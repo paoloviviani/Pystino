@@ -1,0 +1,469 @@
+"""SQLAlchemy 2.0 ORM models.
+
+Ledger design notes:
+
+* ``usage_records`` is the ledger of record. Valkey counters are a rebuildable
+  cache derived from this table, never the other way round (ADR 0006).
+* A usage row is created **before** the upstream call and finalised after, so
+  that a stream interrupted by a suspended mobile client still leaves both the
+  accrued usage and the partial assistant text on disk (ADR 0007).
+* Cost is computed and **stored** at request time, together with the id of the
+  price row that produced it. Re-pricing a model must never rewrite history, and
+  an auditor must be able to see which price was applied.
+* Identity foreign keys are nullable with ``ON DELETE SET NULL`` so that erasing
+  a user under GDPR Art. 17 does not require deleting or falsifying the
+  financial ledger.
+"""
+
+from __future__ import annotations
+
+import enum
+import uuid
+from datetime import datetime
+from decimal import Decimal
+from typing import ClassVar
+
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from gateway.types import Money, TZDateTime, utcnow
+
+
+class Base(DeclarativeBase):
+    # Map bare Python annotations onto our safe column types, so that a
+    # `Mapped[Decimal]` can never accidentally become a float column.
+    type_annotation_map: ClassVar[dict[object, object]] = {
+        Decimal: Money,
+        datetime: TZDateTime,
+    }
+
+
+def _enum(python_type: type[enum.Enum], name: str) -> Enum:
+    """Portable enum column: VARCHAR + CHECK rather than a native PG type.
+
+    Native PostgreSQL enums need CREATE TYPE and make every future value
+    addition a migration with a lock. Values here are stable identifiers, and a
+    CHECK constraint gives the same protection.
+    """
+    return Enum(
+        python_type,
+        name=name,
+        native_enum=False,
+        length=32,
+        values_callable=lambda cls: [member.value for member in cls],
+        validate_strings=True,
+    )
+
+
+def _uuid_pk() -> Mapped[uuid.UUID]:
+    return mapped_column(primary_key=True, default=uuid.uuid4)
+
+
+class MembershipRole(enum.StrEnum):
+    MEMBER = "member"
+    ADMIN = "admin"
+
+
+class GroupSource(enum.StrEnum):
+    OIDC = "oidc"
+    MANUAL = "manual"
+
+
+class LimitScope(enum.StrEnum):
+    GLOBAL = "global"
+    GROUP = "group"
+    USER = "user"
+
+
+class LimitMetric(enum.StrEnum):
+    REQUESTS = "requests"
+    TOKENS = "tokens"  # total_tokens, i.e. prompt + completion
+    COST = "cost"
+
+
+class UsageStatus(enum.StrEnum):
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    CLIENT_DISCONNECTED = "client_disconnected"
+    UPSTREAM_ERROR = "upstream_error"
+
+
+class UsageSource(enum.StrEnum):
+    """Where the token counts on a usage row came from.
+
+    ``ESTIMATED`` exists because some upstreams drop the trailing usage frame of
+    a stream (LiteLLM issue #25389 does exactly this for vLLM backends, and was
+    closed as not-planned). Recording zero in that case would understate spend
+    silently, so we count locally and label the row honestly instead.
+    """
+
+    UPSTREAM_EXACT = "upstream_exact"
+    ESTIMATED = "estimated"
+    UNAVAILABLE = "unavailable"
+
+
+class PriceSource(enum.StrEnum):
+    MANUAL = "manual"
+    CORTECS = "cortecs"
+
+
+class Group(Base):
+    __tablename__ = "groups"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    # For OIDC-sourced groups this is the raw claim value, so it must tolerate
+    # anything an IdP emits (paths like "/research/ai", URNs, GUIDs).
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+    source: Mapped[GroupSource] = mapped_column(
+        _enum(GroupSource, "group_source"), default=GroupSource.MANUAL
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    memberships: Mapped[list[Membership]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
+    model_access: Mapped[list[GroupModelAccess]] = relationship(
+        back_populates="group", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Group {self.name}>"
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (
+        # Identity is (issuer, subject). Email is not identity: it is mutable and
+        # can be reassigned between people.
+        UniqueConstraint("issuer", "subject", name="uq_users_issuer_subject"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    issuer: Mapped[str] = mapped_column(String(255))
+    subject: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(320), index=True, default=None)
+    display_name: Mapped[str | None] = mapped_column(String(255), default=None)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
+    # The user's own choice of which group to bill by default. Users change this
+    # themselves; the gateway validates that they are still a member of it at
+    # request time, so a stale value cannot be used to bill a group they left.
+    default_billing_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="SET NULL"), default=None
+    )
+
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(default=None)
+
+    memberships: Mapped[list[Membership]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", lazy="selectin"
+    )
+    api_keys: Mapped[list[ApiKey]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    default_billing_group: Mapped[Group | None] = relationship(
+        foreign_keys=[default_billing_group_id], lazy="joined"
+    )
+
+    def group_ids(self) -> set[uuid.UUID]:
+        return {m.group_id for m in self.memberships}
+
+    def __repr__(self) -> str:
+        return f"<User {self.issuer}/{self.subject}>"
+
+
+class Membership(Base):
+    __tablename__ = "memberships"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    role: Mapped[MembershipRole] = mapped_column(
+        _enum(MembershipRole, "membership_role"), default=MembershipRole.MEMBER
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="memberships")
+    group: Mapped[Group] = relationship(back_populates="memberships", lazy="joined")
+
+
+class ApiKey(Base):
+    """A revocable programmatic credential.
+
+    Keys are high-entropy random values, so they are stored as a plain SHA-256
+    digest rather than under a slow KDF: there is no low-entropy secret to
+    brute-force, and a per-request Argon2 verification would add tens of
+    milliseconds to every call. See docs/adr/0010-api-keys.md
+    """
+
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+
+    # Public, non-secret handle: indexed so a lookup is one row, after which the
+    # full digest is compared in constant time.
+    prefix: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+
+    name: Mapped[str] = mapped_column(String(255), default="")
+
+    # Pins this key to a group. NULL means "use the user's default billing group
+    # at request time", so changing the default retroactively affects the key.
+    billing_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="SET NULL"), default=None
+    )
+
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(default=None)
+    revoked_at: Mapped[datetime | None] = mapped_column(default=None)
+    # Written opportunistically; not part of the auth decision.
+    last_used_at: Mapped[datetime | None] = mapped_column(default=None)
+
+    user: Mapped[User] = relationship(back_populates="api_keys", lazy="joined")
+    billing_group: Mapped[Group | None] = relationship(
+        foreign_keys=[billing_group_id], lazy="joined"
+    )
+
+    def is_usable(self, *, now: datetime | None = None) -> bool:
+        moment = now or utcnow()
+        if self.revoked_at is not None:
+            return False
+        return not (self.expires_at is not None and self.expires_at <= moment)
+
+
+class ModelDef(Base):
+    """A model the gateway is willing to expose, and how to reach it upstream."""
+
+    __tablename__ = "models"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    # What clients send as "model". Stable and ours to choose.
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    # What we send upstream. Lets us rename or repoint without breaking clients.
+    upstream_model: Mapped[str] = mapped_column(String(255))
+    provider: Mapped[str] = mapped_column(String(64), default="default")
+
+    display_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    context_window: Mapped[int | None] = mapped_column(Integer, default=None)
+    max_output_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
+
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    prices: Mapped[list[ModelPrice]] = relationship(
+        back_populates="model", cascade="all, delete-orphan"
+    )
+    group_access: Mapped[list[GroupModelAccess]] = relationship(
+        back_populates="model", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<ModelDef {self.name}>"
+
+
+class ModelPrice(Base):
+    """Effective-dated pricing.
+
+    Prices are append-only and selected by ``effective_from <= now``, so a price
+    change never alters the cost already recorded against past requests.
+    """
+
+    __tablename__ = "model_prices"
+    __table_args__ = (
+        UniqueConstraint("model_id", "effective_from", name="uq_model_prices_model_effective"),
+        Index("ix_model_prices_model_effective", "model_id", "effective_from"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    model_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("models.id", ondelete="CASCADE"))
+
+    # Per million tokens, matching how every provider publishes prices. Dividing
+    # by 1e6 once at the end keeps the arithmetic exact.
+    input_per_mtok: Mapped[Decimal]
+    output_per_mtok: Mapped[Decimal]
+    cache_read_per_mtok: Mapped[Decimal | None] = mapped_column(default=None)
+    cache_write_per_mtok: Mapped[Decimal | None] = mapped_column(default=None)
+
+    currency: Mapped[str] = mapped_column(String(3))
+    effective_from: Mapped[datetime] = mapped_column(default=utcnow)
+    source: Mapped[PriceSource] = mapped_column(
+        _enum(PriceSource, "price_source"), default=PriceSource.MANUAL
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    model: Mapped[ModelDef] = relationship(back_populates="prices")
+
+
+class GroupModelAccess(Base):
+    """Per-group model availability.
+
+    Absence of a row means no access. There is no global allow-all: a model a
+    nobody has been granted is invisible, which is the safe default for a
+    per-group billing system.
+    """
+
+    __tablename__ = "group_model_access"
+
+    group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    model_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("models.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    group: Mapped[Group] = relationship(back_populates="model_access")
+    model: Mapped[ModelDef] = relationship(back_populates="group_access")
+
+
+class UsageRecord(Base):
+    __tablename__ = "usage_records"
+    __table_args__ = (
+        # Quota aggregation reads "rows for this scope since T", so every scope
+        # gets a composite index leading with its id.
+        Index("ix_usage_group_created", "group_id", "created_at"),
+        Index("ix_usage_user_created", "user_id", "created_at"),
+        Index("ix_usage_key_created", "api_key_id", "created_at"),
+        Index("ix_usage_created", "created_at"),
+        Index("ix_usage_status", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    # Correlates the row with logs and with the id returned to the client.
+    request_id: Mapped[str] = mapped_column(String(64), index=True)
+
+    status: Mapped[UsageStatus] = mapped_column(
+        _enum(UsageStatus, "usage_status"), default=UsageStatus.IN_PROGRESS
+    )
+
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="SET NULL"), default=None
+    )
+    api_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("api_keys.id", ondelete="SET NULL"), default=None
+    )
+    model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("models.id", ondelete="SET NULL"), default=None
+    )
+    # Denormalised so the ledger stays readable after a model is retired.
+    model_name: Mapped[str] = mapped_column(String(255))
+
+    streamed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    cached_prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    reasoning_tokens: Mapped[int] = mapped_column(Integer, default=0)
+
+    usage_source: Mapped[UsageSource] = mapped_column(
+        _enum(UsageSource, "usage_source"), default=UsageSource.UNAVAILABLE
+    )
+
+    cost: Mapped[Decimal] = mapped_column(default=Decimal(0))
+    currency: Mapped[str] = mapped_column(String(3))
+    # Which price row produced `cost`. Null when the model had no price.
+    price_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("model_prices.id", ondelete="SET NULL"), default=None
+    )
+
+    finish_reason: Mapped[str | None] = mapped_column(String(64), default=None)
+    upstream_status: Mapped[int | None] = mapped_column(Integer, default=None)
+    latency_ms: Mapped[int | None] = mapped_column(Integer, default=None)
+    ttfb_ms: Mapped[int | None] = mapped_column(Integer, default=None)
+
+    # Written incrementally while streaming so a suspended client does not lose
+    # the answer. May be partial whenever status != completed.
+    assistant_text: Mapped[str | None] = mapped_column(Text, default=None)
+
+    redaction_engine: Mapped[str | None] = mapped_column(String(64), default=None)
+    redacted_entity_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    error_code: Mapped[str | None] = mapped_column(String(64), default=None)
+    error_message: Mapped[str | None] = mapped_column(Text, default=None)
+
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+    finalised_at: Mapped[datetime | None] = mapped_column(default=None)
+
+    def __repr__(self) -> str:
+        return f"<UsageRecord {self.request_id} {self.status} {self.total_tokens}t>"
+
+
+class LimitRule(Base):
+    """A quota rule: one metric, one scope, one rolling window.
+
+    Rules are additive and all matching rules must pass. There is intentionally
+    no priority or override mechanism: "most specific wins" reliably surprises
+    people when a user-scoped rule silently raises a group ceiling.
+    """
+
+    __tablename__ = "limit_rules"
+    __table_args__ = (
+        UniqueConstraint(
+            "scope",
+            "scope_id",
+            "metric",
+            "window_seconds",
+            name="uq_limit_rules_scope_metric_window",
+        ),
+        CheckConstraint(
+            "(scope = 'global' AND scope_id IS NULL)"
+            " OR (scope <> 'global' AND scope_id IS NOT NULL)",
+            name="ck_limit_rules_scope_id_presence",
+        ),
+        CheckConstraint("window_seconds > 0", name="ck_limit_rules_window_positive"),
+        CheckConstraint("limit_value >= 0", name="ck_limit_rules_limit_non_negative"),
+        Index("ix_limit_rules_lookup", "is_active", "scope", "scope_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(255), default="")
+
+    scope: Mapped[LimitScope] = mapped_column(_enum(LimitScope, "limit_scope"))
+    # Group id or user id depending on scope; NULL for global. Not a real FK,
+    # because it points at one of two tables depending on `scope`.
+    scope_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+
+    metric: Mapped[LimitMetric] = mapped_column(_enum(LimitMetric, "limit_metric"))
+    window_seconds: Mapped[int] = mapped_column(Integer)
+    # Numeric for all three metrics: requests and tokens are integral but sharing
+    # one column keeps rule evaluation uniform.
+    limit_value: Mapped[Decimal]
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    def __repr__(self) -> str:
+        return (
+            f"<LimitRule {self.scope}:{self.scope_id} {self.metric}"
+            f" <= {self.limit_value}/{self.window_seconds}s>"
+        )

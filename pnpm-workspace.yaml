@@ -1,0 +1,6 @@
+# JS/TS half of the monorepo. Nothing here is built in Phase 1 — apps/web and
+# apps/desktop are placeholders. See docs/adr/0002-monorepo-tooling.md
+packages:
+  - "apps/web"
+  - "apps/desktop"
+  - "packages/shared"

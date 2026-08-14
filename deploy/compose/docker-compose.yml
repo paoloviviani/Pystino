@@ -1,0 +1,118 @@
+# Base topology: PostgreSQL, Valkey, migrations and the gateway.
+#
+#   cp deploy/.env.example deploy/.env   # then edit it
+#   docker compose -f deploy/compose/docker-compose.yml up
+#
+# Valkey rather than Redis: BSD-3-Clause, Linux Foundation, wire-compatible, and
+# now the packaged default on current Debian/Ubuntu/Fedora. See
+# docs/adr/0006-counter-store.md
+name: llm-platform
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gateway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-gateway}
+      # Deterministic collation, so index ordering does not depend on the host.
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8 --encoding=UTF8"
+    volumes:
+      # NOT /var/lib/postgresql/data. From PostgreSQL 18 the official image
+      # refuses to start with a mount there: it stores data in a
+      # major-version-specific subdirectory so that `pg_upgrade --link` does not
+      # have to cross a mount boundary, and expects a single mount one level up.
+      # The pre-18 convention fails with "there appears to be PostgreSQL data in
+      # /var/lib/postgresql/data (unused mount/volume)".
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # Both flags matter: without -U it probes as the wrong role and reports
+      # ready before the database is actually usable.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gateway} -d ${POSTGRES_DB:-gateway}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    restart: unless-stopped
+    # Counters are a rebuildable cache, so persistence is not required for
+    # correctness — but keeping it avoids a cold start recomputing every window
+    # from the ledger after a restart.
+    command: ["valkey-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # One-shot migration, so the schema is applied exactly once rather than raced
+  # by every gateway replica on startup.
+  migrate:
+    build:
+      context: ../..
+      dockerfile: apps/gateway/Dockerfile
+    command: ["alembic", "-c", "apps/gateway/alembic.ini", "upgrade", "head"]
+    environment:
+      GATEWAY_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-gateway}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gateway}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: apps/gateway/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    environment:
+      GATEWAY_ENVIRONMENT: ${GATEWAY_ENVIRONMENT:-dev}
+      GATEWAY_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
+      GATEWAY_LOG_JSON: ${GATEWAY_LOG_JSON:-true}
+
+      GATEWAY_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-gateway}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gateway}
+      GATEWAY_VALKEY_URL: redis://valkey:6379/0
+
+      GATEWAY_BILLING_CURRENCY: ${GATEWAY_BILLING_CURRENCY:-EUR}
+      GATEWAY_SESSION_SECRET: ${GATEWAY_SESSION_SECRET:?set GATEWAY_SESSION_SECRET in deploy/.env}
+      GATEWAY_SESSION_COOKIE_SECURE: ${GATEWAY_SESSION_COOKIE_SECURE:-false}
+
+      GATEWAY_UPSTREAM__BASE_URL: ${GATEWAY_UPSTREAM_BASE_URL:-https://api.cortecs.ai/v1}
+      GATEWAY_UPSTREAM__API_KEY: ${GATEWAY_UPSTREAM_API_KEY:-}
+
+      # Phase 1 ships the no-op engine. Presidio arrives in Phase 2 as a separate
+      # service; it is never loaded in-process, because spaCy inference would
+      # block the event loop and stall every concurrent stream.
+      GATEWAY_REDACTION__ENGINE: ${GATEWAY_REDACTION_ENGINE:-noop}
+      GATEWAY_REDACTION__PLACEHOLDER_KEY: ${GATEWAY_REDACTION_PLACEHOLDER_KEY:-}
+
+      GATEWAY_OIDC__ENABLED: ${GATEWAY_OIDC_ENABLED:-false}
+      GATEWAY_OIDC__ISSUER: ${GATEWAY_OIDC_ISSUER:-}
+      GATEWAY_OIDC__CLIENT_ID: ${GATEWAY_OIDC_CLIENT_ID:-}
+      GATEWAY_OIDC__CLIENT_SECRET: ${GATEWAY_OIDC_CLIENT_SECRET:-}
+      GATEWAY_OIDC__REDIRECT_URI: ${GATEWAY_OIDC_REDIRECT_URI:-}
+      GATEWAY_OIDC__GROUPS_CLAIM: ${GATEWAY_OIDC_GROUPS_CLAIM:-groups}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # Liveness only: /readyz would make a database blip restart healthy workers.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).status == 200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+volumes:
+  postgres-data:
+  valkey-data:

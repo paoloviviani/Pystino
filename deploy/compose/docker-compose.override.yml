@@ -1,0 +1,26 @@
+# Development conveniences. Compose loads this automatically alongside the base
+# file when both are passed, or when it sits next to a docker-compose.yml being
+# used from this directory.
+#
+# Deliberately separate from the base file: mixing "reload on edit" into the same
+# definition as the production topology is how a dev-only setting ends up
+# deployed.
+services:
+  gateway:
+    # Source is mounted and the server reloads, so editing a file is enough.
+    command: ["gateway", "serve", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    volumes:
+      - ../../apps/gateway/src:/app/apps/gateway/src:ro
+      - ../../packages/shared-py/src:/app/packages/shared-py/src:ro
+    environment:
+      GATEWAY_LOG_JSON: "false"
+      GATEWAY_LOG_LEVEL: DEBUG
+
+  postgres:
+    # Exposed for psql and for running the test suite against a real PostgreSQL.
+    ports:
+      - "5432:5432"
+
+  valkey:
+    ports:
+      - "6379:6379"

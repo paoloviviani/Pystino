@@ -1,93 +1,176 @@
-# Ai stack
+# LLM Platform
 
+A self-hosted LLM platform for a European research foundation: an OpenAI-compatible
+gateway with per-user and per-group accounting, quotas and policy, plus (later) a web
+frontend, a desktop shell and RAG.
 
+**Licence: [EUPL-1.2](LICENCE)** for all first-party code. This is a hard requirement,
+not a preference — see [ADR 0001](docs/adr/0001-licensing.md) for the dependency policy
+it implies.
 
-## Getting started
+## Status
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+| Component | State |
+|---|---|
+| `apps/gateway` | **Built and tested.** Chat completions (streaming and not), models, API keys, OIDC, accounting, quotas, redaction interface. |
+| `packages/shared-py` | **Built.** Detection contract and the deterministic placeholder scheme. |
+| `apps/web`, `apps/desktop`, `services/rag`, `services/redaction`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+311 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
+exercises the whole slice over real HTTP, and the full `docker compose` stack has been
+built and run against PostgreSQL 18 and Valkey.
 
-## Add your files
-
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## Architecture
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.linksfoundation.com/viviani/ai-stack.git
-git branch -M main
-git push -uf origin main
+                    ┌──────────────┐        ┌──────────────┐
+   browser ────────▶│  apps/web    │        │ apps/desktop │
+   (Phase 2)        │  Next.js PWA │        │  Tauri shell │
+                    └──────┬───────┘        └──────┬───────┘
+                           │  OIDC + /api          │ wraps the same web app
+                           ▼                       ▼
+  opencode ──────▶ ┌────────────────────────────────────────┐
+  OpenAI SDK       │           apps/gateway                 │
+  any OpenAI       │                                        │
+  client           │  /v1/chat/completions   API-key auth   │
+                   │  /v1/models             per-group      │
+                   │  /api/*                 OIDC session   │
+                   │                                        │
+                   │  ┌──────────────────────────────────┐  │
+                   │  │ quota check  →  reserve          │  │
+                   │  │ redact request                   │  │
+                   │  │ upstream call (forced usage)      │  │
+                   │  │ SSE pipeline → rewrite → client   │  │
+                   │  │ accounting  →  settle            │  │
+                   │  └──────────────────────────────────┘  │
+                   └───┬─────────────┬───────────────┬──────┘
+                       │             │               │
+              ┌────────▼───┐  ┌──────▼─────┐  ┌──────▼──────────┐
+              │ PostgreSQL │  │   Valkey   │  │ upstream        │
+              │ the ledger │  │  counters  │  │ OpenAI-compat   │
+              │ of record  │  │ (a cache)  │  │ (Cortecs, …)    │
+              └────────────┘  └────────────┘  └─────────────────┘
+
+                 services/redaction  (Phase 2, out of process — never in the
+                                      gateway, because spaCy would block the loop)
+                 services/rag        (Phase 3, pgvector)
 ```
 
-## Integrate with your tools
+Four ideas carry most of the design:
 
-* [Set up project integrations](https://gitlab.linksfoundation.com/viviani/ai-stack/-/settings/integrations)
+1. **PostgreSQL is the ledger of record; Valkey is a rebuildable cache.** Quotas still
+   evaluate correctly with Valkey gone, just more slowly. Nothing about money is stored
+   only in a cache. ([0006](docs/adr/0006-counter-store.md))
+2. **Quota checks before the upstream call, accounting after, a reservation in between.**
+   Without the reservation, concurrent requests each read the same under-limit total and
+   collectively blow the budget. ([0009](docs/adr/0009-quota-model.md))
+3. **Accounting never silently reports zero.** Usage is forced out of the upstream, and if
+   it never arrives the tokens are counted locally and the row is stamped
+   `estimated`. ([0008](docs/adr/0008-accounting-model.md))
+4. **The server is authoritative for conversations.** That is why the desktop app gets
+   sync for free and why it is a shell rather than a second client.
 
-## Collaborate with your team
+## Quick start
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+```bash
+cp deploy/.env.example deploy/.env
+# edit deploy/.env: set POSTGRES_PASSWORD, GATEWAY_SESSION_SECRET,
+# and GATEWAY_UPSTREAM_API_KEY
+docker compose -f deploy/compose/docker-compose.yml up --build
+```
 
-## Test and Deploy
+That starts PostgreSQL, Valkey, runs migrations once, and starts the gateway on
+`localhost:8000`. Then create something to talk to:
 
-Use the built-in continuous integration in GitLab.
+```bash
+docker compose -f deploy/compose/docker-compose.yml exec gateway \
+  gateway seed --model my-model --upstream-model gpt-4o-mini
+```
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+It prints an API key (once) and a ready-made `curl`. Any OpenAI client works:
 
-***
+```python
+from openai import OpenAI
 
-# Editing this README
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="gwk_...")
+client.chat.completions.create(model="my-model", messages=[{"role": "user", "content": "hello"}])
+```
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+### Trying the stack without a provider key
 
-## Suggestions for a good README
+`docker-compose.smoke.yml` adds a fake OpenAI-compatible upstream so the whole topology
+can be exercised with no provider account:
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+```bash
+docker compose --env-file deploy/.env \
+  -f deploy/compose/docker-compose.yml \
+  -f deploy/compose/docker-compose.smoke.yml up --build
+```
 
-## Name
-Choose a self-explaining name for your project.
+It is a separate overlay on purpose — a fake upstream in the base file would be one
+careless `-f` away from production.
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## Local development without Docker
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+```bash
+uv sync
+uv run pytest                    # 311 tests, no services needed
+uv run ruff check . && uv run ruff format --check .
+uv run mypy apps/gateway/src packages/shared-py/src
+```
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+Tests run against SQLite and a fake upstream transport, so they need no PostgreSQL, no
+Valkey and no network.
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+For an end-to-end check over a real socket — a real server, a real database and a real
+streaming upstream — run:
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+```bash
+./scripts/smoke_test.sh
+```
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+It starts everything on temporary ports, drives the endpoints, prints the resulting
+ledger and cleans up. It also demonstrates the quota overrun policy: the request that
+crosses the limit is admitted, the next one gets a 429.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+Against a real database:
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+```bash
+export GATEWAY_DATABASE_URL=postgresql+asyncpg://gateway:gateway@localhost:5432/gateway
+uv run alembic -c apps/gateway/alembic.ini upgrade head
+uv run gateway seed
+uv run gateway serve --reload
+```
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+## Documentation
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+- **[docs/adr/](docs/adr/README.md)** — every significant decision, with the licence,
+  version and CVE evidence behind it and the date it was checked. Start here.
+- **[apps/gateway/README.md](apps/gateway/README.md)** — the gateway's surfaces, layout,
+  and a table of the streaming traps with the file that handles each.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+## Repository layout
 
-## License
-For open source projects, say how it is licensed.
+```
+apps/gateway/        FastAPI service — the only thing built this session
+apps/web/            Next.js frontend            (Phase 2, placeholder)
+apps/desktop/        Tauri shell                 (Phase 4, placeholder)
+services/rag/        indexing + retrieval        (Phase 3, placeholder)
+services/redaction/  Presidio detection service  (Phase 2, placeholder)
+packages/shared/     shared TypeScript types     (Phase 2, placeholder)
+packages/shared-py/  shared Python contracts
+scripts/             Cortecs pricing importer, smoke test; opencode bootstrap (Phase 4)
+deploy/compose/      docker compose: base, dev override, smoke overlay
+docs/adr/            architecture decision records
+```
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## What is deliberately not here yet
+
+Phase 2 onward: the frontend, RAG, the code sandbox, MCP, the desktop app, the Presidio
+engine, and the `opencode` device-flow bootstrap. Each has a README saying what goes there
+and an ADR recording the decision already taken, so none of that research needs repeating.
+
+The gateway's own known gaps are listed at the end of
+[apps/gateway/README.md](apps/gateway/README.md) and in the ADRs — most notably: the full
+OIDC browser flow is untested without a real identity provider, and there is no GDPR
+erasure procedure for `assistant_text` yet.

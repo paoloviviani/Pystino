@@ -1,0 +1,37 @@
+# Install with:  uv run pre-commit install
+# Or use prek (Rust reimplementation, same config):  prek install
+default_language_version:
+  python: python3.13
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        # mypy needs the real dependency set to be useful, so point it at the
+        # gateway package and give it the libraries it needs to resolve types.
+        files: ^(apps/gateway/src|packages/shared-py/src)/
+        additional_dependencies:
+          - pydantic>=2.9
+          - pydantic-settings>=2.6
+          - sqlalchemy[asyncio]>=2.0.36
+          - fastapi>=0.115
+          - httpx>=0.28

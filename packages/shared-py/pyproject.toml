@@ -1,0 +1,21 @@
+[project]
+name = "llmp-shared"
+version = "0.1.0"
+description = "Contracts shared between the gateway and the out-of-process services"
+requires-python = ">=3.13"
+license = "EUPL-1.2"
+authors = [{ name = "LINKS Foundation" }]
+
+# Deliberately tiny. Anything that both the gateway and a sidecar service must
+# agree on byte-for-byte lives here — above all the deterministic placeholder
+# derivation, which two separate processes have to compute identically.
+dependencies = [
+    "pydantic>=2.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llmp_shared"]
