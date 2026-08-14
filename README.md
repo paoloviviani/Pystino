@@ -18,7 +18,8 @@ it implies.
 
 311 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
 exercises the whole slice over real HTTP, and the full `docker compose` stack has been
-built and run against PostgreSQL 18 and Valkey.
+built and run against PostgreSQL 18, Valkey and Keycloak — including the complete OIDC
+login flow.
 
 ## Architecture
 
@@ -110,6 +111,25 @@ docker compose --env-file deploy/.env \
 It is a separate overlay on purpose — a fake upstream in the base file would be one
 careless `-f` away from production.
 
+### Trying the OIDC login
+
+`docker-compose.keycloak.yml` adds Keycloak with a seeded realm, so the login flow can be
+exercised without wiring up a real identity provider:
+
+```bash
+docker compose --env-file deploy/.env \
+  -f deploy/compose/docker-compose.yml \
+  -f deploy/compose/docker-compose.smoke.yml \
+  -f deploy/compose/docker-compose.keycloak.yml up -d --build
+
+./scripts/test_oidc_flow.py
+```
+
+That drives the whole authorization-code flow and checks the result: PKCE, ID token
+validation, group mapping, the provisioning rules, and a session minting an API key that
+then serves a billed completion. Admin console on <http://localhost:8080> (`admin`/`admin`);
+seeded users are described in [deploy/keycloak/README.md](deploy/keycloak/README.md).
+
 ## Local development without Docker
 
 ```bash
@@ -160,7 +180,8 @@ services/redaction/  Presidio detection service  (Phase 2, placeholder)
 packages/shared/     shared TypeScript types     (Phase 2, placeholder)
 packages/shared-py/  shared Python contracts
 scripts/             Cortecs pricing importer, smoke test; opencode bootstrap (Phase 4)
-deploy/compose/      docker compose: base, dev override, smoke overlay
+deploy/compose/      docker compose: base, dev override, smoke + keycloak overlays
+deploy/keycloak/     seeded dev realm for the OIDC flow
 docs/adr/            architecture decision records
 ```
 

@@ -51,8 +51,9 @@ Or `docker compose -f deploy/compose/docker-compose.yml up` for the whole stack.
 ## Testing
 
 ```bash
-uv run pytest              # 311 tests, no services needed
-../../scripts/smoke_test.sh  # end-to-end over real HTTP
+uv run pytest                  # 311 tests, no services needed
+../../scripts/smoke_test.sh    # end-to-end over real HTTP, no Docker
+../../scripts/test_oidc_flow.py  # full OIDC login against Keycloak (needs the stack up)
 ```
 
 Tests run against SQLite by default so they need no services. Money arithmetic is
@@ -82,11 +83,12 @@ Stated plainly, so none of these is a surprise later.
 
 **Not tested, and needs verifying against the real thing**
 
-- **The full OIDC browser flow.** It needs a live identity provider. Everything on our
-  side of the redirect is tested — claim resolution (including dotted and namespaced
-  paths), group normalisation, provisioning, membership reconciliation, session tokens,
-  cookie type confusion. The redirect round trip itself is not. Verify against the actual
-  IdP before relying on it. ([ADR 0011](../../docs/adr/0011-oidc-integration.md))
+- **OIDC against providers other than Keycloak.** The full redirect flow is now verified
+  end to end against Keycloak 26.7 (`scripts/test_oidc_flow.py`), but Entra ID, Google and
+  others differ in exactly the places ADR 0011 makes configurable: where groups live,
+  whether they appear in the ID token at all, how they are named. Re-run the same checks
+  against the real provider before going live.
+  ([ADR 0011](../../docs/adr/0011-oidc-integration.md))
 - **Load behaviour.** Nothing here has been run under concurrency at the few-hundred
   simultaneous streams the design argues about. The arithmetic in
   [ADR 0004](../../docs/adr/0004-gateway-runtime.md) says Python is not the constraint;
@@ -98,11 +100,14 @@ Stated plainly, so none of these is a surprise later.
 
 **Verified against a real running stack**
 
-`docker compose up` was built and run: PostgreSQL 18, Valkey, migrations and the gateway
-all healthy, real requests served, quotas enforced, and the database fallback confirmed by
-stopping Valkey mid-workload. See [ADR 0005](../../docs/adr/0005-persistence.md) and
-[ADR 0006](../../docs/adr/0006-counter-store.md) for what was checked and the two problems
-it found.
+`docker compose up` was built and run: PostgreSQL 18, Valkey, Keycloak, migrations and the
+gateway all healthy, real requests served, quotas enforced, the database fallback confirmed
+by stopping Valkey mid-workload, and the **full OIDC login flow** driven against a real
+identity provider — including a session minting an API key that then served a billed
+completion. See ADRs [0005](../../docs/adr/0005-persistence.md),
+[0006](../../docs/adr/0006-counter-store.md) and
+[0011](../../docs/adr/0011-oidc-integration.md) for what was checked and the problems it
+found.
 
 **Deliberately not implemented**
 

@@ -1,0 +1,71 @@
+# Overlay that adds Keycloak as an identity provider and points the gateway at it.
+#
+#   docker compose --env-file deploy/.env \
+#     -f deploy/compose/docker-compose.yml \
+#     -f deploy/compose/docker-compose.smoke.yml \
+#     -f deploy/compose/docker-compose.keycloak.yml up --build
+#
+#   ./scripts/test_oidc_flow.sh     # drives the whole login flow and checks it
+#
+# Keycloak admin console: http://localhost:8080  (admin / admin)
+# Seeded users are described in deploy/keycloak/realm-llm-platform.json.
+#
+# Development only. Keycloak runs with `start-dev` (in-memory H2, no TLS) and the
+# realm ships plaintext credentials, which is the point: one command gets you a
+# working IdP. A production deployment needs its own database, TLS, and real
+# secrets.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HTTP_ENABLED: "true"
+      # Pin the frontend URL so the `iss` claim is stable no matter which host
+      # header a request arrives with. Without this, Keycloak infers the issuer
+      # per request, and a token minted for the gateway (which connects as
+      # `keycloak:8080`) would carry a different issuer than one seen from a
+      # browser on `localhost:8080` — and ID token validation compares `iss`
+      # against the discovery document exactly.
+      KC_HOSTNAME: http://keycloak:8080
+      # ...but still serve requests whose Host header is something else, so the
+      # admin console and the test driver remain reachable on localhost.
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "false"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - ../keycloak/realm-llm-platform.json:/opt/keycloak/data/import/realm-llm-platform.json:ro
+    ports:
+      - "${KEYCLOAK_PORT:-8080}:8080"
+    healthcheck:
+      # The management port (9000) serves health in Keycloak 25+. curl is not in
+      # the image, so this uses the JVM-free /bin/bash TCP trick via exec.
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q 'UP' <&3",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  gateway:
+    environment:
+      GATEWAY_OIDC__ENABLED: "true"
+      # The gateway reaches Keycloak over the compose network; this matches
+      # KC_HOSTNAME above so the discovered issuer and the token's `iss` agree.
+      GATEWAY_OIDC__ISSUER: http://keycloak:8080/realms/llm-platform
+      GATEWAY_OIDC__CLIENT_ID: llm-gateway
+      GATEWAY_OIDC__CLIENT_SECRET: gateway-dev-secret-not-for-production
+      # Where the *browser* is sent back to, so this is the gateway's public URL.
+      GATEWAY_OIDC__REDIRECT_URI: http://localhost:8000/auth/callback
+      GATEWAY_OIDC__GROUPS_CLAIM: groups
+      # Plain http locally, so the session cookie must not be Secure-only or the
+      # browser drops it.
+      GATEWAY_SESSION_COOKIE_SECURE: "false"
+      GATEWAY_LOG_JSON: "false"
+    depends_on:
+      keycloak:
+        condition: service_healthy
