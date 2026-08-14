@@ -1,0 +1,177 @@
+{
+  "realm": "llm-platform",
+  "enabled": true,
+  "displayName": "LLM Platform (dev)",
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "groups": [
+    {
+      "name": "research",
+      "path": "/research"
+    },
+    {
+      "name": "finance",
+      "path": "/finance"
+    },
+    {
+      "name": "platform-admins",
+      "path": "/platform-admins"
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "llm-gateway",
+      "name": "LLM Platform Gateway",
+      "description": "Confidential client for the gateway's management API",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "secret": "gateway-dev-secret-not-for-production",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "http://localhost:8000/auth/callback",
+        "http://127.0.0.1:8000/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:8000"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "oauth2.device.authorization.grant.enabled": "true",
+        "post.logout.redirect.uris": "http://localhost:8000/*"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "groups-nested",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "realm_groups.names",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "true",
+            "introspection.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "alice@example.org",
+      "firstName": "Alice",
+      "lastName": "Researcher",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "alice-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/research"
+      ]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "bob@example.org",
+      "firstName": "Bob",
+      "lastName": "Twogroups",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "bob-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/research",
+        "/finance"
+      ]
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "carol@example.org",
+      "firstName": "Carol",
+      "lastName": "Nogroups",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "carol-password",
+          "temporary": false
+        }
+      ],
+      "groups": []
+    },
+    {
+      "username": "dave",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "dave@example.org",
+      "firstName": "Dave",
+      "lastName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dave-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/platform-admins"
+      ]
+    },
+    {
+      "username": "erin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "erin@example.org",
+      "firstName": "Erin",
+      "lastName": "Chooser",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "erin-password",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/research",
+        "/finance"
+      ]
+    }
+  ]
+}

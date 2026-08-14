@@ -49,7 +49,13 @@ ignore = [
 "**/tests/**" = ["S105", "S106", "S311"]
 # A one-shot CLI has no concurrency to block, so reading a file with pathlib
 # inside an async entry point is not the bug ASYNC240 is warning about.
-"**/scripts/**" = ["S101", "ASYNC240"]
+"**/scripts/**" = [
+    "S101",
+    "ASYNC240",
+    # Every URL opened in scripts/ is a hardcoded http://localhost constant in a
+    # development-only driver, not user input.
+    "S310",
+]
 
 # --------------------------------------------------------------------------
 # mypy
