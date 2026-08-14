@@ -1,0 +1,87 @@
+# Workspace root. This is a "virtual" root: it is not itself an installable
+# package, it only ties the Python members together and holds shared tool config.
+# See docs/adr/0002-monorepo-tooling.md
+[tool.uv.workspace]
+members = ["apps/gateway", "packages/shared-py"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+    "aiosqlite>=0.20",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+# --------------------------------------------------------------------------
+# ruff
+# --------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+# Globs, not bare path fragments: the members are nested under apps/ and
+# packages/, so "migrations/versions" would never match.
+extend-exclude = [".venv", "**/migrations/versions/**"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "RUF",  # ruff-specific
+    "ASYNC",# flake8-async: catches blocking calls in async defs
+    "S",    # bandit
+]
+ignore = [
+    "S101",  # assert is fine in tests
+    "B008",  # FastAPI Depends() in defaults is idiomatic
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test credentials are not secrets, and test modules import their own helpers
+# by bare module name (pytest puts the test directory on sys.path).
+"**/tests/**" = ["S105", "S106", "S311"]
+# A one-shot CLI has no concurrency to block, so reading a file with pathlib
+# inside an async entry point is not the bug ASYNC240 is warning about.
+"**/scripts/**" = ["S101", "ASYNC240"]
+
+# --------------------------------------------------------------------------
+# mypy
+# --------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+exclude = ['migrations/versions/.*']
+
+[[tool.mypy.overrides]]
+# These ship no type information as of the versions pinned in apps/gateway.
+module = ["joserfc.*", "redis.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+# --------------------------------------------------------------------------
+# pytest
+# --------------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["apps/gateway/tests", "packages/shared-py/tests"]
+pythonpath = ["apps/gateway/src", "packages/shared-py/src"]
+filterwarnings = [
+    "error",
+    # SQLAlchemy warns that SQLite cannot store Numeric natively. We only use
+    # SQLite in tests, and money columns go through the Money TypeDecorator
+    # which round-trips Decimal as text. See apps/gateway/src/gateway/types.py
+    "ignore::sqlalchemy.exc.SAWarning",
+]

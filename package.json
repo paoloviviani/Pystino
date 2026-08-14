@@ -1,0 +1,12 @@
+{
+  "name": "llm-platform",
+  "private": true,
+  "license": "EUPL-1.2",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "//": "Phase 2. apps/web is a placeholder directory this session."
+  }
+}

@@ -1,0 +1,30 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+node_modules/
+.next/
+out/
+
+# Secrets: only *.env.example is tracked.
+#
+# `*.env` is deliberately broad. The narrower `.env` / `.env.*` pair does NOT
+# match a file like `.gitlab.env`, which is exactly the kind of credential file
+# that ends up in a repository root and gets committed by accident.
+*.env
+.env
+.env.*
+!*.env.example
+!.env.example
+deploy/.env
+
+*.db
+*.sqlite3

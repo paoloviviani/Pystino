@@ -1,0 +1,38 @@
+# Overlay that makes the stack self-contained: it adds a fake OpenAI-compatible
+# upstream so the whole topology can be verified without a provider API key.
+#
+#   docker compose --env-file deploy/.env \
+#     -f deploy/compose/docker-compose.yml \
+#     -f deploy/compose/docker-compose.smoke.yml up --build
+#
+# Deliberately NOT part of the base file. The base topology points at a real
+# provider; a fake upstream living in it would be one careless `-f` away from
+# production, and a gateway that silently talks to a stub is worse than one that
+# fails to start.
+services:
+  fake-upstream:
+    build:
+      context: ../..
+      dockerfile: apps/gateway/Dockerfile
+    # Reuses the gateway image purely because it already has uvicorn and starlette.
+    # scripts/ is not baked into the image, so it is mounted.
+    volumes:
+      - ../../scripts:/app/scripts:ro
+    working_dir: /app/scripts
+    command: ["python", "-m", "uvicorn", "_fake_upstream:app", "--host", "0.0.0.0", "--port", "9099"]
+    healthcheck:
+      # A 405 proves the route exists and the app is serving; the endpoint is
+      # POST-only, so any HTTP response at all is success here.
+      test: ["CMD-SHELL", "python -c \"import urllib.request,urllib.error;\nimport sys\ntry:\n urllib.request.urlopen('http://localhost:9099/v1/chat/completions', timeout=3)\nexcept urllib.error.HTTPError:\n sys.exit(0)\nexcept Exception:\n sys.exit(1)\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  gateway:
+    environment:
+      GATEWAY_UPSTREAM__BASE_URL: http://fake-upstream:9099/v1
+      GATEWAY_UPSTREAM__API_KEY: fake-upstream-key
+      GATEWAY_LOG_JSON: "false"
+    depends_on:
+      fake-upstream:
+        condition: service_healthy
