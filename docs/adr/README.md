@@ -35,7 +35,8 @@ verified is marked as such in the ADR that depends on it.
 | [0014](0014-model-catalogue-and-pricing.md) | The model catalogue and the Cortecs pricing importer |
 | [0022](0022-administration-surface.md) | Administration is an API; admin follows an IdP group (UI stance superseded by 0023) |
 | [0023](0023-admin-console.md) | The console: a SPA served by the gateway, optional at build time |
-| [0024](0024-billing-periods.md) | Billing periods are calendar-based, and are not quota windows |
+| [0024](0024-billing-periods.md) | Billing periods are calendar-based, and are not rolling quota windows |
+| [0025](0025-calendar-period-quotas.md) | Calendar-period quotas, sharing one boundary implementation with reporting |
 
 ## Decisions recorded now, implemented later
 

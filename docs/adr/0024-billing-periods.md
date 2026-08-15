@@ -2,6 +2,9 @@
 
 - Status: accepted
 - Date: 2026-08-15
+- Extended by [0025](0025-calendar-period-quotas.md): quotas may *also* be
+  calendar-based, sharing the boundary implementation defined here. What remains true
+  is that a **rolling** quota window is not a billing period.
 
 ## Context
 
@@ -29,7 +32,12 @@ argued about rather than obviously wrong.
 ## Decision
 
 **Reporting queries `usage_records` directly over calendar boundaries. It does not
-reuse the quota engine, its buckets, or its counter stores.**
+reuse the quota engine's buckets or counter stores.**
+
+The period-boundary function defined here is the single implementation of "when does
+August start", and [0025](0025-calendar-period-quotas.md) has calendar quotas consume
+the same one — which is what makes a monthly budget and a monthly report agree by
+construction rather than by vigilance.
 
 - Periods are expressed as an explicit `[from, to)` half-open range, or a named
   period (`2026-01`, `2026-Q1`) resolved into one.

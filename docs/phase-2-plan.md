@@ -4,6 +4,13 @@ Decided 2026-08-15. The chat frontend moved to Phase 3; Phase 2 is the Presidio
 redaction engine plus a console covering billing, model pricing, user quotas and
 usage reporting.
 
+**Both halves of spend control are in scope, and they are different mechanisms.**
+*Enforcement* caps what a user or group may spend and refuses requests past the cap;
+*accounting* reports what was actually spent in a calendar month. Per-user and
+per-group cost limits already work and are enforced today — what Phase 2 adds is
+calendar-period budgets ([0025](adr/0025-calendar-period-quotas.md)), so a monthly cap
+resets on the 1st and agrees with the monthly report by construction.
+
 Architecture decisions behind this: [0023](adr/0023-admin-console.md) (the console),
 [0024](adr/0024-billing-periods.md) (calendar periods), and the unchanged API
 invariants in [0022](adr/0022-administration-surface.md).
@@ -44,24 +51,33 @@ Everything here is stack-independent. Verified gaps in the current API:
 
 1. **Calendar periods.** `[from, to)` ranges and named periods (`2026-01`, `2026-Q1`)
    resolved in `GATEWAY_BILLING_TIMEZONE` (default `Europe/Rome`), converted to UTC
-   for the query. Test the March and October DST boundaries explicitly.
-2. **Aggregation endpoint.** `GET /api/admin/reports/usage` with `group_by` over any
+   for the query. Test the March and October DST boundaries explicitly. **This one
+   function is then consumed by calendar quotas too** — that shared implementation is
+   what makes budgets and reports agree ([0025](adr/0025-calendar-period-quotas.md)).
+2. **Calendar-period quotas.** `limit_rules.period` alongside `window_seconds`, one or
+   the other per rule. Period-keyed counters (`q:user:{id}:cost:p2026-08`) rather than
+   buckets: exact, self-resetting at the boundary, one GET to read. Settlement applies
+   to the period the *reservation* used, or a stream crossing midnight on the 1st
+   corrupts both months.
+3. **Aggregation endpoint.** `GET /api/admin/reports/usage` with `group_by` over any
    of group, user, model, api_key, day — and combinations, since "spend by model
    within group, by month" is the actual question finance asks.
-3. **Self-service equivalents.** `GET /api/me/reports/usage`, same shape, scoped to
+4. **Self-service equivalents.** `GET /api/me/reports/usage`, same shape, scoped to
    the caller and the groups they belong to. This is what makes "everyone sees their
    own spend" real rather than admin-only.
-4. **`current_value` on limit rules**, so quotas can be displayed against consumption.
+5. **`current_value` on limit rules**, so quotas can be displayed against consumption.
    Reads the ledger, not the counter cache — the cache is an approximation for
    admission control, and a screen showing a budget should show the exact number.
-5. **Pagination** on every list endpoint, with a stable sort.
-6. **CSV export** on the reporting endpoints.
-7. **Disclosures**: estimated-versus-measured split on every total, and an explicit
+6. **Pagination** on every list endpoint, with a stable sort.
+7. **CSV export** on the reporting endpoints.
+8. **Disclosures**: estimated-versus-measured split on every total, and an explicit
    "(erased user)" bucket so a per-user report still sums to its group total.
 
 ### Tests worth writing before the code
 
-Period boundaries across DST; aggregation correctness against hand-computed fixtures;
+Period boundaries across DST; **that a calendar quota and a report for the same period
+return the same number**; that a stream crossing a period boundary settles into the
+period it started in; aggregation correctness against hand-computed fixtures;
 that estimated rows are counted *and* disclosed; that a per-user report sums to the
 group report for the same period; CSV escaping of a group named `Research, AI`.
 
@@ -122,7 +138,7 @@ cookie authenticates it. See [0023](adr/0023-admin-console.md).
 | `/` | any authenticated user | own spend, own groups' spend, API keys, default billing group |
 | `/admin/models` | admin | catalogue: create, edit, activate/deactivate |
 | `/admin/pricing` | admin | price history per model, append a new price, schedule a future one |
-| `/admin/quotas` | admin | limit rules with current consumption against each |
+| `/admin/quotas` | admin | limit rules with current consumption; budgets shown as "€31.40 of €50 this month, resets in 12 days" |
 | `/admin/reports` | admin | spend by group/user/model/period, CSV export |
 | `/admin/users` | admin | users, groups, keys, activity |
 
