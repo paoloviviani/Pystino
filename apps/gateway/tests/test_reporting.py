@@ -374,6 +374,21 @@ class TestCsv:
         costs = [row["cost"] for row in csv.DictReader(io.StringIO(response.text))]
         assert costs == ["0.000000100000", "0.000000100000"]
 
+    async def test_a_comma_in_a_group_name_does_not_shift_the_columns(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        """A group called `Research, AI` is not exotic, and an unquoted comma
+        silently moves every number one column to the right."""
+        awkward = Group(name='Research, AI ("core")')
+        session.add(awkward)
+        await session.flush()
+        await record(session, group_id=awkward.id, cost="3", at=inside_this_month())
+
+        response = await admin_client.get("/api/admin/reports/usage.csv")
+        rows = list(csv.DictReader(io.StringIO(response.text)))
+        assert rows[0]["label"] == 'Research, AI ("core")'
+        assert Decimal(rows[0]["cost"]) == Decimal(3)
+
     async def test_csv_and_json_agree(
         self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
     ) -> None:
@@ -554,6 +569,136 @@ class TestLimitsApi:
         rules = (await admin_client.get("/api/admin/limits")).json()
         rule = next(entry for entry in rules if entry["id"] == created["id"])
         assert Decimal(rule["current_value"]) == Decimal("12.5")
+
+
+class TestTotalsAreConsistent:
+    async def test_a_users_own_report_sums_into_their_groups(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        seeded: Seeded,
+    ) -> None:
+        """What a user sees for themselves has to be part of what their group lead
+        sees for the group — the same ledger, the same period, one query builder."""
+        colleague = User(issuer="https://idp.test", subject="colleague", email="c@example.org")
+        session.add(colleague)
+        await session.flush()
+        await record(
+            session,
+            group_id=seeded.group.id,
+            user_id=seeded.user.id,
+            cost="2",
+            at=inside_this_month(),
+        )
+        await record(
+            session,
+            group_id=seeded.group.id,
+            user_id=colleague.id,
+            cost="3",
+            at=inside_this_month(),
+        )
+
+        as_user(app, seeded.user)
+        mine = (await client.get("/api/me/reports/usage")).json()
+
+        as_user(app, await make_admin(session_factory, seeded))
+        theirs = (
+            await client.get(f"/api/admin/reports/usage?group_id={seeded.group.id}&group_by=user")
+        ).json()
+
+        assert Decimal(mine["totals"]["cost"]) == Decimal(2)
+        assert Decimal(theirs["totals"]["cost"]) == Decimal(5)
+        row = next(entry for entry in theirs["rows"] if entry["key"] == str(seeded.user.id))
+        assert Decimal(row["cost"]) == Decimal(mine["totals"]["cost"])
+
+    async def test_the_rows_sum_to_the_total_on_every_dimension(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        """Whichever way the same spend is sliced, it adds up to the same money."""
+        other = Group(name="teaching")
+        session.add(other)
+        await session.flush()
+        await record(
+            session, group_id=seeded.group.id, model="a", cost="1.5", at=inside_this_month()
+        )
+        await record(session, group_id=other.id, model="b", cost="2.25", at=inside_this_month())
+        await record(session, group_id=None, model="a", cost="0.25", at=inside_this_month())
+
+        for dimension in ("group", "user", "model", "api_key", "day", "total"):
+            body = (await admin_client.get(f"/api/admin/reports/usage?group_by={dimension}")).json()
+            total = Decimal(body["totals"]["cost"])
+            assert total == Decimal(4), dimension
+            if body["rows"]:
+                assert sum(Decimal(row["cost"]) for row in body["rows"]) == total, dimension
+
+
+class TestSeedingANewRule:
+    async def test_a_rule_created_mid_period_counts_the_spend_already_there(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        """Found against the live stack: a new rule's counter started at zero.
+
+        For "EUR 5 this month" created on the 20th that means the cap is wrong for
+        eleven days — the group has already spent the money and the gateway does
+        not know. The cold-cache rebuild cannot help: the cache is not cold, only
+        this rule is.
+        """
+        await record(session, group_id=seeded.group.id, cost="7", at=inside_this_month())
+
+        created = (
+            await admin_client.post(
+                "/api/admin/limits",
+                json={
+                    "scope": "group",
+                    "scope_id": str(seeded.group.id),
+                    "metric": "cost",
+                    "period": "month",
+                    "limit_value": "10",
+                },
+            )
+        ).json()
+        assert Decimal(created["current_value"]) == Decimal(7)
+
+    async def test_the_seeded_counter_matches_the_report(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        await record(session, group_id=seeded.group.id, cost="2.5", at=inside_this_month())
+        created = (
+            await admin_client.post(
+                "/api/admin/limits",
+                json={
+                    "scope": "group",
+                    "scope_id": str(seeded.group.id),
+                    "metric": "cost",
+                    "period": "month",
+                    "limit_value": "10",
+                },
+            )
+        ).json()
+        report = (
+            await admin_client.get(
+                f"/api/admin/reports/usage?group_id={seeded.group.id}&group_by=total"
+            )
+        ).json()
+        assert Decimal(created["current_value"]) == Decimal(report["totals"]["cost"])
+
+    async def test_seeding_a_scope_with_no_history_is_zero_not_an_error(
+        self, admin_client: httpx.AsyncClient, seeded: Seeded
+    ) -> None:
+        created = (
+            await admin_client.post(
+                "/api/admin/limits",
+                json={
+                    "scope": "global",
+                    "metric": "requests",
+                    "window_seconds": 3600,
+                    "limit_value": "10",
+                },
+            )
+        ).json()
+        assert Decimal(created["current_value"] or 0) == 0
 
 
 class TestResetEndpoint:

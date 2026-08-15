@@ -14,9 +14,12 @@ per-group model availability and a pluggable redaction layer.
 | `PUT /api/me/default-billing-group` | session cookie | Users change their own billing group |
 | `GET|POST|DELETE /api/me/keys` | session cookie | Mint and revoke API keys |
 | `GET /api/me/usage` | session cookie | Own spend over a rolling window |
+| `GET /api/me/reports/usage[.csv]` | session cookie | Own spend over a calendar period, by model, day, group or key |
 | `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, limits, users, usage |
 | `GET /api/admin/models/discover` | session cookie + `is_admin` | What the provider offers that we do not carry, and drift the other way |
 | `POST /api/admin/models/import` | session cookie + `is_admin` | Adopt named upstream models with their published prices |
+| `GET /api/admin/reports/usage[.csv]` | session cookie + `is_admin` | Chargeback reporting for a calendar period, `group_by` group/user/model/api_key/day/total |
+| `POST /api/admin/limits/{id}/reset` | session cookie + `is_admin` | Set a quota's consumption to zero (reason required); leaves billing untouched |
 | `GET /healthz`, `/readyz` | — | Liveness (no dependencies) and readiness |
 
 There is **no HTML admin panel**. `/docs` is the operator console — Swagger, generated

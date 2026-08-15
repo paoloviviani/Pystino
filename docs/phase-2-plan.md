@@ -34,7 +34,59 @@ unredacted, and that is a worse thing to be carrying than a missing screen.
 
 ---
 
-## Stage 1 — Reporting API
+## Stage 1 — Reporting API — **done**
+
+Delivered in commits `cd584e1` (quota model v2) and `a2172bf` (reporting API, resets),
+plus the counter-seeding fix below. 78 new tests; `scripts/test_reporting_live.py`
+covers what SQLite cannot.
+
+**Built:**
+
+| | |
+|---|---|
+| `gateway/periods.py` | One implementation of "when does August start", shared by reporting and calendar quotas |
+| Calendar quotas | `period` ∈ day/week/month/quarter/year, stacking with rolling windows |
+| `api_key` scope | "this CI key gets €5 a month" |
+| `quota_resets` | Resettable budgets — the feature Cortecs lacks — as a watermark in the counter key |
+| `GET /api/admin/reports/usage[.csv]` | Named periods or explicit ranges, `group_by` over group/user/model/api_key/day/total |
+| `GET /api/me/reports/usage[.csv]` | Same implementation, `user_id` pinned server-side |
+| `POST /api/admin/limits/{id}/reset` | Reason required, audit trail at `GET .../resets` |
+| `current_value` | Populated from the live counters |
+| Disclosures | Estimated, unavailable, in-flight, `(erased user)`, `(no group)` |
+
+**Where this diverged from the plan below, and why:**
+
+* **No nullable `scope_id`, no shadowing matrix.** Withdrawn on the user's instruction:
+  "scope id null gives an error, it's too easy to go over scope". A rule with no
+  `scope_id` is now refused for every non-global scope. ADR 0025 revised accordingly.
+* **`current_value` reads the counters, not the ledger** — the reverse of what item 5
+  below proposed. Reading the ledger would show a number the enforcement path does not
+  use, so a screen could read "€4 of €10" while the next request is refused. The
+  displayed figure is now the deciding figure, watermark included; the two are asserted
+  equal in `TestReportAndQuotaAgree`.
+* **`group_by` takes one dimension, not combinations.** Cross-tabs are a UI concern and
+  the console can issue two calls; the query builder stays one shape.
+* **Pagination not done** (item 6). Deferred deliberately: it is the only item here the
+  console cannot work without eventually, but no list is near a problematic size in this
+  deployment and adding it now would be guessing at the console's paging model.
+
+**Found by building it** — three bugs the design review had not caught:
+
+1. `rebuild_into` dropped `period` and `reset_epoch`, so the cold-cache rebuild failed
+   outright for calendar rules and was swallowed by its own error handler. A wiped
+   cache handed every group a fresh monthly budget — the exact failure the rebuild
+   exists to prevent.
+2. Sessions use `expire_on_commit=False`, so an already-loaded `resets` collection was
+   not refreshed by a later `selectinload`, making a reset invisible to enforcement in
+   the same session.
+3. **A rule created mid-period started its counter at zero** (caught only against the
+   live stack, where the ledger already held €4.95). "€5 this month" created on the
+   20th would have had the wrong ceiling for eleven days. `QuotaEngine.seed_rule` now
+   primes the counter from the ledger at creation.
+
+The original plan follows, unchanged.
+
+---
 
 Everything here is stack-independent. Verified gaps in the current API:
 
