@@ -33,7 +33,9 @@ verified is marked as such in the ADR that depends on it.
 | [0012](0012-redaction-interface.md) | The redaction interface and deterministic placeholders |
 | [0013](0013-upstream-http-client.md) | httpx, its timeout traps, and a maintenance risk |
 | [0014](0014-model-catalogue-and-pricing.md) | The model catalogue and the Cortecs pricing importer |
-| [0022](0022-administration-surface.md) | Administration is an API (`/docs` is the console); admin follows an IdP group |
+| [0022](0022-administration-surface.md) | Administration is an API; admin follows an IdP group (UI stance superseded by 0023) |
+| [0023](0023-admin-console.md) | The console: a SPA served by the gateway, optional at build time |
+| [0024](0024-billing-periods.md) | Billing periods are calendar-based, and are not quota windows |
 
 ## Decisions recorded now, implemented later
 
@@ -58,6 +60,10 @@ Worth knowing which of the starting assumptions changed, and why:
   two languages cannot share one package.
 
 Everything else in the brief's assumptions was validated as correct.
+
+## Plans
+
+- [phase-2-plan.md](../phase-2-plan.md) — redaction and the console, sequenced.
 
 ## Writing a new one
 
