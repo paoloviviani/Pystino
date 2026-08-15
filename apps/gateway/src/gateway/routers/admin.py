@@ -30,8 +30,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from gateway.accounting.cost import select_price
-from gateway.deps import AdminUserDep, SessionDep, SettingsDep
-from gateway.errors import BadRequestError, GatewayError
+from gateway.deps import AdminUserDep, ControlHttpDep, SessionDep, SettingsDep
+from gateway.errors import BadRequestError, GatewayError, UpstreamUnavailableError
 from gateway.models import (
     ApiKey,
     Group,
@@ -48,7 +48,11 @@ from gateway.models import (
     UsageStatus,
     User,
 )
+from gateway.pricing import CatalogueUnavailable, fetch_catalogue, parse_catalogue
 from gateway.schemas import (
+    CatalogueDiscoveryResponse,
+    CatalogueDriftRow,
+    DiscoveredModel,
     GroupAdminResponse,
     GroupUsageRow,
     LimitRuleCreateRequest,
@@ -56,6 +60,9 @@ from gateway.schemas import (
     LimitRuleUpdateRequest,
     ModelAdminResponse,
     ModelCreateRequest,
+    ModelImportRequest,
+    ModelImportResponse,
+    ModelImportResult,
     ModelUpdateRequest,
     PriceCreateRequest,
     PriceResponse,
@@ -209,6 +216,219 @@ async def update_model(
     await session.refresh(model, attribute_names=["prices"])
     grants = await _grants_by_model(session)
     return _model_response(model, sorted(grants.get(model.id, [])))
+
+
+# -- discovery ---------------------------------------------------------------
+
+
+def _suggested_name(upstream_model: str) -> str:
+    """Strip a provider prefix: ``openai/gpt-4o-mini`` -> ``gpt-4o-mini``.
+
+    Only a suggestion; the client-facing name is ours to choose and the import
+    request can override it.
+    """
+    return upstream_model.rsplit("/", 1)[-1] or upstream_model
+
+
+@router.get("/models/discover", response_model=CatalogueDiscoveryResponse)
+async def discover_models(
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    http: ControlHttpDep,
+    url: str | None = None,
+) -> CatalogueDiscoveryResponse:
+    """Compare the provider's catalogue with ours.
+
+    Nothing is created. The catalogue stays an allowlist an administrator curates
+    — auto-adopting whatever a provider publishes would let their release notes
+    silently change what users can spend money on. What this removes is the
+    tedium of finding out *what* is on offer.
+
+    Reports drift in both directions. Models we serve that the provider no longer
+    offers are the more dangerous half: they keep appearing in ``/v1/models`` and
+    fail only when someone calls them.
+    """
+    catalogue_url = url or f"{settings.upstream.base_url}/models"
+    api_key = settings.upstream.api_key.get_secret_value() or None
+
+    try:
+        payload = await fetch_catalogue(http, catalogue_url, api_key)
+    except CatalogueUnavailable as exc:
+        raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
+
+    prices, unparsable = parse_catalogue(payload)
+    by_upstream = {price.model_id: price for price in prices}
+
+    ours = (await session.execute(select(ModelDef).order_by(ModelDef.name))).scalars().all()
+    our_upstream_ids = {model.upstream_model for model in ours}
+
+    billing_currency = settings.billing_currency.upper()
+    available: list[DiscoveredModel] = []
+    for upstream_id, price in sorted(by_upstream.items()):
+        if upstream_id in our_upstream_ids:
+            continue
+        blocked = None
+        if price.currency != billing_currency:
+            blocked = (
+                f"priced in {price.currency}; this gateway bills in "
+                f"{billing_currency}, so it cannot be imported with a price"
+            )
+        available.append(
+            DiscoveredModel(
+                upstream_model=upstream_id,
+                suggested_name=_suggested_name(upstream_id),
+                input_per_mtok=price.input_per_mtok,
+                output_per_mtok=price.output_per_mtok,
+                currency=price.currency,
+                context_window=price.context_window,
+                blocked_reason=blocked,
+            )
+        )
+
+    catalogued: list[CatalogueDriftRow] = []
+    missing: list[CatalogueDriftRow] = []
+    for model in ours:
+        row = CatalogueDriftRow(
+            name=model.name, upstream_model=model.upstream_model, is_active=model.is_active
+        )
+        (catalogued if model.upstream_model in by_upstream else missing).append(row)
+
+    return CatalogueDiscoveryResponse(
+        provider_url=catalogue_url,
+        provider_model_count=len(prices),
+        available=available,
+        catalogued=catalogued,
+        missing_upstream=missing,
+        unparsable=unparsable,
+    )
+
+
+@router.post(
+    "/models/import",
+    response_model=ModelImportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def import_models(
+    payload: ModelImportRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    http: ControlHttpDep,
+    url: str | None = None,
+) -> ModelImportResponse:
+    """Adopt selected upstream models, with their published prices.
+
+    Explicitly enumerated, never "import everything": the allowlist decision stays
+    with a person, and this only removes the retyping.
+
+    **Access is not granted.** A newly imported model is invisible until a group is
+    granted it, because absence of a ``group_model_access`` row means no access and
+    that invariant is worth more than one saved click.
+
+    A model priced in another currency is **skipped entirely** rather than created
+    without a price. An unpriced model serves happily and records a cost of zero,
+    which is a quiet way to give away money.
+    """
+    catalogue_url = url or f"{settings.upstream.base_url}/models"
+    api_key = settings.upstream.api_key.get_secret_value() or None
+
+    try:
+        catalogue = await fetch_catalogue(http, catalogue_url, api_key)
+    except CatalogueUnavailable as exc:
+        raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
+
+    prices, _ = parse_catalogue(catalogue)
+    by_upstream = {price.model_id: price for price in prices}
+    billing_currency = settings.billing_currency.upper()
+
+    existing = (await session.execute(select(ModelDef))).scalars().all()
+    taken_names = {model.name for model in existing}
+    taken_upstream = {model.upstream_model for model in existing}
+
+    results: list[ModelImportResult] = []
+    for item in payload.models:
+        name = item.name or _suggested_name(item.upstream_model)
+        price = by_upstream.get(item.upstream_model)
+
+        if price is None:
+            results.append(
+                ModelImportResult(
+                    upstream_model=item.upstream_model,
+                    name=name,
+                    imported=False,
+                    priced=False,
+                    reason="not offered by the provider",
+                )
+            )
+            continue
+        if item.upstream_model in taken_upstream:
+            results.append(
+                ModelImportResult(
+                    upstream_model=item.upstream_model,
+                    name=name,
+                    imported=False,
+                    priced=False,
+                    reason="already in the catalogue",
+                )
+            )
+            continue
+        if name in taken_names:
+            results.append(
+                ModelImportResult(
+                    upstream_model=item.upstream_model,
+                    name=name,
+                    imported=False,
+                    priced=False,
+                    reason=f"the name {name!r} is already taken; choose another",
+                )
+            )
+            continue
+        if price.currency != billing_currency:
+            results.append(
+                ModelImportResult(
+                    upstream_model=item.upstream_model,
+                    name=name,
+                    imported=False,
+                    priced=False,
+                    reason=(
+                        f"priced in {price.currency}, not {billing_currency}; import it "
+                        "manually and price it yourself rather than serving it unpriced"
+                    ),
+                )
+            )
+            continue
+
+        model = ModelDef(
+            name=name,
+            upstream_model=item.upstream_model,
+            provider=settings.upstream.base_url,
+            context_window=price.context_window,
+        )
+        session.add(model)
+        await session.flush()
+        session.add(
+            ModelPrice(
+                model_id=model.id,
+                input_per_mtok=price.input_per_mtok,
+                output_per_mtok=price.output_per_mtok,
+                cache_read_per_mtok=price.cache_read_per_mtok,
+                cache_write_per_mtok=price.cache_write_per_mtok,
+                currency=price.currency,
+                effective_from=utcnow(),
+                source=PriceSource.CORTECS,
+            )
+        )
+        taken_names.add(name)
+        taken_upstream.add(item.upstream_model)
+        results.append(
+            ModelImportResult(
+                upstream_model=item.upstream_model, name=name, imported=True, priced=True
+            )
+        )
+
+    await session.commit()
+    return ModelImportResponse(results=results)
 
 
 # -- prices -----------------------------------------------------------------

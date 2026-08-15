@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +51,31 @@ _INPUT_KEYS = ("input_token", "input", "prompt", "input_per_mtok", "input_cost")
 _OUTPUT_KEYS = ("output_token", "output", "completion", "output_per_mtok", "output_cost")
 _CACHE_READ_KEYS = ("cache_read_cost", "cache_read", "cache_read_input_token")
 _CACHE_WRITE_KEYS = ("cache_write_cost", "cache_write", "cache_write_input_token")
+
+
+class CatalogueUnavailable(Exception):
+    """The provider's catalogue could not be fetched or parsed."""
+
+
+async def fetch_catalogue(client: httpx.AsyncClient, url: str, api_key: str | None = None) -> Any:
+    """Fetch a provider catalogue.
+
+    Takes the client rather than making one, so callers pass the *control-plane*
+    client with a finite read timeout. Using the upstream streaming client here
+    would inherit ``read=None`` and let a hung provider hang an admin page
+    indefinitely.
+    """
+    headers = {"accept": "application/json"}
+    if api_key:
+        # Optional for Cortecs; supplying it narrows the catalogue to what this
+        # account can actually reach, which is what you want to price.
+        headers["authorization"] = f"Bearer {api_key}"
+    try:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise CatalogueUnavailable(f"could not fetch {url}: {exc}") from exc
 
 
 @dataclass(frozen=True, slots=True)

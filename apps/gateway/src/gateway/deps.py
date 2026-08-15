@@ -7,7 +7,7 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, Request
 from sqlalchemy import select, update
@@ -77,6 +77,17 @@ def get_quota_engine(request: Request) -> QuotaEngine:
 def get_redactor(request: Request) -> Redactor:
     redactor: Redactor = request.app.state.redactor
     return redactor
+
+
+def get_control_http(request: Request) -> Any:
+    """The control-plane HTTP client, with a finite read timeout.
+
+    Distinct from the upstream client, which has ``read=None`` so long streams
+    survive. Anything that is not a model stream — OIDC discovery, fetching a
+    provider catalogue — must use this one, or a hung dependency hangs the request
+    forever.
+    """
+    return request.app.state.control_http
 
 
 def get_upstream(request: Request) -> OpenAICompatibleUpstream:
@@ -241,4 +252,5 @@ PrincipalDep = Annotated[Principal, Depends(get_principal)]
 QuotaDep = Annotated[QuotaEngine, Depends(get_quota_engine)]
 RedactorDep = Annotated[Redactor, Depends(get_redactor)]
 UpstreamDep = Annotated[OpenAICompatibleUpstream, Depends(get_upstream)]
+ControlHttpDep = Annotated[Any, Depends(get_control_http)]
 EstimatorDep = Annotated[TokenEstimator, Depends(get_estimator)]

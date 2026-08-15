@@ -150,7 +150,7 @@ cookie authenticates it. See [0023](adr/0023-admin-console.md).
 | Route | Who | Content |
 |---|---|---|
 | `/` | any authenticated user | own spend, own groups' spend, API keys, default billing group |
-| `/admin/models` | admin | catalogue: create, edit, activate/deactivate |
+| `/admin/models` | admin | catalogue: create, edit, activate/deactivate; **discover** what the provider offers that we do not carry, and adopt with one click (API already built) |
 | `/admin/pricing` | admin | price history per model, append a new price, schedule a future one |
 | `/admin/quotas` | admin | rules with current consumption; budgets as "€31.40 of €50 this month, resets in 12 days"; which default each explicit rule shadows; a reset button with a required reason |
 | `/admin/reports` | admin | spend by group/user/model/period, CSV export |
