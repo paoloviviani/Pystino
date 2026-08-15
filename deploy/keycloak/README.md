@@ -33,7 +33,7 @@ Each one pins a different branch of `gateway/oidc.py:provision_user`:
 | `bob` | `bob-password` | `research`, `finance` | Two groups, so no default is guessed — he must choose one before spending |
 | `carol` | `carol-password` | none | Can sign in, but cannot bill anything; minting a key fails with a readable reason |
 | `erin` | `erin-password` | `research`, `finance` | The *mutation* target: changes her own default billing group, and it survives her next login |
-| `dave` | `dave-password` | `platform-admins` | A separate group for the admin endpoints |
+| `dave` | `dave-password` | `platform-admins` | The **administrator**: that group grants `is_admin` via `GATEWAY_OIDC__ADMIN_GROUPS`, so he can reach `/api/admin/*` |
 
 `bob` and `erin` are deliberately near-identical. `bob` is never mutated, so "no default was
 guessed" holds on a re-run; `erin` is the one the test changes. An earlier version used one
@@ -46,20 +46,28 @@ same group as the seeded model and price and can make a real billed request.
 ## The two-hostname problem, and how it is handled
 
 An ID token's `iss` is compared byte-for-byte against the issuer in the discovery
-document, and in Docker there are two names for the same Keycloak: `keycloak:8080`
-from inside the compose network, `localhost:8080` from your browser. Left to infer
-the issuer per request, Keycloak mints a token whose `iss` does not match what the
-gateway discovered, and every login fails validation.
+document, and there are two names for the same Keycloak: `localhost:8080` from a
+browser on the host, `keycloak:8080` from inside the compose network. Get this wrong
+and either token validation fails or the browser is redirected somewhere it cannot
+resolve.
 
-So `KC_HOSTNAME` is pinned to `http://keycloak:8080`, making the issuer stable, with
-`KC_HOSTNAME_STRICT=false` so the admin console still answers on `localhost`.
-`scripts/test_oidc_flow.py` rewrites `keycloak:8080` to `localhost:8080` for its own
-requests — safe, because an authorization code is bound to the client and redirect
-URI, not to the hostname the browser used.
+Keycloak separates the two roles, and using that split means **no `/etc/hosts` entry
+is needed**:
 
-If you point a real browser at this, the redirect to Keycloak will send you to
-`http://keycloak:8080/...`, which your machine cannot resolve. Either add
-`127.0.0.1 keycloak` to `/etc/hosts`, or use the test script.
+| | URL | Used by | Setting |
+|---|---|---|---|
+| frontend | `http://localhost:8080` | the browser; also the `iss` claim | `KC_HOSTNAME` |
+| backchannel | `http://keycloak:8080` | the gateway (token, JWKS, userinfo) | `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true` |
+
+Discovery fetched from inside the network therefore returns
+`issuer`/`authorization_endpoint` on `localhost:8080` and `token_endpoint`/`jwks_uri`
+on `keycloak:8080`. The browser can reach everything it is sent to, the gateway can
+reach everything it calls, and both agree on `iss`.
+
+Pinning the frontend to the *internal* name is the trap. It makes token validation
+work and quietly breaks every real browser login — the redirect goes to
+`http://keycloak:8080/...`, which nothing outside Docker can resolve. Adding
+`127.0.0.1 keycloak` to `/etc/hosts` papers over it; configuring the split fixes it.
 
 ## Group claim
 

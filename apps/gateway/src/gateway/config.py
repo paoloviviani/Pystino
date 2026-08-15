@@ -72,6 +72,13 @@ class OIDCSettings(BaseModel):
     # membership purely an admin decision.
     auto_create_groups: bool = True
 
+    # Membership of any of these groups grants `is_admin`. Leave empty and the
+    # flag is never touched by login, so it stays a manual database decision.
+    # Once set, the identity provider is authoritative in both directions:
+    # leaving the group removes admin, exactly as leaving a group removes the
+    # ability to bill it.
+    admin_groups: list[str] = Field(default_factory=list)
+
     # Clock skew tolerance when validating ID token exp/iat/nbf.
     leeway_seconds: int = 60
     # JWKS documents are cached for this long.

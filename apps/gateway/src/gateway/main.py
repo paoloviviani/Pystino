@@ -26,7 +26,7 @@ from gateway.quota import (
     ValkeyCounterStore,
 )
 from gateway.redaction import build_redactor
-from gateway.routers import admin, auth, chat, health, models
+from gateway.routers import admin, auth, chat, health, me, models
 from gateway.upstream import OpenAICompatibleUpstream, build_http_client
 
 logger = logging.getLogger(__name__)
@@ -195,6 +195,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat.router)
     app.include_router(models.router)
     app.include_router(auth.router)
+    app.include_router(me.router)
     app.include_router(admin.router)
 
     return app

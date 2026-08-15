@@ -33,6 +33,7 @@ verified is marked as such in the ADR that depends on it.
 | [0012](0012-redaction-interface.md) | The redaction interface and deterministic placeholders |
 | [0013](0013-upstream-http-client.md) | httpx, its timeout traps, and a maintenance risk |
 | [0014](0014-model-catalogue-and-pricing.md) | The model catalogue and the Cortecs pricing importer |
+| [0022](0022-administration-surface.md) | Administration is an API (`/docs` is the console); admin follows an IdP group |
 
 ## Decisions recorded now, implemented later
 

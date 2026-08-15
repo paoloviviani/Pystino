@@ -219,8 +219,23 @@ async def get_management_user(
     return await load_user_for_management(session, user_id)
 
 
+async def get_admin_user(
+    user: Annotated[User, Depends(get_management_user)],
+) -> User:
+    """Require an administrator.
+
+    Separate from :func:`get_management_user` so that every administrative route
+    is opt-in: forgetting the dependency fails closed at review time, because the
+    route simply will not compile into an admin router without it.
+    """
+    if not user.is_admin:
+        raise PermissionError_("Administrator access is required.")
+    return user
+
+
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 ManagementUserDep = Annotated[User, Depends(get_management_user)]
+AdminUserDep = Annotated[User, Depends(get_admin_user)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 QuotaDep = Annotated[QuotaEngine, Depends(get_quota_engine)]

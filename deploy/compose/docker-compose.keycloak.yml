@@ -22,17 +22,27 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
       KC_HTTP_ENABLED: "true"
-      # Pin the frontend URL so the `iss` claim is stable no matter which host
-      # header a request arrives with. Without this, Keycloak infers the issuer
-      # per request, and a token minted for the gateway (which connects as
-      # `keycloak:8080`) would carry a different issuer than one seen from a
-      # browser on `localhost:8080` — and ID token validation compares `iss`
-      # against the discovery document exactly.
-      KC_HOSTNAME: http://keycloak:8080
-      # ...but still serve requests whose Host header is something else, so the
-      # admin console and the test driver remain reachable on localhost.
+      # There are two names for this Keycloak — `localhost:8080` from a browser on
+      # the host, `keycloak:8080` from inside the compose network — and an ID
+      # token's `iss` is compared byte-for-byte against the discovery document, so
+      # the two must not disagree.
+      #
+      # Keycloak separates the two roles, which is what makes this work without
+      # anyone editing /etc/hosts:
+      #
+      #   frontend   browser-facing URLs (authorization endpoint) and the `iss`
+      #              claim. Pinned to the public name, because a browser is the one
+      #              client that cannot resolve compose-internal DNS.
+      #   backchannel  URLs the gateway calls directly (token, JWKS, userinfo).
+      #              Left dynamic, so they follow the host the request arrived on —
+      #              `keycloak:8080` for the gateway.
+      #
+      # Pinning the frontend to the *internal* name instead is the trap: token
+      # validation then works, but the browser is redirected somewhere it cannot
+      # reach.
+      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "false"
       KC_HEALTH_ENABLED: "true"
     volumes:
       - ../keycloak/realm-llm-platform.json:/opt/keycloak/data/import/realm-llm-platform.json:ro
@@ -62,6 +72,9 @@ services:
       # Where the *browser* is sent back to, so this is the gateway's public URL.
       GATEWAY_OIDC__REDIRECT_URI: http://localhost:8000/auth/callback
       GATEWAY_OIDC__GROUPS_CLAIM: groups
+      # Membership of this realm group grants is_admin, in both directions:
+      # leaving it removes admin at the next login.
+      GATEWAY_OIDC__ADMIN_GROUPS: '["platform-admins"]'
       # Plain http locally, so the session cookie must not be Secure-only or the
       # browser drops it.
       GATEWAY_SESSION_COOKIE_SECURE: "false"
