@@ -14,9 +14,10 @@ it implies.
 |---|---|
 | `apps/gateway` | **Built and tested.** Chat completions (streaming and not), models, API keys, OIDC, accounting, quotas, redaction interface. |
 | `packages/shared-py` | **Built.** Detection contract and the deterministic placeholder scheme. |
-| `apps/web`, `apps/desktop`, `services/rag`, `services/redaction`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |
+| `services/redaction` | **Built and tested.** Presidio behind a swappable detection contract; PII never reaches the upstream. |
+| `apps/web`, `apps/desktop`, `services/rag`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |
 
-433 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
+525 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
 exercises the whole slice over real HTTP, and the full `docker compose` stack has been
 built and run against PostgreSQL 18, Valkey and Keycloak — including the complete OIDC
 login flow and the reporting API (`./scripts/test_reporting_live.py`, which covers the
@@ -53,8 +54,8 @@ dialect-specific SQL the SQLite test suite cannot reach).
               │ of record  │  │ (a cache)  │  │ (Cortecs, …)    │
               └────────────┘  └────────────┘  └─────────────────┘
 
-                 services/redaction  (Phase 2, out of process — never in the
-                                      gateway, because spaCy would block the loop)
+                 services/redaction  (out of process — never in the gateway,
+                                      because spaCy would block the loop)
                  services/rag        (Phase 3, pgvector)
 ```
 
@@ -125,6 +126,7 @@ docker compose --env-file deploy/.env \
 
 ./scripts/test_oidc_flow.py
 ./scripts/test_reporting_live.py
+./scripts/test_redaction_live.py   # needs the redaction overlay too
 ```
 
 That drives the whole authorization-code flow and checks the result: PKCE, ID token
@@ -178,7 +180,7 @@ apps/gateway/        FastAPI service — the only thing built this session
 apps/web/            Next.js frontend            (Phase 2, placeholder)
 apps/desktop/        Tauri shell                 (Phase 4, placeholder)
 services/rag/        indexing + retrieval        (Phase 3, placeholder)
-services/redaction/  Presidio detection service  (Phase 2, placeholder)
+services/redaction/  Presidio detection service, behind a swappable contract
 packages/shared/     shared TypeScript types     (Phase 2, placeholder)
 packages/shared-py/  shared Python contracts
 scripts/             Cortecs pricing importer, smoke test; opencode bootstrap (Phase 4)

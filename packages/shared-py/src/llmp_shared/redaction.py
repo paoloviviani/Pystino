@@ -190,6 +190,16 @@ class PlaceholderMap:
     def original_for(self, placeholder: str) -> str | None:
         return self._to_original.get(placeholder)
 
+    def placeholders(self) -> list[str]:
+        """Every placeholder issued for this request.
+
+        Used to size the stream buffer exactly: the only thing restoration
+        matches is a placeholder from this list, so their longest length is the
+        precise amount of text a streamed response must hold back — not an
+        estimate of "the longest entity we might see".
+        """
+        return list(self._to_original)
+
     def restore(self, text: str) -> str:
         """Replace every known placeholder in *text* with its original value.
 

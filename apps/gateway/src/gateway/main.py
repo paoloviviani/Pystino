@@ -142,6 +142,11 @@ async def shutdown_app_state(app: FastAPI) -> None:
 
     await app.state.upstream_http.aclose()
     await app.state.control_http.aclose()
+    # A redaction engine may own a connection pool. Optional rather than part of
+    # the Redactor protocol: most engines have nothing to release, and requiring
+    # an empty aclose() from every plugin author is friction for no benefit.
+    if (closer := getattr(app.state.redactor, "aclose", None)) is not None:
+        await closer()
     if (valkey := getattr(app.state, "valkey", None)) is not None:
         await valkey.aclose()
     await app.state.engine.dispose()

@@ -1,0 +1,51 @@
+# Deliberately NOT a member of the root uv workspace.
+#
+# Presidio pulls in spaCy, which pulls in a numerical stack and hundreds of
+# megabytes of model weights. Making this a workspace member would put all of it
+# in the gateway's lockfile and in every developer's environment, and would quietly
+# make "the gateway depends on Presidio" true in the one place it must not be.
+#
+# The gateway depends on the *contract* (packages/shared-py). This project is one
+# implementation of it. See docs/adr/0026-pluggable-detection.md
+[project]
+name = "llmp-redaction"
+version = "0.1.0"
+description = "PII detection service: spans in, spans out. A reference implementation of the llmp detection contract."
+readme = "README.md"
+requires-python = ">=3.13"
+license = "EUPL-1.2"
+dependencies = [
+    "fastapi>=0.141,<0.142",
+    "uvicorn[standard]>=0.42,<0.43",
+    "orjson>=3.11,<4",
+    # MIT. See the licence table in docs/adr/0026-pluggable-detection.md — the
+    # spaCy *models* are licensed separately and that is the part that matters.
+    "presidio-analyzer>=2.2.363,<3",
+    "llmp-shared",
+]
+
+[project.optional-dependencies]
+# The Italian NER model is NOT here: it is CC BY-NC-SA 3.0 and is added by a
+# Docker build argument, so the licence choice is explicit and per-deployment.
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[tool.uv.sources]
+llmp-shared = { path = "../../packages/shared-py", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llmp_redaction"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -99,7 +99,11 @@ class RedactionSettings(BaseModel):
     worker. See docs/adr/0012-redaction-interface.md
     """
 
-    engine: Literal["noop", "http"] = "noop"
+    # Not a Literal: third-party engines register through the `llmp.redactors`
+    # entry point and their names cannot be enumerated here (ADR 0026). Validated
+    # at startup by the registry, which refuses an unknown name and lists what is
+    # installed — rather than falling back to noop.
+    engine: str = "noop"
     endpoint: str = ""
     timeout_seconds: float = 5.0
 
@@ -119,6 +123,12 @@ class RedactionSettings(BaseModel):
     # Swap placeholders back to real values in the response. See the asymmetry
     # note in llmp_shared.redaction.
     restore_in_response: bool = True
+
+    # Detection results cached per process, keyed by a hash of the text. On turn
+    # 40 the client resends all 40 messages; without this, inference re-runs over
+    # the whole history every turn. Safe as a pure optimisation — detection is a
+    # function of the text, and placeholders are derived afterwards. 0 disables.
+    cache_size: int = 2048
 
     @field_validator("endpoint")
     @classmethod
