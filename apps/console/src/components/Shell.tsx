@@ -15,10 +15,17 @@ interface NavItem {
   adminOnly?: boolean;
 }
 
-// The full route list from the Phase 2 plan. Items not yet built are absent
-// rather than present-and-dead: a navigation link that goes nowhere is worse
-// than a missing one, because it reads as a bug rather than as unfinished work.
-const NAV: NavItem[] = [{ to: "/", label: "Overview" }];
+// Admin items are filtered out for a non-administrator. The API enforces the
+// same rule independently — this only keeps the navigation honest about what
+// the reader can actually open.
+const NAV: NavItem[] = [
+  { to: "/", label: "Overview" },
+  { to: "/admin/reports", label: "Reports", adminOnly: true },
+  { to: "/admin/quotas", label: "Quotas", adminOnly: true },
+  { to: "/admin/models", label: "Models", adminOnly: true },
+  { to: "/admin/pricing", label: "Pricing", adminOnly: true },
+  { to: "/admin/users", label: "Users", adminOnly: true },
+];
 
 export function Shell({ me, children }: ShellProps) {
   const items = NAV.filter((item) => !item.adminOnly || me.is_admin);

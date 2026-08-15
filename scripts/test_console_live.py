@@ -100,6 +100,9 @@ def main() -> int:
     alice = login("alice")
     if alice is None:
         return 1
+    dave = login("dave")
+    if dave is None:
+        return 1
 
     status, _, body = fetch(alice, "/api/me")
     expect("/api/me answers", status == 200, f"HTTP {status}")
@@ -138,6 +141,41 @@ def main() -> int:
         status == 403,
         f"HTTP {status} — the console hides admin routes, but the API is what enforces it",
     )
+    # The console renders the /admin/* shell for anyone, then shows "administrators
+    # only" and calls nothing. The HTML being public is fine — it is an empty div
+    # and a script tag; the data behind it is what needs a session.
+    status, _, _ = fetch(alice, "/console/admin/quotas")
+    expect("but the page itself still loads", status == 200, f"HTTP {status}")
+
+    print()
+    print("=== every endpoint the admin screens call ===")
+    for label, path in [
+        ("models", "/api/admin/models"),
+        ("groups", "/api/admin/groups"),
+        ("limits", "/api/admin/limits"),
+        ("users", "/api/admin/users"),
+        ("reports", "/api/admin/reports/usage?group_by=group"),
+        ("reports CSV", "/api/admin/reports/usage.csv"),
+    ]:
+        status, _, _ = fetch(dave, path)
+        expect(f"{label} answers for an admin", status == 200, f"HTTP {status}")
+
+    # Price history and reset history are per-id, so they need something to point
+    # at. Skipped rather than faked when the deployment has none.
+    models = json.loads(fetch(dave, "/api/admin/models")[2])
+    if models:
+        status, _, _ = fetch(dave, f"/api/admin/models/{models[0]['id']}/prices")
+        expect("price history answers", status == 200, f"HTTP {status}")
+
+    limits = json.loads(fetch(dave, "/api/admin/limits")[2])
+    if limits:
+        status, _, _ = fetch(dave, f"/api/admin/limits/{limits[0]['id']}/resets")
+        expect("reset history answers", status == 200, f"HTTP {status}")
+        expect(
+            "a rule reports its consumption or says it cannot",
+            "current_value" in limits[0],
+            "an absent field is not the same as a null one",
+        )
 
     print()
     if FAILURES:

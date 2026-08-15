@@ -251,7 +251,7 @@ component libraries become the thing everyone works around.
 
 ---
 
-## Stage 4 — Console SPA — **vertical slice done**
+## Stage 4 — Console SPA — **done**
 
 React 19 + Vite 8 + TypeScript 5.9, served by the gateway at `/console`. The
 slice proves everything novel about serving HTML from the gateway; the remaining
@@ -260,8 +260,16 @@ screens are repetition against an API that is already built.
 **Done:** the Node build stage and `ARG INCLUDE_CONSOLE` (325 MB with the console,
 323 MB without, from one Dockerfile); `GATEWAY_CONSOLE_ENABLED`; CSP, cache
 headers and the SPA fallback; session-cookie auth with a redirect to
-`/auth/login` on 401; and the `/` route — own spend for a named calendar period,
-a breakdown by model/day/group/key, CSV export, and API keys.
+`/auth/login` on 401; and all six routes:
+
+| Route | What it does |
+|---|---|
+| `/` | Own spend for a named period, by model/day/group/key, CSV, API keys |
+| `/admin/reports` | Chargeback: period, six breakdowns, group and model filters, CSV, and what share of the figure is measured rather than inferred |
+| `/admin/quotas` | Rules with live consumption as a meter, over-budget and nearly-spent states, create, delete, reset-with-reason, reset history |
+| `/admin/models` | Catalogue with prices and grants, activate/deactivate, per-group access, provider discovery and selective import |
+| `/admin/pricing` | Append-only price history per model, with scheduled future prices marked |
+| `/admin/users` | Users, groups, keys, last login, enable/disable |
 
 **Found while building it:**
 
@@ -274,9 +282,26 @@ a breakdown by model/day/group/key, CSV export, and API keys.
   reader the message. Now no 4xx is retried — the request will be just as wrong
   next time.
 
-**Not built yet:** `/admin/models`, `/admin/pricing`, `/admin/quotas`,
-`/admin/reports`, `/admin/users`. The nav lists only what exists; a link that
-goes nowhere reads as a bug rather than as unfinished work.
+**Two things the screenshots caught that the tests did not**, both now fixed and
+both presentation problems the API cannot solve on its own:
+
+* A rolling window rendered as `per 86400s`. The API reports raw seconds because
+  that is what it stores; putting seconds in front of a person is the console's
+  mistake, not the API's.
+* A rule at 200% of its cap still showed a green **Active** badge — true, and
+  useless. What that row means is that requests are being refused right now, so
+  it now reads **Over budget**, with **Nearly spent** from 80%.
+
+The users screen also shows each account's `issuer`. Identity is
+`(issuer, subject)`, so two rows can share a name and an email and be different
+accounts — which is exactly what the demo stack contains, left over from before
+the Keycloak hostname fix. Worth knowing operationally: **changing the OIDC
+issuer URL re-provisions everyone**, orphaning their keys and default billing
+group.
+
+**Still not done: pagination.** `/admin/users` filters in the browser over
+whatever the endpoint returned, and says so in a comment. That is adequate for
+this deployment and stops being adequate in the low thousands.
 
 TypeScript is pinned to **5.9.3**, not the 7.0.2 that `latest` now resolves to:
 7.0 is the native-compiler rewrite and was five weeks old at the time. One line

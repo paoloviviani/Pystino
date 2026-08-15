@@ -1,6 +1,6 @@
 # 0023 — The console: a SPA served by the gateway, optional at build time
 
-- Status: accepted, implemented (Phase 2 stages 3 and 4; the `/` route only so far)
+- Status: accepted, implemented (Phase 2 stages 3 and 4)
 - Date: 2026-08-15
 - **Supersedes the UI stance of [0022](0022-administration-surface.md)**, whose API
   design decisions all still hold.

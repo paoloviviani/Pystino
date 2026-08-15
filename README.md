@@ -16,10 +16,10 @@ it implies.
 | `packages/shared-py` | **Built.** Detection contract and the deterministic placeholder scheme. |
 | `services/redaction` | **Built and tested.** Presidio behind a swappable detection contract; PII never reaches the upstream. |
 | `packages/ui` | **Built.** Design tokens and primitives, shared with the Phase 3 chat app. |
-| `apps/console` | **Vertical slice.** Self-service spend at `/console`; admin screens next. |
+| `apps/console` | **Built.** Self-service spend plus reports, quotas, models, pricing and users at `/console`. |
 | `apps/web`, `apps/desktop`, `services/rag`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |
 
-525 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
+582 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
 exercises the whole slice over real HTTP, and the full `docker compose` stack has been
 built and run against PostgreSQL 18, Valkey and Keycloak — including the complete OIDC
 login flow and the reporting API (`./scripts/test_reporting_live.py`, which covers the

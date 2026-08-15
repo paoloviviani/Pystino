@@ -22,8 +22,17 @@ export type { ButtonProps, ButtonVariant } from "./components/Button";
 export { Card } from "./components/Card";
 export type { CardProps } from "./components/Card";
 
+export { Dialog } from "./components/Dialog";
+export type { DialogProps } from "./components/Dialog";
+
 export { Select } from "./components/Field";
 export type { SelectProps } from "./components/Field";
+
+export { Input } from "./components/Input";
+export type { InputProps } from "./components/Input";
+
+export { Meter } from "./components/Meter";
+export type { MeterProps } from "./components/Meter";
 
 export { Money, formatMoney } from "./components/Money";
 export type { MoneyProps } from "./components/Money";
