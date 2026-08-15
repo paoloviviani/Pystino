@@ -12,10 +12,12 @@ next login silently reverts would be worse than offering none.
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Response, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import selectinload
 
@@ -28,6 +30,13 @@ from gateway.models import (
     UsageSource,
     UsageStatus,
 )
+from gateway.reporting import (
+    GroupBy,
+    ReportFilter,
+    build_report,
+    report_to_csv,
+    resolve_period,
+)
 from gateway.schemas import (
     ApiKeyCreatedResponse,
     ApiKeyCreateRequest,
@@ -35,12 +44,16 @@ from gateway.schemas import (
     GroupSummary,
     MeResponse,
     SetDefaultBillingGroupRequest,
+    UsageReport,
     UsageSummaryResponse,
 )
 from gateway.security import generate_api_key
 from gateway.types import utcnow
 
 router = APIRouter(prefix="/api", tags=["self-service"])
+
+# Deliberately narrower than the admin surface: see my_usage_report.
+MyGroupBy = Literal["model", "day", "group", "api_key", "total"]
 
 
 def _group_summary(group: Group | None) -> GroupSummary | None:
@@ -202,6 +215,57 @@ async def my_usage(
         cost=Decimal(str(cost or 0)),
         currency=settings.billing_currency,
         estimated_requests=int(estimated or 0),
+    )
+
+
+@router.get("/me/reports/usage", response_model=UsageReport)
+async def my_usage_report(
+    user: ManagementUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    period: str = "",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    group_by: MyGroupBy = "model",
+) -> UsageReport:
+    """The caller's own spend over a calendar period.
+
+    The same report the administrator surface produces, pinned to this user — one
+    implementation, so the number a user sees for themselves is the number their
+    group lead sees for them. Everyone can see their own spend; nobody sees
+    another's from here.
+
+    ``group_by=user`` is not offered: with the filter pinned it could only ever
+    return a single row, which invites the misreading that it shows other people.
+    """
+    return await build_report(
+        session,
+        ReportFilter(
+            period=resolve_period(period, start, end, settings.billing_timezone),
+            group_by=GroupBy(group_by),
+            user_id=user.id,
+        ),
+        currency=settings.billing_currency,
+        timezone=settings.billing_timezone,
+    )
+
+
+@router.get("/me/reports/usage.csv", response_class=PlainTextResponse)
+async def my_usage_report_csv(
+    user: ManagementUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    period: str = "",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    group_by: MyGroupBy = "model",
+) -> Response:
+    report = await my_usage_report(user, session, settings, period, start, end, group_by)
+    filename = f"my-usage-{report.period.label}-by-{report.group_by}.csv"
+    return Response(
+        content=report_to_csv(report),
+        media_type="text/csv; charset=utf-8",
+        headers={"content-disposition": f'attachment; filename="{filename}"'},
     )
 
 

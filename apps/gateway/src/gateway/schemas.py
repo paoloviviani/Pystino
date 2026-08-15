@@ -19,7 +19,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ChatCompletionRequest(BaseModel):
@@ -136,10 +136,18 @@ class LimitRuleResponse(BaseModel):
     scope: str
     scope_id: uuid.UUID | None
     metric: str
-    window_seconds: int
+    # Exactly one of these is set: a rolling window in seconds, or a calendar
+    # period that resets on its own boundary (ADR 0025).
+    window_seconds: int | None = None
+    period: str | None = None
+    # "3600s" or "month" — one string a UI can print without branching.
+    window_label: str = ""
     limit_value: Decimal
     is_active: bool
     current_value: Decimal | None = None
+    # Null unless the rule has ever been reset. Consumption before this instant
+    # does not count towards the limit; it is still in the billing report.
+    last_reset_at: datetime | None = None
 
 
 # -- administration ---------------------------------------------------------
@@ -246,18 +254,61 @@ class UserUpdateRequest(BaseModel):
 
 class LimitRuleCreateRequest(BaseModel):
     name: str = Field(default="", max_length=255)
-    scope: Literal["global", "group", "user"]
+    scope: Literal["global", "group", "user", "api_key"]
     scope_id: uuid.UUID | None = None
     metric: Literal["requests", "tokens", "cost"]
-    window_seconds: int = Field(ge=1, le=366 * 86_400)
+    # A rolling window ("EUR 1 every 6 hours") or a calendar period ("EUR 5 per
+    # month", resetting at local midnight on the 1st). Exactly one, enforced below
+    # as well as by ck_limit_rules_one_window_kind — a database error is correct
+    # but not a good explanation.
+    window_seconds: int | None = Field(default=None, ge=1, le=366 * 86_400)
+    period: Literal["day", "week", "month", "quarter", "year"] | None = None
     limit_value: Decimal = Field(ge=0)
     is_active: bool = True
 
+    @model_validator(mode="after")
+    def _exactly_one_window(self) -> LimitRuleCreateRequest:
+        if (self.window_seconds is None) == (self.period is None):
+            raise ValueError(
+                "give either window_seconds (a rolling window) or period (a calendar "
+                "budget), not both and not neither"
+            )
+        return self
+
 
 class LimitRuleUpdateRequest(BaseModel):
+    """No window changes.
+
+    Editing a rule's window or scope would move its counter key, silently
+    abandoning the consumption recorded so far — which reads to an operator as a
+    quota that reset itself. Delete the rule and add the one you want, or reset it
+    deliberately.
+    """
+
     name: str | None = Field(default=None, max_length=255)
     limit_value: Decimal | None = Field(default=None, ge=0)
     is_active: bool | None = None
+
+
+class LimitRuleResetRequest(BaseModel):
+    """Set a rule's consumption back to zero, from now.
+
+    The reason is mandatory and stored: zeroing a spending cap is a financially
+    meaningful act, and "who raised whose budget, and why" is the first question
+    asked afterwards.
+    """
+
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class QuotaResetResponse(BaseModel):
+    id: uuid.UUID
+    rule_id: uuid.UUID
+    effective_at: datetime
+    reason: str
+    created_by: uuid.UUID | None
+    # Null when the account has since been erased; the reset itself stays.
+    created_by_email: str | None = None
 
 
 class GroupUsageRow(BaseModel):
@@ -267,6 +318,55 @@ class GroupUsageRow(BaseModel):
     total_tokens: int
     cost: Decimal
     estimated_requests: int
+
+
+# -- reporting ---------------------------------------------------------------
+#
+# Chargeback reporting: what a group spent in a calendar period, in a shape an
+# administrator can hand to finance. Boundaries come from gateway.periods, the
+# same function calendar quotas use (ADR 0024).
+
+
+class PeriodResponse(BaseModel):
+    """The exact window a report covers.
+
+    Echoed back in full because "August" is ambiguous until you say in which
+    timezone, and a report whose boundaries are invisible cannot be reconciled
+    against anything.
+    """
+
+    label: str
+    kind: str | None
+    start: datetime
+    end: datetime
+    timezone: str
+
+
+class UsageReportRow(BaseModel):
+    key: str | None
+    label: str
+    requests: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cost: Decimal
+    # Requests whose token counts the provider did not return and we inferred, and
+    # requests where usage could not be determined at all. Kept separate from the
+    # totals so a reader can see how much of the figure is measured.
+    estimated_requests: int = 0
+    unavailable_requests: int = 0
+
+
+class UsageReport(BaseModel):
+    period: PeriodResponse
+    group_by: str
+    currency: str
+    rows: list[UsageReportRow]
+    totals: UsageReportRow
+    # Plain-language caveats about this particular report: estimated usage,
+    # in-flight requests excluded, deleted subjects. Rendered verbatim by the UI so
+    # a caveat is never lost in a redesign.
+    disclosures: list[str] = Field(default_factory=list)
 
 
 class DiscoveredModel(BaseModel):
