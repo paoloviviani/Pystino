@@ -218,7 +218,28 @@ out-of-process design protects the event loop but does not make it fast.
 
 ---
 
-## Stage 3 — `packages/ui`
+## Stage 3 — `packages/ui` — **done (minimal)**
+
+Tokens (`tokens.css`) plus eight primitives: Button, Card, Table, Stat, Badge,
+Notice, Spinner, Select, and a `Money` formatter. Nothing else — the warning
+below about designing in a vacuum was taken literally, and a component arrives
+when a real screen needs it.
+
+**Styling is CSS custom properties + CSS Modules, not a utility framework.** The
+deciding factor was coupling: components styled with Tailwind classes are inert
+without Tailwind's generator, so every consumer — including the Phase 3 chat app,
+which does not exist yet — would have to run and configure it. With CSS Modules a
+component brings its own scoped styles and the consumer imports it. Plain CSS is
+also readable in five years by someone who is not a frontend specialist, which
+matters more here than terseness.
+
+The palette is deliberately quiet — warm off-white, warm grey text, one muted
+steel-blue accent — and there is **no dark theme**, on instruction. Adding one
+later is a block of token overrides and nothing else.
+
+---
+
+## Stage 3 — `packages/ui` (as planned)
 
 Shared React component library and design tokens, consumed by the console now and the
 chat app in Phase 3.
@@ -230,7 +251,40 @@ component libraries become the thing everyone works around.
 
 ---
 
-## Stage 4 — Console SPA
+## Stage 4 — Console SPA — **vertical slice done**
+
+React 19 + Vite 8 + TypeScript 5.9, served by the gateway at `/console`. The
+slice proves everything novel about serving HTML from the gateway; the remaining
+screens are repetition against an API that is already built.
+
+**Done:** the Node build stage and `ARG INCLUDE_CONSOLE` (325 MB with the console,
+323 MB without, from one Dockerfile); `GATEWAY_CONSOLE_ENABLED`; CSP, cache
+headers and the SPA fallback; session-cookie auth with a redirect to
+`/auth/login` on 401; and the `/` route — own spend for a named calendar period,
+a breakdown by model/day/group/key, CSV export, and API keys.
+
+**Found while building it:**
+
+* The SPA fallback registered before the asset mount swallowed every asset
+  request, so the page loaded with no scripts and no server-side error. Order is
+  now explicit and tested.
+* `StaticFiles` strips its own mount prefix, so a path check for `assets/` never
+  matched and hashed assets were being served with revalidate headers.
+* TanStack Query's default retry sent a 400 three more times before showing the
+  reader the message. Now no 4xx is retried — the request will be just as wrong
+  next time.
+
+**Not built yet:** `/admin/models`, `/admin/pricing`, `/admin/quotas`,
+`/admin/reports`, `/admin/users`. The nav lists only what exists; a link that
+goes nowhere reads as a bug rather than as unfinished work.
+
+TypeScript is pinned to **5.9.3**, not the 7.0.2 that `latest` now resolves to:
+7.0 is the native-compiler rewrite and was five weeks old at the time. One line
+to change when the ecosystem has caught up.
+
+---
+
+## Stage 4 — Console SPA (as planned)
 
 React SPA, built into the gateway image, served same-origin so the existing session
 cookie authenticates it. See [0023](adr/0023-admin-console.md).

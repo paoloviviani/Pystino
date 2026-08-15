@@ -1,6 +1,6 @@
 # 0023 — The console: a SPA served by the gateway, optional at build time
 
-- Status: accepted
+- Status: accepted, implemented (Phase 2 stages 3 and 4; the `/` route only so far)
 - Date: 2026-08-15
 - **Supersedes the UI stance of [0022](0022-administration-surface.md)**, whose API
   design decisions all still hold.
@@ -53,6 +53,24 @@ spend because someone shipped a chat regression.
 - **Multi-role.** `/` is any authenticated user: their own spend, their groups'
   spend, their API keys, their default billing group. `/admin/*` requires `is_admin`,
   which already follows an identity-provider group ([0022](0022-administration-surface.md)).
+
+## How it turned out
+
+Implemented as described. Three details the decision did not anticipate, recorded
+here because each is a trap for whoever adds the next screen:
+
+- **`packages/ui` is styled with CSS Modules and custom properties, not a utility
+  framework.** The consequence below worried about designing in a vacuum; the
+  sharper risk was *coupling*, since components carrying Tailwind classes force
+  every future consumer to run and configure Tailwind. CSS Modules leave the
+  Phase 3 toolchain genuinely open.
+- **The SPA fallback must be registered after the asset mount.** Starlette matches
+  routes in order, so a catch-all under `/console/{path}` added first swallows
+  every asset request — and the page loads with no scripts and nothing in the
+  server log.
+- **`StaticFiles` strips its own mount prefix**, so a path check for `assets/`
+  inside the mount never matches. Everything under that mount is content-hashed
+  anyway, so it is unconditionally immutable now.
 
 ## Consequences
 

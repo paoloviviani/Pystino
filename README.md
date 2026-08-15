@@ -15,6 +15,8 @@ it implies.
 | `apps/gateway` | **Built and tested.** Chat completions (streaming and not), models, API keys, OIDC, accounting, quotas, redaction interface. |
 | `packages/shared-py` | **Built.** Detection contract and the deterministic placeholder scheme. |
 | `services/redaction` | **Built and tested.** Presidio behind a swappable detection contract; PII never reaches the upstream. |
+| `packages/ui` | **Built.** Design tokens and primitives, shared with the Phase 3 chat app. |
+| `apps/console` | **Vertical slice.** Self-service spend at `/console`; admin screens next. |
 | `apps/web`, `apps/desktop`, `services/rag`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |
 
 525 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
@@ -127,6 +129,7 @@ docker compose --env-file deploy/.env \
 ./scripts/test_oidc_flow.py
 ./scripts/test_reporting_live.py
 ./scripts/test_redaction_live.py   # needs the redaction overlay too
+./scripts/test_console_live.py     # the console, served by the gateway
 ```
 
 That drives the whole authorization-code flow and checks the result: PKCE, ID token

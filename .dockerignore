@@ -1,0 +1,34 @@
+# Everything here would be copied into the build context otherwise, which is
+# slow and — for the installed dependency trees — wrong: the image must install
+# from the lockfiles for the platform it is being built for, not inherit whatever
+# a developer's laptop resolved.
+.venv/
+**/.venv/
+node_modules/
+**/node_modules/
+**/dist/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+.git/
+.github/
+
+# Secrets. `*.env` matches .gitlab.env and deploy/.env, which are not `.env`
+# and so are missed by the pattern people usually reach for.
+*.env
+**/*.env
+!.env.example
+**/.env.example
+
+# Not needed at runtime, and each one invalidates the build cache when edited.
+docs/
+scripts/
+deploy/
+*.md
+!apps/gateway/README.md
+!packages/shared-py/README.md
+!services/redaction/README.md

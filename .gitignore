@@ -28,3 +28,6 @@ deploy/.env
 
 *.db
 *.sqlite3
+
+# Local screenshots from manual UI checks.
+.console-shots/

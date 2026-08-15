@@ -1,0 +1,72 @@
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+  /* Buttons in a toolbar should not shrink when the row is tight; text
+   * wrapping inside a button reads as a layout bug. */
+  white-space: nowrap;
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.button[aria-busy="true"] {
+  cursor: progress;
+}
+
+.primary {
+  background: var(--colour-accent);
+  border-color: var(--colour-accent);
+  color: var(--colour-text-inverse);
+}
+
+.primary:hover:not(:disabled) {
+  background: var(--colour-accent-hover);
+  border-color: var(--colour-accent-hover);
+}
+
+.secondary {
+  background: var(--colour-surface);
+  border-color: var(--colour-border-strong);
+  color: var(--colour-text);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--colour-surface-sunken);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--colour-text-muted);
+}
+
+.ghost:hover:not(:disabled) {
+  background: var(--colour-surface-sunken);
+  color: var(--colour-text);
+}
+
+.danger {
+  background: var(--colour-danger);
+  border-color: var(--colour-danger);
+  color: var(--colour-text-inverse);
+}
+
+.danger:hover:not(:disabled) {
+  filter: brightness(0.92);
+}

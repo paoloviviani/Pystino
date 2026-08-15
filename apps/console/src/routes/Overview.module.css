@@ -1,0 +1,45 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.pageHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-bold);
+  line-height: var(--leading-tight);
+}
+
+.subtitle {
+  margin-top: var(--space-1);
+  max-width: 46ch;
+  color: var(--colour-text-muted);
+}
+
+/* auto-fit rather than a fixed column count: three stats sit in a row on a
+   laptop and stack on a phone without a media query per breakpoint. */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--space-5);
+}
+
+.disclosures {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
