@@ -43,11 +43,10 @@ import urllib.request
 from typing import Any
 
 GATEWAY = "http://localhost:8000"
-# Keycloak's frontend URL is pinned to `keycloak:8080` so that the issuer is
-# stable for the gateway (see docker-compose.keycloak.yml). That name does not
-# resolve outside the compose network, so this script rewrites it for its own
-# requests. The authorization code is bound to the client and redirect URI, not to
-# the hostname the browser used, so this is safe.
+# Keycloak's *frontend* URL is pinned to the public name and its backchannel is
+# left dynamic (see docker-compose.keycloak.yml), so browser-facing URLs already
+# point at localhost and this rewrite is a no-op. It is kept only so the script
+# still works if someone pins the frontend to the compose-internal name instead.
 KEYCLOAK_INTERNAL = "keycloak:8080"
 KEYCLOAK_EXTERNAL = "localhost:8080"
 
@@ -214,10 +213,18 @@ def main() -> int:
         print(f"  Keycloak is not reachable (HTTP {status}). Is the stack up?")
         return 2
     discovery = json.loads(body)
+    # The issuer must be the *browser-reachable* name. Pinning it to the
+    # compose-internal name makes token validation work while sending real browsers
+    # somewhere they cannot resolve.
     check(
-        "issuer is pinned to the internal hostname",
-        KEYCLOAK_INTERNAL in discovery["issuer"],
+        "issuer is the public, browser-reachable hostname",
+        KEYCLOAK_EXTERNAL in discovery["issuer"],
         discovery["issuer"],
+    )
+    check(
+        "the authorization endpoint is browser-reachable",
+        KEYCLOAK_INTERNAL not in discovery["authorization_endpoint"],
+        discovery["authorization_endpoint"],
     )
     check(
         "device_authorization_endpoint present (Phase 4 opencode bootstrap)",

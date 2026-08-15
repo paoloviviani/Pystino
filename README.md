@@ -16,7 +16,7 @@ it implies.
 | `packages/shared-py` | **Built.** Detection contract and the deterministic placeholder scheme. |
 | `apps/web`, `apps/desktop`, `services/rag`, `services/redaction`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |
 
-311 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
+343 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
 exercises the whole slice over real HTTP, and the full `docker compose` stack has been
 built and run against PostgreSQL 18, Valkey and Keycloak — including the complete OIDC
 login flow.
@@ -134,7 +134,7 @@ seeded users are described in [deploy/keycloak/README.md](deploy/keycloak/README
 
 ```bash
 uv sync
-uv run pytest                    # 311 tests, no services needed
+uv run pytest                    # 343 tests, no services needed
 uv run ruff check . && uv run ruff format --check .
 uv run mypy apps/gateway/src packages/shared-py/src
 ```

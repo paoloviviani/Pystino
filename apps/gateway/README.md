@@ -14,7 +14,13 @@ per-group model availability and a pluggable redaction layer.
 | `PUT /api/me/default-billing-group` | session cookie | Users change their own billing group |
 | `GET|POST|DELETE /api/me/keys` | session cookie | Mint and revoke API keys |
 | `GET /api/me/usage` | session cookie | Own spend over a rolling window |
+| `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, limits, users, usage |
 | `GET /healthz`, `/readyz` | — | Liveness (no dependencies) and readiness |
+
+There is **no HTML admin panel**. `/docs` is the operator console — Swagger, generated
+from the same schemas the endpoints validate against. Sign in at `/auth/login` first, so
+the session cookie travels with the requests. See
+[ADR 0022](../../docs/adr/0022-administration-surface.md).
 
 Two authentication schemes on purpose: `/v1` is for programs and uses revocable
 API keys that carry a billing group; `/api` is for humans and uses OIDC.
@@ -33,7 +39,7 @@ src/gateway/
   accounting/       token counts, cost, and the ledger writer
   quota/            rolling windows, counter stores, reserve-then-settle
   redaction/        the interface, the buffering rewriter, and the no-op engine
-  routers/          HTTP endpoints
+  routers/          HTTP endpoints: /v1, /auth, /api/me (me.py), /api/admin (admin.py)
 ```
 
 ## Running
@@ -51,7 +57,7 @@ Or `docker compose -f deploy/compose/docker-compose.yml up` for the whole stack.
 ## Testing
 
 ```bash
-uv run pytest                  # 311 tests, no services needed
+uv run pytest                  # 343 tests, no services needed
 ../../scripts/smoke_test.sh    # end-to-end over real HTTP, no Docker
 ../../scripts/test_oidc_flow.py  # full OIDC login against Keycloak (needs the stack up)
 ```
@@ -76,6 +82,8 @@ CI and by `docker compose`.
 | Concurrent requests must not each pass the same under-limit check | `quota/engine.py:check_and_reserve` |
 | Money must never touch a float, including inside the counter store | `types.py`, `quota/counters.py` |
 | A wiped counter cache reports zero spend, not an error, so every group gets a fresh budget | `quota/engine.py:rebuild_if_cache_is_cold` |
+| Editing a price would rewrite what past requests cost, so prices are append-only | `routers/admin.py:create_price` |
+| Deleting a model orphans the usage rows that reference it, so models only deactivate | `routers/admin.py` (no DELETE route) |
 
 ## Known gaps
 
@@ -115,9 +123,6 @@ found.
   invisible. ([ADR 0020](../../docs/adr/0020-embeddings-and-reranking.md))
 - Device authorization flow endpoints, which the `opencode` bootstrap needs. See
   `scripts/README.md`.
-- Admin write endpoints for models, prices, group access and limit rules. Currently those
-  are set via `gateway seed`, the pricing importer, or SQL. A real deployment will want
-  them.
 - Retrying an upstream request without `stream_options` when a provider rejects unknown
   parameters. Left out rather than shipped untested. ([ADR 0013](../../docs/adr/0013-upstream-http-client.md))
 - A hard mid-stream quota ceiling via `max_tokens` clamping. The chosen policy admits the

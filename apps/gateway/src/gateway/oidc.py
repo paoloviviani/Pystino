@@ -362,6 +362,13 @@ async def provision_user(
     # still have. Doing it the other way round leaves a single-group user with no
     # default at all, and therefore unable to make a request until they call the
     # management API.
+    # Admin follows group membership when configured, in both directions. Left
+    # unconfigured, the flag is never touched here and stays a manual decision —
+    # which is what keeps `gateway seed`'s local admin usable.
+    if settings.admin_groups:
+        held = {group.name for group in groups}
+        user.is_admin = bool(held & set(settings.admin_groups))
+
     valid_group_ids = {group.id for group in groups}
     if (
         user.default_billing_group_id is not None
