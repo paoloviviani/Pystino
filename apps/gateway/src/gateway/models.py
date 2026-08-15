@@ -258,6 +258,19 @@ class ApiKey(Base):
         return not (self.expires_at is not None and self.expires_at <= moment)
 
 
+class ModelKind(enum.StrEnum):
+    """What a model does, and therefore which route may use it.
+
+    Imported from the provider catalogue where it says so — Cortecs reports it in
+    `output_modalities` (ADR 0028). Asking the chat route for an embedding model
+    is refused here rather than forwarded to fail upstream with a
+    provider-specific error nobody can act on.
+    """
+
+    CHAT = "chat"
+    EMBEDDING = "embedding"
+
+
 class Provider(Base):
     """An OpenAI-compatible inference endpoint the gateway can route to.
 
@@ -290,6 +303,15 @@ class Provider(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
+    # Whether to add `stream_options: {"include_usage": true}` to streaming
+    # requests. True is right for a generic OpenAI-compatible endpoint, where
+    # asking is the only way to get usage. False for one that sends usage
+    # unconditionally and rejects or deprioritises unknown fields — Cortecs
+    # documents both of those (ADR 0028).
+    forward_stream_options: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
+
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
@@ -316,6 +338,10 @@ class ModelDef(Base):
     # attributed to a model nobody can explain.
     provider_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("providers.id", ondelete="RESTRICT"), index=True
+    )
+
+    kind: Mapped[ModelKind] = mapped_column(
+        _enum(ModelKind, "model_kind"), default=ModelKind.CHAT, server_default="chat"
     )
 
     display_name: Mapped[str | None] = mapped_column(String(255), default=None)
@@ -470,6 +496,23 @@ class UsageRecord(Base):
 
     usage_source: Mapped[UsageSource] = mapped_column(
         _enum(UsageSource, "usage_source"), default=UsageSource.UNAVAILABLE
+    )
+
+    # What the provider said actually served the request, as opposed to what we
+    # asked for. A router with model fallback can substitute (ADR 0028), and
+    # `model_name` above is the request, not the answer. Null when the provider
+    # reported neither, which is most non-routing endpoints.
+    upstream_model: Mapped[str | None] = mapped_column(String(255), default=None)
+    upstream_provider: Mapped[str | None] = mapped_column(String(128), default=None)
+    # Whether that differs from the model we actually asked the provider for.
+    #
+    # Decided at write time, not by comparing columns later: `model_name` is our
+    # client-facing name and `upstream_model` is the provider's, so those two
+    # always differ and comparing them would call every request a substitution.
+    # The recorder holds both the requested upstream name and the reported one,
+    # so it is the only place that can tell.
+    model_substituted: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
     )
 
     cost: Mapped[Decimal] = mapped_column(default=Decimal(0))

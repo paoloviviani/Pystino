@@ -142,6 +142,39 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+async def embeddings(request: Request) -> JSONResponse:
+    """Embeddings, in the Cortecs response shape.
+
+    Reports `provider` and `model` like the real one, so the gateway's
+    record-what-served-it path is exercised rather than assumed.
+    """
+    body = await request.json()
+    LAST_REQUEST.clear()
+    LAST_REQUEST.update(body)
+
+    raw = body.get("input")
+    inputs = [raw] if isinstance(raw, str) else list(raw or [])
+    return JSONResponse(
+        {
+            "id": "emb-smoke",
+            "object": "list",
+            "created": 1_700_000_000,
+            "provider": "fake-provider",
+            "model": body.get("model", "upstream/embed-model"),
+            "data": [
+                {"index": index, "object": "embedding", "embedding": [0.1, 0.2, 0.3]}
+                for index, _ in enumerate(inputs)
+            ],
+            # Cortecs documents completion_tokens as always 0 for embeddings.
+            "usage": {
+                "prompt_tokens": 1000 * max(1, len(inputs)),
+                "completion_tokens": 0,
+                "total_tokens": 1000 * max(1, len(inputs)),
+            },
+        }
+    )
+
+
 async def last_request(request: Request) -> JSONResponse:
     """What this fake received most recently.
 
@@ -159,12 +192,20 @@ async def models(request: Request) -> JSONResponse:
     """
 
     def entry(
-        model_id: str, inp: str, out: str, currency: str = "EUR", ctx: int = 128_000
+        model_id: str,
+        inp: str,
+        out: str,
+        currency: str = "EUR",
+        ctx: int = 128_000,
+        modalities: tuple[str, ...] = ("text",),
     ) -> dict[str, Any]:
         return {
             "id": model_id,
             "context_length": ctx,
             "pricing": {"input_token": inp, "output_token": out, "currency": currency},
+            # Cortecs derives this from model tags; the importer reads it to tell
+            # an embedding model from a chat one (ADR 0028).
+            "output_modalities": list(modalities),
         }
 
     return JSONResponse(
@@ -174,6 +215,13 @@ async def models(request: Request) -> JSONResponse:
                 entry("upstream/haiku-ish", "0.08", "0.40", ctx=32_000),
                 entry("upstream/big-model", "3.00", "15.00", ctx=200_000),
                 entry("upstream/dollar-model", "1.00", "2.00", currency="USD"),
+                entry(
+                    "upstream/embed-model",
+                    "0.02",
+                    "0",
+                    ctx=8192,
+                    modalities=("embeddings",),
+                ),
             ]
         }
     )
@@ -182,6 +230,7 @@ async def models(request: Request) -> JSONResponse:
 app = Starlette(
     routes=[
         Route("/v1/chat/completions", chat_completions, methods=["POST"]),
+        Route("/v1/embeddings", embeddings, methods=["POST"]),
         Route("/v1/models", models, methods=["GET"]),
         Route("/_last_request", last_request, methods=["GET"]),
     ]

@@ -64,6 +64,7 @@ export interface ProviderInput {
   api_key?: string;
   extra_headers?: Record<string, string>;
   is_active?: boolean;
+  forward_stream_options?: boolean;
 }
 
 export function useCreateProvider() {
@@ -163,6 +164,7 @@ export interface CreateModelInput {
   upstream_model: string;
   /** Required: a model with no provider cannot be routed (ADR 0027). */
   provider_id: string;
+  kind?: "chat" | "embedding";
   context_window?: number | null;
 }
 

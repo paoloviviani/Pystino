@@ -274,7 +274,7 @@ def _totals(rows: Sequence[UsageReportRow]) -> UsageReportRow:
     )
 
 
-def _disclosures(totals: UsageReportRow, in_flight: int) -> list[str]:
+def _disclosures(totals: UsageReportRow, in_flight: int, substituted: int = 0) -> list[str]:
     notes: list[str] = []
     if totals.estimated_requests:
         notes.append(
@@ -290,6 +290,17 @@ def _disclosures(totals: UsageReportRow, in_flight: int) -> list[str]:
         notes.append(
             f"{in_flight} request(s) were still in flight when this report was produced "
             "and are excluded; they will appear once complete."
+        )
+    if substituted:
+        # A router with model fallback can serve a different model than the one
+        # asked for, and bills for the one that ran (ADR 0028). We price from the
+        # requested model, so this figure is not necessarily what the provider
+        # will invoice. Said out loud rather than left to be discovered.
+        notes.append(
+            f"{substituted} request(s) were served by a different model than the one "
+            "requested, because the provider substituted one. They are priced here "
+            "using the requested model's price, so this total may not match the "
+            "provider's invoice for them."
         )
     return notes
 
@@ -326,6 +337,21 @@ async def build_report(
         )
     ).scalar_one()
 
+    # Requests the provider served with a model other than the one asked for.
+    # The flag is set at write time by the recorder, which is the only place that
+    # can tell: comparing `model_name` (ours) with `upstream_model` (theirs) would
+    # mark every request, since those differ by design.
+    substituted = (
+        await session.execute(
+            select(func.count(UsageRecord.id)).where(
+                UsageRecord.created_at >= filters.period.start,
+                UsageRecord.created_at < filters.period.end,
+                UsageRecord.status != UsageStatus.IN_PROGRESS,
+                UsageRecord.model_substituted.is_(True),
+            )
+        )
+    ).scalar_one()
+
     return UsageReport(
         period=PeriodResponse(
             label=filters.period.label,
@@ -338,7 +364,7 @@ async def build_report(
         currency=currency,
         rows=report_rows,
         totals=totals,
-        disclosures=_disclosures(totals, int(in_flight or 0)),
+        disclosures=_disclosures(totals, int(in_flight or 0), int(substituted or 0)),
     )
 
 

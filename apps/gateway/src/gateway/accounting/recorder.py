@@ -125,6 +125,11 @@ class RequestAccounting:
         self.record_id: uuid.UUID | None = None
         self._choices: dict[int, ChoiceAccumulator] = {}
         self._upstream_usage: dict[str, Any] | None = None
+        # What the provider says actually served this request. A router with
+        # model fallback can substitute a different model, and the request no
+        # longer describes the answer (ADR 0028).
+        self._upstream_model: str | None = None
+        self._upstream_provider: str | None = None
         self._started_at = utcnow()
         self._first_token_at: datetime | None = None
 
@@ -178,6 +183,15 @@ class RequestAccounting:
             # Later frames win: a provider that sends running totals should be
             # believed at its final word.
             self._upstream_usage = usage
+
+        # Captured before rename_model_stage rewrites `model` to our
+        # client-facing name on the way out. First frame wins: every chunk of a
+        # stream repeats it, and the first is the one that cannot have been
+        # rewritten by anything downstream.
+        if self._upstream_model is None and isinstance(served := payload.get("model"), str):
+            self._upstream_model = served
+        if self._upstream_provider is None and isinstance(by := payload.get("provider"), str):
+            self._upstream_provider = by
 
         for choice in payload.get("choices") or []:
             if not isinstance(choice, dict):
@@ -252,7 +266,7 @@ class RequestAccounting:
 
     # -- finalisation ------------------------------------------------------
 
-    def resolve_counts(self) -> tuple[TokenCounts, UsageSource]:
+    def resolve_counts(self, *, failed: bool = False) -> tuple[TokenCounts, UsageSource]:
         """Best available token counts, and an honest label for their provenance."""
         if self._upstream_usage:
             counts = TokenCounts.from_usage(self._upstream_usage)
@@ -267,6 +281,15 @@ class RequestAccounting:
                 completion += self._estimator.count_text(str(call.get("arguments") or ""))
                 completion += self._estimator.count_text(str(call.get("name") or ""))
 
+        if failed and not completion:
+            # The upstream refused before generating anything, and reported no
+            # usage. Nothing was consumed, so nothing is charged — estimating the
+            # prompt here would bill a caller for the provider's failure, and
+            # Cortecs is explicit that you pay only for a successful request.
+            # A failure *after* partial output still estimates: those tokens were
+            # really generated.
+            return TokenCounts(), UsageSource.UNAVAILABLE
+
         if not completion and not self._ctx.estimated_prompt_tokens:
             return TokenCounts(), UsageSource.UNAVAILABLE
 
@@ -274,6 +297,17 @@ class RequestAccounting:
             TokenCounts(prompt=self._ctx.estimated_prompt_tokens, completion=completion),
             UsageSource.ESTIMATED,
         )
+
+    def _was_substituted(self) -> bool:
+        """Whether the provider served a model other than the one we asked for.
+
+        Compared against the *upstream* name we sent, which is the only
+        meaningful comparison: our client-facing name differs from the
+        provider's by design on every single request.
+        """
+        if self._upstream_model is None or self._model is None:
+            return False
+        return self._upstream_model != self._model.upstream_model
 
     def finish_reason(self) -> str | None:
         for slot in self._choices.values():
@@ -298,7 +332,9 @@ class RequestAccounting:
             return self._last_actuals
         self._finalised = True
 
-        counts, source = self.resolve_counts()
+        counts, source = self.resolve_counts(
+            failed=status in (UsageStatus.UPSTREAM_ERROR,)
+        )
 
         price = None
         breakdown = CostBreakdown.zero(self._ctx.currency)
@@ -347,6 +383,9 @@ class RequestAccounting:
             "cached_prompt_tokens": counts.cached_prompt,
             "reasoning_tokens": counts.reasoning,
             "usage_source": source,
+            "upstream_model": self._upstream_model,
+            "upstream_provider": self._upstream_provider,
+            "model_substituted": self._was_substituted(),
             "cost": breakdown.total,
             "currency": breakdown.currency,
             "price_id": price.id if price is not None else None,

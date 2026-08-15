@@ -56,6 +56,27 @@ class ChatCompletionRequest(BaseModel):
         return self.n if self.n and self.n > 0 else 1
 
 
+class EmbeddingRequest(BaseModel):
+    """Only the fields the gateway acts on; the rest passes through.
+
+    Same philosophy as ChatCompletionRequest: a gateway that validated the full
+    schema would reject valid requests every time a provider shipped a field.
+    ``encoding_format``, ``dimensions`` and any routing parameters are forwarded
+    untouched for the provider to interpret.
+    """
+
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
+
+    model: str
+    # A single string or a batch. Token arrays (OpenAI allows list[int]) are not
+    # accepted: they cannot be redacted, and forwarding pre-tokenised text would
+    # be a hole in the redaction layer (ADR 0028).
+    input: str | list[str]
+
+    def texts(self) -> list[str]:
+        return [self.input] if isinstance(self.input, str) else list(self.input)
+
+
 class ModelCard(BaseModel):
     """One entry of ``GET /v1/models``, in OpenAI's shape."""
 
@@ -172,6 +193,7 @@ class ProviderResponse(BaseModel):
     has_api_key: bool
     extra_headers: dict[str, str]
     is_active: bool
+    forward_stream_options: bool
     model_count: int
     created_at: datetime
     updated_at: datetime
@@ -185,6 +207,9 @@ class ProviderCreateRequest(BaseModel):
     api_key: SecretStr | None = None
     extra_headers: dict[str, str] = Field(default_factory=dict)
     is_active: bool = True
+    # Off for a provider that sends usage unconditionally and dislikes unknown
+    # fields — Cortecs documents both (ADR 0028).
+    forward_stream_options: bool = True
 
 
 class ProviderUpdateRequest(BaseModel):
@@ -201,6 +226,7 @@ class ProviderUpdateRequest(BaseModel):
     api_key: SecretStr | None = None
     extra_headers: dict[str, str] | None = None
     is_active: bool | None = None
+    forward_stream_options: bool | None = None
 
 
 class ProviderTestResponse(BaseModel):
@@ -225,6 +251,7 @@ class ModelCreateRequest(BaseModel):
     # Which endpoint serves it. Required: a model with no provider cannot be
     # routed, and defaulting one would guess at spending money (ADR 0027).
     provider_id: uuid.UUID
+    kind: Literal["chat", "embedding"] = "chat"
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -281,6 +308,8 @@ class ModelAdminResponse(BaseModel):
     provider_id: uuid.UUID
     provider_name: str
     provider_is_active: bool
+    # "chat" or "embedding": which /v1 route may use it (ADR 0028).
+    kind: str
     display_name: str | None
     description: str | None
     is_active: bool

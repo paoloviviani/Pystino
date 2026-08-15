@@ -197,6 +197,7 @@ function ProviderDialog({
   const [description, setDescription] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
+  const [streamOptions, setStreamOptions] = useState(true);
   // Keyed remount: without this the fields keep the previous provider's values
   // when a different row is opened.
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -208,6 +209,7 @@ function ProviderDialog({
     setDescription(provider?.description ?? "");
     setApiKey("");
     setClearKey(false);
+    setStreamOptions(provider?.forward_stream_options ?? true);
   }
 
   const pending = create.isPending || update.isPending;
@@ -221,6 +223,7 @@ function ProviderDialog({
           id: provider.id,
           base_url: baseUrl,
           description: description || null,
+          forward_stream_options: streamOptions,
           // Three ways, deliberately: a typed key replaces, the explicit clear
           // removes, and neither leaves the stored credential untouched.
           ...(apiKey ? { api_key: apiKey } : clearKey ? { api_key: "" } : {}),
@@ -233,6 +236,7 @@ function ProviderDialog({
           name,
           base_url: baseUrl,
           description: description || null,
+          forward_stream_options: streamOptions,
           ...(apiKey ? { api_key: apiKey } : {}),
         },
         done,
@@ -315,6 +319,21 @@ function ProviderDialog({
           <span>Remove the stored key</span>
         </label>
       )}
+
+      <label className={styles.checkItem}>
+        <input
+          type="checkbox"
+          checked={streamOptions}
+          onChange={(event) => setStreamOptions(event.target.checked)}
+        />
+        <span>
+          Ask for token usage on streamed responses
+          <span className={styles.muted}>
+            {" "}— turn off for a provider that sends usage anyway and rejects unknown
+            parameters. Cortecs is one.
+          </span>
+        </span>
+      </label>
 
       <Notice tone="info">
         Use <strong>Test</strong> after saving. It calls the provider&apos;s <code>/models</code>
