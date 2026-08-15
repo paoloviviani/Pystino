@@ -32,7 +32,10 @@ export function AdminModels() {
       header: "Model",
       render: (model) => (
         <>
-          <div>{model.name}</div>
+          <div>
+            {model.name}{" "}
+            {model.kind === "embedding" && <Badge tone="accent">embedding</Badge>}
+          </div>
           <div className={`${styles.muted} ${styles.code}`}>{model.upstream_model}</div>
         </>
       ),
@@ -165,6 +168,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const [name, setName] = useState("");
   const [upstream, setUpstream] = useState("");
   const [providerId, setProviderId] = useState("");
+  const [kind, setKind] = useState<"chat" | "embedding">("chat");
 
   // Only active providers: creating a model on a deactivated endpoint produces
   // something that cannot serve a request the moment it exists.
@@ -188,6 +192,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
                   name: name.trim(),
                   upstream_model: upstream.trim(),
                   provider_id: providerId,
+                  kind,
                 },
                 {
                   onSuccess: () => {
@@ -224,6 +229,15 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
         placeholder="provider/model-id"
         hint="What the gateway asks the provider for."
       />
+
+      <Select
+        label="Kind"
+        value={kind}
+        onChange={(e) => setKind(e.target.value as "chat" | "embedding")}
+      >
+        <option value="chat">Chat — /v1/chat/completions</option>
+        <option value="embedding">Embedding — /v1/embeddings</option>
+      </Select>
 
       <Select
         label="Provider"

@@ -370,6 +370,35 @@ API key — the upgrade succeeded and quietly configured the wrong endpoint. The
 compose files now give the migrate job the same upstream configuration as the
 gateway, and the migration warns when it cannot encrypt the key it found.
 
+## Added after the plan — embeddings, and what actually served a request
+
+[ADR 0028](adr/0028-embeddings-and-served-model.md). Reading the reference
+provider's documentation closely raised three things the plan had not.
+
+`POST /v1/embeddings` is now served, with the same access check, redaction and
+metering as a completion. Embedding inputs are redacted and the vector is of the
+redacted text — deterministic placeholders keep a corpus self-consistent, so two
+documents mentioning the same person still embed alike. Charging is input-only:
+an embedding has no completion tokens. `models.kind` separates chat from
+embedding models and each route refuses the other kind by name, pointing at the
+one that would have worked.
+
+Usage records now keep `upstream_model` and `upstream_provider` — what the
+provider said served the request, which is not always what we asked for when a
+provider fails over. The `model_substituted` flag is decided at write time
+rather than by comparing the two columns later: `model_name` is our
+client-facing name and `upstream_model` is the provider's, so those always
+differ and comparing them would call every request a substitution. The report's
+disclosures surface the count.
+
+`stream_options.include_usage` became per-provider (`forward_stream_options`).
+The reference provider returns usage on streamed responses unconditionally and
+does not document the parameter, so asking for it is at best redundant.
+
+**Found while building it:** a request that failed upstream before generating
+anything was still billed for its estimated prompt. `resolve_counts` now returns
+zero for that case, on both routes.
+
 ## Explicitly out of scope
 
 Budgets with alerts (needs a notification path that does not exist), invoice

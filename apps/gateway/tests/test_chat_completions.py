@@ -325,6 +325,10 @@ class TestNonStreaming:
         row = await latest_usage(session_factory)
         assert row.status is UsageStatus.UPSTREAM_ERROR
         assert row.upstream_status == 503
+        # Nothing was generated, so nothing is charged. Estimating the prompt
+        # here would bill the caller for the provider's failure (ADR 0028).
+        assert row.cost == Decimal(0)
+        assert row.total_tokens == 0
 
     async def test_empty_messages_is_rejected_before_the_upstream(
         self, client: httpx.AsyncClient, seeded: Seeded, fake_upstream: FakeUpstream

@@ -36,7 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.accounting.cost import select_price
-from gateway.models import ModelDef, ModelPrice, PriceSource
+from gateway.models import ModelDef, ModelKind, ModelPrice, PriceSource
 from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
@@ -89,6 +89,10 @@ class CataloguePrice:
     cache_read_per_mtok: Decimal | None = None
     cache_write_per_mtok: Decimal | None = None
     context_window: int | None = None
+    # Chat unless the catalogue says otherwise. Cortecs reports it in
+    # `output_modalities`; a catalogue that says nothing gets the safe default,
+    # since every model catalogued before this existed was a chat model.
+    kind: ModelKind = ModelKind.CHAT
 
 
 @dataclass
@@ -173,6 +177,8 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
             unparsable.append(model_id or "<unidentified model>")
             continue
 
+        kind = _kind_of(entry)
+
         context = _first(entry, ("context_length", "context_window", "max_context"))
         try:
             context_window = int(context) if context is not None else None
@@ -188,10 +194,31 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
                 cache_read_per_mtok=_as_decimal(_first(source, _CACHE_READ_KEYS)),
                 cache_write_per_mtok=_as_decimal(_first(source, _CACHE_WRITE_KEYS)),
                 context_window=context_window,
+                kind=kind,
             )
         )
 
     return prices, unparsable
+
+
+def _kind_of(entry: dict[str, Any]) -> ModelKind:
+    """Whether a catalogue entry describes an embedding model.
+
+    Cortecs derives `output_modalities` from its model tags, so an embedding
+    model reports `embeddings` there. The name check is a fallback for
+    catalogues that say nothing: "embed" in a model id is a strong enough signal
+    to be worth using, and getting it wrong only means the model is refused on
+    the wrong route with a message naming the fix.
+    """
+    modalities = entry.get("output_modalities")
+    if isinstance(modalities, list):
+        if any(str(item).lower().startswith("embed") for item in modalities):
+            return ModelKind.EMBEDDING
+        if modalities:
+            return ModelKind.CHAT
+
+    identifier = str(_first(entry, _ID_KEYS) or "").lower()
+    return ModelKind.EMBEDDING if "embed" in identifier else ModelKind.CHAT
 
 
 def _differs(existing: ModelPrice | None, candidate: CataloguePrice) -> bool:

@@ -51,6 +51,7 @@ from gateway.models import (
     LimitScope,
     Membership,
     ModelDef,
+    ModelKind,
     ModelPrice,
     PriceSource,
     Provider,
@@ -158,6 +159,7 @@ def _model_response(
         # model behind it out of service, and the catalogue is where that is
         # noticed.
         provider_is_active=model.provider.is_active,
+        kind=model.kind.value,
         display_name=model.display_name,
         description=model.description,
         is_active=model.is_active,
@@ -238,6 +240,7 @@ def _provider_response(provider: Provider, model_count: int) -> ProviderResponse
         has_api_key=bool(provider.api_key_encrypted),
         extra_headers=dict(provider.extra_headers or {}),
         is_active=provider.is_active,
+        forward_stream_options=provider.forward_stream_options,
         model_count=model_count,
         created_at=provider.created_at,
         updated_at=provider.updated_at,
@@ -301,6 +304,7 @@ async def create_provider(
         base_url=payload.base_url.rstrip("/"),
         extra_headers=payload.extra_headers,
         is_active=payload.is_active,
+        forward_stream_options=payload.forward_stream_options,
     )
     if payload.api_key is not None:
         _store_api_key(provider, secrets, payload.api_key.get_secret_value())
@@ -496,6 +500,7 @@ async def create_model(
         name=payload.name,
         upstream_model=payload.upstream_model,
         provider_id=payload.provider_id,
+        kind=ModelKind(payload.kind),
         display_name=payload.display_name,
         description=payload.description,
         context_window=payload.context_window,
@@ -757,6 +762,9 @@ async def import_models(
             upstream_model=item.upstream_model,
             provider_id=provider.id,
             context_window=price.context_window,
+            # From the catalogue, so an imported embedding model lands on the
+            # right route without anyone editing it afterwards (ADR 0028).
+            kind=price.kind,
         )
         session.add(model)
         await session.flush()

@@ -93,6 +93,8 @@ export interface AdminModel {
   provider_name: string;
   /** A model behind a deactivated provider is unreachable, and says so. */
   provider_is_active: boolean;
+  /** "chat" or "embedding": which /v1 route may use it. */
+  kind: "chat" | "embedding";
   display_name: string | null;
   description: string | null;
   is_active: boolean;
@@ -203,6 +205,8 @@ export interface AdminProvider {
   has_api_key: boolean;
   extra_headers: Record<string, string>;
   is_active: boolean;
+  /** Whether the gateway adds `stream_options.include_usage` to streaming calls. */
+  forward_stream_options: boolean;
   /** How many models this provider serves — the blast radius of turning it off. */
   model_count: number;
   created_at: string;

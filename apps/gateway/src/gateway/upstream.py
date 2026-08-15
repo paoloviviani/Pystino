@@ -107,6 +107,27 @@ class OpenAICompatibleUpstream:
     def _chat_url(self) -> str:
         return f"{self._settings.base_url}/chat/completions"
 
+    async def embeddings(
+        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    ) -> UpstreamResponse:
+        """Create embeddings. Never streams — the response is one JSON body."""
+        try:
+            response = await self._client.post(
+                f"{self._settings.base_url}/embeddings",
+                content=orjson.dumps(payload),
+                headers=self._headers(request_id=request_id),
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"upstream request failed: {exc}", cause=exc) from exc
+
+        raw = response.content
+        try:
+            candidate = orjson.loads(raw) if raw else None
+            parsed = candidate if isinstance(candidate, dict) else None
+        except orjson.JSONDecodeError:
+            parsed = None
+        return UpstreamResponse(status_code=response.status_code, payload=parsed, raw=raw)
+
     async def list_models(self) -> UpstreamResponse:
         """Ask the provider what it offers.
 

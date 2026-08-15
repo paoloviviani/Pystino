@@ -104,7 +104,7 @@ class TestSpanConversion:
     async def test_scores_outside_the_range_are_clamped(self) -> None:
         """A recogniser returning 1.0000001 must not 422 the whole batch."""
         analyzer = FakeAnalyzer()
-        analyzer.analyze = lambda **kwargs: [Result(0, 1, "X", 1.4)]  # type: ignore[assignment]
+        analyzer.analyze = lambda **kwargs: [Result(0, 1, "X", 1.4)]  # type: ignore[method-assign]
         detector = Detector(analyzer, languages=["en"])
         spans = (
             await detector.analyse(["abc"], language="en", score_threshold=0.0, entity_types=None)

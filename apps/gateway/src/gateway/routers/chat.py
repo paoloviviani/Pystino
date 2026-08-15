@@ -60,7 +60,7 @@ from gateway.errors import (
     error_payload,
     error_response,
 )
-from gateway.models import ModelDef, UsageStatus
+from gateway.models import ModelDef, ModelKind, UsageStatus
 from gateway.providers import ProviderConfigurationError
 from gateway.quota import (
     QuotaAmounts,
@@ -161,6 +161,7 @@ def build_upstream_payload(
     *,
     outcome: RedactionOutcome,
     upstream_model: str,
+    forward_stream_options: bool = True,
 ) -> dict[str, Any]:
     """The request we actually send.
 
@@ -172,10 +173,17 @@ def build_upstream_payload(
     payload["model"] = upstream_model
     payload["messages"] = outcome.messages
 
-    if body.stream:
+    if body.stream and forward_stream_options:
         # Without this, a streamed response carries no token counts at all and
         # accounting would record zero for every streaming request. Merged rather
         # than replaced, so other stream options the client set survive.
+        #
+        # Per provider, because the right answer differs: a generic
+        # OpenAI-compatible endpoint only sends usage if asked, while Cortecs
+        # sends it on the last chunk unconditionally and warns that undocumented
+        # parameters "can cause requests to fail or limit the providers able to
+        # process them" (ADR 0028). Whatever the client itself set is still
+        # forwarded — this only controls our addition.
         options = dict(body.stream_options or {})
         options["include_usage"] = True
         payload["stream_options"] = options
@@ -218,6 +226,14 @@ async def chat_completions(
         user_id=principal.user.id,
         group_id=principal.billing_group.id,
     )
+    if model.kind is not ModelKind.CHAT:
+        # Symmetric with the embeddings route: name the mistake here rather than
+        # forward it and return whatever that provider says about a chat request
+        # for an embedding model.
+        raise BadRequestError(
+            f"{model.name!r} is an embedding model. Use /v1/embeddings for it.",
+            code="wrong_model_kind",
+        )
 
     # Which endpoint serves this model, with that endpoint's credentials. A
     # misconfigured provider surfaces here, before any accounting row exists.
@@ -285,7 +301,12 @@ async def chat_completions(
     )
     await accounting.begin()
 
-    payload = build_upstream_payload(body, outcome=outcome, upstream_model=model.upstream_model)
+    payload = build_upstream_payload(
+        body,
+        outcome=outcome,
+        upstream_model=model.upstream_model,
+        forward_stream_options=model.provider.forward_stream_options,
+    )
 
     if body.stream:
         return await _stream_response(

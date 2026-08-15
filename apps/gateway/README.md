@@ -8,7 +8,8 @@ per-group model availability and a pluggable redaction layer.
 | Path | Auth | Purpose |
 |---|---|---|
 | `POST /v1/chat/completions` | API key | Proxy to the configured upstream, streaming and not |
-| `GET /v1/models` | API key | Models the caller's groups may use, from our catalogue |
+| `POST /v1/embeddings` | API key | Embeddings, metered and redacted like a completion |
+| `GET /v1/models` | API key | Models the caller may use, by group or personal grant |
 | `GET /auth/login`, `/auth/callback` | — | OIDC authorization-code login |
 | `GET /api/me` | session cookie | Identity, groups, default billing group |
 | `PUT /api/me/default-billing-group` | session cookie | Users change their own billing group |
@@ -124,12 +125,14 @@ found.
 
 **Deliberately not implemented**
 
-- `POST /v1/embeddings`. Needed in Phase 3 so indexing spend is accounted for rather than
-  invisible. ([ADR 0020](../../docs/adr/0020-embeddings-and-reranking.md))
 - Device authorization flow endpoints, which the `opencode` bootstrap needs. See
   `scripts/README.md`.
+- Reranking. The embedding half of [ADR 0020](../../docs/adr/0020-embeddings-and-reranking.md)
+  is now served; `/v1/rerank` is not, and has no OpenAI-compatible shape to copy.
 - Retrying an upstream request without `stream_options` when a provider rejects unknown
-  parameters. Left out rather than shipped untested. ([ADR 0013](../../docs/adr/0013-upstream-http-client.md))
+  parameters. A provider that does is configured with `forward_stream_options = false`
+  instead, which costs nothing at request time.
+  ([ADR 0028](../../docs/adr/0028-embeddings-and-served-model.md))
 - A hard mid-stream quota ceiling via `max_tokens` clamping. The chosen policy admits the
   request that crosses the limit. ([ADR 0009](../../docs/adr/0009-quota-model.md))
 

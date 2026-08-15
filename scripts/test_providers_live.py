@@ -230,6 +230,82 @@ def main() -> int:
         expect("the upstream was actually called", bool(seen), str(seen)[:80])
 
     print()
+    print("=== what actually served the request is recorded ===")
+    ledger = sql(
+        "select model_name, upstream_model, upstream_provider, model_substituted "
+        "from usage_records where upstream_model is not null "
+        "order by created_at desc limit 1;"
+    )
+    expect("the provider's own model name is stored", bool(ledger), ledger or "no rows")
+    if ledger:
+        name, served, by, substituted = [*ledger.split("|"), "", "", ""][:4]
+        print(f"  {name} -> served by {served} at {by or 'unreported'}")
+        expect(
+            "our client-facing name is not mistaken for a substitution",
+            substituted == "f",
+            f"model_substituted={substituted} — the two names differ by design",
+        )
+
+    print()
+    print("=== embeddings ===")
+    models = api(dave, "/api/admin/models")[1]
+    embedding = next((m for m in models if m["kind"] == "embedding"), None)
+    if embedding is None:
+        print("  no embedding model catalogued here; skipping")
+    else:
+        import urllib.error
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"{GATEWAY}/v1/embeddings",
+            data=json.dumps({"model": embedding["name"], "input": ["one", "two"]}).encode(),
+            headers={"content-type": "application/json", "authorization": f"Bearer {secret}"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as response:
+                payload = json.loads(response.read())
+            expect("a batch is embedded", len(payload.get("data", [])) >= 1, str(payload)[:120])
+            expect(
+                "and the usage has no completion tokens",
+                payload.get("usage", {}).get("completion_tokens") == 0,
+                str(payload.get("usage")),
+            )
+            # The model name comes from our own API, not from user input; psql
+            # is being handed a literal either way in this development script.
+            # The name comes from our own API and psql is handed a literal;
+            # this is a development script, not a query builder.
+            name = embedding["name"]
+            query = f"select completion_tokens, cost from usage_records where model_name = '{name}' order by created_at desc limit 1;"  # noqa: E501,S608
+            row = sql(query)
+            expect("the ledger charges input only", row.startswith("0|"), row or "no row")
+            print(f"  ledger: completion_tokens|cost = {row}")
+        except urllib.error.HTTPError as error:
+            if error.code == 429:
+                print("  skipped: a quota is exhausted in this deployment")
+            else:
+                expect("a batch is embedded", False, f"HTTP {error.code}")
+
+        # A chat model on the embeddings route is refused here, not upstream.
+        wrong = next((m for m in models if m["kind"] == "chat"), None)
+        if wrong:
+            req = urllib.request.Request(
+                f"{GATEWAY}/v1/embeddings",
+                data=json.dumps({"model": wrong["name"], "input": "x"}).encode(),
+                headers={"content-type": "application/json", "authorization": f"Bearer {secret}"},
+                method="POST",
+            )
+            try:
+                urllib.request.urlopen(req, timeout=30)
+                expect("a chat model is refused by /v1/embeddings", False, "it was accepted")
+            except urllib.error.HTTPError as error:
+                expect(
+                    "a chat model is refused by /v1/embeddings",
+                    error.code == 400,
+                    f"HTTP {error.code}",
+                )
+
+    print()
     print("=== per-user model access ===")
     models = api(dave, "/api/admin/models")[1]
     smoke = next((m for m in models if m["name"] == "smoke-model"), None)
