@@ -67,3 +67,123 @@ export interface ApiKey {
   revoked_at: string | null;
   last_used_at: string | null;
 }
+
+// -- administration ----------------------------------------------------------
+//
+// Decimals are strings here for the same reason they are above: the gateway
+// serialises `Numeric` as a string so no float ever touches money, and typing
+// them as `number` would undo that at the last hop.
+
+export interface Price {
+  id: string;
+  input_per_mtok: string;
+  output_per_mtok: string;
+  cache_read_per_mtok: string | null;
+  cache_write_per_mtok: string | null;
+  currency: string;
+  effective_from: string;
+  source: string;
+}
+
+export interface AdminModel {
+  id: string;
+  name: string;
+  upstream_model: string;
+  provider: string;
+  display_name: string | null;
+  description: string | null;
+  is_active: boolean;
+  context_window: number | null;
+  max_output_tokens: number | null;
+  created_at: string;
+  current_price: Price | null;
+  granted_to: string[];
+}
+
+export interface AdminGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  source: string;
+  is_active: boolean;
+  member_count: number;
+  models: string[];
+}
+
+export interface AdminUser {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  issuer: string;
+  subject: string;
+  is_active: boolean;
+  is_admin: boolean;
+  groups: string[];
+  default_billing_group: string | null;
+  active_key_count: number;
+  last_login_at: string | null;
+}
+
+export interface LimitRule {
+  id: string;
+  name: string;
+  scope: "global" | "group" | "user" | "api_key";
+  scope_id: string | null;
+  metric: "requests" | "tokens" | "cost";
+  window_seconds: number | null;
+  period: string | null;
+  /** "3600s" or "month" — one string to print, whichever kind of rule it is. */
+  window_label: string;
+  limit_value: string;
+  is_active: boolean;
+  /** Live counter value. Absent — not zero — when the counter store is unreachable. */
+  current_value: string | null;
+  last_reset_at: string | null;
+}
+
+export interface QuotaReset {
+  id: string;
+  rule_id: string;
+  effective_at: string;
+  reason: string;
+  created_by: string | null;
+  created_by_email: string | null;
+}
+
+export interface DiscoveredModel {
+  upstream_model: string;
+  suggested_name: string;
+  input_per_mtok: string | null;
+  output_per_mtok: string | null;
+  currency: string | null;
+  context_window: number | null;
+  blocked_reason: string | null;
+}
+
+export interface CatalogueDriftRow {
+  name: string;
+  upstream_model: string;
+  is_active: boolean;
+}
+
+export interface CatalogueDiscovery {
+  provider_url: string;
+  provider_model_count: number;
+  available: DiscoveredModel[];
+  catalogued: CatalogueDriftRow[];
+  /** Ours, no longer offered upstream. The drift that breaks at 3am. */
+  missing_upstream: CatalogueDriftRow[];
+  unparsable: string[];
+}
+
+export interface ModelImportResult {
+  upstream_model: string;
+  name: string | null;
+  imported: boolean;
+  priced: boolean;
+  reason: string | null;
+}
+
+export interface ModelImportResponse {
+  results: ModelImportResult[];
+}

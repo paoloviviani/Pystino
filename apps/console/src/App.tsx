@@ -1,8 +1,15 @@
 import { Notice, Spinner } from "@llmp/ui";
 import { Route, Routes } from "react-router";
+import { RequireAdmin } from "./components/RequireAdmin";
 import { Shell } from "./components/Shell";
 import { NotAuthenticatedError, login } from "./lib/api";
 import { useMe } from "./lib/queries";
+import { AdminModels } from "./routes/AdminModels";
+import { AdminPricing } from "./routes/AdminPricing";
+import { AdminQuotas } from "./routes/AdminQuotas";
+import { AdminReports } from "./routes/AdminReports";
+import { AdminUsers } from "./routes/AdminUsers";
+import { NotFound } from "./routes/NotFound";
 import { Overview } from "./routes/Overview";
 import styles from "./App.module.css";
 
@@ -39,13 +46,59 @@ export function App() {
     );
   }
 
+  const me_ = me.data;
+
   return (
-    <Shell me={me.data}>
+    <Shell me={me_}>
       <Routes>
-        <Route path="/" element={<Overview me={me.data} />} />
-        {/* Admin routes arrive next; until then an unknown path lands on the
-            overview rather than a blank page. */}
-        <Route path="*" element={<Overview me={me.data} />} />
+        <Route path="/" element={<Overview me={me_} />} />
+
+        {/* Wrapped rather than conditionally registered: a non-admin who follows
+            a bookmarked link should be told, not handed a blank 404 that reads
+            as a broken deploy. The API refuses them regardless — this is
+            courtesy, not enforcement. */}
+        <Route
+          path="/admin/models"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminModels />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/pricing"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminPricing />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/quotas"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminQuotas />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/reports"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminReports />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/users"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminUsers />
+            </RequireAdmin>
+          }
+        />
+
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </Shell>
   );

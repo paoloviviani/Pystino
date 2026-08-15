@@ -1,0 +1,40 @@
+.meter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 12rem;
+}
+
+.track {
+  flex: 1;
+  height: 0.4rem;
+  border-radius: var(--radius-pill);
+  background: var(--colour-surface-sunken);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  transition: width 200ms ease;
+}
+
+.under {
+  background: var(--colour-ok);
+}
+
+/* The two states an operator scanning this page is actually looking for. */
+.near {
+  background: var(--colour-warn);
+}
+
+.over {
+  background: var(--colour-danger);
+}
+
+.caption {
+  color: var(--colour-text-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
