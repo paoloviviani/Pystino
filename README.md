@@ -138,6 +138,37 @@ validation, group mapping, the provisioning rules, and a session minting an API 
 then serves a billed completion. Admin console on <http://localhost:8080> (`admin`/`admin`);
 seeded users are described in [deploy/keycloak/README.md](deploy/keycloak/README.md).
 
+### Reaching the console from another machine
+
+The console is at **<http://localhost:8000/console>** on the host running the stack.
+If you are working on a server over SSH, forward both ports rather than exposing
+them:
+
+```bash
+ssh -L 8000:localhost:8000 -L 8080:localhost:8080 <user>@<host>
+```
+
+Then open <http://localhost:8000/console> in your own browser and sign in as one
+of the [seeded users](deploy/keycloak/README.md) — `dave` / `dave-password` is the
+administrator.
+
+**Both ports matter.** 8000 is the gateway; 8080 is Keycloak, and the browser is
+redirected there to log in. Forwarding only 8000 gets you a page that loads and a
+login that goes nowhere.
+
+**Why a tunnel and not just the server's address.** The OIDC configuration is
+pinned to `localhost` in three places — Keycloak's `KC_HOSTNAME`, the gateway's
+`GATEWAY_OIDC__REDIRECT_URI`, and the realm's `redirectUris`. Over a tunnel
+`localhost` is true at both ends and everything works unchanged. To serve the
+console at a real hostname instead, all three have to change together; the
+frontend/backchannel split in
+[docker-compose.keycloak.yml](deploy/compose/docker-compose.keycloak.yml)
+explains why.
+
+And do not put this stack on a routable address as it stands: Keycloak runs
+`start-dev` with `admin`/`admin` and an in-memory database, there is no TLS, the
+session cookie is not `Secure`, and the seeded users have published passwords.
+
 ## Local development without Docker
 
 ```bash
