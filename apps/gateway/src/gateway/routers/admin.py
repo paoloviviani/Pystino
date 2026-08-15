@@ -648,7 +648,7 @@ async def list_limits(
 
 @router.post("/limits", response_model=LimitRuleResponse, status_code=status.HTTP_201_CREATED)
 async def create_limit(
-    payload: LimitRuleCreateRequest, admin: AdminUserDep, session: SessionDep
+    payload: LimitRuleCreateRequest, admin: AdminUserDep, session: SessionDep, quota: QuotaDep
 ) -> LimitRuleResponse:
     """Add a quota rule.
 
@@ -703,7 +703,12 @@ async def create_limit(
             "instead of adding a second one."
         ) from exc
     await session.refresh(rule, attribute_names=["resets"])
-    return _limit_response(rule)
+    # Start the counter from the spend already in the ledger for this window. A
+    # monthly rule created on the 20th otherwise begins at zero and the cap is
+    # wrong for the rest of the month.
+    await quota.seed_rule(rule)
+    current = await quota.current_values([rule])
+    return _limit_response(rule, current.get(rule.id))
 
 
 async def _load_rule(session: SessionDep, rule_id: uuid.UUID) -> LimitRule:

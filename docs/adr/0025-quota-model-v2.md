@@ -1,6 +1,6 @@
 # 0025 — The quota model: stacked, multi-granularity, resettable
 
-- Status: accepted (Phase 2, not yet implemented)
+- Status: accepted, implemented (Stage 1 of Phase 2)
 - Date: 2026-08-15, expanded the same day from an earlier draft that covered only
   calendar-period quotas. Nothing is built against it yet, so it is revised in place
   rather than superseded.
@@ -141,6 +141,16 @@ No deletion, no race, no partial state.
   estimate used for rolling windows.
 - Deliberately still absent: soft limits, alerts and graduated tiers. A quota refuses;
   informing someone before they hit it needs a notification path that does not exist.
+- A rule created part-way through a period must have its counter **seeded from the
+  ledger** (`QuotaEngine.seed_rule`). This was missed in the design and found against a
+  live stack: the counter for a new rule starts empty, and an empty counter answers zero
+  with confidence, so "EUR 5 this month" created on the 20th would enforce the wrong
+  ceiling for eleven days. The cold-cache rebuild does not cover it — the cache is not
+  cold, only the rule is.
+- `current_value` on the admin API reads the **counters**, not the ledger. Reading the
+  ledger would display a number the enforcement path never consults, so an operator
+  could see room in a budget that the next request is refused for. The displayed figure
+  is the deciding figure, reset watermark included.
 
 ## Not adopted from Cortecs
 

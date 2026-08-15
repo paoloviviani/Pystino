@@ -16,10 +16,11 @@ it implies.
 | `packages/shared-py` | **Built.** Detection contract and the deterministic placeholder scheme. |
 | `apps/web`, `apps/desktop`, `services/rag`, `services/redaction`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |
 
-343 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
+433 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
 exercises the whole slice over real HTTP, and the full `docker compose` stack has been
 built and run against PostgreSQL 18, Valkey and Keycloak — including the complete OIDC
-login flow.
+login flow and the reporting API (`./scripts/test_reporting_live.py`, which covers the
+dialect-specific SQL the SQLite test suite cannot reach).
 
 ## Architecture
 
@@ -123,6 +124,7 @@ docker compose --env-file deploy/.env \
   -f deploy/compose/docker-compose.keycloak.yml up -d --build
 
 ./scripts/test_oidc_flow.py
+./scripts/test_reporting_live.py
 ```
 
 That drives the whole authorization-code flow and checks the result: PKCE, ID token

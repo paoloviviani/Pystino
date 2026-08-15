@@ -279,6 +279,47 @@ class QuotaEngine:
             for rule, total in zip(rules, totals, strict=True)
         }
 
+    async def seed_rule(self, rule: LimitRule, *, now: float | None = None) -> bool:
+        """Prime a newly created rule's counter from the ledger.
+
+        Without this, a rule added mid-period starts from an empty counter — which
+        answers zero, confidently. For "EUR 5 this month" created on the 20th that
+        means the cap is wrong for eleven days: the group has already spent the
+        money, and the gateway does not know. The cold-cache rebuild does not help,
+        because the cache is not cold; only this rule is.
+
+        The same argument is weaker for a rolling window, which self-corrects within
+        one window, but seeding is correct for both and the code is the same.
+
+        Returns True if the counter was seeded. Best-effort: a failure here leaves
+        the rule under-counted rather than blocking its creation, and is logged.
+        """
+        if not self._settings.enabled or self._fallback is None:
+            return False
+
+        moment = now if now is not None else utcnow().timestamp()
+        spec, period = self.window_for(rule, datetime.fromtimestamp(moment, tz=UTC))
+        query = WindowQuery(
+            scope=ScopeRef(rule.scope, rule.scope_id),
+            metric=rule.metric,
+            spec=spec,
+            period=period,
+            reset_epoch=self.reset_epoch_for(rule),
+        )
+        try:
+            # Writes only if the ledger has something to write, so creating a rule
+            # for a scope with no history costs one query and no keys.
+            await self._fallback.rebuild_into(self._store, [query], now=moment)  # type: ignore[attr-defined]
+        except Exception:
+            logger.error(
+                "could not seed counters for new limit rule %s; it will under-count "
+                "usage already recorded in this window",
+                rule.id,
+                exc_info=True,
+            )
+            return False
+        return True
+
     async def rebuild_if_cache_is_cold(
         self, session: AsyncSession, *, now: float | None = None
     ) -> bool:
