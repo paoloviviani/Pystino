@@ -32,10 +32,9 @@ from typing import Any
 import orjson
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
+from gateway.access import accessible_model_by_name
 from gateway.accounting import (
     RequestAccounting,
     RequestContext,
@@ -47,11 +46,11 @@ from gateway.accounting.cost import CostBreakdown, CurrencyMismatch
 from gateway.deps import (
     EstimatorDep,
     PrincipalDep,
+    ProvidersDep,
     QuotaDep,
     RedactorDep,
     SessionDep,
     SettingsDep,
-    UpstreamDep,
 )
 from gateway.errors import (
     BadRequestError,
@@ -61,7 +60,8 @@ from gateway.errors import (
     error_payload,
     error_response,
 )
-from gateway.models import GroupModelAccess, ModelDef, UsageStatus
+from gateway.models import ModelDef, UsageStatus
+from gateway.providers import ProviderConfigurationError
 from gateway.quota import (
     QuotaAmounts,
     QuotaEngine,
@@ -87,22 +87,18 @@ _STREAM_HEADERS = {
 }
 
 
-async def load_model_for_group(session: AsyncSession, name: str, group_id: uuid.UUID) -> ModelDef:
-    """Fetch a model the group is allowed to use.
+async def load_model_for_caller(
+    session: AsyncSession, name: str, *, user_id: uuid.UUID | None, group_id: uuid.UUID
+) -> ModelDef:
+    """Fetch a model this caller is allowed to use.
 
-    "Not available to your group" and "does not exist" deliberately return the
-    same 404: which models another group can reach is not this caller's business.
+    Access is the union of group and personal grants; the predicate lives in
+    gateway.access so this and /v1/models cannot drift apart.
+
+    "Not available to you" and "does not exist" deliberately return the same
+    404: which models another group can reach is not this caller's business.
     """
-    stmt = (
-        select(ModelDef)
-        .join(GroupModelAccess, GroupModelAccess.model_id == ModelDef.id)
-        .where(
-            ModelDef.name == name,
-            ModelDef.is_active.is_(True),
-            GroupModelAccess.group_id == group_id,
-        )
-        .options(selectinload(ModelDef.prices))
-    )
+    stmt = accessible_model_by_name(name, user_id=user_id, group_ids=[group_id])
     model = (await session.execute(stmt)).scalars().first()
     if model is None:
         raise ModelNotFoundError(
@@ -209,14 +205,27 @@ async def chat_completions(
     settings: SettingsDep,
     quota: QuotaDep,
     redactor: RedactorDep,
-    upstream: UpstreamDep,
+    providers: ProvidersDep,
     estimator: EstimatorDep,
 ) -> JSONResponse | StreamingResponse:
     if not body.messages:
         raise BadRequestError("'messages' must contain at least one message.")
 
     request_id = request.headers.get(settings.request_id_header) or uuid.uuid4().hex
-    model = await load_model_for_group(session, body.model, principal.billing_group.id)
+    model = await load_model_for_caller(
+        session,
+        body.model,
+        user_id=principal.user.id,
+        group_id=principal.billing_group.id,
+    )
+
+    # Which endpoint serves this model, with that endpoint's credentials. A
+    # misconfigured provider surfaces here, before any accounting row exists.
+    try:
+        upstream = await providers.upstream_for(model.provider)
+    except ProviderConfigurationError as exc:
+        logger.error("provider misconfigured for model %s: %s", model.name, exc)
+        raise UpstreamUnavailableError(str(exc)) from exc
 
     # -- redaction (step 2) -------------------------------------------------
     outcome = await redactor.redact_request(body.messages)

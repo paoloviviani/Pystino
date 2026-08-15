@@ -19,7 +19,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
 
 class ChatCompletionRequest(BaseModel):
@@ -157,10 +157,74 @@ class LimitRuleResponse(BaseModel):
 # primary key.
 
 
+class ProviderResponse(BaseModel):
+    """A provider, minus its credential.
+
+    The API key is never returned — only ``api_key_hint``, which is enough to
+    tell two keys apart and useless to whoever reads it (ADR 0027).
+    """
+
+    id: uuid.UUID
+    name: str
+    description: str | None
+    base_url: str
+    api_key_hint: str
+    has_api_key: bool
+    extra_headers: dict[str, str]
+    is_active: bool
+    model_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProviderCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9._-]+$")
+    description: str | None = None
+    base_url: str = Field(min_length=1, max_length=500)
+    # Write-only. Optional because a local vLLM or Ollama needs no credential.
+    api_key: SecretStr | None = None
+    extra_headers: dict[str, str] = Field(default_factory=dict)
+    is_active: bool = True
+
+
+class ProviderUpdateRequest(BaseModel):
+    """Every field optional; only what is sent is changed.
+
+    ``api_key`` follows a three-way convention that a plain optional string
+    cannot express: omitted leaves the stored key alone, a value replaces it, and
+    an empty string removes it. Without the distinction there is no way to clear
+    a credential without deleting the provider.
+    """
+
+    description: str | None = None
+    base_url: str | None = Field(default=None, min_length=1, max_length=500)
+    api_key: SecretStr | None = None
+    extra_headers: dict[str, str] | None = None
+    is_active: bool | None = None
+
+
+class ProviderTestResponse(BaseModel):
+    """The result of calling a provider's ``/models``.
+
+    Run against the row as stored, so it exercises the credential the gateway
+    would actually send rather than one the operator retypes.
+    """
+
+    ok: bool
+    status_code: int | None = None
+    detail: str
+    model_count: int | None = None
+    # A handful of ids, as evidence the response was a real catalogue.
+    sample: list[str] = Field(default_factory=list)
+    latency_ms: int | None = None
+
+
 class ModelCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     upstream_model: str = Field(min_length=1, max_length=255)
-    provider: str = Field(default="default", max_length=64)
+    # Which endpoint serves it. Required: a model with no provider cannot be
+    # routed, and defaulting one would guess at spending money (ADR 0027).
+    provider_id: uuid.UUID
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -176,7 +240,9 @@ class ModelUpdateRequest(BaseModel):
     """
 
     upstream_model: str | None = Field(default=None, min_length=1, max_length=255)
-    provider: str | None = Field(default=None, max_length=64)
+    # Repointing a model at another provider is allowed: it is how you migrate
+    # off an endpoint without changing what callers ask for.
+    provider_id: uuid.UUID | None = None
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -212,7 +278,9 @@ class ModelAdminResponse(BaseModel):
     id: uuid.UUID
     name: str
     upstream_model: str
-    provider: str
+    provider_id: uuid.UUID
+    provider_name: str
+    provider_is_active: bool
     display_name: str | None
     description: str | None
     is_active: bool
@@ -221,6 +289,8 @@ class ModelAdminResponse(BaseModel):
     created_at: datetime
     current_price: PriceResponse | None
     granted_to: list[str]
+    # Users granted this model personally, over and above their groups.
+    granted_to_users: list[str] = Field(default_factory=list)
 
 
 class GroupAdminResponse(BaseModel):

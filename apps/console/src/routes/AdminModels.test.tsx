@@ -19,7 +19,9 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
     id: "m1",
     name: "fast-summariser",
     upstream_model: "provider/fast-1",
-    provider: "provider",
+    provider_id: "pr1",
+    provider_name: "acme",
+    provider_is_active: true,
     display_name: null,
     description: null,
     is_active: true,
@@ -37,6 +39,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
       source: "manual",
     },
     granted_to: ["research"],
+    granted_to_users: [],
     ...overrides,
   };
 }
@@ -77,7 +80,23 @@ function routes(models: AdminModel[], calls: { imported?: string[] } = {}) {
     const method = init?.method ?? "GET";
     let payload: unknown = [];
 
-    if (url.includes("/models/discover")) payload = DISCOVERY;
+    if (url.includes("/api/admin/providers")) {
+      payload = [
+        {
+          id: "pr1",
+          name: "acme",
+          description: null,
+          base_url: "https://acme.test/v1",
+          api_key_hint: "sk-a…3456",
+          has_api_key: true,
+          extra_headers: {},
+          is_active: true,
+          model_count: 1,
+          created_at: "2026-08-01T10:00:00Z",
+          updated_at: "2026-08-01T10:00:00Z",
+        },
+      ];
+    } else if (url.includes("/models/discover")) payload = DISCOVERY;
     else if (url.includes("/models/import") && method === "POST") {
       const body = JSON.parse(String(init?.body)) as { models: { upstream_model: string }[] };
       calls.imported = body.models.map((entry) => entry.upstream_model);
@@ -91,6 +110,7 @@ function routes(models: AdminModel[], calls: { imported?: string[] } = {}) {
         })),
       };
     } else if (url.includes("/api/admin/models")) payload = models;
+    else if (url.includes("/api/admin/users")) payload = [];
     else if (url.includes("/api/admin/groups")) {
       payload = [
         { id: "g1", name: "research", description: null, source: "idp", is_active: true, member_count: 2, models: ["fast-summariser"] },
@@ -115,6 +135,12 @@ function renderScreen(element: ReactElement) {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+/** Pick the provider whose catalogue to inspect; nothing loads before that. */
+async function openCatalogue(user: ReturnType<typeof userEvent.setup>) {
+  const dialog = await screen.findByRole("dialog");
+  await user.selectOptions(within(dialog).getByLabelText("Provider"), "pr1");
+}
 
 describe("AdminModels", () => {
   it("lists a model with its current price", async () => {
@@ -153,12 +179,25 @@ describe("AdminModels", () => {
     expect(fetchMock.mock.calls.map(String).some((url) => url.includes("discover"))).toBe(false);
   });
 
+  it("does not fetch a catalogue until a provider is chosen", async () => {
+    // "What is on offer" is only meaningful about one endpoint (ADR 0027).
+    const user = userEvent.setup();
+    const fetchMock = routes([model()]);
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await screen.findByRole("dialog");
+    expect(fetchMock.mock.calls.map(String).some((url) => url.includes("discover"))).toBe(false);
+  });
+
   it("surfaces models we still serve that the provider has dropped", async () => {
     const user = userEvent.setup();
     vi.stubGlobal("fetch", routes([model()]));
     renderScreen(<AdminModels />);
 
     await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
 
     await waitFor(() =>
       expect(screen.getByText(/no longer offered upstream/i)).toBeInTheDocument(),
@@ -172,6 +211,7 @@ describe("AdminModels", () => {
     renderScreen(<AdminModels />);
 
     await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
     const checkbox = await screen.findByLabelText("Import dollar-1");
     expect(checkbox).toBeDisabled();
     expect(screen.getByText(/priced in USD/)).toBeInTheDocument();
@@ -186,6 +226,7 @@ describe("AdminModels", () => {
     renderScreen(<AdminModels />);
 
     await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
     const dialog = await screen.findByRole("dialog");
 
     const importButton = within(dialog).getByRole("button", { name: /^Import/ });
@@ -195,5 +236,30 @@ describe("AdminModels", () => {
     await user.click(within(dialog).getByRole("button", { name: /^Import/ }));
 
     await waitFor(() => expect(calls.imported).toEqual(["provider/new-1"]));
+  });
+
+  it("sends the chosen provider with the import", async () => {
+    const user = userEvent.setup();
+    const seen: string[] = [];
+    const base = routes([model()]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        seen.push(String(input));
+        return base(input, init);
+      }),
+    );
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+    await user.click(await screen.findByLabelText("Import new-1"));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: /^Import/ }),
+    );
+
+    await waitFor(() =>
+      expect(seen.some((url) => url.includes("/models/import?provider_id=pr1"))).toBe(true),
+    );
   });
 });

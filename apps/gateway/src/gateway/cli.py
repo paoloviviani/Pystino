@@ -31,6 +31,7 @@ from gateway.models import (
     ModelDef,
     ModelPrice,
     PriceSource,
+    Provider,
     User,
 )
 from gateway.security import generate_api_key
@@ -65,6 +66,21 @@ async def _seed(
                 session.add(group)
                 await session.flush()
 
+            # Migration 0003 creates this from GATEWAY_UPSTREAM__*, so it is
+            # normally already here; seeding a fresh database created with
+            # create_all rather than alembic still needs it.
+            provider = (
+                await session.execute(select(Provider).where(Provider.name == "default"))
+            ).scalar_one_or_none()
+            if provider is None:
+                provider = Provider(
+                    name="default",
+                    description="Created by `gateway seed`",
+                    base_url=settings.upstream.base_url,
+                )
+                session.add(provider)
+                await session.flush()
+
             model = (
                 await session.execute(select(ModelDef).where(ModelDef.name == model_name))
             ).scalar_one_or_none()
@@ -72,7 +88,7 @@ async def _seed(
                 model = ModelDef(
                     name=model_name,
                     upstream_model=upstream_model,
-                    provider="default",
+                    provider_id=provider.id,
                     display_name=model_name,
                 )
                 session.add(model)

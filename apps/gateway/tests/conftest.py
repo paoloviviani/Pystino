@@ -38,8 +38,10 @@ from gateway.models import (
     Membership,
     ModelDef,
     ModelPrice,
+    Provider,
     User,
 )
+from gateway.secrets import SecretBox, hint_for
 from gateway.security import generate_api_key
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -136,6 +138,9 @@ def settings(tmp_path: Path) -> Settings:
         valkey_url="",
         billing_currency="EUR",
         session_secret="test-secret-not-for-production",
+        # Encrypts provider credentials (ADR 0027). Distinct from the session
+        # secret on purpose, and the fixtures below need it to store a key.
+        secret_key="test-encryption-key-not-for-production",
         session_cookie_secure=False,
         persist_transcripts=True,
         # Flush on every event so transcript persistence is observable without
@@ -198,6 +203,7 @@ async def client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
 class Seeded:
     user: User
     group: Group
+    provider: Provider
     model: ModelDef
     api_key: ApiKey
     secret: str
@@ -230,10 +236,23 @@ async def seeded(session_factory: async_sessionmaker[AsyncSession]) -> Seeded:
         await db.flush()
         db.add(Membership(user_id=user.id, group_id=group.id))
 
+        # Every model needs a provider now (ADR 0027); the fake upstream is one.
+        # Its credential is stored the way a real one is — encrypted — so the
+        # tests exercise the decrypt-and-send path rather than skipping it.
+        box = SecretBox(["test-encryption-key-not-for-production"])
+        provider = Provider(
+            name="fake",
+            base_url=UPSTREAM_BASE,
+            api_key_encrypted=box.encrypt("upstream-key"),
+            api_key_hint=hint_for("upstream-key"),
+        )
+        db.add(provider)
+        await db.flush()
+
         model = ModelDef(
             name="test-model",
             upstream_model="upstream/test-model",
-            provider="fake",
+            provider_id=provider.id,
             context_window=8192,
         )
         db.add(model)
@@ -265,7 +284,14 @@ async def seeded(session_factory: async_sessionmaker[AsyncSession]) -> Seeded:
         await db.refresh(model)
         await db.refresh(api_key)
 
-        return Seeded(user=user, group=group, model=model, api_key=api_key, secret=generated.secret)
+        return Seeded(
+            user=user,
+            group=group,
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            secret=generated.secret,
+        )
 
 
 # SSE/payload builders live in helpers.py so test modules can import them

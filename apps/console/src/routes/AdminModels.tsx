@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Dialog, Input, Notice, Spinner, Table } from "@llmp/ui";
+import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner, Table } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney } from "@llmp/ui";
 import { useState } from "react";
@@ -9,7 +9,10 @@ import {
   useImportModels,
   useModelAccess,
   useModels,
+  useProviders,
   useUpdateModel,
+  useUserModelAccess,
+  useUsers,
 } from "../lib/admin";
 import type { AdminModel, DiscoveredModel } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
@@ -35,6 +38,18 @@ export function AdminModels() {
       ),
     },
     {
+      key: "provider",
+      header: "Provider",
+      render: (model) => (
+        <>
+          <div>{model.provider_name}</div>
+          {/* Deactivating a provider silently takes every model behind it out
+              of service. The catalogue is where that has to be visible. */}
+          {!model.provider_is_active && <Badge tone="danger">Provider off</Badge>}
+        </>
+      ),
+    },
+    {
       key: "price",
       header: "Price / Mtok",
       numeric: true,
@@ -54,14 +69,21 @@ export function AdminModels() {
     },
     {
       key: "access",
-      header: "Groups",
+      header: "Access",
       render: (model) =>
-        model.granted_to.length === 0 ? (
+        model.granted_to.length === 0 && model.granted_to_users.length === 0 ? (
           <span className={styles.muted}>nobody</span>
         ) : (
           <div className={styles.chips}>
             {model.granted_to.map((group) => (
               <Badge key={group}>{group}</Badge>
+            ))}
+            {/* Personal grants are unioned with group grants, so they are shown
+                alongside rather than in a separate column. */}
+            {model.granted_to_users.map((user) => (
+              <Badge key={user} tone="accent">
+                {user}
+              </Badge>
             ))}
           </div>
         ),
@@ -139,8 +161,14 @@ export function AdminModels() {
 
 function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const create = useCreateModel();
+  const providers = useProviders();
   const [name, setName] = useState("");
   const [upstream, setUpstream] = useState("");
+  const [providerId, setProviderId] = useState("");
+
+  // Only active providers: creating a model on a deactivated endpoint produces
+  // something that cannot serve a request the moment it exists.
+  const choices = (providers.data ?? []).filter((provider) => provider.is_active);
 
   return (
     <Dialog
@@ -153,11 +181,21 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
           <Button
             variant="primary"
             busy={create.isPending}
-            disabled={!name.trim() || !upstream.trim()}
+            disabled={!name.trim() || !upstream.trim() || !providerId}
             onClick={() =>
               create.mutate(
-                { name: name.trim(), upstream_model: upstream.trim() },
-                { onSuccess: () => { setName(""); setUpstream(""); onClose(); } },
+                {
+                  name: name.trim(),
+                  upstream_model: upstream.trim(),
+                  provider_id: providerId,
+                },
+                {
+                  onSuccess: () => {
+                    setName("");
+                    setUpstream("");
+                    onClose();
+                  },
+                },
               )
             }
           >
@@ -187,6 +225,25 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
         hint="What the gateway asks the provider for."
       />
 
+      <Select
+        label="Provider"
+        value={providerId}
+        onChange={(e) => setProviderId(e.target.value)}
+      >
+        <option value="">Choose an endpoint…</option>
+        {choices.map((provider) => (
+          <option key={provider.id} value={provider.id}>
+            {provider.name} — {provider.base_url}
+          </option>
+        ))}
+      </Select>
+      {choices.length === 0 && !providers.isPending && (
+        <Notice tone="warn">
+          No active provider. Add one on the Providers page first — a model has to
+          resolve to an endpoint.
+        </Notice>
+      )}
+
       <Notice tone="info">
         No group is granted access, and no price is set. Both are deliberate: a new
         model is invisible until someone chooses to expose it, and an unpriced model
@@ -196,10 +253,28 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
   );
 }
 
-/** Grant and revoke a model per group. Each toggle is its own request. */
+/**
+ * Grant and revoke a model, per group and per person.
+ *
+ * Access is the union of the two (ADR 0027), which is why they sit in one dialog:
+ * "who can use this" is a single question, and answering it from two screens
+ * invites the reading that one overrides the other. Nothing here can *remove*
+ * access a group grants — there are no denials.
+ */
 function AccessDialog({ model, onClose }: { model: AdminModel | null; onClose: () => void }) {
   const groups = useGroups();
+  const users = useUsers();
   const access = useModelAccess();
+  const userAccess = useUserModelAccess();
+  const [search, setSearch] = useState("");
+
+  const matching = (users.data ?? []).filter((user) => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return model ? model.granted_to_users.includes(user.email ?? "") : false;
+    return [user.email, user.display_name, user.subject]
+      .filter(Boolean)
+      .some((field) => String(field).toLowerCase().includes(needle));
+  });
 
   return (
     <Dialog open={model !== null} title={`Access · ${model?.name ?? ""}`} onClose={onClose}>
@@ -209,6 +284,7 @@ function AccessDialog({ model, onClose }: { model: AdminModel | null; onClose: (
         </Notice>
       ) : null}
 
+      <p className={styles.muted}>Groups</p>
       {groups.isPending ? (
         <Spinner />
       ) : (
@@ -233,9 +309,51 @@ function AccessDialog({ model, onClose }: { model: AdminModel | null; onClose: (
         </div>
       )}
 
+      <p className={styles.muted}>
+        Individual people, in addition to their groups. Search to find someone; only
+        those already granted are listed otherwise.
+      </p>
+      <Input
+        label="Find a person"
+        hideLabel
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="email or name"
+      />
+      {userAccess.error ? (
+        <Notice tone="danger">
+          {userAccess.error instanceof Error ? userAccess.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+      <div className={styles.checkList}>
+        {matching.map((user) => {
+          const granted = model ? model.granted_to_users.includes(user.email ?? "") : false;
+          return (
+            <label key={user.id} className={styles.checkItem}>
+              <input
+                type="checkbox"
+                checked={granted}
+                disabled={userAccess.isPending}
+                onChange={() =>
+                  model &&
+                  userAccess.mutate({ userId: user.id, modelId: model.id, grant: !granted })
+                }
+              />
+              <span>{user.email ?? user.display_name ?? user.subject}</span>
+            </label>
+          );
+        })}
+        {matching.length === 0 && (
+          <span className={styles.muted}>
+            {search ? "Nobody matches that." : "No individual grants."}
+          </span>
+        )}
+      </div>
+
       <Notice tone="info">
-        Absence of a grant means no access — there is no global allow-all. Revoking
-        takes effect on the next request.
+        Absence of a grant means no access — there is no global allow-all. A person
+        may reach a model through their group or personally; removing one leaves the
+        other. Revoking takes effect on the next request.
       </Notice>
     </Dialog>
   );
@@ -250,9 +368,15 @@ function AccessDialog({ model, onClose }: { model: AdminModel | null; onClose: (
  * let a provider's release notes change what users can spend money on.
  */
 function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const discovery = useDiscovery(open);
+  const providers = useProviders();
+  const [providerId, setProviderId] = useState("");
+  // "What is on offer" is only a meaningful question about one endpoint, so
+  // nothing is fetched until one is chosen.
+  const discovery = useDiscovery(open && providerId ? providerId : null);
   const importModels = useImportModels();
   const [selected, setSelected] = useState<string[]>([]);
+
+  const choices = (providers.data ?? []).filter((provider) => provider.is_active);
 
   const toggle = (id: string) =>
     setSelected((current) =>
@@ -313,9 +437,12 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           <Button
             variant="primary"
             busy={importModels.isPending}
-            disabled={selected.length === 0}
+            disabled={selected.length === 0 || !providerId}
             onClick={() =>
-              importModels.mutate(selected, { onSuccess: () => setSelected([]) })
+              importModels.mutate(
+                { providerId, upstreamModels: selected },
+                { onSuccess: () => setSelected([]) },
+              )
             }
           >
             Import {selected.length || ""}
@@ -323,7 +450,23 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
         </>
       }
     >
-      {discovery.isPending && <Spinner label="Asking the provider" />}
+      <Select
+        label="Provider"
+        value={providerId}
+        onChange={(event) => {
+          setProviderId(event.target.value);
+          setSelected([]);
+        }}
+      >
+        <option value="">Choose an endpoint…</option>
+        {choices.map((provider) => (
+          <option key={provider.id} value={provider.id}>
+            {provider.name}
+          </option>
+        ))}
+      </Select>
+
+      {providerId && discovery.isPending && <Spinner label="Asking the provider" />}
       {discovery.error ? (
         <Notice tone="danger" title="Could not read the provider catalogue">
           {discovery.error instanceof Error ? discovery.error.message : "Unknown error."}

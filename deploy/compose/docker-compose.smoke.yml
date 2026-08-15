@@ -36,3 +36,11 @@ services:
     depends_on:
       fake-upstream:
         condition: service_healthy
+
+  # Migration 0003 seeds the `default` provider from these, so the migrate job
+  # needs the same overrides the gateway gets — otherwise the upgrade points the
+  # provider at the real Cortecs endpoint instead of the fake one.
+  migrate:
+    environment:
+      GATEWAY_UPSTREAM__BASE_URL: http://fake-upstream:9099/v1
+      GATEWAY_UPSTREAM__API_KEY: fake-upstream-key

@@ -59,6 +59,13 @@ services:
     command: ["alembic", "-c", "apps/gateway/alembic.ini", "upgrade", "head"]
     environment:
       GATEWAY_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-gateway}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-gateway}
+      # Migration 0003 reads these to create the `default` provider from the
+      # endpoint this deployment was already using (ADR 0027). Without them the
+      # upgrade succeeds but backfills the wrong URL and drops the API key, so
+      # the migrate job needs the same upstream configuration as the gateway.
+      GATEWAY_UPSTREAM__BASE_URL: ${GATEWAY_UPSTREAM__BASE_URL:-https://api.cortecs.ai/v1}
+      GATEWAY_UPSTREAM__API_KEY: ${GATEWAY_UPSTREAM__API_KEY:-}
+      GATEWAY_SECRET_KEY: ${GATEWAY_SECRET_KEY:?set GATEWAY_SECRET_KEY in deploy/.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,6 +93,10 @@ services:
 
       GATEWAY_BILLING_CURRENCY: ${GATEWAY_BILLING_CURRENCY:-EUR}
       GATEWAY_SESSION_SECRET: ${GATEWAY_SESSION_SECRET:?set GATEWAY_SESSION_SECRET in deploy/.env}
+      # Encrypts provider API keys at rest (ADR 0027). Comma-separated for
+      # rotation: the first encrypts, any decrypts. Losing every value means
+      # re-entering each provider's credential, so back it up with the database.
+      GATEWAY_SECRET_KEY: ${GATEWAY_SECRET_KEY:?set GATEWAY_SECRET_KEY in deploy/.env}
       GATEWAY_SESSION_COOKIE_SECURE: ${GATEWAY_SESSION_COOKIE_SECURE:-false}
 
       GATEWAY_UPSTREAM__BASE_URL: ${GATEWAY_UPSTREAM_BASE_URL:-https://api.cortecs.ai/v1}

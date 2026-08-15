@@ -3,11 +3,13 @@ import { ApiError, request } from "./api";
 import type {
   AdminGroup,
   AdminModel,
+  AdminProvider,
   AdminUser,
   CatalogueDiscovery,
   LimitRule,
   ModelImportResponse,
   Price,
+  ProviderTestResult,
   QuotaReset,
   UsageReport,
 } from "./types";
@@ -22,6 +24,7 @@ import type {
  */
 
 export const adminKeys = {
+  providers: ["admin", "providers"] as const,
   models: ["admin", "models"] as const,
   prices: (modelId: string) => ["admin", "models", modelId, "prices"] as const,
   discovery: ["admin", "models", "discover"] as const,
@@ -36,6 +39,76 @@ export const adminKeys = {
 function retryUnlessRejected(failureCount: number, error: unknown): boolean {
   if (error instanceof ApiError && error.status < 500) return false;
   return failureCount < 2;
+}
+
+// -- providers ---------------------------------------------------------------
+
+export function useProviders() {
+  return useQuery({
+    queryKey: adminKeys.providers,
+    queryFn: () => request<AdminProvider[]>("/api/admin/providers"),
+    retry: retryUnlessRejected,
+  });
+}
+
+export interface ProviderInput {
+  name?: string;
+  description?: string | null;
+  base_url?: string;
+  /**
+   * Three-way, matching the API: omitted keeps the stored key, a value replaces
+   * it, an empty string clears it. A plain optional string cannot express
+   * "remove the credential", so the form must send `undefined` and not `""`
+   * when the field was left alone.
+   */
+  api_key?: string;
+  extra_headers?: Record<string, string>;
+  is_active?: boolean;
+}
+
+export function useCreateProvider() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ProviderInput) =>
+      request<AdminProvider>("/api/admin/providers", { method: "POST", body: input }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.providers }),
+  });
+}
+
+export function useUpdateProvider() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: ProviderInput & { id: string }) =>
+      request<AdminProvider>(`/api/admin/providers/${id}`, { method: "PATCH", body }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.providers });
+      // A deactivated provider takes its models out of service, and the
+      // catalogue shows that per model.
+      client.invalidateQueries({ queryKey: adminKeys.models });
+    },
+  });
+}
+
+export function useDeleteProvider() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request<void>(`/api/admin/providers/${id}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.providers }),
+  });
+}
+
+/**
+ * Test a provider's configuration.
+ *
+ * A failing test is a 200 with `ok: false`, so this mutation resolves rather
+ * than rejects for a provider-side problem — the detail is the useful part and
+ * an error state would hide it behind a generic message.
+ */
+export function useTestProvider() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<ProviderTestResult>(`/api/admin/providers/${id}/test`, { method: "POST" }),
+  });
 }
 
 // -- catalogue ---------------------------------------------------------------
@@ -72,11 +145,14 @@ export function useGroups() {
  * slow or down, and a page that hangs on load because a third party is having a
  * bad day is worse than one with a button on it.
  */
-export function useDiscovery(enabled: boolean) {
+export function useDiscovery(providerId: string | null) {
   return useQuery({
-    queryKey: adminKeys.discovery,
-    queryFn: () => request<CatalogueDiscovery>("/api/admin/models/discover"),
-    enabled,
+    queryKey: [...adminKeys.discovery, providerId],
+    queryFn: () =>
+      request<CatalogueDiscovery>(
+        `/api/admin/models/discover?provider_id=${encodeURIComponent(providerId ?? "")}`,
+      ),
+    enabled: providerId !== null,
     retry: false,
     staleTime: 60_000,
   });
@@ -85,7 +161,8 @@ export function useDiscovery(enabled: boolean) {
 export interface CreateModelInput {
   name: string;
   upstream_model: string;
-  provider?: string;
+  /** Required: a model with no provider cannot be routed (ADR 0027). */
+  provider_id: string;
   context_window?: number | null;
 }
 
@@ -101,7 +178,7 @@ export function useCreateModel() {
 export function useUpdateModel() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; is_active?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; is_active?: boolean; provider_id?: string }) =>
       request<AdminModel>(`/api/admin/models/${id}`, { method: "PATCH", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.models }),
   });
@@ -110,11 +187,14 @@ export function useUpdateModel() {
 export function useImportModels() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (upstreamModels: string[]) =>
-      request<ModelImportResponse>("/api/admin/models/import", {
-        method: "POST",
-        body: { models: upstreamModels.map((upstream_model) => ({ upstream_model })) },
-      }),
+    mutationFn: ({ providerId, upstreamModels }: { providerId: string; upstreamModels: string[] }) =>
+      request<ModelImportResponse>(
+        `/api/admin/models/import?provider_id=${encodeURIComponent(providerId)}`,
+        {
+          method: "POST",
+          body: { models: upstreamModels.map((upstream_model) => ({ upstream_model })) },
+        },
+      ),
     onSuccess: () => {
       // Both: the catalogue gained rows, and discovery's "available" list lost them.
       client.invalidateQueries({ queryKey: adminKeys.models });
@@ -137,6 +217,18 @@ export function useModelAccess() {
       client.invalidateQueries({ queryKey: adminKeys.models });
       client.invalidateQueries({ queryKey: adminKeys.groups });
     },
+  });
+}
+
+/** Personal model grants, unioned with group grants at request time. */
+export function useUserModelAccess() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, modelId, grant }: { userId: string; modelId: string; grant: boolean }) =>
+      request<void>(`/api/admin/users/${userId}/models/${modelId}`, {
+        method: grant ? "PUT" : "DELETE",
+      }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.models }),
   });
 }
 

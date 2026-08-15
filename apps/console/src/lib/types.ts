@@ -89,7 +89,10 @@ export interface AdminModel {
   id: string;
   name: string;
   upstream_model: string;
-  provider: string;
+  provider_id: string;
+  provider_name: string;
+  /** A model behind a deactivated provider is unreachable, and says so. */
+  provider_is_active: boolean;
   display_name: string | null;
   description: string | null;
   is_active: boolean;
@@ -98,6 +101,8 @@ export interface AdminModel {
   created_at: string;
   current_price: Price | null;
   granted_to: string[];
+  /** Users granted this model personally, on top of their groups. */
+  granted_to_users: string[];
 }
 
 export interface AdminGroup {
@@ -186,4 +191,29 @@ export interface ModelImportResult {
 
 export interface ModelImportResponse {
   results: ModelImportResult[];
+}
+
+export interface AdminProvider {
+  id: string;
+  name: string;
+  description: string | null;
+  base_url: string;
+  /** Masked. The key itself is never returned by the API (ADR 0027). */
+  api_key_hint: string;
+  has_api_key: boolean;
+  extra_headers: Record<string, string>;
+  is_active: boolean;
+  /** How many models this provider serves — the blast radius of turning it off. */
+  model_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProviderTestResult {
+  ok: boolean;
+  status_code: number | null;
+  detail: string;
+  model_count: number | null;
+  sample: string[];
+  latency_ms: number | null;
 }

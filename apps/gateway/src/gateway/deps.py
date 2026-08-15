@@ -18,15 +18,16 @@ from gateway.accounting import TokenEstimator
 from gateway.config import Settings
 from gateway.errors import AuthenticationError, PermissionError_
 from gateway.models import ApiKey, Group, User
+from gateway.providers import ProviderRegistry
 from gateway.quota import QuotaEngine, QuotaSubject
 from gateway.redaction import Redactor
+from gateway.secrets import SecretBox
 from gateway.security import (
     extract_prefix,
     parse_authorization_header,
     verify_api_key,
 )
 from gateway.types import utcnow
-from gateway.upstream import OpenAICompatibleUpstream
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +91,20 @@ def get_control_http(request: Request) -> Any:
     return request.app.state.control_http
 
 
-def get_upstream(request: Request) -> OpenAICompatibleUpstream:
-    upstream: OpenAICompatibleUpstream = request.app.state.upstream
-    return upstream
+def get_secrets(request: Request) -> SecretBox:
+    """The box that encrypts provider credentials at rest (ADR 0027)."""
+    secrets: SecretBox = request.app.state.secrets
+    return secrets
+
+
+def get_providers(request: Request) -> ProviderRegistry:
+    """The per-provider upstream clients.
+
+    Replaces the single shared upstream: which endpoint a request reaches now
+    depends on the model it named (ADR 0027).
+    """
+    registry: ProviderRegistry = request.app.state.providers
+    return registry
 
 
 def get_estimator(request: Request) -> TokenEstimator:
@@ -251,6 +263,7 @@ SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 QuotaDep = Annotated[QuotaEngine, Depends(get_quota_engine)]
 RedactorDep = Annotated[Redactor, Depends(get_redactor)]
-UpstreamDep = Annotated[OpenAICompatibleUpstream, Depends(get_upstream)]
+ProvidersDep = Annotated[ProviderRegistry, Depends(get_providers)]
+SecretsDep = Annotated[SecretBox, Depends(get_secrets)]
 ControlHttpDep = Annotated[Any, Depends(get_control_http)]
 EstimatorDep = Annotated[TokenEstimator, Depends(get_estimator)]
