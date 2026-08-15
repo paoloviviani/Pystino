@@ -213,6 +213,18 @@ class Settings(BaseSettings):
 
     api_key_prefix: str = "gwk"
 
+    # -- console (ADR 0023) ---------------------------------------------------
+    #
+    # Two independent gates, deliberately. The image may be built without the
+    # console at all (`ARG INCLUDE_CONSOLE=false`), in which case there are no
+    # assets to serve; and an operator may want it off on an image that has them,
+    # without a rebuild. Neither gate can half-open: no assets means no route,
+    # whatever the flag says.
+    console_enabled: bool = True
+    # Where the built SPA lives inside the image. Empty means "look next to the
+    # package", which is where the Dockerfile puts it.
+    console_dir: str = ""
+
     # How often the in-flight assistant text is flushed to the database while
     # streaming. Mobile clients get suspended mid-generation; a response that
     # only ever existed in the stream is lost. ADR 0007.

@@ -1,0 +1,59 @@
+/* Wide tables scroll inside their card rather than pushing the page sideways. */
+.scroll {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-base);
+}
+
+.caption {
+  padding: 0 var(--space-5) var(--space-3);
+  color: var(--colour-text-muted);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+.table th {
+  padding: var(--space-2) var(--space-5);
+  border-bottom: var(--border-width) solid var(--colour-border);
+  background: var(--colour-surface-sunken);
+  color: var(--colour-text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: var(--border-width) solid var(--colour-border);
+  vertical-align: baseline;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.table tfoot td {
+  border-top: var(--border-width) solid var(--colour-border-strong);
+  border-bottom: none;
+  font-weight: var(--weight-bold);
+}
+
+.numeric {
+  text-align: right;
+  /* Tabular figures: digits share a width, so a column of money lines up.
+     Without this, "1.11" is narrower than "8.88" and the column looks ragged. */
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  padding: var(--space-6) var(--space-5);
+  color: var(--colour-text-muted);
+  text-align: center;
+}

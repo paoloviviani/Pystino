@@ -68,6 +68,11 @@ services:
     build:
       context: ../..
       dockerfile: apps/gateway/Dockerfile
+      args:
+        # The console is additive and the API is identical without it, so the
+        # dev stack includes it. Set INCLUDE_CONSOLE=false for a headless image
+        # (ADR 0023). Reachable at http://localhost:8000/console
+        INCLUDE_CONSOLE: ${INCLUDE_CONSOLE:-true}
     restart: unless-stopped
     ports:
       - "${GATEWAY_PORT:-8000}:8000"

@@ -26,7 +26,7 @@ from gateway.quota import (
     ValkeyCounterStore,
 )
 from gateway.redaction import build_redactor
-from gateway.routers import admin, auth, chat, health, me, models
+from gateway.routers import admin, auth, chat, console, health, me, models
 from gateway.upstream import OpenAICompatibleUpstream, build_http_client
 
 logger = logging.getLogger(__name__)
@@ -205,6 +205,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router)
     app.include_router(me.router)
     app.include_router(admin.router)
+
+    # Last, so a console route can never shadow an API one. Mounts only if the
+    # assets are in the image and the setting allows it (ADR 0023).
+    app.state.console_mounted = console.mount_console(app, resolved)
 
     return app
 

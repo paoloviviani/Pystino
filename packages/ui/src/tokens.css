@@ -1,0 +1,180 @@
+/*
+ * Design tokens.
+ *
+ * Plain CSS custom properties, deliberately. Every value the console and the
+ * Phase 3 chat app must agree on lives here, and a consumer needs no build tool,
+ * no plugin and no configuration to use them — importing this file is the whole
+ * integration. That is what keeps `packages/ui` usable by an application whose
+ * toolchain has not been chosen yet.
+ *
+ * Components reference tokens and never literal values. A component with
+ * `padding: 12px` in it is a component that cannot be restyled.
+ *
+ * The look is deliberately quiet: warm off-white paper, warm grey text, one
+ * muted steel-blue accent. This is a page people read numbers off, closer to a
+ * financial statement than to a dashboard. There is **no dark theme and no
+ * automatic dark mode** — a dark console was not wanted. Adding one later means
+ * adding one block of token overrides here and changing nothing else, which is
+ * most of the argument for tokens in the first place.
+ */
+
+:root {
+  /* -- colour ---------------------------------------------------------------
+   * Warm neutrals rather than blue-greys: the same layout reads as calm on warm
+   * paper and as clinical on cool. One accent, because a console is mostly
+   * tables and a second accent would compete with the semantic colours below.
+   */
+  --colour-bg: #f7f6f3;
+  --colour-surface: #ffffff;
+  --colour-surface-raised: #ffffff;
+  --colour-surface-sunken: #f2f0ec;
+  --colour-border: #e2dfd9;
+  --colour-border-strong: #c6c2ba;
+
+  /* Warm near-black, not #000: pure black on white is harsher than anything
+   * printed, and this is a page of figures someone reads for a while. */
+  --colour-text: #26231f;
+  --colour-text-muted: #6a655d;
+  --colour-text-faint: #948e85;
+  --colour-text-inverse: #ffffff;
+
+  --colour-accent: #35618e;
+  --colour-accent-hover: #2a4d71;
+  --colour-accent-subtle: #eaf0f6;
+
+  /* Semantic. `warn` is a budget nearing its limit, `danger` one past it — the
+   * two states an operator scanning a quota page is looking for. Muted on
+   * purpose: a red that shouts is a red that gets ignored. */
+  --colour-ok: #2f6b4f;
+  --colour-ok-subtle: #e8f1eb;
+  --colour-warn: #8a6420;
+  --colour-warn-subtle: #f8efdc;
+  --colour-danger: #a5382e;
+  --colour-danger-subtle: #f8e8e6;
+
+  /* -- typography -----------------------------------------------------------
+   * System font stack: no webfont request, no layout shift, and nothing to
+   * self-host for a licence to be checked. Money and identifiers use the mono
+   * stack so digits line up down a column.
+   */
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.625rem;
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-bold: 600;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+
+  /* -- space ----------------------------------------------------------------
+   * A 4px scale. Named by step rather than by size, so "space-3" stays correct
+   * if the scale is ever retuned.
+   */
+  --space-0: 0;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* Barely-there shadows. Depth is carried by the border; a heavy drop shadow
+   * on a page of cards makes it look like a slide deck. */
+  --shadow-sm: 0 1px 2px rgb(38 35 31 / 5%);
+  --shadow-md: 0 2px 8px rgb(38 35 31 / 7%);
+
+  --border-width: 1px;
+
+  /* One focus token, used by every interactive element, because a focus
+   * indicator that varies by component is one that will be missing somewhere. */
+  --focus-ring: 0 0 0 2px var(--colour-surface), 0 0 0 4px var(--colour-accent);
+
+  --layout-max-width: 76rem;
+  --layout-sidebar-width: 14rem;
+}
+
+/*
+ * Reset, kept to the handful of rules that actually matter rather than a
+ * wholesale normalise: border-box everywhere, no surprise margins, media that
+ * cannot overflow its container, and form controls that inherit the page font
+ * instead of the browser's default.
+ */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body,
+h1,
+h2,
+h3,
+h4,
+p,
+figure,
+blockquote,
+dl,
+dd {
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  /* Tells the browser this page is light, so form controls and scrollbars are
+   * rendered light even for a reader whose system is set to dark. Without it
+   * they get dark widgets on a warm-white page. */
+  color-scheme: light;
+}
+
+body {
+  min-height: 100vh;
+  background: var(--colour-bg);
+  color: var(--colour-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+img,
+picture,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+input,
+button,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* Honour a reader who has asked the operating system for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
