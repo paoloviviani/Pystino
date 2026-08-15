@@ -1,6 +1,6 @@
 # 0022 — Administration is an API, and admin follows an IdP group
 
-- Status: accepted
+- Status: accepted; **UI stance superseded by [0023](0023-admin-console.md)**
 - Date: 2026-08-15
 
 ## Context
@@ -29,6 +29,11 @@ nothing.
 **An admin API under `/api/admin`, with Swagger at `/docs` as the operator console.
 No HTML panel in the gateway.** Presentation belongs to `apps/web` in Phase 2; a
 second UI here would be a thing to delete later.
+
+> **Superseded on 2026-08-15.** That reasoning rested on `apps/web` arriving in Phase
+> 2. It moved to Phase 3, so the console arrives in the gateway after all — see
+> [0023](0023-admin-console.md). Everything below about the *API* still holds, and the
+> console is only a client of it.
 
 Routes: models (list, create, patch), prices (list, append), group access (grant,
 revoke), limit rules (list, create, patch, delete), users (list, patch), and usage
