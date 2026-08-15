@@ -21,16 +21,17 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Response, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import Row, case, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from gateway.accounting.cost import select_price
-from gateway.deps import AdminUserDep, ControlHttpDep, SessionDep, SettingsDep
+from gateway.deps import AdminUserDep, ControlHttpDep, QuotaDep, SessionDep, SettingsDep
 from gateway.errors import BadRequestError, GatewayError, UpstreamUnavailableError
 from gateway.models import (
     ApiKey,
@@ -43,12 +44,22 @@ from gateway.models import (
     ModelDef,
     ModelPrice,
     PriceSource,
+    QuotaReset,
     UsageRecord,
     UsageSource,
     UsageStatus,
     User,
 )
+from gateway.periods import PeriodKind
 from gateway.pricing import CatalogueUnavailable, fetch_catalogue, parse_catalogue
+from gateway.reporting import (
+    GroupBy,
+    GroupByParam,
+    ReportFilter,
+    build_report,
+    report_to_csv,
+    resolve_period,
+)
 from gateway.schemas import (
     CatalogueDiscoveryResponse,
     CatalogueDriftRow,
@@ -56,6 +67,7 @@ from gateway.schemas import (
     GroupAdminResponse,
     GroupUsageRow,
     LimitRuleCreateRequest,
+    LimitRuleResetRequest,
     LimitRuleResponse,
     LimitRuleUpdateRequest,
     ModelAdminResponse,
@@ -66,6 +78,8 @@ from gateway.schemas import (
     ModelUpdateRequest,
     PriceCreateRequest,
     PriceResponse,
+    QuotaResetResponse,
+    UsageReport,
     UserAdminResponse,
     UserUpdateRequest,
 )
@@ -584,7 +598,7 @@ async def revoke_model_access(
 # -- limit rules ------------------------------------------------------------
 
 
-def _limit_response(rule: LimitRule) -> LimitRuleResponse:
+def _limit_response(rule: LimitRule, current: Decimal | None = None) -> LimitRuleResponse:
     return LimitRuleResponse(
         id=rule.id,
         name=rule.name,
@@ -592,19 +606,44 @@ def _limit_response(rule: LimitRule) -> LimitRuleResponse:
         scope_id=rule.scope_id,
         metric=rule.metric.value,
         window_seconds=rule.window_seconds,
+        period=rule.period.value if rule.period else None,
+        window_label=rule.window_label,
         limit_value=rule.limit_value,
         is_active=rule.is_active,
+        current_value=current,
+        # Requires `resets` to be loaded; every caller here does so explicitly,
+        # because touching an unloaded relationship from async code raises
+        # MissingGreenlet rather than quietly emitting a query.
+        last_reset_at=max((reset.effective_at for reset in rule.resets), default=None),
+    )
+
+
+async def _load_rules(session: SessionDep) -> Sequence[LimitRule]:
+    return (
+        (
+            await session.execute(
+                select(LimitRule)
+                .options(selectinload(LimitRule.resets))
+                .order_by(LimitRule.scope, LimitRule.metric)
+            )
+        )
+        .scalars()
+        .all()
     )
 
 
 @router.get("/limits", response_model=list[LimitRuleResponse])
-async def list_limits(admin: AdminUserDep, session: SessionDep) -> list[LimitRuleResponse]:
-    rules = (
-        (await session.execute(select(LimitRule).order_by(LimitRule.scope, LimitRule.metric)))
-        .scalars()
-        .all()
-    )
-    return [_limit_response(rule) for rule in rules]
+async def list_limits(
+    admin: AdminUserDep, session: SessionDep, quota: QuotaDep
+) -> list[LimitRuleResponse]:
+    """Every rule, with how much of it is used right now.
+
+    ``current_value`` comes from the live counters, so it already accounts for any
+    reset. It is absent — not zero — when the counter store cannot be reached.
+    """
+    rules = await _load_rules(session)
+    current = await quota.current_values(rules)
+    return [_limit_response(rule, current.get(rule.id)) for rule in rules]
 
 
 @router.post("/limits", response_model=LimitRuleResponse, status_code=status.HTTP_201_CREATED)
@@ -637,6 +676,12 @@ async def create_limit(
         ).scalar_one_or_none()
         if exists is None:
             raise NotFoundError(f"No user with id {payload.scope_id}.")
+    elif scope is LimitScope.API_KEY:
+        exists = (
+            await session.execute(select(ApiKey.id).where(ApiKey.id == payload.scope_id))
+        ).scalar_one_or_none()
+        if exists is None:
+            raise NotFoundError(f"No API key with id {payload.scope_id}.")
 
     rule = LimitRule(
         name=payload.name,
@@ -644,6 +689,7 @@ async def create_limit(
         scope_id=payload.scope_id,
         metric=LimitMetric(payload.metric),
         window_seconds=payload.window_seconds,
+        period=PeriodKind(payload.period) if payload.period else None,
         limit_value=payload.limit_value,
         is_active=payload.is_active,
     )
@@ -656,8 +702,19 @@ async def create_limit(
             "A rule already exists for that scope, metric and window. Update it "
             "instead of adding a second one."
         ) from exc
-    await session.refresh(rule)
+    await session.refresh(rule, attribute_names=["resets"])
     return _limit_response(rule)
+
+
+async def _load_rule(session: SessionDep, rule_id: uuid.UUID) -> LimitRule:
+    rule = (
+        await session.execute(
+            select(LimitRule).where(LimitRule.id == rule_id).options(selectinload(LimitRule.resets))
+        )
+    ).scalar_one_or_none()
+    if rule is None:
+        raise NotFoundError(f"No limit rule with id {rule_id}.")
+    return rule
 
 
 @router.patch("/limits/{rule_id}", response_model=LimitRuleResponse)
@@ -666,17 +723,89 @@ async def update_limit(
     payload: LimitRuleUpdateRequest,
     admin: AdminUserDep,
     session: SessionDep,
+    quota: QuotaDep,
 ) -> LimitRuleResponse:
-    rule = (
-        await session.execute(select(LimitRule).where(LimitRule.id == rule_id))
-    ).scalar_one_or_none()
-    if rule is None:
-        raise NotFoundError(f"No limit rule with id {rule_id}.")
+    """Change a rule's name, limit or active flag.
+
+    Not its window or scope: those decide the counter key, so changing one would
+    abandon the consumption recorded so far and read as a quota that reset itself.
+    """
+    rule = await _load_rule(session, rule_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(rule, field, value)
     await session.commit()
-    await session.refresh(rule)
-    return _limit_response(rule)
+    await session.refresh(rule, attribute_names=["resets"])
+    current = await quota.current_values([rule])
+    return _limit_response(rule, current.get(rule.id))
+
+
+@router.post("/limits/{rule_id}/reset", response_model=QuotaResetResponse)
+async def reset_limit(
+    rule_id: uuid.UUID,
+    payload: LimitRuleResetRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+) -> QuotaResetResponse:
+    """Set a rule's consumption back to zero, effective immediately.
+
+    The feature Cortecs budgets do not have, and the one an administrator actually
+    needs mid-project: a group hits its monthly cap on the 20th, the spend is
+    legitimate, and the alternative is either raising the limit permanently or
+    telling them to wait eleven days.
+
+    Two things this deliberately is not:
+
+    * **Not a change to the bill.** Only what the quota counts moves; the usage
+      records behind every report are untouched, so the monthly total is exactly
+      what it was a second ago. Enforcement and accounting stay separate.
+    * **Not schedulable.** Resets take effect now. A future-dated reset is a
+      scheduler, with a scheduler's failure modes, and can be driven from outside
+      by calling this endpoint if it is ever wanted.
+
+    The reason is required and kept: the audit trail is the point.
+    """
+    rule = await _load_rule(session, rule_id)
+    reset = QuotaReset(rule_id=rule.id, created_by=admin.id, reason=payload.reason)
+    session.add(reset)
+    await session.commit()
+    await session.refresh(reset)
+    return QuotaResetResponse(
+        id=reset.id,
+        rule_id=reset.rule_id,
+        effective_at=reset.effective_at,
+        reason=reset.reason,
+        created_by=reset.created_by,
+        created_by_email=admin.email,
+    )
+
+
+@router.get("/limits/{rule_id}/resets", response_model=list[QuotaResetResponse])
+async def list_resets(
+    rule_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> list[QuotaResetResponse]:
+    """Who zeroed this rule, when, and why. Newest first."""
+    await _load_rule(session, rule_id)
+    rows = (
+        await session.execute(
+            select(QuotaReset, User.email)
+            .outerjoin(User, User.id == QuotaReset.created_by)
+            .where(QuotaReset.rule_id == rule_id)
+            .order_by(QuotaReset.effective_at.desc())
+        )
+    ).all()
+    return [
+        QuotaResetResponse(
+            id=reset.id,
+            rule_id=reset.rule_id,
+            effective_at=reset.effective_at,
+            reason=reset.reason,
+            created_by=reset.created_by,
+            # Null once the account is erased. The reset row itself survives, which
+            # is why created_by is ON DELETE SET NULL rather than CASCADE.
+            created_by_email=email,
+        )
+        for reset, email in rows
+    ]
 
 
 @router.delete("/limits/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -778,6 +907,79 @@ async def update_user(
 
     listing = await list_users(admin, session)
     return next(entry for entry in listing if entry.id == user_id)
+
+
+# -- reports ------------------------------------------------------------------
+
+
+@router.get("/reports/usage", response_model=UsageReport)
+async def usage_report(
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    period: str = "",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    group_by: GroupByParam = "group",
+    group_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
+    api_key_id: uuid.UUID | None = None,
+    model: str | None = None,
+) -> UsageReport:
+    """Chargeback reporting: spend over a calendar period, broken down.
+
+    ``period`` is a name — ``2026-08``, ``2026-Q3``, ``2026``, ``2026-W33``,
+    ``2026-08-15`` — resolved in the billing timezone
+    (``GATEWAY_BILLING_TIMEZONE``, default Europe/Rome), so the same request
+    returns the same numbers next year. Defaults to the current month. Pass
+    ``start`` and ``end`` instead for an arbitrary range.
+
+    The boundaries are the ones calendar quotas use, so a monthly budget and this
+    report cannot disagree about when August began.
+    """
+    return await build_report(
+        session,
+        ReportFilter(
+            period=resolve_period(period, start, end, settings.billing_timezone),
+            group_by=GroupBy(group_by),
+            group_id=group_id,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            model_name=model,
+        ),
+        currency=settings.billing_currency,
+        timezone=settings.billing_timezone,
+    )
+
+
+@router.get("/reports/usage.csv", response_class=PlainTextResponse)
+async def usage_report_csv(
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    period: str = "",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    group_by: GroupByParam = "group",
+    group_id: uuid.UUID | None = None,
+    user_id: uuid.UUID | None = None,
+    api_key_id: uuid.UUID | None = None,
+    model: str | None = None,
+) -> Response:
+    """The same report as CSV, for finance.
+
+    A separate path rather than a ``format=csv`` parameter, so the JSON endpoint
+    keeps one response type and the download has a filename a browser will use.
+    """
+    report = await usage_report(
+        admin, session, settings, period, start, end, group_by, group_id, user_id, api_key_id, model
+    )
+    filename = f"usage-{report.period.label}-by-{report.group_by}.csv"
+    return Response(
+        content=report_to_csv(report),
+        media_type="text/csv; charset=utf-8",
+        headers={"content-disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 # -- usage ------------------------------------------------------------------

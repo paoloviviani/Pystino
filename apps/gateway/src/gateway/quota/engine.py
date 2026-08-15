@@ -238,6 +238,47 @@ class QuotaEngine:
             return 0
         return int(max(reset.effective_at for reset in rule.resets).timestamp())
 
+    async def current_values(
+        self, rules: Sequence[LimitRule], *, now: float | None = None
+    ) -> dict[uuid.UUID, Decimal]:
+        """Consumption so far for each rule, in the rule's own metric.
+
+        For display. Reads the same counters enforcement reads — including the
+        reset watermark — so what an administrator sees is what the next request
+        will be judged against, rather than a separate calculation that can drift
+        from it.
+
+        Best-effort: if the counter store cannot answer this returns nothing at
+        all, because a page rendering "EUR 0.00 of EUR 10" during an outage is
+        worse than one rendering nothing.
+        """
+        if not rules:
+            return {}
+        moment = now if now is not None else utcnow().timestamp()
+        as_datetime = datetime.fromtimestamp(moment, tz=UTC)
+
+        queries = []
+        for rule in rules:
+            spec, period = self.window_for(rule, as_datetime)
+            queries.append(
+                WindowQuery(
+                    scope=ScopeRef(rule.scope, rule.scope_id),
+                    metric=rule.metric,
+                    spec=spec,
+                    period=period,
+                    reset_epoch=self.reset_epoch_for(rule),
+                )
+            )
+
+        try:
+            totals = await self._totals(queries, now=moment)
+        except QuotaUnavailable:
+            return {}
+        return {
+            rule.id: from_units(rule.metric, total.units)
+            for rule, total in zip(rules, totals, strict=True)
+        }
+
     async def rebuild_if_cache_is_cold(
         self, session: AsyncSession, *, now: float | None = None
     ) -> bool:

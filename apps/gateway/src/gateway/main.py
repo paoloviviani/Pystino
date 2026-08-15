@@ -96,6 +96,9 @@ async def init_app_state(
         store,
         settings=settings.quota,
         fallback=DatabaseCounterStore(session_factory),
+        # The same timezone reporting uses, so a monthly budget and a monthly
+        # report agree about when the month started (ADR 0024).
+        billing_timezone=settings.billing_timezone,
     )
     app.state.redactor = build_redactor(settings.redaction)
     app.state.token_estimator = DEFAULT_ESTIMATOR
