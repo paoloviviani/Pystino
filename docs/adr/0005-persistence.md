@@ -32,8 +32,22 @@ billing.
   timezone-aware UTC. Rolling-window quota arithmetic mixing naive and aware
   datetimes fails only under load, near midnight, or in another timezone. Binding a
   naive datetime raises rather than guessing.
-- **Enums as `VARCHAR` + `CHECK`, not native PostgreSQL enums** (`native_enum=False`).
+- **Enums as plain `VARCHAR`, not native PostgreSQL enums** (`native_enum=False`).
   Native enums need `CREATE TYPE` and make every added value a migration with a lock.
+
+  > **Corrected 2026-08-15.** This originally read "`VARCHAR` + `CHECK` … a CHECK
+  > constraint gives the same protection", which was wrong. SQLAlchemy's
+  > `Enum(native_enum=False)` defaults to `create_constraint=False`, so no CHECK is
+  > emitted and the column is a bare `VARCHAR` — verified against the live database,
+  > which has only the three constraints this schema names explicitly. Values are
+  > validated in the application (`validate_strings=True`), not by the database.
+  >
+  > Left as it is, deliberately. Adding the CHECK would restore the protection and
+  > reintroduce exactly the cost the decision was avoiding: a CHECK has to be dropped
+  > and recreated to add a value, which is the same migration-with-a-lock as a native
+  > enum. Adding `api_key` to `LimitScope` in migration 0002 needed no DDL at all,
+  > which is the benefit in practice. The trade accepted: a bad value written by
+  > something other than the application is not rejected by the database.
 - **Identity foreign keys are nullable with `ON DELETE SET NULL`.** Erasing a user
   under GDPR Art. 17 must not require deleting or falsifying the financial ledger.
   `model_name` is denormalised onto every usage row for the same reason.

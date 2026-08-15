@@ -183,6 +183,13 @@ class Settings(BaseSettings):
     # the redis:// scheme are still what you use. ADR 0006.
     valkey_url: str = "redis://localhost:6379/0"
 
+    # Calendar boundaries for billing periods and calendar quotas are computed in
+    # this timezone, not UTC. A foundation's January starts at midnight locally, and
+    # a UTC boundary misallocates an hour of spend at each end of every month.
+    # One implementation serves both, which is what makes a monthly budget and a
+    # monthly report agree (ADR 0024, ADR 0025).
+    billing_timezone: str = "Europe/Rome"
+
     # All money is denominated in this currency. Prices in any other currency are
     # rejected rather than silently converted, because a wrong exchange rate
     # produces plausible-looking wrong invoices. ADR 0008.

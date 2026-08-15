@@ -51,52 +51,32 @@ Calendar counters need no buckets: one key per period label
 changes name at the boundary so the reset needs no scheduling. Exact rather than
 approximated, which is what lets a budget reconcile with a report.
 
-### 3. Scopes, including "each"
+### 3. Scopes: global, group, user, api_key — all explicit
 
 `api_key` joins global, group and user. `usage_records.api_key_id` already exists, so
-this is an enum and a lookup, not a schema change.
+this is an enum and a lookup, not a schema change. "This CI key gets €5 per month" is
+a real need and was previously inexpressible.
 
-More importantly, `scope_id` becomes nullable for the non-global scopes, with a
-distinct meaning:
+**`scope_id` stays mandatory for every non-global scope.** A rule names exactly what it
+governs, or it is a global rule.
 
-| `scope` | `scope_id` | Means |
-|---|---|---|
-| `global` | NULL | everyone, combined, one pool |
-| `user` | a user id | that user |
-| `user` | **NULL** | **each user, individually** |
-| `group` / `api_key` | id or NULL | likewise |
+An earlier draft proposed `scope_id IS NULL` meaning "each entity individually",
+copying Cortecs' "shared limit applied individually to every user". It was rejected:
+the failure mode is a rule that looks narrow and is not, and over-scoping a spending
+cap is discovered by someone being unable to work.
 
-The `NULL` form is the "shared limit applied individually" idea, and it is what makes
-quotas safe by default: "every user gets €20 per month" covers people who join next
-month without anyone remembering to write a rule for them. Without it, the default
-state for a new user is *unlimited*.
+The cost, stated plainly: **a new user has no per-user limit until someone writes one.**
+They are not unbounded — a global rule caps total spend, and a group rule caps their
+group — but the per-user ceiling has to be created deliberately. Explicit over
+implicit, chosen knowingly.
 
-### 4. An explicit rule shadows a default of the same shape
+A pleasant consequence is that there is no precedence rule at all. Every rule is
+specific, every applicable rule applies, the tightest wins, and
+[0009](0009-quota-model.md)'s refusal of "most specific wins" survives untouched. The
+resolution step that would have expanded defaults and computed shadowing — the place
+the first subtle bug was going to live — simply does not exist.
 
-This needs care, because [0009](0009-quota-model.md) deliberately rejected precedence:
-"most specific wins reliably surprises people when a user-scoped rule silently raises a
-group ceiling."
-
-That refusal stands. What is added is much narrower:
-
-> A rule for a **specific** entity shadows the **`scope_id IS NULL` default** of the
-> same `(scope, metric, window)`. Rules of *different* scopes, metrics or windows
-> continue to stack conjunctively, with no precedence between them.
-
-Why the narrow version is necessary: a default of €20 per user and a conjunctive-only
-model make it impossible to *grant* anyone more than €20 — the default keeps capping
-them. Shadowing lets "every user gets €20, except alice who gets €100" be expressed at
-all.
-
-Why it does not reintroduce the thing 0009 rejected: shadowing operates only between a
-default and an explicit rule **of identical shape**, on the same counter. It never lets
-a user rule loosen a *group* ceiling, or an hourly rule loosen a weekly one. Those
-still stack, and the tightest still wins.
-
-The console must show this plainly — an entity's effective rules, and which default
-each one shadows — because a rule that silently does nothing is worse than no rule.
-
-### 5. Resets are watermarks, not counter mutations
+### 4. Resets are watermarks, not counter mutations
 
 The feature Cortecs lacks, and the one with a trap in it.
 
@@ -112,6 +92,11 @@ So a reset is a **fact stored in the database**:
 ```
 quota_resets(id, rule_id, effective_at, created_by, reason, created_at)
 ```
+
+Resets take effect **immediately**; `effective_at` records when the reset happened, not
+a schedule. Scheduling was considered and left out — a watermark supports a future
+instant trivially, but nothing needs it yet, and an external scheduled call to the
+endpoint covers it if that changes.
 
 and consumption for a rule becomes
 
@@ -144,15 +129,13 @@ No deletion, no race, no partial state.
 
 ## Consequences
 
-- Migration: `limit_rules.window_seconds` becomes nullable, `period` is added, the
-  scope CHECK relaxes to allow NULL `scope_id` on non-global scopes, `api_key` joins
-  the scope enum, and `quota_resets` is created. Existing rules are all specific,
-  rolling, and unaffected.
-- `ScopeRef` currently *raises* when a non-global scope has no id; that validation
-  inverts for defaults and must be reworked deliberately rather than deleted.
-- Rule evaluation gains a resolution step — expand defaults to the entities in play,
-  drop those shadowed by explicit rules — which is the first place a subtle bug will
-  live. It deserves a test matrix of its own, not just examples.
+- Migration: `limit_rules.window_seconds` becomes nullable, `period` is added with a
+  CHECK enforcing exactly one of the two, `api_key` joins the scope enum, and
+  `quota_resets` is created. The scope CHECK is unchanged — `scope_id` stays mandatory
+  for non-global scopes. Existing rules are all rolling and unaffected.
+- `ScopeRef`'s existing validation (raise when a non-global scope has no id) is correct
+  as written and stays.
+- Rule evaluation gains no resolution step: every rule names its target.
 - Error messages should name the breached rule *and* the time until it resets, as
   Cortecs does. For calendar rules that time is exact rather than the bucket-derived
   estimate used for rolling windows.

@@ -23,13 +23,16 @@ import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from gateway.config import QuotaSettings
 from gateway.models import LimitMetric, LimitRule, LimitScope
+from gateway.periods import Period, PeriodKind, period_containing
 from gateway.quota.counters import (
     CounterDelta,
     CounterStore,
@@ -53,6 +56,17 @@ _TRACEBACK_INTERVAL_SECONDS = 60.0
 # QuotaEngine.rebuild_if_cache_is_cold.
 _REBUILD_MARKER_KEY = "q:seeded"
 
+# Approximate span of each calendar period, used only to size the rebuild marker's
+# TTL. Upper bounds on purpose: a marker that lives slightly too long is harmless,
+# one that expires early causes a needless rebuild.
+_CALENDAR_SPAN_SECONDS = {
+    PeriodKind.DAY: 86_400,
+    PeriodKind.WEEK: 7 * 86_400,
+    PeriodKind.MONTH: 31 * 86_400,
+    PeriodKind.QUARTER: 92 * 86_400,
+    PeriodKind.YEAR: 366 * 86_400,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class QuotaSubject:
@@ -60,6 +74,7 @@ class QuotaSubject:
 
     user_id: uuid.UUID | None
     group_id: uuid.UUID | None
+    api_key_id: uuid.UUID | None = None
 
     def scope_refs(self) -> list[ScopeRef]:
         refs = [ScopeRef(LimitScope.GLOBAL)]
@@ -67,6 +82,8 @@ class QuotaSubject:
             refs.append(ScopeRef(LimitScope.GROUP, self.group_id))
         if self.user_id is not None:
             refs.append(ScopeRef(LimitScope.USER, self.user_id))
+        if self.api_key_id is not None:
+            refs.append(ScopeRef(LimitScope.API_KEY, self.api_key_id))
         return refs
 
 
@@ -96,10 +113,11 @@ class Violation:
     retry_after_seconds: int
 
     def describe(self) -> str:
-        scope = self.rule.scope.value
+        # window_label renders either kind: "3600s" or "month". Reading
+        # window_seconds directly here printed "per Nones" for a calendar rule.
         return (
-            f"{scope} limit of {self.limit} {self.rule.metric.value}"
-            f" per {self.rule.window_seconds}s exceeded (current {self.current})"
+            f"{self.rule.scope.value} limit of {self.limit} {self.rule.metric.value}"
+            f" per {self.rule.window_label} exceeded (current {self.current})"
         )
 
 
@@ -145,10 +163,14 @@ class QuotaEngine:
         *,
         settings: QuotaSettings,
         fallback: CounterStore | None = None,
+        billing_timezone: str = "Europe/Rome",
     ) -> None:
         self._store = store
         self._fallback = fallback
         self._settings = settings
+        # The same timezone reporting uses, so a calendar budget and a monthly report
+        # share one definition of when the period starts (ADR 0024, ADR 0025).
+        self._billing_timezone = billing_timezone
         # When each distinct failure last logged a traceback.
         self._logged_at: dict[str, float] = {}
 
@@ -175,9 +197,46 @@ class QuotaEngine:
             conditions.append(
                 (LimitRule.scope == LimitScope.USER) & (LimitRule.scope_id == subject.user_id)
             )
+        if subject.api_key_id is not None:
+            conditions.append(
+                (LimitRule.scope == LimitScope.API_KEY) & (LimitRule.scope_id == subject.api_key_id)
+            )
 
-        stmt = select(LimitRule).where(LimitRule.is_active.is_(True), or_(*conditions))
+        stmt = (
+            select(LimitRule)
+            .where(LimitRule.is_active.is_(True), or_(*conditions))
+            # Resets come along: the watermark is part of evaluating the rule, not a
+            # separate lookup, and loading it lazily here would be a query per rule.
+            .options(selectinload(LimitRule.resets))
+            # Sessions are created with expire_on_commit=False (db.py), so an
+            # already-loaded `resets` collection is *not* refreshed by a later
+            # selectinload in the same session — SQLAlchemy leaves populated
+            # collections alone. A reset created and committed earlier in the same
+            # session would then be invisible to enforcement. Costs no extra query:
+            # the rows are being fetched either way.
+            .execution_options(populate_existing=True)
+        )
         return list((await session.execute(stmt)).scalars().all())
+
+    def window_for(
+        self, rule: LimitRule, moment: datetime
+    ) -> tuple[WindowSpec | None, Period | None]:
+        """The rule's window: rolling spec or calendar period, never both."""
+        if rule.period is not None:
+            return None, period_containing(rule.period, moment, timezone=self._billing_timezone)
+        assert rule.window_seconds is not None  # guaranteed by ck_limit_rules_one_window_kind
+        return self._spec(rule.window_seconds), None
+
+    @staticmethod
+    def reset_epoch_for(rule: LimitRule) -> int:
+        """Seconds-since-epoch of the rule's latest reset, or 0 if never reset.
+
+        Goes into the counter key rather than being subtracted afterwards, so a reset
+        renames the keys and the old values orphan (ADR 0025).
+        """
+        if not rule.resets:
+            return 0
+        return int(max(reset.effective_at for reset in rule.resets).timestamp())
 
     async def rebuild_if_cache_is_cold(
         self, session: AsyncSession, *, now: float | None = None
@@ -212,7 +271,16 @@ class QuotaEngine:
         moment = now if now is not None else utcnow().timestamp()
 
         rules = list(
-            (await session.execute(select(LimitRule).where(LimitRule.is_active.is_(True))))
+            (
+                await session.execute(
+                    select(LimitRule)
+                    .where(LimitRule.is_active.is_(True))
+                    # Resets are read below, and touching an unloaded relationship
+                    # from async code raises MissingGreenlet — the same trap that
+                    # bit user provisioning once already.
+                    .options(selectinload(LimitRule.resets))
+                )
+            )
             .scalars()
             .all()
         )
@@ -221,7 +289,18 @@ class QuotaEngine:
 
         # Generously longer than any window, so a rebuild happens only when the
         # cache genuinely lost its contents rather than on every window rollover.
-        marker_ttl = max(rule.window_seconds for rule in rules) * 4
+        # A calendar rule has no window_seconds, so its span stands in — approximate
+        # is fine, this only sizes a TTL.
+        spans: list[int] = []
+        for rule in rules:
+            if rule.window_seconds is not None:
+                spans.append(rule.window_seconds)
+            elif rule.period is not None:
+                spans.append(_CALENDAR_SPAN_SECONDS[rule.period])
+            else:
+                # ck_limit_rules_one_window_kind forbids this; belt and braces.
+                spans.append(366 * 86_400)
+        marker_ttl = max(spans) * 4
 
         try:
             claimed = await self._store.claim_once(_REBUILD_MARKER_KEY, ttl_seconds=marker_ttl)
@@ -240,9 +319,12 @@ class QuotaEngine:
             WindowQuery(
                 scope=ScopeRef(rule.scope, rule.scope_id),
                 metric=rule.metric,
-                spec=self._spec(rule.window_seconds),
+                spec=spec,
+                period=period,
+                reset_epoch=self.reset_epoch_for(rule),
             )
             for rule in rules
+            for spec, period in [self.window_for(rule, utcnow())]
         ]
 
         try:
@@ -281,28 +363,44 @@ class QuotaEngine:
         if not rules:
             return Reservation(created_at=moment)
 
-        scoped: list[tuple[LimitRule, ScopeRef, WindowSpec]] = []
+        as_datetime = datetime.fromtimestamp(moment, tz=UTC)
+        scoped: list[tuple[LimitRule, WindowQuery]] = []
         for rule in rules:
-            ref = ScopeRef(rule.scope, rule.scope_id)
-            scoped.append((rule, ref, self._spec(rule.window_seconds)))
+            spec, period = self.window_for(rule, as_datetime)
+            scoped.append(
+                (
+                    rule,
+                    WindowQuery(
+                        scope=ScopeRef(rule.scope, rule.scope_id),
+                        metric=rule.metric,
+                        spec=spec,
+                        period=period,
+                        reset_epoch=self.reset_epoch_for(rule),
+                    ),
+                )
+            )
 
-        queries = [
-            WindowQuery(scope=ref, metric=rule.metric, spec=spec) for rule, ref, spec in scoped
-        ]
+        queries = [query for _, query in scoped]
         totals = await self._totals(queries, now=moment)
 
         violations: list[Violation] = []
-        for (rule, _, spec), total in zip(scoped, totals, strict=True):
+        for (rule, query), total in zip(scoped, totals, strict=True):
             current = from_units(rule.metric, total.units)
             # ">=" not ">": at the limit means spent, so the next request is
             # refused. See the overrun policy in the module docstring.
             if current >= rule.limit_value:
+                if query.period is not None:
+                    # A calendar period knows exactly when it ends; no estimate needed.
+                    retry_after = max(1, query.period.seconds_remaining(as_datetime))
+                else:
+                    assert query.spec is not None
+                    retry_after = query.spec.retry_after_seconds(moment, total.buckets)
                 violations.append(
                     Violation(
                         rule=rule,
                         current=current,
                         limit=rule.limit_value,
-                        retry_after_seconds=spec.retry_after_seconds(moment, total.buckets),
+                        retry_after_seconds=retry_after,
                     )
                 )
 
@@ -312,22 +410,35 @@ class QuotaEngine:
         # Only metrics that some rule actually watches get counters. A rule added
         # later starts from an empty cache; the database store still knows the
         # real history, which is why it is also the rebuild source.
-        wanted: dict[tuple[ScopeRef, LimitMetric, int], WindowSpec] = {}
-        for rule, ref, spec in scoped:
-            wanted[(ref, rule.metric, spec.granularity_seconds)] = spec
+        # One delta per distinct counter. Two rules sharing a scope, metric and
+        # window share a counter and must not be double-counted.
+        wanted: dict[tuple[str, str, str, int], WindowQuery] = {}
+        for _, query in scoped:
+            wanted[
+                (query.scope.key_part, query.metric.value, query.window_id, query.reset_epoch)
+            ] = query
 
         deltas: list[CounterDelta] = []
         reserved: dict[LimitMetric, int] = {}
-        for (ref, metric, _), spec in wanted.items():
-            units = to_units(metric, estimate.get(metric), round_up=True)
-            reserved[metric] = units
+        for query in wanted.values():
+            units = to_units(query.metric, estimate.get(query.metric), round_up=True)
+            reserved[query.metric] = units
             # Recorded even when the estimate is zero. settle() corrects only the
             # deltas a reservation holds, so dropping zero-unit entries here would
             # mean the *actual* usage for that metric is never counted — which is
             # exactly what happens for an unpriced model (estimated cost 0) or a
             # metric the caller could not estimate. The store itself skips
             # zero-valued writes, so this costs nothing on the wire.
-            deltas.append(CounterDelta(scope=ref, metric=metric, spec=spec, units=units))
+            deltas.append(
+                CounterDelta(
+                    scope=query.scope,
+                    metric=query.metric,
+                    units=units,
+                    spec=query.spec,
+                    period=query.period,
+                    reset_epoch=query.reset_epoch,
+                )
+            )
 
         reservation = Reservation(deltas=deltas, reserved=reserved, created_at=moment)
         await self._apply(deltas, now=moment)
@@ -355,12 +466,16 @@ class QuotaEngine:
             actual_units = to_units(delta.metric, actual.get(delta.metric))
             difference = actual_units - delta.units
             if difference:
+                # Reuses the reservation's own window, so a stream that began on 31
+                # August settles into August even though it finished in September.
                 corrections.append(
                     CounterDelta(
                         scope=delta.scope,
                         metric=delta.metric,
-                        spec=delta.spec,
                         units=difference,
+                        spec=delta.spec,
+                        period=delta.period,
+                        reset_epoch=delta.reset_epoch,
                     )
                 )
         reservation.settled = True
