@@ -27,6 +27,7 @@ from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from gateway.models import LimitMetric, LimitScope, UsageRecord, UsageStatus
+from gateway.periods import Period
 from gateway.quota.windows import WindowSpec
 from gateway.types import utcnow
 
@@ -34,6 +35,10 @@ from gateway.types import utcnow
 # nano-currency resolution: ample for per-token prices around 1e-9 and far below
 # any amount anyone will ever invoice.
 COST_SCALE = 10**9
+
+# How long a calendar counter outlives its period, so a settlement arriving after the
+# boundary still finds the key it reserved against.
+_PERIOD_TTL_SLACK = 86_400
 
 _METRIC_SCALE: dict[LimitMetric, int] = {
     LimitMetric.REQUESTS: 1,
@@ -81,9 +86,32 @@ class ScopeRef:
 
 @dataclass(frozen=True, slots=True)
 class WindowQuery:
+    """What to read: one scope and metric over either kind of window.
+
+    Exactly one of ``spec`` (rolling) and ``period`` (calendar) is set, mirroring
+    the rule it came from.
+
+    ``reset_epoch`` is the watermark from ADR 0025, carried in the *key namespace*
+    rather than applied afterwards. A reset therefore renames the keys, the old
+    values orphan and expire on their own TTL, and there is no deletion to race.
+    """
+
     scope: ScopeRef
     metric: LimitMetric
-    spec: WindowSpec
+    spec: WindowSpec | None = None
+    period: Period | None = None
+    reset_epoch: int = 0
+
+    def __post_init__(self) -> None:
+        if (self.spec is None) == (self.period is None):
+            raise ValueError("a window is either rolling (spec) or calendar (period)")
+
+    @property
+    def window_id(self) -> str:
+        if self.period is not None:
+            return f"p{self.period.label}"
+        assert self.spec is not None
+        return f"g{self.spec.granularity_seconds}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,16 +124,27 @@ class WindowTotal:
 
 @dataclass(frozen=True, slots=True)
 class CounterDelta:
-    """A change to apply to one (scope, metric) at one bucket grid.
+    """A change to apply to one (scope, metric) at one window.
 
-    One logical event produces several deltas, because rules with different
-    windows use different bucket widths and therefore different keys.
+    One logical event produces several deltas, because rules with different windows
+    use different keys. A settlement reuses the delta the reservation created, which
+    is how a stream that crosses a period boundary settles into the period it
+    started in rather than corrupting both.
     """
 
     scope: ScopeRef
     metric: LimitMetric
-    spec: WindowSpec
     units: int
+    spec: WindowSpec | None = None
+    period: Period | None = None
+    reset_epoch: int = 0
+
+    @property
+    def window_id(self) -> str:
+        if self.period is not None:
+            return f"p{self.period.label}"
+        assert self.spec is not None
+        return f"g{self.spec.granularity_seconds}"
 
 
 class CounterStore(Protocol):
@@ -136,12 +175,28 @@ class ValkeyCounterStore:
         self._client = client
         self._namespace = namespace
 
-    def _key(self, scope: ScopeRef, metric: LimitMetric, spec: WindowSpec, bucket: int) -> str:
-        # Granularity is in the key: changing max_buckets_per_window must not
-        # make new reads land on buckets written under the old grid.
+    def _key(
+        self,
+        scope: ScopeRef,
+        metric: LimitMetric,
+        window_id: str,
+        reset_epoch: int,
+        bucket: int | None = None,
+    ) -> str:
+        """Build a counter key.
+
+        Two things live in the namespace rather than being applied afterwards, and
+        both make invalidation free:
+
+        * the **granularity or period label**, so changing max_buckets_per_window
+          cannot make new reads land on buckets written under the old grid, and a
+          calendar period resets simply by rolling its label over;
+        * the **reset watermark**, so a reset renames the keys and the old values
+          orphan and expire rather than needing a delete.
+        """
+        suffix = f":{bucket}" if bucket is not None else ""
         return (
-            f"{self._namespace}:{scope.key_part}:{metric.value}"
-            f":g{spec.granularity_seconds}:{bucket}"
+            f"{self._namespace}:{scope.key_part}:{metric.value}:{window_id}:r{reset_epoch}{suffix}"
         )
 
     async def totals(self, queries: Sequence[WindowQuery], *, now: float) -> list[WindowTotal]:
@@ -151,16 +206,31 @@ class ValkeyCounterStore:
         keys: list[str] = []
         spans: list[tuple[int, list[int]]] = []
         for query in queries:
+            if query.period is not None:
+                # A calendar period is a single exact counter, not a bucket grid.
+                spans.append((len(keys), []))
+                keys.append(
+                    self._key(query.scope, query.metric, query.window_id, query.reset_epoch)
+                )
+                continue
+            assert query.spec is not None
             indices = query.spec.indices_for(now)
             spans.append((len(keys), indices))
             keys.extend(
-                self._key(query.scope, query.metric, query.spec, index) for index in indices
+                self._key(query.scope, query.metric, query.window_id, query.reset_epoch, index)
+                for index in indices
             )
 
         raw = await self._client.mget(keys)  # type: ignore[attr-defined]
 
         results: list[WindowTotal] = []
         for start, indices in spans:
+            if not indices:
+                # Calendar: one key, no per-bucket detail (and none is needed —
+                # Retry-After comes from the period's own end, exactly).
+                value = raw[start]
+                results.append(WindowTotal(units=max(0, int(value)) if value else 0))
+                continue
             buckets: dict[int, int] = {}
             for offset, index in enumerate(indices):
                 value = raw[start + offset]
@@ -187,12 +257,25 @@ class ValkeyCounterStore:
         for delta in deltas:
             if delta.units == 0:
                 continue
-            bucket = delta.spec.bucket_index(now)
-            key = self._key(delta.scope, delta.metric, delta.spec, bucket)
+            if delta.period is not None:
+                key = self._key(delta.scope, delta.metric, delta.window_id, delta.reset_epoch)
+                # Outlive the period so a late settle still lands, then expire on
+                # their own rather than needing a sweep.
+                ttl = max(60, int(delta.period.end.timestamp() - now) + _PERIOD_TTL_SLACK)
+            else:
+                assert delta.spec is not None
+                key = self._key(
+                    delta.scope,
+                    delta.metric,
+                    delta.window_id,
+                    delta.reset_epoch,
+                    delta.spec.bucket_index(now),
+                )
+                # Refreshing the TTL on every write only ever extends a bucket's
+                # life, never shortens it below what a reader needs.
+                ttl = delta.spec.ttl_seconds()
             pipe.incrby(key, delta.units)
-            # Refreshing the TTL on every write only ever extends a bucket's
-            # life, never shortens it below what a reader needs.
-            pipe.expire(key, delta.spec.ttl_seconds())
+            pipe.expire(key, ttl)
         await pipe.execute()
 
 
@@ -221,15 +304,30 @@ class DatabaseCounterStore:
             return [await self._one(session, query, now) for query in queries]
 
     async def _one(self, session: AsyncSession, query: WindowQuery, now: float) -> WindowTotal:
-        since = datetime.fromtimestamp(now - query.spec.window_seconds, tz=UTC)
-        stmt = self._select_for(query, since)
+        if query.period is not None:
+            since, until = query.period.start, query.period.end
+        else:
+            assert query.spec is not None
+            since = datetime.fromtimestamp(now - query.spec.window_seconds, tz=UTC)
+            until = None
+
+        # The reset watermark (ADR 0025). Applying it here is what makes a reset
+        # survive a counter-cache rebuild: this store is the rebuild source, so a
+        # reset it ignored would be undone the moment the cache went cold.
+        if query.reset_epoch:
+            watermark = datetime.fromtimestamp(query.reset_epoch, tz=UTC)
+            since = max(since, watermark)
+
+        stmt = self._select_for(query, since, until)
         value = (await session.execute(stmt)).scalar_one_or_none()
         if value is None:
             return WindowTotal(units=0)
         # str() first: going through float would defeat the point of Numeric.
         return WindowTotal(units=to_units(query.metric, Decimal(str(value))))
 
-    def _select_for(self, query: WindowQuery, since: datetime) -> Select[tuple[Any]]:
+    def _select_for(
+        self, query: WindowQuery, since: datetime, until: datetime | None = None
+    ) -> Select[tuple[Any]]:
         columns: dict[LimitMetric, ColumnElement[Any]] = {
             LimitMetric.REQUESTS: func.count(UsageRecord.id),
             LimitMetric.TOKENS: func.coalesce(func.sum(UsageRecord.total_tokens), 0),
@@ -243,12 +341,17 @@ class DatabaseCounterStore:
             # in progress has nothing to contribute yet.
             UsageRecord.status != UsageStatus.IN_PROGRESS,
         )
+        if until is not None:
+            # Half-open, so consecutive periods neither overlap nor leave a gap.
+            stmt = stmt.where(UsageRecord.created_at < until)
 
         match query.scope.scope:
             case LimitScope.GROUP:
                 stmt = stmt.where(UsageRecord.group_id == query.scope.scope_id)
             case LimitScope.USER:
                 stmt = stmt.where(UsageRecord.user_id == query.scope.scope_id)
+            case LimitScope.API_KEY:
+                stmt = stmt.where(UsageRecord.api_key_id == query.scope.scope_id)
             case LimitScope.GLOBAL:
                 pass
         return stmt
@@ -280,7 +383,20 @@ class DatabaseCounterStore:
         moment = now if now is not None else utcnow().timestamp()
         totals = await self.totals(queries, now=moment)
         deltas = [
-            CounterDelta(scope=query.scope, metric=query.metric, spec=query.spec, units=total.units)
+            # Every field of the window travels with the delta. Dropping `period`
+            # here made the rebuilt delta look rolling-with-no-spec, which failed for
+            # calendar rules; dropping `reset_epoch` would have written the total
+            # under the pre-reset key and quietly restored consumption a reset had
+            # cleared. Both are the kind of failure that only shows up in the hour
+            # after losing the cache.
+            CounterDelta(
+                scope=query.scope,
+                metric=query.metric,
+                units=total.units,
+                spec=query.spec,
+                period=query.period,
+                reset_epoch=query.reset_epoch,
+            )
             for query, total in zip(queries, totals, strict=True)
             if total.units
         ]
@@ -296,7 +412,7 @@ class InMemoryCounterStore:
     """
 
     def __init__(self) -> None:
-        self._buckets: dict[tuple[str, str, int], dict[int, int]] = defaultdict(dict)
+        self._buckets: dict[tuple[str, str, str], dict[int, int]] = defaultdict(dict)
         self._claims: set[str] = set()
 
     async def claim_once(self, key: str, *, ttl_seconds: int) -> bool:
@@ -305,13 +421,19 @@ class InMemoryCounterStore:
         self._claims.add(key)
         return True
 
-    def _slot(self, scope: ScopeRef, metric: LimitMetric, spec: WindowSpec) -> dict[int, int]:
-        return self._buckets[(scope.key_part, metric.value, spec.granularity_seconds)]
+    def _slot(
+        self, scope: ScopeRef, metric: LimitMetric, window_id: str, reset: int
+    ) -> dict[int, int]:
+        return self._buckets[(scope.key_part, metric.value, f"{window_id}:r{reset}")]
 
     async def totals(self, queries: Sequence[WindowQuery], *, now: float) -> list[WindowTotal]:
         results: list[WindowTotal] = []
         for query in queries:
-            slot = self._slot(query.scope, query.metric, query.spec)
+            slot = self._slot(query.scope, query.metric, query.window_id, query.reset_epoch)
+            if query.period is not None:
+                results.append(WindowTotal(units=max(0, slot.get(0, 0))))
+                continue
+            assert query.spec is not None
             indices = query.spec.indices_for(now)
             buckets = {index: slot[index] for index in indices if index in slot}
             results.append(WindowTotal(units=max(0, sum(buckets.values())), buckets=buckets))
@@ -321,13 +443,17 @@ class InMemoryCounterStore:
         for delta in deltas:
             if delta.units == 0:
                 continue
-            slot = self._slot(delta.scope, delta.metric, delta.spec)
-            bucket = delta.spec.bucket_index(now)
+            slot = self._slot(delta.scope, delta.metric, delta.window_id, delta.reset_epoch)
+            # A calendar period is one counter; slot 0 stands in for "the period".
+            bucket = 0 if delta.period is not None else delta.spec.bucket_index(now)  # type: ignore[union-attr]
             slot[bucket] = slot.get(bucket, 0) + delta.units
 
     def expire_before(self, cutoff: float) -> None:
-        """Drop buckets that ended before *cutoff*, emulating TTL expiry."""
-        for (_, _, granularity), slot in self._buckets.items():
+        """Drop rolling buckets that ended before *cutoff*, emulating TTL expiry."""
+        for (_, _, window), slot in self._buckets.items():
+            if not window.startswith("g"):
+                continue
+            granularity = int(window.split(":")[0][1:])
             for index in list(slot):
                 if (index + 1) * granularity < cutoff:
                     del slot[index]

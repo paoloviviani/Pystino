@@ -37,6 +37,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from gateway.periods import PeriodKind
 from gateway.types import Money, TZDateTime, utcnow
 
 
@@ -84,6 +85,7 @@ class LimitScope(enum.StrEnum):
     GLOBAL = "global"
     GROUP = "group"
     USER = "user"
+    API_KEY = "api_key"
 
 
 class LimitMetric(enum.StrEnum):
@@ -427,19 +429,33 @@ class LimitRule(Base):
 
     __tablename__ = "limit_rules"
     __table_args__ = (
-        UniqueConstraint(
-            "scope",
-            "scope_id",
-            "metric",
-            "window_seconds",
-            name="uq_limit_rules_scope_metric_window",
+        # A plain UNIQUE over these columns does not work, because three of them are
+        # nullable and SQL treats NULLs as distinct: two identical global rules
+        # (scope_id NULL) or two identical rolling rules (period NULL) would both be
+        # accepted. COALESCE to sentinels that no real value can take, so "one rule
+        # per scope, metric and window" is actually enforced.
+        Index(
+            "uq_limit_rules_identity",
+            text("scope"),
+            text("coalesce(scope_id, '00000000-0000-0000-0000-000000000000')"),
+            text("metric"),
+            text("coalesce(window_seconds, -1)"),
+            text("coalesce(period, '')"),
+            unique=True,
         ),
         CheckConstraint(
             "(scope = 'global' AND scope_id IS NULL)"
             " OR (scope <> 'global' AND scope_id IS NOT NULL)",
             name="ck_limit_rules_scope_id_presence",
         ),
+        # Correct as-is for a nullable column: a CHECK passes when its expression
+        # is NULL, so a calendar rule with no window_seconds satisfies it.
         CheckConstraint("window_seconds > 0", name="ck_limit_rules_window_positive"),
+        CheckConstraint(
+            "(window_seconds IS NOT NULL AND period IS NULL)"
+            " OR (window_seconds IS NULL AND period IS NOT NULL)",
+            name="ck_limit_rules_one_window_kind",
+        ),
         CheckConstraint("limit_value >= 0", name="ck_limit_rules_limit_non_negative"),
         Index("ix_limit_rules_lookup", "is_active", "scope", "scope_id"),
     )
@@ -453,7 +469,14 @@ class LimitRule(Base):
     scope_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
 
     metric: Mapped[LimitMetric] = mapped_column(_enum(LimitMetric, "limit_metric"))
-    window_seconds: Mapped[int] = mapped_column(Integer)
+
+    # Exactly one of these. A rolling window is bucket-approximated and right for
+    # rate limiting; a calendar period is exact, resets at the boundary, and is what
+    # a budget needs so it reconciles with the monthly report (ADR 0025).
+    window_seconds: Mapped[int | None] = mapped_column(Integer, default=None)
+    period: Mapped[PeriodKind | None] = mapped_column(
+        _enum(PeriodKind, "period_kind"), default=None
+    )
     # Numeric for all three metrics: requests and tokens are integral but sharing
     # one column keeps rule evaluation uniform.
     limit_value: Mapped[Decimal]
@@ -462,8 +485,55 @@ class LimitRule(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
+    resets: Mapped[list[QuotaReset]] = relationship(
+        back_populates="rule", cascade="all, delete-orphan"
+    )
+
+    @property
+    def window_label(self) -> str:
+        return f"{self.window_seconds}s" if self.window_seconds else str(self.period)
+
     def __repr__(self) -> str:
         return (
             f"<LimitRule {self.scope}:{self.scope_id} {self.metric}"
-            f" <= {self.limit_value}/{self.window_seconds}s>"
+            f" <= {self.limit_value}/{self.window_label}>"
         )
+
+
+class QuotaReset(Base):
+    """A point in time before which usage no longer counts against a rule.
+
+    Deliberately a watermark rather than a counter mutation. Counters are a
+    rebuildable cache and the gateway recomputes them from the ledger when it finds
+    the cache cold (ADR 0006), so zeroing a counter would be silently undone by the
+    next rebuild. A row here survives that, because the rebuild reads it.
+
+    It also cannot corrupt billing: ``usage_records`` is never touched, so a reset
+    changes what the *quota* counts and leaves the monthly report exactly as it was.
+
+    Rows are append-only and never deleted while the rule exists — zeroing someone's
+    spending cap is a financially meaningful act and the trail is the point.
+    """
+
+    __tablename__ = "quota_resets"
+    __table_args__ = (Index("ix_quota_resets_rule_effective", "rule_id", "effective_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("limit_rules.id", ondelete="CASCADE"), index=True
+    )
+    # When the reset takes effect. Always "now" today: resets are immediate, and a
+    # future value would be a schedule, which is deliberately not supported.
+    effective_at: Mapped[datetime] = mapped_column(default=utcnow)
+    # Who did it. Nullable so erasing a user under GDPR does not delete the audit
+    # trail of the reset itself.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    reason: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    rule: Mapped[LimitRule] = relationship(back_populates="resets")
+
+    def __repr__(self) -> str:
+        return f"<QuotaReset rule={self.rule_id} at={self.effective_at.isoformat()}>"
