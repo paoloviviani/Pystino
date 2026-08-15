@@ -8,7 +8,7 @@ usage reporting.
 *Enforcement* caps what a user or group may spend and refuses requests past the cap;
 *accounting* reports what was actually spent in a calendar month. Per-user and
 per-group cost limits already work and are enforced today — what Phase 2 adds is
-calendar-period budgets ([0025](adr/0025-calendar-period-quotas.md)), so a monthly cap
+calendar-period budgets ([0025](adr/0025-quota-model-v2.md)), so a monthly cap
 resets on the 1st and agrees with the monthly report by construction.
 
 Architecture decisions behind this: [0023](adr/0023-admin-console.md) (the console),
@@ -53,12 +53,23 @@ Everything here is stack-independent. Verified gaps in the current API:
    resolved in `GATEWAY_BILLING_TIMEZONE` (default `Europe/Rome`), converted to UTC
    for the query. Test the March and October DST boundaries explicitly. **This one
    function is then consumed by calendar quotas too** — that shared implementation is
-   what makes budgets and reports agree ([0025](adr/0025-calendar-period-quotas.md)).
-2. **Calendar-period quotas.** `limit_rules.period` alongside `window_seconds`, one or
-   the other per rule. Period-keyed counters (`q:user:{id}:cost:p2026-08`) rather than
-   buckets: exact, self-resetting at the boundary, one GET to read. Settlement applies
-   to the period the *reservation* used, or a stream crossing midnight on the 1st
-   corrupts both months.
+   what makes budgets and reports agree ([0025](adr/0025-quota-model-v2.md)).
+2. **Quota model v2** ([0025](adr/0025-quota-model-v2.md)). Four parts, in this order:
+   - `period` alongside `window_seconds`, one or the other per rule, so "€1 every 6
+     hours" and "€5 per calendar week" stack. Period-keyed counters
+     (`q:user:{id}:cost:p2026-08`) rather than buckets: exact, self-resetting at the
+     boundary, one GET to read.
+   - `api_key` scope, and nullable `scope_id` meaning "each entity individually", so
+     "every user gets €20 per month" covers people who join next month. Without it the
+     default state for a new user is unlimited.
+   - Explicit rules shadow the `scope_id IS NULL` default **of the same shape only**.
+     This is the subtle part and needs its own test matrix, not examples.
+   - `quota_resets` — a reset is a watermark in the database, never a counter
+     mutation, or the cold-cache rebuild resurrects the spend it cleared. The
+     watermark goes in the counter key so invalidation is free.
+
+   Settlement applies to the period the *reservation* used, or a stream crossing
+   midnight on the 1st corrupts both months.
 3. **Aggregation endpoint.** `GET /api/admin/reports/usage` with `group_by` over any
    of group, user, model, api_key, day — and combinations, since "spend by model
    within group, by month" is the actual question finance asks.
@@ -76,7 +87,10 @@ Everything here is stack-independent. Verified gaps in the current API:
 ### Tests worth writing before the code
 
 Period boundaries across DST; **that a calendar quota and a report for the same period
-return the same number**; that a stream crossing a period boundary settles into the
+return the same number**; that a reset survives a counter-cache wipe and rebuild; that
+a reset changes enforcement and leaves the billing report untouched; the default-vs-
+explicit shadowing matrix (default only, explicit only, both, different metric,
+different window, different scope); that a stream crossing a period boundary settles into the
 period it started in; aggregation correctness against hand-computed fixtures;
 that estimated rows are counted *and* disclosed; that a per-user report sums to the
 group report for the same period; CSV escaping of a group named `Research, AI`.
@@ -138,7 +152,7 @@ cookie authenticates it. See [0023](adr/0023-admin-console.md).
 | `/` | any authenticated user | own spend, own groups' spend, API keys, default billing group |
 | `/admin/models` | admin | catalogue: create, edit, activate/deactivate |
 | `/admin/pricing` | admin | price history per model, append a new price, schedule a future one |
-| `/admin/quotas` | admin | limit rules with current consumption; budgets shown as "€31.40 of €50 this month, resets in 12 days" |
+| `/admin/quotas` | admin | rules with current consumption; budgets as "€31.40 of €50 this month, resets in 12 days"; which default each explicit rule shadows; a reset button with a required reason |
 | `/admin/reports` | admin | spend by group/user/model/period, CSV export |
 | `/admin/users` | admin | users, groups, keys, activity |
 
