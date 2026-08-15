@@ -15,6 +15,8 @@ per-group model availability and a pluggable redaction layer.
 | `GET|POST|DELETE /api/me/keys` | session cookie | Mint and revoke API keys |
 | `GET /api/me/usage` | session cookie | Own spend over a rolling window |
 | `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, limits, users, usage |
+| `GET /api/admin/models/discover` | session cookie + `is_admin` | What the provider offers that we do not carry, and drift the other way |
+| `POST /api/admin/models/import` | session cookie + `is_admin` | Adopt named upstream models with their published prices |
 | `GET /healthz`, `/readyz` | — | Liveness (no dependencies) and readiness |
 
 There is **no HTML admin panel**. `/docs` is the operator console — Swagger, generated

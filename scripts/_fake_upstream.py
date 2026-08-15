@@ -106,4 +106,37 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
-app = Starlette(routes=[Route("/v1/chat/completions", chat_completions, methods=["POST"])])
+async def models(request: Request) -> JSONResponse:
+    """A catalogue in the Cortecs shape, for exercising `/api/admin/models/discover`.
+
+    Deliberately mixed: one model the gateway already has, two it does not, and one
+    priced in USD so the currency refusal is reachable.
+    """
+
+    def entry(
+        model_id: str, inp: str, out: str, currency: str = "EUR", ctx: int = 128_000
+    ) -> dict[str, Any]:
+        return {
+            "id": model_id,
+            "context_length": ctx,
+            "pricing": {"input_token": inp, "output_token": out, "currency": currency},
+        }
+
+    return JSONResponse(
+        {
+            "data": [
+                entry(MODEL, "0.15", "0.60", ctx=8192),
+                entry("upstream/haiku-ish", "0.08", "0.40", ctx=32_000),
+                entry("upstream/big-model", "3.00", "15.00", ctx=200_000),
+                entry("upstream/dollar-model", "1.00", "2.00", currency="USD"),
+            ]
+        }
+    )
+
+
+app = Starlette(
+    routes=[
+        Route("/v1/chat/completions", chat_completions, methods=["POST"]),
+        Route("/v1/models", models, methods=["GET"]),
+    ]
+)

@@ -62,6 +62,28 @@ Design decisions:
 - `--save-to` and `--from-file` exist so a change can be captured and reviewed before it
   is applied.
 
+## Discovery (added 2026-08-15)
+
+The allowlist is right and it was also tedious: the only signal about what a provider
+offered that you had *not* catalogued was a line in the importer's dry-run output.
+
+`GET /api/admin/models/discover` compares the provider's catalogue with ours and
+returns three lists — offered-but-not-catalogued (with published prices and a
+suggested name), catalogued-and-still-offered, and **catalogued-but-no-longer-offered**.
+That last one is drift in the direction that fails at 3am: a model we keep advertising
+on `/v1/models` that the provider has retired.
+
+`POST /api/admin/models/import` adopts explicitly named upstream models with their
+published prices. It does **not** grant access — a newly imported model stays invisible
+until a group is granted it, because "absence of a row means no access" is worth more
+than one saved click. A model priced in another currency is skipped entirely rather
+than created unpriced, since an unpriced model serves happily and records a cost of
+zero, which is a quiet way to give money away.
+
+The decision stays with a person; only the retyping is gone. Both endpoints use the
+control-plane HTTP client with its finite read timeout, never the upstream streaming
+client, or a hung provider would hang an admin page indefinitely.
+
 ## Stated uncertainty
 
 The **pricing fields** were verified against the Cortecs documentation. The **envelope**

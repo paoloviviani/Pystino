@@ -267,3 +267,64 @@ class GroupUsageRow(BaseModel):
     total_tokens: int
     cost: Decimal
     estimated_requests: int
+
+
+class DiscoveredModel(BaseModel):
+    """An upstream model the provider offers that we have not catalogued."""
+
+    upstream_model: str
+    suggested_name: str
+    input_per_mtok: Decimal | None
+    output_per_mtok: Decimal | None
+    currency: str | None
+    context_window: int | None
+    # Set when the model cannot be imported as-is, with the reason. The commonest
+    # is a price quoted in a currency this gateway does not bill in.
+    blocked_reason: str | None = None
+
+
+class CatalogueDriftRow(BaseModel):
+    name: str
+    upstream_model: str
+    is_active: bool
+
+
+class CatalogueDiscoveryResponse(BaseModel):
+    """What the provider offers, against what we serve."""
+
+    provider_url: str
+    provider_model_count: int
+    # Offered upstream, absent from our catalogue: candidates to adopt.
+    available: list[DiscoveredModel]
+    # Ours, and still offered upstream.
+    catalogued: list[CatalogueDriftRow]
+    # Ours, and NO LONGER offered upstream. Drift in the direction that breaks at
+    # 3am, so it is reported first-class rather than left to be noticed.
+    missing_upstream: list[CatalogueDriftRow]
+    unparsable: list[str]
+
+
+class ModelImportItem(BaseModel):
+    upstream_model: str
+    # Defaults to the upstream id with any provider prefix stripped.
+    name: str | None = Field(default=None, max_length=255)
+
+
+class ModelImportRequest(BaseModel):
+    models: list[ModelImportItem] = Field(min_length=1, max_length=200)
+
+
+class ModelImportResult(BaseModel):
+    upstream_model: str
+    name: str | None
+    imported: bool
+    priced: bool
+    reason: str | None = None
+
+
+class ModelImportResponse(BaseModel):
+    results: list[ModelImportResult]
+
+    @property
+    def imported_count(self) -> int:
+        return sum(1 for r in self.results if r.imported)

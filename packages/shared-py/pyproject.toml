@@ -19,3 +19,5 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/llmp_shared"]
+# Ship the py.typed marker so consumers get the types rather than Any.
+artifacts = ["src/llmp_shared/py.typed"]

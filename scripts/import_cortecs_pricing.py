@@ -26,7 +26,6 @@ import argparse
 import asyncio
 import sys
 from pathlib import Path
-from typing import Any
 
 import httpx
 import orjson
@@ -35,22 +34,11 @@ from gateway.db import create_engine, create_session_factory
 from gateway.logging_config import configure_logging
 from gateway.pricing import (
     DEFAULT_CATALOGUE_URL,
+    CatalogueUnavailable,
+    fetch_catalogue,
     import_prices,
     parse_catalogue,
 )
-
-
-async def fetch_catalogue(url: str, api_key: str | None) -> Any:
-    headers = {"accept": "application/json"}
-    if api_key:
-        # Optional: supplying it narrows the catalogue to what this account can
-        # actually reach, which is usually what you want to price.
-        headers["authorization"] = f"Bearer {api_key}"
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        response = await client.get(url, headers=headers)
-        response.raise_for_status()
-        return response.json()
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -62,9 +50,10 @@ async def run(args: argparse.Namespace) -> int:
     else:
         api_key = args.api_key or settings.upstream.api_key.get_secret_value() or None
         try:
-            payload = await fetch_catalogue(args.url, api_key)
-        except httpx.HTTPError as exc:
-            print(f"error: could not fetch the catalogue: {exc}", file=sys.stderr)
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+                payload = await fetch_catalogue(client, args.url, api_key)
+        except CatalogueUnavailable as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 2
 
     prices, unparsable = parse_catalogue(payload)
