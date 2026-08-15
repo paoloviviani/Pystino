@@ -149,7 +149,45 @@ group report for the same period; CSV escaping of a group named `Research, AI`.
 
 ---
 
-## Stage 2 — Redaction
+## Stage 2 — Redaction — **done**
+
+Built: `services/redaction` (Presidio behind the contract), `HttpDetectionRedactor`
+in the gateway, an entry-point plugin registry, and
+`deploy/compose/docker-compose.redaction.yml`. Verified end to end against the
+running stack with `scripts/test_redaction_live.py`: the upstream receives
+placeholders and never the PII, the same entity keeps its placeholder across turns,
+and the caller gets the real values back — including through a stream sliced into
+7-byte frames.
+
+Decided during the work ([0026](adr/0026-pluggable-detection.md)): **detection is a
+plugin, not a Presidio integration.** Three entry points — serve the HTTP contract,
+extend this service's recogniser registry, or ship a package advertising
+`llmp.redactors`. Placeholder derivation, substitution, restoration and fail-closed
+behaviour stay in the gateway so no detector can get them wrong.
+
+The Italian NER model is a build argument, off by default, because its weights are
+CC BY-NC-SA 3.0 while everything else is MIT.
+
+Three things only a running container revealed:
+
+1. Presidio **drops** a recogniser whose language is not a registry language, so
+   every Italian identifier was silently absent from the English-only image — the
+   exact capability the licence decision was resting on. Fixed by re-registering
+   the pattern recognisers under each loaded language.
+2. `/healthz` was advertising entities from a hardcoded list while the registry
+   held something else. It now asks the analyzer.
+3. Presidio's default phone regions exclude Italy, so an Italian number came back
+   as a `PERSON`.
+
+Still open: latency under load is unmeasured, and the plan's `tail_size` question
+answered itself — restoration only ever matches placeholders the gateway issued, so
+the buffer is sized from their exact lengths rather than estimated.
+
+The original plan follows, unchanged.
+
+---
+
+## Stage 2 — Redaction (as planned)
 
 The interface, the deterministic placeholder scheme and the cross-frame buffering
 already exist and are tested. `build_redactor("http")` raises `NotImplementedError`

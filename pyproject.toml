@@ -73,6 +73,14 @@ module = ["joserfc.*", "redis.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# Not installed in the workspace environment on purpose: services/redaction is a
+# separate project so that spaCy never enters the gateway's dependency tree. The
+# service narrows what it uses to a Protocol (llmp_redaction.detector.Analyzer),
+# so the untyped import is confined to one function.
+module = ["presidio_analyzer.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
 
@@ -82,8 +90,19 @@ disallow_untyped_defs = false
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-testpaths = ["apps/gateway/tests", "packages/shared-py/tests"]
-pythonpath = ["apps/gateway/src", "packages/shared-py/src"]
+# services/redaction is not a workspace member (it must not put spaCy in the
+# gateway's lockfile), but its tests fake the analyzer and import Presidio
+# nowhere, so they run here rather than rotting in a corner nobody executes.
+testpaths = [
+    "apps/gateway/tests",
+    "packages/shared-py/tests",
+    "services/redaction/tests",
+]
+pythonpath = [
+    "apps/gateway/src",
+    "packages/shared-py/src",
+    "services/redaction/src",
+]
 filterwarnings = [
     "error",
     # SQLAlchemy warns that SQLite cannot store Numeric natively. We only use

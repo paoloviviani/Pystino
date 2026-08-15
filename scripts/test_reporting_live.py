@@ -21,7 +21,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from test_oidc_flow import GATEWAY, check, login, request  # noqa: E402
+from test_oidc_flow import GATEWAY, check, login, request
 
 FAILURES: list[str] = []
 
@@ -52,10 +52,16 @@ def main() -> int:
     print()
     print("=== the report resolves periods in the billing timezone ===")
     status, report = api(dave, "/api/admin/reports/usage")
-    expect("default report is the current month", status == 200 and report["period"]["label"] == this_month,
-           f"HTTP {status}: {report if status != 200 else report['period']['label']}")
-    expect("timezone is Europe/Rome", report["period"]["timezone"] == "Europe/Rome",
-           report["period"]["timezone"])
+    expect(
+        "default report is the current month",
+        status == 200 and report["period"]["label"] == this_month,
+        f"HTTP {status}",
+    )
+    expect(
+        "timezone is Europe/Rome",
+        report["period"]["timezone"] == "Europe/Rome",
+        report["period"]["timezone"],
+    )
 
     status, march = api(dave, "/api/admin/reports/usage?period=2026-03")
     expect(
@@ -69,7 +75,7 @@ def main() -> int:
         march["period"]["end"],
     )
 
-    status, bad = api(dave, "/api/admin/reports/usage?period=last-month")
+    status, _bad = api(dave, "/api/admin/reports/usage?period=last-month")
     expect("an unparsable period is refused", status == 400, f"HTTP {status}")
 
     print()
@@ -91,10 +97,12 @@ def main() -> int:
     expect(
         "the totals agree however the report is sliced",
         Decimal(by_group["totals"]["cost"]) == Decimal(by_total["totals"]["cost"]),
-        f'{by_group["totals"]["cost"]} vs {by_total["totals"]["cost"]}',
+        f"{by_group['totals']['cost']} vs {by_total['totals']['cost']}",
     )
-    print(f"  this month: {by_total['totals']['cost']} {by_total['currency']} "
-          f"over {by_total['totals']['requests']} request(s)")
+    print(
+        f"  this month: {by_total['totals']['cost']} {by_total['currency']} "
+        f"over {by_total['totals']['requests']} request(s)"
+    )
     for note in by_total["disclosures"]:
         print(f"  disclosure: {note}")
 
@@ -131,17 +139,23 @@ def main() -> int:
         # Left behind by an earlier run; find it and carry on.
         rules = api(dave, "/api/admin/limits")[1]
         created = next(
-            r for r in rules
-            if r["scope"] == "group" and r["scope_id"] == research["id"]
-            and r["period"] == "month" and r["metric"] == "cost"
+            r
+            for r in rules
+            if r["scope"] == "group"
+            and r["scope_id"] == research["id"]
+            and r["period"] == "month"
+            and r["metric"] == "cost"
         )
         print("  reusing the rule from a previous run")
     else:
         expect("a calendar rule can be created", status == 201, f"HTTP {status}: {created}")
-        expect("it reports its window as a period", created.get("window_label") == "month",
-               str(created.get("window_label")))
+        expect(
+            "it reports its window as a period",
+            created.get("window_label") == "month",
+            str(created.get("window_label")),
+        )
 
-    status, duplicate = api(
+    status, _duplicate = api(
         dave,
         "/api/admin/limits",
         method="POST",
@@ -158,8 +172,11 @@ def main() -> int:
 
     rules = api(dave, "/api/admin/limits")[1]
     rule = next(r for r in rules if r["id"] == created["id"])
-    expect("current_value is reported from the live counters", rule["current_value"] is not None,
-           str(rule["current_value"]))
+    expect(
+        "current_value is reported from the live counters",
+        rule["current_value"] is not None,
+        str(rule["current_value"]),
+    )
     report_total = Decimal(
         api(dave, f"/api/admin/reports/usage?group_id={research['id']}&group_by=total")[1][
             "totals"
@@ -168,7 +185,7 @@ def main() -> int:
     expect(
         "the monthly quota counter and the monthly report agree",
         Decimal(rule["current_value"]) == report_total,
-        f'quota {rule["current_value"]} vs report {report_total}',
+        f"quota {rule['current_value']} vs report {report_total}",
     )
 
     status, reset = api(
@@ -178,12 +195,18 @@ def main() -> int:
         json_body={"reason": "live check"},
     )
     expect("the rule can be reset", status == 200, f"HTTP {status}: {reset}")
-    expect("the reset records who did it", reset.get("created_by_email") == "dave@example.org",
-           str(reset.get("created_by_email")))
+    expect(
+        "the reset records who did it",
+        reset.get("created_by_email") == "dave@example.org",
+        str(reset.get("created_by_email")),
+    )
 
     after = next(r for r in api(dave, "/api/admin/limits")[1] if r["id"] == rule["id"])
-    expect("consumption is back to zero", Decimal(after["current_value"] or 0) == 0,
-           str(after["current_value"]))
+    expect(
+        "consumption is back to zero",
+        Decimal(after["current_value"] or 0) == 0,
+        str(after["current_value"]),
+    )
     expect("the reset is timestamped on the rule", after["last_reset_at"] is not None, "")
 
     after_report = Decimal(
@@ -198,8 +221,11 @@ def main() -> int:
     )
 
     trail = api(dave, f"/api/admin/limits/{rule['id']}/resets")[1]
-    expect("the reset is in the audit trail", any(e["reason"] == "live check" for e in trail),
-           str(trail)[:120])
+    expect(
+        "the reset is in the audit trail",
+        any(e["reason"] == "live check" for e in trail),
+        str(trail)[:120],
+    )
 
     status, _ = api(
         dave, f"/api/admin/limits/{rule['id']}/reset", method="POST", json_body={"reason": ""}
@@ -210,7 +236,7 @@ def main() -> int:
     print("=== a non-admin sees only their own spend ===")
     alice = login("alice")
     if alice is not None:
-        status, mine = api(alice, "/api/me/reports/usage")
+        status, _mine = api(alice, "/api/me/reports/usage")
         expect("alice can read her own report", status == 200, f"HTTP {status}")
         status, _ = api(alice, "/api/admin/reports/usage")
         expect("alice cannot read everyone's", status == 403, f"HTTP {status}")

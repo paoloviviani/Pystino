@@ -11,6 +11,11 @@ Two details are deliberate:
 * It writes the response in **7-byte slices**, so frame boundaries land mid-JSON
   and inside the blank-line separator. That is the case a parser working on
   network chunks rather than event boundaries gets wrong.
+* It **echoes the last user message back** in its reply, and remembers the last
+  request at ``GET /_last_request``. Both exist for the redaction check: echoing
+  sends any placeholders back through the response path so restoration is
+  exercised end to end, and the recorded request is how a test asserts on the
+  bytes that actually left the gateway rather than on what it believes it sent.
 """
 
 from __future__ import annotations
@@ -26,6 +31,31 @@ from starlette.routing import Route
 
 MODEL = "upstream/smoke-model"
 SLICE_SIZE = 7
+
+# The most recent request body, for GET /_last_request. Single-process, single
+# slot, no locking: this is a development fake, not a service.
+LAST_REQUEST: dict[str, Any] = {}
+
+
+def _echo(body: dict[str, Any]) -> str:
+    """The last user message, so the reply carries whatever the prompt did.
+
+    With redaction on, the prompt reaching here contains placeholders; echoing
+    them means the gateway's restore path has something real to restore.
+    """
+    for message in reversed(body.get("messages") or []):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return " ".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+    return ""
 
 
 def chunk(
@@ -57,6 +87,9 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
     # Printed so the smoke test can assert on what the gateway actually sent —
     # above all that stream_options.include_usage was forced.
     print("UPSTREAM RECEIVED:", json.dumps(body, sort_keys=True), flush=True)
+    LAST_REQUEST.clear()
+    LAST_REQUEST.update(body)
+    echoed = _echo(body)
 
     if not body.get("stream"):
         return JSONResponse(
@@ -68,7 +101,10 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
                 "choices": [
                     {
                         "index": 0,
-                        "message": {"role": "assistant", "content": "buffered hello"},
+                        "message": {
+                            "role": "assistant",
+                            "content": f"buffered hello. You said: {echoed}",
+                        },
                         "finish_reason": "stop",
                     }
                 ],
@@ -82,7 +118,7 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
 
     async def stream() -> AsyncIterator[bytes]:
         frames = b""
-        for piece in ["streamed ", "hello ", "world"]:
+        for piece in ["streamed ", "hello ", "world", ". You said: ", echoed]:
             frames += b"data: " + json.dumps(chunk(piece)).encode() + b"\n\n"
         frames += b"data: " + json.dumps(chunk(finish_reason="stop")).encode() + b"\n\n"
         frames += (
@@ -104,6 +140,15 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
             yield frames[index : index + SLICE_SIZE]
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+async def last_request(request: Request) -> JSONResponse:
+    """What this fake received most recently.
+
+    The point of the redaction check: it asserts on the bytes that actually left
+    the gateway, not on what the gateway believes it sent.
+    """
+    return JSONResponse(LAST_REQUEST)
 
 
 async def models(request: Request) -> JSONResponse:
@@ -138,5 +183,6 @@ app = Starlette(
     routes=[
         Route("/v1/chat/completions", chat_completions, methods=["POST"]),
         Route("/v1/models", models, methods=["GET"]),
+        Route("/_last_request", last_request, methods=["GET"]),
     ]
 )

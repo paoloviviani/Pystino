@@ -11,34 +11,49 @@ from gateway.redaction.base import (
     iter_choice_text,
     set_choice_text,
 )
+from gateway.redaction.http import HttpDetectionRedactor, RedactionUnavailableError
 from gateway.redaction.noop import NoOpRedactor
+from gateway.redaction.registry import (
+    ENTRY_POINT_GROUP,
+    UnknownEngineError,
+    available,
+    register,
+    resolve,
+)
 
 __all__ = [
+    "ENTRY_POINT_GROUP",
+    "HttpDetectionRedactor",
     "NoOpRedactor",
     "RedactionOutcome",
+    "RedactionUnavailableError",
     "Redactor",
     "TextRewriteStage",
+    "UnknownEngineError",
+    "available_engines",
     "build_redactor",
     "has_finish_reason",
     "iter_choice_text",
+    "register_engine",
     "set_choice_text",
 ]
+
+register("noop", lambda _settings: NoOpRedactor())
+register("http", HttpDetectionRedactor)
+
+# Re-exported under clearer names: inside this package "engine" is unambiguous,
+# outside it "register" on its own is not.
+register_engine = register
+available_engines = available
 
 
 def build_redactor(settings: RedactionSettings) -> Redactor:
     """Construct the configured engine.
 
-    Adding Presidio in Phase 2 means adding one branch here and one module; the
-    request path, the response path and the placeholder scheme do not change.
+    Built-ins are ``noop`` and ``http``; anything else comes from an installed
+    package advertising the ``llmp.redactors`` entry point
+    ([0026](../../../../docs/adr/0026-pluggable-detection.md)). An unknown name
+    raises rather than falling back, because a gateway that believes redaction is
+    on when it is not is the worst available outcome.
     """
-    match settings.engine:
-        case "noop":
-            return NoOpRedactor()
-        case "http":
-            raise NotImplementedError(
-                "the HTTP detection engine arrives in Phase 2 together with the "
-                "Presidio service in services/redaction. Set "
-                "GATEWAY_REDACTION__ENGINE=noop for now — it is refused rather "
-                "than silently downgraded, so nobody can believe redaction is on "
-                "when it is not."
-            )
+    return resolve(settings.engine)(settings)
