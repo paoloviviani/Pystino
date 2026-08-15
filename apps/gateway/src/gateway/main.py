@@ -19,6 +19,7 @@ from gateway.db import create_engine, create_session_factory
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.logging_config import configure_logging
 from gateway.oidc import OIDCClient
+from gateway.providers import ProviderRegistry
 from gateway.quota import (
     DatabaseCounterStore,
     InMemoryCounterStore,
@@ -27,7 +28,8 @@ from gateway.quota import (
 )
 from gateway.redaction import build_redactor
 from gateway.routers import admin, auth, chat, console, health, me, models
-from gateway.upstream import OpenAICompatibleUpstream, build_http_client
+from gateway.secrets import SecretBox
+from gateway.upstream import build_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,10 @@ async def init_app_state(
     # Two HTTP clients on purpose. The upstream client has *no* read timeout so
     # long streams survive; a control-plane call (OIDC discovery, JWKS) must never
     # inherit that, or a hung identity provider would hang a login forever.
+    # Whether the caller supplied one matters below: an injected client is a
+    # test's fake transport and must be used for every provider, while the
+    # default is only a fallback nothing routes through any more.
+    injected_upstream = upstream_http
     upstream_http = upstream_http or build_http_client(settings.upstream)
     control_http = control_http or httpx.AsyncClient(timeout=httpx.Timeout(10.0))
 
@@ -91,7 +97,19 @@ async def init_app_state(
     app.state.engine = engine
     app.state.upstream_http = upstream_http
     app.state.control_http = control_http
-    app.state.upstream = OpenAICompatibleUpstream(settings.upstream, upstream_http)
+    # One client per provider, built on demand (ADR 0027). `settings.upstream`
+    # still supplies transport tuning — timeouts and pool sizes are properties of
+    # this gateway, not of any provider — but the endpoint and credentials now
+    # come from the provider row a model points at.
+    app.state.secrets = SecretBox(settings.secret_key_list())
+    app.state.providers = ProviderRegistry(
+        settings.upstream,
+        app.state.secrets,
+        # An injected client means a test's fake transport: reuse it for every
+        # provider rather than building real ones the fake would never see. In
+        # production this is None, so each provider gets its own pool.
+        client_factory=(lambda _settings: injected_upstream) if injected_upstream else None,
+    )
     app.state.quota_engine = QuotaEngine(
         store,
         settings=settings.quota,
@@ -125,6 +143,7 @@ async def init_app_state(
             "environment": settings.environment,
             "upstream": settings.upstream.base_url,
             "redaction_engine": settings.redaction.engine,
+            "secret_key_configured": app.state.secrets.enabled,
             "oidc_enabled": settings.oidc.enabled,
             "quota_enabled": settings.quota.enabled,
         },
@@ -142,6 +161,8 @@ async def shutdown_app_state(app: FastAPI) -> None:
 
     await app.state.upstream_http.aclose()
     await app.state.control_http.aclose()
+    if (providers := getattr(app.state, "providers", None)) is not None:
+        await providers.aclose()
     # A redaction engine may own a connection pool. Optional rather than part of
     # the Redactor protocol: most engines have nothing to release, and requiring
     # an empty aclose() from every plugin author is friction for no benefit.

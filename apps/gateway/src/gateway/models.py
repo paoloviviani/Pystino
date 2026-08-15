@@ -24,6 +24,7 @@ from decimal import Decimal
 from typing import ClassVar
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Enum,
@@ -180,6 +181,9 @@ class User(Base):
     api_keys: Mapped[list[ApiKey]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    model_access: Mapped[list[UserModelAccess]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
     default_billing_group: Mapped[Group | None] = relationship(
         foreign_keys=[default_billing_group_id], lazy="joined"
     )
@@ -254,6 +258,47 @@ class ApiKey(Base):
         return not (self.expires_at is not None and self.expires_at <= moment)
 
 
+class Provider(Base):
+    """An OpenAI-compatible inference endpoint the gateway can route to.
+
+    Configured through the admin API rather than the environment, so adding a
+    provider is not a deploy ([0027](../../../docs/adr/0027-inference-providers.md)).
+
+    The API key is stored **encrypted** (see :mod:`gateway.secrets`) and is never
+    returned by the API — only ``api_key_hint``, which is enough to tell two keys
+    apart and useless to anyone who reads it.
+    """
+
+    __tablename__ = "providers"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    # Referenced by people, not by requests: models point at the id.
+    name: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, default=None)
+
+    base_url: Mapped[str] = mapped_column(String(500))
+    # Ciphertext, or empty for an endpoint that needs no credential — a local
+    # vLLM or Ollama usually does not.
+    api_key_encrypted: Mapped[str] = mapped_column(Text, default="")
+    # Masked, for display. Derived at write time so reading it never needs the
+    # decryption key.
+    api_key_hint: Mapped[str] = mapped_column(String(64), default="")
+
+    # Sent with every request to this provider. Some endpoints need a routing or
+    # tenant header alongside the bearer token.
+    extra_headers: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    models: Mapped[list[ModelDef]] = relationship(back_populates="provider")
+
+    def __repr__(self) -> str:
+        return f"<Provider {self.name}>"
+
+
 class ModelDef(Base):
     """A model the gateway is willing to expose, and how to reach it upstream."""
 
@@ -264,7 +309,14 @@ class ModelDef(Base):
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     # What we send upstream. Lets us rename or repoint without breaking clients.
     upstream_model: Mapped[str] = mapped_column(String(255))
-    provider: Mapped[str] = mapped_column(String(64), default="default")
+
+    # Which endpoint serves it. NOT NULL and RESTRICT on delete: a model must
+    # resolve to exactly one provider, and a provider cannot be removed while
+    # anything still points at it — cascading would leave historical spend
+    # attributed to a model nobody can explain.
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("providers.id", ondelete="RESTRICT"), index=True
+    )
 
     display_name: Mapped[str | None] = mapped_column(String(255), default=None)
     description: Mapped[str | None] = mapped_column(Text, default=None)
@@ -282,6 +334,10 @@ class ModelDef(Base):
     group_access: Mapped[list[GroupModelAccess]] = relationship(
         back_populates="model", cascade="all, delete-orphan"
     )
+    user_access: Mapped[list[UserModelAccess]] = relationship(
+        back_populates="model", cascade="all, delete-orphan"
+    )
+    provider: Mapped[Provider] = relationship(back_populates="models", lazy="joined")
 
     def __repr__(self) -> str:
         return f"<ModelDef {self.name}>"
@@ -340,6 +396,33 @@ class GroupModelAccess(Base):
 
     group: Mapped[Group] = relationship(back_populates="model_access")
     model: Mapped[ModelDef] = relationship(back_populates="group_access")
+
+
+class UserModelAccess(Base):
+    """Per-user model availability, in addition to whatever their groups grant.
+
+    Access is the **union** of the two: a caller may use a model if their group
+    has it or they do personally ([0027](../../../docs/adr/0027-inference-providers.md)).
+    It exists so that "give this one researcher the expensive model" does not
+    require inventing a group for one person.
+
+    There is deliberately no *denial* row. An explicit deny overriding a group
+    grant turns "why can this person not use that model" into a question needing
+    a search rather than a look.
+    """
+
+    __tablename__ = "user_model_access"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    model_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("models.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="model_access")
+    model: Mapped[ModelDef] = relationship(back_populates="user_access")
 
 
 class UsageRecord(Base):

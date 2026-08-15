@@ -107,6 +107,30 @@ class OpenAICompatibleUpstream:
     def _chat_url(self) -> str:
         return f"{self._settings.base_url}/chat/completions"
 
+    async def list_models(self) -> UpstreamResponse:
+        """Ask the provider what it offers.
+
+        Used by catalogue discovery and by the provider connection test. Kept on
+        the client rather than written inline at both call sites so the auth
+        header, the base URL and the error shape are the same ones a real
+        completion would use — a test that builds its own request can pass while
+        the thing it is testing does not work.
+        """
+        try:
+            response = await self._client.get(
+                f"{self._settings.base_url}/models", headers=self._headers()
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"upstream request failed: {exc}", cause=exc) from exc
+
+        raw = response.content
+        try:
+            candidate = orjson.loads(raw) if raw else None
+            parsed = candidate if isinstance(candidate, dict) else None
+        except orjson.JSONDecodeError:
+            parsed = None
+        return UpstreamResponse(status_code=response.status_code, payload=parsed, raw=raw)
+
     async def chat_completion(
         self, payload: Mapping[str, Any], *, request_id: str | None = None
     ) -> UpstreamResponse:

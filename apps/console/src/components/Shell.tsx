@@ -22,6 +22,7 @@ const NAV: NavItem[] = [
   { to: "/", label: "Overview" },
   { to: "/admin/reports", label: "Reports", adminOnly: true },
   { to: "/admin/quotas", label: "Quotas", adminOnly: true },
+  { to: "/admin/providers", label: "Providers", adminOnly: true },
   { to: "/admin/models", label: "Models", adminOnly: true },
   { to: "/admin/pricing", label: "Pricing", adminOnly: true },
   { to: "/admin/users", label: "Users", adminOnly: true },

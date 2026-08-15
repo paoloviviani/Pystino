@@ -50,7 +50,7 @@ def main() -> int:
     status, headers, body = fetch(anonymous, "/console")
     expect("the entry document is served", status == 200, f"HTTP {status}")
     text = body.decode("utf-8", "replace")
-    expect('it contains the mount point', 'id="root"' in text, text[:120])
+    expect("it contains the mount point", 'id="root"' in text, text[:120])
 
     scripts = re.findall(r'src="(/console/assets/[^"]+\.js)"', text)
     expect("it references a hashed script", bool(scripts), text[:200])
@@ -90,7 +90,7 @@ def main() -> int:
     print("=== client-side routing ===")
     status, _, deep = fetch(anonymous, "/console/admin/reports")
     expect("a deep link returns the page, not a 404", status == 200, f"HTTP {status}")
-    expect('and it is the same page', 'id="root"' in deep.decode("utf-8", "replace"))
+    expect("and it is the same page", 'id="root"' in deep.decode("utf-8", "replace"))
 
     status, _, _ = fetch(anonymous, "/console/assets/index-deadbeef.js")
     expect("a missing asset is a 404, not HTML", status == 404, f"HTTP {status}")

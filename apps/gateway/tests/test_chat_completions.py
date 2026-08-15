@@ -164,7 +164,11 @@ class TestModelAccess:
         """Same status as "does not exist": other groups' catalogues are private."""
         async with session_factory() as session:
             session.add(
-                ModelDef(name="secret-model", upstream_model="upstream/secret", provider="x")
+                ModelDef(
+                    name="secret-model",
+                    upstream_model="upstream/secret",
+                    provider_id=seeded.provider.id,
+                )
             )
             await session.commit()
 
@@ -183,7 +187,11 @@ class TestModelAccess:
     ) -> None:
         async with session_factory() as session:
             session.add(
-                ModelDef(name="hidden-model", upstream_model="upstream/hidden", provider="x")
+                ModelDef(
+                    name="hidden-model",
+                    upstream_model="upstream/hidden",
+                    provider_id=seeded.provider.id,
+                )
             )
             await session.commit()
 
@@ -754,7 +762,7 @@ class TestClientDisconnect:
                 settings=app.state.settings,
                 quota=app.state.quota_engine,
                 redactor=app.state.redactor,
-                upstream=app.state.upstream,
+                providers=app.state.providers,
                 estimator=app.state.token_estimator,
             )
 

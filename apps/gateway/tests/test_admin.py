@@ -88,7 +88,11 @@ class TestModels:
 
         created = await client.post(
             "/api/admin/models",
-            json={"name": "new-model", "upstream_model": "vendor/new", "provider": "vendor"},
+            json={
+                "name": "new-model",
+                "upstream_model": "vendor/new",
+                "provider_id": str(seeded.provider.id),
+            },
         )
         assert created.status_code == 201, created.text
         body = created.json()
@@ -113,7 +117,11 @@ class TestModels:
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
             "/api/admin/models",
-            json={"name": "test-model", "upstream_model": "other/thing"},
+            json={
+                "name": "test-model",
+                "upstream_model": "other/thing",
+                "provider_id": str(seeded.provider.id),
+            },
         )
         assert response.status_code == 409
         assert "already exists" in response.json()["error"]["message"]
@@ -251,7 +259,11 @@ class TestGroupAccess:
         created = (
             await client.post(
                 "/api/admin/models",
-                json={"name": "extra-model", "upstream_model": "vendor/extra"},
+                json={
+                    "name": "extra-model",
+                    "upstream_model": "vendor/extra",
+                    "provider_id": str(seeded.provider.id),
+                },
             )
         ).json()
         visible = (await client.get("/v1/models", headers=seeded.auth)).json()["data"]

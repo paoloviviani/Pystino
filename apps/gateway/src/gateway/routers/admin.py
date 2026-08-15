@@ -19,6 +19,7 @@ Two rules the endpoints enforce rather than trust:
 
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import Sequence
 from datetime import datetime, timedelta
@@ -31,7 +32,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from gateway.accounting.cost import select_price
-from gateway.deps import AdminUserDep, ControlHttpDep, QuotaDep, SessionDep, SettingsDep
+from gateway.deps import (
+    AdminUserDep,
+    ControlHttpDep,
+    ProvidersDep,
+    QuotaDep,
+    SecretsDep,
+    SessionDep,
+    SettingsDep,
+)
 from gateway.errors import BadRequestError, GatewayError, UpstreamUnavailableError
 from gateway.models import (
     ApiKey,
@@ -44,14 +53,17 @@ from gateway.models import (
     ModelDef,
     ModelPrice,
     PriceSource,
+    Provider,
     QuotaReset,
     UsageRecord,
     UsageSource,
     UsageStatus,
     User,
+    UserModelAccess,
 )
 from gateway.periods import PeriodKind
 from gateway.pricing import CatalogueUnavailable, fetch_catalogue, parse_catalogue
+from gateway.providers import ProviderConfigurationError
 from gateway.reporting import (
     GroupBy,
     GroupByParam,
@@ -78,11 +90,16 @@ from gateway.schemas import (
     ModelUpdateRequest,
     PriceCreateRequest,
     PriceResponse,
+    ProviderCreateRequest,
+    ProviderResponse,
+    ProviderTestResponse,
+    ProviderUpdateRequest,
     QuotaResetResponse,
     UsageReport,
     UserAdminResponse,
     UserUpdateRequest,
 )
+from gateway.secrets import SecretBox, SecretsUnavailableError, hint_for
 from gateway.types import utcnow
 
 
@@ -128,12 +145,19 @@ def _price_response(price: ModelPrice | None) -> PriceResponse | None:
     )
 
 
-def _model_response(model: ModelDef, granted_to: list[str]) -> ModelAdminResponse:
+def _model_response(
+    model: ModelDef, granted_to: list[str], granted_to_users: list[str] | None = None
+) -> ModelAdminResponse:
     return ModelAdminResponse(
         id=model.id,
         name=model.name,
         upstream_model=model.upstream_model,
-        provider=model.provider,
+        provider_id=model.provider_id,
+        provider_name=model.provider.name,
+        # Surfaced per model because deactivating a provider silently takes every
+        # model behind it out of service, and the catalogue is where that is
+        # noticed.
+        provider_is_active=model.provider.is_active,
         display_name=model.display_name,
         description=model.description,
         is_active=model.is_active,
@@ -142,6 +166,7 @@ def _model_response(model: ModelDef, granted_to: list[str]) -> ModelAdminRespons
         created_at=model.created_at,
         current_price=_price_response(select_price(list(model.prices))),
         granted_to=granted_to,
+        granted_to_users=granted_to_users or [],
     )
 
 
@@ -159,15 +184,273 @@ async def _grants_by_model(session: SessionDep) -> dict[uuid.UUID, list[str]]:
     return grants
 
 
+async def _user_grants_by_model(session: SessionDep) -> dict[uuid.UUID, list[str]]:
+    """Personal grants, which are unioned with group grants at request time."""
+    rows = (
+        await session.execute(
+            select(UserModelAccess.model_id, func.coalesce(User.email, User.subject)).join(
+                User, User.id == UserModelAccess.user_id
+            )
+        )
+    ).all()
+    grants: dict[uuid.UUID, list[str]] = {}
+    for model_id, label in rows:
+        grants.setdefault(model_id, []).append(label)
+    return grants
+
+
 async def _load_model(session: SessionDep, model_id: uuid.UUID) -> ModelDef:
     model = (
         await session.execute(
-            select(ModelDef).where(ModelDef.id == model_id).options(selectinload(ModelDef.prices))
+            select(ModelDef)
+            .where(ModelDef.id == model_id)
+            .options(selectinload(ModelDef.prices), selectinload(ModelDef.provider))
         )
     ).scalar_one_or_none()
     if model is None:
         raise NotFoundError(f"No model with id {model_id}.")
     return model
+
+
+async def _load_provider(session: SessionDep, provider_id: uuid.UUID) -> Provider:
+    provider = (
+        await session.execute(select(Provider).where(Provider.id == provider_id))
+    ).scalar_one_or_none()
+    if provider is None:
+        raise NotFoundError(f"No provider with id {provider_id}.")
+    return provider
+
+
+# -- providers ---------------------------------------------------------------
+#
+# Adding an inference endpoint is configuration, not a deploy (ADR 0027). The
+# API key is write-only throughout: it goes in encrypted and never comes back
+# out, only a hint.
+
+
+def _provider_response(provider: Provider, model_count: int) -> ProviderResponse:
+    return ProviderResponse(
+        id=provider.id,
+        name=provider.name,
+        description=provider.description,
+        base_url=provider.base_url,
+        api_key_hint=provider.api_key_hint,
+        has_api_key=bool(provider.api_key_encrypted),
+        extra_headers=dict(provider.extra_headers or {}),
+        is_active=provider.is_active,
+        model_count=model_count,
+        created_at=provider.created_at,
+        updated_at=provider.updated_at,
+    )
+
+
+async def _model_counts(session: SessionDep) -> dict[uuid.UUID, int]:
+    """How many models each provider serves.
+
+    Shown beside every provider because it is the blast radius of deactivating
+    or deleting one, and an operator should see it before the click rather than
+    after.
+    """
+    rows = (
+        await session.execute(
+            select(ModelDef.provider_id, func.count(ModelDef.id)).group_by(ModelDef.provider_id)
+        )
+    ).all()
+    return _pairs(rows)
+
+
+def _store_api_key(provider: Provider, secrets: SecretBox, plaintext: str) -> None:
+    """Encrypt and attach a credential, or clear it.
+
+    The hint is derived here, at write time, so displaying a provider never
+    needs the decryption key.
+    """
+    if not plaintext:
+        provider.api_key_encrypted = ""
+        provider.api_key_hint = ""
+        return
+    try:
+        provider.api_key_encrypted = secrets.encrypt(plaintext)
+    except SecretsUnavailableError as exc:
+        raise BadRequestError(str(exc), code="secret_key_missing") from exc
+    provider.api_key_hint = hint_for(plaintext)
+
+
+@router.get("/providers", response_model=list[ProviderResponse])
+async def list_providers(admin: AdminUserDep, session: SessionDep) -> list[ProviderResponse]:
+    providers = (await session.execute(select(Provider).order_by(Provider.name))).scalars().all()
+    counts = await _model_counts(session)
+    return [_provider_response(provider, counts.get(provider.id, 0)) for provider in providers]
+
+
+@router.post("/providers", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)
+async def create_provider(
+    payload: ProviderCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+) -> ProviderResponse:
+    """Add an inference endpoint.
+
+    No model points at it yet, so creating one changes nothing observable until
+    a model is created against it or repointed.
+    """
+    provider = Provider(
+        name=payload.name,
+        description=payload.description,
+        base_url=payload.base_url.rstrip("/"),
+        extra_headers=payload.extra_headers,
+        is_active=payload.is_active,
+    )
+    if payload.api_key is not None:
+        _store_api_key(provider, secrets, payload.api_key.get_secret_value())
+
+    session.add(provider)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise ConflictError(f"A provider named {payload.name!r} already exists.") from exc
+    await session.refresh(provider)
+    return _provider_response(provider, 0)
+
+
+@router.patch("/providers/{provider_id}", response_model=ProviderResponse)
+async def update_provider(
+    provider_id: uuid.UUID,
+    payload: ProviderUpdateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+    providers: ProvidersDep,
+) -> ProviderResponse:
+    """Change a provider.
+
+    ``name`` is not editable: models reference the row by id, but people
+    reference it by name in conversation and in the console, and a rename makes
+    every past mention of it wrong.
+
+    The three-way ``api_key`` convention matters here — omitted keeps the stored
+    credential, a value replaces it, an empty string clears it. A two-way
+    optional field cannot express "remove the key".
+    """
+    provider = await _load_provider(session, provider_id)
+    fields = payload.model_dump(exclude_unset=True)
+
+    if "api_key" in fields:
+        secret = payload.api_key.get_secret_value() if payload.api_key is not None else ""
+        _store_api_key(provider, secrets, secret)
+    fields.pop("api_key", None)
+
+    if (base_url := fields.pop("base_url", None)) is not None:
+        provider.base_url = base_url.rstrip("/")
+    for field, value in fields.items():
+        setattr(provider, field, value)
+
+    await session.commit()
+    await session.refresh(provider)
+
+    # The cached client was built from the old values. Dropped rather than
+    # rebuilt: the next request through this provider builds it, and doing it
+    # here would pay the cost on an admin request that may never be followed by
+    # any traffic.
+    await providers.forget(provider.id)
+
+    counts = await _model_counts(session)
+    return _provider_response(provider, counts.get(provider.id, 0))
+
+
+@router.delete("/providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_provider(
+    provider_id: uuid.UUID,
+    admin: AdminUserDep,
+    session: SessionDep,
+    providers: ProvidersDep,
+) -> None:
+    """Remove a provider that nothing uses.
+
+    Refused while any model points at it. The database would refuse anyway —
+    the foreign key is ON DELETE RESTRICT — but a 409 naming the count is a far
+    better answer than an integrity error, and cascading would leave historical
+    spend attributed to a model that can no longer be explained.
+    """
+    await _load_provider(session, provider_id)
+    counts = await _model_counts(session)
+    if (count := counts.get(provider_id, 0)) > 0:
+        raise ConflictError(
+            f"{count} model(s) still use this provider. Repoint or remove them first, "
+            "or deactivate the provider instead."
+        )
+
+    await session.execute(delete(Provider).where(Provider.id == provider_id))
+    await session.commit()
+    await providers.forget(provider_id)
+
+
+@router.post("/providers/{provider_id}/test", response_model=ProviderTestResponse)
+async def test_provider(
+    provider_id: uuid.UUID,
+    admin: AdminUserDep,
+    session: SessionDep,
+    providers: ProvidersDep,
+) -> ProviderTestResponse:
+    """Call the provider's ``/models`` and report what came back.
+
+    Run against the row **as stored**, credential included, so it exercises
+    exactly what a real request would send. A wrong base URL or a stale key
+    should be found when it is entered, not by a user's request failing an hour
+    later.
+
+    Never raises for a provider-side failure: "it did not work, and here is why"
+    is the useful answer, and an exception would make the console show a generic
+    error instead of the detail.
+    """
+    provider = await _load_provider(session, provider_id)
+
+    try:
+        upstream, client = providers.build_probe(provider)
+    except ProviderConfigurationError as exc:
+        return ProviderTestResponse(ok=False, detail=str(exc))
+
+    started = time.monotonic()
+    try:
+        result = await upstream.list_models()
+    except Exception as exc:
+        return ProviderTestResponse(
+            ok=False,
+            detail=f"could not reach {provider.base_url}: {exc}",
+            latency_ms=int((time.monotonic() - started) * 1000),
+        )
+    finally:
+        await client.aclose()
+
+    latency = int((time.monotonic() - started) * 1000)
+    if result.status_code >= 400:
+        hint = ""
+        if result.status_code in (401, 403):
+            hint = " — check the API key"
+        elif result.status_code == 404:
+            hint = " — check the base URL includes the version path, e.g. /v1"
+        return ProviderTestResponse(
+            ok=False,
+            status_code=result.status_code,
+            detail=f"the provider answered {result.status_code}{hint}",
+            latency_ms=latency,
+        )
+
+    ids = [
+        entry.get("id")
+        for entry in (result.payload or {}).get("data", [])
+        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+    ]
+    return ProviderTestResponse(
+        ok=True,
+        status_code=result.status_code,
+        detail=f"reachable; the provider offers {len(ids)} model(s)",
+        model_count=len(ids),
+        sample=[entry for entry in ids[:5] if entry],
+        latency_ms=latency,
+    )
 
 
 # -- models -----------------------------------------------------------------
@@ -178,12 +461,22 @@ async def list_models(
     admin: AdminUserDep, session: SessionDep, include_inactive: bool = True
 ) -> list[ModelAdminResponse]:
     """Every model, including inactive ones — an operator needs to see those."""
-    stmt = select(ModelDef).options(selectinload(ModelDef.prices)).order_by(ModelDef.name)
+    stmt = (
+        select(ModelDef)
+        .options(selectinload(ModelDef.prices), selectinload(ModelDef.provider))
+        .order_by(ModelDef.name)
+    )
     if not include_inactive:
         stmt = stmt.where(ModelDef.is_active.is_(True))
     models = (await session.execute(stmt)).scalars().all()
     grants = await _grants_by_model(session)
-    return [_model_response(model, sorted(grants.get(model.id, []))) for model in models]
+    user_grants = await _user_grants_by_model(session)
+    return [
+        _model_response(
+            model, sorted(grants.get(model.id, [])), sorted(user_grants.get(model.id, []))
+        )
+        for model in models
+    ]
 
 
 @router.post("/models", response_model=ModelAdminResponse, status_code=status.HTTP_201_CREATED)
@@ -195,10 +488,14 @@ async def create_model(
     It is invisible to callers until a group is granted access: absence of a
     ``group_model_access`` row means no access, with no global allow-all.
     """
+    # Checked before insert so the failure is "no such provider" rather than a
+    # foreign-key violation.
+    await _load_provider(session, payload.provider_id)
+
     model = ModelDef(
         name=payload.name,
         upstream_model=payload.upstream_model,
-        provider=payload.provider,
+        provider_id=payload.provider_id,
         display_name=payload.display_name,
         description=payload.description,
         context_window=payload.context_window,
@@ -211,7 +508,7 @@ async def create_model(
     except IntegrityError as exc:
         await session.rollback()
         raise ConflictError(f"A model named {payload.name!r} already exists.") from exc
-    await session.refresh(model, attribute_names=["prices"])
+    await session.refresh(model, attribute_names=["prices", "provider"])
     return _model_response(model, [])
 
 
@@ -224,12 +521,20 @@ async def update_model(
 ) -> ModelAdminResponse:
     """Change a model in place. Deactivate here rather than deleting."""
     model = await _load_model(session, model_id)
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    fields = payload.model_dump(exclude_unset=True)
+    if (provider_id := fields.get("provider_id")) is not None:
+        # Repointing at another endpoint is allowed and is how a migration off a
+        # provider happens; pointing at one that does not exist is not.
+        await _load_provider(session, provider_id)
+    for field, value in fields.items():
         setattr(model, field, value)
     await session.commit()
-    await session.refresh(model, attribute_names=["prices"])
+    await session.refresh(model, attribute_names=["prices", "provider"])
     grants = await _grants_by_model(session)
-    return _model_response(model, sorted(grants.get(model.id, [])))
+    user_grants = await _user_grants_by_model(session)
+    return _model_response(
+        model, sorted(grants.get(model.id, [])), sorted(user_grants.get(model.id, []))
+    )
 
 
 # -- discovery ---------------------------------------------------------------
@@ -244,12 +549,36 @@ def _suggested_name(upstream_model: str) -> str:
     return upstream_model.rsplit("/", 1)[-1] or upstream_model
 
 
+async def _catalogue_source(
+    session: SessionDep, secrets: SecretBox, provider_id: uuid.UUID, url: str | None
+) -> tuple[Provider, str, str | None]:
+    """Where to fetch a catalogue from, and with which credential.
+
+    Per provider since ADR 0027: "what does the provider offer" is only a
+    meaningful question about a specific one. `url` overrides the endpoint for a
+    provider whose catalogue lives somewhere other than `{base_url}/models`.
+    """
+    provider = await _load_provider(session, provider_id)
+    catalogue_url = url or f"{provider.base_url}/models"
+    api_key: str | None = None
+    if provider.api_key_encrypted:
+        try:
+            api_key = secrets.decrypt(provider.api_key_encrypted)
+        except Exception as exc:
+            raise BadRequestError(
+                f"provider {provider.name!r}: {exc}", code="provider_key_unreadable"
+            ) from exc
+    return provider, catalogue_url, api_key
+
+
 @router.get("/models/discover", response_model=CatalogueDiscoveryResponse)
 async def discover_models(
     admin: AdminUserDep,
     session: SessionDep,
     settings: SettingsDep,
+    secrets: SecretsDep,
     http: ControlHttpDep,
+    provider_id: uuid.UUID,
     url: str | None = None,
 ) -> CatalogueDiscoveryResponse:
     """Compare the provider's catalogue with ours.
@@ -263,8 +592,7 @@ async def discover_models(
     offers are the more dangerous half: they keep appearing in ``/v1/models`` and
     fail only when someone calls them.
     """
-    catalogue_url = url or f"{settings.upstream.base_url}/models"
-    api_key = settings.upstream.api_key.get_secret_value() or None
+    provider, catalogue_url, api_key = await _catalogue_source(session, secrets, provider_id, url)
 
     try:
         payload = await fetch_catalogue(http, catalogue_url, api_key)
@@ -274,7 +602,17 @@ async def discover_models(
     prices, unparsable = parse_catalogue(payload)
     by_upstream = {price.model_id: price for price in prices}
 
-    ours = (await session.execute(select(ModelDef).order_by(ModelDef.name))).scalars().all()
+    # Only this provider's models. A model served by another provider is not
+    # "missing upstream" here — it was never expected to be.
+    ours = (
+        (
+            await session.execute(
+                select(ModelDef).where(ModelDef.provider_id == provider.id).order_by(ModelDef.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
     our_upstream_ids = {model.upstream_model for model in ours}
 
     billing_currency = settings.billing_currency.upper()
@@ -328,7 +666,9 @@ async def import_models(
     admin: AdminUserDep,
     session: SessionDep,
     settings: SettingsDep,
+    secrets: SecretsDep,
     http: ControlHttpDep,
+    provider_id: uuid.UUID,
     url: str | None = None,
 ) -> ModelImportResponse:
     """Adopt selected upstream models, with their published prices.
@@ -344,8 +684,7 @@ async def import_models(
     without a price. An unpriced model serves happily and records a cost of zero,
     which is a quiet way to give away money.
     """
-    catalogue_url = url or f"{settings.upstream.base_url}/models"
-    api_key = settings.upstream.api_key.get_secret_value() or None
+    provider, catalogue_url, api_key = await _catalogue_source(session, secrets, provider_id, url)
 
     try:
         catalogue = await fetch_catalogue(http, catalogue_url, api_key)
@@ -416,7 +755,7 @@ async def import_models(
         model = ModelDef(
             name=name,
             upstream_model=item.upstream_model,
-            provider=settings.upstream.base_url,
+            provider_id=provider.id,
             context_window=price.context_window,
         )
         session.add(model)
@@ -590,6 +929,51 @@ async def revoke_model_access(
         delete(GroupModelAccess).where(
             GroupModelAccess.group_id == group_id,
             GroupModelAccess.model_id == model_id,
+        )
+    )
+    await session.commit()
+
+
+@router.put("/users/{user_id}/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def grant_user_model_access(
+    user_id: uuid.UUID, model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> None:
+    """Let one person use a model, over and above their groups. Idempotent.
+
+    Access is the **union** of group and personal grants (ADR 0027), so this adds
+    and never subtracts: it cannot be used to take away something a group grants.
+    """
+    user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+    await _load_model(session, model_id)
+
+    existing = (
+        await session.execute(
+            select(UserModelAccess).where(
+                UserModelAccess.user_id == user_id,
+                UserModelAccess.model_id == model_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is None:
+        session.add(UserModelAccess(user_id=user_id, model_id=model_id))
+        await session.commit()
+
+
+@router.delete("/users/{user_id}/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_user_model_access(
+    user_id: uuid.UUID, model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> None:
+    """Remove a personal grant. Idempotent.
+
+    The person may still reach the model through a group: this removes the
+    personal grant only, because there is no such thing as a denial here.
+    """
+    await session.execute(
+        delete(UserModelAccess).where(
+            UserModelAccess.user_id == user_id,
+            UserModelAccess.model_id == model_id,
         )
     )
     await session.commit()

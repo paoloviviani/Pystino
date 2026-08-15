@@ -15,11 +15,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class UpstreamSettings(BaseModel):
-    """One OpenAI-compatible upstream.
+    """Transport tuning for upstream calls, plus the bootstrap endpoint.
 
-    Phase 1 ships a single configurable upstream. Multi-provider routing is
-    Phase 2; the ``models`` table already carries a ``provider`` column so that
-    routing can be added without a migration to the hot path.
+    Since ADR 0027 the endpoint and credentials of a *running* request come from
+    the ``providers`` table, not from here: ``base_url`` and ``api_key`` are read
+    once, by migration 0003, to create the ``default`` provider so an upgrade
+    changes nothing.
+
+    Everything else on this model is still live. Timeouts and pool sizes are
+    properties of this gateway's HTTP client rather than of any provider, so they
+    stay global and apply to every provider's client.
     """
 
     base_url: str = "https://api.cortecs.ai/v1"
@@ -205,6 +210,14 @@ class Settings(BaseSettings):
     # produces plausible-looking wrong invoices. ADR 0008.
     billing_currency: str = "EUR"
 
+    # Encrypts provider API keys at rest (ADR 0027). Comma-separated: the first
+    # value encrypts, any of them decrypts, which is what makes rotation a
+    # rolling restart rather than re-entering every provider credential.
+    #
+    # Deliberately separate from session_secret: rotating session signing must
+    # not destroy stored provider keys.
+    secret_key: SecretStr = SecretStr("")
+
     # Signs management session cookies.
     session_secret: SecretStr = SecretStr("")
     session_ttl_seconds: int = 8 * 3600
@@ -244,14 +257,21 @@ class Settings(BaseSettings):
     def _upper(cls, value: str) -> str:
         return value.upper()
 
+    def secret_key_list(self) -> list[str]:
+        """Encryption keys, newest first. Empty when none is configured."""
+        raw = self.secret_key.get_secret_value()
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
     @model_validator(mode="after")
     def _production_requires_secrets(self) -> Settings:
         if self.environment == "production":
             missing: list[str] = []
             if not self.session_secret.get_secret_value():
                 missing.append("GATEWAY_SESSION_SECRET")
-            if not self.upstream.api_key.get_secret_value():
-                missing.append("GATEWAY_UPSTREAM__API_KEY")
+            # Provider credentials live in the database from ADR 0027 onwards,
+            # and they cannot be stored without this.
+            if not self.secret_key.get_secret_value():
+                missing.append("GATEWAY_SECRET_KEY")
             if missing:
                 raise ValueError(f"missing required settings in production: {', '.join(missing)}")
         return self

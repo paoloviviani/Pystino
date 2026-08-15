@@ -37,6 +37,8 @@ verified is marked as such in the ADR that depends on it.
 | [0023](0023-admin-console.md) | The console: a SPA served by the gateway, optional at build time |
 | [0024](0024-billing-periods.md) | Billing periods are calendar-based, and are not rolling quota windows |
 | [0025](0025-quota-model-v2.md) | The quota model: stacked, multi-granularity, resettable |
+| [0026](0026-pluggable-detection.md) | Detection is a plugin; the Italian NER model is a build flag |
+| [0027](0027-inference-providers.md) | Inference providers as configurable records, with keys encrypted at rest |
 
 ## Decisions recorded now, implemented later
 

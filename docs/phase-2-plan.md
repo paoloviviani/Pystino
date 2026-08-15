@@ -343,6 +343,33 @@ security bug will be.
 
 ---
 
+## Added after the plan — inference providers
+
+Not in the original plan; asked for once the console existed. See
+[0027](adr/0027-inference-providers.md).
+
+Providers became records rather than environment variables: a `providers` table,
+`models.provider_id` (not nullable), one HTTP client per provider built on demand,
+and `POST /api/admin/providers/{id}/test` to check an endpoint before anything
+depends on it. Migration 0003 turns the existing `GATEWAY_UPSTREAM__*` into a
+`default` provider and points every existing model at it, so an upgrade changes
+nothing observable.
+
+API keys are encrypted at rest with Fernet under `GATEWAY_SECRET_KEY`
+(comma-separated, so rotation is a rolling restart) and are **write-only** over
+the API — a request returns only a hint like `sk-…4f2a`.
+
+Model access became the union of group grants and new per-user grants, in one
+predicate (`gateway/access.py`) that `/v1/models`, `/v1/models/{name}` and the
+chat path all share. No denials: an explicit deny overriding a group grant makes
+"why can this person not use that model" a question requiring a search.
+
+**Found while building it:** the migrate job did not have `GATEWAY_UPSTREAM__*`,
+so the backfilled provider pointed at the default Cortecs URL and dropped the
+API key — the upgrade succeeded and quietly configured the wrong endpoint. The
+compose files now give the migrate job the same upstream configuration as the
+gateway, and the migration warns when it cannot encrypt the key it found.
+
 ## Explicitly out of scope
 
 Budgets with alerts (needs a notification path that does not exist), invoice

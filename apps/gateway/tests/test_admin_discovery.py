@@ -62,7 +62,9 @@ class TestDiscovery:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
-        body = (await client.get("/api/admin/models/discover")).json()
+        body = (
+            await client.get("/api/admin/models/discover?provider_id=" + str(seeded.provider.id))
+        ).json()
 
         assert body["provider_model_count"] == 4
         available = {m["upstream_model"] for m in body["available"]}
@@ -79,7 +81,9 @@ class TestDiscovery:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
-        body = (await client.get("/api/admin/models/discover")).json()
+        body = (
+            await client.get("/api/admin/models/discover?provider_id=" + str(seeded.provider.id))
+        ).json()
         small = next(m for m in body["available"] if m["upstream_model"] == "vendor/new-small")
         assert small["suggested_name"] == "new-small"
         assert small["context_window"] == 32000
@@ -93,7 +97,9 @@ class TestDiscovery:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
-        body = (await client.get("/api/admin/models/discover")).json()
+        body = (
+            await client.get("/api/admin/models/discover?provider_id=" + str(seeded.provider.id))
+        ).json()
         dollar = next(m for m in body["available"] if m["upstream_model"] == "vendor/dollar-model")
         assert dollar["blocked_reason"] is not None
         assert "USD" in dollar["blocked_reason"]
@@ -108,11 +114,19 @@ class TestDiscovery:
     ) -> None:
         """Drift in the direction that fails at 3am rather than at review time."""
         async with session_factory() as session:
-            session.add(ModelDef(name="retired", upstream_model="vendor/gone", provider="vendor"))
+            session.add(
+                ModelDef(
+                    name="retired",
+                    upstream_model="vendor/gone",
+                    provider_id=seeded.provider.id,
+                )
+            )
             await session.commit()
 
         as_user(app, await make_admin(session_factory, seeded))
-        body = (await client.get("/api/admin/models/discover")).json()
+        body = (
+            await client.get("/api/admin/models/discover?provider_id=" + str(seeded.provider.id))
+        ).json()
         assert [m["name"] for m in body["missing_upstream"]] == ["retired"]
         assert [m["name"] for m in body["catalogued"]] == ["test-model"]
 
@@ -130,7 +144,9 @@ class TestDiscovery:
             transport=httpx.MockTransport(broken)
         )
         as_user(app, await make_admin(session_factory, seeded))
-        response = await client.get("/api/admin/models/discover")
+        response = await client.get(
+            "/api/admin/models/discover?provider_id=" + str(seeded.provider.id)
+        )
         assert response.status_code == 502
 
     async def test_a_non_admin_cannot_probe_the_provider(
@@ -142,7 +158,9 @@ class TestDiscovery:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded, admin=False))
-        assert (await client.get("/api/admin/models/discover")).status_code == 403
+        assert (
+            await client.get("/api/admin/models/discover?provider_id=" + str(seeded.provider.id))
+        ).status_code == 403
 
 
 class TestImport:
@@ -156,7 +174,7 @@ class TestImport:
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
-            "/api/admin/models/import",
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
             json={"models": [{"upstream_model": "vendor/new-small"}]},
         )
         assert response.status_code == 201, response.text
@@ -190,7 +208,7 @@ class TestImport:
         """Absence of a grant means no access, and import must not quietly weaken it."""
         as_user(app, await make_admin(session_factory, seeded))
         await client.post(
-            "/api/admin/models/import",
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
             json={"models": [{"upstream_model": "vendor/new-large"}]},
         )
         async with session_factory() as session:
@@ -222,7 +240,7 @@ class TestImport:
         """An unpriced model serves happily and records zero cost."""
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
-            "/api/admin/models/import",
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
             json={"models": [{"upstream_model": "vendor/dollar-model"}]},
         )
         result = response.json()["results"][0]
@@ -247,7 +265,7 @@ class TestImport:
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
-            "/api/admin/models/import",
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
             json={"models": [{"upstream_model": "upstream/test-model"}]},
         )
         result = response.json()["results"][0]
@@ -264,7 +282,7 @@ class TestImport:
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
-            "/api/admin/models/import",
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
             json={"models": [{"upstream_model": "vendor/new-small", "name": "test-model"}]},
         )
         result = response.json()["results"][0]
@@ -281,7 +299,7 @@ class TestImport:
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
-            "/api/admin/models/import",
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
             json={"models": [{"upstream_model": "vendor/imaginary"}]},
         )
         result = response.json()["results"][0]
@@ -299,7 +317,7 @@ class TestImport:
         """One bad entry must not lose the good ones."""
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
-            "/api/admin/models/import",
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
             json={
                 "models": [
                     {"upstream_model": "vendor/new-small"},
@@ -325,5 +343,8 @@ class TestImport:
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
         assert (
-            await client.post("/api/admin/models/import", json={"models": []})
+            await client.post(
+                "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+                json={"models": []},
+            )
         ).status_code == 400

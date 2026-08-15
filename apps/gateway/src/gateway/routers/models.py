@@ -17,10 +17,10 @@ after switching group.
 from __future__ import annotations
 
 from fastapi import APIRouter
-from sqlalchemy import select
 
+from gateway.access import accessible_model_by_name, accessible_models
 from gateway.deps import PrincipalDep, SessionDep
-from gateway.models import GroupModelAccess, ModelDef
+from gateway.models import ModelDef
 from gateway.schemas import ModelCard, ModelList
 
 router = APIRouter(prefix="/v1", tags=["openai"])
@@ -28,20 +28,12 @@ router = APIRouter(prefix="/v1", tags=["openai"])
 
 @router.get("/models", response_model=ModelList)
 async def list_models(principal: PrincipalDep, session: SessionDep) -> ModelList:
-    group_ids = principal.user.group_ids()
-    if not group_ids:
-        return ModelList(data=[])
-
-    stmt = (
-        select(ModelDef)
-        .join(GroupModelAccess, GroupModelAccess.model_id == ModelDef.id)
-        .where(
-            ModelDef.is_active.is_(True),
-            GroupModelAccess.group_id.in_(group_ids),
-        )
-        .distinct()
-        .order_by(ModelDef.name)
-    )
+    # Group grants and personal grants, unioned in one place (ADR 0027). The
+    # empty case is handled there too, so there is no early return to keep in
+    # step with the predicate.
+    stmt = accessible_models(
+        user_id=principal.user.id, group_ids=principal.user.group_ids()
+    ).order_by(ModelDef.name)
     models = (await session.execute(stmt)).scalars().all()
 
     return ModelList(
@@ -49,7 +41,7 @@ async def list_models(principal: PrincipalDep, session: SessionDep) -> ModelList
             ModelCard(
                 id=model.name,
                 created=int(model.created_at.timestamp()),
-                owned_by=model.provider,
+                owned_by=model.provider.name,
                 context_window=model.context_window,
                 display_name=model.display_name,
             )
@@ -64,15 +56,8 @@ async def retrieve_model(
 ) -> ModelCard:
     from gateway.errors import ModelNotFoundError
 
-    group_ids = principal.user.group_ids()
-    stmt = (
-        select(ModelDef)
-        .join(GroupModelAccess, GroupModelAccess.model_id == ModelDef.id)
-        .where(
-            ModelDef.name == model_name,
-            ModelDef.is_active.is_(True),
-            GroupModelAccess.group_id.in_(group_ids or [None]),
-        )
+    stmt = accessible_model_by_name(
+        model_name, user_id=principal.user.id, group_ids=principal.user.group_ids()
     )
     model = (await session.execute(stmt)).scalars().first()
     if model is None:
@@ -82,7 +67,7 @@ async def retrieve_model(
     return ModelCard(
         id=model.name,
         created=int(model.created_at.timestamp()),
-        owned_by=model.provider,
+        owned_by=model.provider.name,
         context_window=model.context_window,
         display_name=model.display_name,
     )
