@@ -182,11 +182,24 @@ def main() -> int:
             "totals"
         ]["cost"]
     )
-    expect(
-        "the monthly quota counter and the monthly report agree",
-        Decimal(rule["current_value"]) == report_total,
-        f"quota {rule['current_value']} vs report {report_total}",
-    )
+    # Only equal on a rule that has not been reset inside the period, and this
+    # script resets it a few lines below — so on every run after the first the
+    # counter legitimately starts from zero while the report still counts the
+    # whole month. Reported as skipped rather than failed: a reset is designed
+    # to make exactly this difference, and asserting equality regardless would
+    # be a check that fails when the feature works.
+    if rule["last_reset_at"]:
+        print(
+            f"  skipped: this rule was reset at {rule['last_reset_at']}, so the counter "
+            f"({rule['current_value']}) covers less of the month than the report "
+            f"({report_total}) by design"
+        )
+    else:
+        expect(
+            "the monthly quota counter and the monthly report agree",
+            Decimal(rule["current_value"]) == report_total,
+            f"quota {rule['current_value']} vs report {report_total}",
+        )
 
     status, reset = api(
         dave,

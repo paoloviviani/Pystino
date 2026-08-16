@@ -206,6 +206,48 @@ And do not put this stack on a routable address as it stands: Keycloak runs
 `start-dev` with `admin`/`admin` and an in-memory database, there is no TLS, the
 session cookie is not `Secure`, and the seeded users have published passwords.
 
+### Without a tunnel, over a private overlay network
+
+A WireGuard mesh — NetBird, Tailscale, plain WireGuard — gives the host an
+address only enrolled peers can reach, authenticated and encrypted below HTTP.
+That is the one way to drop the tunnel without putting any of the above on a
+routable address.
+
+Set `OVERLAY_ADDR` in `deploy/.env` to an address that **already exists on this
+host** (`ip -brief addr` will show it; on the LINKS development host it is
+`100.124.242.79` on `wt0`), and add the overlay file:
+
+```bash
+docker compose --env-file deploy/.env \
+  -f deploy/compose/docker-compose.yml \
+  -f deploy/compose/docker-compose.smoke.yml \
+  -f deploy/compose/docker-compose.keycloak.yml \
+  -f deploy/compose/docker-compose.redaction.yml \
+  -f deploy/compose/docker-compose.overlay.yml up -d
+```
+
+Then open `http://<OVERLAY_ADDR>:8000/console` from any enrolled peer. The
+overlay moves all three pinned URLs together, and registers the extra callback
+on the realm with a one-shot `kcadm` container — the exact URI, never a
+wildcard, because an open redirect on an OIDC client hands the authorization
+code to whoever asks.
+
+Three things worth knowing before you use it:
+
+- **Publishing is additive.** `127.0.0.1` is still bound, so the live scripts
+  and healthchecks keep working when the mesh is down. Without the overlay file
+  the stack is loopback-only, which is the default the base files now set —
+  Docker's own default is `0.0.0.0`, meaning every interface the host has.
+- **Signing in works on the overlay address only.** The gateway sends exactly
+  one `redirect_uri`, and the login-state cookie is scoped to the origin the
+  flow began on, so starting at `localhost:8000` and being sent back to the
+  overlay address loses it. The symptom is a callback answered with *"No login
+  is in progress in this browser"*, which reads like a broken flow rather than
+  a mismatched hostname. `/v1` is unaffected: it uses API keys, not sessions.
+- **It narrows where the stack is reachable from, and nothing else.** Keycloak
+  still has `admin`/`admin`, there is still no TLS, and the gateway still holds
+  real provider credentials that anyone with a session can spend.
+
 ## Local development without Docker
 
 ```bash

@@ -18,9 +18,15 @@ services:
 
   postgres:
     # Exposed for psql and for running the test suite against a real PostgreSQL.
+    # Loopback only: an unauthenticated-from-the-network database is not
+    # something to hand to whatever the host's firewall happens to allow, and
+    # Docker's default publish address is every interface.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
 
   valkey:
+    # Loopback only, same reasoning. Needed on the host by
+    # scripts/test_quota_race_live.py, which drives the real store from many
+    # clients at once — the one thing the unit suite structurally cannot check.
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"

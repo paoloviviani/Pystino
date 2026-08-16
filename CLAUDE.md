@@ -18,7 +18,11 @@ anything; it is the context that is not recoverable from the code.
    rather than a stack trace.
 4. **Never put the dev stack on a routable address.** Keycloak runs `start-dev`
    with `admin`/`admin`, there is no TLS, the session cookie is not `Secure`,
-   and the seeded passwords are in the repo.
+   and the seeded passwords are in the repo. The base compose files bind
+   `127.0.0.1` for this reason. To reach it from another machine, use the SSH
+   tunnel or `docker-compose.overlay.yml`, which publishes on a private
+   WireGuard-mesh address as well — see the README. A private overlay address
+   satisfies this rule; a public one does not, whatever else is done to it.
 
 ## Explaining the work
 
@@ -75,9 +79,15 @@ Inside the gateway, the pieces that carry the most weight:
 - **`InMemoryCounterStore` is atomic for an uninteresting reason** — it never
   awaits. It cannot prove anything about `MULTI`/`EXEC`, which is why
   `scripts/test_quota_race_live.py` exists.
-- **Keycloak's advertised hostname must match the tunnel.** `KEYCLOAK_PORT`
-  moves the published port *and* `KC_HOSTNAME` together. Changing it needs the
-  gateway restarted too — it reads OIDC discovery once at startup.
+- **Keycloak's advertised hostname must match however you reached it.**
+  `KEYCLOAK_PORT` moves the published port *and* `KC_HOSTNAME` together;
+  `OVERLAY_ADDR` moves the host part of both, plus the gateway's redirect URI
+  and the realm's registered callback. Changing either needs the gateway
+  restarted — it reads OIDC discovery once at startup. And the login-state
+  cookie is per-origin, so with the overlay active you can only *sign in* on
+  the overlay address; `localhost` still serves `/v1` and the API, which is
+  what the live scripts need. They follow `OVERLAY_ADDR` when it is set, so
+  source `deploy/.env` before running them.
 - **The demo user's cap is EUR 1/hour and the fake upstream bills 1M tokens per
   request.** Running several live scripts back to back exhausts it legitimately;
   they report that as skipped. Flushing Valkey alone does not reset it — the

@@ -55,7 +55,9 @@ services:
     volumes:
       - ../keycloak/realm-llm-platform.json:/opt/keycloak/data/import/realm-llm-platform.json:ro
     ports:
-      - "${KEYCLOAK_PORT:-8080}:8080"
+      # Loopback only, and this one matters more than the gateway's: `start-dev`
+      # serves the admin console with admin/admin.
+      - "127.0.0.1:${KEYCLOAK_PORT:-8080}:8080"
     healthcheck:
       # The management port (9000) serves health in Keycloak 25+. curl is not in
       # the image, so this uses the JVM-free /bin/bash TCP trick via exec.

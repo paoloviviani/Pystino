@@ -20,9 +20,15 @@ sockets, and asserts the two things that matter:
   refuse the next legitimate request too.
 
 Usage:
+    # The override file is what publishes 6379 on the host. Passing any -f at
+    # all stops Compose loading it automatically, so it has to be named — and
+    # without it this script cannot reach Valkey at all.
     docker compose --env-file deploy/.env \\
-      -f deploy/compose/docker-compose.yml up -d valkey
-    python3 scripts/test_quota_race_live.py
+      -f deploy/compose/docker-compose.yml \\
+      -f deploy/compose/docker-compose.override.yml up -d valkey
+    uv run python scripts/test_quota_race_live.py
+
+Set VALKEY_URL to point somewhere else. Database 9 is used and flushed.
 """
 
 from __future__ import annotations
