@@ -163,9 +163,7 @@ class TestCachePricing:
 class TestImagePricing:
     def test_a_per_image_model_charges_by_the_picture(self) -> None:
         counts = TokenCounts.from_image_usage(None, images=3)
-        breakdown = compute_cost(
-            counts, price(per_image=Decimal("0.04")), billing_currency="EUR"
-        )
+        breakdown = compute_cost(counts, price(per_image=Decimal("0.04")), billing_currency="EUR")
         assert breakdown.image_cost == Decimal("0.12")
         assert breakdown.total == Decimal("0.12")
 
@@ -173,9 +171,7 @@ class TestImagePricing:
         counts = TokenCounts.from_image_usage(
             {"input_tokens": 1_000_000, "output_tokens": 0}, images=2
         )
-        breakdown = compute_cost(
-            counts, price(input_per_mtok=Decimal("5")), billing_currency="EUR"
-        )
+        breakdown = compute_cost(counts, price(input_per_mtok=Decimal("5")), billing_currency="EUR")
         assert breakdown.input_cost == Decimal("5")
         assert breakdown.image_cost == Decimal(0)
 

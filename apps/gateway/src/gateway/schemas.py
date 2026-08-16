@@ -241,6 +241,11 @@ class ModelCard(BaseModel):
     # Non-standard but useful additions; OpenAI clients ignore unknown fields.
     context_window: int | None = None
     display_name: str | None = None
+    # Which of this gateway's routes will serve it. Not in OpenAI's schema,
+    # where the listing is per-endpoint and the question does not arise — here
+    # one listing covers chat, embedding and image models, and without this a
+    # client has to guess and get a 400 to find out (ADR 0030).
+    kind: str = "chat"
 
 
 class ModelList(BaseModel):

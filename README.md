@@ -19,7 +19,7 @@ it implies.
 | `apps/console` | **Built.** Self-service spend plus reports, quotas, providers, models, pricing and users at `/console`. |
 | `apps/web`, `apps/desktop`, `services/rag`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |
 
-757 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
+760 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
 exercises the whole slice over real HTTP, and the full `docker compose` stack has been
 built and run against PostgreSQL 18, Valkey and Keycloak — including the complete OIDC
 login flow and the reporting API (`./scripts/test_reporting_live.py`, which covers the
@@ -140,7 +140,8 @@ legitimately exhaust it; the scripts report that as skipped rather than failed.
 
 That drives the whole authorization-code flow and checks the result: PKCE, ID token
 validation, group mapping, the provisioning rules, and a session minting an API key that
-then serves a billed completion. Admin console on <http://localhost:8080> (`admin`/`admin`);
+then serves a billed completion. Keycloak admin console on <http://localhost:8080> —
+or whatever `KEYCLOAK_PORT` is set to — (`admin`/`admin`);
 seeded users are described in [deploy/keycloak/README.md](deploy/keycloak/README.md).
 
 ### Reaching the console from another machine
@@ -150,45 +151,44 @@ If you are working on a server over SSH, forward both ports rather than exposing
 them:
 
 ```bash
-# the LINKS development host
-ssh -L 8000:localhost:8000 -L 8080:localhost:8080 ubuntu@130.192.84.52
+# the LINKS development host, where KEYCLOAK_PORT is set to 18080
+ssh -L 8000:localhost:8000 -L 18080:localhost:18080 ubuntu@130.192.84.52
 ```
 
 Then open <http://localhost:8000/console> in your own browser and sign in as one
 of the [seeded users](deploy/keycloak/README.md) — `dave` / `dave-password` is the
 administrator.
 
-**Both ports matter.** 8000 is the gateway; 8080 is Keycloak, and the browser is
-redirected there to log in. Forwarding only 8000 gets you a page that loads and a
-login that goes nowhere.
+**Both ports matter.** 8000 is the gateway; 18080 is Keycloak, and the browser
+is redirected there to log in. Forwarding only 8000 gets you a page that loads
+and a login that goes nowhere.
 
-**And the local ports must match the remote ones**, not just be any free pair.
-The browser is sent to whatever Keycloak advertises, which is `localhost:8080`,
-so `-L 9000:localhost:8080` would serve the console and break the login.
+**And the local port must match the remote one**, not just be any free port. The
+browser goes wherever Keycloak advertises, so `-L 9000:localhost:18080` would
+serve the console and break the login.
 
-If something on your own machine already owns 8080 — Docker Desktop and Jenkins
-are the usual suspects — `ssh` prints `bind: Address already in use`, carries on
-with the other forward, and you get a console that loads and a login that cannot
-connect. Either free the port, or move both ends together:
+Keycloak is on **18080 rather than 8080** on that host because 8080 is taken on
+the machine we tunnel from — when that happens `ssh` prints
+`bind: Address already in use`, carries on with the other forward, and you get
+exactly that symptom: a console that loads and a login that cannot connect.
+`KEYCLOAK_PORT` in `deploy/.env` moves the published port *and* the hostname
+Keycloak advertises, so the browser, the tunnel and the `iss` claim keep
+agreeing:
 
 ```bash
-# on the server
 KEYCLOAK_PORT=18080 docker compose --env-file deploy/.env \
   -f deploy/compose/docker-compose.yml \
   -f deploy/compose/docker-compose.smoke.yml \
   -f deploy/compose/docker-compose.keycloak.yml up -d
-
-# from your machine
-ssh -L 8000:localhost:8000 -L 18080:localhost:18080 ubuntu@130.192.84.52
 ```
 
-`KEYCLOAK_PORT` moves the published port *and* the hostname Keycloak advertises,
-so the browser, the tunnel and the `iss` claim keep agreeing. To check a forward
-is actually up before blaming the stack:
+Changing it needs the **gateway restarted too** — it reads OIDC discovery once
+at startup, so a gateway that was already running keeps sending browsers to the
+old port. To check a forward is actually up before blaming the stack:
 
 ```bash
-curl -s http://localhost:8080/realms/llm-platform | head -c 200   # realm JSON
-lsof -nP -iTCP:8080 -sTCP:LISTEN                                  # who has the port
+curl -s http://localhost:18080/realms/llm-platform | head -c 200  # realm JSON
+lsof -nP -iTCP:18080 -sTCP:LISTEN                                 # who has the port
 ```
 
 **Why a tunnel and not just the server's address.** The OIDC configuration is

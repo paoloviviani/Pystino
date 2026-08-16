@@ -23,7 +23,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable
 
-from sqlalchemy import ColumnElement, Select, or_, select
+from sqlalchemy import ColumnElement, Select, literal, or_, select
 from sqlalchemy.orm import selectinload
 
 from gateway.models import GroupModelAccess, ModelDef, Provider, UserModelAccess
@@ -39,22 +39,44 @@ def accessible_models(
     """
     groups = list(group_ids)
 
-    # Outer joins plus an OR, rather than a UNION of two queries: a model granted
-    # both ways must appear once, and `distinct` on one statement is simpler to
-    # be sure of than deduplicating two result sets.
+    # EXISTS per grant kind, rather than outer joins plus DISTINCT.
+    #
+    # The joins were the obvious spelling and they were wrong twice over. A
+    # model granted through two of the caller's groups fans out into two rows,
+    # so the joins force a DISTINCT to put it back — and `DISTINCT` requires an
+    # equality operator for every selected column. `ModelDef.provider` is
+    # `lazy="joined"`, which drags the provider's `extra_headers` into the
+    # select list, and PostgreSQL has no equality operator for `json`. The
+    # result was a 500 on `/v1/models` that SQLite could not reproduce, because
+    # SQLite is happy to compare JSON.
+    #
+    # EXISTS cannot fan out, so there is nothing to deduplicate and no DISTINCT
+    # to go wrong. It is also the cheaper plan: no join-then-dedup over the
+    # grant tables.
     reachable: list[ColumnElement[bool]] = []
     if groups:
-        reachable.append(GroupModelAccess.group_id.in_(groups))
+        reachable.append(
+            select(literal(1))
+            .where(
+                GroupModelAccess.model_id == ModelDef.id,
+                GroupModelAccess.group_id.in_(groups),
+            )
+            .exists()
+        )
     if user_id is not None:
-        reachable.append(UserModelAccess.user_id == user_id)
+        reachable.append(
+            select(literal(1))
+            .where(
+                UserModelAccess.model_id == ModelDef.id,
+                UserModelAccess.user_id == user_id,
+            )
+            .exists()
+        )
 
     statement = (
         select(ModelDef)
         .join(Provider, Provider.id == ModelDef.provider_id)
-        .outerjoin(GroupModelAccess, GroupModelAccess.model_id == ModelDef.id)
-        .outerjoin(UserModelAccess, UserModelAccess.model_id == ModelDef.id)
         .where(ModelDef.is_active.is_(True), Provider.is_active.is_(True))
-        .distinct()
     )
 
     if not reachable:

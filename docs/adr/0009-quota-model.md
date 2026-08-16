@@ -59,6 +59,23 @@ visible to its siblings; settling replaces the estimate with the truth.
 Tested with ten concurrent attempts against a 1000-token ceiling at 400 tokens each:
 between 1 and 3 are admitted, never all ten.
 
+**Amended 2026-08-16 — that bound is not guaranteed.** The same test admitted
+*five* on a machine under heavy load. `check_and_reserve` reads the window
+total, decides, and then increments, and there are `await` points in between:
+concurrent callers can all read the same pre-reservation total before any of
+their increments land. Reservations narrow the window a great deal — without
+them all ten pass — but they do not close it, and the window is *wider* against
+a real counter store than the in-memory one, because the read is a network
+round trip.
+
+So the honest statement of the bound is "overshoot is bounded by the number of
+requests that can read the total within one round trip, times one request's
+usage", not "one request's usage". Closing it needs the check and the increment
+to be one atomic operation at the store — a Lua script on Valkey, or a
+conditional increment — which is not what is implemented. Left as a known
+weakness rather than quietly wrong documentation; see the note in the gateway
+README.
+
 **A bug the tests found:** deltas whose estimate was zero were originally skipped, so
 `settle` had nothing to correct and the *actual* usage for that metric was never
 counted at all — which would have silently under-counted cost for every unpriced
@@ -77,8 +94,8 @@ Consequences of that choice:
 
 - Overshoot is bounded by **one request's actual usage**, and the *next* request is
   refused.
-- Because reservations are visible to concurrent requests, that bound holds under
-  concurrency too.
+- Because reservations are visible to concurrent requests, that bound mostly holds
+  under concurrency — but not strictly; see the amendment above.
 
 An optional stricter mode was considered and **not implemented**: clamping
 `max_tokens` so the worst case fits the remaining budget, making the limit genuinely
