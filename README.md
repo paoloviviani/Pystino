@@ -150,7 +150,8 @@ If you are working on a server over SSH, forward both ports rather than exposing
 them:
 
 ```bash
-ssh -L 8000:localhost:8000 -L 8080:localhost:8080 <user>@<host>
+# the LINKS development host
+ssh -L 8000:localhost:8000 -L 8080:localhost:8080 ubuntu@130.192.84.52
 ```
 
 Then open <http://localhost:8000/console> in your own browser and sign in as one
@@ -160,6 +161,10 @@ administrator.
 **Both ports matter.** 8000 is the gateway; 8080 is Keycloak, and the browser is
 redirected there to log in. Forwarding only 8000 gets you a page that loads and a
 login that goes nowhere.
+
+**And the local ports must be those numbers**, not just any free pair. The
+browser is sent to whatever Keycloak advertises, which is `localhost:8080`;
+`-L 9000:localhost:8000` would serve the console and break the login.
 
 **Why a tunnel and not just the server's address.** The OIDC configuration is
 pinned to `localhost` in three places — Keycloak's `KC_HOSTNAME`, the gateway's
