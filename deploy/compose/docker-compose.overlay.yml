@@ -1,0 +1,94 @@
+# Reaching the stack from another machine, without an SSH tunnel.
+#
+# The base files publish on 127.0.0.1 only, because this stack must never sit on
+# a routable address: Keycloak runs `start-dev` with admin/admin, there is no
+# TLS, the session cookie is not `Secure`, the seeded passwords are in the
+# repository, and the gateway holds real provider credentials that a session
+# holder can spend. None of that is fixable by being careful with the URL.
+#
+# A private overlay network is the way out that does not require pretending
+# otherwise. WireGuard-based meshes — NetBird, Tailscale, plain WireGuard —
+# give the host an address reachable only by enrolled peers, authenticated and
+# encrypted at the network layer. The stack is still plaintext HTTP with a
+# default admin password; it is simply no longer on a network where that is
+# anyone's problem but the mesh's.
+#
+# This file adds a second publish address alongside the loopback one, and
+# rewrites the two URLs that are sent to a *browser* — the browser is on the
+# other peer, so `localhost` means its own machine and nothing here.
+#
+#   OVERLAY_ADDR=100.124.242.79 docker compose --env-file deploy/.env \
+#     -f deploy/compose/docker-compose.yml \
+#     -f deploy/compose/docker-compose.keycloak.yml \
+#     -f deploy/compose/docker-compose.overlay.yml up -d
+#
+# `OVERLAY_ADDR` must be an address that already exists on this host — check
+# with `ip -brief addr`. Docker refuses to start a container whose publish
+# address it cannot bind, so a mesh that is down becomes a stack that will not
+# boot. That is the reason the loopback binding is kept rather than replaced:
+# the live scripts and the healthchecks go on working when the mesh does not.
+#
+# What this does NOT do is make the deployment safe to expose more widely. It
+# narrows *where* the stack is reachable from; it changes nothing about what an
+# attacker who reaches it can do.
+
+services:
+  gateway:
+    ports:
+      # Appended to the base file's loopback entry, not replacing it.
+      - "${OVERLAY_ADDR:?set OVERLAY_ADDR to this host's overlay address}:${GATEWAY_PORT:-8000}:8000"
+    environment:
+      # Where the browser is sent back to after signing in. Pointing at
+      # localhost would send the *other* machine to its own port 8000.
+      GATEWAY_OIDC__REDIRECT_URI: http://${OVERLAY_ADDR}:${GATEWAY_PORT:-8000}/auth/callback
+
+  keycloak:
+    ports:
+      - "${OVERLAY_ADDR:?set OVERLAY_ADDR to this host's overlay address}:${KEYCLOAK_PORT:-8080}:8080"
+    environment:
+      # The advertised hostname has to match what the browser typed, or the
+      # authorization redirect lands somewhere that machine cannot reach. Same
+      # rule as KEYCLOAK_PORT: this and the published port move together, and
+      # the gateway needs restarting after either, because it reads OIDC
+      # discovery once at startup.
+      KC_HOSTNAME: http://${OVERLAY_ADDR}:${KEYCLOAK_PORT:-8080}
+
+  # Teaching the realm that the overlay callback is legitimate.
+  #
+  # Without this the flow fails at the *first* step with "Invalid parameter:
+  # redirect_uri" — a blank Keycloak error page before any login form, which
+  # reads like a broken deployment rather than a missing entry in a list. The
+  # realm file ships localhost only, and correctly so: the mesh address belongs
+  # to one deployment and does not belong in a tracked fixture.
+  #
+  # A wildcard would be the lazy fix and is the one thing not to do here: an
+  # open redirect on an OIDC client hands the authorization code to whoever
+  # asks. The exact URI is registered, and nothing else.
+  #
+  # Idempotent, so it is safe on every `up`. It sets the full list rather than
+  # appending, which also repairs a list edited by hand in the admin console.
+  keycloak-overlay-client:
+    image: quay.io/keycloak/keycloak:26.7
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        kc=/opt/keycloak/bin/kcadm.sh
+        overlay="http://$${OVERLAY_ADDR}:$${GATEWAY_PORT}"
+        $$kc config credentials --server http://keycloak:8080 \
+          --realm master --user "$${KC_ADMIN_USER}" --password "$${KC_ADMIN_PASSWORD}"
+        id=$$($$kc get clients -r llm-platform -q clientId=llm-gateway \
+          --fields id --format csv --noquotes)
+        $$kc update "clients/$${id}" -r llm-platform \
+          -s "redirectUris=[\"http://localhost:$${GATEWAY_PORT}/auth/callback\",\"http://127.0.0.1:$${GATEWAY_PORT}/auth/callback\",\"$${overlay}/auth/callback\"]" \
+          -s "webOrigins=[\"http://localhost:$${GATEWAY_PORT}\",\"$${overlay}\"]"
+        echo "registered $${overlay}/auth/callback"
+    environment:
+      OVERLAY_ADDR: ${OVERLAY_ADDR}
+      GATEWAY_PORT: ${GATEWAY_PORT:-8000}
+      KC_ADMIN_USER: admin
+      KC_ADMIN_PASSWORD: admin

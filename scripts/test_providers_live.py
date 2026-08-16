@@ -291,7 +291,18 @@ def main() -> int:
                 expect("a batch is embedded", False, f"HTTP {error.code}")
 
         # A chat model on the embeddings route is refused here, not upstream.
-        wrong = next((m for m in models if m["kind"] == "chat"), None)
+        #
+        # Chosen from `/v1/models`, which is filtered to what this key may
+        # reach, rather than from the admin listing of everything catalogued.
+        # A model the caller cannot access answers 404 — correctly, since which
+        # models another group can use is not their business — and that 404 is
+        # indistinguishable here from the routing check never having run.
+        reachable = urllib.request.Request(
+            f"{GATEWAY}/v1/models", headers={"authorization": f"Bearer {secret}"}
+        )
+        with urllib.request.urlopen(reachable, timeout=30) as response:
+            mine = json.loads(response.read()).get("data", [])
+        wrong = next((m | {"name": m["id"]} for m in mine if m.get("kind") == "chat"), None)
         if wrong:
             req = urllib.request.Request(
                 f"{GATEWAY}/v1/embeddings",

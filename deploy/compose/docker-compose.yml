@@ -82,7 +82,13 @@ services:
         INCLUDE_CONSOLE: ${INCLUDE_CONSOLE:-true}
     restart: unless-stopped
     ports:
-      - "${GATEWAY_PORT:-8000}:8000"
+      # Loopback only. Docker's default is 0.0.0.0, which puts the whole
+      # management API — and a console session cookie that is not `Secure` —
+      # on every interface the host happens to have, including whatever the
+      # cloud firewall permits. Reaching it from elsewhere is a deliberate act:
+      # add docker-compose.overlay.yml, which publishes on a private overlay
+      # address as well.
+      - "127.0.0.1:${GATEWAY_PORT:-8000}:8000"
     environment:
       GATEWAY_ENVIRONMENT: ${GATEWAY_ENVIRONMENT:-dev}
       GATEWAY_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}

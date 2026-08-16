@@ -43,16 +43,30 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-GATEWAY = "http://localhost:8000"
+# The gateway must be reached on the *same origin* as its registered redirect
+# URI. The session cookie carrying the login state is scoped to the origin the
+# flow started on, so beginning at localhost and being sent back to the overlay
+# address loses it — and the gateway answers the callback with "No login is in
+# progress in this browser", which reads like a broken flow rather than a
+# mismatched hostname. Hence this follows OVERLAY_ADDR too.
+GATEWAY_HOST = os.environ.get("GATEWAY_HOST") or os.environ.get("OVERLAY_ADDR") or "localhost"
+GATEWAY = os.environ.get(
+    "GATEWAY_URL", f"http://{GATEWAY_HOST}:{os.environ.get('GATEWAY_PORT', '8000')}"
+)
 # Keycloak's *frontend* URL is pinned to the public name and its backchannel is
 # left dynamic (see docker-compose.keycloak.yml), so browser-facing URLs already
-# point at localhost and this rewrite is a no-op. It is kept only so the script
-# still works if someone pins the frontend to the compose-internal name instead.
+# point at the advertised host and this rewrite is a no-op. It is kept only so
+# the script still works if someone pins the frontend to the internal name.
 KEYCLOAK_INTERNAL = "keycloak:8080"
-# Follows KEYCLOAK_PORT, which moves the published port and the hostname
-# Keycloak advertises together — set it when something already owns 8080 on the
-# machine you tunnel from.
-KEYCLOAK_EXTERNAL = f"localhost:{os.environ.get('KEYCLOAK_PORT', '8080')}"
+# The host a *browser* is sent to, which is whatever KC_HOSTNAME advertises —
+# not necessarily localhost. With docker-compose.overlay.yml it is the overlay
+# address, and asserting on localhost would fail against a stack that is
+# working correctly. So it follows OVERLAY_ADDR, the same variable the overlay
+# file reads, and KEYCLOAK_HOST overrides both.
+KEYCLOAK_HOST = os.environ.get("KEYCLOAK_HOST") or os.environ.get("OVERLAY_ADDR") or "localhost"
+# KEYCLOAK_PORT moves the published port and the advertised hostname together —
+# set it when something already owns 8080 on the machine you browse from.
+KEYCLOAK_EXTERNAL = f"{KEYCLOAK_HOST}:{os.environ.get('KEYCLOAK_PORT', '8080')}"
 
 PASSWORDS = {
     "alice": "alice-password",

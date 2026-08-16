@@ -310,7 +310,16 @@ def main() -> int:
     print()
     print("=== model capabilities ===")
     providers = api(dave, "/api/admin/providers")[1]["items"]
-    provider_id = next((p["id"] for p in providers if p["is_active"]), None)
+    # The provider serving the fake upstream, not merely the first active one.
+    # Everything below asserts about `upstream/*` models, which only the fake
+    # upstream offers — and a deployment that has had a real provider added
+    # through the console (as this one has) will otherwise discover against
+    # that instead, and report a missing model that was never supposed to be
+    # there. Falls back to the first active provider for a stack with only one.
+    provider_id = next(
+        (p["id"] for p in providers if p["is_active"] and "fake-upstream" in p["base_url"]),
+        next((p["id"] for p in providers if p["is_active"]), None),
+    )
     if provider_id:
         found = api(dave, f"/api/admin/models/discover?provider_id={provider_id}")[1]
         offered = {m["upstream_model"]: m for m in found.get("available", [])}
@@ -335,6 +344,7 @@ def main() -> int:
                 str(rich["context_window"]),
             )
 
+        just_imported = False
         if "upstream/big-model" not in catalogued and rich is not None:
             status, _ = api(
                 dave,
@@ -343,6 +353,7 @@ def main() -> int:
                 method="POST",
             )
             expect("it can be imported", status == 201, f"HTTP {status}")
+            just_imported = status == 201
             catalogued = {
                 m["upstream_model"]: m
                 for m in api(dave, "/api/admin/models?limit=200")[1]["items"]
@@ -350,12 +361,26 @@ def main() -> int:
 
         imported = catalogued.get("upstream/big-model")
         if imported is not None:
-            expect(
-                "the capabilities survive the import",
-                "image" in imported["input_modalities"]
-                and "reasoning" in imported["supported_features"],
-                f"in={imported['input_modalities']} feat={imported['supported_features']}",
-            )
+            # Only meaningful on the run that actually imported it. A few lines
+            # below, this script edits `reasoning` off the same model to prove
+            # an operator can correct a claim — and that edit is *supposed* to
+            # persist, so on every later run the model is one a human has
+            # already corrected. Asserting the catalogue's original claim
+            # against it would be a check that fails because the feature under
+            # test worked.
+            if not just_imported:
+                print(
+                    "  skipped: upstream/big-model was catalogued by an earlier run and "
+                    f"edited by it — feat={imported['supported_features']}. Delete the "
+                    "model to exercise the import path again."
+                )
+            else:
+                expect(
+                    "the capabilities survive the import",
+                    "image" in imported["input_modalities"]
+                    and "reasoning" in imported["supported_features"],
+                    f"in={imported['input_modalities']} feat={imported['supported_features']}",
+                )
             status, edited = api(
                 dave,
                 f"/api/admin/models/{imported['id']}",
