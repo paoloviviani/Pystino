@@ -35,8 +35,8 @@ export function Table<Row>({
   return (
     <div className={styles.scroll}>
       <table className={styles.table}>
-        {/* Present rather than omitted: someone arriving at this table with a
-            screen reader needs to know what it is before hearing thirty numbers. */}
+        {/* Announced, not shown — see the note on `.caption`. Omitting it
+            would leave a screen reader to infer what thirty numbers are. */}
         {caption && <caption className={styles.caption}>{caption}</caption>}
         <thead>
           <tr>

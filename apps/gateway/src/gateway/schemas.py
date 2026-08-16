@@ -17,14 +17,35 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, SecretStr, model_validator
 
 if TYPE_CHECKING:
     from gateway.redaction import RedactionOutcome as RedactionOutcomeLike
 else:  # pragma: no cover - runtime only needs the name to exist
     RedactionOutcomeLike = Any
+
+
+def _plain_decimal(value: Decimal | None) -> str | None:
+    """A money amount as digits, never in scientific notation.
+
+    `Numeric(24,12)` round-trips a zero as `Decimal("0E-12")`, and both of the
+    obvious renderings of that are wrong where it lands: a spreadsheet cell
+    reading `0E-12`, and a UI that strips the sign and shows `0E12.00`. Neither
+    is a rounding error anybody notices in review — the number is *zero* — but
+    the same path carries every other price, so it is fixed at the boundary
+    rather than in each consumer.
+
+    `format(value, "f")` is exact and never returns an exponent.
+    """
+    return None if value is None else format(value, "f")
+
+
+#: A `Decimal` that serialises to a plain decimal string. Money stays a string
+#: end to end — parsing it into a float anywhere would reintroduce binary
+#: floating point at the last moment.
+Money = Annotated[Decimal, PlainSerializer(_plain_decimal, return_type=str, when_used="json")]
 
 
 class ChatCompletionRequest(BaseModel):
@@ -304,7 +325,7 @@ class UsageSummaryResponse(BaseModel):
     window_seconds: int
     requests: int
     total_tokens: int
-    cost: Decimal
+    cost: Money
     currency: str
     # Split so a reader can tell measured spend from inferred spend.
     estimated_requests: int = 0
@@ -322,9 +343,9 @@ class LimitRuleResponse(BaseModel):
     period: str | None = None
     # "3600s" or "month" — one string a UI can print without branching.
     window_label: str = ""
-    limit_value: Decimal
+    limit_value: Money
     is_active: bool
-    current_value: Decimal | None = None
+    current_value: Money | None = None
     # Null unless the rule has ever been reset. Consumption before this instant
     # does not count towards the limit; it is still in the billing report.
     last_reset_at: datetime | None = None
@@ -442,11 +463,11 @@ class ModelUpdateRequest(BaseModel):
 
 class PriceResponse(BaseModel):
     id: uuid.UUID
-    input_per_mtok: Decimal
-    output_per_mtok: Decimal
-    cache_read_per_mtok: Decimal | None
-    cache_write_per_mtok: Decimal | None
-    per_image: Decimal | None
+    input_per_mtok: Money
+    output_per_mtok: Money
+    cache_read_per_mtok: Money | None
+    cache_write_per_mtok: Money | None
+    per_image: Money | None
     currency: str
     effective_from: datetime
     source: str
@@ -455,14 +476,14 @@ class PriceResponse(BaseModel):
 class PriceCreateRequest(BaseModel):
     """A new price. Prices are append-only, so this never edits an existing row."""
 
-    input_per_mtok: Decimal = Field(ge=0)
-    output_per_mtok: Decimal = Field(ge=0)
-    cache_read_per_mtok: Decimal | None = Field(default=None, ge=0)
-    cache_write_per_mtok: Decimal | None = Field(default=None, ge=0)
+    input_per_mtok: Money = Field(ge=0)
+    output_per_mtok: Money = Field(ge=0)
+    cache_read_per_mtok: Money | None = Field(default=None, ge=0)
+    cache_write_per_mtok: Money | None = Field(default=None, ge=0)
     # Per generated image, for image models priced that way. Not per million of
     # anything, and set alongside the token rates rather than instead of them —
     # a model can be metered both ways (ADR 0030).
-    per_image: Decimal | None = Field(default=None, ge=0)
+    per_image: Money | None = Field(default=None, ge=0)
     # Defaults to the gateway's billing currency; anything else is refused.
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     # Future-dated prices are allowed: that is how a change is scheduled.
@@ -530,7 +551,7 @@ class LimitRuleCreateRequest(BaseModel):
     # but not a good explanation.
     window_seconds: int | None = Field(default=None, ge=1, le=366 * 86_400)
     period: Literal["day", "week", "month", "quarter", "year"] | None = None
-    limit_value: Decimal = Field(ge=0)
+    limit_value: Money = Field(ge=0)
     is_active: bool = True
 
     @model_validator(mode="after")
@@ -553,7 +574,7 @@ class LimitRuleUpdateRequest(BaseModel):
     """
 
     name: str | None = Field(default=None, max_length=255)
-    limit_value: Decimal | None = Field(default=None, ge=0)
+    limit_value: Money | None = Field(default=None, ge=0)
     is_active: bool | None = None
 
 
@@ -583,7 +604,7 @@ class GroupUsageRow(BaseModel):
     group_name: str
     requests: int
     total_tokens: int
-    cost: Decimal
+    cost: Money
     estimated_requests: int
 
 
@@ -620,7 +641,7 @@ class UsageReportRow(BaseModel):
     # real cost against zero tokens, which reads as a bug unless the report
     # says what was actually bought (ADR 0030).
     images: int = 0
-    cost: Decimal
+    cost: Money
     # Requests whose token counts the provider did not return and we inferred, and
     # requests where usage could not be determined at all. Kept separate from the
     # totals so a reader can see how much of the figure is measured.
@@ -645,8 +666,8 @@ class DiscoveredModel(BaseModel):
 
     upstream_model: str
     suggested_name: str
-    input_per_mtok: Decimal | None
-    output_per_mtok: Decimal | None
+    input_per_mtok: Money | None
+    output_per_mtok: Money | None
     currency: str | None
     context_window: int | None
     # Set when the model cannot be imported as-is, with the reason. The commonest
