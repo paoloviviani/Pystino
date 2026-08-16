@@ -20,6 +20,7 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
     prompt_tokens: 8000,
     completion_tokens: 2000,
     total_tokens: 10000,
+    images: 0,
     cost: "42.500000000000",
     estimated_requests: 0,
     unavailable_requests: 0,

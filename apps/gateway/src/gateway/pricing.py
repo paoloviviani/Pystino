@@ -202,19 +202,28 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
 
 
 def _kind_of(entry: dict[str, Any]) -> ModelKind:
-    """Whether a catalogue entry describes an embedding model.
+    """What a catalogue entry says the model produces.
 
     Cortecs derives `output_modalities` from its model tags, so an embedding
-    model reports `embeddings` there. The name check is a fallback for
-    catalogues that say nothing: "embed" in a model id is a strong enough signal
-    to be worth using, and getting it wrong only means the model is refused on
-    the wrong route with a message naming the fix.
+    model reports `embeddings` there and an image model reports `image`. The
+    name check is a fallback for catalogues that say nothing: "embed" in a
+    model id is a strong enough signal to be worth using, and getting it wrong
+    only means the model is refused on the wrong route with a message naming
+    the fix.
+
+    No name fallback for images. "image" appears in the id of plenty of models
+    that *accept* images and generate text, and mislabelling one of those would
+    take it off the chat route entirely — a worse failure than leaving an image
+    model to be labelled by hand.
     """
     modalities = entry.get("output_modalities")
     if isinstance(modalities, list):
-        if any(str(item).lower().startswith("embed") for item in modalities):
+        lowered = [str(item).lower() for item in modalities]
+        if any(item.startswith("embed") for item in lowered):
             return ModelKind.EMBEDDING
-        if modalities:
+        if any(item.startswith("image") for item in lowered):
+            return ModelKind.IMAGE
+        if lowered:
             return ModelKind.CHAT
 
     identifier = str(_first(entry, _ID_KEYS) or "").lower()

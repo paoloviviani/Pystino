@@ -17,9 +17,14 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+
+if TYPE_CHECKING:
+    from gateway.redaction import RedactionOutcome as RedactionOutcomeLike
+else:  # pragma: no cover - runtime only needs the name to exist
+    RedactionOutcomeLike = Any
 
 
 class ChatCompletionRequest(BaseModel):
@@ -75,6 +80,155 @@ class EmbeddingRequest(BaseModel):
 
     def texts(self) -> list[str]:
         return [self.input] if isinstance(self.input, str) else list(self.input)
+
+
+class ResponsesRequest(BaseModel):
+    """``POST /v1/responses``.
+
+    Same passthrough philosophy as the chat request: only the fields the
+    gateway acts on are declared, and ``extra="allow"`` forwards the rest —
+    ``reasoning``, ``text``, ``tools`` and whatever a provider added last week.
+    """
+
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
+
+    model: str
+    #: A bare string, or a list of items. The items are usually chat-shaped
+    #: messages but may be tool outputs or content-part objects.
+    input: str | list[dict[str, Any]]
+    instructions: str | None = None
+    stream: bool = False
+    max_output_tokens: int | None = None
+    # Declared so the route can refuse them; see the module docstring for why.
+    previous_response_id: str | None = None
+    store: bool = False
+
+    def as_messages(self) -> list[dict[str, Any]]:
+        """The input as chat-shaped messages, for redaction and counting.
+
+        Items that are not messages — tool outputs, function-call results — are
+        passed through as-is so redaction can still walk their text, and are
+        put back in place afterwards. Dropping them would under-count the
+        prompt and, worse, leave un-redacted text on the wire.
+        """
+        if isinstance(self.input, str):
+            return [{"role": "user", "content": self.input}]
+        return [dict(item) for item in self.input if isinstance(item, dict)]
+
+    def upstream_payload(
+        self, outcome: RedactionOutcomeLike, *, upstream_model: str
+    ) -> dict[str, Any]:
+        payload = self.model_dump(exclude_unset=True)
+        payload["model"] = upstream_model
+        # Returned in the shape it arrived in: a caller who sent a string gets
+        # a string. Wrapping it in a list would change what the provider sees
+        # and, for some, how it is templated.
+        if isinstance(self.input, str):
+            first = outcome.messages[0] if outcome.messages else {}
+            payload["input"] = str(first.get("content") or "")
+        else:
+            payload["input"] = outcome.messages
+        # Never forwarded: both are refused by the route, and leaving a default
+        # in the payload would send `store: false` to a provider that has no
+        # such field.
+        payload.pop("previous_response_id", None)
+        payload.pop("store", None)
+        return payload
+
+
+class MessagesRequest(BaseModel):
+    """``POST /v1/messages`` — Anthropic's shape.
+
+    ``max_tokens`` is required by that API and is not given a default here: a
+    gateway that invented one would silently truncate answers, and the error
+    from omitting it is clear.
+    """
+
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
+
+    model: str
+    messages: list[dict[str, Any]]
+    max_tokens: int
+    system: str | list[dict[str, Any]] | None = None
+    stream: bool = False
+
+    def as_messages(self) -> list[dict[str, Any]]:
+        """Messages plus the system prompt, so redaction sees all the text.
+
+        The system prompt is prepended as a message rather than redacted
+        separately because it is prompt text like any other — a name in a
+        system prompt is exactly as sensitive as one in a user turn.
+        """
+        prefix: list[dict[str, Any]] = []
+        if isinstance(self.system, str) and self.system:
+            prefix.append({"role": "system", "content": self.system})
+        elif isinstance(self.system, list):
+            for part in self.system:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    prefix.append({"role": "system", "content": part["text"]})
+        return prefix + [dict(message) for message in self.messages]
+
+    def system_message_count(self) -> int:
+        if isinstance(self.system, str) and self.system:
+            return 1
+        if isinstance(self.system, list):
+            return sum(
+                1
+                for part in self.system
+                if isinstance(part, dict) and isinstance(part.get("text"), str)
+            )
+        return 0
+
+    def upstream_payload(
+        self, outcome: RedactionOutcomeLike, *, upstream_model: str
+    ) -> dict[str, Any]:
+        payload = self.model_dump(exclude_unset=True)
+        payload["model"] = upstream_model
+
+        split = self.system_message_count()
+        system_parts = [str(m.get("content") or "") for m in outcome.messages[:split]]
+        payload["messages"] = outcome.messages[split:]
+
+        # Put the system prompt back in the shape it arrived in.
+        if isinstance(self.system, str):
+            payload["system"] = system_parts[0] if system_parts else ""
+        elif isinstance(self.system, list):
+            rebuilt: list[dict[str, Any]] = []
+            index = 0
+            for part in self.system:
+                copied = dict(part) if isinstance(part, dict) else part
+                if isinstance(copied, dict) and isinstance(copied.get("text"), str):
+                    copied["text"] = system_parts[index] if index < len(system_parts) else ""
+                    index += 1
+                rebuilt.append(copied)
+            payload["system"] = rebuilt
+        return payload
+
+
+class ImageGenerationRequest(BaseModel):
+    """``POST /v1/images/generations``.
+
+    ``n`` is validated here rather than left to the provider because it
+    multiplies the bill: a per-image-priced model charges ``n`` times, and the
+    reservation has to know the number before the request is made.
+    """
+
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
+
+    model: str
+    prompt: str
+    n: int = Field(default=1, ge=1, le=10)
+    size: str | None = None
+    response_format: str | None = None
+
+    def upstream_payload(
+        self, outcome: RedactionOutcomeLike, *, upstream_model: str
+    ) -> dict[str, Any]:
+        payload = self.model_dump(exclude_unset=True)
+        payload["model"] = upstream_model
+        first = outcome.messages[0] if outcome.messages else {}
+        payload["prompt"] = str(first.get("content") or "")
+        return payload
 
 
 class ModelCard(BaseModel):
@@ -194,6 +348,7 @@ class ProviderResponse(BaseModel):
     extra_headers: dict[str, str]
     is_active: bool
     forward_stream_options: bool
+    auth_scheme: str
     model_count: int
     created_at: datetime
     updated_at: datetime
@@ -210,6 +365,8 @@ class ProviderCreateRequest(BaseModel):
     # Off for a provider that sends usage unconditionally and dislikes unknown
     # fields — Cortecs documents both (ADR 0028).
     forward_stream_options: bool = True
+    # "bearer" for anything OpenAI-shaped, "x_api_key" for Anthropic's own API.
+    auth_scheme: Literal["bearer", "x_api_key"] = "bearer"
 
 
 class ProviderUpdateRequest(BaseModel):
@@ -227,6 +384,7 @@ class ProviderUpdateRequest(BaseModel):
     extra_headers: dict[str, str] | None = None
     is_active: bool | None = None
     forward_stream_options: bool | None = None
+    auth_scheme: Literal["bearer", "x_api_key"] | None = None
 
 
 class ProviderTestResponse(BaseModel):
@@ -251,7 +409,7 @@ class ModelCreateRequest(BaseModel):
     # Which endpoint serves it. Required: a model with no provider cannot be
     # routed, and defaulting one would guess at spending money (ADR 0027).
     provider_id: uuid.UUID
-    kind: Literal["chat", "embedding"] = "chat"
+    kind: Literal["chat", "embedding", "image"] = "chat"
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -283,6 +441,7 @@ class PriceResponse(BaseModel):
     output_per_mtok: Decimal
     cache_read_per_mtok: Decimal | None
     cache_write_per_mtok: Decimal | None
+    per_image: Decimal | None
     currency: str
     effective_from: datetime
     source: str
@@ -295,6 +454,10 @@ class PriceCreateRequest(BaseModel):
     output_per_mtok: Decimal = Field(ge=0)
     cache_read_per_mtok: Decimal | None = Field(default=None, ge=0)
     cache_write_per_mtok: Decimal | None = Field(default=None, ge=0)
+    # Per generated image, for image models priced that way. Not per million of
+    # anything, and set alongside the token rates rather than instead of them —
+    # a model can be metered both ways (ADR 0030).
+    per_image: Decimal | None = Field(default=None, ge=0)
     # Defaults to the gateway's billing currency; anything else is refused.
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     # Future-dated prices are allowed: that is how a change is scheduled.
@@ -448,6 +611,10 @@ class UsageReportRow(BaseModel):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    # Pictures generated. Present because an image row can legitimately show a
+    # real cost against zero tokens, which reads as a bug unless the report
+    # says what was actually bought (ADR 0030).
+    images: int = 0
     cost: Decimal
     # Requests whose token counts the provider did not return and we inferred, and
     # requests where usage could not be determined at all. Kept separate from the

@@ -26,7 +26,7 @@ import {
   useUsers,
 } from "../lib/admin";
 import { usePaginated } from "../lib/paging";
-import type { AdminModel, DiscoveredModel } from "../lib/types";
+import type { AdminModel, DiscoveredModel, ModelKind } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import styles from "./Admin.module.css";
 
@@ -49,7 +49,7 @@ export function AdminModels() {
         <>
           <div>
             {model.name}{" "}
-            {model.kind === "embedding" && <Badge tone="accent">embedding</Badge>}
+            {model.kind !== "chat" && <Badge tone="accent">{model.kind}</Badge>}
           </div>
           <div className={`${styles.muted} ${styles.code}`}>{model.upstream_model}</div>
         </>
@@ -215,7 +215,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const [name, setName] = useState("");
   const [upstream, setUpstream] = useState("");
   const [providerId, setProviderId] = useState("");
-  const [kind, setKind] = useState<"chat" | "embedding">("chat");
+  const [kind, setKind] = useState<ModelKind>("chat");
 
   // Only active providers: creating a model on a deactivated endpoint produces
   // something that cannot serve a request the moment it exists.
@@ -280,10 +280,13 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
       <Select
         label="Kind"
         value={kind}
-        onChange={(e) => setKind(e.target.value as "chat" | "embedding")}
+        onChange={(e) => setKind(e.target.value as ModelKind)}
+        hint="Decides which routes will serve it. A model asked for on the wrong one is
+          refused with a message naming the right one."
       >
-        <option value="chat">Chat — /v1/chat/completions</option>
+        <option value="chat">Chat — /v1/chat/completions, /v1/responses, /v1/messages</option>
         <option value="embedding">Embedding — /v1/embeddings</option>
+        <option value="image">Image — /v1/images/generations</option>
       </Select>
 
       <Select

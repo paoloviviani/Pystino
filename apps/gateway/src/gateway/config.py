@@ -31,6 +31,10 @@ class UpstreamSettings(BaseModel):
     api_key: SecretStr = SecretStr("")
     # Sent to the upstream as-is. Useful for provider-specific routing headers.
     extra_headers: dict[str, str] = Field(default_factory=dict)
+    # How the credential is presented. Anthropic's own API wants `x-api-key`
+    # and rejects a bearer token; every OpenAI-compatible endpoint, including
+    # the reference provider's own /v1/messages, wants bearer (ADR 0030).
+    auth_scheme: Literal["bearer", "x_api_key"] = "bearer"
 
     # httpx's default read timeout is 5s, which silently kills long streams.
     # Read must be None; connect must stay finite so a dead provider fails fast.

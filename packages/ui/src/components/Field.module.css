@@ -38,3 +38,8 @@
   outline: none;
   box-shadow: var(--focus-ring);
 }
+
+.hint {
+  color: var(--colour-text-faint);
+  font-size: var(--text-xs);
+}

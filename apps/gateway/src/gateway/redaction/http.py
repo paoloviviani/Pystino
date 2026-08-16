@@ -29,6 +29,7 @@ from llmp_shared import (
 
 from gateway.config import RedactionSettings
 from gateway.errors import GatewayError
+from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome, TextRewriteStage
 from gateway.sse.pipeline import StreamStage, passthrough
 
@@ -162,8 +163,14 @@ class RestoreStage(TextRewriteStage):
     sufficient and no more than necessary.
     """
 
-    def __init__(self, placeholders: PlaceholderMap, *, tail_size: int) -> None:
-        super().__init__(tail_size=tail_size)
+    def __init__(
+        self,
+        placeholders: PlaceholderMap,
+        *,
+        tail_size: int,
+        surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS,
+    ) -> None:
+        super().__init__(tail_size=tail_size, surface=surface)
         self._placeholders = placeholders
 
     def transform(self, text: str, *, final: bool) -> str:
@@ -303,13 +310,17 @@ class HttpDetectionRedactor:
             engine=self.name,
         )
 
-    def response_stage(self, outcome: RedactionOutcome) -> StreamStage:
+    def response_stage(
+        self, outcome: RedactionOutcome, *, surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS
+    ) -> StreamStage:
         if not self._settings.restore_in_response or not outcome.placeholder_map:
             # Nothing was replaced, so nothing can need restoring. Skips the
             # buffering and the per-frame JSON round trip entirely.
             return passthrough
         return RestoreStage(
-            outcome.placeholder_map, tail_size=_longest_placeholder(outcome.placeholder_map)
+            outcome.placeholder_map,
+            tail_size=_longest_placeholder(outcome.placeholder_map),
+            surface=surface,
         )
 
     async def redact_response_text(self, text: str, outcome: RedactionOutcome) -> str:

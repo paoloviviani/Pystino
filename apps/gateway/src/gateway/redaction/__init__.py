@@ -7,9 +7,7 @@ from gateway.redaction.base import (
     RedactionOutcome,
     Redactor,
     TextRewriteStage,
-    has_finish_reason,
     iter_choice_text,
-    set_choice_text,
 )
 from gateway.redaction.http import HttpDetectionRedactor, RedactionUnavailableError
 from gateway.redaction.noop import NoOpRedactor
@@ -32,10 +30,8 @@ __all__ = [
     "UnknownEngineError",
     "available_engines",
     "build_redactor",
-    "has_finish_reason",
     "iter_choice_text",
     "register_engine",
-    "set_choice_text",
 ]
 
 register("noop", lambda _settings: NoOpRedactor())

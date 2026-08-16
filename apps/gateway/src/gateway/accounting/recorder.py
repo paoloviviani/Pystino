@@ -33,7 +33,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from gateway.accounting.cost import CostBreakdown, TokenCounts, compute_cost, select_price
 from gateway.accounting.tokens import TokenEstimator
 from gateway.config import Settings
-from gateway.models import ModelDef, UsageRecord, UsageSource, UsageStatus
+from gateway.models import ApiSurface, ModelDef, UsageRecord, UsageSource, UsageStatus
+from gateway.protocols import reader_for
 from gateway.quota import QuotaAmounts
 from gateway.sse.events import SSEEvent
 from gateway.types import utcnow
@@ -102,6 +103,9 @@ class RequestContext:
     estimated_prompt_tokens: int = 0
     redaction_engine: str | None = None
     redacted_entity_count: int = 0
+    #: Which endpoint served the request. Selects how response frames are read
+    #: — the surfaces disagree about where usage lives and what its keys mean.
+    surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS
 
 
 class RequestAccounting:
@@ -117,6 +121,7 @@ class RequestAccounting:
         model: ModelDef | None = None,
     ) -> None:
         self._ctx = context
+        self._reader = reader_for(context.surface)
         self._session_factory = session_factory
         self._settings = settings
         self._estimator = estimator
@@ -132,6 +137,9 @@ class RequestAccounting:
         self._upstream_provider: str | None = None
         self._started_at = utcnow()
         self._first_token_at: datetime | None = None
+        #: Set by the image route, which counts pictures rather than tokens.
+        self._images = 0
+        self._image_size: str | None = None
 
         self._flushed_chars = 0
         self._last_flush_at = self._started_at
@@ -151,6 +159,7 @@ class RequestAccounting:
             model_id=self._ctx.model_id,
             model_name=self._ctx.model_name,
             streamed=self._ctx.streamed,
+            api_surface=self._ctx.surface,
             currency=self._ctx.currency,
             usage_source=UsageSource.UNAVAILABLE,
             cost=Decimal(0),
@@ -175,38 +184,50 @@ class RequestAccounting:
         self.observe_payload(payload)
 
     def observe_payload(self, payload: dict[str, Any]) -> None:
-        """Accumulate one chat-completion chunk or a full non-streamed body."""
+        """Accumulate one response frame, in whatever shape this surface uses."""
         if self._first_token_at is None:
             self._first_token_at = utcnow()
 
-        if isinstance(usage := payload.get("usage"), dict):
-            # Later frames win: a provider that sends running totals should be
-            # believed at its final word.
-            self._upstream_usage = usage
+        if (frame := self._reader.frame(payload)) is not None:
+            if isinstance(usage := frame.get("usage"), dict):
+                if self._reader.accumulates_usage:
+                    # Anthropic sends the input count on one frame and the
+                    # output count on another. Merged key by key, later
+                    # non-null wins — replacing would discard whichever half
+                    # arrived first.
+                    merged = dict(self._upstream_usage or {})
+                    merged.update({k: v for k, v in usage.items() if v is not None})
+                    self._upstream_usage = merged
+                else:
+                    # One terminal usage frame carrying complete totals; a
+                    # provider that sends running totals is believed at its
+                    # final word.
+                    self._upstream_usage = usage
 
-        # Captured before rename_model_stage rewrites `model` to our
-        # client-facing name on the way out. First frame wins: every chunk of a
-        # stream repeats it, and the first is the one that cannot have been
-        # rewritten by anything downstream.
-        if self._upstream_model is None and isinstance(served := payload.get("model"), str):
-            self._upstream_model = served
-        if self._upstream_provider is None and isinstance(by := payload.get("provider"), str):
-            self._upstream_provider = by
+            # Captured before the rename stage rewrites `model` to our
+            # client-facing name on the way out. First frame wins: a stream
+            # repeats it, and the first is the one nothing downstream can have
+            # touched.
+            if self._upstream_model is None and isinstance(served := frame.get("model"), str):
+                self._upstream_model = served
+            if self._upstream_provider is None and isinstance(by := frame.get("provider"), str):
+                self._upstream_provider = by
 
-        for choice in payload.get("choices") or []:
-            if not isinstance(choice, dict):
-                continue
-            index = choice.get("index")
-            slot = self._choices.setdefault(
-                index if isinstance(index, int) else 0, ChoiceAccumulator()
-            )
-            if isinstance(delta := choice.get("delta"), dict):
-                slot.observe_delta(delta)
-            # Non-streamed responses carry a whole message instead of a delta.
-            if isinstance(message := choice.get("message"), dict):
-                slot.observe_delta(message)
-            if reason := choice.get("finish_reason"):
+        for index, delta in self._reader.deltas(payload):
+            slot = self._choices.setdefault(index, ChoiceAccumulator())
+            if reason := delta.get("__finish_reason__"):
                 slot.finish_reason = str(reason)
+                continue
+            slot.observe_delta(delta)
+
+    def observe_images(self, count: int, size: str | None) -> None:
+        """How many pictures came back, and at what size.
+
+        Separate from usage because the models that charge per image are
+        exactly the ones that report no usage at all.
+        """
+        self._images = max(0, count)
+        self._image_size = size
 
     # -- persistence -------------------------------------------------------
 
@@ -269,9 +290,9 @@ class RequestAccounting:
     def resolve_counts(self, *, failed: bool = False) -> tuple[TokenCounts, UsageSource]:
         """Best available token counts, and an honest label for their provenance."""
         if self._upstream_usage:
-            counts = TokenCounts.from_usage(self._upstream_usage)
+            counts = self._reader.counts(self._upstream_usage)
             if counts.total:
-                return counts, UsageSource.UPSTREAM_EXACT
+                return self._with_images(counts), UsageSource.UPSTREAM_EXACT
 
         # No usable usage frame. Estimate rather than record zero.
         completion_text = "".join(part for slot in self._choices.values() for part in slot.content)
@@ -280,6 +301,13 @@ class RequestAccounting:
             for call in slot.tool_calls.values():
                 completion += self._estimator.count_text(str(call.get("arguments") or ""))
                 completion += self._estimator.count_text(str(call.get("name") or ""))
+
+        if self._images and not completion:
+            # An image request that reported no usage. The picture count came
+            # from the response and is exact, and it is what the model is
+            # billed on — so the row is `upstream_exact`, with zero tokens
+            # rather than an estimate of a quantity nobody charges for.
+            return self._with_images(TokenCounts()), UsageSource.UPSTREAM_EXACT
 
         if failed and not completion:
             # The upstream refused before generating anything, and reported no
@@ -294,8 +322,22 @@ class RequestAccounting:
             return TokenCounts(), UsageSource.UNAVAILABLE
 
         return (
-            TokenCounts(prompt=self._ctx.estimated_prompt_tokens, completion=completion),
+            self._with_images(
+                TokenCounts(prompt=self._ctx.estimated_prompt_tokens, completion=completion)
+            ),
             UsageSource.ESTIMATED,
+        )
+
+    def _with_images(self, counts: TokenCounts) -> TokenCounts:
+        if not self._images:
+            return counts
+        return TokenCounts(
+            prompt=counts.prompt,
+            completion=counts.completion,
+            cached_prompt=counts.cached_prompt,
+            reasoning=counts.reasoning,
+            cache_write=counts.cache_write,
+            images=self._images,
         )
 
     def _was_substituted(self) -> bool:
@@ -332,9 +374,7 @@ class RequestAccounting:
             return self._last_actuals
         self._finalised = True
 
-        counts, source = self.resolve_counts(
-            failed=status in (UsageStatus.UPSTREAM_ERROR,)
-        )
+        counts, source = self.resolve_counts(failed=status in (UsageStatus.UPSTREAM_ERROR,))
 
         price = None
         breakdown = CostBreakdown.zero(self._ctx.currency)
@@ -382,6 +422,8 @@ class RequestAccounting:
             "total_tokens": counts.total,
             "cached_prompt_tokens": counts.cached_prompt,
             "reasoning_tokens": counts.reasoning,
+            "image_count": counts.images,
+            "image_size": self._image_size,
             "usage_source": source,
             "upstream_model": self._upstream_model,
             "upstream_provider": self._upstream_provider,

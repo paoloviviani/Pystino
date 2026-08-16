@@ -137,7 +137,7 @@ def main() -> int:
     )
     if status == 409:
         # Left behind by an earlier run; find it and carry on.
-        rules = api(dave, "/api/admin/limits")[1]["items"]["items"]
+        rules = api(dave, "/api/admin/limits")[1]["items"]
         created = next(
             r
             for r in rules

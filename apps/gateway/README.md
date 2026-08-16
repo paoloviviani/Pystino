@@ -9,6 +9,9 @@ per-group model availability and a pluggable redaction layer.
 |---|---|---|
 | `POST /v1/chat/completions` | API key | Proxy to the configured upstream, streaming and not |
 | `POST /v1/embeddings` | API key | Embeddings, metered and redacted like a completion |
+| `POST /v1/responses` | API key | OpenAI's Responses API, streaming and not. Server-side conversation state is refused |
+| `POST /v1/messages` | API key | Anthropic's Messages API, streaming and not, over the same chat models |
+| `POST /v1/images/generations` | API key | Image generation, billed per picture or per token depending on the model |
 | `GET /v1/models` | API key | Models the caller may use, by group or personal grant |
 | `GET /auth/login`, `/auth/callback` | — | OIDC authorization-code login |
 | `GET /api/me` | session cookie | Identity, groups, default billing group |
@@ -44,6 +47,10 @@ src/gateway/
   config.py         all configuration; nothing else reads the environment
   models.py         SQLAlchemy ORM — the usage ledger lives here
   pagination.py     the listing envelope, its bounds and the count query
+  protocols.py      per API surface: where usage, the served model and the
+                    assistant text live in a response frame
+  routers/_metered.py  resolve, reserve, record, settle — shared by all five
+                    /v1 routes so the ordering cannot drift between them
   types.py          Money (Numeric, never float) and UTC-safe datetimes
   security.py       API key generation, SHA-256 hashing, verification
   oidc.py           discovery, PKCE, ID token validation, group claim mapping
@@ -136,6 +143,12 @@ found.
   `scripts/README.md`.
 - Reranking. The embedding half of [ADR 0020](../../docs/adr/0020-embeddings-and-reranking.md)
   is now served; `/v1/rerank` is not, and has no OpenAI-compatible shape to copy.
+- Image editing and variations (`/v1/images/edits`, `/v1/images/variations`). They
+  take multipart uploads, which the redaction layer has no story for.
+  ([ADR 0030](../../docs/adr/0030-more-surfaces.md))
+- Server-side conversation state on `/v1/responses`. `previous_response_id` and
+  `store` are refused: a stored prefix is billed on every follow-up and this
+  gateway would have no record of what it contained.
 - Retrying an upstream request without `stream_options` when a provider rejects unknown
   parameters. A provider that does is configured with `forward_stream_options = false`
   instead, which costs nothing at request time.

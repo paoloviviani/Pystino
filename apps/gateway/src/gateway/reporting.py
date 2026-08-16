@@ -168,6 +168,7 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
         func.coalesce(func.sum(UsageRecord.prompt_tokens), 0).label("prompt_tokens"),
         func.coalesce(func.sum(UsageRecord.completion_tokens), 0).label("completion_tokens"),
         func.coalesce(func.sum(UsageRecord.total_tokens), 0).label("total_tokens"),
+        func.coalesce(func.sum(UsageRecord.image_count), 0).label("images"),
         func.coalesce(func.sum(UsageRecord.cost), 0).label("cost"),
         func.coalesce(
             func.sum(case((UsageRecord.usage_source == UsageSource.ESTIMATED, 1), else_=0)), 0
@@ -237,7 +238,7 @@ async def _labels(session: AsyncSession, group_by: GroupBy, keys: Sequence[Any])
 def _row(
     group_by: GroupBy, key: Any, labels: dict[Any, str], values: Sequence[Any]
 ) -> UsageReportRow:
-    requests, prompt, completion, total, cost, estimated, unavailable = values
+    requests, prompt, completion, total, images, cost, estimated, unavailable = values
     if key is None:
         label = _NO_KEY_LABEL[group_by]
     else:
@@ -254,6 +255,7 @@ def _row(
         prompt_tokens=int(prompt or 0),
         completion_tokens=int(completion or 0),
         total_tokens=int(total or 0),
+        images=int(images or 0),
         cost=Decimal(str(cost or 0)),
         estimated_requests=int(estimated or 0),
         unavailable_requests=int(unavailable or 0),
@@ -268,6 +270,7 @@ def _totals(rows: Sequence[UsageReportRow]) -> UsageReportRow:
         prompt_tokens=sum(row.prompt_tokens for row in rows),
         completion_tokens=sum(row.completion_tokens for row in rows),
         total_tokens=sum(row.total_tokens for row in rows),
+        images=sum(row.images for row in rows),
         cost=sum((row.cost for row in rows), Decimal(0)),
         estimated_requests=sum(row.estimated_requests for row in rows),
         unavailable_requests=sum(row.unavailable_requests for row in rows),
@@ -290,6 +293,15 @@ def _disclosures(totals: UsageReportRow, in_flight: int, substituted: int = 0) -
         notes.append(
             f"{in_flight} request(s) were still in flight when this report was produced "
             "and are excluded; they will appear once complete."
+        )
+    if totals.images:
+        # Otherwise an image row reads as a bug: real money against zero
+        # tokens. Most image models are priced per picture and report no token
+        # usage at all (ADR 0030).
+        notes.append(
+            f"{totals.images} image(s) were generated. Image models are commonly priced "
+            "per image rather than per token, so those requests contribute cost without "
+            "contributing tokens."
         )
     if substituted:
         # A router with model fallback can serve a different model than the one
@@ -380,6 +392,7 @@ CSV_HEADER = [
     "prompt_tokens",
     "completion_tokens",
     "total_tokens",
+    "images",
     "cost",
     "currency",
     "estimated_requests",
@@ -415,6 +428,7 @@ def report_to_csv(report: UsageReport) -> str:
                 row.prompt_tokens,
                 row.completion_tokens,
                 row.total_tokens,
+                row.images,
                 # Plain decimal, never scientific notation: a spreadsheet reading
                 # "1E-7" as text is a support ticket.
                 f"{row.cost:f}",

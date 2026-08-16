@@ -21,7 +21,6 @@ so the machinery is proven without shipping an engine.
 
 from __future__ import annotations
 
-import copy
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -29,6 +28,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from llmp_shared import PlaceholderMap
 
+from gateway.models import ApiSurface
+from gateway.protocols import reader_for
 from gateway.sse.events import SSEEvent
 from gateway.sse.pipeline import StreamStage
 
@@ -61,8 +62,15 @@ class Redactor(Protocol):
         """Rewrite outbound messages before they reach the upstream."""
         ...
 
-    def response_stage(self, outcome: RedactionOutcome) -> StreamStage:
-        """The stage that rewrites the streamed response."""
+    def response_stage(
+        self, outcome: RedactionOutcome, *, surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS
+    ) -> StreamStage:
+        """The stage that rewrites the streamed response.
+
+        ``surface`` selects where the assistant text lives in the frames; the
+        buffering that makes the rewrite safe across chunk boundaries is the
+        same for all of them.
+        """
         ...
 
     async def redact_response_text(self, text: str, outcome: RedactionOutcome) -> str:
@@ -71,38 +79,13 @@ class Redactor(Protocol):
 
 
 def iter_choice_text(payload: dict[str, Any]) -> list[tuple[int, str]]:
-    """Extract ``(choice_index, text)`` from a streamed chunk."""
-    results: list[tuple[int, str]] = []
-    for choice in payload.get("choices") or []:
-        if not isinstance(choice, dict):
-            continue
-        index = choice.get("index")
-        index = index if isinstance(index, int) else 0
-        delta = choice.get("delta")
-        if isinstance(delta, dict) and isinstance(content := delta.get("content"), str):
-            results.append((index, content))
-    return results
+    """Extract ``(choice_index, text)`` from a streamed chat chunk.
 
-
-def set_choice_text(payload: dict[str, Any], index: int, text: str) -> None:
-    """Replace one choice's delta content in place."""
-    for choice in payload.get("choices") or []:
-        if not isinstance(choice, dict):
-            continue
-        choice_index = choice.get("index")
-        choice_index = choice_index if isinstance(choice_index, int) else 0
-        if choice_index != index:
-            continue
-        delta = choice.get("delta")
-        if isinstance(delta, dict):
-            delta["content"] = text
-
-
-def has_finish_reason(payload: dict[str, Any]) -> bool:
-    return any(
-        isinstance(choice, dict) and choice.get("finish_reason")
-        for choice in payload.get("choices") or []
-    )
+    Kept as a module function because tests and the noop redactor use it
+    directly; the streaming stage goes through the surface protocol instead, so
+    that the same buffering serves all five surfaces.
+    """
+    return reader_for(ApiSurface.CHAT_COMPLETIONS).stream_texts(payload)
 
 
 class TextRewriteStage(ABC):
@@ -115,10 +98,18 @@ class TextRewriteStage(ABC):
     boundary.
     """
 
-    def __init__(self, *, tail_size: int = 0) -> None:
+    def __init__(
+        self, *, tail_size: int = 0, surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS
+    ) -> None:
         self._tail_size = max(0, tail_size)
         self._pending: dict[int, str] = {}
         self._template: dict[str, Any] | None = None
+        # Where this surface keeps its assistant text. The buffering below is
+        # protocol-independent; only the accessors differ.
+        self._proto = reader_for(surface)
+        # Anthropic is the one surface that uses named SSE events, so a
+        # synthesised frame there needs its `event:` line too.
+        self._named_events = surface is ApiSurface.MESSAGES
 
     @abstractmethod
     def transform(self, text: str, *, final: bool) -> str:
@@ -146,14 +137,18 @@ class TextRewriteStage(ABC):
 
             self._template = payload
 
-            texts = iter_choice_text(payload)
+            texts = self._proto.stream_texts(payload)
             if not texts:
-                # A frame with no text (role preamble, or the finish frame). Flush
-                # before a finish_reason so held-back text cannot arrive after the
-                # client believes the message is complete.
-                if has_finish_reason(payload):
+                # A frame with no incremental text: a role preamble, a
+                # lifecycle marker, or a terminal frame repeating the finished
+                # text. Flush before a terminal frame so held-back text cannot
+                # arrive after the client believes the message is complete —
+                # and rewrite any complete text the frame itself carries.
+                if self._proto.is_terminal(payload):
                     for extra in self._flush_all():
                         yield extra
+                if self._proto.rewrite_whole(payload, self._rewrite_settled):
+                    event.replace_json(payload)
                 yield event
                 continue
 
@@ -162,14 +157,16 @@ class TextRewriteStage(ABC):
                 rewritten = self._advance(index, text)
                 if rewritten != text:
                     mutated = True
-                set_choice_text(payload, index, rewritten)
+                self._proto.set_stream_text(payload, index, rewritten)
 
+            if self._proto.rewrite_whole(payload, self._rewrite_settled):
+                mutated = True
             if mutated:
                 event.replace_json(payload)
 
             # Flushing after writing this frame keeps ordering: released text
             # precedes the finish marker it shares a frame with.
-            if has_finish_reason(payload):
+            if self._proto.is_terminal(payload):
                 yield event
                 for extra in self._flush_all():
                     yield extra
@@ -224,19 +221,20 @@ class TextRewriteStage(ABC):
             events.append(self._synthesise(index, text))
         return events
 
-    def _synthesise(self, index: int, text: str) -> SSEEvent:
-        """Build a chunk shaped like the ones the upstream was sending.
+    def _rewrite_settled(self, text: str) -> str:
+        """Transform a complete text field.
 
-        Copying the last real payload keeps ``id``, ``model`` and ``created``
-        consistent, which strict clients check.
+        ``final=True`` because there is nothing more coming for this field —
+        it arrived whole, so there is no boundary an entity could straddle.
         """
-        if self._template is not None:
-            payload = copy.deepcopy(self._template)
-            payload["choices"] = [{"index": index, "delta": {"content": text}}]
-            payload.pop("usage", None)
-        else:
-            payload = {
-                "object": "chat.completion.chunk",
-                "choices": [{"index": index, "delta": {"content": text}}],
-            }
-        return SSEEvent.from_json(payload)
+        return self.transform(text, final=True) if text else text
+
+    def _synthesise(self, index: int, text: str) -> SSEEvent:
+        """Build a frame shaped like the ones the upstream was sending."""
+        payload = self._proto.synthesise(self._template, index, text)
+        event = SSEEvent.from_json(payload)
+        # Anthropic names its events, and a client switching on `event:` would
+        # ignore a frame that carries only `data:`.
+        if isinstance(kind := payload.get("type"), str) and self._named_events:
+            event.event = kind
+        return event

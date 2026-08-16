@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome, Redactor
 from gateway.sse.pipeline import StreamStage, passthrough
 
@@ -27,7 +28,9 @@ class NoOpRedactor(Redactor):
     async def redact_request(self, messages: list[dict[str, Any]]) -> RedactionOutcome:
         return RedactionOutcome(messages=messages, engine=self.name)
 
-    def response_stage(self, outcome: RedactionOutcome) -> StreamStage:
+    def response_stage(
+        self, outcome: RedactionOutcome, *, surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS
+    ) -> StreamStage:
         return passthrough
 
     async def redact_response_text(self, text: str, outcome: RedactionOutcome) -> str:

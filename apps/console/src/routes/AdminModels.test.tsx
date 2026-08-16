@@ -36,6 +36,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
       output_per_mtok: "2.000000000000",
       cache_read_per_mtok: null,
       cache_write_per_mtok: null,
+      per_image: null,
       currency: "EUR",
       effective_from: "2026-08-01T10:00:00Z",
       source: "manual",

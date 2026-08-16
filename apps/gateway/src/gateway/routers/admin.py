@@ -44,6 +44,7 @@ from gateway.deps import (
 from gateway.errors import BadRequestError, GatewayError, UpstreamUnavailableError
 from gateway.models import (
     ApiKey,
+    AuthScheme,
     Group,
     GroupModelAccess,
     LimitMetric,
@@ -158,6 +159,7 @@ def _price_response(price: ModelPrice | None) -> PriceResponse | None:
         output_per_mtok=price.output_per_mtok,
         cache_read_per_mtok=price.cache_read_per_mtok,
         cache_write_per_mtok=price.cache_write_per_mtok,
+        per_image=price.per_image,
         currency=price.currency,
         effective_from=price.effective_from,
         source=price.source.value,
@@ -266,6 +268,7 @@ def _provider_response(provider: Provider, model_count: int) -> ProviderResponse
         extra_headers=dict(provider.extra_headers or {}),
         is_active=provider.is_active,
         forward_stream_options=provider.forward_stream_options,
+        auth_scheme=provider.auth_scheme.value,
         model_count=model_count,
         created_at=provider.created_at,
         updated_at=provider.updated_at,
@@ -337,6 +340,7 @@ async def create_provider(
         extra_headers=payload.extra_headers,
         is_active=payload.is_active,
         forward_stream_options=payload.forward_stream_options,
+        auth_scheme=AuthScheme(payload.auth_scheme),
     )
     if payload.api_key is not None:
         _store_api_key(provider, secrets, payload.api_key.get_secret_value())
@@ -380,6 +384,8 @@ async def update_provider(
 
     if (base_url := fields.pop("base_url", None)) is not None:
         provider.base_url = base_url.rstrip("/")
+    if (scheme := fields.pop("auth_scheme", None)) is not None:
+        provider.auth_scheme = AuthScheme(scheme)
     for field, value in fields.items():
         setattr(provider, field, value)
 
@@ -898,6 +904,7 @@ async def create_price(
         output_per_mtok=payload.output_per_mtok,
         cache_read_per_mtok=payload.cache_read_per_mtok,
         cache_write_per_mtok=payload.cache_write_per_mtok,
+        per_image=payload.per_image,
         currency=currency,
         effective_from=payload.effective_from or utcnow(),
         source=PriceSource.MANUAL,

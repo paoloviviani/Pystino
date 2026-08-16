@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Dialog, Input, Notice, Spinner, Table } from "@llmp/ui";
+import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner, Table } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import {
@@ -198,6 +198,7 @@ function ProviderDialog({
   const [apiKey, setApiKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
   const [streamOptions, setStreamOptions] = useState(true);
+  const [authScheme, setAuthScheme] = useState<"bearer" | "x_api_key">("bearer");
   // Keyed remount: without this the fields keep the previous provider's values
   // when a different row is opened.
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -210,6 +211,7 @@ function ProviderDialog({
     setApiKey("");
     setClearKey(false);
     setStreamOptions(provider?.forward_stream_options ?? true);
+    setAuthScheme(provider?.auth_scheme ?? "bearer");
   }
 
   const pending = create.isPending || update.isPending;
@@ -224,6 +226,7 @@ function ProviderDialog({
           base_url: baseUrl,
           description: description || null,
           forward_stream_options: streamOptions,
+          auth_scheme: authScheme,
           // Three ways, deliberately: a typed key replaces, the explicit clear
           // removes, and neither leaves the stored credential untouched.
           ...(apiKey ? { api_key: apiKey } : clearKey ? { api_key: "" } : {}),
@@ -237,6 +240,7 @@ function ProviderDialog({
           base_url: baseUrl,
           description: description || null,
           forward_stream_options: streamOptions,
+          auth_scheme: authScheme,
           ...(apiKey ? { api_key: apiKey } : {}),
         },
         done,
@@ -334,6 +338,17 @@ function ProviderDialog({
           </span>
         </span>
       </label>
+
+      <Select
+        label="Credential header"
+        value={authScheme}
+        onChange={(event) => setAuthScheme(event.target.value as "bearer" | "x_api_key")}
+        hint="Anthropic's own API takes x-api-key and rejects a bearer token. Every
+          OpenAI-compatible endpoint — including Cortecs, for all of its routes — takes bearer."
+      >
+        <option value="bearer">Authorization: Bearer</option>
+        <option value="x_api_key">x-api-key (Anthropic)</option>
+      </Select>
 
       <Notice tone="info">
         Use <strong>Test</strong> after saving. It calls the provider&apos;s <code>/models</code>

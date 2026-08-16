@@ -9,6 +9,7 @@ import type {
   CatalogueDiscovery,
   LimitRule,
   ModelImportResponse,
+  ModelKind,
   Price,
   ProviderTestResult,
   QuotaReset,
@@ -90,6 +91,7 @@ export interface ProviderInput {
   extra_headers?: Record<string, string>;
   is_active?: boolean;
   forward_stream_options?: boolean;
+  auth_scheme?: "bearer" | "x_api_key";
 }
 
 export function useCreateProvider() {
@@ -192,7 +194,7 @@ export interface CreateModelInput {
   upstream_model: string;
   /** Required: a model with no provider cannot be routed (ADR 0027). */
   provider_id: string;
-  kind?: "chat" | "embedding";
+  kind?: ModelKind;
   context_window?: number | null;
 }
 
@@ -268,6 +270,8 @@ export interface CreatePriceInput {
   modelId: string;
   input_per_mtok: string;
   output_per_mtok: string;
+  /** Omitted for a token-priced model; the two are not alternatives. */
+  per_image?: string | null;
   effective_from?: string | null;
 }
 

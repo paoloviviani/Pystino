@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
@@ -70,6 +70,17 @@ function routes(total: number, seen: Seen = { users: [] }) {
   });
 }
 
+/**
+ * The pager, scoped to its own landmark.
+ *
+ * `screen.getByRole("button", ...)` walks the entire document computing
+ * accessible names, and the table under test has a button on every row. Over a
+ * full page of users that query dominates the runtime of the whole file.
+ */
+function pager() {
+  return within(screen.getByRole("navigation", { name: "Pagination" }));
+}
+
 function renderScreen(element: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
@@ -107,7 +118,7 @@ describe("AdminUsers", () => {
   });
 
   it("sends the search to the server rather than filtering the page", async () => {
-    const user_ = userEvent.setup();
+    const user_ = userEvent.setup({ delay: null });
     const seen: Seen = { users: [] };
     vi.stubGlobal("fetch", routes(400, seen));
     renderScreen(<AdminUsers />);
@@ -124,7 +135,7 @@ describe("AdminUsers", () => {
   });
 
   it("debounces rather than querying every keystroke", async () => {
-    const user_ = userEvent.setup();
+    const user_ = userEvent.setup({ delay: null });
     const seen: Seen = { users: [] };
     vi.stubGlobal("fetch", routes(400, seen));
     renderScreen(<AdminUsers />);
@@ -139,13 +150,13 @@ describe("AdminUsers", () => {
   });
 
   it("returns to the first page when a search is typed", async () => {
-    const user_ = userEvent.setup();
+    const user_ = userEvent.setup({ delay: null });
     const seen: Seen = { users: [] };
     vi.stubGlobal("fetch", routes(400, seen));
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getByRole("button", { name: "Next" }));
+    await user_.click(pager().getByRole("button", { name: "Next" }));
     await waitFor(() => expect(lastUsersCall(seen).get("offset")).toBe("50"));
 
     await user_.type(screen.getByLabelText("Search"), "person-3");
@@ -157,31 +168,31 @@ describe("AdminUsers", () => {
   });
 
   it("pages forwards and back", async () => {
-    const user_ = userEvent.setup();
+    const user_ = userEvent.setup({ delay: null });
     const seen: Seen = { users: [] };
     vi.stubGlobal("fetch", routes(120, seen));
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getByRole("button", { name: "Next" }));
+    await user_.click(pager().getByRole("button", { name: "Next" }));
 
     await waitFor(() => expect(screen.getByText("person-50@example.org")).toBeInTheDocument());
     expect(screen.getByText("51–100")).toBeInTheDocument();
 
-    await user_.click(screen.getByRole("button", { name: "Previous" }));
+    await user_.click(pager().getByRole("button", { name: "Previous" }));
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
   });
 
   it("will not page past the end", async () => {
-    const user_ = userEvent.setup();
+    const user_ = userEvent.setup({ delay: null });
     vi.stubGlobal("fetch", routes(60));
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getByRole("button", { name: "Next" }));
+    await user_.click(pager().getByRole("button", { name: "Next" }));
 
     await waitFor(() => expect(screen.getByText("51–60")).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(pager().getByRole("button", { name: "Next" })).toBeDisabled();
   });
 
   it("shows no pager at all when everything fits", async () => {
@@ -194,7 +205,7 @@ describe("AdminUsers", () => {
   });
 
   it("says a search matched nothing rather than that there are no users", async () => {
-    const user_ = userEvent.setup();
+    const user_ = userEvent.setup({ delay: null });
     vi.stubGlobal("fetch", routes(400));
     renderScreen(<AdminUsers />);
 

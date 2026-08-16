@@ -19,7 +19,7 @@ it implies.
 | `apps/console` | **Built.** Self-service spend plus reports, quotas, providers, models, pricing and users at `/console`. |
 | `apps/web`, `apps/desktop`, `services/rag`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |
 
-709 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
+757 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
 exercises the whole slice over real HTTP, and the full `docker compose` stack has been
 built and run against PostgreSQL 18, Valkey and Keycloak — including the complete OIDC
 login flow and the reporting API (`./scripts/test_reporting_live.py`, which covers the
@@ -131,7 +131,12 @@ docker compose --env-file deploy/.env \
 ./scripts/test_redaction_live.py   # needs the redaction overlay too
 ./scripts/test_console_live.py     # the console, served by the gateway
 ./scripts/test_providers_live.py   # provider credentials, routing and per-user access
+./scripts/test_surfaces_live.py    # responses, anthropic messages and image generation
 ```
+
+Each of those bills the demo user, whose cap is EUR 1 an hour, and the fake
+upstream reports a million tokens per request. Running several back to back will
+legitimately exhaust it; the scripts report that as skipped rather than failed.
 
 That drives the whole authorization-code flow and checks the result: PKCE, ID token
 validation, group mapping, the provisioning rules, and a session minting an API key that

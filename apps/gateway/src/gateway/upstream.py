@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -27,6 +27,12 @@ import httpx
 import orjson
 
 from gateway.config import UpstreamSettings
+
+#: Anthropic requires an API version on every request and rejects one without
+#: it. Harmless on providers that proxy the shape and ignore the header, so it
+#: is sent unconditionally rather than made configurable; a provider's own
+#: `extra_headers` still wins, since those are applied after.
+ANTHROPIC_HEADERS = {"anthropic-version": "2023-06-01"}
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +89,13 @@ def build_http_client(settings: UpstreamSettings) -> httpx.AsyncClient:
 
 
 class OpenAICompatibleUpstream:
-    """Talks to any endpoint implementing the OpenAI chat completions API."""
+    """Talks to a provider endpoint.
+
+    Named for the shape most of it speaks; it also carries the Anthropic
+    Messages route, which the reference provider serves from the same base URL
+    with the same credentials (ADR 0030). Splitting it in two would mean two
+    connection pools to the same host.
+    """
 
     def __init__(self, settings: UpstreamSettings, client: httpx.AsyncClient) -> None:
         self._settings = settings
@@ -95,7 +107,14 @@ class OpenAICompatibleUpstream:
             "accept": "application/json",
         }
         if api_key := self._settings.api_key.get_secret_value():
-            headers["authorization"] = f"Bearer {api_key}"
+            if self._settings.auth_scheme == "x_api_key":
+                # Anthropic's own API authenticates this way and rejects a
+                # bearer token. The reference provider uses bearer for every
+                # route including /v1/messages, so this is per provider rather
+                # than per route (ADR 0030).
+                headers["x-api-key"] = api_key
+            else:
+                headers["authorization"] = f"Bearer {api_key}"
         headers.update(self._settings.extra_headers)
         if request_id:
             # Helps correlate our ledger with a provider's own logs when
@@ -103,30 +122,58 @@ class OpenAICompatibleUpstream:
             headers["x-request-id"] = request_id
         return headers
 
-    @property
-    def _chat_url(self) -> str:
-        return f"{self._settings.base_url}/chat/completions"
-
-    async def embeddings(
-        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    async def post_json(
+        self,
+        path: str,
+        payload: Mapping[str, Any],
+        *,
+        request_id: str | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> UpstreamResponse:
-        """Create embeddings. Never streams — the response is one JSON body."""
+        """POST a JSON body to one of the provider's routes and parse the reply.
+
+        Every non-streaming route goes through here, so they cannot drift on
+        auth, timeouts, or what a non-JSON error body does (it becomes a null
+        payload with the raw bytes kept, rather than an exception that would
+        lose the provider's own diagnostics).
+        """
+        headers = self._headers(request_id=request_id)
+        if extra_headers:
+            headers.update(extra_headers)
         try:
             response = await self._client.post(
-                f"{self._settings.base_url}/embeddings",
+                f"{self._settings.base_url}{path}",
                 content=orjson.dumps(payload),
-                headers=self._headers(request_id=request_id),
+                headers=headers,
             )
         except httpx.HTTPError as exc:
             raise UpstreamError(f"upstream request failed: {exc}", cause=exc) from exc
 
         raw = response.content
+        parsed: dict[str, Any] | None
         try:
             candidate = orjson.loads(raw) if raw else None
             parsed = candidate if isinstance(candidate, dict) else None
         except orjson.JSONDecodeError:
             parsed = None
         return UpstreamResponse(status_code=response.status_code, payload=parsed, raw=raw)
+
+    async def embeddings(
+        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    ) -> UpstreamResponse:
+        """Create embeddings. Never streams — the response is one JSON body."""
+        return await self.post_json("/embeddings", payload, request_id=request_id)
+
+    async def images(
+        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    ) -> UpstreamResponse:
+        """Generate images. Never streams here, whatever the provider offers.
+
+        Partial-image streaming exists upstream and is not forwarded: a partial
+        image is not billable output, and the route would gain a streaming
+        pipeline for no accounting benefit.
+        """
+        return await self.post_json("/images/generations", payload, request_id=request_id)
 
     async def list_models(self) -> UpstreamResponse:
         """Ask the provider what it offers.
@@ -156,29 +203,32 @@ class OpenAICompatibleUpstream:
         self, payload: Mapping[str, Any], *, request_id: str | None = None
     ) -> UpstreamResponse:
         """Non-streaming completion."""
-        try:
-            response = await self._client.post(
-                self._chat_url,
-                content=orjson.dumps(payload),
-                headers=self._headers(request_id=request_id),
-            )
-        except httpx.HTTPError as exc:
-            raise UpstreamError(f"upstream request failed: {exc}", cause=exc) from exc
+        return await self.post_json("/chat/completions", payload, request_id=request_id)
 
-        raw = response.content
-        parsed: dict[str, Any] | None
-        try:
-            candidate = orjson.loads(raw) if raw else None
-            parsed = candidate if isinstance(candidate, dict) else None
-        except orjson.JSONDecodeError:
-            parsed = None
-        return UpstreamResponse(status_code=response.status_code, payload=parsed, raw=raw)
+    async def responses(
+        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    ) -> UpstreamResponse:
+        """Non-streaming Responses call."""
+        return await self.post_json("/responses", payload, request_id=request_id)
+
+    async def messages(
+        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    ) -> UpstreamResponse:
+        """Non-streaming Anthropic Messages call."""
+        return await self.post_json(
+            "/messages", payload, request_id=request_id, extra_headers=ANTHROPIC_HEADERS
+        )
 
     @asynccontextmanager
-    async def stream_chat_completion(
-        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    async def stream(
+        self,
+        path: str,
+        payload: Mapping[str, Any],
+        *,
+        request_id: str | None = None,
+        extra_headers: Mapping[str, str] | None = None,
     ) -> AsyncIterator[httpx.Response]:
-        """Streaming completion.
+        """Open a streaming POST against one of the provider's routes.
 
         A context manager so that the upstream connection is closed on every exit
         path — including the one that matters, where the *client* disconnects and
@@ -188,9 +238,11 @@ class OpenAICompatibleUpstream:
         """
         headers = self._headers(request_id=request_id)
         headers["accept"] = "text/event-stream"
+        if extra_headers:
+            headers.update(extra_headers)
         request = self._client.build_request(
             "POST",
-            self._chat_url,
+            f"{self._settings.base_url}{path}",
             content=orjson.dumps(payload),
             headers=headers,
         )
@@ -203,3 +255,20 @@ class OpenAICompatibleUpstream:
             yield response
         finally:
             await response.aclose()
+
+    def stream_chat_completion(
+        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    ) -> AbstractAsyncContextManager[httpx.Response]:
+        return self.stream("/chat/completions", payload, request_id=request_id)
+
+    def stream_responses(
+        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    ) -> AbstractAsyncContextManager[httpx.Response]:
+        return self.stream("/responses", payload, request_id=request_id)
+
+    def stream_messages(
+        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    ) -> AbstractAsyncContextManager[httpx.Response]:
+        return self.stream(
+            "/messages", payload, request_id=request_id, extra_headers=ANTHROPIC_HEADERS
+        )

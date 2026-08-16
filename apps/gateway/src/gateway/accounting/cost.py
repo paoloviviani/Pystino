@@ -13,6 +13,19 @@ whole prompt is billed at the input rate, which is the conservative reading.
 **Reasoning tokens are already inside completion_tokens.** OpenAI-compatible
 providers report them as a breakdown of the completion, not as an extra. They are
 persisted for visibility and deliberately not billed again.
+
+**Anthropic counts the prompt the other way round, and it matters.** OpenAI's
+``prompt_tokens`` *includes* the cached tokens; Anthropic's ``input_tokens``
+*excludes* them — the prompt is ``input_tokens + cache_creation_input_tokens +
+cache_read_input_tokens``. Feeding Anthropic's numbers through the OpenAI reader
+would subtract the cache read from a figure that never contained it and
+undercharge every cached request, so each surface gets its own reader rather
+than one tolerant function that guesses (ADR 0030).
+
+**Cache writes are billed, at a premium.** A cache-creation token is charged
+above the input rate — the whole point being that it pays for itself on later
+reads. It is a third disjoint slice of the prompt, alongside the uncached
+remainder and the cache reads.
 """
 
 from __future__ import annotations
@@ -51,6 +64,12 @@ class TokenCounts:
     completion: int = 0
     cached_prompt: int = 0
     reasoning: int = 0
+    #: Prompt tokens written to a provider-side cache, billed above the input
+    #: rate. A disjoint slice of ``prompt``, like ``cached_prompt``.
+    cache_write: int = 0
+    #: Images produced. Only ever non-zero on the image route, where many models
+    #: are priced per image rather than per token (ADR 0030).
+    images: int = 0
 
     @property
     def total(self) -> int:
@@ -58,12 +77,17 @@ class TokenCounts:
 
     @property
     def billable_prompt(self) -> int:
-        """Prompt tokens charged at the full input rate."""
-        return max(0, self.prompt - self.cached_prompt)
+        """Prompt tokens charged at the full input rate.
+
+        The uncached, non-written remainder: cache reads and cache writes are
+        each billed at their own rate, and charging them here too would bill the
+        same token twice.
+        """
+        return max(0, self.prompt - self.cached_prompt - self.cache_write)
 
     @classmethod
     def from_usage(cls, usage: dict[str, Any] | None) -> TokenCounts:
-        """Read an OpenAI-compatible ``usage`` object.
+        """Read a Chat Completions ``usage`` object.
 
         Tolerant by necessity: providers disagree on where the cache and
         reasoning breakdowns live, and several omit them entirely.
@@ -94,6 +118,79 @@ class TokenCounts:
             reasoning=reasoning,
         )
 
+    @classmethod
+    def from_responses_usage(cls, usage: dict[str, Any] | None) -> TokenCounts:
+        """Read a Responses API ``usage`` object.
+
+        The same convention as Chat Completions — ``input_tokens`` includes the
+        cached tokens — under different names. The nested detail objects are
+        optional: the reference provider returns the three totals flat and
+        nothing else.
+        """
+        if not usage:
+            return cls()
+
+        prompt = _as_int(usage.get("input_tokens"))
+        completion = _as_int(usage.get("output_tokens"))
+
+        details = usage.get("input_tokens_details")
+        cached = _as_int(details.get("cached_tokens")) if isinstance(details, dict) else 0
+
+        out_details = usage.get("output_tokens_details")
+        reasoning = (
+            _as_int(out_details.get("reasoning_tokens")) if isinstance(out_details, dict) else 0
+        )
+
+        return cls(
+            prompt=prompt,
+            completion=completion,
+            cached_prompt=min(cached, prompt),
+            reasoning=reasoning,
+        )
+
+    @classmethod
+    def from_anthropic_usage(cls, usage: dict[str, Any] | None) -> TokenCounts:
+        """Read an Anthropic Messages ``usage`` object.
+
+        **The inverse convention**, and the reason this is not the Chat
+        Completions reader with different key names: Anthropic's
+        ``input_tokens`` is the uncached remainder, *not* the whole prompt. The
+        prompt is the sum of the three slices, and each is billed at its own
+        rate. Reading it the OpenAI way would undercharge every cached request
+        and, once the cache read exceeded the remainder, charge nothing at all
+        for the prompt.
+        """
+        if not usage:
+            return cls()
+
+        uncached = _as_int(usage.get("input_tokens"))
+        cache_write = _as_int(usage.get("cache_creation_input_tokens"))
+        cache_read = _as_int(usage.get("cache_read_input_tokens"))
+
+        return cls(
+            prompt=uncached + cache_write + cache_read,
+            completion=_as_int(usage.get("output_tokens")),
+            cached_prompt=cache_read,
+            cache_write=cache_write,
+        )
+
+    @classmethod
+    def from_image_usage(cls, usage: dict[str, Any] | None, *, images: int = 0) -> TokenCounts:
+        """Read an image-generation ``usage`` object, if there is one.
+
+        Optional on every provider that returns it, and absent entirely on the
+        per-image-priced models — which is why ``images`` is carried separately
+        rather than inferred from the token counts.
+        """
+        counts = cls.from_responses_usage(usage)
+        return cls(
+            prompt=counts.prompt,
+            completion=counts.completion,
+            cached_prompt=counts.cached_prompt,
+            reasoning=counts.reasoning,
+            images=max(0, images),
+        )
+
 
 def _as_int(value: Any) -> int:
     if isinstance(value, bool) or value is None:
@@ -112,10 +209,18 @@ class CostBreakdown:
     output_cost: Decimal
     cache_read_cost: Decimal
     currency: str
+    cache_write_cost: Decimal = Decimal(0)
+    image_cost: Decimal = Decimal(0)
 
     @property
     def total(self) -> Decimal:
-        return self.input_cost + self.output_cost + self.cache_read_cost
+        return (
+            self.input_cost
+            + self.output_cost
+            + self.cache_read_cost
+            + self.cache_write_cost
+            + self.image_cost
+        )
 
     @classmethod
     def zero(cls, currency: str) -> CostBreakdown:
@@ -164,20 +269,45 @@ def compute_cost(
     input_rate = as_decimal(price.input_per_mtok)
     output_rate = as_decimal(price.output_per_mtok)
 
-    if price.cache_read_per_mtok is not None and counts.cached_prompt:
-        cache_rate = as_decimal(price.cache_read_per_mtok)
-        input_cost = Decimal(counts.billable_prompt) * input_rate / MILLION
-        cache_cost = Decimal(counts.cached_prompt) * cache_rate / MILLION
-    else:
-        # No cache pricing configured: charge the whole prompt at the input rate.
-        input_cost = Decimal(counts.prompt) * input_rate / MILLION
-        cache_cost = Decimal(0)
+    # Each slice is priced only when a rate exists for it. An unpriced slice
+    # falls back into the input rate rather than being billed at zero: charging
+    # nothing for tokens the provider charged us for is the more expensive
+    # mistake, and it is invisible until the invoice arrives.
+    billable = counts.billable_prompt
+    cache_cost = Decimal(0)
+    write_cost = Decimal(0)
 
+    if counts.cached_prompt:
+        if price.cache_read_per_mtok is not None:
+            cache_cost = (
+                Decimal(counts.cached_prompt) * as_decimal(price.cache_read_per_mtok) / MILLION
+            )
+        else:
+            billable += counts.cached_prompt
+
+    if counts.cache_write:
+        if price.cache_write_per_mtok is not None:
+            write_cost = (
+                Decimal(counts.cache_write) * as_decimal(price.cache_write_per_mtok) / MILLION
+            )
+        else:
+            billable += counts.cache_write
+
+    input_cost = Decimal(billable) * input_rate / MILLION
     output_cost = Decimal(counts.completion) * output_rate / MILLION
+
+    # Per-image pricing sits alongside the token rates rather than replacing
+    # them: a token-priced image model reports usage and charges nothing here,
+    # and a per-image model reports no usage and charges nothing per token.
+    image_cost = Decimal(0)
+    if counts.images and price.per_image is not None:
+        image_cost = Decimal(counts.images) * as_decimal(price.per_image)
 
     return CostBreakdown(
         input_cost=input_cost,
         output_cost=output_cost,
         cache_read_cost=cache_cost,
+        cache_write_cost=write_cost,
+        image_cost=image_cost,
         currency=price.currency.upper(),
     )

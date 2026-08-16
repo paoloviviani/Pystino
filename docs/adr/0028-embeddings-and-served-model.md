@@ -60,6 +60,11 @@ which is exactly Cortecs. A provider-level switch rather than a global one
 because the right answer differs per endpoint, and this gateway now talks to
 several.
 
+Whether Cortecs *rejects* the field or merely ignores it is still unverified —
+it needs a real key. `scripts/check_cortecs_stream_options.py` settles it in
+four requests, including the case with no error attached: the parameter being
+accepted but narrowing the pool of providers that can serve the request.
+
 ### Embeddings are a first-class metered route
 
 `POST /v1/embeddings`, sharing everything that matters with chat completions:

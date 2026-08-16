@@ -116,6 +116,28 @@ class UsageSource(enum.StrEnum):
     UNAVAILABLE = "unavailable"
 
 
+class AuthScheme(enum.StrEnum):
+    """How a provider expects its API key to be presented."""
+
+    BEARER = "bearer"
+    X_API_KEY = "x_api_key"
+
+
+class ApiSurface(enum.StrEnum):
+    """Which endpoint a request came in through.
+
+    Four of these are OpenAI's shapes and one is Anthropic's; all of them meter
+    identically, which is the point of recording the difference rather than
+    letting each route keep its own books.
+    """
+
+    CHAT_COMPLETIONS = "chat_completions"
+    EMBEDDINGS = "embeddings"
+    RESPONSES = "responses"
+    MESSAGES = "messages"
+    IMAGES = "images"
+
+
 class PriceSource(enum.StrEnum):
     MANUAL = "manual"
     CORTECS = "cortecs"
@@ -269,6 +291,7 @@ class ModelKind(enum.StrEnum):
 
     CHAT = "chat"
     EMBEDDING = "embedding"
+    IMAGE = "image"
 
 
 class Provider(Base):
@@ -310,6 +333,16 @@ class Provider(Base):
     # documents both of those (ADR 0028).
     forward_stream_options: Mapped[bool] = mapped_column(
         Boolean, default=True, server_default=text("true")
+    )
+
+    # How this provider wants the credential presented. Anthropic's own API
+    # takes `x-api-key` and rejects a bearer token; everything OpenAI-shaped —
+    # including the reference provider's /v1/messages — takes bearer, which is
+    # why this is a property of the provider and not of the route (ADR 0030).
+    auth_scheme: Mapped[AuthScheme] = mapped_column(
+        _enum(AuthScheme, "auth_scheme"),
+        default=AuthScheme.BEARER,
+        server_default=AuthScheme.BEARER.value,
     )
 
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
@@ -391,6 +424,9 @@ class ModelPrice(Base):
     output_per_mtok: Mapped[Decimal]
     cache_read_per_mtok: Mapped[Decimal | None] = mapped_column(default=None)
     cache_write_per_mtok: Mapped[Decimal | None] = mapped_column(default=None)
+    # Per generated image, for the image models that are not priced per token
+    # (ADR 0030). Not per million of anything — the divisor does not apply.
+    per_image: Mapped[Decimal | None] = mapped_column(default=None)
 
     currency: Mapped[str] = mapped_column(String(3))
     effective_from: Mapped[datetime] = mapped_column(default=utcnow)
@@ -514,6 +550,22 @@ class UsageRecord(Base):
     model_substituted: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
+
+    # Which API surface served the request (ADR 0030). Derivable from the model
+    # for chat vs embedding, but not for the two surfaces that serve the *same*
+    # chat models — a caller can reach one model through /v1/chat/completions,
+    # /v1/responses or /v1/messages, and "can we retire the Anthropic surface"
+    # is a question only this column answers.
+    api_surface: Mapped[ApiSurface] = mapped_column(
+        _enum(ApiSurface, "api_surface"),
+        default=ApiSurface.CHAT_COMPLETIONS,
+        server_default=ApiSurface.CHAT_COMPLETIONS.value,
+    )
+    # Images produced, and the size asked for. Recorded rather than derived
+    # because many image models are priced per image by size, and without both
+    # the ledger cannot be repriced if that pricing is ever modelled properly.
+    image_count: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    image_size: Mapped[str | None] = mapped_column(String(32), default=None)
 
     cost: Mapped[Decimal] = mapped_column(default=Decimal(0))
     currency: Mapped[str] = mapped_column(String(3))
