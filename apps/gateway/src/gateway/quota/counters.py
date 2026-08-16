@@ -152,6 +152,29 @@ class CounterStore(Protocol):
 
     async def apply(self, deltas: Sequence[CounterDelta], *, now: float) -> None: ...
 
+    async def apply_and_total(
+        self,
+        deltas: Sequence[CounterDelta],
+        queries: Sequence[WindowQuery],
+        *,
+        now: float,
+    ) -> list[WindowTotal]:
+        """Apply *deltas*, then report the totals for *queries*, **atomically**.
+
+        The reason quota admission is not a race. Reading a total, deciding,
+        and then incrementing leaves a window in which every concurrent caller
+        reads the same pre-increment figure and they all decide yes.
+        Incrementing first and reading back the result closes it: each caller
+        sees a total that already contains every increment that preceded its
+        own, so it can tell exactly what the window held before it arrived.
+
+        A caller that turns out not to be admitted undoes its own delta.
+        Reserving before knowing is the price of atomicity, and it is a cheap
+        one — the undo is another increment, and the reservation was going to
+        be corrected by ``settle`` regardless.
+        """
+        ...
+
     async def claim_once(self, key: str, *, ttl_seconds: int) -> bool:
         """Atomically claim *key*, returning True only for the first caller.
 
@@ -199,10 +222,10 @@ class ValkeyCounterStore:
             f"{self._namespace}:{scope.key_part}:{metric.value}:{window_id}:r{reset_epoch}{suffix}"
         )
 
-    async def totals(self, queries: Sequence[WindowQuery], *, now: float) -> list[WindowTotal]:
-        if not queries:
-            return []
-
+    def _plan(
+        self, queries: Sequence[WindowQuery], *, now: float
+    ) -> tuple[list[str], list[tuple[int, list[int]]]]:
+        """The keys to read, and where each query's slice of them begins."""
         keys: list[str] = []
         spans: list[tuple[int, list[int]]] = []
         for query in queries:
@@ -220,9 +243,31 @@ class ValkeyCounterStore:
                 self._key(query.scope, query.metric, query.window_id, query.reset_epoch, index)
                 for index in indices
             )
+        return keys, spans
 
-        raw = await self._client.mget(keys)  # type: ignore[attr-defined]
+    def _delta_key(self, delta: CounterDelta, *, now: float) -> tuple[str, int]:
+        """The key a delta lands on, and how long it should outlive its window."""
+        if delta.period is not None:
+            key = self._key(delta.scope, delta.metric, delta.window_id, delta.reset_epoch)
+            # Outlive the period so a late settle still lands, then expire on
+            # their own rather than needing a sweep.
+            ttl = max(60, int(delta.period.end.timestamp() - now) + _PERIOD_TTL_SLACK)
+            return key, ttl
+        assert delta.spec is not None
+        key = self._key(
+            delta.scope,
+            delta.metric,
+            delta.window_id,
+            delta.reset_epoch,
+            delta.spec.bucket_index(now),
+        )
+        # Refreshing the TTL on every write only ever extends a bucket's life,
+        # never shortens it below what a reader needs.
+        return key, delta.spec.ttl_seconds()
 
+    def _totals_from(
+        self, raw: Sequence[Any], spans: Sequence[tuple[int, list[int]]]
+    ) -> list[WindowTotal]:
         results: list[WindowTotal] = []
         for start, indices in spans:
             if not indices:
@@ -242,6 +287,40 @@ class ValkeyCounterStore:
             results.append(WindowTotal(units=max(0, sum(buckets.values())), buckets=buckets))
         return results
 
+    async def totals(self, queries: Sequence[WindowQuery], *, now: float) -> list[WindowTotal]:
+        if not queries:
+            return []
+        keys, spans = self._plan(queries, now=now)
+        raw = await self._client.mget(keys)  # type: ignore[attr-defined]
+        return self._totals_from(raw, spans)
+
+    async def apply_and_total(
+        self,
+        deltas: Sequence[CounterDelta],
+        queries: Sequence[WindowQuery],
+        *,
+        now: float,
+    ) -> list[WindowTotal]:
+        """One MULTI/EXEC, so the increments and the read cannot interleave.
+
+        ``transaction=True`` is load-bearing here. A plain pipeline is only a
+        batching optimisation — another client's INCRBY can land between our
+        writes and our read, which is precisely the interleaving this exists to
+        prevent.
+        """
+        keys, spans = self._plan(queries, now=now)
+        pipe = self._client.pipeline(transaction=True)  # type: ignore[attr-defined]
+        for delta in deltas:
+            if delta.units == 0:
+                continue
+            key, ttl = self._delta_key(delta, now=now)
+            pipe.incrby(key, delta.units)
+            pipe.expire(key, ttl)
+        if keys:
+            pipe.mget(keys)
+        results = await pipe.execute()
+        return self._totals_from(results[-1] if keys else [], spans)
+
     async def claim_once(self, key: str, *, ttl_seconds: int) -> bool:
         # SET NX is atomic across processes, which is the whole point: two workers
         # starting together must not both decide to rebuild.
@@ -253,27 +332,14 @@ class ValkeyCounterStore:
     async def apply(self, deltas: Sequence[CounterDelta], *, now: float) -> None:
         if not deltas:
             return
+        # No transaction: a settle or a release is a blind increment that reads
+        # nothing back, so there is nothing for another client to interleave
+        # with and MULTI would only cost a round trip.
         pipe = self._client.pipeline(transaction=False)  # type: ignore[attr-defined]
         for delta in deltas:
             if delta.units == 0:
                 continue
-            if delta.period is not None:
-                key = self._key(delta.scope, delta.metric, delta.window_id, delta.reset_epoch)
-                # Outlive the period so a late settle still lands, then expire on
-                # their own rather than needing a sweep.
-                ttl = max(60, int(delta.period.end.timestamp() - now) + _PERIOD_TTL_SLACK)
-            else:
-                assert delta.spec is not None
-                key = self._key(
-                    delta.scope,
-                    delta.metric,
-                    delta.window_id,
-                    delta.reset_epoch,
-                    delta.spec.bucket_index(now),
-                )
-                # Refreshing the TTL on every write only ever extends a bucket's
-                # life, never shortens it below what a reader needs.
-                ttl = delta.spec.ttl_seconds()
+            key, ttl = self._delta_key(delta, now=now)
             pipe.incrby(key, delta.units)
             pipe.expire(key, ttl)
         await pipe.execute()
@@ -361,6 +427,57 @@ class DatabaseCounterStore:
         # accounting path writes anyway.
         return None
 
+    async def apply_and_total(
+        self,
+        deltas: Sequence[CounterDelta],
+        queries: Sequence[WindowQuery],
+        *,
+        now: float,
+    ) -> list[WindowTotal]:
+        """Read the ledger, then add the caller's own deltas arithmetically.
+
+        There is nothing here to increment — this store counts settled ledger
+        rows, and an in-flight request contributes nothing until it finishes.
+        But the contract is "the totals as they will be once your deltas are
+        applied", and the engine subtracts its own contribution back out to
+        decide. Returning the raw ledger figure would make that subtraction go
+        negative and admit a request that should have been refused.
+
+        What this cannot do is make the reservation visible to *other*
+        concurrent requests, which is the wider overshoot bound already
+        documented on this class. That is a property of running degraded, not
+        something atomicity here could fix.
+        """
+        totals = await self.totals(queries, now=now)
+        if not deltas:
+            return totals
+
+        added: dict[tuple[str, str, str, int], int] = defaultdict(int)
+        for delta in deltas:
+            added[
+                (delta.scope.key_part, delta.metric.value, delta.window_id, delta.reset_epoch)
+            ] += delta.units
+
+        return [
+            WindowTotal(
+                units=max(
+                    0,
+                    total.units
+                    + added.get(
+                        (
+                            query.scope.key_part,
+                            query.metric.value,
+                            query.window_id,
+                            query.reset_epoch,
+                        ),
+                        0,
+                    ),
+                ),
+                buckets=total.buckets,
+            )
+            for query, total in zip(queries, totals, strict=True)
+        ]
+
     async def claim_once(self, key: str, *, ttl_seconds: int) -> bool:
         # This store *is* the source of truth, so it is never cold and never needs
         # rebuilding into.
@@ -427,6 +544,9 @@ class InMemoryCounterStore:
         return self._buckets[(scope.key_part, metric.value, f"{window_id}:r{reset}")]
 
     async def totals(self, queries: Sequence[WindowQuery], *, now: float) -> list[WindowTotal]:
+        return self._totals(queries, now=now)
+
+    def _totals(self, queries: Sequence[WindowQuery], *, now: float) -> list[WindowTotal]:
         results: list[WindowTotal] = []
         for query in queries:
             slot = self._slot(query.scope, query.metric, query.window_id, query.reset_epoch)
@@ -440,6 +560,9 @@ class InMemoryCounterStore:
         return results
 
     async def apply(self, deltas: Sequence[CounterDelta], *, now: float) -> None:
+        self._apply(deltas, now=now)
+
+    def _apply(self, deltas: Sequence[CounterDelta], *, now: float) -> None:
         for delta in deltas:
             if delta.units == 0:
                 continue
@@ -447,6 +570,24 @@ class InMemoryCounterStore:
             # A calendar period is one counter; slot 0 stands in for "the period".
             bucket = 0 if delta.period is not None else delta.spec.bucket_index(now)  # type: ignore[union-attr]
             slot[bucket] = slot.get(bucket, 0) + delta.units
+
+    async def apply_and_total(
+        self,
+        deltas: Sequence[CounterDelta],
+        queries: Sequence[WindowQuery],
+        *,
+        now: float,
+    ) -> list[WindowTotal]:
+        """Atomic by construction: neither half awaits anything.
+
+        Written against the synchronous helpers rather than by awaiting
+        ``apply`` and ``totals`` in turn. Both happen to be await-free today, so
+        the loop would not interleave between them — but that is a property of
+        their current bodies, not of the interface, and this method's whole
+        purpose is to not depend on it.
+        """
+        self._apply(deltas, now=now)
+        return self._totals(queries, now=now)
 
     def expire_before(self, cutoff: float) -> None:
         """Drop rolling buckets that ended before *cutoff*, emulating TTL expiry."""

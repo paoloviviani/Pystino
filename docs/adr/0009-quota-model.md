@@ -59,22 +59,39 @@ visible to its siblings; settling replaces the estimate with the truth.
 Tested with ten concurrent attempts against a 1000-token ceiling at 400 tokens each:
 between 1 and 3 are admitted, never all ten.
 
-**Amended 2026-08-16 — that bound is not guaranteed.** The same test admitted
-*five* on a machine under heavy load. `check_and_reserve` reads the window
-total, decides, and then increments, and there are `await` points in between:
-concurrent callers can all read the same pre-reservation total before any of
-their increments land. Reservations narrow the window a great deal — without
-them all ten pass — but they do not close it, and the window is *wider* against
+**Amended 2026-08-16 — the bound was not guaranteed, and now is.** The same
+test admitted *five* on a loaded machine. `check_and_reserve` read the window
+total, decided, and then incremented, with `await` points in between, so
+concurrent callers could all read the same pre-reservation figure before any of
+their increments landed. Reservations narrowed the window a great deal —
+without them all ten passed — but did not close it, and it was *wider* against
 a real counter store than the in-memory one, because the read is a network
 round trip.
 
-So the honest statement of the bound is "overshoot is bounded by the number of
-requests that can read the total within one round trip, times one request's
-usage", not "one request's usage". Closing it needs the check and the increment
-to be one atomic operation at the store — a Lua script on Valkey, or a
-conditional increment — which is not what is implemented. Left as a known
-weakness rather than quietly wrong documentation; see the note in the gateway
-README.
+**Admission now reserves first and judges afterwards.** One store operation
+applies the deltas and returns the resulting totals
+(`CounterStore.apply_and_total`); the engine subtracts its own contribution back
+out and compares *that* against the limit. Every caller therefore sees exactly
+what the window held before it arrived, whatever order the loop or the network
+puts them in. On Valkey it is a `MULTI`/`EXEC` — a plain pipeline is only
+batching, and another client's `INCRBY` can still land between the writes and
+the read.
+
+The policy is unchanged, only the moment of the increment: a request is refused
+when the window had *already* reached the limit, and an admitted request may
+still overshoot by its own usage. A caller that turns out to be refused undoes
+its own delta, so refusals leave nothing on the counter — otherwise fifty
+refusals would bury the window and refuse the next legitimate request too.
+
+Ten concurrent attempts at 400 against a 1000 ceiling now admit exactly three,
+deterministically, and fifty attempts still admit exactly three and leave 1200
+on the counter.
+
+**Except on the database fallback.** That store counts settled ledger rows and
+has nothing to increment, so a reservation there is invisible to other
+in-flight requests. Overshoot while running degraded keeps the wider bound
+already documented — `concurrent_requests × default_max_output_tokens` — and no
+amount of atomicity at that layer would change it.
 
 **A bug the tests found:** deltas whose estimate was zero were originally skipped, so
 `settle` had nothing to correct and the *actual* usage for that metric was never
@@ -94,8 +111,9 @@ Consequences of that choice:
 
 - Overshoot is bounded by **one request's actual usage**, and the *next* request is
   refused.
-- Because reservations are visible to concurrent requests, that bound mostly holds
-  under concurrency — but not strictly; see the amendment above.
+- Because reservations are applied and read back atomically, that bound holds
+  under concurrency too — see the amendment above for how, and for the one
+  exception while running on the database fallback.
 
 An optional stricter mode was considered and **not implemented**: clamping
 `max_tokens` so the worst case fits the remaining budget, making the limit genuinely

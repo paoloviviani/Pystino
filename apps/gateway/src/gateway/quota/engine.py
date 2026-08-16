@@ -156,6 +156,25 @@ class Reservation:
         return not self.deltas
 
 
+def _negate(delta: CounterDelta) -> CounterDelta:
+    """The same counter, moved the other way.
+
+    Every window field travels with it. Rebuilding the delta from the query
+    instead would be one place for `period` or `reset_epoch` to go missing, and
+    an undo that lands on a different key than the reserve is worse than no
+    undo at all — it leaves the reservation in place *and* subtracts from
+    something else.
+    """
+    return CounterDelta(
+        scope=delta.scope,
+        metric=delta.metric,
+        units=-delta.units,
+        spec=delta.spec,
+        period=delta.period,
+        reset_epoch=delta.reset_epoch,
+    )
+
+
 class QuotaEngine:
     def __init__(
         self,
@@ -463,11 +482,57 @@ class QuotaEngine:
             )
 
         queries = [query for _, query in scoped]
-        totals = await self._totals(queries, now=moment)
+
+        # Only metrics that some rule actually watches get counters. A rule added
+        # later starts from an empty cache; the database store still knows the
+        # real history, which is why it is also the rebuild source.
+        # One delta per distinct counter. Two rules sharing a scope, metric and
+        # window share a counter and must not be double-counted.
+        wanted: dict[tuple[str, str, str, int], WindowQuery] = {}
+        for _, query in scoped:
+            wanted[
+                (query.scope.key_part, query.metric.value, query.window_id, query.reset_epoch)
+            ] = query
+
+        deltas: list[CounterDelta] = []
+        reserved: dict[LimitMetric, int] = {}
+        contribution: dict[tuple[str, str, str, int], int] = {}
+        for key, query in wanted.items():
+            units = to_units(query.metric, estimate.get(query.metric), round_up=True)
+            reserved[query.metric] = units
+            contribution[key] = units
+            # Recorded even when the estimate is zero. settle() corrects only the
+            # deltas a reservation holds, so dropping zero-unit entries here would
+            # mean the *actual* usage for that metric is never counted — which is
+            # exactly what happens for an unpriced model (estimated cost 0) or a
+            # metric the caller could not estimate. The store itself skips
+            # zero-valued writes, so this costs nothing on the wire.
+            deltas.append(
+                CounterDelta(
+                    scope=query.scope,
+                    metric=query.metric,
+                    units=units,
+                    spec=query.spec,
+                    period=query.period,
+                    reset_epoch=query.reset_epoch,
+                )
+            )
+
+        # Reserve first, then judge what we found — see CounterStore.
+        # apply_and_total for why this order is the one that is not a race.
+        totals = await self._reserve(deltas, queries, now=moment)
 
         violations: list[Violation] = []
         for (rule, query), total in zip(scoped, totals, strict=True):
-            current = from_units(rule.metric, total.units)
+            # Our own contribution is subtracted back out, so the decision is
+            # made on what the window held *before* this request — which is the
+            # documented policy: refused at the limit, and an admitted request
+            # may overshoot by its own usage. Reserving first changes when the
+            # increment happens, never what the rule means.
+            mine = contribution.get(
+                (query.scope.key_part, query.metric.value, query.window_id, query.reset_epoch), 0
+            )
+            current = from_units(rule.metric, max(0, total.units - mine))
             # ">=" not ">": at the limit means spent, so the next request is
             # refused. See the overrun policy in the module docstring.
             if current >= rule.limit_value:
@@ -487,44 +552,14 @@ class QuotaEngine:
                 )
 
         if violations:
+            # Undo what was reserved a moment ago. The refusal is the caller's
+            # answer, so their estimate must not keep occupying the window —
+            # holding it would refuse the *next* caller too, for a request that
+            # never ran.
+            await self._apply([_negate(delta) for delta in deltas], now=moment)
             raise QuotaExceeded(violations)
 
-        # Only metrics that some rule actually watches get counters. A rule added
-        # later starts from an empty cache; the database store still knows the
-        # real history, which is why it is also the rebuild source.
-        # One delta per distinct counter. Two rules sharing a scope, metric and
-        # window share a counter and must not be double-counted.
-        wanted: dict[tuple[str, str, str, int], WindowQuery] = {}
-        for _, query in scoped:
-            wanted[
-                (query.scope.key_part, query.metric.value, query.window_id, query.reset_epoch)
-            ] = query
-
-        deltas: list[CounterDelta] = []
-        reserved: dict[LimitMetric, int] = {}
-        for query in wanted.values():
-            units = to_units(query.metric, estimate.get(query.metric), round_up=True)
-            reserved[query.metric] = units
-            # Recorded even when the estimate is zero. settle() corrects only the
-            # deltas a reservation holds, so dropping zero-unit entries here would
-            # mean the *actual* usage for that metric is never counted — which is
-            # exactly what happens for an unpriced model (estimated cost 0) or a
-            # metric the caller could not estimate. The store itself skips
-            # zero-valued writes, so this costs nothing on the wire.
-            deltas.append(
-                CounterDelta(
-                    scope=query.scope,
-                    metric=query.metric,
-                    units=units,
-                    spec=query.spec,
-                    period=query.period,
-                    reset_epoch=query.reset_epoch,
-                )
-            )
-
-        reservation = Reservation(deltas=deltas, reserved=reserved, created_at=moment)
-        await self._apply(deltas, now=moment)
-        return reservation
+        return Reservation(deltas=deltas, reserved=reserved, created_at=moment)
 
     async def settle(
         self,
@@ -593,6 +628,49 @@ class QuotaEngine:
             self._logged_at[key] = now
             return True
         return False
+
+    async def _reserve(
+        self,
+        deltas: Sequence[CounterDelta],
+        queries: Sequence[WindowQuery],
+        *,
+        now: float,
+    ) -> list[WindowTotal]:
+        """Atomic reserve-then-read, with the same degradation ladder as a read.
+
+        The fallback path cannot reserve — it counts settled ledger rows — so a
+        deployment running on it keeps the wider overshoot bound documented on
+        DatabaseCounterStore. Failing open returns zeroes, which admits the
+        request; that is what failing open means.
+        """
+        try:
+            return list(await self._store.apply_and_total(deltas, queries, now=now))
+        except Exception:
+            verbose = self._verbose("read", now)
+            logger.warning(
+                "counter store unavailable for reserve%s",
+                "" if verbose else " (traceback suppressed; still failing)",
+                exc_info=verbose,
+            )
+
+        if self._fallback is not None and self._settings.fallback_to_database:
+            try:
+                if self._verbose("fallback", now):
+                    logger.warning("falling back to database counters")
+                else:
+                    logger.debug("still using database counters")
+                return list(await self._fallback.apply_and_total(deltas, queries, now=now))
+            except Exception:
+                logger.error(
+                    "database counter fallback failed",
+                    exc_info=self._verbose("fallback_failed", now),
+                )
+
+        if self._settings.fail_open:
+            logger.error("quota checks failing open; requests are not being limited")
+            return [WindowTotal(units=0) for _ in queries]
+
+        raise QuotaUnavailable("no counter store could answer")
 
     async def _totals(self, queries: Sequence[WindowQuery], *, now: float) -> list[WindowTotal]:
         try:
