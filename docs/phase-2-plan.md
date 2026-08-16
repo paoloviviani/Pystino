@@ -95,7 +95,7 @@ Everything here is stack-independent. Verified gaps in the current API:
 | `LimitRuleResponse.current_value` is declared but never populated | A quota screen cannot show "€7.20 of €10" |
 | Usage aggregates by **group only** | No per-user, per-model or per-key breakdown |
 | No time series | No charts, no trend, no "spend by day" |
-| No pagination anywhere | `/api/admin/users` returns everything |
+| ~~No pagination anywhere~~ | Closed after the plan — [0029](adr/0029-pagination.md) |
 | No date ranges — only `window_seconds` | Cannot report on January ([0024](adr/0024-billing-periods.md)) |
 | No CSV export | Finance cannot allocate against grants |
 
@@ -299,9 +299,8 @@ the Keycloak hostname fix. Worth knowing operationally: **changing the OIDC
 issuer URL re-provisions everyone**, orphaning their keys and default billing
 group.
 
-**Still not done: pagination.** `/admin/users` filters in the browser over
-whatever the endpoint returned, and says so in a comment. That is adequate for
-this deployment and stops being adequate in the low thousands.
+**Pagination was still not done here.** It was closed afterwards — see the
+section below and [0029](adr/0029-pagination.md).
 
 TypeScript is pinned to **5.9.3**, not the 7.0.2 that `latest` now resolves to:
 7.0 is the native-compiler rewrite and was five weeks old at the time. One line
@@ -398,6 +397,29 @@ does not document the parameter, so asking for it is at best redundant.
 **Found while building it:** a request that failed upstream before generating
 anything was still billed for its estimated prompt. `resolve_counts` now returns
 zero for that case, on both routes.
+
+## Added after the plan — pagination and server-side search
+
+[ADR 0029](adr/0029-pagination.md). Every management listing returns
+`{items, total, limit, offset}` now, and takes `limit`/`offset` with a ceiling
+of 200. Out-of-range is a 400 rather than a clamp, because silently returning a
+different window is how a client comes to treat a truncated list as complete.
+
+Aggregations are excluded on purpose: `/api/admin/reports/usage` and its CSV
+return every row they summed. A truncated total is a wrong number that looks
+like a right one, and the report exists to be reconciled against an invoice.
+
+Filtering moved to the server along with it — `q` on users, models and groups,
+plus `is_active` and `provider_id`. This was the actual motivation. The users
+screen had a search box that filtered in the browser over whatever had been
+returned, which reads exactly like a real search until the directory outgrows
+one response, and then searches the first page and reports nothing found.
+
+**Found while building it:** `PATCH /api/admin/users/{id}` answered by re-reading
+the listing and picking its row out of it, which breaks the moment the listing
+is a page. Two other lookups were quadratic in disguise — rendering a page of
+models read *every* group and personal grant, and a page of users read every API
+key — now both restricted to the ids on the page.
 
 ## Explicitly out of scope
 

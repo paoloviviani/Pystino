@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdminProvider } from "../lib/types";
+import { jsonResponse } from "../test-helpers";
 import { AdminProviders } from "./AdminProviders";
 
 /**
@@ -48,10 +49,7 @@ function routes(providers: AdminProvider[], captured: Captured = { bodies: [] },
     } else if (url.includes("/api/admin/providers")) {
       payload = method === "GET" ? providers : providers[0];
     }
-    return new Response(JSON.stringify(payload), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return jsonResponse(payload);
   });
 }
 

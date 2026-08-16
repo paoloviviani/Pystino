@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me, UsageReport } from "../lib/types";
+import { jsonResponse } from "../test-helpers";
 import { Overview } from "./Overview";
 
 /**
@@ -65,10 +66,7 @@ function respondWith(body: UsageReport, keys: unknown[] = []) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     const payload = url.includes("/reports/usage") ? body : keys;
-    return new Response(JSON.stringify(payload), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return jsonResponse(payload);
   });
 }
 

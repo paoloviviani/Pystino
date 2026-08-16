@@ -1,4 +1,16 @@
-import { Badge, Button, Card, Dialog, Input, Meter, Notice, Select, Spinner, Table } from "@llmp/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  Input,
+  Meter,
+  Notice,
+  Pagination,
+  Select,
+  Spinner,
+  Table,
+} from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney } from "@llmp/ui";
 import { useState } from "react";
@@ -11,6 +23,7 @@ import {
   useResets,
   useUsers,
 } from "../lib/admin";
+import { usePaginated } from "../lib/paging";
 import type { LimitRule } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import styles from "./Admin.module.css";
@@ -30,10 +43,13 @@ export function AdminQuotas() {
   const nameFor = (rule: LimitRule): string => {
     if (rule.scope === "global") return "everyone";
     if (rule.scope === "group") {
-      return groups.data?.find((group) => group.id === rule.scope_id)?.name ?? shortId(rule.scope_id);
+      return (
+        groups.data?.items.find((group) => group.id === rule.scope_id)?.name ??
+        shortId(rule.scope_id)
+      );
     }
     if (rule.scope === "user") {
-      const user = users.data?.find((entry) => entry.id === rule.scope_id);
+      const user = users.data?.items.find((entry) => entry.id === rule.scope_id);
       return user?.email ?? user?.display_name ?? shortId(rule.scope_id);
     }
     return shortId(rule.scope_id);
@@ -142,7 +158,7 @@ export function AdminQuotas() {
         ) : (
           <Table
             columns={columns}
-            rows={limits.data ?? []}
+            rows={limits.data?.items ?? []}
             rowKey={(rule) => rule.id}
             empty="No quota rules. Nothing is capped."
             caption="Quota rules and their live consumption."
@@ -249,7 +265,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
         {scope === "group" && (
           <Select label="Group" value={scopeId} onChange={(e) => setScopeId(e.target.value)}>
             <option value="">Choose…</option>
-            {(groups.data ?? []).map((group) => (
+            {(groups.data?.items ?? []).map((group) => (
               <option key={group.id} value={group.id}>
                 {group.name}
               </option>
@@ -260,7 +276,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
         {scope === "user" && (
           <Select label="User" value={scopeId} onChange={(e) => setScopeId(e.target.value)}>
             <option value="">Choose…</option>
-            {(users.data ?? []).map((user) => (
+            {(users.data?.items ?? []).map((user) => (
               <option key={user.id} value={user.id}>
                 {user.email ?? user.display_name ?? user.subject}
               </option>
@@ -376,15 +392,19 @@ function ResetDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () =>
 }
 
 function HistoryDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () => void }) {
-  const resets = useResets(rule?.id ?? null);
+  // Nothing prunes the reset trail, so this is the one dialog whose contents
+  // grow forever. Newest first, a page at a time.
+  const paged = usePaginated(10);
+  const resets = useResets(rule?.id ?? null, paged.page);
 
   return (
     <Dialog open={rule !== null} title={`Resets · ${rule?.name || "rule"}`} onClose={onClose}>
       {resets.isPending ? (
         <Spinner />
-      ) : (resets.data ?? []).length === 0 ? (
+      ) : (resets.data?.total ?? 0) === 0 ? (
         <p className={styles.muted}>This rule has never been reset.</p>
       ) : (
+        <>
         <Table
           columns={[
             { key: "when", header: "When", render: (row) => formatDateTime(row.effective_at) },
@@ -397,9 +417,18 @@ function HistoryDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () 
             },
             { key: "why", header: "Reason", render: (row) => row.reason },
           ]}
-          rows={resets.data ?? []}
+          rows={resets.data?.items ?? []}
           rowKey={(row) => row.id}
         />
+        <Pagination
+          total={resets.data?.total ?? 0}
+          limit={paged.limit}
+          offset={paged.offset}
+          onOffsetChange={paged.setOffset}
+          noun="resets"
+          busy={resets.isFetching}
+        />
+        </>
       )}
     </Dialog>
   );

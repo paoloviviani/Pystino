@@ -1,4 +1,15 @@
-import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner, Table } from "@llmp/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  Input,
+  Notice,
+  Pagination,
+  Select,
+  Spinner,
+  Table,
+} from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney } from "@llmp/ui";
 import { useState } from "react";
@@ -14,12 +25,16 @@ import {
   useUserModelAccess,
   useUsers,
 } from "../lib/admin";
+import { usePaginated } from "../lib/paging";
 import type { AdminModel, DiscoveredModel } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import styles from "./Admin.module.css";
 
 export function AdminModels() {
-  const models = useModels();
+  // A provider catalogue import can bring hundreds of models in one click, so
+  // this is one of the two screens that genuinely needs the pager.
+  const paged = usePaginated();
+  const models = useModels(paged.page);
   const update = useUpdateModel();
 
   const [creating, setCreating] = useState(false);
@@ -137,6 +152,24 @@ export function AdminModels() {
         </Notice>
       ) : null}
 
+      <Card>
+        <div className={styles.searchRow}>
+          <div className={styles.grow}>
+            <Input
+              label="Search"
+              value={paged.search}
+              onChange={(event) => paged.setSearch(event.target.value)}
+              placeholder="our name or the provider's"
+              hint={
+                models.data
+                  ? `${models.data.total.toLocaleString()} matching`
+                  : "Matches both names, so a provider's list can be reconciled against ours."
+              }
+            />
+          </div>
+        </div>
+      </Card>
+
       <Card flush>
         {models.isPending ? (
           <Spinner label="Loading the catalogue" />
@@ -145,13 +178,27 @@ export function AdminModels() {
             {models.error instanceof Error ? models.error.message : "Unknown error."}
           </Notice>
         ) : (
-          <Table
-            columns={columns}
-            rows={models.data ?? []}
-            rowKey={(model) => model.id}
-            empty="No models catalogued. Use Discover to see what the provider offers."
-            caption="Catalogued models, their current price and who may use them."
-          />
+          <>
+            <Table
+              columns={columns}
+              rows={models.data?.items ?? []}
+              rowKey={(model) => model.id}
+              empty={
+                paged.query
+                  ? "No model matches that."
+                  : "No models catalogued. Use Discover to see what the provider offers."
+              }
+              caption="Catalogued models, their current price and who may use them."
+            />
+            <Pagination
+              total={models.data?.total ?? 0}
+              limit={paged.limit}
+              offset={paged.offset}
+              onOffsetChange={paged.setOffset}
+              noun="models"
+              busy={models.isFetching}
+            />
+          </>
         )}
       </Card>
 
@@ -172,7 +219,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
   // Only active providers: creating a model on a deactivated endpoint produces
   // something that cannot serve a request the moment it exists.
-  const choices = (providers.data ?? []).filter((provider) => provider.is_active);
+  const choices = (providers.data?.items ?? []).filter((provider) => provider.is_active);
 
   return (
     <Dialog
@@ -277,18 +324,16 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
  */
 function AccessDialog({ model, onClose }: { model: AdminModel | null; onClose: () => void }) {
   const groups = useGroups();
-  const users = useUsers();
   const access = useModelAccess();
   const userAccess = useUserModelAccess();
-  const [search, setSearch] = useState("");
+  const finder = usePaginated(20);
 
-  const matching = (users.data ?? []).filter((user) => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return model ? model.granted_to_users.includes(user.email ?? "") : false;
-    return [user.email, user.display_name, user.subject]
-      .filter(Boolean)
-      .some((field) => String(field).toLowerCase().includes(needle));
-  });
+  // The directory is searched, not downloaded. Nothing is requested until
+  // something is typed: opening this dialog to grant one person access should
+  // not pull a page of accounts nobody asked about.
+  const users = useUsers(finder.page, finder.query.trim().length > 0);
+  const matching = finder.query.trim() ? (users.data?.items ?? []) : [];
+  const granted = model?.granted_to_users ?? [];
 
   return (
     <Dialog open={model !== null} title={`Access · ${model?.name ?? ""}`} onClose={onClose}>
@@ -303,7 +348,7 @@ function AccessDialog({ model, onClose }: { model: AdminModel | null; onClose: (
         <Spinner />
       ) : (
         <div className={styles.checkList}>
-          {(groups.data ?? []).map((group) => {
+          {(groups.data?.items ?? []).map((group) => {
             const granted = model ? group.models.includes(model.name) : false;
             return (
               <label key={group.id} className={styles.checkItem}>
@@ -324,15 +369,40 @@ function AccessDialog({ model, onClose }: { model: AdminModel | null; onClose: (
       )}
 
       <p className={styles.muted}>
-        Individual people, in addition to their groups. Search to find someone; only
-        those already granted are listed otherwise.
+        Individual people, in addition to their groups. Everyone already granted is listed
+        below; search to add someone else.
       </p>
+      {granted.length > 0 && (
+        <div className={styles.checkList}>
+          {granted.map((email) => (
+            <label key={email} className={styles.checkItem}>
+              <input
+                type="checkbox"
+                checked
+                disabled={userAccess.isPending}
+                onChange={() => {
+                  // Revoking needs the id, and the grant list carries only the
+                  // label — so find the account by searching for it. Exact,
+                  // because an email is unique.
+                  const match = users.data?.items.find((entry) => entry.email === email);
+                  if (match && model) {
+                    userAccess.mutate({ userId: match.id, modelId: model.id, grant: false });
+                  } else {
+                    finder.setSearch(email);
+                  }
+                }}
+              />
+              <span>{email}</span>
+            </label>
+          ))}
+        </div>
+      )}
       <Input
         label="Find a person"
         hideLabel
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="email or name"
+        value={finder.search}
+        onChange={(event) => finder.setSearch(event.target.value)}
+        placeholder="email, name or subject"
       />
       {userAccess.error ? (
         <Notice tone="danger">
@@ -341,16 +411,15 @@ function AccessDialog({ model, onClose }: { model: AdminModel | null; onClose: (
       ) : null}
       <div className={styles.checkList}>
         {matching.map((user) => {
-          const granted = model ? model.granted_to_users.includes(user.email ?? "") : false;
+          const has = granted.includes(user.email ?? "");
           return (
             <label key={user.id} className={styles.checkItem}>
               <input
                 type="checkbox"
-                checked={granted}
+                checked={has}
                 disabled={userAccess.isPending}
                 onChange={() =>
-                  model &&
-                  userAccess.mutate({ userId: user.id, modelId: model.id, grant: !granted })
+                  model && userAccess.mutate({ userId: user.id, modelId: model.id, grant: !has })
                 }
               />
               <span>{user.email ?? user.display_name ?? user.subject}</span>
@@ -359,7 +428,19 @@ function AccessDialog({ model, onClose }: { model: AdminModel | null; onClose: (
         })}
         {matching.length === 0 && (
           <span className={styles.muted}>
-            {search ? "Nobody matches that." : "No individual grants."}
+            {!finder.query.trim()
+              ? granted.length === 0
+                ? "No individual grants."
+                : "Type to find someone else."
+              : users.isFetching
+                ? "Searching…"
+                : "Nobody matches that."}
+          </span>
+        )}
+        {users.data && users.data.total > matching.length && (
+          <span className={styles.muted}>
+            Showing {matching.length} of {users.data.total.toLocaleString()} matches — narrow
+            the search to see the rest.
           </span>
         )}
       </div>
@@ -390,7 +471,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   const importModels = useImportModels();
   const [selected, setSelected] = useState<string[]>([]);
 
-  const choices = (providers.data ?? []).filter((provider) => provider.is_active);
+  const choices = (providers.data?.items ?? []).filter((provider) => provider.is_active);
 
   const toggle = (id: string) =>
     setSelected((current) =>

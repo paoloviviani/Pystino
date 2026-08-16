@@ -23,6 +23,12 @@ per-group model availability and a pluggable redaction layer.
 | `POST /api/admin/limits/{id}/reset` | session cookie + `is_admin` | Set a quota's consumption to zero (reason required); leaves billing untouched |
 | `GET /healthz`, `/readyz` | — | Liveness (no dependencies) and readiness |
 
+Every management listing answers with `{items, total, limit, offset}` and takes
+`?limit=&offset=` (ceiling 200; out of range is a 400, not a clamp). Users,
+models and groups also take `?q=` for a case-insensitive substring search.
+Reports are aggregations, not listings, and return every row they summed.
+([ADR 0029](../../docs/adr/0029-pagination.md))
+
 There is **no HTML admin panel**. `/docs` is the operator console — Swagger, generated
 from the same schemas the endpoints validate against. Sign in at `/auth/login` first, so
 the session cookie travels with the requests. See
@@ -37,6 +43,7 @@ API keys that carry a billing group; `/api` is for humans and uses OIDC.
 src/gateway/
   config.py         all configuration; nothing else reads the environment
   models.py         SQLAlchemy ORM — the usage ledger lives here
+  pagination.py     the listing envelope, its bounds and the count query
   types.py          Money (Numeric, never float) and UTC-safe datetimes
   security.py       API key generation, SHA-256 hashing, verification
   oidc.py           discovery, PKCE, ID token validation, group claim mapping

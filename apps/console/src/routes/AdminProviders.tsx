@@ -121,7 +121,7 @@ export function AdminProviders() {
       ) : null}
 
       {failures.map(([id, result]) => {
-        const provider = providers.data?.find((entry) => entry.id === id);
+        const provider = providers.data?.items.find((entry) => entry.id === id);
         return (
           <Notice key={id} tone="warn" title={`${provider?.name ?? "Provider"} is not reachable`}>
             {result.detail}
@@ -139,7 +139,7 @@ export function AdminProviders() {
         ) : (
           <Table
             columns={columns}
-            rows={providers.data ?? []}
+            rows={providers.data?.items ?? []}
             rowKey={(provider) => provider.id}
             empty="No providers configured. Nothing can be served until one exists."
             caption="Inference endpoints, their credentials and how many models they serve."

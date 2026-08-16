@@ -566,7 +566,7 @@ class TestLimitsApi:
         reservation = await quota.check_and_reserve(session, subject, QuotaAmounts())
         await quota.settle(reservation, QuotaAmounts(cost=Decimal("12.5")))
 
-        rules = (await admin_client.get("/api/admin/limits")).json()
+        rules = (await admin_client.get("/api/admin/limits")).json()["items"]
         rule = next(entry for entry in rules if entry["id"] == created["id"])
         assert Decimal(rule["current_value"]) == Decimal("12.5")
 
@@ -744,7 +744,7 @@ class TestResetEndpoint:
         assert response.json()["reason"] == "grant extension approved"
         assert response.json()["created_by_email"] == seeded.user.email
 
-        trail = (await admin_client.get(f"/api/admin/limits/{rule.id}/resets")).json()
+        trail = (await admin_client.get(f"/api/admin/limits/{rule.id}/resets")).json()["items"]
         assert [entry["reason"] for entry in trail] == ["grant extension approved"]
 
     async def test_resetting_an_unknown_rule_is_404(self, admin_client: httpx.AsyncClient) -> None:

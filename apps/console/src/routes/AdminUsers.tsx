@@ -1,30 +1,24 @@
-import { Badge, Button, Card, Input, Notice, Spinner, Table } from "@llmp/ui";
+import { Badge, Button, Card, Input, Notice, Pagination, Spinner, Table } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
-import { useMemo, useState } from "react";
 import { useGroups, useUpdateUser, useUsers } from "../lib/admin";
+import { usePaginated } from "../lib/paging";
 import type { AdminGroup, AdminUser } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import styles from "./Admin.module.css";
 
 export function AdminUsers() {
-  const users = useUsers();
-  const groups = useGroups();
+  // Searched and paged on the server. It used to filter in the browser over
+  // whatever the endpoint had returned, which reads the same until the
+  // organisation outgrows one response — at which point the box quietly
+  // searches the first page and reports nothing found.
+  const paged = usePaginated();
+  const users = useUsers(paged.page);
+  const groupPaging = usePaginated();
+  const groups = useGroups(groupPaging.page);
   const update = useUpdateUser();
-  const [search, setSearch] = useState("");
 
-  // Filtered in the browser, not the server. Honest about why: the list
-  // endpoint has no pagination or search yet, so this narrows what is already
-  // loaded rather than pretending to be a query. It stops being adequate at a
-  // few thousand users, and the note in the Phase 2 plan says so.
-  const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return users.data ?? [];
-    return (users.data ?? []).filter((user) =>
-      [user.email, user.display_name, user.subject, ...user.groups]
-        .filter(Boolean)
-        .some((field) => String(field).toLowerCase().includes(needle)),
-    );
-  }, [users.data, search]);
+  const page = users.data;
+  const rows = page?.items ?? [];
 
   const columns: Column<AdminUser>[] = [
     {
@@ -120,10 +114,14 @@ export function AdminUsers() {
           <div className={styles.grow}>
             <Input
               label="Search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="email, name or group"
-              hint={`${filtered.length} of ${(users.data ?? []).length} shown`}
+              value={paged.search}
+              onChange={(event) => paged.setSearch(event.target.value)}
+              placeholder="email, name or identity provider subject"
+              hint={
+                page
+                  ? `${page.total.toLocaleString()} matching`
+                  : "Searches every account, not just this page."
+              }
             />
           </div>
         </div>
@@ -137,22 +135,50 @@ export function AdminUsers() {
             {users.error instanceof Error ? users.error.message : "Unknown error."}
           </Notice>
         ) : (
-          <Table
-            columns={columns}
-            rows={filtered}
-            rowKey={(user) => user.id}
-            empty={search ? "No user matches that." : "No users yet."}
-            caption="Users, their groups and their keys."
-          />
+          <>
+            <Table
+              columns={columns}
+              rows={rows}
+              rowKey={(user) => user.id}
+              empty={paged.query ? "No user matches that." : "No users yet."}
+              caption="Users, their groups and their keys."
+            />
+            <Pagination
+              total={page?.total ?? 0}
+              limit={paged.limit}
+              offset={paged.offset}
+              onOffsetChange={paged.setOffset}
+              noun="users"
+              busy={users.isFetching}
+            />
+          </>
         )}
       </Card>
 
-      <GroupsCard groups={groups.data ?? []} loading={groups.isPending} />
+      <GroupsCard
+        groups={groups.data?.items ?? []}
+        total={groups.data?.total ?? 0}
+        loading={groups.isPending}
+        paging={groupPaging}
+        busy={groups.isFetching}
+      />
     </div>
   );
 }
 
-function GroupsCard({ groups, loading }: { groups: AdminGroup[]; loading: boolean }) {
+function GroupsCard({
+  groups,
+  total,
+  loading,
+  paging,
+  busy,
+}: {
+  groups: AdminGroup[];
+  total: number;
+  loading: boolean;
+  paging: ReturnType<typeof usePaginated>;
+  busy: boolean;
+}) {
   const columns: Column<AdminGroup>[] = [
     { key: "name", header: "Group", render: (group) => group.name },
     {
@@ -189,7 +215,17 @@ function GroupsCard({ groups, loading }: { groups: AdminGroup[]; loading: boolea
       {loading ? (
         <Spinner />
       ) : (
-        <Table columns={columns} rows={groups} rowKey={(group) => group.id} empty="No groups." />
+        <>
+          <Table columns={columns} rows={groups} rowKey={(group) => group.id} empty="No groups." />
+          <Pagination
+            total={total}
+            limit={paging.limit}
+            offset={paging.offset}
+            onOffsetChange={paging.setOffset}
+            noun="groups"
+            busy={busy}
+          />
+        </>
       )}
     </Card>
   );

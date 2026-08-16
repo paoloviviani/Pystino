@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UsageReport } from "../lib/types";
+import { jsonResponse } from "../test-helpers";
 import { AdminReports } from "./AdminReports";
 
 /** The chargeback screen. Its job is to be reconcilable, so what is tested is
@@ -53,10 +54,7 @@ function routes(body: UsageReport, seen: string[] = []) {
     } else if (url.includes("/api/admin/models")) {
       payload = [];
     }
-    return new Response(JSON.stringify(payload), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return jsonResponse(payload);
   });
 }
 

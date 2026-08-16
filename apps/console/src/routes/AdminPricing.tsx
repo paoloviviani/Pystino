@@ -11,7 +11,7 @@ export function AdminPricing() {
   const [modelId, setModelId] = useState("");
   const prices = usePrices(modelId || null);
 
-  const model = models.data?.find((entry) => entry.id === modelId);
+  const model = models.data?.items.find((entry) => entry.id === modelId);
   const now = new Date();
 
   const columns: Column<Price>[] = [
@@ -62,7 +62,7 @@ export function AdminPricing() {
           onChange={(event) => setModelId(event.target.value)}
         >
           <option value="">Choose a model…</option>
-          {(models.data ?? []).map((entry) => (
+          {(models.data?.items ?? []).map((entry) => (
             <option key={entry.id} value={entry.id}>
               {entry.name}
               {entry.current_price ? "" : "  (unpriced)"}
@@ -83,7 +83,7 @@ export function AdminPricing() {
             ) : (
               <Table
                 columns={columns}
-                rows={prices.data ?? []}
+                rows={prices.data?.items ?? []}
                 rowKey={(price) => price.id}
                 empty="No price has ever been set. This model records a cost of zero."
                 caption={`Price history for ${model?.name ?? "the model"}.`}
