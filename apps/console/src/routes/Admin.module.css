@@ -80,6 +80,31 @@
   background: var(--colour-surface-sunken);
 }
 
+/* A capability set: the checkboxes for the values providers actually emit, and
+   the Other box under them. A fieldset because the legend is what names the
+   group for a screen reader — the boxes are "image" and "audio", which mean
+   nothing without "Accepts" attached to them. */
+.capabilities {
+  display: grid;
+  gap: var(--space-2);
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-inline-size: 0; /* fieldset defaults to min-content, which breaks the grid */
+}
+
+/* Deliberately identical to the field labels in `@llmp/ui` — a legend that
+   styled itself differently would read as a section heading rather than as
+   the label of the control under it. */
+.capabilitiesLegend {
+  padding: 0;
+  color: var(--colour-text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .searchRow {
   display: flex;
   align-items: flex-end;

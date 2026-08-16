@@ -12,6 +12,7 @@ import {
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney } from "@llmp/ui";
+import type { ReactNode } from "react";
 import { useState } from "react";
 import {
   useCreateModel,
@@ -245,34 +246,137 @@ function Capabilities({ model }: { model: AdminModel }) {
   );
 }
 
-/** A comma-separated list, for editing a capability set by hand. */
-function CapabilityInput({
-  label,
-  hint,
-  value,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  value: string;
-  onChange: (next: string) => void;
-}) {
-  return (
-    <Input
-      label={label}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      hint={hint}
-      placeholder="comma separated"
-    />
-  );
-}
-
 const asList = (value: string): string[] =>
   value
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+
+interface Vocabulary {
+  value: string;
+  /** A plain-English name for a value whose own name does not give it away. */
+  gloss?: string;
+}
+
+/**
+ * The values that get a checkbox.
+ *
+ * Not a design opinion: this is every value the reference provider's catalogue
+ * actually uses, counted across all 107 models it offers. `input_modalities`
+ * is never anything but text, image or audio; `supported_features` is never
+ * anything but tools, json_mode or reasoning. A checkbox for a value no
+ * provider emits is clutter, and one missing for a value they do emit is the
+ * bug this is meant to avoid.
+ *
+ * The two extra output modalities come from this gateway's own model kinds
+ * rather than from the catalogue — nothing in it produces embeddings or
+ * images, but migration 0006 backfills both and an operator cataloguing such a
+ * model by hand needs to say so.
+ *
+ * These lists are a convenience, never a filter. Anything outside them is
+ * typed into the Other box and kept verbatim, which is the whole point of
+ * ADR 0031: the capability most worth hearing about is the one the provider
+ * added last week, and a vocabulary compiled today would discard exactly that.
+ */
+const KNOWN_INPUTS: readonly Vocabulary[] = [
+  { value: "text" },
+  { value: "image", gloss: "vision" },
+  { value: "audio" },
+];
+
+const KNOWN_OUTPUTS: readonly Vocabulary[] = [
+  { value: "text" },
+  { value: "image" },
+  { value: "embeddings" },
+];
+
+const KNOWN_FEATURES: readonly Vocabulary[] = [
+  { value: "tools", gloss: "function calling" },
+  { value: "json_mode", gloss: "structured output" },
+  { value: "reasoning" },
+];
+
+/**
+ * A capability set: checkboxes for the values providers actually use, and a
+ * comma-separated box for everything else.
+ *
+ * The Other box is not a fallback nobody is expected to reach. It is seeded
+ * with whatever the import found that has no checkbox, so an unrecognised
+ * capability is *visible and editable* rather than quietly absent — a value
+ * with nowhere to render would be dropped by the first save, and the operator
+ * would have destroyed information by opening a dialog and clicking Save.
+ */
+function CapabilityPicker({
+  label,
+  otherLabel,
+  hint,
+  known,
+  value,
+  onChange,
+}: {
+  label: string;
+  otherLabel: string;
+  hint: ReactNode;
+  known: readonly Vocabulary[];
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const vocabulary = known.map((entry) => entry.value);
+
+  // Seeded once, then owned by the input. Deriving this from `value` on every
+  // render would fight the person typing: splitting on the comma they just
+  // pressed and joining the result back removes it before they type the next
+  // word. The dialog remounts this component when it loads a different model.
+  const [other, setOther] = useState(() =>
+    value.filter((item) => !vocabulary.includes(item)).join(", "),
+  );
+
+  // Set union rather than concatenation: typing a value into Other that also
+  // has a checkbox should tick it, not list it twice.
+  const emit = (ticked: string[], extras: string) =>
+    onChange([...new Set([...ticked, ...asList(extras)])]);
+
+  return (
+    <fieldset className={styles.capabilities}>
+      <legend className={styles.capabilitiesLegend}>{label}</legend>
+      <div className={styles.checkList}>
+        {known.map((entry) => (
+          <label key={entry.value} className={styles.checkItem}>
+            <input
+              type="checkbox"
+              checked={value.includes(entry.value)}
+              onChange={(event) =>
+                emit(
+                  vocabulary.filter((item) =>
+                    item === entry.value ? event.target.checked : value.includes(item),
+                  ),
+                  other,
+                )
+              }
+            />
+            <span>
+              {entry.value}
+              {entry.gloss && <span className={styles.muted}> ({entry.gloss})</span>}
+            </span>
+          </label>
+        ))}
+      </div>
+      <Input
+        label={otherLabel}
+        value={other}
+        onChange={(event) => {
+          setOther(event.target.value);
+          emit(
+            value.filter((item) => vocabulary.includes(item)),
+            event.target.value,
+          );
+        }}
+        placeholder="comma separated"
+        hint={hint}
+      />
+    </fieldset>
+  );
+}
 
 /**
  * Correcting what the catalogue claimed.
@@ -289,9 +393,9 @@ const asList = (value: string): string[] =>
 function EditModelDialog({ model, onClose }: { model: AdminModel | null; onClose: () => void }) {
   const update = useUpdateModel();
   const [kind, setKind] = useState<ModelKind>("chat");
-  const [inputs, setInputs] = useState("");
-  const [outputs, setOutputs] = useState("");
-  const [features, setFeatures] = useState("");
+  const [inputs, setInputs] = useState<string[]>([]);
+  const [outputs, setOutputs] = useState<string[]>([]);
+  const [features, setFeatures] = useState<string[]>([]);
   const [context, setContext] = useState("");
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
@@ -299,9 +403,9 @@ function EditModelDialog({ model, onClose }: { model: AdminModel | null; onClose
   if (model && loadedFor !== model.id) {
     setLoadedFor(model.id);
     setKind(model.kind);
-    setInputs(model.input_modalities.join(", "));
-    setOutputs(model.output_modalities.join(", "));
-    setFeatures(model.supported_features.join(", "));
+    setInputs(model.input_modalities);
+    setOutputs(model.output_modalities);
+    setFeatures(model.supported_features);
     setContext(model.context_window ? String(model.context_window) : "");
   }
 
@@ -311,9 +415,9 @@ function EditModelDialog({ model, onClose }: { model: AdminModel | null; onClose
       {
         id: model.id,
         kind,
-        input_modalities: asList(inputs),
-        output_modalities: asList(outputs),
-        supported_features: asList(features),
+        input_modalities: inputs,
+        output_modalities: outputs,
+        supported_features: features,
         context_window: context === "" ? null : Number(context),
       },
       { onSuccess: onClose },
@@ -352,22 +456,33 @@ function EditModelDialog({ model, onClose }: { model: AdminModel | null; onClose
         <option value="image">Image — /v1/images/generations</option>
       </Select>
 
-      <CapabilityInput
+      {/* Remounted per model: each picker seeds its Other box once, from the
+          capabilities the model arrived with. */}
+      <CapabilityPicker
+        key={`inputs-${loadedFor}`}
         label="Accepts"
-        hint="Input modalities, e.g. text, image. What you can send it."
+        otherLabel="Other input modalities"
+        hint="What you can send it."
+        known={KNOWN_INPUTS}
         value={inputs}
         onChange={setInputs}
       />
-      <CapabilityInput
+      <CapabilityPicker
+        key={`outputs-${loadedFor}`}
         label="Produces"
-        hint="Output modalities, e.g. text, embeddings, image."
+        otherLabel="Other output modalities"
+        hint="What comes back."
+        known={KNOWN_OUTPUTS}
         value={outputs}
         onChange={setOutputs}
       />
-      <CapabilityInput
+      <CapabilityPicker
+        key={`features-${loadedFor}`}
         label="Features"
-        hint="e.g. tools, json_mode, reasoning. Not a fixed list — whatever the provider
-          reports is kept, so a new one is not silently dropped."
+        otherLabel="Other features"
+        hint="Not a fixed list — whatever the provider reports is kept, so a capability
+          it added last week is not silently dropped."
+        known={KNOWN_FEATURES}
         value={features}
         onChange={setFeatures}
       />
@@ -397,6 +512,14 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const [upstream, setUpstream] = useState("");
   const [providerId, setProviderId] = useState("");
   const [kind, setKind] = useState<ModelKind>("chat");
+  const [inputs, setInputs] = useState<string[]>([]);
+  const [outputs, setOutputs] = useState<string[]>([]);
+  const [features, setFeatures] = useState<string[]>([]);
+  // Bumped after a successful create to remount the pickers. Clearing the
+  // arrays is not enough on its own: each picker owns the text in its Other
+  // box, so without this the previous model's typed-in capabilities are still
+  // sitting there and rejoin the set the moment any checkbox is touched.
+  const [generation, setGeneration] = useState(0);
 
   // Only active providers: creating a model on a deactivated endpoint produces
   // something that cannot serve a request the moment it exists.
@@ -421,11 +544,18 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
                   upstream_model: upstream.trim(),
                   provider_id: providerId,
                   kind,
+                  input_modalities: inputs,
+                  output_modalities: outputs,
+                  supported_features: features,
                 },
                 {
                   onSuccess: () => {
                     setName("");
                     setUpstream("");
+                    setInputs([]);
+                    setOutputs([]);
+                    setFeatures([]);
+                    setGeneration((current) => current + 1);
                     onClose();
                   },
                 },
@@ -469,6 +599,36 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
         <option value="embedding">Embedding — /v1/embeddings</option>
         <option value="image">Image — /v1/images/generations</option>
       </Select>
+
+      {/* Describing it now rather than importing-then-editing. Left empty this
+          reads "not stated", which is honest for a model nobody has described. */}
+      <CapabilityPicker
+        key={`inputs-${generation}`}
+        label="Accepts"
+        otherLabel="Other input modalities"
+        hint="What you can send it."
+        known={KNOWN_INPUTS}
+        value={inputs}
+        onChange={setInputs}
+      />
+      <CapabilityPicker
+        key={`outputs-${generation}`}
+        label="Produces"
+        otherLabel="Other output modalities"
+        hint="What comes back."
+        known={KNOWN_OUTPUTS}
+        value={outputs}
+        onChange={setOutputs}
+      />
+      <CapabilityPicker
+        key={`features-${generation}`}
+        label="Features"
+        otherLabel="Other features"
+        hint="Anything the provider reports. Not limited to the boxes above."
+        known={KNOWN_FEATURES}
+        value={features}
+        onChange={setFeatures}
+      />
 
       <Select
         label="Provider"

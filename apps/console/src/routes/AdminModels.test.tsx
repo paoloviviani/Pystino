@@ -157,6 +157,28 @@ function renderScreen(element: ReactElement) {
 
 afterEach(() => vi.unstubAllGlobals());
 
+/**
+ * One capability set, addressed by its legend.
+ *
+ * Scoping is not tidiness here: "Accepts" and "Produces" both offer a box
+ * called `image`, so an unscoped query is ambiguous — which is precisely the
+ * confusion the legend exists to resolve for anyone reading the form aloud.
+ */
+function group(name: string) {
+  return within(screen.getByRole("group", { name }));
+}
+
+async function openEditor(user: ReturnType<typeof userEvent.setup>) {
+  await waitFor(() => expect(screen.getByText("fast-summariser")).toBeInTheDocument());
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  return within(await screen.findByRole("dialog"));
+}
+
+async function save(user: ReturnType<typeof userEvent.setup>) {
+  const dialog = within(screen.getByRole("dialog"));
+  await user.click(dialog.getByRole("button", { name: "Save" }));
+}
+
 /** Pick the provider whose catalogue to inspect; nothing loads before that. */
 async function openCatalogue(user: ReturnType<typeof userEvent.setup>) {
   const dialog = await screen.findByRole("dialog");
@@ -195,11 +217,14 @@ describe("AdminModels", () => {
     renderScreen(<AdminModels />);
 
     await waitFor(() => expect(screen.getByText("fast-summariser")).toBeInTheDocument());
+    // Scoped to the listing: the Add dialog is mounted from the start, closed,
+    // and its capability boxes are called "image" and "text" too.
+    const listing = within(screen.getByRole("table"));
     // "text" is not shown: every model takes text, so a badge for it is noise
     // that crowds out the ones that distinguish models from each other.
-    expect(screen.getByText("image")).toBeInTheDocument();
-    expect(screen.getByText("tools")).toBeInTheDocument();
-    expect(screen.queryByText("text")).not.toBeInTheDocument();
+    expect(listing.getByText("image")).toBeInTheDocument();
+    expect(listing.getByText("tools")).toBeInTheDocument();
+    expect(listing.queryByText("text")).not.toBeInTheDocument();
   });
 
   it("says nothing was stated rather than implying a model cannot", async () => {
@@ -217,18 +242,126 @@ describe("AdminModels", () => {
     vi.stubGlobal("fetch", routes([model({ supported_features: ["tools"] })], {}, captured));
     renderScreen(<AdminModels />);
 
-    await waitFor(() => expect(screen.getByText("fast-summariser")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: "Edit" }));
-
-    const dialog = await screen.findByRole("dialog");
-    const features = within(dialog).getByLabelText("Features");
-    await user.clear(features);
-    await user.type(features, "tools, reasoning");
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await openEditor(user);
+    await user.click(group("Features").getByRole("checkbox", { name: /^reasoning/ }));
+    await save(user);
 
     await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
     const body = captured.bodies[0] as Record<string, unknown>;
     expect(body.supported_features).toEqual(["tools", "reasoning"]);
+  });
+
+  it("shows what the model already claims as ticked", async () => {
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal(
+      "fetch",
+      routes([model({ input_modalities: ["text", "image"], supported_features: ["tools"] })]),
+    );
+    renderScreen(<AdminModels />);
+
+    await openEditor(user);
+    expect(group("Accepts").getByRole("checkbox", { name: /^image/ })).toBeChecked();
+    expect(group("Accepts").getByRole("checkbox", { name: /^audio/ })).not.toBeChecked();
+    expect(group("Features").getByRole("checkbox", { name: /^tools/ })).toBeChecked();
+    expect(group("Features").getByRole("checkbox", { name: /^reasoning/ })).not.toBeChecked();
+  });
+
+  it("unticking a box takes the capability away", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: { bodies: unknown[] } = { bodies: [] };
+    vi.stubGlobal(
+      "fetch",
+      routes([model({ supported_features: ["tools", "reasoning"] })], {}, captured),
+    );
+    renderScreen(<AdminModels />);
+
+    await openEditor(user);
+    await user.click(group("Features").getByRole("checkbox", { name: /^tools/ }));
+    await save(user);
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    expect((captured.bodies[0] as Record<string, unknown>).supported_features).toEqual([
+      "reasoning",
+    ]);
+  });
+
+  it("keeps a capability the provider invented that has no checkbox", async () => {
+    // The failure this whole design exists to prevent (ADR 0031). A value with
+    // nowhere to render would be dropped by the first save, so an operator
+    // would destroy information by opening the dialog and clicking Save
+    // without touching anything.
+    const user = userEvent.setup({ delay: null });
+    const captured: { bodies: unknown[] } = { bodies: [] };
+    vi.stubGlobal(
+      "fetch",
+      routes([model({ supported_features: ["tools", "web_search"] })], {}, captured),
+    );
+    renderScreen(<AdminModels />);
+
+    await openEditor(user);
+    // Visible and editable, not merely retained behind the scenes.
+    expect(group("Features").getByLabelText("Other features")).toHaveValue("web_search");
+
+    await user.click(group("Features").getByRole("checkbox", { name: /^reasoning/ }));
+    await save(user);
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    expect((captured.bodies[0] as Record<string, unknown>).supported_features).toEqual([
+      "tools",
+      "reasoning",
+      "web_search",
+    ]);
+  });
+
+  it("adds an unrecognised capability typed by hand", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: { bodies: unknown[] } = { bodies: [] };
+    vi.stubGlobal("fetch", routes([model({ supported_features: ["tools"] })], {}, captured));
+    renderScreen(<AdminModels />);
+
+    await openEditor(user);
+    await user.type(group("Features").getByLabelText("Other features"), "web_search, citations");
+    await save(user);
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    expect((captured.bodies[0] as Record<string, unknown>).supported_features).toEqual([
+      "tools",
+      "web_search",
+      "citations",
+    ]);
+  });
+
+  it("does not list a value twice when it is both ticked and typed", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: { bodies: unknown[] } = { bodies: [] };
+    vi.stubGlobal("fetch", routes([model({ supported_features: ["tools"] })], {}, captured));
+    renderScreen(<AdminModels />);
+
+    await openEditor(user);
+    await user.type(group("Features").getByLabelText("Other features"), "tools");
+    await save(user);
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    expect((captured.bodies[0] as Record<string, unknown>).supported_features).toEqual(["tools"]);
+  });
+
+  it("keeps the accepts and produces sets apart", async () => {
+    // Both offer a box called "image", and they mean different things. If the
+    // legend did not name the group they would be indistinguishable — to a
+    // screen reader as much as to this test.
+    const user = userEvent.setup({ delay: null });
+    const captured: { bodies: unknown[] } = { bodies: [] };
+    vi.stubGlobal("fetch", routes([model({ output_modalities: ["text"] })], {}, captured));
+    renderScreen(<AdminModels />);
+
+    await openEditor(user);
+    await user.click(group("Accepts").getByRole("checkbox", { name: /^image/ }));
+    await save(user);
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies[0] as Record<string, unknown>;
+    expect(body.input_modalities).toEqual(["text", "image"]);
+    expect(body.output_modalities).toEqual(["text"]);
   });
 
   it("can correct a mis-inferred kind", async () => {
