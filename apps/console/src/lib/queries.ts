@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, request } from "./api";
 import { MAX_LIMIT, type Page, pageParams } from "./paging";
-import type { ApiKey, Me, UsageReport } from "./types";
+import type { ApiKey, MintedApiKey, Me, UsageReport } from "./types";
 
 /**
  * Query keys, in one place.
@@ -61,5 +61,42 @@ export function useMyKeys() {
     queryKey: [...keys.myKeys, search],
     queryFn: () => request<Page<ApiKey>>(`/api/me/keys?${search}`),
     retry: retryUnlessRejected,
+  });
+}
+
+export interface MintKeyInput {
+  name: string;
+  /** Omitted means "resolve the user's default group at request time". */
+  billing_group_id?: string | null;
+  expires_in_days?: number | null;
+}
+
+/**
+ * Mint a key.
+ *
+ * The response carries the only copy of the secret that will ever exist, so it
+ * is returned to the caller rather than swallowed — and deliberately **not**
+ * written into the query cache. A cached secret would survive in memory for as
+ * long as the tab is open and could be re-rendered by any later read of the
+ * key list, which is exactly the "shown once" promise broken quietly.
+ */
+export function useMintKey() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: MintKeyInput) =>
+      request<MintedApiKey>("/api/me/keys", { method: "POST", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.myKeys }),
+  });
+}
+
+/**
+ * Revoke one. The API revokes rather than deletes — the usage ledger references
+ * keys, and removing one would turn historical spend into an unattributable row.
+ */
+export function useRevokeKey() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request<ApiKey>(`/api/me/keys/${id}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.myKeys }),
   });
 }
