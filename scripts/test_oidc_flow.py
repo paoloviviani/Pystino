@@ -452,8 +452,43 @@ def main() -> int:
     print("=== session handling ===")
     status, _, _ = request(new_session(), f"{GATEWAY}/api/me")
     check("no cookie means 401", status == 401, f"HTTP {status}")
-    status, _, _ = request(alice, f"{GATEWAY}/auth/logout", method="POST")
-    check("logout succeeds", status == 200, f"HTTP {status}")
+
+    # Signing out, properly. Only a real Keycloak can show this: dropping our
+    # own cookie left its SSO session standing, so the next /auth/login was
+    # answered without a password prompt and the reader came straight back as
+    # themselves. It looked exactly like a button that did nothing.
+    signed_out = login("alice")
+    if signed_out is not None:
+        status, _, body = request(signed_out, f"{GATEWAY}/auth/logout", method="POST")
+        check("logout succeeds", status == 200, f"HTTP {status}")
+        target = json.loads(body).get("redirect_to")
+        check(
+            "and hands back the provider's end-session URL",
+            bool(target) and "id_token_hint=" in str(target),
+            # The hint is what lets Keycloak end the session without stopping to
+            # ask; without it there is a confirmation page mid-logout.
+            str(target)[:80] if target else "no redirect_to",
+        )
+        status, _, _ = request(signed_out, f"{GATEWAY}/api/me")
+        check("our own session is gone", status == 401, f"HTTP {status}")
+
+        if target:
+            status, headers, _ = request(signed_out, target)
+            check(
+                "the provider ends the session without a confirmation page",
+                status == 302,
+                f"HTTP {status} — 200 is Keycloak's 'Logging out?' prompt",
+            )
+
+            # The assertion that would have caught the bug.
+            status, headers, _ = request(signed_out, f"{GATEWAY}/auth/login")
+            if status == 302:
+                _, _, page = request(signed_out, reachable(headers["location"]))
+                check(
+                    "signing in again asks for a password",
+                    b'name="password"' in page,
+                    "Keycloak re-authenticated silently — the SSO session survived logout",
+                )
 
     print()
     if failures:

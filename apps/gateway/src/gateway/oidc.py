@@ -63,6 +63,9 @@ class OIDCMetadata:
     # Present when the provider supports the device flow; recorded now because
     # Phase 4 will need it and discovery is already being parsed.
     device_authorization_endpoint: str | None = None
+    # RP-initiated logout. Optional in the spec, so a provider without it means
+    # the gateway can only drop its own session — see `logout`.
+    end_session_endpoint: str | None = None
 
 
 def generate_pkce_pair() -> tuple[str, str]:
@@ -183,6 +186,7 @@ class OIDCClient:
                 jwks_uri=document["jwks_uri"],
                 userinfo_endpoint=document.get("userinfo_endpoint"),
                 device_authorization_endpoint=document.get("device_authorization_endpoint"),
+                end_session_endpoint=document.get("end_session_endpoint"),
             )
         except KeyError as exc:
             raise OIDCError(f"discovery document is missing {exc}") from exc

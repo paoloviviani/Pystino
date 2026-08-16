@@ -105,8 +105,18 @@ function UserMenu({ me, name }: { me: Me; name: string }) {
 
   const signOut = async () => {
     setBusy(true);
+    // Where to send the browser once our own session is gone. The gateway
+    // answers with the identity provider's end-session URL, and going there is
+    // what actually signs the person out: dropping our cookie alone leaves
+    // Keycloak's SSO session standing, so /auth/login is answered without a
+    // password prompt and they arrive back as themselves. That is what "logout
+    // does nothing" looked like.
+    let target = "/auth/login";
     try {
-      await request<{ status: string }>("/auth/logout", { method: "POST" });
+      const result = await request<{ redirect_to: string | null }>("/auth/logout", {
+        method: "POST",
+      });
+      if (result.redirect_to) target = result.redirect_to;
     } catch {
       // The cookie may already be gone, or the network may be down. Either way
       // the useful next step is the same: go to the login page and find out.
@@ -115,7 +125,7 @@ function UserMenu({ me, name }: { me: Me; name: string }) {
     // this tab was fetched as the signed-out user's predecessor, and throwing
     // the whole page away is the only way to be sure none of it is still on
     // screen behind a spinner.
-    window.location.assign("/auth/login");
+    window.location.assign(target);
   };
 
   return (

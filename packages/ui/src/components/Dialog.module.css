@@ -1,5 +1,10 @@
 .dialog {
-  width: min(34rem, calc(100vw - 2 * var(--space-5)));
+  width: min(34rem, calc(100vw - 2 * var(--space-4)));
+  /* Capped, or a long form — the model editor with three capability groups is
+     the tall one — runs off the bottom of a phone with its footer buttons
+     unreachable. `dvh` rather than `vh` so the browser's collapsing address bar
+     does not hide them either. */
+  max-height: calc(100dvh - 2 * var(--space-4));
   padding: 0;
   border: var(--border-width) solid var(--colour-border);
   border-radius: var(--radius-lg);
@@ -9,13 +14,17 @@
 }
 
 .dialog::backdrop {
-  /* Warm rather than neutral black, so the dimmed page still reads as paper. */
-  background: rgb(38 35 31 / 35%);
+  /* Matches --colour-text. Custom properties do not inherit into ::backdrop in
+     every engine, so this is the one deliberate literal in the package. */
+  background: rgb(27 36 48 / 40%);
 }
 
 .panel {
   display: flex;
   flex-direction: column;
+  /* Bounded by the dialog's max-height so the body, not the page, scrolls. */
+  max-height: inherit;
+  min-height: 0;
 }
 
 .header {
@@ -25,6 +34,8 @@
   gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
   border-bottom: var(--border-width) solid var(--colour-border);
+  /* Stays put while the body scrolls under it. */
+  flex-shrink: 0;
 }
 
 .title {
@@ -58,6 +69,10 @@
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-5);
+  /* The part that scrolls when the dialog is capped, so the header stays
+     visible and the footer's buttons stay reachable. */
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .footer {
@@ -68,4 +83,7 @@
   padding: var(--space-4) var(--space-5);
   border-top: var(--border-width) solid var(--colour-border);
   background: var(--colour-surface-sunken);
+  /* Never squeezed out by a long body. */
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }

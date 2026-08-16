@@ -13,6 +13,11 @@
   gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
   border-bottom: var(--border-width) solid var(--colour-border);
+  /* On a phone the Breakdown card's title plus its picker and Export button
+     do not fit on one line, and `flex-shrink: 0` on the actions meant the last
+     button was simply cut off by the card's `overflow: hidden` — not scrolled
+     to, not wrapped, gone. */
+  flex-wrap: wrap;
 }
 
 .title {
@@ -31,7 +36,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  /* Not shrunk (which squashed the controls) but allowed onto its own line. */
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .body {

@@ -167,7 +167,7 @@ export function AdminModels() {
               label="Search"
               value={paged.search}
               onChange={(event) => paged.setSearch(event.target.value)}
-              placeholder="our name or the provider's"
+              placeholder="model name or upstream id"
               hint={
                 models.data
                   ? `${models.data.total.toLocaleString()} matching`
