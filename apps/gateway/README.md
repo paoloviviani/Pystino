@@ -137,6 +137,17 @@ completion. See ADRs [0005](../../docs/adr/0005-persistence.md),
 [0011](../../docs/adr/0011-oidc-integration.md) for what was checked and the problems it
 found.
 
+**Known weakness**
+
+- `check_and_reserve` is check-then-act. It reads the window total, decides, then
+  increments, with `await` points in between — so concurrent callers can all read
+  the same pre-reservation total. Reservations narrow the window enormously
+  (without them every concurrent request passes) but do not close it, and the
+  test that pins the bound has been seen to admit five of ten rather than three
+  on a loaded machine. Closing it needs the check and the increment to be one
+  atomic operation at the counter store.
+  ([ADR 0009](../../docs/adr/0009-quota-model.md))
+
 **Deliberately not implemented**
 
 - Device authorization flow endpoints, which the `opencode` bootstrap needs. See

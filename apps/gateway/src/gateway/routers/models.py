@@ -44,6 +44,7 @@ async def list_models(principal: PrincipalDep, session: SessionDep) -> ModelList
                 owned_by=model.provider.name,
                 context_window=model.context_window,
                 display_name=model.display_name,
+                kind=model.kind.value,
             )
             for model in models
         ]
@@ -70,4 +71,5 @@ async def retrieve_model(
         owned_by=model.provider.name,
         context_window=model.context_window,
         display_name=model.display_name,
+        kind=model.kind.value,
     )

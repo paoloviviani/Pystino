@@ -14,6 +14,7 @@ import uuid
 import httpx
 import pytest
 from conftest import FakeUpstream, Seeded
+from gateway.access import accessible_models
 from gateway.config import UpstreamSettings
 from gateway.models import GroupModelAccess, ModelDef, Provider, User, UserModelAccess
 from gateway.providers import ProviderConfigurationError, ProviderRegistry
@@ -24,6 +25,7 @@ from gateway.secrets import (
     hint_for,
 )
 from sqlalchemy import select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
 
@@ -434,6 +436,46 @@ class TestRouting:
         # caller at all, and "does not exist or you cannot use it" is the same
         # answer as for any other unreachable model.
         assert response.status_code == 404
+
+
+class TestAccessQueryOnPostgres:
+    """What the access predicate compiles to, checked against the real dialect.
+
+    The suite runs on SQLite, and SQLite is more forgiving than PostgreSQL in
+    exactly one way that bit here: it will happily `SELECT DISTINCT` over a
+    JSON column, and PostgreSQL has no equality operator for `json` at all.
+    The predicate used to outer-join the two grant tables and deduplicate with
+    DISTINCT, and `ModelDef.provider` is `lazy="joined"`, so the provider's
+    `extra_headers` landed in the select list and `/v1/models` answered 500 on
+    PostgreSQL while every test passed.
+
+    Compiling the statement needs no database, so the check is cheap and it
+    fails for the right reason.
+    """
+
+    @staticmethod
+    def _sql(**kwargs: object) -> str:
+        stmt = accessible_models(**kwargs)  # type: ignore[arg-type]
+        return str(stmt.compile(dialect=postgresql.dialect()))
+
+    def test_the_predicate_does_not_deduplicate(self) -> None:
+        sql = self._sql(user_id=uuid.uuid4(), group_ids=[uuid.uuid4()])
+        assert "DISTINCT" not in sql.upper(), (
+            "DISTINCT requires an equality operator for every selected column, "
+            "and the eager-loaded provider brings a json one along"
+        )
+
+    def test_both_grant_kinds_are_exists_subqueries(self) -> None:
+        """EXISTS cannot fan out, which is why no deduplication is needed."""
+        sql = self._sql(user_id=uuid.uuid4(), group_ids=[uuid.uuid4()])
+        assert sql.upper().count("EXISTS") == 2
+        assert "JOIN group_model_access" not in sql
+        assert "JOIN user_model_access" not in sql
+
+    def test_a_caller_with_no_grants_still_compiles(self) -> None:
+        sql = self._sql(user_id=None, group_ids=[])
+        assert "DISTINCT" not in sql.upper()
+        assert "IS NULL" in sql.upper()
 
 
 class TestAccessUnion:

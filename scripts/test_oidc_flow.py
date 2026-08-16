@@ -35,6 +35,7 @@ from __future__ import annotations
 import html
 import http.cookiejar
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -48,7 +49,10 @@ GATEWAY = "http://localhost:8000"
 # point at localhost and this rewrite is a no-op. It is kept only so the script
 # still works if someone pins the frontend to the compose-internal name instead.
 KEYCLOAK_INTERNAL = "keycloak:8080"
-KEYCLOAK_EXTERNAL = "localhost:8080"
+# Follows KEYCLOAK_PORT, which moves the published port and the hostname
+# Keycloak advertises together — set it when something already owns 8080 on the
+# machine you tunnel from.
+KEYCLOAK_EXTERNAL = f"localhost:{os.environ.get('KEYCLOAK_PORT', '8080')}"
 
 PASSWORDS = {
     "alice": "alice-password",
@@ -272,8 +276,13 @@ def main() -> int:
         available = json.load(response)["data"]
     check("her key can list models", response.status == 200, f"{len(available)} model(s)")
 
-    if available:
-        model = available[0]["id"]
+    # The first entry alphabetically is not necessarily a chat model — the
+    # catalogue holds embedding and image models too, and each is refused by
+    # this route with a message naming the right one (ADR 0030).
+    chat_models = [entry for entry in available if entry.get("kind", "chat") == "chat"]
+    check("at least one chat model is reachable", bool(chat_models), f"{len(available)} model(s)")
+    if chat_models:
+        model = chat_models[0]["id"]
         chat = urllib.request.Request(
             f"{GATEWAY}/v1/chat/completions",
             data=json.dumps(
