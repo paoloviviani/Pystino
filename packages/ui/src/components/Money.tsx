@@ -23,8 +23,35 @@ export function Money({ amount, currency }: MoneyProps) {
   );
 }
 
+/**
+ * Expands scientific notation into plain digits, exactly.
+ *
+ * `Numeric(24,12)` round-trips a zero as `Decimal("0E-12")`, and Python
+ * serialises that verbatim. Fed straight into the formatter below it lost its
+ * sign to `replace("-", "")` and came out as `0E12.00`. The gateway now sends
+ * plain digits, so this is a second line of defence rather than the fix — but
+ * a money formatter that silently mangles a valid decimal string is a trap
+ * worth closing, and doing it with string shifts keeps the no-float promise
+ * that is the whole point of this module.
+ */
+function expandExponent(amount: string): string {
+  const match = /^(-?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/.exec(amount);
+  if (!match) return amount;
+
+  const [, sign = "", whole = "", fraction = "", exponent = "0"] = match;
+  const digits = `${whole}${fraction}`;
+  // Where the point sits once the exponent is applied, counted from the left.
+  // `Number` on the *exponent* is safe — it is a small integer, not the amount.
+  const point = whole.length + Number(exponent);
+
+  if (point <= 0) return `${sign}0.${"0".repeat(-point)}${digits}`;
+  if (point >= digits.length) return `${sign}${digits}${"0".repeat(point - digits.length)}`;
+  return `${sign}${digits.slice(0, point)}.${digits.slice(point)}`;
+}
+
 /** Trims the API's trailing zeros to two decimals without going through a float. */
-export function formatMoney(amount: string, currency: string): string {
+export function formatMoney(input: string, currency: string): string {
+  const amount = expandExponent(input);
   const symbol = SYMBOLS[currency.toUpperCase()] ?? `${currency.toUpperCase()} `;
   const negative = amount.startsWith("-");
   const [whole = "0", fraction = ""] = amount.replace("-", "").split(".");

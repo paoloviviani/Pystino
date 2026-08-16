@@ -34,6 +34,24 @@ describe("formatMoney", () => {
     expect(formatMoney("0", "EUR")).toBe("€0.00");
   });
 
+  it("expands scientific notation rather than mangling it", () => {
+    // `Numeric(24,12)` hands back `Decimal("0E-12")` for a zero price, which
+    // Python serialises verbatim. This used to lose the sign to a `replace`
+    // and render as "€0E12.00" on the pricing screen.
+    expect(formatMoney("0E-12", "EUR")).toBe("€0.00");
+  });
+
+  it("expands an exponent without going near a float", () => {
+    expect(formatMoney("1.5E-7", "EUR")).toBe("€0.00000015");
+    expect(formatMoney("1.5E+3", "EUR")).toBe("€1\u00a0500.00");
+    expect(formatMoney("-2E-3", "EUR")).toBe("−€0.002");
+  });
+
+  it("leaves an ordinary decimal string alone", () => {
+    // The expansion must not touch the common case.
+    expect(formatMoney("0.000000000000", "EUR")).toBe("€0.00");
+  });
+
   it("uses a real minus sign for a negative amount", () => {
     // U+2212, not a hyphen: it aligns with the digits in a tabular column.
     expect(formatMoney("-5.00", "EUR")).toBe("−€5.00");

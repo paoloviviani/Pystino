@@ -70,12 +70,80 @@
 }
 
 .identity {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.identityButton {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  flex-shrink: 0;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
   color: var(--colour-text-muted);
   font-size: var(--text-sm);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.identityButton:hover {
+  background: var(--colour-surface-sunken);
+}
+
+.identityButton:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* A chevron drawn in CSS rather than an SVG import: one glyph does not justify
+   an asset pipeline, and a text character would inherit the font. */
+.chevron {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  transform: translateY(-2px) rotate(45deg);
+}
+
+.identityButton[aria-expanded="true"] .chevron {
+  transform: translateY(1px) rotate(-135deg);
+}
+
+.menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 14rem;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--colour-border);
+  border-radius: var(--radius-md);
+  background: var(--colour-surface);
+  box-shadow: var(--shadow-md, 0 8px 24px rgb(0 0 0 / 12%));
+}
+
+.menuMeta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--border-width) solid var(--colour-border);
+  font-size: var(--text-xs);
+}
+
+.menuEmail {
+  color: var(--colour-text);
+  overflow-wrap: anywhere;
+}
+
+.menuGroups {
+  color: var(--colour-text-faint);
 }
 
 .identityName {
