@@ -223,6 +223,7 @@ function ProviderDialog({
       update.mutate(
         {
           id: provider.id,
+          name,
           base_url: baseUrl,
           description: description || null,
           forward_stream_options: streamOptions,
@@ -259,7 +260,7 @@ function ProviderDialog({
           <Button
             variant="primary"
             busy={pending}
-            disabled={!baseUrl.trim() || (!editing && !name.trim())}
+            disabled={!baseUrl.trim() || !name.trim()}
             onClick={submit}
           >
             {editing ? "Save" : "Add"}
@@ -273,15 +274,19 @@ function ProviderDialog({
         </Notice>
       ) : null}
 
-      {!editing && (
-        <Input
-          label="Name"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          placeholder="cortecs"
-          hint="Letters, digits, dot, dash and underscore. Cannot be changed later."
-        />
-      )}
+      <Input
+        label="Name"
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+        placeholder="cortecs"
+        hint={
+          editing
+            ? "Letters, digits, dot, dash and underscore. Renaming is safe: models" +
+              " reference the provider by id and past spend keeps its attribution." +
+              " It does change owned_by on every /v1/models card this provider serves."
+            : "Letters, digits, dot, dash and underscore."
+        }
+      />
 
       <Input
         label="Base URL"

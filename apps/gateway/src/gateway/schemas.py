@@ -429,6 +429,11 @@ class ProviderUpdateRequest(BaseModel):
     a credential without deleting the provider.
     """
 
+    # Same rule as on create, so a rename cannot produce a name that could not
+    # have been created.
+    name: str | None = Field(
+        default=None, min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9._-]+$"
+    )
     description: str | None = None
     base_url: str | None = Field(default=None, min_length=1, max_length=500)
     api_key: SecretStr | None = None

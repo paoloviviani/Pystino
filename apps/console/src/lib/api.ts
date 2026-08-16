@@ -88,9 +88,18 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   return (await response.json()) as T;
 }
 
-/** Sends the browser to the gateway's OIDC login, returning here afterwards. */
+/**
+ * Sends the browser to the gateway's OIDC login, returning to *this page*
+ * afterwards.
+ *
+ * Without the `next`, an expired session on a deep link costs the reader their
+ * place: they sign in and arrive at the overview, having asked for a quota
+ * rule. The gateway validates the path and ignores anything that is not one on
+ * its own origin, so this cannot become an open redirect.
+ */
 export function login(): void {
-  window.location.assign("/auth/login");
+  const here = window.location.pathname + window.location.search;
+  window.location.assign(`/auth/login?next=${encodeURIComponent(here)}`);
 }
 
 /**

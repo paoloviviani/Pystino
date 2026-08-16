@@ -154,11 +154,21 @@ def check(label: str, condition: bool, detail: str = "") -> bool:
     return condition
 
 
-def login(username: str) -> urllib.request.OpenerDirector | None:
-    """Complete the authorization-code flow and return an authenticated session."""
+def login(
+    username: str, *, next_path: str | None = None, landed: list[str] | None = None
+) -> urllib.request.OpenerDirector | None:
+    """Complete the authorization-code flow and return an authenticated session.
+
+    ``next_path`` is the deep link a browser was trying to reach before it was
+    sent to sign in; ``landed`` collects where the callback actually sent it,
+    so a caller can assert on that.
+    """
     opener = new_session()
 
-    status, headers, _ = request(opener, f"{GATEWAY}/auth/login")
+    start = f"{GATEWAY}/auth/login"
+    if next_path is not None:
+        start += "?next=" + urllib.parse.quote(next_path, safe="")
+    status, headers, _ = request(opener, start)
     if status != 302:
         check(f"{username}: /auth/login redirects", False, f"got HTTP {status}")
         return None
@@ -197,18 +207,31 @@ def login(username: str) -> urllib.request.OpenerDirector | None:
         check(f"{username}: authorization code returned", False, callback_url[:140])
         return None
 
-    # Hand the code back to the gateway.
+    # Hand the code back to the gateway. It answers a browser with a 303 to the
+    # console — a session cookie and a page, not JSON in the address bar — and
+    # keeps the JSON only for a headless build with no console to land on. Both
+    # are a successful login, so both are accepted here.
     status, headers, body = request(opener, callback_url)
-    if status != 200:
+    if status == 303:
+        landing = headers.get("location", "")
+        check(
+            f"{username}: the callback lands on a page, not on JSON",
+            landing.startswith("/console"),
+            landing or "no Location header",
+        )
+        print(f"  logged in as {username} -> {landing}")
+        if landed is not None:
+            landed.append(landing)
+    elif status == 200:
+        payload = json.loads(body)
+        print(f"  logged in as {username} (headless): groups={payload.get('groups')}")
+    else:
         check(
             f"{username}: gateway accepted the callback",
             False,
             f"HTTP {status}: {body.decode('utf-8', 'replace')[:200]}",
         )
         return None
-
-    payload = json.loads(body)
-    print(f"  logged in as {username}: groups={payload.get('groups')}")
     return opener
 
 
@@ -401,6 +424,29 @@ def main() -> int:
         status == 400,
         f"HTTP {status}: {json.loads(body).get('error', {}).get('message', '')[:90]}",
     )
+
+    print()
+    print("=== where the callback sends the browser ===")
+    # The unit suite covers `_safe_next` exhaustively. What only this can show
+    # is that the value survives the round trip through Keycloak and is applied
+    # by the callback — the signed flow cookie is the only thing carrying it,
+    # and a browser that comes back holding a *valid session* is exactly when
+    # an open redirect would be worth exploiting.
+    deep: list[str] = []
+    if login("alice", next_path="/console/admin/models", landed=deep) is not None:
+        check(
+            "a deep link survives signing in",
+            deep == ["/console/admin/models"],
+            str(deep),
+        )
+
+    hostile: list[str] = []
+    if login("alice", next_path="//evil.test/phish", landed=hostile) is not None:
+        check(
+            "a protocol-relative URL does not become an open redirect",
+            hostile == ["/console"],
+            f"landed on {hostile} — a browser resolves //evil.test to another host",
+        )
 
     print()
     print("=== session handling ===")

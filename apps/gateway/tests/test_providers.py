@@ -272,6 +272,76 @@ class TestProviderApi:
         assert (await admin_client.post("/api/admin/providers", json=payload)).status_code == 201
         assert (await admin_client.post("/api/admin/providers", json=payload)).status_code == 409
 
+    async def test_a_provider_can_be_renamed(self, admin_client: httpx.AsyncClient) -> None:
+        """Because it gets mistyped, and there is no other way out.
+
+        A provider serving any model refuses to be deleted, so without this the
+        typo is permanent — and it is not private, it appears as `owned_by` on
+        every /v1/models card that provider serves.
+        """
+        created = (
+            await admin_client.post(
+                "/api/admin/providers",
+                json={"name": "cortecce", "base_url": "https://api.cortecs.ai/v1"},
+            )
+        ).json()
+        response = await admin_client.patch(
+            f"/api/admin/providers/{created['id']}", json={"name": "cortecs"}
+        )
+        assert response.status_code == 200
+        assert response.json()["name"] == "cortecs"
+
+    async def test_renaming_onto_an_existing_name_is_409(
+        self, admin_client: httpx.AsyncClient
+    ) -> None:
+        """Names are unique, so a rename collides exactly as a create does — and
+        must say so rather than surfacing the IntegrityError as a 500."""
+        for name in ("first", "second"):
+            await admin_client.post(
+                "/api/admin/providers", json={"name": name, "base_url": f"https://{name}.test/v1"}
+            )
+        listing = (await admin_client.get("/api/admin/providers?limit=200")).json()["items"]
+        second = next(p for p in listing if p["name"] == "second")
+
+        response = await admin_client.patch(
+            f"/api/admin/providers/{second['id']}", json={"name": "first"}
+        )
+        assert response.status_code == 409
+
+    async def test_a_rename_does_not_disturb_the_credential(
+        self, admin_client: httpx.AsyncClient
+    ) -> None:
+        """The three-way api_key convention applies to a rename too."""
+        created = (
+            await admin_client.post(
+                "/api/admin/providers",
+                json={"name": "typo", "base_url": "https://x.test/v1", "api_key": "sk-keep-me"},
+            )
+        ).json()
+        renamed = await admin_client.patch(
+            f"/api/admin/providers/{created['id']}", json={"name": "fixed"}
+        )
+        assert renamed.json()["name"] == "fixed"
+        assert renamed.json()["has_api_key"] is True
+
+    async def test_a_rename_to_an_impossible_name_is_refused(
+        self, admin_client: httpx.AsyncClient
+    ) -> None:
+        """Same rule as create: a rename cannot produce a name that could not
+        have been created in the first place."""
+        created = (
+            await admin_client.post(
+                "/api/admin/providers",
+                json={"name": "fine", "base_url": "https://x.test/v1"},
+            )
+        ).json()
+        response = await admin_client.patch(
+            f"/api/admin/providers/{created['id']}", json={"name": "not a valid name"}
+        )
+        # 400, not 422: this gateway normalises validation failures into its own
+        # error envelope so that /v1 and /api answer the same shape.
+        assert response.status_code == 400
+
     async def test_omitting_the_key_on_update_keeps_it(
         self, admin_client: httpx.AsyncClient
     ) -> None:
