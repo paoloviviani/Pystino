@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import secrets
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -36,6 +37,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 _FLOW_COOKIE = "gw_login"
 _FLOW_TTL_SECONDS = 600
+
+#: The ID token, kept only as `id_token_hint` for a one-click sign-out.
+_HINT_COOKIE = "gw_idt"
+#: Below the 4KB per-cookie limit with room for the name and attributes.
+_MAX_HINT_BYTES = 3072
 
 #: Where a browser lands after signing in, when it did not ask for anywhere.
 _DEFAULT_LANDING = "/console"
@@ -249,14 +255,87 @@ async def callback(
         secure=settings.session_cookie_secure,
         samesite="lax",
     )
+    # Kept solely to pass as `id_token_hint` when signing out. Without it
+    # Keycloak cannot tell which session is being ended, so it interrupts with
+    # a "Logging out?" confirmation page — safe, but an unfamiliar screen in
+    # the middle of a one-click action.
+    #
+    # Scoped to /auth so it is not sent on every console API call, and skipped
+    # entirely if it is large enough to risk the 4KB cookie limit: a realm with
+    # many role claims could otherwise produce a cookie the browser silently
+    # drops, and this must never be the reason a login fails. Losing it costs
+    # the confirmation page and nothing else.
+    if len(id_token) <= _MAX_HINT_BYTES:
+        response.set_cookie(
+            _HINT_COOKIE,
+            id_token,
+            max_age=settings.session_ttl_seconds,
+            path="/auth",
+            httponly=True,
+            secure=settings.session_cookie_secure,
+            samesite="lax",
+        )
     response.delete_cookie(_FLOW_COOKIE)
     return response
 
 
 @router.post("/logout")
-async def logout(settings: SettingsDep) -> JSONResponse:
-    response = JSONResponse({"status": "ok"})
+async def logout(request: Request, settings: SettingsDep) -> JSONResponse:
+    """End the session here **and** at the identity provider.
+
+    Dropping our own cookie is not logging out. Keycloak keeps its own SSO
+    session, so the next visit to ``/auth/login`` was answered without a
+    password prompt and the reader arrived back on the console as the same
+    person — signing out looked like it did nothing at all. On a shared machine
+    that is a real problem, not a cosmetic one.
+
+    So the cookie goes *and* the caller is handed the provider's
+    ``end_session_endpoint`` to navigate to. Returned rather than redirected
+    into, because this is a POST from `fetch` — following a 3xx would fetch
+    Keycloak's page into JavaScript instead of taking the browser there. The
+    console does a full page navigation with it.
+
+    ``end_session_endpoint`` is optional in the spec. When a provider does not
+    publish one, ``redirect_to`` is null and the caller falls back to signing
+    in again — our session is still gone, which is as much as we can do.
+    """
+    redirect_to: str | None = None
+    console_mounted = bool(getattr(request.app.state, "console_mounted", False))
+    client = getattr(request.app.state, "oidc_client", None)
+    if isinstance(client, OIDCClient):
+        try:
+            metadata = await client.metadata()
+        except OIDCError as exc:
+            # Never fatal: failing to reach the provider must not leave someone
+            # unable to drop their session here.
+            logger.warning("could not read discovery for logout: %s", exc)
+        else:
+            if metadata.end_session_endpoint:
+                # Built from the origin this request actually arrived on, so it
+                # is the origin whose post-logout URI is registered with the
+                # provider. Hard-coding it would break the moment the stack is
+                # reached on the overlay address instead of localhost.
+                origin = str(request.base_url).rstrip("/")
+                landing = f"{origin}{_DEFAULT_LANDING}" if console_mounted else origin
+                parameters = {"post_logout_redirect_uri": landing}
+
+                # With the hint, the provider knows which session to end and
+                # does it. Without one it cannot, and Keycloak stops to ask —
+                # correctly, since otherwise any page able to navigate a
+                # browser here could sign people out. `client_id` is what makes
+                # the request resolvable at all in that case.
+                hint = request.cookies.get(_HINT_COOKIE)
+                if hint:
+                    parameters["id_token_hint"] = hint
+                else:
+                    parameters["client_id"] = settings.oidc.client_id
+
+                redirect_to = f"{metadata.end_session_endpoint}?{urlencode(parameters)}"
+
+    response = JSONResponse({"status": "ok", "redirect_to": redirect_to})
     response.delete_cookie(settings.session_cookie_name)
+    # Same path it was set with, or the browser keeps it.
+    response.delete_cookie(_HINT_COOKIE, path="/auth")
     return response
 
 

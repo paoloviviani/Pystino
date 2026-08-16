@@ -124,6 +124,56 @@ describe("Shell", () => {
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/auth/login"));
   });
 
+  it("goes to the provider's end-session URL, not just to our login page", async () => {
+    // The bug this exists to catch: dropping our own cookie leaves Keycloak's
+    // SSO session standing, so /auth/login is answered without a password
+    // prompt and the reader lands back on the console as the same person.
+    // Signing out looked like it did nothing.
+    const user = userEvent.setup({ delay: null });
+    const endSession =
+      "http://idp.test/realms/llm-platform/protocol/openid-connect/logout?client_id=llm-gateway";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ status: "ok", redirect_to: endSession }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+    stubNavigation();
+    renderShell();
+
+    await user.click(screen.getByRole("button", { name: /Dave/ }));
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(endSession));
+  });
+
+  it("falls back to our login page when the provider publishes no end-session URL", async () => {
+    // Optional in the spec. Our session is gone either way, which is as much
+    // as the gateway can promise on its own.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ status: "ok", redirect_to: null }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+    stubNavigation();
+    renderShell();
+
+    await user.click(screen.getByRole("button", { name: /Dave/ }));
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/auth/login"));
+  });
+
   it("closes on Escape", async () => {
     const user = userEvent.setup({ delay: null });
     renderShell();

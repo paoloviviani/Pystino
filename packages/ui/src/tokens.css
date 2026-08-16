@@ -10,47 +10,56 @@
  * Components reference tokens and never literal values. A component with
  * `padding: 12px` in it is a component that cannot be restyled.
  *
- * The look is deliberately quiet: warm off-white paper, warm grey text, one
- * muted steel-blue accent. This is a page people read numbers off, closer to a
- * financial statement than to a dashboard. There is **no dark theme and no
- * automatic dark mode** — a dark console was not wanted. Adding one later means
- * adding one block of token overrides here and changing nothing else, which is
- * most of the argument for tokens in the first place.
+ * The look is deliberately quiet: cool off-white, slate text, one steel-blue
+ * accent. This is a page people read numbers off, closer to a financial
+ * statement than to a dashboard. There is **no dark theme and no automatic dark
+ * mode** — a dark console was not wanted. Adding one later means adding one
+ * block of token overrides here and changing nothing else, which is most of the
+ * argument for tokens in the first place.
  */
 
 :root {
   /* -- colour ---------------------------------------------------------------
-   * Warm neutrals rather than blue-greys: the same layout reads as calm on warm
-   * paper and as clinical on cool. One accent, because a console is mostly
-   * tables and a second accent would compete with the semantic colours below.
+   * Cool blue-greys. This started warm — off-white paper, warm grey text — on
+   * the theory that a page of figures reads calmer on warm stock. In use it
+   * read as beige, which is a different thing, and the accent had to fight it.
+   * One accent still, because a console is mostly tables and a second would
+   * compete with the semantic colours below.
+   *
+   * Every component references these names and none of them holds a literal,
+   * so this block is the whole change.
    */
-  --colour-bg: #f7f6f3;
+  --colour-bg: #f4f6f9;
   --colour-surface: #ffffff;
   --colour-surface-raised: #ffffff;
-  --colour-surface-sunken: #f2f0ec;
-  --colour-border: #e2dfd9;
-  --colour-border-strong: #c6c2ba;
+  --colour-surface-sunken: #edf1f6;
+  --colour-border: #dce3ec;
+  --colour-border-strong: #b6c1d0;
 
-  /* Warm near-black, not #000: pure black on white is harsher than anything
+  /* Cool near-black, not #000: pure black on white is harsher than anything
    * printed, and this is a page of figures someone reads for a while. */
-  --colour-text: #26231f;
-  --colour-text-muted: #6a655d;
-  --colour-text-faint: #948e85;
+  --colour-text: #1b2430;
+  --colour-text-muted: #566374;
+  --colour-text-faint: #7d8899;
   --colour-text-inverse: #ffffff;
 
-  --colour-accent: #35618e;
-  --colour-accent-hover: #2a4d71;
-  --colour-accent-subtle: #eaf0f6;
+  /* Slightly brighter than the old steel blue, which was chosen to sit against
+   * a warm background and goes flat against a cool one. */
+  --colour-accent: #2b6cb0;
+  --colour-accent-hover: #21548a;
+  --colour-accent-subtle: #e7eff8;
 
   /* Semantic. `warn` is a budget nearing its limit, `danger` one past it — the
    * two states an operator scanning a quota page is looking for. Muted on
-   * purpose: a red that shouts is a red that gets ignored. */
-  --colour-ok: #2f6b4f;
-  --colour-ok-subtle: #e8f1eb;
-  --colour-warn: #8a6420;
-  --colour-warn-subtle: #f8efdc;
-  --colour-danger: #a5382e;
-  --colour-danger-subtle: #f8e8e6;
+   * purpose: a red that shouts is a red that gets ignored. These stay warm by
+   * design: they have to separate from the accent, and a cool amber is not a
+   * warning colour anybody recognises. */
+  --colour-ok: #1f6b52;
+  --colour-ok-subtle: #e3f0ea;
+  --colour-warn: #8a5a12;
+  --colour-warn-subtle: #fbefd8;
+  --colour-danger: #b0322a;
+  --colour-danger-subtle: #fbe9e7;
 
   /* -- typography -----------------------------------------------------------
    * System font stack: no webfont request, no layout shift, and nothing to
@@ -95,9 +104,10 @@
   --radius-pill: 999px;
 
   /* Barely-there shadows. Depth is carried by the border; a heavy drop shadow
-   * on a page of cards makes it look like a slide deck. */
-  --shadow-sm: 0 1px 2px rgb(38 35 31 / 5%);
-  --shadow-md: 0 2px 8px rgb(38 35 31 / 7%);
+   * on a page of cards makes it look like a slide deck. Tinted to match
+   * --colour-text: a warm shadow under a cool card reads as a smudge. */
+  --shadow-sm: 0 1px 2px rgb(27 36 48 / 6%);
+  --shadow-md: 0 2px 8px rgb(27 36 48 / 8%);
 
   --border-width: 1px;
 

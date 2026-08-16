@@ -85,7 +85,8 @@ services:
           --fields id --format csv --noquotes)
         $$kc update "clients/$${id}" -r llm-platform \
           -s "redirectUris=[\"http://localhost:$${GATEWAY_PORT}/auth/callback\",\"http://127.0.0.1:$${GATEWAY_PORT}/auth/callback\",\"$${overlay}/auth/callback\"]" \
-          -s "webOrigins=[\"http://localhost:$${GATEWAY_PORT}\",\"$${overlay}\"]"
+          -s "webOrigins=[\"http://localhost:$${GATEWAY_PORT}\",\"$${overlay}\"]" \
+          -s "attributes.\"post.logout.redirect.uris\"=\"http://localhost:$${GATEWAY_PORT}/*##$${overlay}/*\""
         echo "registered $${overlay}/auth/callback"
     environment:
       OVERLAY_ADDR: ${OVERLAY_ADDR}
