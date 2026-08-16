@@ -100,13 +100,17 @@ export interface AdminModel {
   provider_name: string;
   /** A model behind a deactivated provider is unreachable, and says so. */
   provider_is_active: boolean;
-  /** "chat" or "embedding": which /v1 route may use it. */
+  /** Which /v1 route may serve it. */
   kind: ModelKind;
   display_name: string | null;
   description: string | null;
   is_active: boolean;
   context_window: number | null;
   max_output_tokens: number | null;
+  /** What it accepts, produces and can do. Empty means "nobody has said". */
+  input_modalities: string[];
+  output_modalities: string[];
+  supported_features: string[];
   created_at: string;
   current_price: Price | null;
   granted_to: string[];
@@ -171,6 +175,11 @@ export interface DiscoveredModel {
   output_per_mtok: string | null;
   currency: string | null;
   context_window: number | null;
+  /** What the provider claims, shown before importing so the choice is informed. */
+  kind: ModelKind;
+  input_modalities: string[];
+  output_modalities: string[];
+  supported_features: string[];
   blocked_reason: string | null;
 }
 

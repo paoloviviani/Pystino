@@ -375,14 +375,23 @@ async def models(request: Request) -> JSONResponse:
         currency: str = "EUR",
         ctx: int = 128_000,
         modalities: tuple[str, ...] = ("text",),
+        accepts: tuple[str, ...] = ("text",),
+        features: tuple[str, ...] = ("tools", "json_mode"),
     ) -> dict[str, Any]:
         return {
             "id": model_id,
-            "context_length": ctx,
+            # `context_size`, which is the key the real catalogue uses. Spelled
+            # the same way here on purpose: the importer used to look only for
+            # `context_length` and silently imported every model with no
+            # context window at all (ADR 0031).
+            "context_size": ctx,
             "pricing": {"input_token": inp, "output_token": out, "currency": currency},
-            # Cortecs derives this from model tags; the importer reads it to tell
-            # an embedding model from a chat one (ADR 0028).
+            # Cortecs derives these from model tags; the importer reads
+            # `output_modalities` to tell an embedding model from a chat one
+            # (ADR 0028) and carries all three through as capabilities.
+            "input_modalities": list(accepts),
             "output_modalities": list(modalities),
+            "supported_features": list(features),
         }
 
     return JSONResponse(
@@ -390,7 +399,16 @@ async def models(request: Request) -> JSONResponse:
             "data": [
                 entry(MODEL, "0.15", "0.60", ctx=8192),
                 entry("upstream/haiku-ish", "0.08", "0.40", ctx=32_000),
-                entry("upstream/big-model", "3.00", "15.00", ctx=200_000),
+                # Multimodal input and reasoning, so discovery has something
+                # richer than "text in, text out" to report.
+                entry(
+                    "upstream/big-model",
+                    "3.00",
+                    "15.00",
+                    ctx=200_000,
+                    accepts=("text", "image"),
+                    features=("tools", "json_mode", "reasoning"),
+                ),
                 entry("upstream/dollar-model", "1.00", "2.00", currency="USD"),
                 entry(
                     "upstream/embed-model",
@@ -398,6 +416,7 @@ async def models(request: Request) -> JSONResponse:
                     "0",
                     ctx=8192,
                     modalities=("embeddings",),
+                    features=(),
                 ),
                 entry(
                     "upstream/image-model",
@@ -405,6 +424,7 @@ async def models(request: Request) -> JSONResponse:
                     "0",
                     ctx=0,
                     modalities=("image",),
+                    features=(),
                 ),
             ]
         }

@@ -54,7 +54,14 @@ def key_for(user: Any, name: str) -> str | None:
     return str(created["secret"])
 
 
-def call(secret: str, path: str, body: dict[str, Any], *, sse: bool = False) -> tuple[int, Any]:
+def call(
+    secret: str,
+    path: str,
+    body: dict[str, Any],
+    *,
+    sse: bool = False,
+    method: str = "POST",
+) -> tuple[int, Any]:
     """A `/v1` request with an API key, straight over HTTP.
 
     Not `test_oidc_flow.request`: that one carries a browser session, and the
@@ -64,7 +71,10 @@ def call(secret: str, path: str, body: dict[str, Any], *, sse: bool = False) -> 
     if sse:
         headers["accept"] = "text/event-stream"
     req = urllib.request.Request(
-        f"{GATEWAY}{path}", data=json.dumps(body).encode(), headers=headers, method="POST"
+        f"{GATEWAY}{path}",
+        data=json.dumps(body).encode() if method != "GET" else None,
+        headers=headers,
+        method=method,
     )
     try:
         with urllib.request.urlopen(req, timeout=120) as response:
@@ -296,6 +306,77 @@ def main() -> int:
                 f"prompt={row[0]} completion={row[1]}",
             )
             expect("and the row is marked streamed", row[8] == "t", row[8])
+
+    print()
+    print("=== model capabilities ===")
+    providers = api(dave, "/api/admin/providers")[1]["items"]
+    provider_id = next((p["id"] for p in providers if p["is_active"]), None)
+    if provider_id:
+        found = api(dave, f"/api/admin/models/discover?provider_id={provider_id}")[1]
+        offered = {m["upstream_model"]: m for m in found.get("available", [])}
+        catalogued = {
+            m["upstream_model"]: m for m in api(dave, "/api/admin/models?limit=200")[1]["items"]
+        }
+        rich = offered.get("upstream/big-model") or catalogued.get("upstream/big-model")
+
+        expect("discovery finds the multimodal model", rich is not None, str(sorted(offered)))
+        if rich is not None:
+            expect(
+                "and reports what the provider claims it can do",
+                "image" in rich["input_modalities"] and "tools" in rich["supported_features"],
+                f"in={rich['input_modalities']} feat={rich['supported_features']}",
+            )
+            # `context_size` is the key the real catalogue uses, and it was
+            # missing from the importer's list — every imported model had a
+            # null context window and nothing failed (ADR 0031).
+            expect(
+                "and the context window, from the key the catalogue really uses",
+                rich["context_window"] == 200_000,
+                str(rich["context_window"]),
+            )
+
+        if "upstream/big-model" not in catalogued and rich is not None:
+            status, _ = api(
+                dave,
+                f"/api/admin/models/import?provider_id={provider_id}",
+                json_body={"models": [{"upstream_model": "upstream/big-model"}]},
+                method="POST",
+            )
+            expect("it can be imported", status == 201, f"HTTP {status}")
+            catalogued = {
+                m["upstream_model"]: m
+                for m in api(dave, "/api/admin/models?limit=200")[1]["items"]
+            }
+
+        imported = catalogued.get("upstream/big-model")
+        if imported is not None:
+            expect(
+                "the capabilities survive the import",
+                "image" in imported["input_modalities"]
+                and "reasoning" in imported["supported_features"],
+                f"in={imported['input_modalities']} feat={imported['supported_features']}",
+            )
+            status, edited = api(
+                dave,
+                f"/api/admin/models/{imported['id']}",
+                json_body={"supported_features": ["Tools", "  json_mode "]},
+                method="PATCH",
+            )
+            expect(
+                "an operator can correct a claim, normalised",
+                status == 200 and edited["supported_features"] == ["json_mode", "tools"],
+                f"HTTP {status}: {edited.get('supported_features')}",
+            )
+
+        status, cards = call(secret, "/v1/models", {}, method="GET")
+        if status == 200:
+            by_id = {card["id"]: card for card in cards.get("data", [])}
+            embed = by_id.get("embed-model")
+            expect(
+                "and a caller can see the kind without taking a 400 to find out",
+                embed is not None and embed["kind"] == "embedding",
+                str(embed and embed["kind"]),
+            )
 
     print()
     print("=== the report explains the image spend ===")

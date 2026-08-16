@@ -19,7 +19,15 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, SecretStr, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    SecretStr,
+    model_validator,
+)
 
 if TYPE_CHECKING:
     from gateway.redaction import RedactionOutcome as RedactionOutcomeLike
@@ -46,6 +54,16 @@ def _plain_decimal(value: Decimal | None) -> str | None:
 #: end to end — parsing it into a float anywhere would reintroduce binary
 #: floating point at the last moment.
 Money = Annotated[Decimal, PlainSerializer(_plain_decimal, return_type=str, when_used="json")]
+
+
+#: Lower-cased, deduplicated and sorted, so that re-importing a model is
+#: visibly a no-op rather than a change nobody made. Validated as *shape*, not
+#: as vocabulary: the reference provider documents `supported_features` as an
+#: open set, and rejecting a value it added last week would make discovery fail
+#: on exactly the models an operator most wants to hear about (ADR 0031).
+Capabilities = Annotated[list[str], AfterValidator(lambda items: sorted({
+    str(item).strip().lower() for item in items if str(item).strip()
+}))]
 
 
 class ChatCompletionRequest(BaseModel):
@@ -261,7 +279,14 @@ class ModelCard(BaseModel):
     owned_by: str = "gateway"
     # Non-standard but useful additions; OpenAI clients ignore unknown fields.
     context_window: int | None = None
+    max_output_tokens: int | None = None
     display_name: str | None = None
+    # What the model accepts, produces and can do. Not in OpenAI's schema
+    # either, and the reason a client can pick a model that does tool calling
+    # without a lookup table of its own (ADR 0031).
+    input_modalities: list[str] = Field(default_factory=list)
+    output_modalities: list[str] = Field(default_factory=list)
+    supported_features: list[str] = Field(default_factory=list)
     # Which of this gateway's routes will serve it. Not in OpenAI's schema,
     # where the listing is per-endpoint and the question does not arise — here
     # one listing covers chat, embedding and image models, and without this a
@@ -440,6 +465,9 @@ class ModelCreateRequest(BaseModel):
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
     max_output_tokens: int | None = Field(default=None, ge=1)
+    input_modalities: Capabilities = Field(default_factory=list)
+    output_modalities: Capabilities = Field(default_factory=list)
+    supported_features: Capabilities = Field(default_factory=list)
     is_active: bool = True
 
 
@@ -454,10 +482,21 @@ class ModelUpdateRequest(BaseModel):
     # Repointing a model at another provider is allowed: it is how you migrate
     # off an endpoint without changing what callers ask for.
     provider_id: uuid.UUID | None = None
+    # Editable because discovery infers it from the provider's modality tags,
+    # and a mis-inferred kind takes a model off the only route that would serve
+    # it. Historical usage rows record the surface they actually went through,
+    # so correcting this does not make past spend unreadable (ADR 0030).
+    kind: Literal["chat", "embedding", "image"] | None = None
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
     max_output_tokens: int | None = Field(default=None, ge=1)
+    # Editable, because the catalogue is a claim rather than a contract: an
+    # operator who has found out that a model does not really do tool calling
+    # needs somewhere to record it that discovery will not immediately undo.
+    input_modalities: Capabilities | None = None
+    output_modalities: Capabilities | None = None
+    supported_features: Capabilities | None = None
     is_active: bool | None = None
 
 
@@ -504,6 +543,9 @@ class ModelAdminResponse(BaseModel):
     is_active: bool
     context_window: int | None
     max_output_tokens: int | None
+    input_modalities: list[str]
+    output_modalities: list[str]
+    supported_features: list[str]
     created_at: datetime
     current_price: PriceResponse | None
     granted_to: list[str]
@@ -670,6 +712,13 @@ class DiscoveredModel(BaseModel):
     output_per_mtok: Money | None
     currency: str | None
     context_window: int | None
+    # What the provider says it can do, shown before importing so the choice is
+    # informed — "does this one do tool calling" is the commonest question at
+    # exactly this moment (ADR 0031).
+    kind: str = "chat"
+    input_modalities: list[str] = Field(default_factory=list)
+    output_modalities: list[str] = Field(default_factory=list)
+    supported_features: list[str] = Field(default_factory=list)
     # Set when the model cannot be imported as-is, with the reason. The commonest
     # is a price quoted in a currency this gateway does not bill in.
     blocked_reason: str | None = None
