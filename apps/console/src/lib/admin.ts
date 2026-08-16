@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, request } from "./api";
+import { MAX_LIMIT, type Page, type PageQuery, pageParams } from "./paging";
 import type {
   AdminGroup,
   AdminModel,
@@ -35,6 +36,18 @@ export const adminKeys = {
   report: (query: string) => ["admin", "report", query] as const,
 };
 
+/**
+ * Every listing is a page now, so the window is part of the cache key.
+ *
+ * Note what is *not* here: the mutations below still invalidate the bare key
+ * (`["admin", "users"]`), which prefix-matches every page of it. A mutation
+ * that only invalidated the page the operator happens to be on would leave the
+ * others stale in the cache, to be shown unchanged the moment they page back.
+ */
+function pagedKey(base: readonly string[], search: string) {
+  return [...base, search] as const;
+}
+
 /** No 4xx is retried: the request will be just as wrong the second time. */
 function retryUnlessRejected(failureCount: number, error: unknown): boolean {
   if (error instanceof ApiError && error.status < 500) return false;
@@ -43,11 +56,23 @@ function retryUnlessRejected(failureCount: number, error: unknown): boolean {
 
 // -- providers ---------------------------------------------------------------
 
-export function useProviders() {
+/**
+ * Keeps the previous page on screen while the next one loads.
+ *
+ * Without it every keystroke in a search box blanks the table to a spinner,
+ * which reads as the results having gone away.
+ */
+const pagedOptions = {
+  placeholderData: keepPreviousData,
+  retry: retryUnlessRejected,
+} as const;
+
+export function useProviders(query: PageQuery = { limit: MAX_LIMIT }) {
+  const search = pageParams(query);
   return useQuery({
-    queryKey: adminKeys.providers,
-    queryFn: () => request<AdminProvider[]>("/api/admin/providers"),
-    retry: retryUnlessRejected,
+    queryKey: pagedKey(adminKeys.providers, search),
+    queryFn: () => request<Page<AdminProvider>>(`/api/admin/providers?${search}`),
+    ...pagedOptions,
   });
 }
 
@@ -114,28 +139,31 @@ export function useTestProvider() {
 
 // -- catalogue ---------------------------------------------------------------
 
-export function useModels() {
+export function useModels(query: PageQuery = { limit: MAX_LIMIT }) {
+  const search = pageParams(query);
   return useQuery({
-    queryKey: adminKeys.models,
-    queryFn: () => request<AdminModel[]>("/api/admin/models"),
-    retry: retryUnlessRejected,
+    queryKey: pagedKey(adminKeys.models, search),
+    queryFn: () => request<Page<AdminModel>>(`/api/admin/models?${search}`),
+    ...pagedOptions,
   });
 }
 
-export function usePrices(modelId: string | null) {
+export function usePrices(modelId: string | null, query: PageQuery = { limit: MAX_LIMIT }) {
+  const search = pageParams(query);
   return useQuery({
-    queryKey: adminKeys.prices(modelId ?? ""),
-    queryFn: () => request<Price[]>(`/api/admin/models/${modelId}/prices`),
+    queryKey: pagedKey(adminKeys.prices(modelId ?? ""), search),
+    queryFn: () => request<Page<Price>>(`/api/admin/models/${modelId}/prices?${search}`),
     enabled: modelId !== null,
-    retry: retryUnlessRejected,
+    ...pagedOptions,
   });
 }
 
-export function useGroups() {
+export function useGroups(query: PageQuery = { limit: MAX_LIMIT }) {
+  const search = pageParams(query);
   return useQuery({
-    queryKey: adminKeys.groups,
-    queryFn: () => request<AdminGroup[]>("/api/admin/groups"),
-    retry: retryUnlessRejected,
+    queryKey: pagedKey(adminKeys.groups, search),
+    queryFn: () => request<Page<AdminGroup>>(`/api/admin/groups?${search}`),
+    ...pagedOptions,
   });
 }
 
@@ -258,23 +286,25 @@ export function useCreatePrice() {
 
 // -- quotas ------------------------------------------------------------------
 
-export function useLimits() {
+export function useLimits(query: PageQuery = { limit: MAX_LIMIT }) {
+  const search = pageParams(query);
   return useQuery({
-    queryKey: adminKeys.limits,
-    queryFn: () => request<LimitRule[]>("/api/admin/limits"),
-    retry: retryUnlessRejected,
+    queryKey: pagedKey(adminKeys.limits, search),
+    queryFn: () => request<Page<LimitRule>>(`/api/admin/limits?${search}`),
+    ...pagedOptions,
     // Consumption moves with traffic, so a quota page left open should not go
     // stale in a way that hides an exhausted budget.
     refetchInterval: 30_000,
   });
 }
 
-export function useResets(ruleId: string | null) {
+export function useResets(ruleId: string | null, query: PageQuery = {}) {
+  const search = pageParams(query);
   return useQuery({
-    queryKey: adminKeys.resets(ruleId ?? ""),
-    queryFn: () => request<QuotaReset[]>(`/api/admin/limits/${ruleId}/resets`),
+    queryKey: pagedKey(adminKeys.resets(ruleId ?? ""), search),
+    queryFn: () => request<Page<QuotaReset>>(`/api/admin/limits/${ruleId}/resets?${search}`),
     enabled: ruleId !== null,
-    retry: retryUnlessRejected,
+    ...pagedOptions,
   });
 }
 
@@ -331,11 +361,20 @@ export function useResetLimit() {
 
 // -- users -------------------------------------------------------------------
 
-export function useUsers() {
+/**
+ * Accounts, a page at a time.
+ *
+ * `enabled` is how the pickers avoid pulling the directory: a dialog that
+ * searches for a person passes `false` until something is typed, rather than
+ * fetching the first fifty people nobody asked for.
+ */
+export function useUsers(query: PageQuery = { limit: MAX_LIMIT }, enabled = true) {
+  const search = pageParams(query);
   return useQuery({
-    queryKey: adminKeys.users,
-    queryFn: () => request<AdminUser[]>("/api/admin/users"),
-    retry: retryUnlessRejected,
+    queryKey: pagedKey(adminKeys.users, search),
+    queryFn: () => request<Page<AdminUser>>(`/api/admin/users?${search}`),
+    enabled,
+    ...pagedOptions,
   });
 }
 

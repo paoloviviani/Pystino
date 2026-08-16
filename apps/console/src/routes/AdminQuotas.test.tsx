@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LimitRule } from "../lib/types";
+import { jsonResponse } from "../test-helpers";
 import { AdminQuotas } from "./AdminQuotas";
 
 /**
@@ -42,10 +43,7 @@ function routes(rules: LimitRule[]) {
     else if (url.includes("/api/admin/limits") && method === "GET") payload = rules;
     else if (url.includes("/api/admin/groups")) payload = [{ id: "g1", name: "research", description: null, source: "idp", is_active: true, member_count: 3, models: [] }];
     else if (url.includes("/api/admin/users")) payload = [];
-    return new Response(JSON.stringify(payload), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return jsonResponse(payload);
   });
 }
 

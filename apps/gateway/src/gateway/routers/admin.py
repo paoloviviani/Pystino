@@ -27,9 +27,9 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Response, status
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import Row, case, delete, func, select
+from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from gateway.accounting.cost import select_price
 from gateway.deps import (
@@ -62,6 +62,7 @@ from gateway.models import (
     User,
     UserModelAccess,
 )
+from gateway.pagination import Page, PageDep, count_of
 from gateway.periods import PeriodKind
 from gateway.pricing import CatalogueUnavailable, fetch_catalogue, parse_catalogue
 from gateway.providers import ProviderConfigurationError
@@ -114,6 +115,23 @@ def _pairs[K, V](rows: Sequence[Row[tuple[K, V]]]) -> dict[K, V]:
     rather than at four call sites.
     """
     return {row[0]: row[1] for row in rows}
+
+
+def _matches(needle: str, *columns: InstrumentedAttribute[str | None]) -> ColumnElement[bool]:
+    """A case-insensitive substring search across several columns.
+
+    Once a listing is paginated, filtering has to happen in the database:
+    narrowing the fifty rows that came back is not a search, it is a search of
+    page one. So the console's search box is a query parameter now.
+
+    ``%`` and ``_`` in what the operator typed are escaped, or a search for
+    ``gpt_4`` would quietly also match ``gpt-4``. ``ilike`` is native on
+    Postgres and emulated by SQLAlchemy elsewhere, which is what the tests run
+    on.
+    """
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    pattern = f"%{escaped}%"
+    return or_(*(column.ilike(pattern, escape="\\") for column in columns))
 
 
 router = APIRouter(prefix="/api/admin", tags=["administration"])
@@ -172,29 +190,36 @@ def _model_response(
     )
 
 
-async def _grants_by_model(session: SessionDep) -> dict[uuid.UUID, list[str]]:
-    rows = (
-        await session.execute(
-            select(GroupModelAccess.model_id, Group.name).join(
-                Group, Group.id == GroupModelAccess.group_id
-            )
-        )
-    ).all()
+async def _grants_by_model(
+    session: SessionDep, model_ids: Sequence[uuid.UUID] | None = None
+) -> dict[uuid.UUID, list[str]]:
+    """Group grants, narrowed to the models being rendered.
+
+    The listing shows one page of models, so the grant tables are read for that
+    page only: unbounded here means catalogue size times group count.
+    """
+    stmt = select(GroupModelAccess.model_id, Group.name).join(
+        Group, Group.id == GroupModelAccess.group_id
+    )
+    if model_ids is not None:
+        stmt = stmt.where(GroupModelAccess.model_id.in_(model_ids))
+    rows = (await session.execute(stmt)).all()
     grants: dict[uuid.UUID, list[str]] = {}
     for model_id, group_name in rows:
         grants.setdefault(model_id, []).append(group_name)
     return grants
 
 
-async def _user_grants_by_model(session: SessionDep) -> dict[uuid.UUID, list[str]]:
+async def _user_grants_by_model(
+    session: SessionDep, model_ids: Sequence[uuid.UUID] | None = None
+) -> dict[uuid.UUID, list[str]]:
     """Personal grants, which are unioned with group grants at request time."""
-    rows = (
-        await session.execute(
-            select(UserModelAccess.model_id, func.coalesce(User.email, User.subject)).join(
-                User, User.id == UserModelAccess.user_id
-            )
-        )
-    ).all()
+    stmt = select(UserModelAccess.model_id, func.coalesce(User.email, User.subject)).join(
+        User, User.id == UserModelAccess.user_id
+    )
+    if model_ids is not None:
+        stmt = stmt.where(UserModelAccess.model_id.in_(model_ids))
+    rows = (await session.execute(stmt)).all()
     grants: dict[uuid.UUID, list[str]] = {}
     for model_id, label in rows:
         grants.setdefault(model_id, []).append(label)
@@ -279,11 +304,18 @@ def _store_api_key(provider: Provider, secrets: SecretBox, plaintext: str) -> No
     provider.api_key_hint = hint_for(plaintext)
 
 
-@router.get("/providers", response_model=list[ProviderResponse])
-async def list_providers(admin: AdminUserDep, session: SessionDep) -> list[ProviderResponse]:
-    providers = (await session.execute(select(Provider).order_by(Provider.name))).scalars().all()
+@router.get("/providers", response_model=Page[ProviderResponse])
+async def list_providers(
+    admin: AdminUserDep, session: SessionDep, page: PageDep
+) -> Page[ProviderResponse]:
+    stmt = select(Provider).order_by(Provider.name)
+    total = await count_of(session, stmt)
+    providers = (await session.execute(page.apply(stmt))).scalars().all()
     counts = await _model_counts(session)
-    return [_provider_response(provider, counts.get(provider.id, 0)) for provider in providers]
+    return page.page(
+        [_provider_response(provider, counts.get(provider.id, 0)) for provider in providers],
+        total,
+    )
 
 
 @router.post("/providers", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)
@@ -460,11 +492,22 @@ async def test_provider(
 # -- models -----------------------------------------------------------------
 
 
-@router.get("/models", response_model=list[ModelAdminResponse])
+@router.get("/models", response_model=Page[ModelAdminResponse])
 async def list_models(
-    admin: AdminUserDep, session: SessionDep, include_inactive: bool = True
-) -> list[ModelAdminResponse]:
-    """Every model, including inactive ones — an operator needs to see those."""
+    admin: AdminUserDep,
+    session: SessionDep,
+    page: PageDep,
+    include_inactive: bool = True,
+    q: str = "",
+    provider_id: uuid.UUID | None = None,
+) -> Page[ModelAdminResponse]:
+    """Every model, including inactive ones — an operator needs to see those.
+
+    ``q`` matches the model's own name or the upstream one it maps to. It is a
+    substring match, deliberately: an operator looking for a model half-knows
+    its name, and a prefix match on a catalogue full of
+    ``meta-llama/Llama-3.3-70B-Instruct`` finds nothing.
+    """
     stmt = (
         select(ModelDef)
         .options(selectinload(ModelDef.prices), selectinload(ModelDef.provider))
@@ -472,15 +515,25 @@ async def list_models(
     )
     if not include_inactive:
         stmt = stmt.where(ModelDef.is_active.is_(True))
-    models = (await session.execute(stmt)).scalars().all()
-    grants = await _grants_by_model(session)
-    user_grants = await _user_grants_by_model(session)
-    return [
-        _model_response(
-            model, sorted(grants.get(model.id, [])), sorted(user_grants.get(model.id, []))
-        )
-        for model in models
-    ]
+    if provider_id is not None:
+        stmt = stmt.where(ModelDef.provider_id == provider_id)
+    if needle := q.strip():
+        stmt = stmt.where(_matches(needle, ModelDef.name, ModelDef.upstream_model))
+
+    total = await count_of(session, stmt)
+    models = (await session.execute(page.apply(stmt))).scalars().all()
+    ids = [model.id for model in models]
+    grants = await _grants_by_model(session, ids)
+    user_grants = await _user_grants_by_model(session, ids)
+    return page.page(
+        [
+            _model_response(
+                model, sorted(grants.get(model.id, [])), sorted(user_grants.get(model.id, []))
+            )
+            for model in models
+        ],
+        total,
+    )
 
 
 @router.post("/models", response_model=ModelAdminResponse, status_code=status.HTTP_201_CREATED)
@@ -535,8 +588,8 @@ async def update_model(
         setattr(model, field, value)
     await session.commit()
     await session.refresh(model, attribute_names=["prices", "provider"])
-    grants = await _grants_by_model(session)
-    user_grants = await _user_grants_by_model(session)
+    grants = await _grants_by_model(session, [model.id])
+    user_grants = await _user_grants_by_model(session, [model.id])
     return _model_response(
         model, sorted(grants.get(model.id, [])), sorted(user_grants.get(model.id, []))
     )
@@ -795,14 +848,19 @@ async def import_models(
 # -- prices -----------------------------------------------------------------
 
 
-@router.get("/models/{model_id}/prices", response_model=list[PriceResponse])
+@router.get("/models/{model_id}/prices", response_model=Page[PriceResponse])
 async def list_prices(
-    model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
-) -> list[PriceResponse]:
-    """Full price history, newest first. Nothing here is ever mutated."""
+    model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, page: PageDep
+) -> Page[PriceResponse]:
+    """Price history, newest first. Nothing here is ever mutated.
+
+    Sliced in Python rather than in SQL: the rows are already loaded with the
+    model, and a price history is short. The shape matches the other listings
+    so a client does not have to care which.
+    """
     model = await _load_model(session, model_id)
     ordered = sorted(model.prices, key=lambda price: price.effective_from, reverse=True)
-    return [response for price in ordered if (response := _price_response(price))]
+    return page.slice([response for price in ordered if (response := _price_response(price))])
 
 
 @router.post(
@@ -861,42 +919,52 @@ async def create_price(
 # -- groups and access ------------------------------------------------------
 
 
-@router.get("/groups", response_model=list[GroupAdminResponse])
-async def list_groups(admin: AdminUserDep, session: SessionDep) -> list[GroupAdminResponse]:
-    groups = (await session.execute(select(Group).order_by(Group.name))).scalars().all()
+@router.get("/groups", response_model=Page[GroupAdminResponse])
+async def list_groups(
+    admin: AdminUserDep, session: SessionDep, page: PageDep, q: str = ""
+) -> Page[GroupAdminResponse]:
+    stmt = select(Group).order_by(Group.name)
+    if needle := q.strip():
+        stmt = stmt.where(_matches(needle, Group.name, Group.description))
+    total = await count_of(session, stmt)
+    groups = (await session.execute(page.apply(stmt))).scalars().all()
+    ids = [group.id for group in groups]
 
     counts: dict[uuid.UUID, int] = _pairs(
         (
             await session.execute(
-                select(Membership.group_id, func.count(Membership.user_id)).group_by(
-                    Membership.group_id
-                )
+                select(Membership.group_id, func.count(Membership.user_id))
+                .where(Membership.group_id.in_(ids))
+                .group_by(Membership.group_id)
             )
         ).all()
     )
     access_rows = (
         await session.execute(
-            select(GroupModelAccess.group_id, ModelDef.name).join(
-                ModelDef, ModelDef.id == GroupModelAccess.model_id
-            )
+            select(GroupModelAccess.group_id, ModelDef.name)
+            .join(ModelDef, ModelDef.id == GroupModelAccess.model_id)
+            .where(GroupModelAccess.group_id.in_(ids))
         )
     ).all()
     models: dict[uuid.UUID, list[str]] = {}
     for group_id, model_name in access_rows:
         models.setdefault(group_id, []).append(model_name)
 
-    return [
-        GroupAdminResponse(
-            id=group.id,
-            name=group.name,
-            description=group.description,
-            source=group.source.value,
-            is_active=group.is_active,
-            member_count=int(counts.get(group.id, 0)),
-            models=sorted(models.get(group.id, [])),
-        )
-        for group in groups
-    ]
+    return page.page(
+        [
+            GroupAdminResponse(
+                id=group.id,
+                name=group.name,
+                description=group.description,
+                source=group.source.value,
+                is_active=group.is_active,
+                member_count=int(counts.get(group.id, 0)),
+                models=sorted(models.get(group.id, [])),
+            )
+            for group in groups
+        ],
+        total,
+    )
 
 
 @router.put(
@@ -1024,18 +1092,22 @@ async def _load_rules(session: SessionDep) -> Sequence[LimitRule]:
     )
 
 
-@router.get("/limits", response_model=list[LimitRuleResponse])
+@router.get("/limits", response_model=Page[LimitRuleResponse])
 async def list_limits(
-    admin: AdminUserDep, session: SessionDep, quota: QuotaDep
-) -> list[LimitRuleResponse]:
+    admin: AdminUserDep, session: SessionDep, quota: QuotaDep, page: PageDep
+) -> Page[LimitRuleResponse]:
     """Every rule, with how much of it is used right now.
 
     ``current_value`` comes from the live counters, so it already accounts for any
     reset. It is absent — not zero — when the counter store cannot be reached.
+
+    Paginated after the counters are read, not before: the same rules are
+    already loaded whole to evaluate a request, so reading a page of them from
+    the database would save nothing the request path does not pay anyway.
     """
     rules = await _load_rules(session)
     current = await quota.current_values(rules)
-    return [_limit_response(rule, current.get(rule.id)) for rule in rules]
+    return page.slice([_limit_response(rule, current.get(rule.id)) for rule in rules])
 
 
 @router.post("/limits", response_model=LimitRuleResponse, status_code=status.HTTP_201_CREATED)
@@ -1176,33 +1248,40 @@ async def reset_limit(
     )
 
 
-@router.get("/limits/{rule_id}/resets", response_model=list[QuotaResetResponse])
+@router.get("/limits/{rule_id}/resets", response_model=Page[QuotaResetResponse])
 async def list_resets(
-    rule_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
-) -> list[QuotaResetResponse]:
-    """Who zeroed this rule, when, and why. Newest first."""
+    rule_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, page: PageDep
+) -> Page[QuotaResetResponse]:
+    """Who zeroed this rule, when, and why. Newest first.
+
+    This one grows with time rather than with the organisation — nothing prunes
+    it, by design, since it is the audit trail for overriding a budget.
+    """
     await _load_rule(session, rule_id)
-    rows = (
-        await session.execute(
-            select(QuotaReset, User.email)
-            .outerjoin(User, User.id == QuotaReset.created_by)
-            .where(QuotaReset.rule_id == rule_id)
-            .order_by(QuotaReset.effective_at.desc())
-        )
-    ).all()
-    return [
-        QuotaResetResponse(
-            id=reset.id,
-            rule_id=reset.rule_id,
-            effective_at=reset.effective_at,
-            reason=reset.reason,
-            created_by=reset.created_by,
-            # Null once the account is erased. The reset row itself survives, which
-            # is why created_by is ON DELETE SET NULL rather than CASCADE.
-            created_by_email=email,
-        )
-        for reset, email in rows
-    ]
+    stmt = (
+        select(QuotaReset, User.email)
+        .outerjoin(User, User.id == QuotaReset.created_by)
+        .where(QuotaReset.rule_id == rule_id)
+        .order_by(QuotaReset.effective_at.desc())
+    )
+    total = await count_of(session, stmt)
+    rows = (await session.execute(page.apply(stmt))).all()
+    return page.page(
+        [
+            QuotaResetResponse(
+                id=reset.id,
+                rule_id=reset.rule_id,
+                effective_at=reset.effective_at,
+                reason=reset.reason,
+                created_by=reset.created_by,
+                # Null once the account is erased. The reset row itself survives,
+                # which is why created_by is ON DELETE SET NULL, not CASCADE.
+                created_by_email=email,
+            )
+            for reset, email in rows
+        ],
+        total,
+    )
 
 
 @router.delete("/limits/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1219,31 +1298,26 @@ async def delete_limit(rule_id: uuid.UUID, admin: AdminUserDep, session: Session
 # -- users ------------------------------------------------------------------
 
 
-@router.get("/users", response_model=list[UserAdminResponse])
-async def list_users(admin: AdminUserDep, session: SessionDep) -> list[UserAdminResponse]:
-    users = (
-        (
-            await session.execute(
-                select(User)
-                .options(selectinload(User.memberships).selectinload(Membership.group))
-                .order_by(User.email)
-            )
-        )
-        .scalars()
-        .all()
-    )
+async def _user_responses(session: SessionDep, users: Sequence[User]) -> list[UserAdminResponse]:
+    """Decorate user rows with the counts and names the console shows.
 
+    Both lookups are restricted to the users being rendered. Reading every key
+    and every group to render fifty rows is the sort of thing that is invisible
+    until an organisation is large, which is the case pagination exists for.
+    """
+    ids = [user.id for user in users]
     key_counts: dict[uuid.UUID, int] = _pairs(
         (
             await session.execute(
                 select(ApiKey.user_id, func.count(ApiKey.id))
-                .where(ApiKey.revoked_at.is_(None))
+                .where(ApiKey.revoked_at.is_(None), ApiKey.user_id.in_(ids))
                 .group_by(ApiKey.user_id)
             )
         ).all()
     )
+    billing_ids = [user.default_billing_group_id for user in users if user.default_billing_group_id]
     group_names: dict[uuid.UUID, str] = _pairs(
-        (await session.execute(select(Group.id, Group.name))).all()
+        (await session.execute(select(Group.id, Group.name).where(Group.id.in_(billing_ids)))).all()
     )
 
     return [
@@ -1256,12 +1330,45 @@ async def list_users(admin: AdminUserDep, session: SessionDep) -> list[UserAdmin
             is_active=user.is_active,
             is_admin=user.is_admin,
             groups=sorted(m.group.name for m in user.memberships),
-            default_billing_group=group_names.get(user.default_billing_group_id or uuid.uuid4()),
+            default_billing_group=(
+                group_names.get(user.default_billing_group_id)
+                if user.default_billing_group_id
+                else None
+            ),
             active_key_count=int(key_counts.get(user.id, 0)),
             last_login_at=user.last_login_at,
         )
         for user in users
     ]
+
+
+@router.get("/users", response_model=Page[UserAdminResponse])
+async def list_users(
+    admin: AdminUserDep,
+    session: SessionDep,
+    page: PageDep,
+    q: str = "",
+    is_active: bool | None = None,
+) -> Page[UserAdminResponse]:
+    """Accounts, by email.
+
+    ``q`` matches email, display name or the identity provider's subject. The
+    subject is in there because that is all there is to search on for an
+    account whose IdP does not release an email claim.
+    """
+    stmt = (
+        select(User)
+        .options(selectinload(User.memberships).selectinload(Membership.group))
+        .order_by(User.email)
+    )
+    if needle := q.strip():
+        stmt = stmt.where(_matches(needle, User.email, User.display_name, User.subject))
+    if is_active is not None:
+        stmt = stmt.where(User.is_active.is_(is_active))
+
+    total = await count_of(session, stmt)
+    users = (await session.execute(page.apply(stmt))).scalars().all()
+    return page.page(await _user_responses(session, users), total)
 
 
 @router.patch("/users/{user_id}", response_model=UserAdminResponse)
@@ -1302,8 +1409,9 @@ async def update_user(
         setattr(user, field, value)
     await session.commit()
 
-    listing = await list_users(admin, session)
-    return next(entry for entry in listing if entry.id == user_id)
+    # Not by re-reading the listing and picking a row out of it: the listing is
+    # a page now, and the user just edited may not be on the page.
+    return (await _user_responses(session, [user]))[0]
 
 
 # -- reports ------------------------------------------------------------------

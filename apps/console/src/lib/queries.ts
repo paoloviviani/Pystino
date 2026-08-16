@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, request } from "./api";
+import { MAX_LIMIT, type Page, pageParams } from "./paging";
 import type { ApiKey, Me, UsageReport } from "./types";
 
 /**
@@ -52,9 +53,13 @@ export function useMyReport(period: string, groupBy: string) {
 }
 
 export function useMyKeys() {
+  // One person's keys, so the whole set fits in a page and the overview does
+  // not need a pager. It still reads the envelope, because the endpoint
+  // returns one.
+  const search = pageParams({ limit: MAX_LIMIT });
   return useQuery({
-    queryKey: keys.myKeys,
-    queryFn: () => request<ApiKey[]>("/api/me/keys"),
+    queryKey: [...keys.myKeys, search],
+    queryFn: () => request<Page<ApiKey>>(`/api/me/keys?${search}`),
     retry: retryUnlessRejected,
   });
 }

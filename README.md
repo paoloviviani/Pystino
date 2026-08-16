@@ -19,7 +19,7 @@ it implies.
 | `apps/console` | **Built.** Self-service spend plus reports, quotas, providers, models, pricing and users at `/console`. |
 | `apps/web`, `apps/desktop`, `services/rag`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |
 
-673 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
+709 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
 exercises the whole slice over real HTTP, and the full `docker compose` stack has been
 built and run against PostgreSQL 18, Valkey and Keycloak — including the complete OIDC
 login flow and the reporting API (`./scripts/test_reporting_live.py`, which covers the

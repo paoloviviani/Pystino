@@ -40,6 +40,9 @@ export type { MoneyProps } from "./components/Money";
 export { Notice } from "./components/Notice";
 export type { NoticeProps } from "./components/Notice";
 
+export { Pagination } from "./components/Pagination";
+export type { PaginationProps } from "./components/Pagination";
+
 export { Spinner } from "./components/Spinner";
 export type { SpinnerProps } from "./components/Spinner";
 

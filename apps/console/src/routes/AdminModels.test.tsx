@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdminModel, CatalogueDiscovery } from "../lib/types";
+import { jsonResponse } from "../test-helpers";
 import { AdminModels } from "./AdminModels";
 
 /**
@@ -120,10 +121,7 @@ function routes(models: AdminModel[], calls: { imported?: string[] } = {}) {
       ];
     }
 
-    return new Response(JSON.stringify(payload), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+    return jsonResponse(payload);
   });
 }
 

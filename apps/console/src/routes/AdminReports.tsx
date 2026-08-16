@@ -80,7 +80,7 @@ export function AdminReports() {
 
           <Select label="Group" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
             <option value="">All groups</option>
-            {(groups.data ?? []).map((group) => (
+            {(groups.data?.items ?? []).map((group) => (
               <option key={group.id} value={group.id}>
                 {group.name}
               </option>
@@ -89,7 +89,7 @@ export function AdminReports() {
 
           <Select label="Model" value={model} onChange={(e) => setModel(e.target.value)}>
             <option value="">All models</option>
-            {(models.data ?? []).map((entry) => (
+            {(models.data?.items ?? []).map((entry) => (
               <option key={entry.id} value={entry.name}>
                 {entry.name}
               </option>

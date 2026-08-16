@@ -30,6 +30,7 @@ from gateway.models import (
     UsageSource,
     UsageStatus,
 )
+from gateway.pagination import Page, PageDep, count_of
 from gateway.reporting import (
     GroupBy,
     ReportFilter,
@@ -105,16 +106,25 @@ async def set_default_billing_group(
     return await me(user, session)
 
 
-@router.get("/me/keys", response_model=list[ApiKeyResponse])
-async def list_keys(user: ManagementUserDep, session: SessionDep) -> list[ApiKeyResponse]:
+@router.get("/me/keys", response_model=Page[ApiKeyResponse])
+async def list_keys(
+    user: ManagementUserDep, session: SessionDep, page: PageDep
+) -> Page[ApiKeyResponse]:
+    """The caller's keys, newest first, revoked ones included.
+
+    Paginated like the admin listings even though one person's keys are few:
+    revoked keys are never deleted, so this grows with time, and having one
+    response shape for every listing is worth more than the exception.
+    """
     stmt = (
         select(ApiKey)
         .where(ApiKey.user_id == user.id)
         .options(selectinload(ApiKey.billing_group))
         .order_by(ApiKey.created_at.desc())
     )
-    keys = (await session.execute(stmt)).scalars().all()
-    return [_key_response(key) for key in keys]
+    total = await count_of(session, stmt)
+    keys = (await session.execute(page.apply(stmt))).scalars().all()
+    return page.page([_key_response(key) for key in keys], total)
 
 
 @router.post("/me/keys", response_model=ApiKeyCreatedResponse, status_code=status.HTTP_201_CREATED)

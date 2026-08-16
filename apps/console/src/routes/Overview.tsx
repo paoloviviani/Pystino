@@ -170,7 +170,7 @@ export function Overview({ me }: OverviewProps) {
         ) : (
           <Table
             columns={keyColumns}
-            rows={keys.data ?? []}
+            rows={keys.data?.items ?? []}
             rowKey={(key) => key.id}
             empty="You have not minted any API keys."
           />

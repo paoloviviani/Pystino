@@ -237,7 +237,7 @@ class TestProviderApi:
             "/api/admin/providers",
             json={"name": "acme", "base_url": "https://acme.test/v1", "api_key": "sk-acme-123456"},
         )
-        listing = (await admin_client.get("/api/admin/providers")).json()
+        listing = (await admin_client.get("/api/admin/providers")).json()["items"]
         acme = next(entry for entry in listing if entry["name"] == "acme")
 
         assert "api_key" not in acme
@@ -333,7 +333,7 @@ class TestProviderApi:
     async def test_the_model_count_is_the_blast_radius(
         self, admin_client: httpx.AsyncClient, seeded: Seeded
     ) -> None:
-        listing = (await admin_client.get("/api/admin/providers")).json()
+        listing = (await admin_client.get("/api/admin/providers")).json()["items"]
         fake = next(entry for entry in listing if entry["name"] == "fake")
         assert fake["model_count"] == 1
 
@@ -542,11 +542,11 @@ class TestUserGrantApi:
         # Idempotent: granting twice is not an error.
         assert (await admin_client.put(path)).status_code == 204
 
-        listing = (await admin_client.get("/api/admin/models")).json()
+        listing = (await admin_client.get("/api/admin/models")).json()["items"]
         assert listing[0]["granted_to_users"] == [seeded.user.email]
 
         assert (await admin_client.delete(path)).status_code == 204
-        listing = (await admin_client.get("/api/admin/models")).json()
+        listing = (await admin_client.get("/api/admin/models")).json()["items"]
         assert listing[0]["granted_to_users"] == []
 
     async def test_granting_to_an_unknown_user_is_404(

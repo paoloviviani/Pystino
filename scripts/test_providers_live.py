@@ -93,7 +93,9 @@ def main() -> int:
 
     print()
     print("=== the migration turned the environment upstream into a provider ===")
-    status, providers = api(dave, "/api/admin/providers")
+    status, listing = api(dave, "/api/admin/providers")
+    # Listings answer with a pagination envelope now (ADR 0029).
+    providers = listing["items"] if status == 200 else []
     expect("providers can be listed", status == 200, f"HTTP {status}")
     default = next((p for p in providers if p["name"] == "default"), None)
     expect("a `default` provider exists", default is not None, str([p["name"] for p in providers]))
@@ -136,7 +138,9 @@ def main() -> int:
         },
     )
     if status == 409:
-        created = next(p for p in api(dave, "/api/admin/providers")[1] if p["name"] == "live-check")
+        created = next(
+            p for p in api(dave, "/api/admin/providers")[1]["items"] if p["name"] == "live-check"
+        )
         print("  reusing the provider from a previous run")
     else:
         expect("it can be created", status == 201, f"HTTP {status}: {created}")
@@ -248,7 +252,7 @@ def main() -> int:
 
     print()
     print("=== embeddings ===")
-    models = api(dave, "/api/admin/models")[1]
+    models = api(dave, "/api/admin/models")[1]["items"]
     embedding = next((m for m in models if m["kind"] == "embedding"), None)
     if embedding is None:
         print("  no embedding model catalogued here; skipping")
@@ -307,13 +311,13 @@ def main() -> int:
 
     print()
     print("=== per-user model access ===")
-    models = api(dave, "/api/admin/models")[1]
+    models = api(dave, "/api/admin/models")[1]["items"]
     smoke = next((m for m in models if m["name"] == "smoke-model"), None)
     if smoke is None:
         expect("smoke-model is catalogued", False, str([m["name"] for m in models]))
         return 1
 
-    users = api(dave, "/api/admin/users")[1]
+    users = api(dave, "/api/admin/users")[1]["items"]
     carol = next((u for u in users if (u["email"] or "").startswith("carol")), None)
     if carol is None:
         print("  no carol in this deployment; skipping the per-user checks")
@@ -322,7 +326,7 @@ def main() -> int:
         status, _ = api(dave, f"/api/admin/users/{carol['id']}/models/{smoke['id']}", method="PUT")
         expect("a personal grant can be made", status == 204, f"HTTP {status}")
 
-        listing = api(dave, "/api/admin/models")[1]
+        listing = api(dave, "/api/admin/models")[1]["items"]
         granted = next(m for m in listing if m["id"] == smoke["id"])
         expect(
             "and it is visible on the model",

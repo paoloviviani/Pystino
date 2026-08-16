@@ -100,7 +100,7 @@ class TestModels:
         assert body["current_price"] is None
         assert body["granted_to"] == []
 
-        listing = (await client.get("/api/admin/models")).json()
+        listing = (await client.get("/api/admin/models")).json()["items"]
         assert {m["name"] for m in listing} == {"test-model", "new-model"}
 
         patched = await client.patch(f"/api/admin/models/{body['id']}", json={"is_active": False})
@@ -192,7 +192,7 @@ class TestPrices:
             f"/api/admin/models/{seeded.model.id}/prices",
             json={"input_per_mtok": "9", "output_per_mtok": "9"},
         )
-        history = (await client.get(f"/api/admin/models/{seeded.model.id}/prices")).json()
+        history = (await client.get(f"/api/admin/models/{seeded.model.id}/prices")).json()["items"]
         assert len(history) == 2
         assert Decimal(history[0]["input_per_mtok"]) == Decimal(9)
 
@@ -210,7 +210,7 @@ class TestPrices:
             f"/api/admin/models/{seeded.model.id}/prices",
             json={"input_per_mtok": "99", "output_per_mtok": "99", "effective_from": future},
         )
-        current = (await client.get("/api/admin/models")).json()
+        current = (await client.get("/api/admin/models")).json()["items"]
         model = next(m for m in current if m["name"] == "test-model")
         assert Decimal(model["current_price"]["input_per_mtok"]) == Decimal(1)
 
@@ -336,7 +336,7 @@ class TestGroupAccess:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
-        groups = (await client.get("/api/admin/groups")).json()
+        groups = (await client.get("/api/admin/groups")).json()["items"]
         research = next(g for g in groups if g["name"] == "research")
         assert research["member_count"] == 1
         assert research["models"] == ["test-model"]
@@ -518,7 +518,7 @@ class TestUsersAndUsage:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
-        users = (await client.get("/api/admin/users")).json()
+        users = (await client.get("/api/admin/users")).json()["items"]
         entry = next(u for u in users if u["email"] == "member@example.org")
         assert entry["groups"] == ["research"]
         assert entry["active_key_count"] == 1

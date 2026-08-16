@@ -162,12 +162,14 @@ def main() -> int:
 
     # Price history and reset history are per-id, so they need something to point
     # at. Skipped rather than faked when the deployment has none.
-    models = json.loads(fetch(dave, "/api/admin/models")[2])
+    # Every listing answers with a pagination envelope now (ADR 0029), so the
+    # rows are under `items`.
+    models = json.loads(fetch(dave, "/api/admin/models")[2])["items"]
     if models:
         status, _, _ = fetch(dave, f"/api/admin/models/{models[0]['id']}/prices")
         expect("price history answers", status == 200, f"HTTP {status}")
 
-    limits = json.loads(fetch(dave, "/api/admin/limits")[2])
+    limits = json.loads(fetch(dave, "/api/admin/limits")[2])["items"]
     if limits:
         status, _, _ = fetch(dave, f"/api/admin/limits/{limits[0]['id']}/resets")
         expect("reset history answers", status == 200, f"HTTP {status}")
@@ -176,6 +178,62 @@ def main() -> int:
             "current_value" in limits[0],
             "an absent field is not the same as a null one",
         )
+
+    print()
+    print("=== pagination ===")
+    _, _, body = fetch(dave, "/api/admin/models?limit=1")
+    page = json.loads(body)
+    expect(
+        "a listing answers with an envelope",
+        set(page) == {"items", "total", "limit", "offset"},
+        str(sorted(page)),
+    )
+    expect(
+        "which reports the match, not the page",
+        page["total"] >= len(page["items"]),
+        f"total {page['total']}, returned {len(page['items'])}",
+    )
+
+    # One row at a time must reach every row, exactly once. An off-by-one in
+    # the offset loses a row in the middle of a catalogue, which cannot be seen
+    # from the first page.
+    walked: list[str] = []
+    offset = 0
+    while True:
+        step = json.loads(fetch(dave, f"/api/admin/models?limit=1&offset={offset}")[2])
+        walked += [entry["name"] for entry in step["items"]]
+        offset += 1
+        if offset >= step["total"]:
+            break
+    whole = json.loads(fetch(dave, "/api/admin/models?limit=200")[2])
+    expect(
+        "paging one row at a time yields the whole catalogue",
+        sorted(walked) == sorted(entry["name"] for entry in whole["items"]),
+        f"{sorted(walked)} vs {sorted(entry['name'] for entry in whole['items'])}",
+    )
+    expect("and no row twice", len(walked) == len(set(walked)), str(walked))
+
+    hit = json.loads(fetch(dave, "/api/admin/models?q=model")[2])
+    expect(
+        "a search narrows the total, not only the page",
+        hit["total"] <= whole["total"],
+        f"{hit['total']} of {whole['total']}",
+    )
+    literal = json.loads(fetch(dave, "/api/admin/models?q=%25")[2])
+    expect("a percent sign is searched for literally", literal["total"] == 0, str(literal["total"]))
+
+    for bad in ("limit=0", "limit=201", "offset=-1"):
+        status, _, _ = fetch(dave, f"/api/admin/models?{bad}")
+        # Refused rather than clamped: silently returning a different window is
+        # how a client treats a truncated list as complete.
+        expect(f"{bad} is refused", status == 400, f"HTTP {status}")
+
+    status, _, body = fetch(dave, "/api/admin/reports/usage?limit=1")
+    expect(
+        "a report is an aggregation and does not truncate",
+        status == 200 and "items" not in json.loads(body),
+        f"HTTP {status}",
+    )
 
     print()
     if FAILURES:

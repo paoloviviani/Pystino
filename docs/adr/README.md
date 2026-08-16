@@ -40,6 +40,7 @@ verified is marked as such in the ADR that depends on it.
 | [0026](0026-pluggable-detection.md) | Detection is a plugin; the Italian NER model is a build flag |
 | [0027](0027-inference-providers.md) | Inference providers as configurable records, with keys encrypted at rest |
 | [0028](0028-embeddings-and-served-model.md) | Embeddings, and recording what actually served a request |
+| [0029](0029-pagination.md) | Pagination on the management listings, and server-side search |
 
 ## Decisions recorded now, implemented later
 

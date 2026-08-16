@@ -116,7 +116,7 @@ def main() -> int:
 
     print()
     print("=== a calendar quota, its counter, and a reset ===")
-    groups = api(dave, "/api/admin/groups")[1]
+    groups = api(dave, "/api/admin/groups")[1]["items"]
     research = next((g for g in groups if g["name"] == "research"), None)
     if research is None:
         expect("the research group exists", False, str([g["name"] for g in groups]))
@@ -137,7 +137,7 @@ def main() -> int:
     )
     if status == 409:
         # Left behind by an earlier run; find it and carry on.
-        rules = api(dave, "/api/admin/limits")[1]
+        rules = api(dave, "/api/admin/limits")[1]["items"]["items"]
         created = next(
             r
             for r in rules
@@ -170,7 +170,7 @@ def main() -> int:
     )
     expect("a duplicate rule is refused by the expression index", status == 409, f"HTTP {status}")
 
-    rules = api(dave, "/api/admin/limits")[1]
+    rules = api(dave, "/api/admin/limits")[1]["items"]
     rule = next(r for r in rules if r["id"] == created["id"])
     expect(
         "current_value is reported from the live counters",
@@ -201,7 +201,7 @@ def main() -> int:
         str(reset.get("created_by_email")),
     )
 
-    after = next(r for r in api(dave, "/api/admin/limits")[1] if r["id"] == rule["id"])
+    after = next(r for r in api(dave, "/api/admin/limits")[1]["items"] if r["id"] == rule["id"])
     expect(
         "consumption is back to zero",
         Decimal(after["current_value"] or 0) == 0,
@@ -220,7 +220,7 @@ def main() -> int:
         f"{after_report} vs {report_total}",
     )
 
-    trail = api(dave, f"/api/admin/limits/{rule['id']}/resets")[1]
+    trail = api(dave, f"/api/admin/limits/{rule['id']}/resets")[1]["items"]
     expect(
         "the reset is in the audit trail",
         any(e["reason"] == "live check" for e in trail),
