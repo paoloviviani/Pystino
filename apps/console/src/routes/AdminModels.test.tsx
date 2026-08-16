@@ -41,6 +41,9 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
       effective_from: "2026-08-01T10:00:00Z",
       source: "manual",
     },
+    input_modalities: ["text"],
+    output_modalities: ["text"],
+    supported_features: [],
     granted_to: ["research"],
     granted_to_users: [],
     ...overrides,
@@ -58,6 +61,10 @@ const DISCOVERY: CatalogueDiscovery = {
       output_per_mtok: "1.500000000000",
       currency: "EUR",
       context_window: 32000,
+      kind: "chat",
+      input_modalities: ["text", "image"],
+      output_modalities: ["text"],
+      supported_features: ["tools"],
       blocked_reason: null,
     },
     {
@@ -67,6 +74,10 @@ const DISCOVERY: CatalogueDiscovery = {
       output_per_mtok: "1.900000000000",
       currency: "USD",
       context_window: null,
+      kind: "chat",
+      input_modalities: [],
+      output_modalities: [],
+      supported_features: [],
       blocked_reason: "priced in USD; this gateway bills in EUR",
     },
   ],
@@ -77,11 +88,20 @@ const DISCOVERY: CatalogueDiscovery = {
   unparsable: [],
 };
 
-function routes(models: AdminModel[], calls: { imported?: string[] } = {}) {
+function routes(
+  models: AdminModel[],
+  calls: { imported?: string[] } = {},
+  captured: { bodies: unknown[] } = { bodies: [] },
+) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     let payload: unknown = [];
+
+    if (init?.body && method === "PATCH") {
+      captured.bodies.push(JSON.parse(String(init.body)));
+      return jsonResponse(models[0]);
+    }
 
     if (url.includes("/api/admin/providers")) {
       payload = [
@@ -160,6 +180,74 @@ describe("AdminModels", () => {
     renderScreen(<AdminModels />);
 
     await waitFor(() => expect(screen.getByText("No price")).toBeInTheDocument());
+  });
+
+  it("shows what a model can do", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes([
+        model({
+          input_modalities: ["image", "text"],
+          supported_features: ["json_mode", "tools"],
+        }),
+      ]),
+    );
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("fast-summariser")).toBeInTheDocument());
+    // "text" is not shown: every model takes text, so a badge for it is noise
+    // that crowds out the ones that distinguish models from each other.
+    expect(screen.getByText("image")).toBeInTheDocument();
+    expect(screen.getByText("tools")).toBeInTheDocument();
+    expect(screen.queryByText("text")).not.toBeInTheDocument();
+  });
+
+  it("says nothing was stated rather than implying a model cannot", async () => {
+    // Most catalogued models predate capabilities. Rendering that as crosses
+    // would turn an absence of information into a claim.
+    vi.stubGlobal("fetch", routes([model({ input_modalities: [], supported_features: [] })]));
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("not stated")).toBeInTheDocument());
+  });
+
+  it("sends an edited capability set to the API", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: { bodies: unknown[] } = { bodies: [] };
+    vi.stubGlobal("fetch", routes([model({ supported_features: ["tools"] })], {}, captured));
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("fast-summariser")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    const dialog = await screen.findByRole("dialog");
+    const features = within(dialog).getByLabelText("Features");
+    await user.clear(features);
+    await user.type(features, "tools, reasoning");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies[0] as Record<string, unknown>;
+    expect(body.supported_features).toEqual(["tools", "reasoning"]);
+  });
+
+  it("can correct a mis-inferred kind", async () => {
+    // Discovery reads the kind off modality tags. Getting it wrong takes the
+    // model off the only route that would serve it.
+    const user = userEvent.setup({ delay: null });
+    const captured: { bodies: unknown[] } = { bodies: [] };
+    vi.stubGlobal("fetch", routes([model()], {}, captured));
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("fast-summariser")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.selectOptions(within(dialog).getByLabelText("Kind"), "embedding");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    expect((captured.bodies[0] as Record<string, unknown>).kind).toBe("embedding");
   });
 
   it("says when a model is granted to nobody", async () => {

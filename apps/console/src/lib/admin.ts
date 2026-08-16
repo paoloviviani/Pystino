@@ -196,6 +196,10 @@ export interface CreateModelInput {
   provider_id: string;
   kind?: ModelKind;
   context_window?: number | null;
+  max_output_tokens?: number | null;
+  input_modalities?: string[];
+  output_modalities?: string[];
+  supported_features?: string[];
 }
 
 export function useCreateModel() {
@@ -207,10 +211,23 @@ export function useCreateModel() {
   });
 }
 
+/** Every field optional; only what is sent is changed, matching the API. */
+export interface ModelUpdateInput {
+  is_active?: boolean;
+  provider_id?: string;
+  kind?: ModelKind;
+  display_name?: string | null;
+  context_window?: number | null;
+  max_output_tokens?: number | null;
+  input_modalities?: string[];
+  output_modalities?: string[];
+  supported_features?: string[];
+}
+
 export function useUpdateModel() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; is_active?: boolean; provider_id?: string }) =>
+    mutationFn: ({ id, ...body }: { id: string } & ModelUpdateInput) =>
       request<AdminModel>(`/api/admin/models/${id}`, { method: "PATCH", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.models }),
   });

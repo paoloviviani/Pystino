@@ -98,6 +98,67 @@ class TestParseCatalogue:
         prices, _ = parse_catalogue({"data": [entry]})
         assert prices[0].context_window == 128_000
 
+    def test_the_key_the_real_catalogue_actually_uses(self) -> None:
+        """`context_size`, which was missing from the list this reads.
+
+        Every model imported from the reference provider therefore had a null
+        context window, and nothing failed — the field is nullable and the
+        console renders a blank. Pinned by name so the spelling cannot quietly
+        drift back (ADR 0031).
+        """
+        entry = catalogue_entry()
+        entry["context_size"] = 200_000
+        prices, _ = parse_catalogue({"data": [entry]})
+        assert prices[0].context_window == 200_000
+
+
+class TestCapabilities:
+    """What the catalogue says a model can do (ADR 0031)."""
+
+    def test_modalities_and_features_are_carried_through(self) -> None:
+        entry = catalogue_entry()
+        entry["input_modalities"] = ["text", "image"]
+        entry["output_modalities"] = ["text"]
+        entry["supported_features"] = ["tools", "reasoning"]
+        prices, _ = parse_catalogue({"data": [entry]})
+        assert prices[0].input_modalities == ("image", "text")
+        assert prices[0].supported_features == ("reasoning", "tools")
+
+    def test_normalised_so_a_re_import_is_visibly_a_no_op(self) -> None:
+        """Sorted, lower-cased, deduplicated.
+
+        Otherwise the same catalogue read twice produces two different values
+        and a re-import looks like a change nobody made.
+        """
+        entry = catalogue_entry()
+        entry["supported_features"] = ["Tools", "tools", " REASONING ", ""]
+        prices, _ = parse_catalogue({"data": [entry]})
+        assert prices[0].supported_features == ("reasoning", "tools")
+
+    def test_an_unknown_feature_is_kept_rather_than_dropped(self) -> None:
+        """The provider documents this as an open set.
+
+        Filtering to a vocabulary we compiled today would silently hide
+        exactly the capability an operator most wants to hear about — the one
+        that is new.
+        """
+        entry = catalogue_entry()
+        entry["supported_features"] = ["tools", "some_feature_added_next_week"]
+        prices, _ = parse_catalogue({"data": [entry]})
+        assert "some_feature_added_next_week" in prices[0].supported_features
+
+    def test_a_catalogue_that_says_nothing_claims_nothing(self) -> None:
+        """Empty means "not stated", and must not be read as "cannot"."""
+        prices, _ = parse_catalogue({"data": [catalogue_entry()]})
+        assert prices[0].input_modalities == ()
+        assert prices[0].supported_features == ()
+
+    def test_a_non_list_does_not_blow_up_the_import(self) -> None:
+        entry = catalogue_entry()
+        entry["supported_features"] = "tools"
+        prices, _ = parse_catalogue({"data": [entry]})
+        assert prices[0].supported_features == ()
+
     def test_unreadable_entries_are_reported_not_dropped(self) -> None:
         """A model that fails to import looks just like a free model."""
         prices, unparsable = parse_catalogue(

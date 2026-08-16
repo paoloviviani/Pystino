@@ -185,6 +185,9 @@ def _model_response(
         is_active=model.is_active,
         context_window=model.context_window,
         max_output_tokens=model.max_output_tokens,
+        input_modalities=list(model.input_modalities or []),
+        output_modalities=list(model.output_modalities or []),
+        supported_features=list(model.supported_features or []),
         created_at=model.created_at,
         current_price=_price_response(select_price(list(model.prices))),
         granted_to=granted_to,
@@ -564,6 +567,9 @@ async def create_model(
         description=payload.description,
         context_window=payload.context_window,
         max_output_tokens=payload.max_output_tokens,
+        input_modalities=list(payload.input_modalities),
+        output_modalities=list(payload.output_modalities),
+        supported_features=list(payload.supported_features),
         is_active=payload.is_active,
     )
     session.add(model)
@@ -590,6 +596,8 @@ async def update_model(
         # Repointing at another endpoint is allowed and is how a migration off a
         # provider happens; pointing at one that does not exist is not.
         await _load_provider(session, provider_id)
+    if (kind := fields.pop("kind", None)) is not None:
+        model.kind = ModelKind(kind)
     for field, value in fields.items():
         setattr(model, field, value)
     await session.commit()
@@ -698,6 +706,10 @@ async def discover_models(
                 output_per_mtok=price.output_per_mtok,
                 currency=price.currency,
                 context_window=price.context_window,
+                kind=price.kind.value,
+                input_modalities=list(price.input_modalities),
+                output_modalities=list(price.output_modalities),
+                supported_features=list(price.supported_features),
                 blocked_reason=blocked,
             )
         )
@@ -824,6 +836,9 @@ async def import_models(
             # From the catalogue, so an imported embedding model lands on the
             # right route without anyone editing it afterwards (ADR 0028).
             kind=price.kind,
+            input_modalities=list(price.input_modalities),
+            output_modalities=list(price.output_modalities),
+            supported_features=list(price.supported_features),
         )
         session.add(model)
         await session.flush()

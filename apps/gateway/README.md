@@ -26,6 +26,12 @@ per-group model availability and a pluggable redaction layer.
 | `POST /api/admin/limits/{id}/reset` | session cookie + `is_admin` | Set a quota's consumption to zero (reason required); leaves billing untouched |
 | `GET /healthz`, `/readyz` | — | Liveness (no dependencies) and readiness |
 
+`GET /v1/models` reports each model's `kind`, `context_window`,
+`input_modalities`, `output_modalities` and `supported_features`, so a client
+can pick a model that does tool calling or reads images without taking a 400 to
+find out. Non-standard fields, which OpenAI clients ignore
+([ADR 0031](../../docs/adr/0031-model-capabilities.md)).
+
 Every management listing answers with `{items, total, limit, offset}` and takes
 `?limit=&offset=` (ceiling 200; out of range is a 400, not a clamp). Users,
 models and groups also take `?q=` for a case-insensitive substring search.

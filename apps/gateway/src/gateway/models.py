@@ -384,6 +384,25 @@ class ModelDef(Base):
     context_window: Mapped[int | None] = mapped_column(Integer, default=None)
     max_output_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
 
+    # What the model can be given, what it can produce, and what it can do
+    # (ADR 0031). Free-form string lists rather than a column of booleans:
+    # the reference provider documents `supported_features` as an open set —
+    # "current values include json_mode, reasoning and tools" — and a boolean
+    # per feature would need a migration every time a provider adds one.
+    #
+    # Imported from the provider's catalogue and editable afterwards, because
+    # the catalogue is a claim rather than a contract and an operator who has
+    # found out otherwise needs somewhere to record it.
+    input_modalities: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'")
+    )
+    output_modalities: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'")
+    )
+    supported_features: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'")
+    )
+
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 

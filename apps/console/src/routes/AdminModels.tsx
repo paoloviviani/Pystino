@@ -39,6 +39,7 @@ export function AdminModels() {
 
   const [creating, setCreating] = useState(false);
   const [access, setAccess] = useState<AdminModel | null>(null);
+  const [editing, setEditing] = useState<AdminModel | null>(null);
   const [discovering, setDiscovering] = useState(false);
 
   const columns: Column<AdminModel>[] = [
@@ -54,6 +55,11 @@ export function AdminModels() {
           <div className={`${styles.muted} ${styles.code}`}>{model.upstream_model}</div>
         </>
       ),
+    },
+    {
+      key: "capabilities",
+      header: "Capabilities",
+      render: (model) => <Capabilities model={model} />,
     },
     {
       key: "provider",
@@ -118,6 +124,7 @@ export function AdminModels() {
       render: (model) => (
         <div className={styles.rowActions}>
           <Button onClick={() => setAccess(model)}>Access</Button>
+          <Button onClick={() => setEditing(model)}>Edit</Button>
           <Button
             busy={update.isPending && update.variables?.id === model.id}
             onClick={() => update.mutate({ id: model.id, is_active: !model.is_active })}
@@ -203,11 +210,185 @@ export function AdminModels() {
       </Card>
 
       <CreateModelDialog open={creating} onClose={() => setCreating(false)} />
+      <EditModelDialog model={editing} onClose={() => setEditing(null)} />
       <AccessDialog model={access} onClose={() => setAccess(null)} />
       <DiscoveryDialog open={discovering} onClose={() => setDiscovering(false)} />
     </div>
   );
 }
+
+/**
+ * What a model accepts, produces and can do.
+ *
+ * Three lists rather than a column of yes/no flags, because the provider
+ * documents its feature set as open — "current values include json_mode,
+ * reasoning and tools" — and a fixed set of checkboxes would silently hide
+ * whatever it added last week (ADR 0031).
+ *
+ * An empty set reads "not stated", never "cannot". Nobody has described most
+ * of these models yet, and rendering that as a row of crosses would turn an
+ * absence of information into a claim.
+ */
+function Capabilities({ model }: { model: AdminModel }) {
+  const inputs = model.input_modalities.filter((item) => item !== "text");
+  const shown = [...inputs, ...model.supported_features];
+
+  if (shown.length === 0) {
+    return <span className={styles.muted}>not stated</span>;
+  }
+  return (
+    <div className={styles.chips}>
+      {shown.map((item) => (
+        <Badge key={item}>{item.replace(/_/g, " ")}</Badge>
+      ))}
+    </div>
+  );
+}
+
+/** A comma-separated list, for editing a capability set by hand. */
+function CapabilityInput({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <Input
+      label={label}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      hint={hint}
+      placeholder="comma separated"
+    />
+  );
+}
+
+const asList = (value: string): string[] =>
+  value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+/**
+ * Correcting what the catalogue claimed.
+ *
+ * Discovery imports the provider's own description, and a provider's catalogue
+ * is a claim rather than a contract — a model advertised as supporting tool
+ * calling may do it badly or not at all. Without somewhere to record that, the
+ * only options are to believe it or to stop importing.
+ *
+ * `kind` is editable for the sharper version of the same problem: it is
+ * inferred from modality tags, and inferring it wrong takes a model off the
+ * only route that would serve it.
+ */
+function EditModelDialog({ model, onClose }: { model: AdminModel | null; onClose: () => void }) {
+  const update = useUpdateModel();
+  const [kind, setKind] = useState<ModelKind>("chat");
+  const [inputs, setInputs] = useState("");
+  const [outputs, setOutputs] = useState("");
+  const [features, setFeatures] = useState("");
+  const [context, setContext] = useState("");
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+
+  // Keyed remount: without this the fields keep the previous model's values.
+  if (model && loadedFor !== model.id) {
+    setLoadedFor(model.id);
+    setKind(model.kind);
+    setInputs(model.input_modalities.join(", "));
+    setOutputs(model.output_modalities.join(", "));
+    setFeatures(model.supported_features.join(", "));
+    setContext(model.context_window ? String(model.context_window) : "");
+  }
+
+  const submit = () => {
+    if (!model) return;
+    update.mutate(
+      {
+        id: model.id,
+        kind,
+        input_modalities: asList(inputs),
+        output_modalities: asList(outputs),
+        supported_features: asList(features),
+        context_window: context === "" ? null : Number(context),
+      },
+      { onSuccess: onClose },
+    );
+  };
+
+  return (
+    <Dialog
+      open={model !== null}
+      title={`Edit ${model?.name ?? ""}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" busy={update.isPending} onClick={submit}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      {update.error ? (
+        <Notice tone="danger">
+          {update.error instanceof Error ? update.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      <Select
+        label="Kind"
+        value={kind}
+        onChange={(event) => setKind(event.target.value as ModelKind)}
+        hint="Which routes will serve it. Discovery infers this from the provider's
+          modality tags and can get it wrong."
+      >
+        <option value="chat">Chat — /v1/chat/completions, /v1/responses, /v1/messages</option>
+        <option value="embedding">Embedding — /v1/embeddings</option>
+        <option value="image">Image — /v1/images/generations</option>
+      </Select>
+
+      <CapabilityInput
+        label="Accepts"
+        hint="Input modalities, e.g. text, image. What you can send it."
+        value={inputs}
+        onChange={setInputs}
+      />
+      <CapabilityInput
+        label="Produces"
+        hint="Output modalities, e.g. text, embeddings, image."
+        value={outputs}
+        onChange={setOutputs}
+      />
+      <CapabilityInput
+        label="Features"
+        hint="e.g. tools, json_mode, reasoning. Not a fixed list — whatever the provider
+          reports is kept, so a new one is not silently dropped."
+        value={features}
+        onChange={setFeatures}
+      />
+      <Input
+        label="Context window"
+        type="number"
+        min="1"
+        value={context}
+        onChange={(event) => setContext(event.target.value)}
+        hint="Tokens. Leave empty if unknown."
+      />
+
+      <Notice tone="info">
+        These describe the model to callers on <code>/v1/models</code>; they do not change
+        what the provider will actually accept. Re-running Discover does not overwrite an
+        edit — it only reports models we do not already carry.
+      </Notice>
+    </Dialog>
+  );
+}
+
 
 function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const create = useCreateModel();
@@ -509,6 +690,39 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           )}
         </>
       ),
+    },
+    {
+      key: "capabilities",
+      header: "Capabilities",
+      // Shown before importing, because "does this one do tool calling" and
+      // "can it read an image" are the questions asked at exactly this moment.
+      render: (row) => {
+        const shown = [
+          ...(row.kind !== "chat" ? [row.kind] : []),
+          ...row.input_modalities.filter((item) => item !== "text"),
+          ...row.supported_features,
+        ];
+        return shown.length === 0 ? (
+          <span className={styles.muted}>not stated</span>
+        ) : (
+          <div className={styles.chips}>
+            {shown.map((item) => (
+              <Badge key={item}>{item.replace(/_/g, " ")}</Badge>
+            ))}
+          </div>
+        );
+      },
+    },
+    {
+      key: "context",
+      header: "Context",
+      numeric: true,
+      render: (row) =>
+        row.context_window ? (
+          row.context_window.toLocaleString()
+        ) : (
+          <span className={styles.muted}>—</span>
+        ),
     },
     {
       key: "price",

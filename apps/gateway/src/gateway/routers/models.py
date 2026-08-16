@@ -43,8 +43,12 @@ async def list_models(principal: PrincipalDep, session: SessionDep) -> ModelList
                 created=int(model.created_at.timestamp()),
                 owned_by=model.provider.name,
                 context_window=model.context_window,
+                max_output_tokens=model.max_output_tokens,
                 display_name=model.display_name,
                 kind=model.kind.value,
+                input_modalities=list(model.input_modalities or []),
+                output_modalities=list(model.output_modalities or []),
+                supported_features=list(model.supported_features or []),
             )
             for model in models
         ]
@@ -70,6 +74,10 @@ async def retrieve_model(
         created=int(model.created_at.timestamp()),
         owned_by=model.provider.name,
         context_window=model.context_window,
+        max_output_tokens=model.max_output_tokens,
         display_name=model.display_name,
         kind=model.kind.value,
+        input_modalities=list(model.input_modalities or []),
+        output_modalities=list(model.output_modalities or []),
+        supported_features=list(model.supported_features or []),
     )

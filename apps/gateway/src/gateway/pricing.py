@@ -93,6 +93,11 @@ class CataloguePrice:
     # `output_modalities`; a catalogue that says nothing gets the safe default,
     # since every model catalogued before this existed was a chat model.
     kind: ModelKind = ModelKind.CHAT
+    # What the model takes, produces and can do, as the catalogue reports it
+    # (ADR 0031). Empty means "the catalogue did not say", not "cannot".
+    input_modalities: tuple[str, ...] = ()
+    output_modalities: tuple[str, ...] = ()
+    supported_features: tuple[str, ...] = ()
 
 
 @dataclass
@@ -179,7 +184,11 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
 
         kind = _kind_of(entry)
 
-        context = _first(entry, ("context_length", "context_window", "max_context"))
+        # `context_size` is what the reference provider actually sends, and its
+        # absence from this list is why every imported model had a null context
+        # window until now. The other spellings stay for catalogues that use
+        # them.
+        context = _first(entry, ("context_size", "context_length", "context_window", "max_context"))
         try:
             context_window = int(context) if context is not None else None
         except (TypeError, ValueError):
@@ -188,6 +197,9 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
         prices.append(
             CataloguePrice(
                 model_id=model_id,
+                input_modalities=_string_list(entry.get("input_modalities")),
+                output_modalities=_string_list(entry.get("output_modalities")),
+                supported_features=_string_list(entry.get("supported_features")),
                 input_per_mtok=input_rate,
                 output_per_mtok=output_rate,
                 currency=str(currency).upper(),
@@ -199,6 +211,19 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
         )
 
     return prices, unparsable
+
+
+def _string_list(value: Any) -> tuple[str, ...]:
+    """A catalogue's string array, normalised and deduplicated.
+
+    Lower-cased and sorted so that two imports of the same model produce the
+    same value, and a re-import is therefore visibly a no-op rather than a
+    change nobody made.
+    """
+    if not isinstance(value, list):
+        return ()
+    seen = {str(item).strip().lower() for item in value if str(item).strip()}
+    return tuple(sorted(seen))
 
 
 def _kind_of(entry: dict[str, Any]) -> ModelKind:
