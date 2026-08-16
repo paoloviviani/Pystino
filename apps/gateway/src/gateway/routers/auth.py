@@ -11,7 +11,7 @@ import logging
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
 from joserfc import jwt
 from joserfc.errors import JoseError
@@ -37,13 +37,53 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 _FLOW_COOKIE = "gw_login"
 _FLOW_TTL_SECONDS = 600
 
+#: Where a browser lands after signing in, when it did not ask for anywhere.
+_DEFAULT_LANDING = "/console"
 
-def _issue_flow_cookie(secret: str, *, state: str, nonce: str, verifier: str) -> str:
+
+def _safe_next(value: str | None) -> str | None:
+    """A caller-supplied return path, or ``None`` if it is not obviously ours.
+
+    This is the input to a redirect the browser follows *while holding a
+    freshly minted session cookie*, which makes a permissive check here an open
+    redirect: an attacker sends someone a login link with their own host in
+    ``next``, the victim signs in for real, and lands on a page of the
+    attacker's choosing that looks like it came from us.
+
+    So the rule is a path on this origin and nothing else. Rejected rather than
+    sanitised — a value we had to repair is a value we did not understand, and
+    guessing at intent is how the interesting cases get through:
+
+    * ``//evil.test`` and ``/\\evil.test`` are protocol-relative URLs, which
+      browsers resolve to another host despite the leading slash;
+    * anything with a scheme, even after whitespace or control characters,
+      which some parsers strip before resolving;
+    * ``\\r``/``\\n``, which can split a header on a less careful stack than
+      this one.
+    """
+    if not value or not value.startswith("/"):
+        return None
+    if value.startswith("//") or value.startswith("/\\"):
+        return None
+    if any(character in value for character in "\r\n\t") or any(
+        ord(character) < 0x20 or ord(character) == 0x7F for character in value
+    ):
+        return None
+    return value
+
+
+def _issue_flow_cookie(
+    secret: str, *, state: str, nonce: str, verifier: str, next_path: str | None
+) -> str:
     now = int(utcnow().timestamp())
     claims = {
         "state": state,
         "nonce": nonce,
         "cv": verifier,
+        # Carried in the signed cookie rather than round-tripped through the
+        # identity provider: it comes back to us tamper-evident, and it is
+        # nobody else's business where this browser was headed.
+        "nx": next_path,
         "iat": now,
         "exp": now + _FLOW_TTL_SECONDS,
         "typ": "gw-login",
@@ -74,7 +114,15 @@ def _oidc_client(request: Request) -> OIDCClient:
 
 
 @router.get("/login")
-async def login(request: Request, settings: SettingsDep) -> RedirectResponse:
+async def login(
+    request: Request, settings: SettingsDep, next: str | None = None
+) -> RedirectResponse:
+    """Start the flow, remembering where the browser was trying to go.
+
+    ``next`` lets a deep link survive signing in: following a bookmark to a
+    quota rule should end at that rule, not at the overview with the reader
+    navigating back to where they already were.
+    """
     client = _oidc_client(request)
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
@@ -96,6 +144,7 @@ async def login(request: Request, settings: SettingsDep) -> RedirectResponse:
             state=state,
             nonce=nonce,
             verifier=verifier,
+            next_path=_safe_next(next),
         ),
         max_age=_FLOW_TTL_SECONDS,
         httponly=True,
@@ -113,7 +162,7 @@ async def callback(
     code: str | None = None,
     state: str | None = None,
     error: str | None = None,
-) -> JSONResponse:
+) -> Response:
     if error:
         raise BadRequestError(f"The identity provider returned an error: {error}")
     if not code or not state:
@@ -161,16 +210,33 @@ async def callback(
 
     logger.info("oidc login: user=%s subject=%s groups=%s", user.id, user.subject, groups)
 
-    response = JSONResponse(
-        {
-            "status": "ok",
-            "user_id": str(user.id),
-            "groups": groups,
-            "default_billing_group_id": (
-                str(user.default_billing_group_id) if user.default_billing_group_id else None
-            ),
-        }
-    )
+    # A browser ends up here, not an API client — it arrived by following a
+    # redirect from the identity provider — so this ends the journey where the
+    # reader was going. It used to answer with the JSON below, which left them
+    # looking at `{"status":"ok",...}` in the address bar of what should have
+    # been the console, with a working session and no sign of it.
+    #
+    # 303 rather than 302: the result of a completed exchange is a different
+    # resource, and 303 says so without inviting a replay of this URL. The
+    # authorization code is single-use, so a reload of the callback would fail.
+    #
+    # Headless deployments (`INCLUDE_CONSOLE=false`) keep the JSON: there is no
+    # page to send anyone to, and something is driving this programmatically.
+    landing = _safe_next(flow.get("nx")) or _DEFAULT_LANDING
+    response: Response
+    if getattr(request.app.state, "console_mounted", False):
+        response = RedirectResponse(landing, status_code=303)
+    else:
+        response = JSONResponse(
+            {
+                "status": "ok",
+                "user_id": str(user.id),
+                "groups": groups,
+                "default_billing_group_id": (
+                    str(user.default_billing_group_id) if user.default_billing_group_id else None
+                ),
+            }
+        )
     response.set_cookie(
         settings.session_cookie_name,
         issue_session_token(

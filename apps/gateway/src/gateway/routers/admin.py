@@ -369,9 +369,17 @@ async def update_provider(
 ) -> ProviderResponse:
     """Change a provider.
 
-    ``name`` is not editable: models reference the row by id, but people
-    reference it by name in conversation and in the console, and a rename makes
-    every past mention of it wrong.
+    ``name`` is editable, which it was not. The argument against was that
+    people refer to a provider by name and a rename makes past mentions wrong —
+    true, and outweighed by the case that actually happens: it was mistyped
+    when it was created. There is no way out of that otherwise, because a
+    provider serving any model refuses to be deleted, so the typo is permanent
+    and appears in the console and in ``owned_by`` on every ``/v1/models`` card
+    it serves.
+
+    Nothing references the name as a key: models point at the row by id, and
+    ``usage_records`` stores the provider the *upstream* reported, not this
+    name, so renaming leaves historical spend intact and correctly attributed.
 
     The three-way ``api_key`` convention matters here — omitted keeps the stored
     credential, a value replaces it, an empty string clears it. A two-way
@@ -392,7 +400,13 @@ async def update_provider(
     for field, value in fields.items():
         setattr(provider, field, value)
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # Names are unique, so a rename can collide the same way a create can,
+        # and must answer the same way rather than with a 500.
+        await session.rollback()
+        raise ConflictError(f"A provider named {payload.name!r} already exists.") from exc
     await session.refresh(provider)
 
     # The cached client was built from the old values. Dropped rather than

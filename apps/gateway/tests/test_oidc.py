@@ -25,6 +25,7 @@ from gateway.oidc import (
     split_claim_path,
     verify_session_token,
 )
+from gateway.routers.auth import _safe_next
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -352,3 +353,60 @@ class TestSessionTokens:
         )
         with pytest.raises(OIDCError):
             verify_session_token(wrong_type, secret=SECRET)
+
+
+class TestReturnPath:
+    """Where the browser is sent after signing in.
+
+    The callback hands the browser a fresh session cookie and then redirects
+    it, which makes this function the difference between a convenience and an
+    open redirect. An attacker who can choose the destination sends a victim a
+    login link, the victim signs in for real, and lands somewhere hostile with
+    every appearance of having arrived from us.
+    """
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/console",
+            "/console/admin/models",
+            "/console/admin/users?q=alice&limit=50",
+            "/console/admin/quotas#rule-3",
+        ],
+    )
+    def test_a_path_on_this_origin_is_kept(self, path: str) -> None:
+        assert _safe_next(path) == path
+
+    @pytest.mark.parametrize(
+        "hostile",
+        [
+            # Protocol-relative: a browser resolves this to another host, the
+            # leading slash notwithstanding. The one everybody misses.
+            "//evil.test/phish",
+            "/\\evil.test/phish",
+            "https://evil.test",
+            "http://evil.test",
+            "javascript:alert(1)",
+            "evil.test",
+            # Header splitting, on a less careful stack than this one.
+            "/console\r\nSet-Cookie: a=b",
+            "/console\nLocation: http://evil.test",
+        ],
+    )
+    def test_anything_else_is_refused(self, hostile: str) -> None:
+        assert _safe_next(hostile) is None
+
+    def test_absent_is_not_an_error(self) -> None:
+        """No `next` is the ordinary case — the caller falls back to a default."""
+        assert _safe_next(None) is None
+        assert _safe_next("") is None
+
+    def test_refused_rather_than_repaired(self) -> None:
+        """A value we had to fix is a value we did not understand.
+
+        Stripping the leading slashes off `//evil.test` yields `evil.test`,
+        which is a *relative* path and resolves back to this origin — so the
+        sanitising version of this function silently sends the reader to a page
+        that does not exist instead of refusing an attack.
+        """
+        assert _safe_next("//evil.test") is None
