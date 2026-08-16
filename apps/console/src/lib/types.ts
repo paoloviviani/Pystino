@@ -70,6 +70,18 @@ export interface ApiKey {
   last_used_at: string | null;
 }
 
+/**
+ * What minting returns, exactly once.
+ *
+ * `secret` exists on this response and nowhere else — the gateway stores only a
+ * hash, so it cannot be re-read, re-sent or recovered. A separate type rather
+ * than an optional field on `ApiKey`, so that anywhere holding a plain `ApiKey`
+ * provably has no secret in it.
+ */
+export interface MintedApiKey extends ApiKey {
+  secret: string;
+}
+
 // -- administration ----------------------------------------------------------
 //
 // Decimals are strings here for the same reason they are above: the gateway

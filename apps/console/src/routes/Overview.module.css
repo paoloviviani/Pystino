@@ -43,3 +43,36 @@
   font-family: var(--font-mono);
   font-size: var(--text-sm);
 }
+
+/* The minted secret. A long unbroken token that must stay readable on a phone
+   and stay selectable everywhere — `user-select` is not set to `all`, because
+   that makes a partial selection impossible when the copy button fails and
+   hand-copying is the fallback. */
+.secretRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.secret {
+  flex: 1;
+  min-width: 12rem;
+  padding: var(--space-3);
+  border: var(--border-width) solid var(--colour-border);
+  border-radius: var(--radius-md);
+  background: var(--colour-surface-sunken);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.copyFallback {
+  color: var(--colour-warn);
+  font-size: var(--text-sm);
+}
+
+.secretDetail {
+  color: var(--colour-text-muted);
+  font-size: var(--text-sm);
+}
