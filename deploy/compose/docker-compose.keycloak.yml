@@ -40,7 +40,15 @@ services:
       # Pinning the frontend to the *internal* name instead is the trap: token
       # validation then works, but the browser is redirected somewhere it cannot
       # reach.
-      KC_HOSTNAME: http://localhost:8080
+      #
+      # The port follows KEYCLOAK_PORT so that a laptop with something already
+      # on 8080 is a one-variable fix rather than a dead end. Set the same
+      # number on both ends and the browser, the tunnel and the `iss` claim all
+      # still agree:
+      #
+      #   KEYCLOAK_PORT=18080 docker compose ... up -d
+      #   ssh -L 18080:localhost:18080 -L 8000:localhost:8000 ubuntu@<host>
+      KC_HOSTNAME: http://localhost:${KEYCLOAK_PORT:-8080}
       KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_HOSTNAME_STRICT: "false"
       KC_HEALTH_ENABLED: "true"
