@@ -175,6 +175,183 @@ async def embeddings(request: Request) -> JSONResponse:
     )
 
 
+async def responses(request: Request) -> JSONResponse | StreamingResponse:
+    """The Responses API, in the Cortecs shape.
+
+    Usage is flat — `input_tokens`/`output_tokens`/`total_tokens` with no
+    nested detail objects — because that is what the reference provider
+    returns, and a fake that reports the richer OpenAI shape would let a bug in
+    the flat path through.
+    """
+    body = await request.json()
+    LAST_REQUEST.clear()
+    LAST_REQUEST.update(body)
+
+    raw = body.get("input")
+    echoed = raw if isinstance(raw, str) else _echo({"messages": raw or []})
+    text = f"echo: {echoed}"
+
+    def envelope(status: str = "completed") -> dict[str, Any]:
+        return {
+            "id": "resp-smoke",
+            "object": "response",
+            "created_at": 1_700_000_000,
+            "status": status,
+            "provider": "fake-provider",
+            "model": body.get("model", MODEL),
+            "output": [
+                {
+                    "id": "msg-1",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text}],
+                }
+            ],
+            "output_text": text,
+            "usage": {
+                "input_tokens": 1_000_000,
+                "output_tokens": 500_000,
+                "total_tokens": 1_500_000,
+            },
+        }
+
+    if not body.get("stream"):
+        return JSONResponse(envelope())
+
+    async def stream() -> AsyncIterator[bytes]:
+        events: list[dict[str, Any]] = [
+            {"type": "response.created", "response": {**envelope("in_progress"), "usage": None}},
+            {"type": "response.output_text.delta", "delta": text, "item_id": "msg-1"},
+            {"type": "response.output_text.done", "text": text, "item_id": "msg-1"},
+            {"type": "response.completed", "response": envelope()},
+        ]
+        frames = "".join(f"data: {json.dumps(event)}\n\n" for event in events).encode()
+        for index in range(0, len(frames), SLICE_SIZE):
+            yield frames[index : index + SLICE_SIZE]
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+async def messages(request: Request) -> JSONResponse | StreamingResponse:
+    """Anthropic Messages, with usage split across two frames when streaming.
+
+    The split is the whole point of having this fake: `message_start` carries
+    the input count and `message_delta` the output count, and a gateway that
+    let the last frame win would record a prompt of zero.
+
+    `input_tokens` here is the *uncached remainder*, matching Anthropic — the
+    prompt is that plus the two cache figures.
+    """
+    body = await request.json()
+    LAST_REQUEST.clear()
+    LAST_REQUEST.update(body)
+
+    text = f"echo: {_echo(body)}"
+    model = body.get("model", MODEL)
+    usage_in = {
+        "input_tokens": 600_000,
+        "cache_creation_input_tokens": 100_000,
+        "cache_read_input_tokens": 300_000,
+    }
+
+    if not body.get("stream"):
+        return JSONResponse(
+            {
+                "id": "msg-smoke",
+                "type": "message",
+                "role": "assistant",
+                "model": model,
+                "content": [{"type": "text", "text": text}],
+                "stop_reason": "end_turn",
+                "stop_sequence": None,
+                "usage": {**usage_in, "output_tokens": 500_000},
+            }
+        )
+
+    async def stream() -> AsyncIterator[bytes]:
+        events: list[tuple[str, dict[str, Any]]] = [
+            (
+                "message_start",
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg-smoke",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": model,
+                        "content": [],
+                        "stop_reason": None,
+                        "usage": {**usage_in, "output_tokens": 1},
+                    },
+                },
+            ),
+            (
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            ),
+            (
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": text},
+                },
+            ),
+            ("content_block_stop", {"type": "content_block_stop", "index": 0}),
+            (
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                    # Only the output count, as Anthropic sends it.
+                    "usage": {"output_tokens": 500_000},
+                },
+            ),
+            ("message_stop", {"type": "message_stop"}),
+        ]
+        frames = "".join(
+            f"event: {name}\ndata: {json.dumps(event)}\n\n" for name, event in events
+        ).encode()
+        for index in range(0, len(frames), SLICE_SIZE):
+            yield frames[index : index + SLICE_SIZE]
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+async def images(request: Request) -> JSONResponse:
+    """Image generation.
+
+    Returns `n` images and *no* usage object, which is the per-image-priced
+    case — the one where the gateway has to bill from the picture count alone.
+    """
+    body = await request.json()
+    LAST_REQUEST.clear()
+    LAST_REQUEST.update(body)
+
+    count = int(body.get("n") or 1)
+    return JSONResponse(
+        {
+            "created": 1_700_000_000,
+            "size": body.get("size") or "1024x1024",
+            "data": [
+                {
+                    # A one-pixel PNG: small enough to log, real enough to decode.
+                    "b64_json": (
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8"
+                        "z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+                    ),
+                    "revised_prompt": f"a picture of {body.get('prompt', '')}",
+                }
+                for _ in range(count)
+            ],
+        }
+    )
+
+
 async def last_request(request: Request) -> JSONResponse:
     """What this fake received most recently.
 
@@ -222,6 +399,13 @@ async def models(request: Request) -> JSONResponse:
                     ctx=8192,
                     modalities=("embeddings",),
                 ),
+                entry(
+                    "upstream/image-model",
+                    "0",
+                    "0",
+                    ctx=0,
+                    modalities=("image",),
+                ),
             ]
         }
     )
@@ -231,6 +415,9 @@ app = Starlette(
     routes=[
         Route("/v1/chat/completions", chat_completions, methods=["POST"]),
         Route("/v1/embeddings", embeddings, methods=["POST"]),
+        Route("/v1/responses", responses, methods=["POST"]),
+        Route("/v1/messages", messages, methods=["POST"]),
+        Route("/v1/images/generations", images, methods=["POST"]),
         Route("/v1/models", models, methods=["GET"]),
         Route("/_last_request", last_request, methods=["GET"]),
     ]

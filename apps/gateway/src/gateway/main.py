@@ -27,7 +27,19 @@ from gateway.quota import (
     ValkeyCounterStore,
 )
 from gateway.redaction import build_redactor
-from gateway.routers import admin, auth, chat, console, embeddings, health, me, models
+from gateway.routers import (
+    admin,
+    auth,
+    chat,
+    console,
+    embeddings,
+    health,
+    images,
+    me,
+    messages,
+    models,
+)
+from gateway.routers import responses as responses_router
 from gateway.secrets import SecretBox
 from gateway.upstream import build_http_client
 
@@ -223,6 +235,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(chat.router)
     app.include_router(embeddings.router)
+    app.include_router(responses_router.router)
+    app.include_router(messages.router)
+    app.include_router(images.router)
     app.include_router(models.router)
     app.include_router(auth.router)
     app.include_router(me.router)

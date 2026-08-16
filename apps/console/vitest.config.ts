@@ -13,6 +13,13 @@ export default mergeConfig(
       setupFiles: ["./src/test-setup.ts"],
       globals: true,
       css: true,
+      // Six times vitest's default. Not because any test is slow — the whole
+      // suite is about eighteen seconds — but because it gets run beside the
+      // Python suite and a compose stack on a small machine, and once that
+      // starts swapping a test can sit descheduled for a minute and fail
+      // having done nothing wrong. A ceiling costs nothing when there is
+      // memory to spare.
+      testTimeout: 30_000,
     },
   }),
 );

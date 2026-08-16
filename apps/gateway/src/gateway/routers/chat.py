@@ -23,26 +23,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack
-from decimal import Decimal
 from typing import Any
 
 import orjson
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from gateway.access import accessible_model_by_name
 from gateway.accounting import (
     RequestAccounting,
-    RequestContext,
     TokenCounts,
-    compute_cost,
-    select_price,
 )
-from gateway.accounting.cost import CostBreakdown, CurrencyMismatch
 from gateway.deps import (
     EstimatorDep,
     PrincipalDep,
@@ -54,22 +46,15 @@ from gateway.deps import (
 )
 from gateway.errors import (
     BadRequestError,
-    ModelNotFoundError,
-    ServiceUnavailableError,
-    UpstreamUnavailableError,
     error_payload,
-    error_response,
 )
-from gateway.models import ModelDef, ModelKind, UsageStatus
-from gateway.providers import ProviderConfigurationError
+from gateway.models import ApiSurface, ModelDef, UsageStatus
 from gateway.quota import (
-    QuotaAmounts,
     QuotaEngine,
-    QuotaExceeded,
-    QuotaUnavailable,
     Reservation,
 )
 from gateway.redaction import RedactionOutcome, Redactor
+from gateway.routers import _metered
 from gateway.schemas import ChatCompletionRequest
 from gateway.sse import SSEEvent, chain, iter_sse_events
 from gateway.sse.pipeline import StreamStage, tap
@@ -79,32 +64,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["openai"])
 
-_STREAM_HEADERS = {
+SURFACE = ApiSurface.CHAT_COMPLETIONS
+
+#: Re-exported: the embeddings route and the tests import it from here, and it
+#: was defined here before the metering was shared out.
+estimate_cost = _metered.estimate_cost
+
+STREAM_HEADERS = {
     "cache-control": "no-cache",
     "connection": "keep-alive",
     # Stops nginx buffering the stream into uselessness.
     "x-accel-buffering": "no",
 }
-
-
-async def load_model_for_caller(
-    session: AsyncSession, name: str, *, user_id: uuid.UUID | None, group_id: uuid.UUID
-) -> ModelDef:
-    """Fetch a model this caller is allowed to use.
-
-    Access is the union of group and personal grants; the predicate lives in
-    gateway.access so this and /v1/models cannot drift apart.
-
-    "Not available to you" and "does not exist" deliberately return the same
-    404: which models another group can reach is not this caller's business.
-    """
-    stmt = accessible_model_by_name(name, user_id=user_id, group_ids=[group_id])
-    model = (await session.execute(stmt)).scalars().first()
-    if model is None:
-        raise ModelNotFoundError(
-            f"The model {name!r} does not exist or you do not have access to it."
-        )
-    return model
 
 
 def rename_model_stage(client_facing_name: str) -> StreamStage:
@@ -191,15 +162,6 @@ def build_upstream_payload(
     return payload
 
 
-def estimate_cost(model: ModelDef, counts: TokenCounts, *, currency: str) -> CostBreakdown:
-    price = select_price(list(model.prices))
-    try:
-        return compute_cost(counts, price, billing_currency=currency, model_name=model.name)
-    except CurrencyMismatch as exc:
-        # Refuse rather than bill in the wrong currency.
-        raise BadRequestError(str(exc), code="price_currency_mismatch") from exc
-
-
 # response_model=None because this endpoint returns either a JSONResponse or a
 # StreamingResponse, and FastAPI would otherwise try to build a Pydantic response
 # model from that union. The response body is OpenAI's schema, not ours, and is
@@ -219,29 +181,9 @@ async def chat_completions(
     if not body.messages:
         raise BadRequestError("'messages' must contain at least one message.")
 
-    request_id = request.headers.get(settings.request_id_header) or uuid.uuid4().hex
-    model = await load_model_for_caller(
-        session,
-        body.model,
-        user_id=principal.user.id,
-        group_id=principal.billing_group.id,
-    )
-    if model.kind is not ModelKind.CHAT:
-        # Symmetric with the embeddings route: name the mistake here rather than
-        # forward it and return whatever that provider says about a chat request
-        # for an embedding model.
-        raise BadRequestError(
-            f"{model.name!r} is an embedding model. Use /v1/embeddings for it.",
-            code="wrong_model_kind",
-        )
-
-    # Which endpoint serves this model, with that endpoint's credentials. A
-    # misconfigured provider surfaces here, before any accounting row exists.
-    try:
-        upstream = await providers.upstream_for(model.provider)
-    except ProviderConfigurationError as exc:
-        logger.error("provider misconfigured for model %s: %s", model.name, exc)
-        raise UpstreamUnavailableError(str(exc)) from exc
+    request_id = _metered.request_id_for(request, settings)
+    model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
+    upstream = await _metered.resolve_upstream(providers, model)
 
     # -- redaction (step 2) -------------------------------------------------
     outcome = await redactor.redact_request(body.messages)
@@ -253,53 +195,24 @@ async def chat_completions(
         * body.choice_count()
     )
     worst_case = TokenCounts(prompt=prompt_tokens, completion=max_output)
-    worst_case_cost = estimate_cost(model, worst_case, currency=settings.billing_currency)
 
-    try:
-        reservation = await quota.check_and_reserve(
-            session,
-            principal.quota_subject,
-            QuotaAmounts(
-                tokens=Decimal(worst_case.total),
-                cost=worst_case_cost.total,
-            ),
-        )
-    except QuotaExceeded as exc:
-        logger.info("quota refusal for user=%s: %s", principal.user.id, exc)
-        return error_response(
-            f"Quota exceeded. {exc}",
-            status_code=429,
-            type_="insufficient_quota",
-            code="quota_exceeded",
-            headers={"retry-after": str(exc.retry_after_seconds)},
-        )
-    except QuotaUnavailable as exc:
-        raise ServiceUnavailableError(
-            "Quota state is temporarily unavailable, so the request was refused "
-            "rather than served unmetered."
-        ) from exc
-
-    # -- usage row before the upstream call (step 5) ------------------------
-    accounting = RequestAccounting(
-        context=RequestContext(
-            request_id=request_id,
-            model_name=model.name,
-            currency=settings.billing_currency,
-            streamed=body.stream,
-            user_id=principal.user.id,
-            group_id=principal.billing_group.id,
-            api_key_id=principal.api_key.id if principal.api_key else None,
-            model_id=model.id,
-            estimated_prompt_tokens=prompt_tokens,
-            redaction_engine=outcome.engine,
-            redacted_entity_count=outcome.entity_count,
-        ),
-        session_factory=request.app.state.session_factory,
+    # -- reserve, then open the usage row (steps 4-5) -----------------------
+    metered = await _metered.begin(
+        request,
+        session=session,
+        principal=principal,
         settings=settings,
+        quota=quota,
         estimator=estimator,
         model=model,
+        surface=SURFACE,
+        request_id=request_id,
+        worst_case=worst_case,
+        outcome=outcome,
+        streamed=body.stream,
     )
-    await accounting.begin()
+    if isinstance(metered, JSONResponse):
+        return metered
 
     payload = build_upstream_payload(
         body,
@@ -317,9 +230,7 @@ async def chat_completions(
             outcome=outcome,
             redactor=redactor,
             upstream=upstream,
-            accounting=accounting,
-            quota=quota,
-            reservation=reservation,
+            metered=metered,
             request_id=request_id,
         )
 
@@ -329,9 +240,7 @@ async def chat_completions(
         outcome=outcome,
         redactor=redactor,
         upstream=upstream,
-        accounting=accounting,
-        quota=quota,
-        reservation=reservation,
+        metered=metered,
         request_id=request_id,
     )
 
@@ -343,39 +252,25 @@ async def _buffered_response(
     outcome: RedactionOutcome,
     redactor: Redactor,
     upstream: OpenAICompatibleUpstream,
-    accounting: RequestAccounting,
-    quota: QuotaEngine,
-    reservation: Reservation,
+    metered: _metered.Metered,
     request_id: str,
 ) -> JSONResponse:
     """Non-streaming completion."""
     try:
         response = await upstream.chat_completion(payload, request_id=request_id)
     except UpstreamError as exc:
-        actuals = await accounting.finalise(
-            status=UsageStatus.UPSTREAM_ERROR,
-            error_code="upstream_unreachable",
-            error_message=str(exc),
-        )
-        await quota.settle(reservation, actuals)
-        raise UpstreamUnavailableError("The upstream provider could not be reached.") from exc
+        raise await metered.upstream_unreachable(exc) from exc
 
     if not response.ok:
-        actuals = await accounting.finalise(
-            status=UsageStatus.UPSTREAM_ERROR,
-            upstream_status=response.status_code,
-            error_code="upstream_error",
-            error_message=(response.raw[:500].decode("utf-8", "replace") if response.raw else None),
+        return await metered.upstream_refused(
+            status_code=response.status_code,
+            message=(response.raw[:500].decode("utf-8", "replace") if response.raw else None),
+            content=response.payload
+            or error_payload("The upstream provider returned an error.", type_="api_error"),
         )
-        await quota.settle(reservation, actuals)
-        # Pass the provider's own error through: clients act on these.
-        content = response.payload or error_payload(
-            "The upstream provider returned an error.", type_="api_error"
-        )
-        return JSONResponse(status_code=response.status_code, content=content)
 
     body_payload = response.payload or {}
-    accounting.observe_payload(body_payload)
+    metered.accounting.observe_payload(body_payload)
 
     # Report our model name, and restore any placeholders we introduced.
     body_payload["model"] = model.name
@@ -386,11 +281,7 @@ async def _buffered_response(
         if isinstance(message, dict) and isinstance(message.get("content"), str):
             message["content"] = await redactor.redact_response_text(message["content"], outcome)
 
-    actuals = await accounting.finalise(
-        status=UsageStatus.COMPLETED, upstream_status=response.status_code
-    )
-    await quota.settle(reservation, actuals)
-
+    await metered.completed(upstream_status=response.status_code)
     return JSONResponse(status_code=200, content=body_payload)
 
 
@@ -403,9 +294,7 @@ async def _stream_response(
     outcome: RedactionOutcome,
     redactor: Redactor,
     upstream: OpenAICompatibleUpstream,
-    accounting: RequestAccounting,
-    quota: QuotaEngine,
-    reservation: Reservation,
+    metered: _metered.Metered,
     request_id: str,
 ) -> JSONResponse | StreamingResponse:
     """Streaming completion.
@@ -422,30 +311,18 @@ async def _stream_response(
         )
     except UpstreamError as exc:
         await stack.aclose()
-        actuals = await accounting.finalise(
-            status=UsageStatus.UPSTREAM_ERROR,
-            error_code="upstream_unreachable",
-            error_message=str(exc),
-        )
-        await quota.settle(reservation, actuals)
-        raise UpstreamUnavailableError("The upstream provider could not be reached.") from exc
+        raise await metered.upstream_unreachable(exc) from exc
 
     if upstream_response.status_code >= 400:
         raw = await upstream_response.aread()
         await stack.aclose()
-        actuals = await accounting.finalise(
-            status=UsageStatus.UPSTREAM_ERROR,
-            upstream_status=upstream_response.status_code,
-            error_code="upstream_error",
-            error_message=raw[:500].decode("utf-8", "replace") if raw else None,
-        )
-        await quota.settle(reservation, actuals)
         try:
             content = orjson.loads(raw) if raw else None
         except orjson.JSONDecodeError:
             content = None
-        return JSONResponse(
+        return await metered.upstream_refused(
             status_code=upstream_response.status_code,
+            message=raw[:500].decode("utf-8", "replace") if raw else None,
             content=content
             or error_payload("The upstream provider returned an error.", type_="api_error"),
         )
@@ -458,45 +335,41 @@ async def _stream_response(
                 events,
                 # Observe first: accounting must see usage frames that the client
                 # will not be shown.
-                tap(accounting.observe_event),
+                tap(metered.accounting.observe_event),
                 rename_model_stage(model.name),
                 redactor.response_stage(outcome),
                 usage_visibility_stage(body.client_wants_usage()),
             )
             async for event in pipeline:
                 yield event.encode()
-                await accounting.maybe_flush()
+                await metered.accounting.maybe_flush()
             completed = True
         finally:
             await stack.aclose()
             if completed:
-                actuals = await accounting.finalise(
-                    status=UsageStatus.COMPLETED,
-                    upstream_status=upstream_response.status_code,
-                )
-                await quota.settle(reservation, actuals)
+                await metered.completed(upstream_status=upstream_response.status_code)
             else:
                 # The client went away (or something failed mid-stream). We are
                 # very likely inside a cancelled task, where awaiting anything
                 # re-raises immediately — so finalisation is handed to a detached
                 # task instead of awaited. Without this, the tokens already
                 # generated and paid for would never be recorded.
-                _spawn_finalisation(
+                spawn_finalisation(
                     request,
-                    accounting=accounting,
-                    quota=quota,
-                    reservation=reservation,
+                    accounting=metered.accounting,
+                    quota=metered.quota,
+                    reservation=metered.reservation,
                     upstream_status=upstream_response.status_code,
                 )
 
     return StreamingResponse(
         body_iterator(),
         media_type="text/event-stream",
-        headers=_STREAM_HEADERS,
+        headers=STREAM_HEADERS,
     )
 
 
-def _spawn_finalisation(
+def spawn_finalisation(
     request: Request,
     *,
     accounting: RequestAccounting,

@@ -27,7 +27,7 @@ from datetime import datetime
 import httpx
 
 from gateway.config import UpstreamSettings
-from gateway.models import Provider
+from gateway.models import AuthScheme, Provider
 from gateway.secrets import SecretBox, SecretDecryptionError
 from gateway.upstream import OpenAICompatibleUpstream, build_http_client
 
@@ -79,6 +79,8 @@ class ProviderRegistry:
 
     @staticmethod
     def _fingerprint(provider: Provider) -> tuple[str, str, datetime]:
+        # `updated_at` covers every other editable field, including the auth
+        # scheme: an edit bumps it, which retires the cached client.
         return (provider.base_url, provider.api_key_encrypted, provider.updated_at)
 
     def _settings_for(self, provider: Provider) -> UpstreamSettings:
@@ -97,6 +99,10 @@ class ProviderRegistry:
                 "base_url": provider.base_url.rstrip("/"),
                 "api_key": _as_secret(api_key),
                 "extra_headers": dict(provider.extra_headers or {}),
+                # `or BEARER` because a Provider built in memory and not yet
+                # flushed has no column default applied; the registry is handed
+                # such objects by the provider connection test.
+                "auth_scheme": (provider.auth_scheme or AuthScheme.BEARER).value,
             }
         )
 

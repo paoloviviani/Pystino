@@ -40,6 +40,19 @@ export function AdminPricing() {
       render: (price) => <Money amount={price.output_per_mtok} currency={price.currency} />,
     },
     {
+      key: "image",
+      header: "Per image",
+      numeric: true,
+      // Only image models carry one, and showing a dash beats showing zero:
+      // "not priced this way" and "free" are different facts.
+      render: (price) =>
+        price.per_image ? (
+          <Money amount={price.per_image} currency={price.currency} />
+        ) : (
+          <span className={styles.muted}>—</span>
+        ),
+    },
+    {
       key: "source",
       header: "Source",
       render: (price) => <Badge>{price.source}</Badge>,
@@ -102,6 +115,7 @@ function AppendPrice({ modelId, modelName }: { modelId: string; modelName: strin
   const create = useCreatePrice();
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
+  const [perImage, setPerImage] = useState("");
   const [effective, setEffective] = useState("");
 
   const submit = () => {
@@ -110,11 +124,21 @@ function AppendPrice({ modelId, modelName }: { modelId: string; modelName: strin
         modelId,
         input_per_mtok: input,
         output_per_mtok: output,
+        // Omitted rather than sent as zero: zero is a real price meaning
+        // "free", and a token-priced model has no per-image price at all.
+        per_image: perImage === "" ? null : perImage,
         // A local datetime-local value carries no zone; converting through Date
         // makes the browser's zone explicit rather than letting the server guess.
         effective_from: effective ? new Date(effective).toISOString() : null,
       },
-      { onSuccess: () => { setInput(""); setOutput(""); setEffective(""); } },
+      {
+        onSuccess: () => {
+          setInput("");
+          setOutput("");
+          setPerImage("");
+          setEffective("");
+        },
+      },
     );
   };
 
@@ -147,6 +171,15 @@ function AppendPrice({ modelId, modelName }: { modelId: string; modelName: strin
             step="0.000001"
             value={output}
             onChange={(event) => setOutput(event.target.value)}
+          />
+          <Input
+            label="Per image"
+            type="number"
+            min="0"
+            step="0.000001"
+            value={perImage}
+            onChange={(event) => setPerImage(event.target.value)}
+            hint="Image models only. Charged per picture, on top of any token rates."
           />
           <Input
             label="Effective from"

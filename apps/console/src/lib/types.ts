@@ -42,6 +42,8 @@ export interface UsageReportRow {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  /** Pictures generated. Non-zero only for image models, which often bill per image. */
+  images: number;
   cost: string;
   estimated_requests: number;
   unavailable_requests: number;
@@ -74,12 +76,17 @@ export interface ApiKey {
 // serialises `Numeric` as a string so no float ever touches money, and typing
 // them as `number` would undo that at the last hop.
 
+/** What a model produces, and therefore which route may use it. */
+export type ModelKind = "chat" | "embedding" | "image";
+
 export interface Price {
   id: string;
   input_per_mtok: string;
   output_per_mtok: string;
   cache_read_per_mtok: string | null;
   cache_write_per_mtok: string | null;
+  /** Per generated image, for image models nobody prices per token. */
+  per_image: string | null;
   currency: string;
   effective_from: string;
   source: string;
@@ -94,7 +101,7 @@ export interface AdminModel {
   /** A model behind a deactivated provider is unreachable, and says so. */
   provider_is_active: boolean;
   /** "chat" or "embedding": which /v1 route may use it. */
-  kind: "chat" | "embedding";
+  kind: ModelKind;
   display_name: string | null;
   description: string | null;
   is_active: boolean;
@@ -207,6 +214,8 @@ export interface AdminProvider {
   is_active: boolean;
   /** Whether the gateway adds `stream_options.include_usage` to streaming calls. */
   forward_stream_options: boolean;
+  /** How the credential is presented. Anthropic's own API rejects a bearer token. */
+  auth_scheme: "bearer" | "x_api_key";
   /** How many models this provider serves — the blast radius of turning it off. */
   model_count: number;
   created_at: string;

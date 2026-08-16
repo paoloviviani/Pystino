@@ -26,16 +26,12 @@ does and does not buy.
 from __future__ import annotations
 
 import logging
-import uuid
-from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway.access import accessible_model_by_name
 from gateway.accounting import TokenCounts
-from gateway.accounting.recorder import RequestAccounting, RequestContext
 from gateway.deps import (
     EstimatorDep,
     PrincipalDep,
@@ -47,21 +43,17 @@ from gateway.deps import (
 )
 from gateway.errors import (
     BadRequestError,
-    ModelNotFoundError,
-    ServiceUnavailableError,
-    UpstreamUnavailableError,
-    error_response,
 )
-from gateway.models import ModelKind, UsageStatus
-from gateway.providers import ProviderConfigurationError
-from gateway.quota import QuotaAmounts, QuotaExceeded, QuotaUnavailable
-from gateway.routers.chat import estimate_cost
+from gateway.models import ApiSurface
+from gateway.routers import _metered
 from gateway.schemas import EmbeddingRequest
 from gateway.upstream import UpstreamError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["openai"])
+
+SURFACE = ApiSurface.EMBEDDINGS
 
 
 @router.post("/embeddings", response_model=None)
@@ -80,33 +72,9 @@ async def create_embeddings(
     if not texts or all(not text for text in texts):
         raise BadRequestError("'input' must contain at least one non-empty string.")
 
-    request_id = request.headers.get(settings.request_id_header) or uuid.uuid4().hex
-
-    stmt = accessible_model_by_name(
-        body.model,
-        user_id=principal.user.id,
-        group_ids=[principal.billing_group.id],
-    )
-    model = (await session.execute(stmt)).scalars().first()
-    if model is None:
-        raise ModelNotFoundError(
-            f"The model {body.model!r} does not exist or you do not have access to it."
-        )
-    if model.kind is not ModelKind.EMBEDDING:
-        # Refused here rather than forwarded, so the answer names the mistake
-        # instead of arriving as whatever error that provider returns for a chat
-        # model asked to embed.
-        raise BadRequestError(
-            f"{model.name!r} is a chat model. Use /v1/chat/completions for it, or "
-            "choose a model catalogued as an embedding model.",
-            code="wrong_model_kind",
-        )
-
-    try:
-        upstream = await providers.upstream_for(model.provider)
-    except ProviderConfigurationError as exc:
-        logger.error("provider misconfigured for model %s: %s", model.name, exc)
-        raise UpstreamUnavailableError(str(exc)) from exc
+    request_id = _metered.request_id_for(request, settings)
+    model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
+    upstream = await _metered.resolve_upstream(providers, model)
 
     # -- redaction ----------------------------------------------------------
     # Reuses the message-shaped interface so one engine covers both routes: each
@@ -117,50 +85,22 @@ async def create_embeddings(
 
     # -- reservation --------------------------------------------------------
     prompt_tokens = sum(estimator.count_text(text) for text in redacted)
-    counts = TokenCounts(prompt=prompt_tokens, completion=0)
-    reserve_cost = estimate_cost(model, counts, currency=settings.billing_currency)
-
-    try:
-        reservation = await quota.check_and_reserve(
-            session,
-            principal.quota_subject,
-            QuotaAmounts(tokens=Decimal(counts.total), cost=reserve_cost.total),
-        )
-    except QuotaExceeded as exc:
-        logger.info("quota refusal for user=%s: %s", principal.user.id, exc)
-        return error_response(
-            f"Quota exceeded. {exc}",
-            status_code=429,
-            type_="insufficient_quota",
-            code="quota_exceeded",
-            headers={"retry-after": str(exc.retry_after_seconds)},
-        )
-    except QuotaUnavailable as exc:
-        raise ServiceUnavailableError(
-            "Quota state is temporarily unavailable, so the request was refused "
-            "rather than served unmetered."
-        ) from exc
-
-    accounting = RequestAccounting(
-        context=RequestContext(
-            request_id=request_id,
-            model_name=model.name,
-            currency=settings.billing_currency,
-            streamed=False,
-            user_id=principal.user.id,
-            group_id=principal.billing_group.id,
-            api_key_id=principal.api_key.id if principal.api_key else None,
-            model_id=model.id,
-            estimated_prompt_tokens=prompt_tokens,
-            redaction_engine=outcome.engine,
-            redacted_entity_count=outcome.entity_count,
-        ),
-        session_factory=request.app.state.session_factory,
+    metered = await _metered.begin(
+        request,
+        session=session,
+        principal=principal,
         settings=settings,
+        quota=quota,
         estimator=estimator,
         model=model,
+        surface=SURFACE,
+        request_id=request_id,
+        worst_case=TokenCounts(prompt=prompt_tokens, completion=0),
+        outcome=outcome,
+        streamed=False,
     )
-    await accounting.begin()
+    if isinstance(metered, JSONResponse):
+        return metered
 
     payload: dict[str, Any] = body.model_dump(exclude_unset=True)
     payload["model"] = model.upstream_model
@@ -172,38 +112,20 @@ async def create_embeddings(
     try:
         response = await upstream.embeddings(payload, request_id=request_id)
     except UpstreamError as exc:
-        await accounting.finalise(
-            status=UsageStatus.UPSTREAM_ERROR,
-            error_code="upstream_unreachable",
-            error_message=str(exc),
-        )
-        await quota.release(reservation)
-        raise UpstreamUnavailableError("The upstream provider could not be reached.") from exc
+        raise await metered.upstream_unreachable(exc) from exc
 
     if response.status_code >= 400:
-        await accounting.finalise(
-            status=UsageStatus.UPSTREAM_ERROR,
-            upstream_status=response.status_code,
-            error_code="upstream_error",
-            error_message=_error_text(response.payload),
-        )
-        # Released, not settled: a refused request consumed no tokens, and
-        # holding the reservation would charge the caller for the provider's
-        # failure until the window rolled over.
-        await quota.release(reservation)
-        return JSONResponse(
+        return await metered.upstream_refused(
             status_code=response.status_code,
-            content=response.payload if response.payload is not None else {},
+            message=_metered.error_text(response.payload),
+            content=response.payload,
         )
 
     if response.payload is not None:
         # Feeds usage, and the model/provider that actually served it.
-        accounting.observe_payload(response.payload)
+        metered.accounting.observe_payload(response.payload)
 
-    actuals = await accounting.finalise(
-        status=UsageStatus.COMPLETED, upstream_status=response.status_code
-    )
-    await quota.settle(reservation, actuals)
+    await metered.completed(upstream_status=response.status_code)
 
     body_out = dict(response.payload or {})
     # Report our model name, not the upstream's, exactly as the chat route does:
@@ -212,12 +134,3 @@ async def create_embeddings(
     if body_out.get("model") is not None:
         body_out["model"] = model.name
     return JSONResponse(status_code=response.status_code, content=body_out)
-
-
-def _error_text(payload: dict[str, Any] | None) -> str | None:
-    if not payload:
-        return None
-    error = payload.get("error")
-    if isinstance(error, dict):
-        return str(error.get("message") or "")[:500]
-    return str(error or "")[:500] or None

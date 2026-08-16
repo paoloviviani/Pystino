@@ -421,6 +421,42 @@ is a page. Two other lookups were quadratic in disguise — rendering a page of
 models read *every* group and personal grant, and a page of users read every API
 key — now both restricted to the ids on the page.
 
+## Added after the plan — three more API surfaces
+
+[ADR 0030](adr/0030-more-surfaces.md). The three things deferred with "not now"
+at the end of ADR 0028: OpenAI's Responses API, Anthropic's Messages API and
+image generation. The reference provider serves all three from the same base
+URL with the same credential, so each is a request shape rather than a second
+gateway.
+
+Doing them together forced the refactor that doing them separately would have
+made unaffordable. `routers/_metered.py` now owns the reserve-then-settle
+ordering for all five `/v1` routes, and `protocols.py` owns where each surface
+keeps its usage, its served model and its assistant text — read by accounting
+and redaction alike. Chat and embeddings moved onto both, which is most of the
+diff.
+
+**Found while building it, and the reason this ADR matters:** Anthropic counts
+the prompt the opposite way round. OpenAI's `prompt_tokens` includes the cached
+tokens; Anthropic's `input_tokens` excludes them, so the prompt is
+`input_tokens + cache_creation + cache_read`. Reading it the OpenAI way
+subtracts a cache read from a figure that never contained it, and on a
+heavily-cached request bills nothing at all for the prompt. Each surface now
+names its reader explicitly, and a test computes both and asserts they
+disagree.
+
+Two smaller things fell out. `cache_write_per_mtok` had been on the price table
+since Phase 1 and `compute_cost` never read it — Anthropic reporting cache
+creation as its own billable slice made that gap real. And the two existing
+routes disagreed about whether a failed request releases or settles its
+reservation; they settle now, which is the answer that stays correct when a
+provider fails after producing something.
+
+Image models needed a unit of billing that is not a token: `per_image` on the
+price row, `image_count` and `image_size` on the usage row, an `images` column
+and a disclosure in the report so a row showing real money against zero tokens
+does not read as a bug.
+
 ## Explicitly out of scope
 
 Budgets with alerts (needs a notification path that does not exist), invoice

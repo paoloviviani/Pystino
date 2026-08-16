@@ -41,6 +41,7 @@ verified is marked as such in the ADR that depends on it.
 | [0027](0027-inference-providers.md) | Inference providers as configurable records, with keys encrypted at rest |
 | [0028](0028-embeddings-and-served-model.md) | Embeddings, and recording what actually served a request |
 | [0029](0029-pagination.md) | Pagination on the management listings, and server-side search |
+| [0030](0030-more-surfaces.md) | Responses, Anthropic Messages and image generation, over one metering path |
 
 ## Decisions recorded now, implemented later
 

@@ -45,6 +45,15 @@ export function AdminReports() {
       render: (row) => row.total_tokens.toLocaleString(),
     },
     {
+      key: "images",
+      header: "Images",
+      numeric: true,
+      // A dash, not a zero: most rows are not image rows, and a column of
+      // zeroes reads as "we generated no images" rather than "not applicable".
+      render: (row) =>
+        row.images ? row.images.toLocaleString() : <span className={styles.muted}>—</span>,
+    },
+    {
       key: "cost",
       header: "Spend",
       numeric: true,
@@ -116,7 +125,12 @@ export function AdminReports() {
               <Stat
                 label="Requests"
                 value={report.data.totals.requests.toLocaleString()}
-                detail={`${report.data.totals.total_tokens.toLocaleString()} tokens`}
+                detail={
+                  report.data.totals.images
+                    ? `${report.data.totals.total_tokens.toLocaleString()} tokens, ` +
+                      `${report.data.totals.images.toLocaleString()} images`
+                    : `${report.data.totals.total_tokens.toLocaleString()} tokens`
+                }
               />
               <Stat
                 label="Measured"
