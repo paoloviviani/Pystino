@@ -363,6 +363,54 @@ class TestReserveAndSettle:
         )
         assert (await store.totals([query], now=FIXED_NOW))[0].units == 10
 
+    async def test_a_refused_reservation_does_not_stay_on_the_counter(
+        self, session: AsyncSession, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """Reserving before deciding must not charge the refused.
+
+        Admission now increments first and judges afterwards, so a caller that
+        turns out to be over the limit has already added its estimate. If that
+        were left in place, fifty refusals would bury the window under fifty
+        estimates and the *next* legitimate request would be refused too — and
+        the counter would disagree with the ledger, which records nothing for a
+        request that never ran.
+        """
+        group_id = uuid.uuid4()
+        await add_rule(
+            session,
+            scope=LimitScope.GROUP,
+            scope_id=group_id,
+            metric=LimitMetric.TOKENS,
+            limit="1000",
+        )
+        store = InMemoryCounterStore()
+        quota = engine_for(store)
+        subject = QuotaSubject(None, group_id)
+
+        async def attempt() -> bool:
+            async with session_factory() as own_session:
+                try:
+                    await quota.check_and_reserve(
+                        own_session, subject, QuotaAmounts(tokens=Decimal(400))
+                    )
+                    return True
+                except QuotaExceeded:
+                    return False
+
+        admitted = sum(await asyncio.gather(*(attempt() for _ in range(50))))
+        assert admitted == 3, f"admitted {admitted} of 50"
+
+        # Only the three that were admitted are still on the counter. Summed
+        # straight out of the store rather than through a WindowQuery, so the
+        # assertion cannot be satisfied by a bucket the reader happens to miss.
+        held = sum(
+            units
+            for (scope_key, metric, _window), slot in store._buckets.items()
+            for units in slot.values()
+            if scope_key.endswith(str(group_id)) and metric == LimitMetric.TOKENS.value
+        )
+        assert held == 1200, f"counter holds {held}, expected 3 x 400"
+
     async def test_concurrent_requests_cannot_all_pass_the_same_check(
         self, session: AsyncSession, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
@@ -372,13 +420,14 @@ class TestReserveAndSettle:
         might use 400 tokens. Without reservations all ten would read a total of
         zero and all ten would proceed, spending up to 4000.
 
-        The upper bound is deliberately loose. `check_and_reserve` reads the
-        total, decides, then increments, with `await` points in between, so how
-        many callers see the same pre-reservation total depends on how the loop
-        interleaves — on a loaded machine this has admitted five. Asserting 3
-        would make a real weakness look like a flaky test; the property worth
-        pinning is that reservations are visible to concurrent callers at all,
-        which the gap between 5 and 10 shows. See ADR 0009.
+        Exactly three, not "between one and three". `check_and_reserve`
+        reserves and reads back in one atomic store operation, so each caller
+        sees a total that already contains every increment before its own and
+        the outcome does not depend on how the event loop interleaves.
+
+        This used to assert `1 <= admitted <= 3` and admitted five on a loaded
+        machine, because the check and the increment were separate awaits. If
+        this ever goes soft again, that is the regression.
         """
         group_id = uuid.uuid4()
         await add_rule(
@@ -406,10 +455,10 @@ class TestReserveAndSettle:
         results = await asyncio.gather(*(attempt() for _ in range(10)))
         admitted = sum(results)
 
-        # ceil(1000/400) = 3 is the figure a perfectly atomic reserve would
-        # give. The margin above it is the check-then-act window, not slack in
-        # the test: if this ever reaches 10, reservations have stopped working.
-        assert 1 <= admitted <= 5, f"admitted {admitted} of 10"
+        # ceil(1000/400): the first three see a pre-reservation total of 0,
+        # 400 and 800, all under the ceiling. Every later caller sees 1200 or
+        # more and is refused.
+        assert admitted == 3, f"admitted {admitted} of 10"
 
 
 # --------------------------------------------------------------------------
@@ -512,7 +561,11 @@ class TestFallback:
         finally:
             engine_logger.removeHandler(handler)
 
-        read_failures = [r for r in captured if "unavailable for reads" in r.getMessage()]
+        # "unavailable for reserve" on the admission path, "unavailable for
+        # reads" on a plain read. Two messages because an operator wants to
+        # know which one is failing, one suppression budget because it is one
+        # incident.
+        read_failures = [r for r in captured if "counter store unavailable" in r.getMessage()]
         # Every failure is still reported — silence would be worse.
         assert len(read_failures) == 5
         # But only the first carries a traceback.
