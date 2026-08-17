@@ -142,6 +142,24 @@ Phase 2 is complete: gateway, redaction, console, providers, quotas, reporting,
 five `/v1` surfaces. `docs/phase-2-plan.md` records what was planned and what
 was added afterwards, including the bugs each addition surfaced.
 
+Two pieces of recorded-but-unbuilt work, both with their reasoning written down
+rather than left to be rediscovered:
+
+- **[docs/cache-accounting-findings.md](docs/cache-accounting-findings.md)** —
+  prompt-cache accounting is **wrong on the OpenAI-shaped surfaces**. There are
+  four different spellings for "cache write tokens" in the wild and
+  `TokenCounts.from_usage` reads none of them, so those tokens are billed at the
+  full input rate: ~20× overcharge on Gemini, undercharge on Anthropic. Cortecs
+  also reports its own cost in the `usage` object (integer micro-EUR) and we
+  ignore it. Evidence is from the live API; LiteLLM has the same bug open. This
+  is a money bug — see ground rule 3.
+- **[docs/redaction-scoping-plan.md](docs/redaction-scoping-plan.md)** — the
+  console cannot see the redaction layer at all (whether it is on, which engine,
+  whether the service answers), and redaction is process-global when it needs to
+  be scopeable per model, provider, user or group. The precedence rule to copy is
+  the quota engine's: any applicable scope requiring redaction wins, so adding a
+  scope can only tighten.
+
 Known open items, none of them blocking:
 
 - **Pagination**: done. **Concurrency**: done and verified. Both were the last
