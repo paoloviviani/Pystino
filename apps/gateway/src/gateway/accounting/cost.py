@@ -98,11 +98,7 @@ class TokenCounts:
         prompt = _as_int(usage.get("prompt_tokens"))
         completion = _as_int(usage.get("completion_tokens"))
 
-        details = usage.get("prompt_tokens_details") or {}
-        cached = _as_int(details.get("cached_tokens")) if isinstance(details, dict) else 0
-        # Anthropic-style and some proxies use a flat key instead.
-        if not cached:
-            cached = _as_int(usage.get("cache_read_input_tokens"))
+        cached, cache_write = _cache_slices(usage, usage.get("prompt_tokens_details"), prompt)
 
         completion_details = usage.get("completion_tokens_details") or {}
         reasoning = (
@@ -114,7 +110,8 @@ class TokenCounts:
         return cls(
             prompt=prompt,
             completion=completion,
-            cached_prompt=min(cached, prompt),
+            cached_prompt=cached,
+            cache_write=cache_write,
             reasoning=reasoning,
         )
 
@@ -133,8 +130,7 @@ class TokenCounts:
         prompt = _as_int(usage.get("input_tokens"))
         completion = _as_int(usage.get("output_tokens"))
 
-        details = usage.get("input_tokens_details")
-        cached = _as_int(details.get("cached_tokens")) if isinstance(details, dict) else 0
+        cached, cache_write = _cache_slices(usage, usage.get("input_tokens_details"), prompt)
 
         out_details = usage.get("output_tokens_details")
         reasoning = (
@@ -144,7 +140,8 @@ class TokenCounts:
         return cls(
             prompt=prompt,
             completion=completion,
-            cached_prompt=min(cached, prompt),
+            cached_prompt=cached,
+            cache_write=cache_write,
             reasoning=reasoning,
         )
 
@@ -187,9 +184,81 @@ class TokenCounts:
             prompt=counts.prompt,
             completion=counts.completion,
             cached_prompt=counts.cached_prompt,
+            cache_write=counts.cache_write,
             reasoning=counts.reasoning,
             images=max(0, images),
         )
+
+
+#: Every spelling of "cache write tokens" seen in the wild, in the order they
+#: are tried. All live inside ``prompt_tokens_details`` on the OpenAI-shaped
+#: surfaces; Anthropic's flat ``cache_creation_input_tokens`` is read by its own
+#: reader, which has to treat the prompt total differently anyway.
+#:
+#: Tolerating several spellings here is **not** the same mistake as tolerating
+#: several prompt conventions, which the module docstring above refuses. These
+#: keys differ only in how one provider spells a quantity every provider means
+#: identically. The conventions differ in *meaning* — whether the cached tokens
+#: are already inside ``prompt_tokens`` — and merging those produces numbers that
+#: are wrong rather than merely differently named.
+#:
+#: Observed 2026-08-17 against the live reference provider, which routes to
+#: several backends and passes each one's spelling through untouched:
+#:
+#: * ``created_cache_tokens``  — vLLM-backed models
+#: * ``cache_write_tokens``    — Nebius; also OpenRouter, and LiteLLM reports it
+#:                               from moonshot/deepseek/kimi
+#: * ``cache_creation_tokens`` — Nebius returns this *as well*, hence "first
+#:                               match wins" rather than a sum
+#:
+#: See docs/cache-accounting-findings.md for the raw evidence.
+_CACHE_WRITE_KEYS = (
+    "cache_write_tokens",
+    "cache_creation_tokens",
+    "created_cache_tokens",
+    "cache_creation_input_tokens",
+)
+
+#: Cache reads. ``cached_tokens`` is the OpenAI standard and by far the common
+#: case; the flat Anthropic-style key is accepted because proxies pass it through
+#: onto an OpenAI-shaped response.
+_CACHE_READ_KEYS = ("cached_tokens", "cache_read_tokens", "cache_read_input_tokens")
+
+
+def _first_int(source: Any, keys: tuple[str, ...]) -> int:
+    """The first of *keys* present and non-zero.
+
+    First match rather than a sum: a provider that reports the same count under
+    two names — Nebius sends both ``cache_write_tokens`` and
+    ``cache_creation_tokens`` — would otherwise be billed twice for one slice.
+    """
+    if not isinstance(source, dict):
+        return 0
+    for key in keys:
+        if (value := _as_int(source.get(key))) > 0:
+            return value
+    return 0
+
+
+def _cache_slices(usage: dict[str, Any], details: Any, prompt: int) -> tuple[int, int]:
+    """``(cache_read, cache_write)`` for an OpenAI-shaped usage object.
+
+    Both are looked for in ``prompt_tokens_details`` first and then at the top
+    level, because proxies flatten. Both are clamped so that together they never
+    exceed the prompt: the three slices are disjoint subsets of it, and
+    ``billable_prompt`` subtracts both, so a provider reporting a write count
+    that is *not* inside its prompt total would otherwise drive the input charge
+    to zero. Clamping loses a little precision in a case no provider is known to
+    produce; not clamping loses money in it.
+    """
+    read = _first_int(details, _CACHE_READ_KEYS) or _first_int(usage, _CACHE_READ_KEYS)
+    write = _first_int(details, _CACHE_WRITE_KEYS) or _first_int(usage, _CACHE_WRITE_KEYS)
+
+    read = min(read, prompt)
+    # The read is the slice we are most confident about — it is the standardised
+    # field — so the write yields to it rather than the other way round.
+    write = min(write, max(0, prompt - read))
+    return read, write
 
 
 def _as_int(value: Any) -> int:
@@ -201,6 +270,65 @@ def _as_int(value: Any) -> int:
         return max(0, int(value))
     except (TypeError, ValueError):
         return 0
+
+
+#: How to read a provider's self-reported cost, by declared unit name.
+#:
+#: There is no standard here and nothing in the payload says which convention is
+#: in use: the reference provider sends ``"cost": 136`` meaning 136 micro-EUR,
+#: while OpenRouter sends a decimal number of credits. Reading either as the
+#: other is wrong by a factor of a million, so the unit is **declared per
+#: provider** and never inferred. A provider that has not declared one has its
+#: reported cost ignored, which is the only safe default.
+#:
+#: The currency is part of the unit name rather than a separate column, because
+#: the two are one claim about one API: "this provider reports micro-EUR". A
+#: provider that changes what it reports needs an operator to say so, and adding
+#: a name here is a deliberate act with a test behind it.
+UPSTREAM_COST_UNITS: dict[str, tuple[Decimal, str]] = {
+    "micro_eur": (Decimal("0.000001"), "EUR"),
+    "micro_usd": (Decimal("0.000001"), "USD"),
+    "eur": (Decimal(1), "EUR"),
+    "usd": (Decimal(1), "USD"),
+}
+
+
+def read_upstream_cost(
+    usage: dict[str, Any] | None, unit: str | None
+) -> tuple[Decimal, str] | None:
+    """What the provider says the request cost, in its own currency.
+
+    Recorded for reconciliation and **never billed from**. Three reasons, all of
+    which would otherwise show up as an invoice nobody can explain: it arrives
+    pre-rounded (the reference provider rounds to whole micro-EUR, turning a
+    0.502 completion charge into 1), it is denominated in the provider's currency
+    rather than the billing one and this gateway refuses to convert, and it
+    describes what *they* charged rather than what we agreed to charge a group.
+
+    What it is good for is catching the two failures our own arithmetic cannot
+    see: a stale price row, and a provider changing a rate without telling us.
+    Both look like a steady divergence between this figure and ``cost``.
+    """
+    if not usage or not unit:
+        return None
+    scale = UPSTREAM_COST_UNITS.get(unit)
+    if scale is None:
+        return None
+
+    raw = usage.get("cost")
+    if raw is None or isinstance(raw, bool):
+        return None
+    try:
+        # Via `str`, so a provider sending a float does not import its binary
+        # rounding into a Decimal column.
+        amount = Decimal(str(raw))
+    except (ArithmeticError, TypeError, ValueError):
+        return None
+    if amount < 0:
+        return None
+
+    factor, currency = scale
+    return amount * factor, currency
 
 
 @dataclass(frozen=True, slots=True)

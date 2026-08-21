@@ -1,0 +1,423 @@
+"""Prompt-cache accounting: reading the slices, and billing them.
+
+Ground rule 3 territory — a wrong answer here is a wrong invoice. The specific
+bug these pin down is documented in docs/cache-accounting-findings.md: providers
+spell "cache write tokens" at least four different ways, the Chat Completions
+reader looked for none of them, and those tokens were therefore billed at the
+full input rate. That is an overcharge of roughly 20x on Gemini, whose cache
+writes are far *cheaper* than its input, and an undercharge on Anthropic, whose
+are dearer. Wrong in both directions depending on the provider.
+
+The payloads below are not invented. They are what the reference provider
+actually returned on 2026-08-17, routed to three different backends.
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+
+import httpx
+import pytest
+from conftest import FakeUpstream, Seeded
+from gateway.accounting.cost import (
+    UPSTREAM_COST_UNITS,
+    TokenCounts,
+    compute_cost,
+    read_upstream_cost,
+)
+from gateway.models import ModelPrice, Provider, UsageRecord
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def latest_record(session: AsyncSession) -> UsageRecord:
+    return (
+        (
+            await session.execute(
+                select(UsageRecord).order_by(UsageRecord.created_at.desc()).limit(1)
+            )
+        )
+        .scalars()
+        .one()
+    )
+
+
+def price(
+    *,
+    input_rate: str = "1",
+    output_rate: str = "2",
+    cache_read: str | None = None,
+    cache_write: str | None = None,
+) -> ModelPrice:
+    return ModelPrice(
+        input_per_mtok=Decimal(input_rate),
+        output_per_mtok=Decimal(output_rate),
+        cache_read_per_mtok=Decimal(cache_read) if cache_read else None,
+        cache_write_per_mtok=Decimal(cache_write) if cache_write else None,
+        currency="EUR",
+    )
+
+
+class TestEverySpellingOfCacheWrite:
+    """One quantity, four names. Missing any of them bills it at the input rate."""
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "cache_write_tokens",  # Nebius; OpenRouter; LiteLLM sees it from deepseek/kimi
+            "cache_creation_tokens",  # Nebius sends this too; LiteLLM's normalised name
+            "created_cache_tokens",  # vLLM-backed models
+            "cache_creation_input_tokens",  # Anthropic's name, on an OpenAI-shaped body
+        ],
+    )
+    def test_the_write_slice_is_found(self, key: str) -> None:
+        counts = TokenCounts.from_usage(
+            {
+                "prompt_tokens": 1000,
+                "completion_tokens": 10,
+                "prompt_tokens_details": {"cached_tokens": 200, key: 300},
+            }
+        )
+        assert counts.cache_write == 300
+        assert counts.cached_prompt == 200
+        # The three slices are disjoint subsets of the prompt.
+        assert counts.billable_prompt == 500
+
+    def test_two_names_for_the_same_slice_are_not_added_up(self) -> None:
+        """Nebius returns `cache_write_tokens` *and* `cache_creation_tokens`.
+
+        Summing them would bill the same tokens twice, and the arithmetic would
+        look plausible right up to the invoice.
+        """
+        counts = TokenCounts.from_usage(
+            {
+                "prompt_tokens": 1000,
+                "completion_tokens": 1,
+                "prompt_tokens_details": {
+                    "cached_tokens": 0,
+                    "cache_write_tokens": 400,
+                    "cache_creation_tokens": 400,
+                },
+            }
+        )
+        assert counts.cache_write == 400
+
+    def test_a_flattened_usage_object_still_works(self) -> None:
+        """Proxies hoist the details to the top level."""
+        counts = TokenCounts.from_usage(
+            {"prompt_tokens": 900, "completion_tokens": 5, "cache_write_tokens": 100}
+        )
+        assert counts.cache_write == 100
+
+    def test_absent_means_zero_not_a_guess(self) -> None:
+        counts = TokenCounts.from_usage({"prompt_tokens": 500, "completion_tokens": 5})
+        assert counts.cache_write == 0
+        assert counts.billable_prompt == 500
+
+
+class TestClamping:
+    """The slices must never exceed the prompt they are slices of."""
+
+    def test_a_write_larger_than_the_prompt_is_clamped(self) -> None:
+        counts = TokenCounts.from_usage(
+            {
+                "prompt_tokens": 100,
+                "completion_tokens": 1,
+                "prompt_tokens_details": {"cache_write_tokens": 999},
+            }
+        )
+        assert counts.cache_write == 100
+        assert counts.billable_prompt == 0
+
+    def test_the_read_wins_when_the_two_would_overflow(self) -> None:
+        """`cached_tokens` is the standardised field, so it is the trusted one.
+
+        Without this, `billable_prompt` would floor at zero and the input charge
+        would silently vanish for the whole request.
+        """
+        counts = TokenCounts.from_usage(
+            {
+                "prompt_tokens": 1000,
+                "completion_tokens": 1,
+                "prompt_tokens_details": {"cached_tokens": 900, "cache_write_tokens": 500},
+            }
+        )
+        assert counts.cached_prompt == 900
+        assert counts.cache_write == 100
+        assert counts.billable_prompt == 0
+
+    def test_billable_prompt_is_never_negative(self) -> None:
+        counts = TokenCounts(prompt=10, cached_prompt=8, cache_write=8)
+        assert counts.billable_prompt == 0
+
+
+class TestTheObservedPayloads:
+    """Verbatim from the live API, so a provider change breaks a test."""
+
+    def test_a_vllm_backed_cache_miss_then_hit(self) -> None:
+        first = TokenCounts.from_usage(
+            {
+                "completion_tokens": 2,
+                "prompt_tokens": 1152,
+                "total_tokens": 1154,
+                "prompt_tokens_details": {"cached_tokens": 0, "created_cache_tokens": 1024},
+            }
+        )
+        assert (first.cached_prompt, first.cache_write) == (0, 1024)
+        assert first.billable_prompt == 128
+
+        second = TokenCounts.from_usage(
+            {
+                "completion_tokens": 2,
+                "prompt_tokens": 1152,
+                "total_tokens": 1154,
+                "prompt_tokens_details": {"cached_tokens": 768, "created_cache_tokens": 256},
+            }
+        )
+        assert (second.cached_prompt, second.cache_write) == (768, 256)
+        assert second.billable_prompt == 128
+
+    def test_a_nebius_payload_with_both_names_and_extra_modalities(self) -> None:
+        counts = TokenCounts.from_usage(
+            {
+                "completion_tokens": 1,
+                "prompt_tokens": 1161,
+                "total_tokens": 1162,
+                "completion_tokens_details": {
+                    "audio_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "image_tokens": 0,
+                },
+                "prompt_tokens_details": {
+                    "audio_tokens": 0,
+                    "cached_tokens": 0,
+                    "video_tokens": 0,
+                    "cache_write_tokens": 0,
+                    "cache_creation_tokens": 0,
+                },
+            }
+        )
+        assert (counts.cached_prompt, counts.cache_write) == (0, 0)
+        assert counts.billable_prompt == 1161
+
+
+class TestResponsesSurface:
+    def test_it_reads_writes_too(self) -> None:
+        """Same convention as Chat Completions, different key names."""
+        counts = TokenCounts.from_responses_usage(
+            {
+                "input_tokens": 800,
+                "output_tokens": 20,
+                "input_tokens_details": {"cached_tokens": 100, "cache_write_tokens": 200},
+            }
+        )
+        assert (counts.cached_prompt, counts.cache_write) == (100, 200)
+        assert counts.billable_prompt == 500
+
+
+class TestTheTwoConventionsStillDisagree:
+    def test_anthropic_adds_its_slices_and_openai_does_not(self) -> None:
+        """The distinction the tolerant reader must NOT erase.
+
+        Both bodies describe the same request. Anthropic's `input_tokens`
+        excludes the cache slices, so the prompt is the sum; OpenAI's includes
+        them. Reading one as the other undercharges by the cached amount.
+        """
+        anthropic = TokenCounts.from_anthropic_usage(
+            {
+                "input_tokens": 128,
+                "cache_creation_input_tokens": 256,
+                "cache_read_input_tokens": 768,
+                "output_tokens": 2,
+            }
+        )
+        openai = TokenCounts.from_usage(
+            {
+                "prompt_tokens": 1152,
+                "completion_tokens": 2,
+                "prompt_tokens_details": {"cached_tokens": 768, "cache_write_tokens": 256},
+            }
+        )
+        assert anthropic.prompt == openai.prompt == 1152
+        assert anthropic.billable_prompt == openai.billable_prompt == 128
+
+
+class TestBilling:
+    def test_a_write_is_charged_at_its_own_rate(self) -> None:
+        counts = TokenCounts(prompt=1_000_000, completion=0, cached_prompt=0, cache_write=400_000)
+        breakdown = compute_cost(
+            counts,
+            price(input_rate="10", cache_write="20"),
+            billing_currency="EUR",
+        )
+        # 600k at 10/Mtok + 400k at 20/Mtok
+        assert breakdown.input_cost == Decimal(6)
+        assert breakdown.cache_write_cost == Decimal(8)
+        assert breakdown.total == Decimal(14)
+
+    def test_gemini_shaped_pricing_is_no_longer_a_20x_overcharge(self) -> None:
+        """The bug, in the direction nobody expects.
+
+        Gemini prices a cache write far *below* input — 0.034 against 0.673 per
+        Mtok. Billing the written slice at the input rate overcharges it ~20x.
+        """
+        counts = TokenCounts(prompt=1_000_000, completion=0, cache_write=1_000_000)
+        correct = compute_cost(
+            counts, price(input_rate="0.673", cache_write="0.034"), billing_currency="EUR"
+        )
+        as_if_unread = compute_cost(
+            TokenCounts(prompt=1_000_000, completion=0),
+            price(input_rate="0.673", cache_write="0.034"),
+            billing_currency="EUR",
+        )
+        assert correct.total == Decimal("0.034")
+        assert as_if_unread.total == Decimal("0.673")
+        assert as_if_unread.total / correct.total > 19
+
+    def test_an_unpriced_write_falls_back_to_the_input_rate(self) -> None:
+        """Which is what the reference provider itself does.
+
+        Its vLLM-backed models report `created_cache_tokens` and charge them at
+        the input rate, because those models have no cache-write price. Billing
+        them at zero would give the tokens away.
+        """
+        counts = TokenCounts(prompt=1_000_000, completion=0, cache_write=400_000)
+        breakdown = compute_cost(counts, price(input_rate="10"), billing_currency="EUR")
+        assert breakdown.cache_write_cost == Decimal(0)
+        assert breakdown.input_cost == Decimal(10)
+
+    def test_reads_and_writes_are_priced_separately(self) -> None:
+        counts = TokenCounts(
+            prompt=1_000_000, completion=0, cached_prompt=500_000, cache_write=200_000
+        )
+        breakdown = compute_cost(
+            counts,
+            price(input_rate="10", cache_read="1", cache_write="20"),
+            billing_currency="EUR",
+        )
+        assert breakdown.input_cost == Decimal(3)  # 300k at 10
+        assert breakdown.cache_read_cost == Decimal("0.5")  # 500k at 1
+        assert breakdown.cache_write_cost == Decimal(4)  # 200k at 20
+
+
+class TestUpstreamReportedCost:
+    """The provider's own figure: recorded for reconciliation, never billed from."""
+
+    def test_micro_eur_is_scaled(self) -> None:
+        # The observed payload: 136 micro-EUR for one small request.
+        result = read_upstream_cost({"cost": 136}, "micro_eur")
+        assert result == (Decimal("0.000136"), "EUR")
+
+    def test_no_declared_unit_means_the_figure_is_ignored(self) -> None:
+        """Nothing in the payload says which unit it used.
+
+        The reference provider means micro-EUR by `cost: 136`; OpenRouter means
+        a decimal number of credits. Guessing is wrong by a factor of a million,
+        so silence is the only safe default.
+        """
+        assert read_upstream_cost({"cost": 136}, None) is None
+
+    def test_an_unknown_unit_is_ignored_rather_than_assumed(self) -> None:
+        assert read_upstream_cost({"cost": 136}, "furlongs") is None
+
+    def test_a_provider_that_reports_nothing(self) -> None:
+        assert read_upstream_cost({"prompt_tokens": 10}, "micro_eur") is None
+        assert read_upstream_cost(None, "micro_eur") is None
+
+    def test_a_float_does_not_import_binary_rounding(self) -> None:
+        """Via `str`, so 0.1 is a tenth and not 0.1000000000000000055511151231."""
+        result = read_upstream_cost({"cost": 0.1}, "usd")
+        assert result == (Decimal("0.1"), "USD")
+
+    def test_nonsense_is_refused(self) -> None:
+        assert read_upstream_cost({"cost": "gratis"}, "eur") is None
+        assert read_upstream_cost({"cost": -5}, "eur") is None
+        # `True` is an int in Python; it is not a cost.
+        assert read_upstream_cost({"cost": True}, "eur") is None
+
+    def test_the_currency_comes_from_the_unit(self) -> None:
+        """One claim about one API, not two independently-settable columns."""
+        for unit, (_, currency) in UPSTREAM_COST_UNITS.items():
+            result = read_upstream_cost({"cost": 1}, unit)
+            assert result is not None and result[1] == currency
+
+
+class TestItReachesTheLedger:
+    """Reading and billing correctly is no use if the row does not keep it.
+
+    `cache_write_tokens` was computed and then dropped on the floor: there was
+    no column for it, so a cached request could not be explained after the fact
+    and the ledger could not be repriced.
+    """
+
+    async def test_the_write_count_and_the_reported_cost_are_stored(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        # An explicit UPDATE, not a mutation of `seeded.provider`: that object
+        # belongs to the fixture's own session, so assigning to it here would
+        # look like it worked and persist nothing.
+        await session.execute(
+            update(Provider)
+            .where(Provider.id == seeded.provider.id)
+            .values(upstream_cost_unit="micro_eur")
+        )
+        await session.commit()
+
+        fake_upstream.set_json(
+            {
+                "id": "c1",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+                "usage": {
+                    "prompt_tokens": 1152,
+                    "completion_tokens": 2,
+                    "total_tokens": 1154,
+                    "prompt_tokens_details": {"cached_tokens": 768, "created_cache_tokens": 256},
+                    "cost": 67,
+                    "cost_details": {"prompt_cost": 45, "cache_read_cost": 21},
+                },
+            }
+        )
+        response = await client.post(
+            "/v1/chat/completions",
+            json={"model": seeded.model.name, "messages": [{"role": "user", "content": "hi"}]},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+
+        record = await latest_record(session)
+        assert record.cached_prompt_tokens == 768
+        assert record.cache_write_tokens == 256
+        assert record.upstream_cost == Decimal("0.000067")
+        assert record.upstream_cost_currency == "EUR"
+
+    async def test_a_provider_with_no_declared_unit_stores_no_reported_cost(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """The default. Our own `cost` is unaffected either way."""
+        fake_upstream.set_json(
+            {
+                "id": "c2",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2, "cost": 999999},
+            }
+        )
+        response = await client.post(
+            "/v1/chat/completions",
+            json={"model": seeded.model.name, "messages": [{"role": "user", "content": "hi"}]},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+
+        record = await latest_record(session)
+        assert record.upstream_cost is None
+        assert record.upstream_cost_currency is None
