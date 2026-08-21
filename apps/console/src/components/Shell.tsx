@@ -28,6 +28,7 @@ const NAV: NavItem[] = [
   { to: "/admin/models", label: "Models", adminOnly: true },
   { to: "/admin/pricing", label: "Pricing", adminOnly: true },
   { to: "/admin/users", label: "Users", adminOnly: true },
+  { to: "/admin/redaction", label: "Redaction", adminOnly: true },
 ];
 
 export function Shell({ me, children }: ShellProps) {

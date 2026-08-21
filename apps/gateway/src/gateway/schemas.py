@@ -764,6 +764,90 @@ class UsageReport(BaseModel):
     disclosures: list[str] = Field(default_factory=list)
 
 
+class RedactionServiceHealth(BaseModel):
+    """What the detection service says about itself, asked at read time.
+
+    Asked rather than remembered: a service that was reachable at startup and is
+    not reachable now is the failure that matters, and with ``fail_open`` false
+    it means every request is currently being refused. That is not something to
+    discover from a user's ticket.
+    """
+
+    reachable: bool
+    detail: str = ""
+    latency_ms: int | None = None
+    engine: str | None = None
+    engine_version: str | None = None
+    #: Languages it can analyse, and the NER model backing each.
+    languages: list[str] = Field(default_factory=list)
+    models: dict[str, str] = Field(default_factory=dict)
+    #: Served without an NER model, so fewer entities are found. Surfaced because
+    #: "we detect less in Italian" is invisible otherwise.
+    degraded_languages: list[str] = Field(default_factory=list)
+    #: Every entity type it can detect, which is the superset any scope can ask
+    #: for.
+    entities: list[str] = Field(default_factory=list)
+
+
+class RedactionActivity(BaseModel):
+    """Evidence that it is working, not merely configured.
+
+    The count of entities actually removed is the only figure that distinguishes
+    a working redaction layer from one that is switched on and detecting nothing
+    — a wrong language or too high a threshold both look like healthy silence.
+    """
+
+    window_seconds: int
+    requests: int
+    #: Requests that went through a redacting engine, whether or not it found
+    #: anything.
+    requests_redacted: int
+    entities_redacted: int
+    #: Engine names seen in the window. More than one means the configuration
+    #: changed inside it.
+    engines: list[str] = Field(default_factory=list)
+
+
+class RedactionStatusResponse(BaseModel):
+    """The redaction layer as it is actually running.
+
+    Read-only. Everything here comes from process configuration read at startup
+    (ADR 0012), so it describes this worker — which is the honest scope, and the
+    reason a future per-scope configuration needs a database row rather than more
+    environment variables.
+    """
+
+    #: The engine in force, taken from the constructed redactor rather than from
+    #: the setting, so a mismatch cannot hide behind agreeing documentation.
+    engine: str
+    #: False when the engine is ``noop``: configured, and redacting nothing.
+    enabled: bool
+    endpoint: str | None = None
+    #: Names the registry will accept, so the future dropdown has a source and an
+    #: operator can see what an install added.
+    installed_engines: list[str] = Field(default_factory=list)
+
+    #: On failure: refuse the request, or forward it unredacted. Default false,
+    #: and true deserves to be shown as a warning rather than a setting.
+    fail_open: bool
+    restore_in_response: bool
+    language: str
+    score_threshold: float
+    #: Null means "everything the engine offers" rather than "none".
+    entity_types: list[str] | None = None
+    timeout_seconds: float
+    cache_size: int
+    #: Whether the HMAC key placeholders derive from is set. Never the key.
+    placeholder_key_set: bool
+
+    service: RedactionServiceHealth | None = None
+    activity: RedactionActivity
+    #: Plain-language problems with this configuration, computed here rather than
+    #: in the console so the wording lives with the rule and can be tested. Same
+    #: convention as a report's disclosures: rendered verbatim.
+    warnings: list[str] = Field(default_factory=list)
+
+
 class DiscoveredModel(BaseModel):
     """An upstream model the provider offers that we have not catalogued."""
 

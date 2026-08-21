@@ -8,6 +8,7 @@ import { AdminModels } from "./routes/AdminModels";
 import { AdminPricing } from "./routes/AdminPricing";
 import { AdminProviders } from "./routes/AdminProviders";
 import { AdminQuotas } from "./routes/AdminQuotas";
+import { AdminRedaction } from "./routes/AdminRedaction";
 import { AdminReports } from "./routes/AdminReports";
 import { AdminUsers } from "./routes/AdminUsers";
 import { NotFound } from "./routes/NotFound";
@@ -87,6 +88,14 @@ export function App() {
           element={
             <RequireAdmin me={me_}>
               <AdminQuotas />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/redaction"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminRedaction />
             </RequireAdmin>
           }
         />
