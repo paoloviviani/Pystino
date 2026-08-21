@@ -153,7 +153,34 @@ describe("Overview", () => {
     vi.stubGlobal("fetch", respondWith(report()));
     renderScreen(<Overview me={ME} />);
 
-    await waitFor(() => expect(screen.getAllByText("€3.25").length).toBeGreaterThan(0));
+    // Three decimals: this screen is for a person reading what they spent, and
+    // the ledger's twelve places are noise here.
+    await waitFor(() => expect(screen.getAllByText("€3.250").length).toBeGreaterThan(0));
+  });
+
+  it("rounds spend to milli, rather than showing the ledger's full precision", async () => {
+    const tiny = report({
+      rows: [{ ...report().rows[0]!, cost: "0.001497172000" }],
+      totals: { ...report().totals, cost: "0.001497172000" },
+    });
+    vi.stubGlobal("fetch", respondWith(tiny));
+    renderScreen(<Overview me={ME} />);
+
+    await waitFor(() => expect(screen.getAllByText("€0.001").length).toBeGreaterThan(0));
+    expect(screen.queryByText("€0.001497172")).not.toBeInTheDocument();
+  });
+
+  it("says 'less than' rather than telling someone they spent nothing", async () => {
+    // Capping the decimals must not reintroduce the misleading zero that full
+    // precision existed to avoid.
+    const sliver = report({
+      rows: [{ ...report().rows[0]!, cost: "0.000000400000" }],
+      totals: { ...report().totals, cost: "0.000000400000" },
+    });
+    vi.stubGlobal("fetch", respondWith(sliver));
+    renderScreen(<Overview me={ME} />);
+
+    await waitFor(() => expect(screen.getAllByText("< €0.001").length).toBeGreaterThan(0));
   });
 
   it("names the period and its timezone", async () => {
@@ -192,7 +219,7 @@ describe("Overview", () => {
     vi.stubGlobal("fetch", respondWith(empty));
     renderScreen(<Overview me={ME} />);
 
-    await waitFor(() => expect(screen.getAllByText("€0.00").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("€0.000").length).toBeGreaterThan(0));
   });
 
   describe("API keys", () => {
