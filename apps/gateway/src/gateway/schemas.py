@@ -723,12 +723,31 @@ class UsageReportRow(BaseModel):
     # totals so a reader can see how much of the figure is measured.
     estimated_requests: int = 0
     unavailable_requests: int = 0
-    # What the providers said these requests cost, summed, when they say so at
-    # all. Null when no request in the row carried one — which is not the same
-    # as zero, and reporting it as zero would read as "the provider charged us
-    # nothing". Not comparable to `cost` across currencies, which is why the
-    # disclosure rather than a computed difference is what the report offers.
-    upstream_cost: Money | None = None
+
+
+class BillingDrift(BaseModel):
+    """Our figure against the provider's, for one provider.
+
+    **Per provider, and never summed across them.** A total mixes requests whose
+    provider reports a cost with requests whose provider does not, so the two
+    sides describe different sets of requests and the comparison is meaningless
+    — it reads as a huge discrepancy when nothing is wrong. Currencies may differ
+    between providers too, and this gateway does not convert.
+
+    `requests` and `cost` cover **only** the requests that carried a provider
+    figure, which is narrower than that provider's total spend: a request made
+    before the operator declared `upstream_cost_unit`, or one the provider
+    reported no cost for, is excluded from both sides rather than from one.
+    """
+
+    provider: str
+    requests: int
+    #: Ours, over the comparable requests only.
+    cost: Money
+    currency: str
+    #: Theirs, in their unit's currency.
+    upstream_cost: Money
+    upstream_currency: str
 
 
 class UsageReport(BaseModel):
@@ -737,6 +756,8 @@ class UsageReport(BaseModel):
     currency: str
     rows: list[UsageReportRow]
     totals: UsageReportRow
+    #: One entry per provider that reported a cost. Empty when none did.
+    reconciliation: list[BillingDrift] = Field(default_factory=list)
     # Plain-language caveats about this particular report: estimated usage,
     # in-flight requests excluded, deleted subjects. Rendered verbatim by the UI so
     # a caveat is never lost in a redesign.

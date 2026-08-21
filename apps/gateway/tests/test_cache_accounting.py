@@ -26,6 +26,7 @@ from gateway.accounting.cost import (
     read_upstream_cost,
 )
 from gateway.models import ModelPrice, Provider, UsageRecord
+from gateway.reporting import GroupBy, ReportFilter, build_report, resolve_period
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -421,3 +422,137 @@ class TestItReachesTheLedger:
         record = await latest_record(session)
         assert record.upstream_cost is None
         assert record.upstream_cost_currency is None
+
+
+class TestReconciliationIsPerProvider:
+    """The bug: a total is not a comparison.
+
+    Summing every request's cost and weighing it against the sum of *reported*
+    costs adds requests whose provider reports a figure to requests whose
+    provider does not. The two sides then describe different sets of requests,
+    and the result reads as an enormous discrepancy when nothing is wrong — the
+    fake upstream's spend against one real provider's invoice.
+    """
+
+    async def test_only_comparable_requests_are_compared(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await session.execute(
+            update(Provider)
+            .where(Provider.id == seeded.provider.id)
+            .values(upstream_cost_unit="micro_eur")
+        )
+        await session.commit()
+
+        # One request the provider priced, and one it did not.
+        for reported in (True, False):
+            usage: dict[str, object] = {"prompt_tokens": 1000, "completion_tokens": 100}
+            if reported:
+                usage["cost"] = 500
+            fake_upstream.set_json(
+                {
+                    "id": "c",
+                    "object": "chat.completion",
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "x"}}],
+                    "usage": usage,
+                }
+            )
+            assert (
+                await client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": seeded.model.name,
+                        "messages": [{"role": "user", "content": "hi"}],
+                    },
+                    headers=seeded.auth,
+                )
+            ).status_code == 200
+
+        report = await build_report(
+            session,
+            ReportFilter(period=resolve_period("", None, None, "UTC"), group_by=GroupBy.TOTAL),
+            currency="EUR",
+            timezone="UTC",
+        )
+
+        assert len(report.reconciliation) == 1
+        drift = report.reconciliation[0]
+        assert drift.provider == seeded.provider.name
+        # One of the two requests, not both: the unreported one is excluded from
+        # *both* sides rather than from one.
+        assert drift.requests == 1
+        assert drift.upstream_cost == Decimal("0.000500")
+        assert drift.cost < report.totals.cost
+        # And the misleading figure is gone from the summary entirely.
+        assert not hasattr(report.totals, "upstream_cost")
+
+    async def test_a_provider_that_reports_nothing_does_not_appear(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """No unit declared, so there is nothing to reconcile and no row."""
+        fake_upstream.set_json(
+            {
+                "id": "c",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "x"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2, "cost": 999},
+            }
+        )
+        await client.post(
+            "/v1/chat/completions",
+            json={"model": seeded.model.name, "messages": [{"role": "user", "content": "hi"}]},
+            headers=seeded.auth,
+        )
+        report = await build_report(
+            session,
+            ReportFilter(period=resolve_period("", None, None, "UTC"), group_by=GroupBy.TOTAL),
+            currency="EUR",
+            timezone="UTC",
+        )
+        assert report.reconciliation == []
+        assert not any("reported" in note for note in report.disclosures)
+
+    async def test_the_disclosure_names_the_provider_and_its_scope(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """Unqualified, the note reads as covering the whole report."""
+        await session.execute(
+            update(Provider)
+            .where(Provider.id == seeded.provider.id)
+            .values(upstream_cost_unit="micro_eur")
+        )
+        await session.commit()
+        fake_upstream.set_json(
+            {
+                "id": "c",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "x"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2, "cost": 42},
+            }
+        )
+        await client.post(
+            "/v1/chat/completions",
+            json={"model": seeded.model.name, "messages": [{"role": "user", "content": "hi"}]},
+            headers=seeded.auth,
+        )
+        report = await build_report(
+            session,
+            ReportFilter(period=resolve_period("", None, None, "UTC"), group_by=GroupBy.TOTAL),
+            currency="EUR",
+            timezone="UTC",
+        )
+        note = next(n for n in report.disclosures if seeded.provider.name in n)
+        assert "not comparable to the totals" in note
+        assert "1 request(s)" in note

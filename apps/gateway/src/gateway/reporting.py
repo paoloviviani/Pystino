@@ -36,6 +36,7 @@ from gateway.models import (
     ApiKey,
     Group,
     ModelDef,
+    Provider,
     UsageRecord,
     UsageSource,
     UsageStatus,
@@ -49,7 +50,7 @@ from gateway.periods import (
     parse_period,
     period_containing,
 )
-from gateway.schemas import PeriodResponse, UsageReport, UsageReportRow
+from gateway.schemas import BillingDrift, PeriodResponse, UsageReport, UsageReportRow
 from gateway.types import utcnow
 
 
@@ -170,10 +171,6 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
         func.coalesce(func.sum(UsageRecord.total_tokens), 0).label("total_tokens"),
         func.coalesce(func.sum(UsageRecord.image_count), 0).label("images"),
         func.coalesce(func.sum(UsageRecord.cost), 0).label("cost"),
-        # Deliberately *not* coalesced to zero: null here means no request in
-        # this group reported a cost, which is a different fact from a reported
-        # cost of nothing.
-        func.sum(UsageRecord.upstream_cost).label("upstream_cost"),
         func.coalesce(
             func.sum(case((UsageRecord.usage_source == UsageSource.ESTIMATED, 1), else_=0)), 0
         ).label("estimated"),
@@ -242,17 +239,7 @@ async def _labels(session: AsyncSession, group_by: GroupBy, keys: Sequence[Any])
 def _row(
     group_by: GroupBy, key: Any, labels: dict[Any, str], values: Sequence[Any]
 ) -> UsageReportRow:
-    (
-        requests,
-        prompt,
-        completion,
-        total,
-        images,
-        cost,
-        upstream_cost,
-        estimated,
-        unavailable,
-    ) = values
+    requests, prompt, completion, total, images, cost, estimated, unavailable = values
     if key is None:
         label = _NO_KEY_LABEL[group_by]
     else:
@@ -273,7 +260,6 @@ def _row(
         cost=Decimal(str(cost or 0)),
         estimated_requests=int(estimated or 0),
         unavailable_requests=int(unavailable or 0),
-        upstream_cost=None if upstream_cost is None else Decimal(str(upstream_cost)),
     )
 
 
@@ -289,16 +275,80 @@ def _totals(rows: Sequence[UsageReportRow]) -> UsageReportRow:
         cost=sum((row.cost for row in rows), Decimal(0)),
         estimated_requests=sum(row.estimated_requests for row in rows),
         unavailable_requests=sum(row.unavailable_requests for row in rows),
-        # Summed only over the rows that have one, and left null if none do.
-        upstream_cost=(
-            sum((row.upstream_cost for row in rows if row.upstream_cost is not None), Decimal(0))
-            if any(row.upstream_cost is not None for row in rows)
-            else None
-        ),
     )
 
 
-def _disclosures(totals: UsageReportRow, in_flight: int, substituted: int = 0) -> list[str]:
+async def _reconciliation(
+    session: AsyncSession, filters: ReportFilter, *, currency: str
+) -> list[BillingDrift]:
+    """Our cost against the provider's, one row per provider.
+
+    Grouped by provider and never totalled, because a total is not a comparison:
+    it adds requests whose provider reports a cost to requests whose provider
+    does not, so the two sides cover different sets of requests and the result
+    reads as a large discrepancy when nothing at all is wrong. That was a real
+    bug — the fake upstream's spend was being weighed against the one real
+    provider's figure.
+
+    Only rows with a provider figure count, on **both** sides. Anything else
+    would reintroduce the same mismatch inside a single provider: a request made
+    before its ``upstream_cost_unit`` was declared has our cost and not theirs.
+
+    The provider comes from the model, since ``usage_records`` records the
+    provider the *upstream* named rather than our row. A record whose model has
+    since been deleted has no provider to attribute to and is left out; saying
+    so is better than guessing, and it is visible as a gap between this and the
+    report totals.
+    """
+    query = (
+        select(
+            Provider.name,
+            func.count(UsageRecord.id),
+            func.coalesce(func.sum(UsageRecord.cost), 0),
+            func.coalesce(func.sum(UsageRecord.upstream_cost), 0),
+            UsageRecord.upstream_cost_currency,
+        )
+        .join(ModelDef, ModelDef.id == UsageRecord.model_id)
+        .join(Provider, Provider.id == ModelDef.provider_id)
+        .where(
+            UsageRecord.created_at >= filters.period.start,
+            UsageRecord.created_at < filters.period.end,
+            UsageRecord.status != UsageStatus.IN_PROGRESS,
+            UsageRecord.upstream_cost.is_not(None),
+        )
+        .group_by(Provider.name, UsageRecord.upstream_cost_currency)
+        .order_by(Provider.name)
+    )
+    if filters.group_id is not None:
+        query = query.where(UsageRecord.group_id == filters.group_id)
+    if filters.user_id is not None:
+        query = query.where(UsageRecord.user_id == filters.user_id)
+    if filters.api_key_id is not None:
+        query = query.where(UsageRecord.api_key_id == filters.api_key_id)
+    if filters.model_name is not None:
+        query = query.where(UsageRecord.model_name == filters.model_name)
+
+    return [
+        BillingDrift(
+            provider=name,
+            requests=int(requests or 0),
+            cost=Decimal(str(cost or 0)),
+            currency=currency,
+            upstream_cost=Decimal(str(upstream or 0)),
+            upstream_currency=upstream_currency or currency,
+        )
+        for name, requests, cost, upstream, upstream_currency in (
+            await session.execute(query)
+        ).all()
+    ]
+
+
+def _disclosures(
+    totals: UsageReportRow,
+    in_flight: int,
+    substituted: int = 0,
+    reconciliation: Sequence[BillingDrift] | None = None,
+) -> list[str]:
     notes: list[str] = []
     if totals.estimated_requests:
         notes.append(
@@ -324,18 +374,14 @@ def _disclosures(totals: UsageReportRow, in_flight: int, substituted: int = 0) -
             "per image rather than per token, so those requests contribute cost without "
             "contributing tokens."
         )
-    if totals.upstream_cost is not None and totals.requests:
-        # The one check our own arithmetic cannot perform on itself. A steady gap
-        # between the two figures means either a price row has gone stale or the
-        # provider changed a rate; neither shows up anywhere else until an
-        # invoice arrives. Stated as both numbers rather than a difference,
-        # because they are not necessarily in the same currency and this report
-        # refuses to convert (see CurrencyMismatch).
+    for drift in reconciliation or ():
         notes.append(
-            f"The provider reported {totals.upstream_cost} for these requests against "
-            f"{totals.cost} charged here. A persistent gap means a stale price row or an "
-            "upstream rate change, not a rounding error — the provider's figure is "
-            "informational and is never billed from."
+            f"{drift.provider}: it reported {drift.upstream_cost} {drift.upstream_currency} "
+            f"for {drift.requests} request(s) against {drift.cost} {drift.currency} charged "
+            "here. Covers only the requests that provider reported a cost for, so it is not "
+            "comparable to the totals above. A persistent gap means a stale price row or an "
+            "upstream rate change; the provider's figure is informational and never billed "
+            "from."
         )
     if substituted:
         # A router with model fallback can serve a different model than the one
@@ -398,6 +444,8 @@ async def build_report(
         )
     ).scalar_one()
 
+    reconciliation = await _reconciliation(session, filters, currency=currency)
+
     return UsageReport(
         period=PeriodResponse(
             label=filters.period.label,
@@ -410,7 +458,10 @@ async def build_report(
         currency=currency,
         rows=report_rows,
         totals=totals,
-        disclosures=_disclosures(totals, int(in_flight or 0), int(substituted or 0)),
+        reconciliation=reconciliation,
+        disclosures=_disclosures(
+            totals, int(in_flight or 0), int(substituted or 0), reconciliation
+        ),
     )
 
 

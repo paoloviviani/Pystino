@@ -23,6 +23,19 @@ export interface OverviewProps {
   me: Me;
 }
 
+/**
+ * Milli-EUR on this screen.
+ *
+ * This is the page a person opens to see what they spent, and the ledger's
+ * twelve decimal places are noise there — `€0.001497172` is harder to read than
+ * `€0.001` and answers a question nobody asked. Full precision belongs on the
+ * admin screens, where it is being reconciled against a provider's invoice.
+ *
+ * The formatter says `< €0.001` rather than `€0.000` for a real amount below
+ * that, so capping the decimals cannot tell somebody they spent nothing.
+ */
+const SPEND_DECIMALS = 3;
+
 const BREAKDOWNS = [
   { value: "model", label: "By model" },
   { value: "day", label: "By day" },
@@ -58,7 +71,13 @@ export function Overview({ me }: OverviewProps) {
       key: "cost",
       header: "Spend",
       numeric: true,
-      render: (row) => <Money amount={row.cost} currency={report.data?.currency ?? "EUR"} />,
+      render: (row) => (
+        <Money
+          amount={row.cost}
+          currency={report.data?.currency ?? "EUR"}
+          maxDecimals={SPEND_DECIMALS}
+        />
+      ),
     },
   ];
 
@@ -99,7 +118,11 @@ export function Overview({ me }: OverviewProps) {
               <Stat
                 label={`Spend · ${report.data.period.label}`}
                 value={
-                  <Money amount={report.data.totals.cost} currency={report.data.currency} />
+                  <Money
+                    amount={report.data.totals.cost}
+                    currency={report.data.currency}
+                    maxDecimals={SPEND_DECIMALS}
+                  />
                 }
                 detail={`${report.data.period.timezone} calendar period`}
               />
