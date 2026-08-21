@@ -345,6 +345,17 @@ class Provider(Base):
         server_default=AuthScheme.BEARER.value,
     )
 
+    # How to read this provider's self-reported cost, if it reports one. Not an
+    # enum column: the accepted names live in `UPSTREAM_COST_UNITS` beside the
+    # arithmetic that uses them, the same way redaction engine names are
+    # validated by their registry rather than by the schema.
+    #
+    # Null means "ignore what it reports", which is the default and the only
+    # safe one — nothing in the payload says whether `cost: 136` means 136
+    # micro-EUR or 136 of something else, and guessing is wrong by a factor of a
+    # million. The reference provider is `micro_eur`.
+    upstream_cost_unit: Mapped[str | None] = mapped_column(String(32), default=None)
+
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
@@ -547,6 +558,12 @@ class UsageRecord(Base):
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cached_prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    # Prompt tokens written to a provider-side cache. Billed at its own rate and
+    # until now computed but never stored, so a cached request could not be
+    # explained after the fact and the ledger could not be repriced.
+    cache_write_tokens: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=text("0")
+    )
     reasoning_tokens: Mapped[int] = mapped_column(Integer, default=0)
 
     usage_source: Mapped[UsageSource] = mapped_column(
@@ -588,6 +605,12 @@ class UsageRecord(Base):
 
     cost: Mapped[Decimal] = mapped_column(default=Decimal(0))
     currency: Mapped[str] = mapped_column(String(3))
+    # What the *provider* said this cost, in the provider's own currency, when it
+    # says so at all and the operator has declared how to read it. Never billed
+    # from — it is pre-rounded and possibly in another currency — but it is the
+    # only signal that catches a stale price row or an upstream rate change.
+    upstream_cost: Mapped[Decimal | None] = mapped_column(default=None)
+    upstream_cost_currency: Mapped[str | None] = mapped_column(String(3), default=None)
     # Which price row produced `cost`. Null when the model had no price.
     price_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("model_prices.id", ondelete="SET NULL"), default=None

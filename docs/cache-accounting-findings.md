@@ -2,23 +2,30 @@
 
 - Investigated 2026-08-17 against the **live** Cortecs API with a real key, plus
   LiteLLM's and OpenRouter's documentation and issue tracker.
-- Status: **findings recorded, fix not yet written.** This is a money bug, so it
-  falls under ground rule 3 in [CLAUDE.md](../CLAUDE.md).
+- Status: **fixed.** The investigation is kept because the evidence is the
+  interesting part — the spelling table below is what the reader now consults,
+  and a provider adding a fifth name is caught by
+  `scripts/test_cache_accounting_live.py`. Ground rule 3 in
+  [CLAUDE.md](../CLAUDE.md) applies: this was a money bug.
 - Related: [ADR 0028](adr/0028-embeddings-and-served-model.md) (the two prompt
   conventions), [ADR 0031](adr/0031-model-capabilities.md) (`context_size`, the
   same class of mistake).
 
 ## The short version
 
-1. Cortecs **does** report cost downstream, inside `usage`, in integer
-   micro-EUR — we ignore it entirely.
-2. There are **at least four different spellings** for "cache write tokens"
-   across providers, and our Chat Completions reader looks for **none** of them.
-   Only the Anthropic reader handles cache writes at all.
-3. For the 19 Cortecs models that price cache writes, a request through
-   `/v1/chat/completions` therefore bills written tokens at the **full input
-   rate**. That is an overcharge of roughly 20× on Gemini and an undercharge on
-   Anthropic.
+1. There are **at least four different spellings** for "cache write tokens"
+   across providers, and the Chat Completions reader looked for **none** of
+   them. Only the Anthropic reader handled cache writes at all, so
+   `/v1/messages` was correct and the other four surfaces were not.
+2. For the 19 Cortecs models that price cache writes, a request through
+   `/v1/chat/completions` therefore billed written tokens at the **full input
+   rate** — an overcharge of roughly 20× on Gemini, whose writes are far cheaper
+   than its input, and an undercharge on Anthropic, whose are dearer. Wrong in
+   both directions depending on the provider.
+3. `cache_write_tokens` had no column, so even the surface that read the count
+   correctly then discarded it.
+4. Cortecs **does** report cost downstream, inside `usage`, in integer
+   micro-EUR, and it was ignored.
 
 ## Evidence: what Cortecs sends
 
@@ -154,10 +161,12 @@ do not rely on it either way without checking.
   pricing appears only on Anthropic, Google Gemini and the newer OpenAI models,
   which is consistent with those being the providers with explicit/TTL caching.
 
-## What to change
+## What was changed
 
-1. **Read cache writes on the OpenAI-shaped surfaces.** `from_usage` and
-   `from_responses_usage` currently leave `cache_write` at 0.
+1. **Cache writes are read on the OpenAI-shaped surfaces.** `from_usage` and
+   `from_responses_usage` left `cache_write` at 0; both now consult
+   `_CACHE_WRITE_KEYS`, in `prompt_tokens_details` first and then flattened at
+   the top level.
 
    A tolerant multi-key reader is right *here* and wrong for the case ADR 0028
    warns about, and the distinction is worth keeping straight: the two prompt
@@ -166,27 +175,46 @@ do not rely on it either way without checking.
    differ only in the **spelling of the same quantity**. Tolerating spellings is
    safe; tolerating semantics is not.
 
-2. **Clamp the slices.** `nebius` returns both `cache_write_tokens` and
-   `cache_creation_tokens`; take one, never the sum, and hold
-   `cached + written <= prompt` so a provider that reports writes *outside* the
-   prompt total cannot push `billable_prompt` negative.
+2. **The slices are clamped.** First match wins rather than a sum, because
+   Nebius returns both `cache_write_tokens` and `cache_creation_tokens` for one
+   quantity. `cached + written <= prompt` is enforced, with the standardised
+   `cached_tokens` taking precedence, so a provider reporting writes *outside*
+   its prompt total cannot drive the input charge to zero.
 
-3. **Record the upstream-reported cost, do not bill from it.** A nullable
-   `upstream_cost` (+ its currency) on `usage_records`, populated from
-   `usage.cost` when present, gives a reconciliation signal for free: our figure
-   drifting from theirs means either our price table is stale or the provider
-   changed a rate. Billing from it would import their rounding and their
-   currency, and we refuse currency conversion by design.
+3. **The upstream figure is recorded, never billed from.** `usage_records`
+   gained `upstream_cost` and `upstream_cost_currency`, and `usage_records`
+   also gained `cache_write_tokens` — which had been computed since ADR 0030
+   and then dropped, there being no column for it.
 
-4. **Tests.** Parametrised over every spelling in the table above; a case where
-   both nebius keys are present; and a live-script assertion that a repeated
-   long prompt to a cache-priced Cortecs model produces a non-zero
-   `cached_tokens` on the second call and a cost below the first.
+   Reading `usage.cost` needs a **declared unit**: nothing in the payload says
+   whether `136` means micro-EUR or credits, and the two differ by a factor of a
+   million. So `providers.upstream_cost_unit` is null by default and the figure
+   is ignored until an operator names the convention. Accepted names live in
+   `UPSTREAM_COST_UNITS` beside the arithmetic, and the API refuses an unknown
+   one rather than silently recording nothing.
+
+   The admin usage report sums it and says so in a disclosure when present,
+   because a column nothing reads is a column nobody trusts.
+
+4. **Tests.** `apps/gateway/tests/test_cache_accounting.py` — every spelling in
+   the table, the both-Nebius-keys case, the clamps, the observed payloads
+   verbatim, the Gemini-shaped ~20x overcharge, and the two conventions still
+   producing the same answer from their different inputs.
+   `scripts/test_cache_accounting_live.py` drives a real cache hit and checks the
+   ledger, which is the only thing that can notice a renamed field.
 
 ## Reproducing
 
-`scripts/` has nothing for this yet. The throwaway probe was: same ~1150-token
-system prompt twice, `max_tokens=5`, `temperature=0`, printing `usage` verbatim.
+`scripts/test_cache_accounting_live.py`, with `deploy/.env` sourced. It finds an
+active chat model whose price carries a cache-read rate, sends the same
+~1500-token prompt twice, and asserts the ledger caught both slices. It skips
+rather than fails where no such model is catalogued, because the fake upstream
+does not cache.
+
+Verified against the live provider on 2026-08-21: prompt 1628, cached 1280,
+written 256, our cost 0.000076029 EUR against a reported 0.000077 — the gap
+being their rounding of each component up to a whole micro-EUR.
+
 Note the supplied key is **provider-scoped** — google, azure and amazon backends
 answer 404 `Provider not in allowed providers`, so Anthropic-, Gemini- and
 OpenAI-backed caching could not be observed directly and the table entries for

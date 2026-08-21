@@ -29,6 +29,8 @@ from pydantic import (
     model_validator,
 )
 
+from gateway.accounting.cost import UPSTREAM_COST_UNITS
+
 if TYPE_CHECKING:
     from gateway.redaction import RedactionOutcome as RedactionOutcomeLike
 else:  # pragma: no cover - runtime only needs the name to exist
@@ -400,9 +402,32 @@ class ProviderResponse(BaseModel):
     is_active: bool
     forward_stream_options: bool
     auth_scheme: str
+    upstream_cost_unit: str | None = None
     model_count: int
     created_at: datetime
     updated_at: datetime
+
+
+def _known_cost_unit(value: str | None) -> str | None:
+    """Refuse a unit name the arithmetic does not know.
+
+    A typo here would silently stop recording the provider's figure — the exact
+    kind of quiet nothing that makes a reconciliation column untrustworthy — so
+    it is rejected at the boundary with the list of what is accepted.
+    """
+    if value is None or value == "":
+        return None
+    normalised = value.strip().lower()
+    if normalised not in UPSTREAM_COST_UNITS:
+        raise ValueError(
+            f"unknown upstream cost unit {value!r}; expected one of "
+            f"{', '.join(sorted(UPSTREAM_COST_UNITS))}"
+        )
+    return normalised
+
+
+#: Empty string clears it, matching the `api_key` convention on the same model.
+UpstreamCostUnit = Annotated[str | None, AfterValidator(_known_cost_unit)]
 
 
 class ProviderCreateRequest(BaseModel):
@@ -418,6 +443,9 @@ class ProviderCreateRequest(BaseModel):
     forward_stream_options: bool = True
     # "bearer" for anything OpenAI-shaped, "x_api_key" for Anthropic's own API.
     auth_scheme: Literal["bearer", "x_api_key"] = "bearer"
+    # How to read this provider's self-reported cost. Null ignores it, which is
+    # the default because nothing in a response says which unit it used.
+    upstream_cost_unit: UpstreamCostUnit = None
 
 
 class ProviderUpdateRequest(BaseModel):
@@ -441,6 +469,7 @@ class ProviderUpdateRequest(BaseModel):
     is_active: bool | None = None
     forward_stream_options: bool | None = None
     auth_scheme: Literal["bearer", "x_api_key"] | None = None
+    upstream_cost_unit: UpstreamCostUnit = None
 
 
 class ProviderTestResponse(BaseModel):
@@ -694,6 +723,12 @@ class UsageReportRow(BaseModel):
     # totals so a reader can see how much of the figure is measured.
     estimated_requests: int = 0
     unavailable_requests: int = 0
+    # What the providers said these requests cost, summed, when they say so at
+    # all. Null when no request in the row carried one — which is not the same
+    # as zero, and reporting it as zero would read as "the provider charged us
+    # nothing". Not comparable to `cost` across currencies, which is why the
+    # disclosure rather than a computed difference is what the report offers.
+    upstream_cost: Money | None = None
 
 
 class UsageReport(BaseModel):

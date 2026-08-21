@@ -257,6 +257,7 @@ async def begin(
             redaction_engine=outcome.engine if outcome else None,
             redacted_entity_count=outcome.entity_count if outcome else 0,
             surface=surface,
+            upstream_cost_unit=model.provider.upstream_cost_unit,
         ),
         session_factory=request.app.state.session_factory,
         settings=settings,

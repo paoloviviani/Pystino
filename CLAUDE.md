@@ -69,6 +69,16 @@ Inside the gateway, the pieces that carry the most weight:
   *includes* cached tokens; Anthropic's `input_tokens` *excludes* them. Each
   surface has its own named reader in `accounting/cost.py` for this reason. Do
   not "simplify" them into one tolerant parser.
+- **But cache-write *spellings* are tolerated, deliberately.** There are four
+  names for that one quantity — `_CACHE_WRITE_KEYS` in `accounting/cost.py` —
+  and reading only one bills those tokens at the input rate. The distinction
+  from the rule above is the point: those differ in **meaning**, these differ
+  only in **spelling**. See
+  [docs/cache-accounting-findings.md](docs/cache-accounting-findings.md).
+- **A provider's own reported cost needs a declared unit.** `usage.cost` is
+  micro-EUR from Cortecs and credits from OpenRouter, and nothing in the payload
+  says which. `providers.upstream_cost_unit` is null by default, which means
+  "ignore it". It is recorded for reconciliation and never billed from.
 - **SQLite is more forgiving than PostgreSQL** in ways that hide real bugs. It
   will `SELECT DISTINCT` over a JSON column; PostgreSQL has no equality
   operator for `json` at all. The unit suite runs on SQLite, so anything
@@ -97,8 +107,8 @@ Inside the gateway, the pieces that carry the most weight:
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services
-uv run pytest -q                       # 648 gateway tests, SQLite
-pnpm -r test                           # 10 packages/ui + 68 console
+uv run pytest -q                       # 752 gateway tests, SQLite
+pnpm -r test                           # 13 packages/ui + 87 console
 ```
 
 Then, for anything touching the request path, money, or SQL, against the real
@@ -118,6 +128,7 @@ docker compose --env-file deploy/.env \
 ./scripts/test_providers_live.py    # credentials encrypted in PostgreSQL, routing
 ./scripts/test_surfaces_live.py     # responses, anthropic messages, images
 ./scripts/test_quota_race_live.py   # admission under concurrency, real Valkey
+./scripts/test_cache_accounting_live.py  # a real cache hit, and the ledger
 ```
 
 **Run the live scripts.** More than half the serious bugs in this project's
@@ -142,17 +153,9 @@ Phase 2 is complete: gateway, redaction, console, providers, quotas, reporting,
 five `/v1` surfaces. `docs/phase-2-plan.md` records what was planned and what
 was added afterwards, including the bugs each addition surfaced.
 
-Two pieces of recorded-but-unbuilt work, both with their reasoning written down
-rather than left to be rediscovered:
+One piece of recorded-but-unbuilt work, with its reasoning written down rather
+than left to be rediscovered:
 
-- **[docs/cache-accounting-findings.md](docs/cache-accounting-findings.md)** —
-  prompt-cache accounting is **wrong on the OpenAI-shaped surfaces**. There are
-  four different spellings for "cache write tokens" in the wild and
-  `TokenCounts.from_usage` reads none of them, so those tokens are billed at the
-  full input rate: ~20× overcharge on Gemini, undercharge on Anthropic. Cortecs
-  also reports its own cost in the `usage` object (integer micro-EUR) and we
-  ignore it. Evidence is from the live API; LiteLLM has the same bug open. This
-  is a money bug — see ground rule 3.
 - **[docs/redaction-scoping-plan.md](docs/redaction-scoping-plan.md)** — the
   console cannot see the redaction layer at all (whether it is on, which engine,
   whether the service answers), and redaction is process-global when it needs to

@@ -272,6 +272,7 @@ def _provider_response(provider: Provider, model_count: int) -> ProviderResponse
         is_active=provider.is_active,
         forward_stream_options=provider.forward_stream_options,
         auth_scheme=provider.auth_scheme.value,
+        upstream_cost_unit=provider.upstream_cost_unit,
         model_count=model_count,
         created_at=provider.created_at,
         updated_at=provider.updated_at,
@@ -344,6 +345,7 @@ async def create_provider(
         is_active=payload.is_active,
         forward_stream_options=payload.forward_stream_options,
         auth_scheme=AuthScheme(payload.auth_scheme),
+        upstream_cost_unit=payload.upstream_cost_unit,
     )
     if payload.api_key is not None:
         _store_api_key(provider, secrets, payload.api_key.get_secret_value())

@@ -30,7 +30,13 @@ import orjson
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from gateway.accounting.cost import CostBreakdown, TokenCounts, compute_cost, select_price
+from gateway.accounting.cost import (
+    CostBreakdown,
+    TokenCounts,
+    compute_cost,
+    read_upstream_cost,
+    select_price,
+)
 from gateway.accounting.tokens import TokenEstimator
 from gateway.config import Settings
 from gateway.models import ApiSurface, ModelDef, UsageRecord, UsageSource, UsageStatus
@@ -106,6 +112,12 @@ class RequestContext:
     #: Which endpoint served the request. Selects how response frames are read
     #: — the surfaces disagree about where usage lives and what its keys mean.
     surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS
+    #: How to read this provider's self-reported cost, from
+    #: `providers.upstream_cost_unit`. Passed as a plain string rather than read
+    #: off `model.provider` here: finalisation runs in its own session, where
+    #: touching a relationship on a model loaded elsewhere is a lazy load on a
+    #: detached instance. Null means the provider's figure is ignored.
+    upstream_cost_unit: str | None = None
 
 
 class RequestAccounting:
@@ -396,6 +408,13 @@ class RequestAccounting:
                 )
                 price = None
 
+        # What the provider said it cost, if it said anything and the operator
+        # has declared how to read it. Deliberately outside the try above: a
+        # failure to price locally must not also discard the provider's figure,
+        # which is the one number still available when our own price row is the
+        # thing that is broken.
+        reported = read_upstream_cost(self._upstream_usage, self._ctx.upstream_cost_unit)
+
         now = utcnow()
         latency_ms = int((now - self._started_at).total_seconds() * 1000)
         ttfb_ms = (
@@ -421,6 +440,7 @@ class RequestAccounting:
             "completion_tokens": counts.completion,
             "total_tokens": counts.total,
             "cached_prompt_tokens": counts.cached_prompt,
+            "cache_write_tokens": counts.cache_write,
             "reasoning_tokens": counts.reasoning,
             "image_count": counts.images,
             "image_size": self._image_size,
@@ -430,6 +450,8 @@ class RequestAccounting:
             "model_substituted": self._was_substituted(),
             "cost": breakdown.total,
             "currency": breakdown.currency,
+            "upstream_cost": reported[0] if reported else None,
+            "upstream_cost_currency": reported[1] if reported else None,
             "price_id": price.id if price is not None else None,
             "finish_reason": self.finish_reason(),
             "upstream_status": upstream_status,

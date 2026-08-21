@@ -170,6 +170,10 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
         func.coalesce(func.sum(UsageRecord.total_tokens), 0).label("total_tokens"),
         func.coalesce(func.sum(UsageRecord.image_count), 0).label("images"),
         func.coalesce(func.sum(UsageRecord.cost), 0).label("cost"),
+        # Deliberately *not* coalesced to zero: null here means no request in
+        # this group reported a cost, which is a different fact from a reported
+        # cost of nothing.
+        func.sum(UsageRecord.upstream_cost).label("upstream_cost"),
         func.coalesce(
             func.sum(case((UsageRecord.usage_source == UsageSource.ESTIMATED, 1), else_=0)), 0
         ).label("estimated"),
@@ -238,7 +242,17 @@ async def _labels(session: AsyncSession, group_by: GroupBy, keys: Sequence[Any])
 def _row(
     group_by: GroupBy, key: Any, labels: dict[Any, str], values: Sequence[Any]
 ) -> UsageReportRow:
-    requests, prompt, completion, total, images, cost, estimated, unavailable = values
+    (
+        requests,
+        prompt,
+        completion,
+        total,
+        images,
+        cost,
+        upstream_cost,
+        estimated,
+        unavailable,
+    ) = values
     if key is None:
         label = _NO_KEY_LABEL[group_by]
     else:
@@ -259,6 +273,7 @@ def _row(
         cost=Decimal(str(cost or 0)),
         estimated_requests=int(estimated or 0),
         unavailable_requests=int(unavailable or 0),
+        upstream_cost=None if upstream_cost is None else Decimal(str(upstream_cost)),
     )
 
 
@@ -274,6 +289,12 @@ def _totals(rows: Sequence[UsageReportRow]) -> UsageReportRow:
         cost=sum((row.cost for row in rows), Decimal(0)),
         estimated_requests=sum(row.estimated_requests for row in rows),
         unavailable_requests=sum(row.unavailable_requests for row in rows),
+        # Summed only over the rows that have one, and left null if none do.
+        upstream_cost=(
+            sum((row.upstream_cost for row in rows if row.upstream_cost is not None), Decimal(0))
+            if any(row.upstream_cost is not None for row in rows)
+            else None
+        ),
     )
 
 
@@ -302,6 +323,19 @@ def _disclosures(totals: UsageReportRow, in_flight: int, substituted: int = 0) -
             f"{totals.images} image(s) were generated. Image models are commonly priced "
             "per image rather than per token, so those requests contribute cost without "
             "contributing tokens."
+        )
+    if totals.upstream_cost is not None and totals.requests:
+        # The one check our own arithmetic cannot perform on itself. A steady gap
+        # between the two figures means either a price row has gone stale or the
+        # provider changed a rate; neither shows up anywhere else until an
+        # invoice arrives. Stated as both numbers rather than a difference,
+        # because they are not necessarily in the same currency and this report
+        # refuses to convert (see CurrencyMismatch).
+        notes.append(
+            f"The provider reported {totals.upstream_cost} for these requests against "
+            f"{totals.cost} charged here. A persistent gap means a stale price row or an "
+            "upstream rate change, not a rounding error — the provider's figure is "
+            "informational and is never billed from."
         )
     if substituted:
         # A router with model fallback can serve a different model than the one
