@@ -1,17 +1,61 @@
 # Redaction: making it visible, and making it scoped
 
-- Requested 2026-08-17. **Not started.** This is the requirement, recorded
-  before it is designed, so the design is not reverse-engineered from a diff.
+- Requested 2026-08-17. **Step 1 of 3 is built**: the console can now see the
+  redaction layer (`GET /api/admin/redaction`, the Redaction screen). Steps 2
+  and 3 — scoping, then configurable engines — are still the requirement below,
+  recorded before being designed so the design is not reverse-engineered from a
+  diff.
 - Related: [ADR 0012](adr/0012-redaction-interface.md) (the detection contract),
   [ADR 0026](adr/0026-pluggable-detection.md) (the `llmp.redactors` entry point),
   [ADR 0009](adr/0009-quota-model.md) (the precedence rule to copy).
 
-## 1. The console cannot see the redaction layer at all
+## 1. Visibility — **done**
 
-Today redaction is **process-global configuration**: `GATEWAY_REDACTION__ENGINE`,
-`__ENDPOINT`, `__FAIL_OPEN` and the rest, read at startup into
-`RedactionSettings`. There is no API surface and no screen, so an operator using
-the console cannot answer:
+`GET /api/admin/redaction` reports the layer as this worker is actually running
+it, and the console renders it at `/admin/redaction`. Three decisions in it worth
+keeping when the write path arrives:
+
+- **The engine comes from the constructed redactor, not the setting.** If the two
+  ever disagree, reporting the setting describes a deployment that does not
+  exist.
+- **The service is asked at read time**, not remembered from startup. A detector
+  that was reachable then and is not now is the failure that matters, and with
+  `fail_open` false it means every request is currently being refused.
+- **The warnings are computed server-side** and rendered verbatim, the same
+  convention as a report's disclosures, so the wording lives with the rule and is
+  testable in Python. They are the point of the screen: a configuration dump
+  says what the settings are, the warnings say the settings are not achieving
+  what they look like they achieve. Covered so far — `noop`; `fail_open`; an
+  unreachable service (worded differently for fail-open and fail-closed, because
+  those are different emergencies); a configured language the service does not
+  serve; a language served without an NER model; entity types configured that the
+  service cannot detect and therefore silently ignores; placeholders left in the
+  response.
+
+What it deliberately does **not** expose: the placeholder key, ever — only
+whether it is set. The endpoint is stripped of any `user:pass@` on the way out,
+because a URL is exactly the setting that grows basic auth and this response is
+rendered in a browser.
+
+The activity figures come from `usage_records` rather than a counter, so they
+survive a restart and agree with the reports. The count of entities *actually
+removed* is the only number that distinguishes a working layer from one that is
+switched on and detecting nothing.
+
+## What made this worth doing first
+
+Everything below needs somewhere to show its effect, and this is it. Scoping
+without visibility would mean an operator setting a per-group rule and having no
+way to confirm it took.
+
+## 2. The original problem statement, kept because it is the acceptance criteria
+
+Redaction *is still* process-global configuration —
+`GATEWAY_REDACTION__ENGINE`, `__ENDPOINT`, `__FAIL_OPEN` and the rest, read at
+startup into `RedactionSettings`. What changed in step 1 is only that it can now
+be seen. These were the questions an operator could not answer, and each is now
+answered by the screen; they are listed here as the checklist it was built
+against:
 
 - is redaction on at all, or is `engine` still `noop`?
 - which engine — and is it the Presidio service or something else?
@@ -25,17 +69,14 @@ the console cannot answer:
 The per-request evidence exists — `usage_records.redaction_engine` and
 `.redacted_entity_count` — but nothing aggregates or exposes it.
 
-**Minimum worth building:** a read-only panel. Engine name, endpoint (host only,
-never a credential), reachability with latency from a real call to the service's
-health endpoint, the detection settings in force, the fail-open/fail-closed
-posture flagged as a warning when open, and a count of entities redacted over a
-recent window from `usage_records`. That last number is the one that tells an
-operator it is genuinely working rather than configured.
+All of the above are on the screen. The one addition made while building it that
+was not in this list: the detection service's own `/healthz` reports its engine
+version, the languages it serves, the NER model behind each, and every entity
+type it can detect — so the screen shows what the deployment *can* do, not only
+what it is configured to ask for. That is also what makes the mismatch warnings
+possible.
 
-The provider screen's connection test is the model to copy: run it against the
-row as stored, report what came back.
-
-## 2. Admin-configurable engines
+## 3. Admin-configurable engines
 
 Only **Presidio** exists today, behind the `http` engine contract, and the
 contract is deliberately generic — anything that speaks the detection API in
@@ -66,7 +107,7 @@ needs a database row that overrides them, and a clear precedence between the
 two. Worth an ADR of its own — this is the same "environment upstream became a
 provider row" migration shape as `providers`.
 
-## 3. Where redaction applies — the actual request
+## 4. Where redaction applies — the actual request
 
 It is all-or-nothing today. Wanted, in the requester's words:
 
@@ -111,9 +152,69 @@ deliberate, separate, auditable thing — not a side effect of ordering.
   redaction to apply. Without that, "why was this redacted" is unanswerable
   after the fact.
 
-## Sequencing
+## The write path, concretely
 
-Visibility first — it is read-only, needs no migration, and it is the thing
-currently missing that makes the rest hard to trust. Then scoping, which needs a
-table, a precedence rule with tests, and admission-path changes. Configurable
-endpoints last, since only one implementation exists to point at.
+Now that the read side exists, here is what step 2 actually costs. Recorded so
+the next session does not re-derive it.
+
+### The table
+
+`redaction_rules`, shaped like `limit_rules` because the console already renders
+that shape and an operator already understands it:
+
+| column | why |
+|---|---|
+| `scope` | `global` / `provider` / `model` / `group` / `user` — the same enum shape as `LimitScope`, which has `global`/`group`/`user`/`api_key`. Not the same enum: redaction wants provider and model, quotas want api_key. |
+| `scope_id` | null for `global`, else the subject. |
+| `require_redaction` | bool. **Only ever `true` in the first version** — see below. |
+| `is_active` | so a rule can be parked without losing who wrote it. |
+| `created_by`, `created_at` | this is a policy decision about personal data; who made it is part of the record. |
+
+A partial unique index on `(scope, scope_id)` where `is_active`, matching the
+expression index `limit_rules` uses, so a duplicate is a 409 rather than two
+rules that disagree.
+
+### The precedence rule, and why `require_redaction` is write-only-true at first
+
+> Redaction applies if **any** applicable scope requires it.
+
+An `false` value would mean "exempt", and an exemption is the one thing that can
+make the system redact *less* than it did yesterday. Shipping the additive half
+first means no combination of rules can weaken the layer, which is the property
+that makes every later addition safe. Exemptions can come later, as a distinct
+and deliberately noisier feature.
+
+This is the quota engine's rule with the comparison inverted, and the parallel is
+worth stating in the code: quotas are *all rules must pass*, redaction is *any
+rule requiring it wins*. Both mean "adding a rule can only tighten".
+
+### Where it plugs in
+
+`_metered.begin()` already resolves the model, and through it the provider, and
+holds the principal — so every scope a rule can name is in scope at the one place
+redaction is invoked. The lookup is one query per request against a table that
+will hold single digits of rows, so it wants the same treatment `access.py` got:
+resolved in the admission path, not lazily mid-stream.
+
+The redactor itself does not change. What changes is whether it is called, which
+means `RedactionSettings.engine` stops being the on/off switch and becomes "which
+engine, when redaction is required". A deployment with no rules should behave
+exactly as today, or upgrading changes behaviour silently — so **no rules means
+fall back to the current global setting**, and the Redaction screen must say
+which of the two is deciding.
+
+### What the ledger must record
+
+`usage_records` already has `redaction_engine` and `redacted_entity_count`, and
+neither answers "why was this redacted". Add the rule id, or at least the scope
+that matched. Without it, an operator asked why a particular request was redacted
+six weeks ago has no answer, and that is precisely the question a data-protection
+review asks.
+
+### Sequencing from here
+
+Scoping next: the table, the precedence rule with tests over every combination,
+the admission-path change, and the console screen gaining a rules list. Then
+configurable engines, which is still last — only one implementation exists to
+point at, so the useful version is an editable endpoint with a test-before-save
+rather than a registry of engines that do not exist.

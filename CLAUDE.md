@@ -107,8 +107,8 @@ Inside the gateway, the pieces that carry the most weight:
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services
-uv run pytest -q                       # 752 gateway tests, SQLite
-pnpm -r test                           # 13 packages/ui + 87 console
+uv run pytest -q                       # 773 gateway tests, SQLite
+pnpm -r test                           # 21 packages/ui + 100 console
 ```
 
 Then, for anything touching the request path, money, or SQL, against the real
@@ -153,22 +153,27 @@ Phase 2 is complete: gateway, redaction, console, providers, quotas, reporting,
 five `/v1` surfaces. `docs/phase-2-plan.md` records what was planned and what
 was added afterwards, including the bugs each addition surfaced.
 
-One piece of recorded-but-unbuilt work, with its reasoning written down rather
-than left to be rediscovered:
+One piece of part-built work, with its reasoning written down rather than left
+to be rediscovered:
 
-- **[docs/redaction-scoping-plan.md](docs/redaction-scoping-plan.md)** — the
-  console cannot see the redaction layer at all (whether it is on, which engine,
-  whether the service answers), and redaction is process-global when it needs to
-  be scopeable per model, provider, user or group. The precedence rule to copy is
-  the quota engine's: any applicable scope requiring redaction wins, so adding a
-  scope can only tighten.
+- **[docs/redaction-scoping-plan.md](docs/redaction-scoping-plan.md)** —
+  visibility is **done** (`GET /api/admin/redaction`, the Redaction screen).
+  Still to do: redaction is process-global when it needs to be scopeable per
+  model, provider, user or group, and the engine is not configurable from the
+  console. The precedence rule to copy is the quota engine's, inverted — quotas
+  are *all rules must pass*, redaction is *any applicable scope requiring it
+  wins* — so adding a scope can only tighten. The doc carries the table shape,
+  where it plugs into `_metered`, and why the first version has no exemptions.
 
 Known open items, none of them blocking:
 
 - **Pagination**: done. **Concurrency**: done and verified. Both were the last
   outstanding items from Phase 2.
-- Whether Cortecs rejects `stream_options` is still unverified — it needs a real
-  API key. `scripts/check_cortecs_stream_options.py` answers it in four requests.
+- Cortecs **accepts** `stream_options` and reports usage with or without it, so
+  `forward_stream_options = false` stays the right default (checked against the
+  live API). Still unverified is whether sending it narrows the routing pool —
+  Cortecs does not name the serving provider in its stream frames, so
+  `scripts/check_cortecs_stream_options.py` reports that part as unknown.
 - Deferred by the user: per-provider default body params (`eu_native`,
   `allow_zero_data_retention`), image editing and variations, per-size image
   pricing, reranking.

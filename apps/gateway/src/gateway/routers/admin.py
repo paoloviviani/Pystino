@@ -24,14 +24,16 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Any
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from gateway.accounting.cost import select_price
+from gateway.config import RedactionSettings, Settings
 from gateway.deps import (
     AdminUserDep,
     ControlHttpDep,
@@ -67,6 +69,8 @@ from gateway.pagination import Page, PageDep, count_of
 from gateway.periods import PeriodKind
 from gateway.pricing import CatalogueUnavailable, fetch_catalogue, parse_catalogue
 from gateway.providers import ProviderConfigurationError
+from gateway.redaction import Redactor
+from gateway.redaction import registry as redaction_registry
 from gateway.reporting import (
     GroupBy,
     GroupByParam,
@@ -98,6 +102,9 @@ from gateway.schemas import (
     ProviderTestResponse,
     ProviderUpdateRequest,
     QuotaResetResponse,
+    RedactionActivity,
+    RedactionServiceHealth,
+    RedactionStatusResponse,
     UsageReport,
     UserAdminResponse,
     UserUpdateRequest,
@@ -1577,3 +1584,225 @@ async def usage_by_group(
         for group_id, requests, tokens, cost, estimated in rows
     ]
     return sorted(result, key=lambda row: row.cost, reverse=True)
+
+
+# -- redaction ---------------------------------------------------------------
+#
+# Read-only, deliberately. Redaction is process configuration read at startup
+# (ADR 0012), so there is nothing here an operator could change even if the
+# route allowed it — see docs/redaction-scoping-plan.md for what making it
+# configurable requires. Until then the console can at least answer "is it on,
+# which engine, and is it answering", which it previously could not.
+
+
+def _sanitised_endpoint(endpoint: str) -> str | None:
+    """The detection endpoint, without any credential embedded in it.
+
+    Nothing puts one there today, but a URL is exactly the kind of setting that
+    grows a `user:pass@` when somebody puts the service behind basic auth, and
+    this response is rendered in a browser.
+    """
+    if not endpoint:
+        return None
+    scheme, _, rest = endpoint.partition("://")
+    if not rest:
+        return endpoint
+    _, at, host = rest.rpartition("@")
+    return f"{scheme}://{host}" if at else endpoint
+
+
+async def _redaction_service_health(
+    http: Any, settings: Settings
+) -> RedactionServiceHealth | None:
+    """Ask the detection service what it is and whether it is there.
+
+    Returns ``None`` for an engine that has no service to ask — ``noop``, or an
+    in-process plugin. Never raises: "it is not answering, and here is why" is
+    the useful answer, and an exception would replace it with a generic error on
+    a page whose whole job is to say what is wrong.
+    """
+    endpoint = settings.redaction.endpoint
+    if settings.redaction.engine != "http" or not endpoint:
+        return None
+
+    started = time.monotonic()
+    try:
+        response = await http.get(
+            f"{endpoint.rstrip('/')}/healthz",
+            timeout=settings.redaction.timeout_seconds,
+        )
+        latency = int((time.monotonic() - started) * 1000)
+        if response.status_code >= 400:
+            return RedactionServiceHealth(
+                reachable=False,
+                detail=f"{endpoint} answered HTTP {response.status_code}",
+                latency_ms=latency,
+            )
+        body = response.json()
+    except Exception as exc:
+        return RedactionServiceHealth(
+            reachable=False,
+            detail=f"could not reach {endpoint}: {exc}",
+            latency_ms=int((time.monotonic() - started) * 1000),
+        )
+
+    return RedactionServiceHealth(
+        reachable=True,
+        detail=str(body.get("status") or "ok"),
+        latency_ms=latency,
+        engine=body.get("engine"),
+        engine_version=body.get("engine_version"),
+        languages=[str(item) for item in body.get("languages") or []],
+        models={str(k): str(v) for k, v in (body.get("models") or {}).items()},
+        degraded_languages=[str(item) for item in body.get("degraded_languages") or []],
+        entities=[str(item) for item in body.get("entities") or []],
+    )
+
+
+async def _redaction_activity(session: SessionDep, window_seconds: int) -> RedactionActivity:
+    """What redaction has actually done recently.
+
+    Counted from the ledger rather than from a metric, so it survives a restart
+    and agrees with the reports. `redaction_engine` is written per request, which
+    is what makes "one engine or two in this window" answerable at all.
+    """
+    since = utcnow() - timedelta(seconds=window_seconds)
+    redacting = UsageRecord.redaction_engine.is_not(None) & (
+        UsageRecord.redaction_engine != "noop"
+    )
+    row = (
+        await session.execute(
+            select(
+                func.count(UsageRecord.id),
+                func.coalesce(func.sum(case((redacting, 1), else_=0)), 0),
+                func.coalesce(func.sum(UsageRecord.redacted_entity_count), 0),
+            ).where(
+                UsageRecord.created_at >= since,
+                UsageRecord.status != UsageStatus.IN_PROGRESS,
+            )
+        )
+    ).one()
+    engines = (
+        (
+            await session.execute(
+                select(UsageRecord.redaction_engine)
+                .where(UsageRecord.created_at >= since, redacting)
+                .group_by(UsageRecord.redaction_engine)
+                .order_by(UsageRecord.redaction_engine)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return RedactionActivity(
+        window_seconds=window_seconds,
+        requests=int(row[0] or 0),
+        requests_redacted=int(row[1] or 0),
+        entities_redacted=int(row[2] or 0),
+        engines=[name for name in engines if name],
+    )
+
+
+def _redaction_warnings(
+    config: RedactionSettings, engine: str, service: RedactionServiceHealth | None
+) -> list[str]:
+    """What is wrong with this configuration, in words.
+
+    The point of the screen. A configuration dump tells an operator what the
+    settings say; these tell them the settings are not achieving what they look
+    like they achieve — which is the failure mode of a redaction layer, because
+    detecting nothing looks exactly like finding nothing to detect.
+    """
+    notes: list[str] = []
+
+    if engine == "noop":
+        notes.append(
+            "Redaction is not enabled: the engine is 'noop', so prompts reach the provider "
+            "exactly as the caller sent them."
+        )
+        return notes
+
+    if config.fail_open:
+        notes.append(
+            "fail_open is on, so a detection failure forwards the prompt unredacted instead "
+            "of refusing the request. A redaction layer that silently stops redacting is "
+            "worse than an outage."
+        )
+
+    if service is not None and not service.reachable:
+        notes.append(
+            "The detection service is not answering. "
+            + (
+                "With fail_open off, every request needing redaction is being refused."
+                if not config.fail_open
+                else "With fail_open on, prompts are currently going upstream unredacted."
+            )
+        )
+
+    if service is not None and service.reachable:
+        if service.languages and config.language not in service.languages:
+            notes.append(
+                f"Configured for language '{config.language}', which the service does not "
+                f"serve — it offers {', '.join(service.languages)}. Detection will find "
+                "little or nothing."
+            )
+        elif config.language in service.degraded_languages:
+            notes.append(
+                f"'{config.language}' is served without a named-entity model, so fewer "
+                "entities are found than for a fully supported language."
+            )
+
+        if config.entity_types and service.entities:
+            unknown = sorted(set(config.entity_types) - set(service.entities))
+            if unknown:
+                notes.append(
+                    "These entity types are configured but the service does not detect them, "
+                    f"so they are silently ignored: {', '.join(unknown)}."
+                )
+
+    if not config.restore_in_response:
+        notes.append(
+            "restore_in_response is off, so callers receive placeholders rather than the "
+            "original values. Deliberate for some deployments; surprising in most."
+        )
+
+    return notes
+
+
+@router.get("/redaction", response_model=RedactionStatusResponse)
+async def redaction_status(
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    http: ControlHttpDep,
+    request: Request,
+    window_seconds: int = 86_400,
+) -> RedactionStatusResponse:
+    """The redaction layer as this worker is running it."""
+    if not 60 <= window_seconds <= 366 * 86_400:
+        raise BadRequestError("window_seconds must be between 60 and one year.")
+
+    config = settings.redaction
+    service = await _redaction_service_health(http, settings)
+    # From the constructed redactor, not the setting: if the two ever disagreed,
+    # reporting the setting would describe a deployment that does not exist.
+    live: Redactor | None = getattr(request.app.state, "redactor", None)
+    engine = getattr(live, "name", None) or config.engine
+
+    return RedactionStatusResponse(
+        engine=engine,
+        enabled=engine != "noop",
+        endpoint=_sanitised_endpoint(config.endpoint),
+        installed_engines=redaction_registry.available(),
+        fail_open=config.fail_open,
+        restore_in_response=config.restore_in_response,
+        language=config.language,
+        score_threshold=config.score_threshold,
+        entity_types=list(config.entity_types) if config.entity_types else None,
+        timeout_seconds=config.timeout_seconds,
+        cache_size=config.cache_size,
+        placeholder_key_set=bool(config.placeholder_key.get_secret_value()),
+        service=service,
+        activity=await _redaction_activity(session, window_seconds),
+        warnings=_redaction_warnings(config, engine, service),
+    )

@@ -13,6 +13,7 @@ import type {
   Price,
   ProviderTestResult,
   QuotaReset,
+  RedactionStatus,
   UsageReport,
 } from "./types";
 
@@ -34,6 +35,7 @@ export const adminKeys = {
   limits: ["admin", "limits"] as const,
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
   users: ["admin", "users"] as const,
+  redaction: ["admin", "redaction"] as const,
   report: (query: string) => ["admin", "report", query] as const,
 };
 
@@ -100,6 +102,22 @@ export function useCreateProvider() {
     mutationFn: (input: ProviderInput) =>
       request<AdminProvider>("/api/admin/providers", { method: "POST", body: input }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.providers }),
+  });
+}
+
+/**
+ * The redaction layer's current state.
+ *
+ * Not cached for long: the service-reachability check is the point, and a stale
+ * "reachable" is exactly the wrong thing to show on a page someone opened
+ * because requests are failing.
+ */
+export function useRedactionStatus() {
+  return useQuery({
+    queryKey: adminKeys.redaction,
+    queryFn: () => request<RedactionStatus>("/api/admin/redaction"),
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 

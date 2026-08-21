@@ -223,6 +223,50 @@ export interface ModelImportResponse {
   results: ModelImportResult[];
 }
 
+/** What the detection service says about itself, asked at read time. */
+export interface RedactionServiceHealth {
+  reachable: boolean;
+  detail: string;
+  latency_ms: number | null;
+  engine: string | null;
+  engine_version: string | null;
+  languages: string[];
+  models: Record<string, string>;
+  /** Served without an NER model, so fewer entities are found. */
+  degraded_languages: string[];
+  entities: string[];
+}
+
+export interface RedactionActivity {
+  window_seconds: number;
+  requests: number;
+  requests_redacted: number;
+  entities_redacted: number;
+  engines: string[];
+}
+
+/** The redaction layer as the gateway is actually running it (ADR 0012). */
+export interface RedactionStatus {
+  engine: string;
+  enabled: boolean;
+  endpoint: string | null;
+  installed_engines: string[];
+  fail_open: boolean;
+  restore_in_response: boolean;
+  language: string;
+  score_threshold: number;
+  /** Null means every type the engine offers, not none. */
+  entity_types: string[] | null;
+  timeout_seconds: number;
+  cache_size: number;
+  /** Whether the HMAC key is set. Never the key. */
+  placeholder_key_set: boolean;
+  service: RedactionServiceHealth | null;
+  activity: RedactionActivity;
+  /** Computed by the API, rendered verbatim. */
+  warnings: string[];
+}
+
 export interface AdminProvider {
   id: string;
   name: string;
