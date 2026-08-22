@@ -163,8 +163,19 @@ Phase 2 is complete: gateway, redaction, console, providers, quotas, reporting,
 five `/v1` surfaces. `docs/phase-2-plan.md` records what was planned and what
 was added afterwards, including the bugs each addition surfaced.
 
-One piece of part-built work, with its reasoning written down rather than left
-to be rediscovered:
+Two pieces of designed-but-unbuilt work, with the reasoning written down rather
+than left to be rediscovered:
+
+- **[ADR 0032](docs/adr/0032-provider-plugins.md)** *(proposed)* — providers and
+  routers are different kinds, distinguished by whether the serving endpoint is
+  implied by the model or chosen per request. Vendor knowledge moves into
+  plugins, pricing with it, and the load-bearing rule is that **a plugin returns
+  facts and never computes money** — `accounting/cost.py` stays the only code
+  that multiplies a count by a rate. Cortecs is the router reference
+  implementation. Note the measurement recorded there: Cortecs charges its
+  listed price whichever sub-provider serves, so per-endpoint pricing buys
+  attribution and drift detection rather than different rates.
+
 
 - **[docs/redaction-scoping-plan.md](docs/redaction-scoping-plan.md)** —
   visibility is **done** (`GET /api/admin/redaction`, the Redaction screen).
