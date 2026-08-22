@@ -86,6 +86,15 @@ Inside the gateway, the pieces that carry the most weight:
 - **Money is a string end to end.** `Numeric(24,12)` round-trips zero as
   `Decimal("0E-12")`; the `Money` annotated type in `schemas.py` forces plain
   digits. Never parse an amount into a float, including in the browser.
+- **Redaction is ~90% of the CPU, and it scales with prompt length** — about
+  0.1ms per prompt token, against a gateway cost that stays flat at 24-31ms.
+  Capacity planning is redaction planning; see
+  [docs/performance.md](docs/performance.md). Its detection cache is a
+  *per-process* LRU, so adding workers lowers the hit rate.
+- **Per-request round trips are pinned by a test.** `test_query_counts.py`
+  bounds them at 3 selects to authenticate and 5 + 2 writes for a metered
+  request. `selectinload` on a many-to-one relation costs a round trip that
+  `joinedload` does not; that is how the budget was set.
 - **`InMemoryCounterStore` is atomic for an uninteresting reason** — it never
   awaits. It cannot prove anything about `MULTI`/`EXEC`, which is why
   `scripts/test_quota_race_live.py` exists.
@@ -107,7 +116,7 @@ Inside the gateway, the pieces that carry the most weight:
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services
-uv run pytest -q                       # 773 gateway tests, SQLite
+uv run pytest -q                       # 775 gateway tests, SQLite
 pnpm -r test                           # 21 packages/ui + 100 console
 ```
 
@@ -129,6 +138,7 @@ docker compose --env-file deploy/.env \
 ./scripts/test_surfaces_live.py     # responses, anthropic messages, images
 ./scripts/test_quota_race_live.py   # admission under concurrency, real Valkey
 ./scripts/test_cache_accounting_live.py  # a real cache hit, and the ledger
+./scripts/benchmark_live.py         # per-layer cost; see docs/performance.md
 ```
 
 **Run the live scripts.** More than half the serious bugs in this project's
