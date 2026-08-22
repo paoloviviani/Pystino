@@ -24,7 +24,7 @@ import uuid
 from collections.abc import Iterable
 
 from sqlalchemy import ColumnElement, Select, literal, or_, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from gateway.models import GroupModelAccess, ModelDef, Provider, UserModelAccess
 
@@ -100,5 +100,8 @@ def accessible_model_by_name(
     return (
         accessible_models(user_id=user_id, group_ids=group_ids)
         .where(ModelDef.name == name)
-        .options(selectinload(ModelDef.prices), selectinload(ModelDef.provider))
+        # The provider is many-to-one, so it joins without multiplying rows;
+        # prices are to-many and stay a separate IN query. One round trip saved
+        # on every metered request.
+        .options(selectinload(ModelDef.prices), joinedload(ModelDef.provider))
     )

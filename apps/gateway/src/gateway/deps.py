@@ -12,7 +12,7 @@ from typing import Annotated, Any
 from fastapi import Depends, Request
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from gateway.accounting import TokenEstimator
 from gateway.config import Settings
@@ -123,12 +123,23 @@ async def resolve_api_key(session: AsyncSession, secret: str) -> ApiKey:
     if prefix is None:
         raise AuthenticationError("Invalid API key provided.")
 
+    # `joinedload` for the two many-to-one relations, not `selectinload`.
+    #
+    # This runs on every single request, so its round trips are multiplied by
+    # everything the gateway does. `selectinload` issues one SELECT per
+    # relation — four in total here — where a join fetches the key, its user and
+    # its billing group in one. Memberships stay `selectinload` because they are
+    # to-many: joining them would multiply the key row by the membership count
+    # and make the result set quadratic in a user's group count.
+    #
+    # Measured: four selects to authenticate became two. See
+    # apps/gateway/tests/test_query_counts.py, which pins it.
     stmt = (
         select(ApiKey)
         .where(ApiKey.prefix == prefix)
         .options(
-            selectinload(ApiKey.user).selectinload(User.memberships),
-            selectinload(ApiKey.billing_group),
+            joinedload(ApiKey.user).selectinload(User.memberships),
+            joinedload(ApiKey.billing_group),
         )
     )
     api_key = (await session.execute(stmt)).scalar_one_or_none()
