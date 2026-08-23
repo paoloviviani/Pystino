@@ -75,6 +75,10 @@ This is the load-bearing rule, and the reason the refactor is safe:
 > catalogue offers. `accounting/cost.py` remains the only code that multiplies a
 > count by a rate.
 
+That holds under both billing modes in decision 6: in `provider_reported` mode
+the plugin still only *reports* a number it read, and the gateway decides to
+treat it as the charge. The plugin multiplies nothing either way.
+
 That keeps the property which makes this ledger trustworthy: one place does the
 arithmetic, and 775 tests are pointed at it. A plugin that could compute a
 charge would be a plugin that could get an invoice wrong, and no amount of
@@ -102,10 +106,14 @@ class ProviderPlugin(Protocol):
     async def catalogue(self, client: httpx.AsyncClient) -> list[CatalogueEntry]
 ```
 
-`ReportedCost` carries an amount **and its declared unit**, because nothing in a
-payload says whether `136` means micro-EUR or credits — the point already made
-by `UPSTREAM_COST_UNITS`. Moving the unit into the plugin removes the
-`upstream_cost_unit` column and the operator's obligation to know it.
+`ReportedCost` carries an amount, **its declared unit**, and whether the plugin
+asserts the figure is the counterparty's actual charge rather than an estimate.
+The unit because nothing in a payload says whether `136` means micro-EUR or
+credits — the point already made by `UPSTREAM_COST_UNITS`, and moving it into the
+plugin removes both the `upstream_cost_unit` column and the operator's obligation
+to know it. The assertion because decision 6 lets a deployment bill from that
+figure, and a plugin that merely passes through something a vendor calls "cost"
+should not be selectable for that.
 
 `read_served_endpoint` is what the current code cannot do: the reference router
 names the serving endpoint **only in a response header**, never in the body or
@@ -156,6 +164,80 @@ Encoding what was **measured**, not assumed (2026-08-22, live API):
 | cache-write spellings | `created_cache_tokens`, `cache_write_tokens`, `cache_creation_tokens` | three backends, three names, two of them in one response |
 | catalogue keys | `context_size`, `pricing.*`, `input_modalities`, `output_modalities`, `supported_features`, `providers` | ADR 0031 |
 
+### 6. Two billing modes, and both figures always recorded
+
+Resolved 2026-08-22, replacing the earlier position that only our own arithmetic
+may bill. A provider or router is configured as **one** of:
+
+- `own_prices` *(default)* — we charge tokens x our price row. The counterparty's
+  figure is evidence.
+- `provider_reported` — the counterparty's figure **is** the charge. Our price
+  row still exists, and is still evaluated, but as evidence.
+
+The reason both are wanted is that they answer different accounting questions,
+and which one is right is a policy the platform does not get to decide: strict
+pass-through cost recovery makes their figure correct by definition, while
+anything involving overhead recovery, a subsidised group, or a price held steady
+across a budgeting year makes ours correct by definition.
+
+**The invariant that makes either safe: both figures are always recorded, in
+every mode.** A deployment that defers to the counterparty still keeps its own
+arithmetic, and one that bills its own prices still keeps theirs. Misalignment is
+then a recorded fact rather than something nobody can reconstruct afterwards —
+which is the whole reason the earlier version of this ADR was too restrictive.
+
+`usage_records` therefore carries three cost figures with one meaning each:
+
+| column | meaning | always present |
+|---|---|---|
+| `cost` | **what we charge.** Authoritative for quotas, reports and invoices | yes |
+| `computed_cost` | our arithmetic from the price row in force | yes |
+| `upstream_cost` (+ currency) | what the counterparty said it charged | when reported |
+| `upstream_cost_details` | their breakdown, stored verbatim as JSON | when reported |
+| `cost_source` | which of the two produced `cost`, including fallback | yes |
+
+`price_id` already records *which* price row was in force, and prices are
+append-only and effective-dated, so our rates at the time are recoverable
+without storing them again.
+
+The breakdown is kept as JSON rather than as four more numeric columns because
+their shape is theirs, not ours — the reference router reports five components
+including `prompt_audio_cost`, and a different one will report something else.
+Normalising it would be inventing a schema for someone else's data. Note the
+constraint from ADR 0029's neighbourhood: PostgreSQL has no equality operator for
+`json`, so this column must never appear in a `DISTINCT` or `GROUP BY`.
+
+Five rules that go with the modes:
+
+1. **`cost_source` never lies about a fallback.** If the mode is
+   `provider_reported` and no figure arrives — a failed request, or a provider
+   that omits it — the charge falls back to `computed_cost` and the source says
+   `own_prices_fallback`. Silently falling back would have a pass-through
+   deployment quietly billing from a price table nobody was maintaining. Reports
+   should disclose the count, exactly as they already disclose estimated token
+   counts.
+2. **`provider_reported` requires the currencies to match.** Their figure is in
+   their currency, and this gateway refuses to convert (`CurrencyMismatch`).
+   Configuring the mode against a counterparty that reports another currency is
+   a configuration error, refused at the boundary rather than at request time.
+3. **Prices are still required in `provider_reported` mode**, because admission
+   happens *before* the request and their figure only exists after. The quota
+   reservation must use our estimate in both modes; only the settlement differs.
+   A provider in `provider_reported` mode with unpriced models has no cost-based
+   admission control at all, which is a hole worth warning about on the console
+   rather than discovering from an overspend.
+4. **The rounding is inherited knowingly.** Their figure is pre-rounded — the
+   reference router rounds each component up to a whole micro-EUR, which is
+   ~25% on a 40-token request and ~2% on a 400-token one. In
+   `provider_reported` mode that is passed to the group being billed. That is
+   the correct behaviour for pass-through and it should be visible, not
+   discovered.
+5. **A plugin declares whether its figure is fit to bill from.** Reporting a
+   cost and being *contractually authoritative* about it are different claims,
+   so `read_reported_cost` returns the amount, its unit, and whether the plugin
+   asserts it is the counterparty's actual charge. A deployment cannot select
+   `provider_reported` against a plugin that does not make that assertion.
+
 ## An inconvenient measurement, stated plainly
 
 The brief for this work is "correct billing on our side based on actual provider
@@ -194,9 +276,13 @@ So the honest framing of what per-sub-provider support buys **today**:
   to expect, and it explains the small positive drift already visible in reports.
 
 If per-endpoint pricing is wanted regardless, the schema above supports it and
-costs nothing while unused. What it should **not** do is bill from the
-counterparty's reported figure: that carries their rounding and their currency,
-and we refuse conversion by design.
+costs nothing while unused.
+
+Note what this does *not* settle. Per-endpoint prices are for the `own_prices`
+mode; a deployment in `provider_reported` mode against a router that varies by
+endpoint gets the right answer automatically, because their figure already
+accounts for whichever endpoint ran. The two mechanisms address the same risk
+from opposite ends, and decision 6 is what lets a deployment pick which end.
 
 ## Consequences
 
@@ -253,19 +339,26 @@ needs the served endpoint recorded per request, needs substitution checked, and
 needs reconciliation grouped by endpoint. A boolean would leave all three
 optional.
 
+## Resolved by review, 2026-08-22
+
+1. **May a counterparty be the billing truth?** **Yes, configurably** — see
+   decision 6. The earlier "no" was too restrictive: it protected the ledger's
+   arithmetic at the cost of forbidding pass-through cost recovery, which is a
+   legitimate accounting policy the platform should not decide on a deployment's
+   behalf. What survives from the objection is the *auditability* requirement:
+   both figures are recorded in both modes, so a divergence is always
+   reconstructable, and a fallback is never silent.
+2. **In-tree or entry-point discovered?** **Both** — in-tree for the plugins we
+   maintain, so they are reviewed and tested with the gateway, and the
+   `llmp.providers` entry point supported so a deployment can add a counterparty
+   without forking. Same shape as ADR 0026.
+
 ## Open questions, for whoever reviews this
 
-1. **Should a router be allowed to bill from its reported cost?** This ADR says
-   no. If a counterparty's figure is ever contractually authoritative, that is a
-   different decision and wants its own ADR.
-2. **Should plugins be in-tree or entry-point discovered?** ADR 0026 chose entry
-   points for redactors. In-tree is simpler to test and review; entry points let
-   a deployment add a counterparty without forking. Probably: in-tree for the
-   ones we maintain, entry points supported for others.
-3. **How is a plugin bound to a provider row?** A `plugin` column naming it,
+1. **How is a plugin bound to a provider row?** A `plugin` column naming it,
    validated at startup against the registry like the redaction engine — which
    refuses an unknown name rather than falling back.
-4. **What happens to a provider row whose plugin disappears?** Refusing at
+2. **What happens to a provider row whose plugin disappears?** Refusing at
    startup is consistent with redaction; refusing means one uninstalled package
    takes the gateway down. Probably: refuse to *serve that provider*, loudly, and
    keep running.
