@@ -174,7 +174,10 @@ than left to be rediscovered:
   that multiplies a count by a rate. Cortecs is the router reference
   implementation. Note the measurement recorded there: Cortecs charges its
   listed price whichever sub-provider serves, so per-endpoint pricing buys
-  attribution and drift detection rather than different rates.
+  attribution and drift detection rather than different rates. Billing has two
+  configurable modes — our prices, or the counterparty's reported figure — and
+  **both figures are recorded in both modes**, so a divergence is always
+  reconstructable and a fallback is never silent.
 
 
 - **[docs/redaction-scoping-plan.md](docs/redaction-scoping-plan.md)** —
