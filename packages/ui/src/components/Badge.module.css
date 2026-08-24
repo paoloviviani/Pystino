@@ -1,10 +1,24 @@
+/*
+ * A solid block of colour, square.
+ *
+ * It was a pale pill with tinted text. Both changed for the Bauhaus pass and
+ * for the same reason: in this palette a chip that whispers loses to the chrome,
+ * which is 2px black rules on white and does not whisper. A filled block at full
+ * strength is also the poster idiom — colour doing a job, in a rectangle.
+ *
+ * Square rather than pill because a rounded rectangle is not one of the three
+ * shapes. `--radius-sm` rather than a literal `0`, so a later restyle can soften
+ * every corner in the token file rather than in fourteen components.
+ */
 .badge {
   display: inline-flex;
   align-items: center;
   padding: 0.1rem var(--space-2);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--label-tracking);
+  text-transform: var(--label-transform);
   white-space: nowrap;
 }
 
@@ -12,19 +26,38 @@
   background: var(--colour-surface-sunken);
   color: var(--colour-text-muted);
 }
+
+/* Black, not blue — and this is a fix rather than a preference.
+ *
+ * Dropping green made `ok` the blue, and `accent` was already the blue, so on the
+ * providers listing the classification badge (ROUTER) and the state badge
+ * (ACTIVE) came out identically. Two different kinds of fact wearing the same
+ * colour is worse than either colour being wrong.
+ *
+ * Black resolves it in-palette: `accent` classifies (what this thing *is*), and
+ * black is the structural colour this whole design is ruled in. `ok` keeps the
+ * blue for states (how this thing *is doing*). */
 .accent {
-  background: var(--colour-accent-subtle);
-  color: var(--colour-accent);
+  background: var(--colour-text);
+  color: var(--colour-text-inverse);
 }
+
+/* Blue, not green: there is no green in this palette. See tokens.css. */
 .ok {
-  background: var(--colour-ok-subtle);
-  color: var(--colour-ok);
+  background: var(--colour-ok);
+  color: var(--colour-text-inverse);
 }
+
+/* The one that inverts. Cadmium is the lightest of the three primaries, so white
+ * on it fails contrast badly and it takes near-black type instead — which is
+ * what the period printers did with it too. Full strength rather than the wash,
+ * because a chip is small enough to carry it. */
 .warn {
-  background: var(--colour-warn-subtle);
-  color: var(--colour-warn);
+  background: var(--colour-yellow);
+  color: var(--colour-text);
 }
+
 .danger {
-  background: var(--colour-danger-subtle);
-  color: var(--colour-danger);
+  background: var(--colour-danger);
+  color: var(--colour-text-inverse);
 }

@@ -26,13 +26,50 @@
   flex-shrink: 0;
 }
 
-/* A plain square in the accent colour. A logo is the foundation's to supply;
-   inventing one here would only have to be removed later. */
+/* Circle, triangle, square, in the three primaries.
+ *
+ * Still not a logo — one is the foundation's to supply, and inventing one here
+ * would only have to be removed. This is the movement's own signature rather
+ * than a mark: the three shapes and the three colours, in Kandinsky's pairing
+ * (circle/blue, triangle/yellow, square/red) from the Bauhaus colour-shape
+ * questionnaire. Drawn in CSS rather than set as glyphs, because a real circle
+ * is a shape and a bullet character is a font's opinion about one.
+ *
+ * Decorative in the strict sense — `aria-hidden`, with the wordmark beside it
+ * carrying the name — so it costs a screen reader nothing. */
 .brandMark {
-  width: 0.9rem;
-  height: 0.9rem;
-  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex-shrink: 0;
+}
+
+.brandMark::before,
+.brandMark::after {
+  content: "";
+  width: 0.65rem;
+  height: 0.65rem;
+}
+
+/* The circle. */
+.brandMark::before {
+  border-radius: var(--radius-pill);
   background: var(--colour-accent);
+}
+
+/* The square. */
+.brandMark::after {
+  background: var(--colour-danger);
+}
+
+/* The triangle, between them: a zero-width box with a coloured bottom border,
+   which is the only way to draw one without an SVG. */
+.brandShape {
+  width: 0;
+  height: 0;
+  border-left: 0.33rem solid transparent;
+  border-right: 0.33rem solid transparent;
+  border-bottom: 0.55rem solid var(--colour-yellow);
 }
 
 .brandName {
@@ -48,10 +85,14 @@
 
 .navLink {
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   color: var(--colour-text-muted);
-  font-weight: var(--weight-medium);
+  font-weight: var(--label-weight);
+  letter-spacing: 0.01em;
   text-decoration: none;
+  /* Reserves the space the active state's rule will occupy, so selecting a tab
+     does not shift the row by 3px. */
+  border-bottom: 3px solid transparent;
 }
 
 .navLink:hover {
@@ -64,9 +105,14 @@
   box-shadow: var(--focus-ring);
 }
 
+/* Underscored rather than filled. A filled tab in this palette is a block of
+   colour in the chrome, which is exactly what the "colour is a signal" rule
+   above rules out — the nav is not telling anyone anything urgent. A 3px rule
+   under the current section is the ruled-layout way to say the same thing. */
 .navLinkActive {
-  background: var(--colour-accent-subtle);
-  color: var(--colour-accent);
+  color: var(--colour-text);
+  font-weight: var(--weight-bold);
+  border-bottom-color: var(--colour-accent);
 }
 
 .identity {

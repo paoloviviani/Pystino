@@ -25,6 +25,7 @@ An image built without the console cannot half-serve one.
 from __future__ import annotations
 
 import logging
+import mimetypes
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, Request, Response
@@ -37,6 +38,21 @@ from gateway.config import Settings
 logger = logging.getLogger(__name__)
 
 MOUNT_PATH = "/console"
+
+# Content types Starlette would otherwise guess wrong, registered explicitly.
+#
+# `StaticFiles` asks `mimetypes.guess_type`, which reads the *operating system's*
+# mime database when there is one. There is one on a developer's machine and there
+# is not one in the slim runtime image, so the self-hosted woff2 was served as
+# `font/woff2` locally and `application/octet-stream` in the container — the works
+# here / broken there shape that only a live check finds. Browsers happen to load
+# a font regardless of its content type, so the symptom would have been nothing
+# more than a wrong header, indefinitely.
+for _suffix, _type in (
+    (".woff2", "font/woff2"),
+    (".woff", "font/woff"),
+):
+    mimetypes.add_type(_type, _suffix)
 
 # Immutable assets: the filename contains a content hash, so a changed file is a
 # changed URL and a year-long cache can never serve a stale one.

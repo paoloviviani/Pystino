@@ -45,6 +45,7 @@ verified is marked as such in the ADR that depends on it.
 | [0031](0031-model-capabilities.md) | Model capabilities: imported from the catalogue, exposed to callers, editable |
 | [0032](0032-provider-plugins.md) | Providers versus routers, and a plugin seam that returns facts rather than computing money |
 | [0033](0033-redaction-engine-selection.md) | The redaction engine becomes an admin decision, on an append-only record |
+| [0034](0034-bauhaus-design-language.md) | Bauhaus as the design language, and a self-hosted geometric sans |
 
 ## Decisions recorded now, implemented later
 

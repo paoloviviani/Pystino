@@ -35,20 +35,28 @@
 
 .table th {
   padding: var(--space-2) var(--space-5);
+  /* The header rule stays at full weight and full black: it is the line that
+   * separates the labels from the data, and in a ruled layout that is the one
+   * that has to be unmissable. */
   border-bottom: var(--border-width) solid var(--colour-border);
   background: var(--colour-surface-sunken);
-  color: var(--colour-text-muted);
+  color: var(--colour-text);
   font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-  letter-spacing: 0.04em;
+  font-weight: var(--label-weight);
+  letter-spacing: var(--label-tracking);
   text-align: left;
-  text-transform: uppercase;
+  text-transform: var(--label-transform);
   white-space: nowrap;
 }
 
+/* Row lines are the quiet rule, deliberately. 2px of black under every row turns
+ * a listing into a grid of boxes and buries the data in its own scaffolding —
+ * which is the failure mode of applying this style literally rather than
+ * functionally. The bold rules are the ones that separate *kinds* of thing:
+ * header from body, body from total. */
 .table td {
   padding: var(--space-3) var(--space-5);
-  border-bottom: var(--border-width) solid var(--colour-border);
+  border-bottom: var(--border-width-quiet) solid var(--colour-border-quiet);
   vertical-align: baseline;
 }
 
