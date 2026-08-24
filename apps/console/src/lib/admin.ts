@@ -11,6 +11,7 @@ import type {
   ModelImportResponse,
   ModelKind,
   Price,
+  ProviderPlugin,
   ProviderTestResult,
   QuotaReset,
   RedactionStatus,
@@ -36,6 +37,7 @@ export const adminKeys = {
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
   users: ["admin", "users"] as const,
   redaction: ["admin", "redaction"] as const,
+  providerPlugins: ["admin", "provider-plugins"] as const,
   report: (query: string) => ["admin", "report", query] as const,
 };
 
@@ -92,6 +94,9 @@ export interface ProviderInput {
   api_key?: string;
   extra_headers?: Record<string, string>;
   is_active?: boolean;
+  plugin?: string | null;
+  kind?: "provider" | "router";
+  billing_mode?: "own_prices" | "provider_reported";
   forward_stream_options?: boolean;
   auth_scheme?: "bearer" | "x_api_key";
 }
@@ -112,6 +117,20 @@ export function useCreateProvider() {
  * "reachable" is exactly the wrong thing to show on a page someone opened
  * because requests are failing.
  */
+/**
+ * The provider types this deployment can offer.
+ *
+ * Long stale time: this changes when a package is installed, not while somebody
+ * is filling in a form.
+ */
+export function useProviderPlugins() {
+  return useQuery({
+    queryKey: adminKeys.providerPlugins,
+    queryFn: () => request<ProviderPlugin[]>("/api/admin/provider-plugins"),
+    staleTime: 10 * 60_000,
+  });
+}
+
 export function useRedactionStatus() {
   return useQuery({
     queryKey: adminKeys.redaction,

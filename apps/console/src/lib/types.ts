@@ -267,6 +267,25 @@ export interface RedactionStatus {
   warnings: string[];
 }
 
+/**
+ * An installed provider type.
+ *
+ * The plugin *is* the type as far as an operator is concerned: it decides how
+ * the counterparty is talked to and what may be believed about what it charged.
+ * Read from the API rather than hardcoded, so installing a plugin makes it
+ * selectable without a console release (ADR 0032).
+ */
+export interface ProviderPlugin {
+  name: string;
+  label: string;
+  description: string;
+  /** `provider` implies the serving endpoint; `router` chooses it per request. */
+  kind: "provider" | "router";
+  /** Only the modes this plugin can support, so the UI cannot offer a refusal. */
+  billing_modes: ("own_prices" | "provider_reported")[];
+  is_default: boolean;
+}
+
 export interface AdminProvider {
   id: string;
   name: string;
@@ -281,6 +300,19 @@ export interface AdminProvider {
   forward_stream_options: boolean;
   /** How the credential is presented. Anthropic's own API rejects a bearer token. */
   auth_scheme: "bearer" | "x_api_key";
+  /** Which plugin carries this counterparty's quirks. Null is the default type. */
+  plugin: string | null;
+  kind: "provider" | "router";
+  /** What the named plugin actually is, so a mismatch with `kind` is visible. */
+  plugin_kind: string | null;
+  /** Whose figure is the charge. */
+  billing_mode: "own_prices" | "provider_reported";
+  /**
+   * Active models here with no price row. They reserve nothing, so no cost
+   * ceiling ever trips for them — a hole in any mode and a sharp one in
+   * pass-through, where the provider's figure arrives too late to admit on.
+   */
+  unpriced_model_count: number;
   /** How many models this provider serves — the blast radius of turning it off. */
   model_count: number;
   created_at: string;

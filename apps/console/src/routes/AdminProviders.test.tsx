@@ -27,6 +27,11 @@ function provider(overrides: Partial<AdminProvider> = {}): AdminProvider {
     is_active: true,
     forward_stream_options: true,
     auth_scheme: "bearer",
+    plugin: null,
+    kind: "provider",
+    plugin_kind: "provider",
+    billing_mode: "own_prices",
+    unpriced_model_count: 0,
     model_count: 3,
     created_at: "2026-08-01T10:00:00Z",
     updated_at: "2026-08-01T10:00:00Z",
@@ -38,11 +43,44 @@ interface Captured {
   bodies: { url: string; body: unknown }[];
 }
 
+/**
+ * The installed provider types, as the registry would report them.
+ *
+ * Returned raw rather than through `jsonResponse`, which wraps an array in the
+ * pagination envelope every *listing* uses — this endpoint is a handful of
+ * installed packages, not a listing, so it answers with a plain array.
+ */
+const PLUGINS = [
+  {
+    name: "generic",
+    label: "OpenAI-compatible",
+    description: "Forwards requests unchanged. Tokens are counted here.",
+    kind: "provider",
+    billing_modes: ["own_prices"],
+    is_default: true,
+  },
+  {
+    name: "cortecs",
+    label: "Cortecs (router)",
+    description: "Chooses a sub-provider per request and reports its own cost.",
+    kind: "router",
+    billing_modes: ["own_prices", "provider_reported"],
+    is_default: false,
+  },
+];
+
 function routes(providers: AdminProvider[], captured: Captured = { bodies: [] }, test?: unknown) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     if (init?.body) captured.bodies.push({ url, body: JSON.parse(String(init.body)) });
+
+    if (url.includes("/provider-plugins")) {
+      return new Response(JSON.stringify(PLUGINS), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
 
     let payload: unknown = [];
     if (url.endsWith("/test") && method === "POST") {
@@ -214,5 +252,117 @@ describe("AdminProviders", () => {
     await user.type(within(dialog).getByLabelText("Name"), "ollama");
     await user.type(within(dialog).getByLabelText("Base URL"), "http://ollama:11434/v1");
     expect(within(dialog).getByRole("button", { name: "Add" })).toBeEnabled();
+  });
+});
+
+describe("AdminProviders: choosing a type", () => {
+  it("offers the installed types rather than a hardcoded list", async () => {
+    // Read from the API so installing a plugin makes it selectable without a
+    // console release, which is the point of the entry point existing.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes([provider()]));
+    renderScreen(<AdminProviders />);
+
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    const type = dialog.getByLabelText("Type");
+    expect(within(type).getByRole("option", { name: /OpenAI-compatible/ })).toBeInTheDocument();
+    expect(within(type).getByRole("option", { name: /Cortecs/ })).toBeInTheDocument();
+  });
+
+  it("explains what the chosen type means for billing", async () => {
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes([provider()]));
+    renderScreen(<AdminProviders />);
+
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText(/Tokens are counted here/)).toBeInTheDocument();
+  });
+
+  it("only offers pass-through billing for a type that can support it", async () => {
+    // The generic type reads no authoritative figure, so offering the choice
+    // would be offering a configuration the API refuses.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes([provider()]));
+    renderScreen(<AdminProviders />);
+
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.queryByLabelText("Billing")).not.toBeInTheDocument();
+
+    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    expect(dialog.getByLabelText("Billing")).toBeInTheDocument();
+  });
+
+  it("warns that pass-through still needs prices", async () => {
+    // Admission happens before the request; the provider's figure arrives
+    // after. An unpriced model reserves nothing and no ceiling ever trips.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes([provider()]));
+    renderScreen(<AdminProviders />);
+
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    await user.selectOptions(dialog.getByLabelText("Billing"), "provider_reported");
+
+    expect(dialog.getByText(/Prices are still needed/)).toBeInTheDocument();
+  });
+
+  it("sends the kind implied by the type, not one the operator typed", async () => {
+    // Whether the serving endpoint is chosen per request is a property of the
+    // counterparty, not an opinion an operator should have to hold.
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal("fetch", routes([provider()], captured));
+    renderScreen(<AdminProviders />);
+
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("Name"), "cx");
+    await user.type(dialog.getByLabelText("Base URL"), "https://api.cortecs.ai/v1");
+    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies.at(-1)!.body as Record<string, unknown>;
+    expect(body.plugin).toBe("cortecs");
+    expect(body.kind).toBe("router");
+  });
+
+  it("shows what each provider is, and flags what needs attention", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes([
+        provider({
+          plugin: "cortecs",
+          kind: "router",
+          plugin_kind: "router",
+          billing_mode: "provider_reported",
+          unpriced_model_count: 2,
+        }),
+      ]),
+    );
+    renderScreen(<AdminProviders />);
+
+    const table = within(await screen.findByRole("table"));
+    await waitFor(() => expect(table.getByText("cortecs")).toBeInTheDocument());
+    expect(table.getByText("router")).toBeInTheDocument();
+    expect(table.getByText("bills from provider")).toBeInTheDocument();
+    expect(table.getByText("2 unpriced")).toBeInTheDocument();
+  });
+
+  it("flags a plugin whose kind disagrees with the stored one", async () => {
+    // Naming the router plugin while the row still says `provider` is a
+    // configuration to point at rather than a silent inconsistency.
+    vi.stubGlobal(
+      "fetch",
+      routes([provider({ plugin: "cortecs", kind: "provider", plugin_kind: "router" })]),
+    );
+    renderScreen(<AdminProviders />);
+
+    const table = within(await screen.findByRole("table"));
+    await waitFor(() => expect(table.getByText("kind mismatch")).toBeInTheDocument());
   });
 });

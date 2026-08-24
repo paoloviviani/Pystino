@@ -30,6 +30,11 @@ class GenericOpenAIPlugin:
     """An OpenAI-compatible provider with no vendor quirks worth naming."""
 
     name = "generic"
+    label = "OpenAI-compatible"
+    description = (
+        "Forwards requests unchanged. Tokens are counted here and billed from the price "
+        "rows you set — the provider is never asked what it charged."
+    )
     kind = ProviderKind.PROVIDER
     # An operator declaring a unit is not the vendor asserting a charge.
     reports_authoritative_cost = False
