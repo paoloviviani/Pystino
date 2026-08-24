@@ -1,17 +1,17 @@
-import { Badge, Card, Notice, Spinner, Stat } from "@llmp/ui";
-import { useRedactionStatus } from "../lib/admin";
-import type { RedactionStatus } from "../lib/types";
+import { Badge, Button, Card, Dialog, Input, Notice, Spinner, Stat } from "@llmp/ui";
+import { useState } from "react";
+import { useRedactionStatus, useSetRedactionEngine } from "../lib/admin";
+import type { RedactionEngineOption, RedactionStatus } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import styles from "./Admin.module.css";
 
 /**
- * What the redaction layer is doing, right now.
+ * What the redaction layer is doing, and which engine it is doing it with.
  *
- * Read-only, because redaction is process configuration read at startup
- * (ADR 0012) — there is nothing on this page an operator could change even if
- * the form existed. Making it configurable, and scopeable per model, provider,
- * user or group, is specified in docs/redaction-scoping-plan.md and needs a
- * database row rather than more environment variables.
+ * Mostly read-only still. The one thing an admin can change here is **which
+ * installed engine is in force** (ADR 0033); the endpoint, the placeholder key
+ * and the detection parameters remain deployment configuration, and per-scope
+ * rules are still specified in docs/redaction-scoping-plan.md.
  *
  * Until this screen existed the console could not answer the first question
  * anyone asks — is redaction on at all — and the answer is not derivable from
@@ -19,6 +19,14 @@ import styles from "./Admin.module.css";
  * the configuration: a layer that is switched on and detecting nothing looks
  * exactly like one that has nothing to find, and only the entity count tells
  * them apart.
+ *
+ * The engine list is deliberately a list of described choices and not a
+ * dropdown. What an operator is choosing between is not two names — it is
+ * "strips personal data before it leaves" versus "does not", and only the
+ * description says which is which. `blocked_reason` comes from the API for the
+ * same reason the warnings do: the rule that decides whether an engine can run
+ * is the engine's own, and re-deriving it here would mean the browser knowing
+ * which settings each engine needs.
  */
 export function AdminRedaction() {
   const status = useRedactionStatus();
@@ -28,7 +36,7 @@ export function AdminRedaction() {
       <PageHeader
         title="Redaction"
         subtitle="What the gateway strips from prompts before they reach a provider, and
-          whether the detection service is answering. Configured per deployment, not here."
+          whether the detection service is answering."
       />
 
       {status.isPending && <Spinner label="Reading the redaction configuration" />}
@@ -55,6 +63,8 @@ function Detail({ status }: { status: RedactionStatus }) {
           {note}
         </Notice>
       ))}
+
+      <EngineList status={status} />
 
       <Card>
         <div className={styles.stats}>
@@ -88,7 +98,14 @@ function Detail({ status }: { status: RedactionStatus }) {
         </div>
       </Card>
 
-      <Card title="Configuration" description="From the environment this gateway started with.">
+      <Card
+        title="Configuration"
+        description={
+          status.source === "console"
+            ? "From the environment this gateway started with, except the engine, which was set here."
+            : "From the environment this gateway started with."
+        }
+      >
         <dl className={styles.details}>
           <Row label="Engine">
             <code className={styles.code}>{status.engine}</code>{" "}
@@ -97,6 +114,27 @@ function Detail({ status }: { status: RedactionStatus }) {
             <span className={styles.muted}>
               · installed: {status.installed_engines.join(", ") || "none"}
             </span>
+          </Row>
+          {/* Which of the two decided. Invisible otherwise, and it is exactly
+              the confusion a database override introduces: an environment
+              variable that no longer takes effect looks like a broken one. */}
+          <Row label="Set by">
+            {status.source === "console" && status.configured ? (
+              <>
+                This console
+                {status.configured.changed_by ? ` · ${status.configured.changed_by}` : ""}
+                {" · "}
+                {new Date(status.configured.changed_at).toLocaleString()}
+                {status.configured.reason && (
+                  <div className={styles.muted}>{status.configured.reason}</div>
+                )}
+              </>
+            ) : (
+              <>
+                The deployment&apos;s environment
+                <span className={styles.muted}> · GATEWAY_REDACTION__ENGINE</span>
+              </>
+            )}
           </Row>
           <Row label="Detection endpoint">
             {status.endpoint ? (
@@ -175,6 +213,164 @@ function Detail({ status }: { status: RedactionStatus }) {
         </Card>
       )}
     </>
+  );
+}
+
+/**
+ * The installed engines, and which one is in force.
+ *
+ * Switching is a two-step for one case only: an engine that redacts nothing
+ * needs a written reason, because that is the change which makes the system
+ * quietly stop protecting anything and the reason is kept permanently. Every
+ * other switch is one click — asking for a justification to *turn protection on*
+ * would be friction with no reader.
+ */
+function EngineList({ status }: { status: RedactionStatus }) {
+  const setEngine = useSetRedactionEngine();
+  const [confirming, setConfirming] = useState<RedactionEngineOption | null>(null);
+
+  const choose = (engine: RedactionEngineOption) => {
+    if (!engine.redacts) {
+      setConfirming(engine);
+      return;
+    }
+    setEngine.mutate({ engine: engine.name, reason: "" });
+  };
+
+  return (
+    <Card
+      title="Engine"
+      description="One is in force at a time. Installing an engine through the llmp.redactors
+        entry point adds it here."
+    >
+      {setEngine.error ? (
+        <Notice tone="danger" title="The engine was not changed">
+          {setEngine.error instanceof Error ? setEngine.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      {/* Stated rather than implied. A change that looks instant and is not is
+          worse than one that says how long it takes. */}
+      {setEngine.isSuccess && status.propagation_seconds > 0 && (
+        <Notice tone="info">
+          Saved. This worker switched immediately; any other worker picks it up within{" "}
+          {status.propagation_seconds} seconds.
+        </Notice>
+      )}
+
+      <div className={styles.engineList}>
+        {status.engines.map((engine) => (
+          <div
+            key={engine.name}
+            className={`${styles.engine} ${engine.is_active ? styles.engineActive : ""}`}
+          >
+            <div className={styles.engineBody}>
+              <div className={styles.engineName}>
+                {engine.label}
+                <code className={styles.code}>{engine.name}</code>
+                {engine.is_active && <Badge tone="accent">In force</Badge>}
+                {/* The one property that decides whether this screen means
+                    anything, said on every row rather than only on the
+                    active one. */}
+                {!engine.redacts && <Badge tone="danger">Redacts nothing</Badge>}
+              </div>
+              <div className={styles.muted}>{engine.description}</div>
+              {/* Server-computed, rendered verbatim: the wording lives with the
+                  rule, the same convention as the warnings above. */}
+              {engine.blocked_reason && (
+                <div className={styles.muted}>
+                  <strong>Cannot be enabled.</strong> {engine.blocked_reason}
+                </div>
+              )}
+            </div>
+            <div className={styles.engineAction}>
+              {engine.is_active ? (
+                <Button variant="secondary" disabled>
+                  Enabled
+                </Button>
+              ) : (
+                <Button
+                  variant={engine.redacts ? "primary" : "secondary"}
+                  disabled={engine.blocked_reason !== null || setEngine.isPending}
+                  onClick={() => choose(engine)}
+                >
+                  {engine.redacts ? "Enable" : "Turn redaction off"}
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <ConfirmOff
+        engine={confirming}
+        pending={setEngine.isPending}
+        onCancel={() => setConfirming(null)}
+        onConfirm={(reason) =>
+          confirming &&
+          setEngine.mutate(
+            { engine: confirming.name, reason },
+            { onSuccess: () => setConfirming(null) },
+          )
+        }
+      />
+    </Card>
+  );
+}
+
+/**
+ * The one switch that needs a sentence typed out.
+ *
+ * The reason is a required field rather than a checkbox saying "I understand",
+ * because a checkbox produces no record. This one is stored on an append-only
+ * row and is what a data-protection review reads six months later.
+ */
+function ConfirmOff({
+  engine,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  engine: RedactionEngineOption | null;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+
+  return (
+    <Dialog
+      open={engine !== null}
+      title="Turn redaction off"
+      onClose={onCancel}
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={reason.trim().length === 0 || pending}
+            onClick={() => onConfirm(reason.trim())}
+          >
+            {pending ? "Saving…" : "Turn it off"}
+          </Button>
+        </>
+      }
+    >
+      <Notice tone="danger">
+        Prompts will reach providers exactly as callers sent them. Nothing is stripped, and
+        nothing about a request already sent is changed.
+      </Notice>
+      <Input
+        label="Reason"
+        value={reason}
+        onChange={(event) => setReason(event.target.value)}
+        placeholder="e.g. detection service migration, 24h window agreed with the DPO"
+        hint="Kept permanently, with who made the change and when. This is the record a
+          later review reads."
+      />
+    </Dialog>
   );
 }
 

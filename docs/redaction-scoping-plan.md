@@ -76,7 +76,23 @@ type it can detect — so the screen shows what the deployment *can* do, not onl
 what it is configured to ask for. That is also what makes the mismatch warnings
 possible.
 
-## 3. Admin-configurable engines
+## 3. Admin-configurable engines — **the engine itself is done**
+
+*Updated 2026-08-24.* An admin can now see every installed engine and choose
+which is in force, from the console, recorded on an append-only row. See
+[ADR 0033](adr/0033-redaction-engine-selection.md), which also records why the
+warning below about a console toggle was overridden rather than honoured — the
+short version being that the effort went into the word *silently*, and that the
+alternative an operator actually reaches for during an incident is editing an
+environment variable and restarting, which leaves no record at all.
+
+What is still true below, and still to do: the **endpoint** and the detection
+**parameters** are not editable. The endpoint especially — an endpoint that can be
+typed into a browser is an endpoint that can be pointed at a logger, with every
+prompt in plaintext. That needs the test-before-save shape this section describes
+and more thought than the engine list needed.
+
+## 3a. The original reasoning, kept
 
 Only **Presidio** exists today, behind the `http` engine contract, and the
 contract is deliberately generic — anything that speaks the detection API in

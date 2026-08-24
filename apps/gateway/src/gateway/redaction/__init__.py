@@ -13,14 +13,17 @@ from gateway.redaction.http import HttpDetectionRedactor, RedactionUnavailableEr
 from gateway.redaction.noop import NoOpRedactor
 from gateway.redaction.registry import (
     ENTRY_POINT_GROUP,
+    EngineInfo,
     UnknownEngineError,
     available,
+    describe,
     register,
     resolve,
 )
 
 __all__ = [
     "ENTRY_POINT_GROUP",
+    "EngineInfo",
     "HttpDetectionRedactor",
     "NoOpRedactor",
     "RedactionOutcome",
@@ -30,17 +33,39 @@ __all__ = [
     "UnknownEngineError",
     "available_engines",
     "build_redactor",
+    "describe_engines",
     "iter_choice_text",
     "register_engine",
 ]
 
-register("noop", lambda _settings: NoOpRedactor())
-register("http", HttpDetectionRedactor)
+register(
+    "noop",
+    lambda _settings: NoOpRedactor(),
+    label="Off (noop)",
+    description=(
+        "Nothing is removed. Prompts reach the provider exactly as the caller sent them. "
+        "Recorded on every request as the 'noop' engine, so a past request cannot be "
+        "mistaken for one that was screened."
+    ),
+    redacts=False,
+)
+register(
+    "http",
+    HttpDetectionRedactor,
+    label="Presidio (detection service)",
+    description=(
+        "Calls an out-of-process detection service over the contract in "
+        "llmp_shared.redaction. Entities are replaced with deterministic placeholders "
+        "before the request leaves, and swapped back in the response."
+    ),
+    needs_endpoint=True,
+)
 
 # Re-exported under clearer names: inside this package "engine" is unambiguous,
 # outside it "register" on its own is not.
 register_engine = register
 available_engines = available
+describe_engines = describe
 
 
 def build_redactor(settings: RedactionSettings) -> Redactor:

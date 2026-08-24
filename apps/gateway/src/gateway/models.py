@@ -767,6 +767,63 @@ class LimitRule(Base):
         )
 
 
+class RedactionConfig(Base):
+    """Which redaction engine this deployment is running, as an admin set it.
+
+    See [ADR 0033](../../../../docs/adr/0033-redaction-engine-selection.md).
+
+    **Append-only, and the newest row wins.** Never updated, never deleted:
+    switching redaction off is a decision about whether personal data leaves this
+    deployment, and "who turned it off, when, and why" is a question a
+    data-protection review asks about a window that has already closed. A mutable
+    row answers it only for the most recent change, which is the one nobody needs
+    to ask about.
+
+    Modelled on ``quota_resets`` — the other table here that records a deliberate
+    administrative act rather than a state — and on ``model_prices``, whose rows
+    are append-only so a past request keeps the price it was billed at. Same
+    argument, different stake.
+
+    **No row means the environment decides.** A deployment that never touches the
+    console behaves exactly as it did before this table existed, which is what
+    keeps the upgrade silent. The API reports which of the two is in force,
+    because "the console says http and the environment says noop" is otherwise
+    invisible and is precisely the confusion this table introduces.
+
+    What is deliberately *not* here: the endpoint, the placeholder key, the
+    detection parameters. Those stay in the environment for now — the key
+    especially, because it is a secret and because rotating it re-labels every
+    transcript it ever labelled. Enabling an engine that needs an endpoint is
+    refused when the environment has not provided one, rather than saved into a
+    configuration that cannot run.
+    """
+
+    __tablename__ = "redaction_config"
+    __table_args__ = (Index("ix_redaction_config_created", "created_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    #: A registry name, not an enum: engines register through the
+    #: `llmp.redactors` entry point and their names cannot be enumerated in a
+    #: schema (ADR 0026). Validated against the registry before the row is
+    #: written, which is stricter than an enum would be — it also proves the
+    #: engine is *installed*, not merely spelled correctly.
+    engine: Mapped[str] = mapped_column(String(64))
+    #: Why. Required by the API when switching to an engine that redacts nothing,
+    #: optional otherwise: turning the layer off is the change that needs
+    #: explaining, and demanding a sentence for every change trains people to
+    #: type "x".
+    reason: Mapped[str] = mapped_column(String(500), default="")
+    # Nullable for the same reason as on `quota_resets`: erasing a user under
+    # GDPR must not delete the record of what they changed.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    def __repr__(self) -> str:
+        return f"<RedactionConfig engine={self.engine} at={self.created_at.isoformat()}>"
+
+
 class QuotaReset(Base):
     """A point in time before which usage no longer counts against a rule.
 
