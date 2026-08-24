@@ -555,6 +555,27 @@ def _check_billing_mode(plugin: str | None, mode: str | None) -> None:
 
 
 
+class ProviderPluginResponse(BaseModel):
+    """An installed provider type, for the console's selector.
+
+    The plugin *is* the provider type as far as an operator is concerned: it
+    decides how the counterparty is talked to and what can be believed about
+    what it charged. So the console offers these rather than a free-text field.
+    """
+
+    name: str
+    label: str
+    description: str
+    #: `provider` implies the serving endpoint; `router` chooses it per request.
+    kind: str
+    #: The billing modes this plugin can actually support. Pass-through appears
+    #: only where the plugin asserts its reported figure is the real charge, so
+    #: the UI cannot offer a configuration the API would refuse.
+    billing_modes: list[str]
+    #: What a provider row with no plugin named resolves to.
+    is_default: bool
+
+
 class ProviderTestResponse(BaseModel):
     """The result of calling a provider's ``/models``.
 

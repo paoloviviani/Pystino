@@ -4,16 +4,18 @@ import { useState } from "react";
 import {
   useCreateProvider,
   useDeleteProvider,
+  useProviderPlugins,
   useProviders,
   useTestProvider,
   useUpdateProvider,
 } from "../lib/admin";
-import type { AdminProvider, ProviderTestResult } from "../lib/types";
+import type { AdminProvider, ProviderPlugin, ProviderTestResult } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import styles from "./Admin.module.css";
 
 export function AdminProviders() {
   const providers = useProviders();
+  const plugins = useProviderPlugins();
   const update = useUpdateProvider();
   const remove = useDeleteProvider();
   const test = useTestProvider();
@@ -37,6 +39,32 @@ export function AdminProviders() {
           <div>{provider.name}</div>
           <div className={`${styles.muted} ${styles.code}`}>{provider.base_url}</div>
           {provider.description && <div className={styles.muted}>{provider.description}</div>}
+        </>
+      ),
+    },
+    {
+      key: "type",
+      header: "Type",
+      render: (provider) => (
+        <>
+          {/* The label, not the internal name: the operator chose "Cortecs
+              (router)" and should see that back. */}
+          <div>{pluginLabel(plugins.data, provider.plugin)}</div>
+          <div className={styles.chips}>
+            {provider.kind === "router" && <Badge tone="accent">router</Badge>}
+            {provider.billing_mode === "provider_reported" && (
+              <Badge tone="warn">bills from provider</Badge>
+            )}
+            {/* A named plugin that disagrees with the stored kind is a
+                configuration to point at, not a silent inconsistency. */}
+            {provider.plugin_kind !== null && provider.plugin_kind !== provider.kind && (
+              <Badge tone="danger">kind mismatch</Badge>
+            )}
+            {/* Unpriced models reserve nothing, so no cost ceiling trips. */}
+            {provider.unpriced_model_count > 0 && (
+              <Badge tone="warn">{provider.unpriced_model_count} unpriced</Badge>
+            )}
+          </div>
         </>
       ),
     },
@@ -171,6 +199,19 @@ function TestBadge({ result }: { result: ProviderTestResult | undefined }) {
   );
 }
 
+/** A provider type's human label, falling back to its name if it is not installed. */
+function pluginLabel(plugins: ProviderPlugin[] | undefined, name: string | null): string {
+  const match = (plugins ?? []).find((entry) =>
+    name === null ? entry.is_default : entry.name === name,
+  );
+  return match?.label ?? name ?? "OpenAI-compatible";
+}
+
+/** The default type's name, whose value in the selector is the empty string. */
+function defaultPluginName(plugins: ProviderPlugin[] | undefined): string {
+  return plugins?.find((entry) => entry.is_default)?.name ?? "generic";
+}
+
 /**
  * Create and edit share a dialog, because the fields are the same and the only
  * real difference is what happens to the API key.
@@ -199,6 +240,11 @@ function ProviderDialog({
   const [clearKey, setClearKey] = useState(false);
   const [streamOptions, setStreamOptions] = useState(true);
   const [authScheme, setAuthScheme] = useState<"bearer" | "x_api_key">("bearer");
+  // The provider *type*. Read from the API rather than hardcoded, so installing
+  // a plugin makes it selectable without a console release (ADR 0032).
+  const plugins = useProviderPlugins();
+  const [plugin, setPlugin] = useState<string>("");
+  const [billingMode, setBillingMode] = useState<"own_prices" | "provider_reported">("own_prices");
   // Keyed remount: without this the fields keep the previous provider's values
   // when a different row is opened.
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -212,7 +258,17 @@ function ProviderDialog({
     setClearKey(false);
     setStreamOptions(provider?.forward_stream_options ?? true);
     setAuthScheme(provider?.auth_scheme ?? "bearer");
+    setPlugin(provider?.plugin ?? "");
+    setBillingMode(provider?.billing_mode ?? "own_prices");
   }
+
+  const chosen = (plugins.data ?? []).find(
+    (entry) => entry.name === (plugin || defaultPluginName(plugins.data)),
+  );
+  // Only the modes this type can support, so the form cannot offer a
+  // configuration the API would refuse.
+  const modes = chosen?.billing_modes ?? ["own_prices"];
+  const effectiveMode = modes.includes(billingMode) ? billingMode : "own_prices";
 
   const pending = create.isPending || update.isPending;
   const error = create.error ?? update.error;
@@ -228,6 +284,12 @@ function ProviderDialog({
           description: description || null,
           forward_stream_options: streamOptions,
           auth_scheme: authScheme,
+          plugin: plugin || null,
+          // Taken from the plugin rather than asked for separately: whether the
+          // serving endpoint is chosen per request is a property of the
+          // counterparty, not an opinion an operator should have to hold.
+          kind: chosen?.kind ?? "provider",
+          billing_mode: effectiveMode,
           // Three ways, deliberately: a typed key replaces, the explicit clear
           // removes, and neither leaves the stored credential untouched.
           ...(apiKey ? { api_key: apiKey } : clearKey ? { api_key: "" } : {}),
@@ -242,6 +304,9 @@ function ProviderDialog({
           description: description || null,
           forward_stream_options: streamOptions,
           auth_scheme: authScheme,
+          plugin: plugin || null,
+          kind: chosen?.kind ?? "provider",
+          billing_mode: effectiveMode,
           ...(apiKey ? { api_key: apiKey } : {}),
         },
         done,
@@ -287,6 +352,51 @@ function ProviderDialog({
             : "Letters, digits, dot, dash and underscore."
         }
       />
+
+      <Select
+        label="Type"
+        value={plugin}
+        onChange={(event) => setPlugin(event.target.value)}
+        hint={
+          chosen
+            ? chosen.description
+            : "How this counterparty is talked to, and what may be believed about what it charged."
+        }
+      >
+        {(plugins.data ?? []).map((entry) => (
+          <option key={entry.name} value={entry.is_default ? "" : entry.name}>
+            {entry.label}
+            {entry.kind === "router" ? " — chooses an endpoint per request" : ""}
+          </option>
+        ))}
+      </Select>
+
+      {/* Only offered where the type can support more than one, and only a type
+          that asserts its reported figure is the real charge can. */}
+      {modes.length > 1 && (
+        <Select
+          label="Billing"
+          value={effectiveMode}
+          onChange={(event) =>
+            setBillingMode(event.target.value as "own_prices" | "provider_reported")
+          }
+          hint="Which figure is charged. Both are always recorded, so a divergence stays
+            reconstructable either way."
+        >
+          <option value="own_prices">Our prices — tokens counted here</option>
+          <option value="provider_reported">
+            The provider's reported cost — pass-through
+          </option>
+        </Select>
+      )}
+
+      {effectiveMode === "provider_reported" && (
+        <Notice tone="warn">
+          Prices are still needed: admission happens before the request and the provider's
+          figure only arrives after, so an unpriced model reserves nothing and no cost
+          ceiling ever trips for it.
+        </Notice>
+      )}
 
       <Input
         label="Base URL"

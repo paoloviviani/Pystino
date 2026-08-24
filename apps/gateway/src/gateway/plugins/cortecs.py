@@ -60,6 +60,11 @@ class CortecsRouterPlugin:
     """A router that quotes one price per model and chooses the endpoint itself."""
 
     name = "cortecs"
+    label = "Cortecs (router)"
+    description = (
+        "Chooses a sub-provider per request and names it in a response header. Reports its "
+        "own cost in micro-EUR, so it can bill from either your prices or its figure."
+    )
     kind = ProviderKind.ROUTER
     # Reconciled against their listed prices on three sub-providers,
     # agreeing to within their own rounding. It is what they charge.

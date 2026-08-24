@@ -84,6 +84,40 @@ def available() -> list[str]:
     return sorted({*_BUILTIN, *_discovered()})
 
 
+def describe() -> list[dict[str, object]]:
+    """Every installed plugin, for the console's provider-type selector.
+
+    Built from the registry rather than written out in the frontend, so
+    installing a plugin makes it selectable without a console release — which is
+    the point of the entry point existing at all.
+
+    ``billing_modes`` is the list a deployment may actually choose for this
+    plugin: pass-through only appears where the plugin asserts its reported
+    figure is the counterparty's real charge, so the UI cannot offer a
+    configuration the API would then refuse.
+    """
+    described: list[dict[str, object]] = []
+    for name in available():
+        try:
+            plugin = resolve(name)
+        except UnknownPluginError:  # pragma: no cover - available() just listed it
+            continue
+        modes = ["own_prices"]
+        if getattr(plugin, "reports_authoritative_cost", False):
+            modes.append("provider_reported")
+        described.append(
+            {
+                "name": plugin.name,
+                "label": getattr(plugin, "label", plugin.name),
+                "description": getattr(plugin, "description", ""),
+                "kind": plugin.kind.value,
+                "billing_modes": modes,
+                "is_default": plugin.name == DEFAULT_PLUGIN,
+            }
+        )
+    return described
+
+
 def resolve(name: str | None, *, reported_cost_unit: str | None = None) -> ProviderPlugin:
     """The plugin for *name*, or the generic one when a row names none.
 

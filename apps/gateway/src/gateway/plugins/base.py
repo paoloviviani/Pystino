@@ -100,6 +100,13 @@ class ProviderPlugin(Protocol):
     """Everything the gateway needs to know that is specific to a counterparty."""
 
     name: str
+    #: A human name for the console's type selector. The plugin *is* the
+    #: provider type as far as an operator is concerned, so this is the label
+    #: they choose from.
+    label: str
+    #: One sentence on what picking this type means for billing — the thing an
+    #: operator is actually deciding. Rendered under the selector.
+    description: str
     kind: ProviderKind
     #: Whether this plugin's ``read_reported_cost`` asserts the counterparty's
     #: *actual charge* rather than an indicative number. Declared rather than

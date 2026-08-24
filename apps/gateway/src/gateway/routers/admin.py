@@ -101,6 +101,7 @@ from gateway.schemas import (
     PriceCreateRequest,
     PriceResponse,
     ProviderCreateRequest,
+    ProviderPluginResponse,
     ProviderResponse,
     ProviderTestResponse,
     ProviderUpdateRequest,
@@ -380,6 +381,17 @@ async def list_providers(
         ],
         total,
     )
+
+
+@router.get("/provider-plugins", response_model=list[ProviderPluginResponse])
+async def list_provider_plugins(admin: AdminUserDep) -> list[ProviderPluginResponse]:
+    """The provider types this deployment can offer.
+
+    Read from the registry, so installing a plugin makes it selectable without a
+    console release. Not paginated: this is a handful of installed packages, not
+    a listing that grows with use.
+    """
+    return [ProviderPluginResponse.model_validate(entry) for entry in plugin_registry.describe()]
 
 
 @router.post("/providers", response_model=ProviderResponse, status_code=status.HTTP_201_CREATED)
