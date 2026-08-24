@@ -40,7 +40,13 @@ export function Shell({ me, children }: ShellProps) {
       <header className={styles.header}>
         <div className={styles.headerInner}>
           <div className={styles.brand}>
-            <span className={styles.brandMark} aria-hidden="true" />
+            {/* Circle, triangle, square — the movement's own signature rather
+                than a logo, which is the foundation's to supply. The circle and
+                the square are pseudo-elements; the triangle needs a real element
+                because it is drawn with borders. */}
+            <span className={styles.brandMark} aria-hidden="true">
+              <span className={styles.brandShape} />
+            </span>
             <span className={styles.brandName}>LLM platform</span>
           </div>
 

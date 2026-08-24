@@ -5,17 +5,21 @@
   min-width: 12rem;
 }
 
+/* A ruled rectangle with a solid fill, rather than a rounded capsule. Taller
+ * than it was, and outlined: at 0.4rem with no border a bar reads as a hairline,
+ * and this style wants it to read as a measured quantity. */
 .track {
   flex: 1;
-  height: 0.4rem;
-  border-radius: var(--radius-pill);
-  background: var(--colour-surface-sunken);
+  height: 0.6rem;
+  border: var(--border-width-quiet) solid var(--colour-border);
+  border-radius: var(--radius-sm);
+  background: var(--colour-surface);
   overflow: hidden;
 }
 
 .fill {
   height: 100%;
-  border-radius: var(--radius-pill);
+  border-radius: 0;
   transition: width 200ms ease;
 }
 
@@ -25,7 +29,8 @@
 
 /* The two states an operator scanning this page is actually looking for. */
 .near {
-  background: var(--colour-warn);
+  /* The cadmium, not the type colour: this is a fill. */
+  background: var(--colour-yellow);
 }
 
 .over {

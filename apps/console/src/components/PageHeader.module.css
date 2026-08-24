@@ -6,10 +6,16 @@
   flex-wrap: wrap;
 }
 
+/* The page title is meant to be a shape on the page rather than a slightly
+ * larger sentence. A Bauhaus layout has a steep typographic hierarchy — that is
+ * what makes it read as constructed — so this is set tight and heavy, with the
+ * tracking pulled in, which a geometric sans needs at display size or the
+ * counters open up and it goes airy. */
 .title {
   font-size: var(--text-xl);
   font-weight: var(--weight-bold);
   line-height: var(--leading-tight);
+  letter-spacing: -0.02em;
 }
 
 .subtitle {
