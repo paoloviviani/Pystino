@@ -216,10 +216,23 @@ Five rules that go with the modes:
    deployment quietly billing from a price table nobody was maintaining. Reports
    should disclose the count, exactly as they already disclose estimated token
    counts.
-2. **`provider_reported` requires the currencies to match.** Their figure is in
-   their currency, and this gateway refuses to convert (`CurrencyMismatch`).
-   Configuring the mode against a counterparty that reports another currency is
-   a configuration error, refused at the boundary rather than at request time.
+2. **Several units are supported; none are converted.** Revised on review. An
+   earlier draft refused `provider_reported` unless the counterparty reported the
+   billing currency, which is the wrong lever: refusing to *hold* a figure is not
+   the same as refusing to convert it. If an upstream bills dollars, the ledger
+   records dollars and the report says dollars.
+
+   A unit is a property of a figure, not of the system. `upstream_cost` carries
+   its own `upstream_cost_currency` per row, reconciliation groups by provider
+   **and** currency, and the disclosure names both units — so a dollar figure is
+   never summed into a euro total and never silently rated into one. Already
+   true, and pinned by
+   `test_a_provider_that_bills_in_another_currency_is_reported_in_it`.
+
+   What remains a single currency is arithmetic *within* one charge: a price row
+   in USD on a model billed in EUR is a configuration error, because combining
+   them needs a rate. `CurrencyMismatch` keeps exactly that meaning.
+
 3. **Prices are still required in `provider_reported` mode**, because admission
    happens *before* the request and their figure only exists after. The quota
    reservation must use our estimate in both modes; only the settlement differs.
@@ -338,6 +351,21 @@ Simpler schema, and it hides that the two need different *mechanisms*: a router
 needs the served endpoint recorded per request, needs substitution checked, and
 needs reconciliation grouped by endpoint. A boolean would leave all three
 optional.
+
+## A further step, deliberately not taken here
+
+Reporting a counterparty's figure in its own unit (rule 2) is not the same as
+**billing** different groups in different currencies. The latter would mean
+`GATEWAY_BILLING_CURRENCY` becoming a default rather than a constraint, and it
+has one sharp edge that wants its own decision: a cost limit of "EUR 10 per day"
+cannot count USD spend. Counting it as though it were EUR is silently wrong;
+ignoring it leaves a group with no cap at all. The fail-visible shape would be a
+cost rule that declares its currency and counts only matching rows, with the
+console warning when a group has spend in a currency no rule covers. Requests,
+tokens and image metrics are unit-free and unaffected.
+
+Not built, and not blocking: every price and every reported figure in this
+deployment is EUR.
 
 ## Resolved by review, 2026-08-22
 
