@@ -23,6 +23,7 @@ import orjson
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI
+from gateway.accounting.cost import TokenCounts
 from gateway.config import (
     QuotaSettings,
     RedactionSettings,
@@ -32,6 +33,7 @@ from gateway.config import (
 from gateway.main import create_app, init_app_state, shutdown_app_state
 from gateway.models import (
     ApiKey,
+    ApiSurface,
     Base,
     Group,
     GroupModelAccess,
@@ -41,6 +43,8 @@ from gateway.models import (
     Provider,
     User,
 )
+from gateway.plugins import registry as plugin_registry
+from gateway.plugins.base import ProviderKind, ReportedCost
 from gateway.secrets import SecretBox, hint_for
 from gateway.security import generate_api_key
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -307,3 +311,99 @@ async def seeded(session_factory: async_sessionmaker[AsyncSession]) -> Seeded:
 # SSE/payload builders live in helpers.py so test modules can import them
 # directly; re-exported here purely for convenience.
 __all__ = ["UPSTREAM_BASE", "FakeUpstream", "Seeded"]
+
+
+# -- test-only provider plugins ----------------------------------------------
+#
+# Since ADR 0032 slice 3, what unit a counterparty reports its cost in is the
+# plugin's knowledge and not a column an operator fills in. These two exist so
+# the tests that used to set `providers.upstream_cost_unit` can still make their
+# point, and they make it against the real seam: a provider row names a plugin,
+# the registry resolves it, and the recorder reads what it returns.
+
+
+class DollarShopPlugin:
+    """A router that charges in dollars and means it.
+
+    The case that matters is not conversion — it is that a foreign figure is
+    recorded in its own unit and never summed into a euro total. Authoritative,
+    so pass-through billing is selectable for it and the *currency* is the only
+    thing standing between its figure and the invoice.
+    """
+
+    name = "dollar-shop"
+    label = "Dollar shop (test)"
+    description = "Reports an authoritative charge in US dollars."
+    kind = ProviderKind.ROUTER
+    reports_authoritative_cost = True
+
+    def auth_headers(self, credential: str) -> dict[str, str]:
+        return {"authorization": f"Bearer {credential}"}
+
+    def prepare_payload(
+        self, payload: dict[str, object], *, surface: ApiSurface
+    ) -> dict[str, object]:
+        return payload
+
+    def read_usage(self, usage: dict[str, object] | None, *, surface: ApiSurface) -> TokenCounts:
+        return TokenCounts.from_usage(usage)
+
+    def read_served_by(self, payload: object, headers: object) -> None:
+        return None
+
+    def read_reported_cost(self, usage: dict[str, object] | None) -> ReportedCost | None:
+        if not usage or (raw := usage.get("cost")) is None or isinstance(raw, bool):
+            return None
+        return ReportedCost(amount=Decimal(str(raw)), currency="USD", authoritative=True)
+
+
+class IndicativeCostPlugin:
+    """Reads a figure and asserts nothing about it.
+
+    The distinction ADR 0032 turns on: reporting a number is not claiming it is
+    the charge. Everything about this row can be configured for pass-through and
+    the request path must still bill from our own prices, recording the figure
+    beside the one it did not use.
+    """
+
+    name = "indicative"
+    label = "Indicative cost (test)"
+    description = "Reports a euro figure it does not stand behind."
+    kind = ProviderKind.PROVIDER
+    reports_authoritative_cost = False
+
+    def auth_headers(self, credential: str) -> dict[str, str]:
+        return {"authorization": f"Bearer {credential}"}
+
+    def prepare_payload(
+        self, payload: dict[str, object], *, surface: ApiSurface
+    ) -> dict[str, object]:
+        return payload
+
+    def read_usage(self, usage: dict[str, object] | None, *, surface: ApiSurface) -> TokenCounts:
+        return TokenCounts.from_usage(usage)
+
+    def read_served_by(self, payload: object, headers: object) -> None:
+        return None
+
+    def read_reported_cost(self, usage: dict[str, object] | None) -> ReportedCost | None:
+        if not usage or (raw := usage.get("cost")) is None or isinstance(raw, bool):
+            return None
+        # Micro-EUR, like the reference router, so the arithmetic in a test that
+        # compares the two figures is the same arithmetic.
+        return ReportedCost(
+            amount=Decimal(str(raw)) * Decimal("0.000001"), currency="EUR", authoritative=False
+        )
+
+
+@pytest.fixture(autouse=True)
+def test_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Register the two above for every test.
+
+    Autouse and unconditional: a plugin name is resolved lazily, deep in the
+    request path, so a test that forgot to ask for the fixture would fail with
+    "unknown provider plugin" from three frames inside the recorder rather than
+    from its own setup.
+    """
+    monkeypatch.setitem(plugin_registry._BUILTIN, DollarShopPlugin.name, DollarShopPlugin)
+    monkeypatch.setitem(plugin_registry._BUILTIN, IndicativeCostPlugin.name, IndicativeCostPlugin)

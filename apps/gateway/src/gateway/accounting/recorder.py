@@ -137,15 +137,12 @@ class RequestContext:
     #: Which endpoint served the request. Selects how response frames are read
     #: — the surfaces disagree about where usage lives and what its keys mean.
     surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS
-    #: How to read this provider's self-reported cost, from
-    #: `providers.upstream_cost_unit`. Passed as a plain string rather than read
-    #: off `model.provider` here: finalisation runs in its own session, where
-    #: touching a relationship on a model loaded elsewhere is a lazy load on a
-    #: detached instance. Null means the provider's figure is ignored.
-    upstream_cost_unit: str | None = None
     #: Which plugin carries this counterparty's quirks (ADR 0032), from
-    #: `providers.plugin`. By name for the same reason as above, and null
-    #: resolves to the generic OpenAI-compatible behaviour.
+    #: `providers.plugin`. Passed as a plain string rather than read off
+    #: `model.provider` here: finalisation runs in its own session, where
+    #: touching a relationship on a model loaded elsewhere is a lazy load on a
+    #: detached instance. Null resolves to the generic OpenAI-compatible
+    #: behaviour, which reports no cost of its own.
     plugin: str | None = None
     #: Whose figure is the charge, from `providers.billing_mode` (ADR 0032).
     billing_mode: str = "own_prices"
@@ -173,9 +170,7 @@ class RequestAccounting:
         # that should have been caught when the provider was saved; here it must
         # not lose a usage row, so it degrades to generic and says so loudly.
         try:
-            self._plugin = _plugins().resolve(
-                context.plugin, reported_cost_unit=context.upstream_cost_unit
-            )
+            self._plugin = _plugins().resolve(context.plugin)
         except _plugins().UnknownPluginError:
             logger.error(
                 "provider plugin %r is not installed; recording this request with the "

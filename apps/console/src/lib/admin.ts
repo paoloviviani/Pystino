@@ -97,8 +97,6 @@ export interface ProviderInput {
   plugin?: string | null;
   kind?: "provider" | "router";
   billing_mode?: "own_prices" | "provider_reported";
-  forward_stream_options?: boolean;
-  auth_scheme?: "bearer" | "x_api_key";
 }
 
 export function useCreateProvider() {

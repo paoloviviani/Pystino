@@ -18,13 +18,10 @@ from gateway.models import (
     ModelDef,
     ModelKind,
     ModelPrice,
-    Provider,
     UsageRecord,
     UsageSource,
 )
 from gateway.redaction import RedactionOutcome
-from gateway.routers.chat import build_upstream_payload
-from gateway.schemas import ChatCompletionRequest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -359,64 +356,6 @@ class TestEmbeddingRedaction:
         )
         first, second = fake_upstream.bodies[-1]["input"]
         assert "<PERSON_X>" in first and "<PERSON_X>" in second
-
-
-class TestStreamOptionsPerProvider:
-    """Cortecs sends usage unconditionally and warns about undocumented fields."""
-
-    def test_stream_options_is_injected_by_default(self) -> None:
-        payload = build_upstream_payload(
-            ChatCompletionRequest(
-                model="m", messages=[{"role": "user", "content": "x"}], stream=True
-            ),
-            outcome=RedactionOutcome(messages=[{"role": "user", "content": "x"}]),
-            upstream_model="up/m",
-        )
-        assert payload["stream_options"] == {"include_usage": True}
-
-    def test_a_provider_can_opt_out(self) -> None:
-        payload = build_upstream_payload(
-            ChatCompletionRequest(
-                model="m", messages=[{"role": "user", "content": "x"}], stream=True
-            ),
-            outcome=RedactionOutcome(messages=[{"role": "user", "content": "x"}]),
-            upstream_model="up/m",
-            forward_stream_options=False,
-        )
-        assert "stream_options" not in payload
-
-    def test_what_the_client_sent_is_still_forwarded(self) -> None:
-        """The flag controls *our* addition, not the caller's own options."""
-        payload = build_upstream_payload(
-            ChatCompletionRequest(
-                model="m",
-                messages=[{"role": "user", "content": "x"}],
-                stream=True,
-                stream_options={"include_usage": True},
-            ),
-            outcome=RedactionOutcome(messages=[{"role": "user", "content": "x"}]),
-            upstream_model="up/m",
-            forward_stream_options=False,
-        )
-        assert payload["stream_options"] == {"include_usage": True}
-
-    def test_nothing_is_added_to_a_non_streaming_request(self) -> None:
-        payload = build_upstream_payload(
-            ChatCompletionRequest(model="m", messages=[{"role": "user", "content": "x"}]),
-            outcome=RedactionOutcome(messages=[{"role": "user", "content": "x"}]),
-            upstream_model="up/m",
-        )
-        assert "stream_options" not in payload
-
-    async def test_the_flag_is_configurable_per_provider(
-        self, session: AsyncSession, seeded: Seeded
-    ) -> None:
-        provider = (
-            await session.execute(select(Provider).where(Provider.id == seeded.provider.id))
-        ).scalar_one()
-        assert provider.forward_stream_options is True
-        provider.forward_stream_options = False
-        await session.commit()
 
 
 class _ShoutyRedactor:

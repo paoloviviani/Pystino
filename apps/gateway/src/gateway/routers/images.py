@@ -98,6 +98,7 @@ async def create_image(
         return metered
 
     payload = body.upstream_payload(outcome, upstream_model=model.upstream_model)
+    payload = metered.shape_payload(payload, surface=SURFACE)
 
     try:
         response = await upstream.images(payload, request_id=request_id)

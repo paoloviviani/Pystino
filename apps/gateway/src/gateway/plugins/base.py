@@ -1,7 +1,7 @@
 """What a counterparty plugin is, and the one rule it must obey.
 
-See [ADR 0032](../../../../docs/adr/0032-provider-plugins.md). Two ideas carry
-the design.
+See [ADR 0032](../../../../docs/adr/0032-provider-plugins.md). Three ideas
+carry the design.
 
 **Providers and routers are different kinds**, distinguished by a single
 question: is the endpoint that serves a request determined by the model asked
@@ -18,7 +18,16 @@ deployment bills from the counterparty's figure, the plugin still only *reports*
 a number it read and the gateway decides to treat it as the charge. The plugin
 multiplies nothing either way.
 
-The rule is enforced by these return types rather than by review. There is
+**Vendor knowledge belongs here rather than in a column.** Three columns on
+``providers`` were added reactively, one per discovery — ``auth_scheme`` when
+Anthropic's own API refused a bearer token, ``forward_stream_options`` when a
+counterparty documented that unknown parameters can narrow its routing pool,
+``upstream_cost_unit`` when one turned out to report cost in micro-EUR. Each was
+the right local fix and the pattern was the problem: the next counterparty adds
+a fourth. ``auth_headers`` and ``prepare_payload`` are where those answers live
+now, so a new counterparty is a new plugin rather than a new migration.
+
+The money rule is enforced by these return types rather than by review. There is
 nothing here a plugin could return that would let it price a request.
 """
 
@@ -64,6 +73,13 @@ class ReportedCost:
 
     * ``amount`` and ``currency`` — the figure, in the unit it arrived in. Never
       converted. If an upstream bills dollars, this is dollars and stays dollars.
+
+      The unit is the plugin's to know, because nothing in a payload says it:
+      the reference router sends ``"cost": 136`` meaning 136 micro-EUR, while
+      OpenRouter sends a decimal number of credits, and reading either as the
+      other is wrong by a factor of a million. This is why the answer moved out
+      of ``providers.upstream_cost_unit`` and in here — a plugin knows its
+      counterparty; an operator filling in a form is guessing.
     * ``authoritative`` — whether the plugin asserts this is the counterparty's
       *actual charge* rather than an estimate or an indicative figure. A
       deployment cannot bill from a plugin that does not assert it.
@@ -95,6 +111,16 @@ class CataloguePrice:
     sub_provider: str | None = None
 
 
+def bearer_headers(credential: str) -> dict[str, str]:
+    """``Authorization: Bearer`` — what every OpenAI-compatible endpoint wants.
+
+    Shared by the plugins that agree rather than copied into each, so the day one
+    of them needs to differ, the difference is a deliberate override and visible
+    as one.
+    """
+    return {"authorization": f"Bearer {credential}"}
+
+
 @runtime_checkable
 class ProviderPlugin(Protocol):
     """Everything the gateway needs to know that is specific to a counterparty."""
@@ -104,8 +130,11 @@ class ProviderPlugin(Protocol):
     #: provider type as far as an operator is concerned, so this is the label
     #: they choose from.
     label: str
-    #: One sentence on what picking this type means for billing — the thing an
-    #: operator is actually deciding. Rendered under the selector.
+    #: One or two sentences on what picking this type means for billing — the
+    #: thing an operator is actually deciding. Rendered verbatim under the
+    #: console's type selector, so it wants that register: declarative, third
+    #: person, one fact per clause. Not "the prices you set" — the reader is
+    #: choosing between types, not being addressed.
     description: str
     kind: ProviderKind
     #: Whether this plugin's ``read_reported_cost`` asserts the counterparty's
@@ -114,6 +143,37 @@ class ProviderPlugin(Protocol):
     #: billing against a plugin that cannot make the claim — before a request is
     #: ever made, not after an invoice is wrong.
     reports_authoritative_cost: bool
+
+    # -- shaping a request --------------------------------------------------
+
+    def auth_headers(self, credential: str) -> Mapping[str, str]:
+        """How this counterparty wants the credential presented.
+
+        Called with the decrypted key, so it is never logged and never stored.
+        Returns an empty mapping for an endpoint that needs none — a local vLLM
+        or Ollama usually does not.
+
+        This replaced ``providers.auth_scheme``. The two known answers are a
+        bearer token and Anthropic's ``x-api-key``, and the reason it is per
+        counterparty rather than per route is that the reference router serves
+        ``/v1/messages`` with bearer like everything else (ADR 0030).
+        """
+        ...
+
+    def prepare_payload(self, payload: dict[str, Any], *, surface: ApiSurface) -> dict[str, Any]:
+        """The body as this counterparty wants it, given the body we would send.
+
+        Called after redaction and after the upstream model name is substituted,
+        so what arrives here is the request as it would go out. A plugin adds
+        only what its counterparty needs; whatever the *client* set is already in
+        the payload and must survive, because forwarding exactly what was sent —
+        including parameters this gateway knows nothing about — is what keeps a
+        model's behaviour the caller's business (ADR 0028).
+
+        This replaced ``providers.forward_stream_options``. Mutating in place is
+        allowed; the return value is what is sent.
+        """
+        ...
 
     # -- reading a response: facts only ------------------------------------
 

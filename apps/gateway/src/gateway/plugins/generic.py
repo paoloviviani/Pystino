@@ -13,12 +13,11 @@ second change wearing the same commit.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from decimal import Decimal
 from typing import Any
 
-from gateway.accounting.cost import UPSTREAM_COST_UNITS, TokenCounts
+from gateway.accounting.cost import TokenCounts
 from gateway.models import ApiSurface
-from gateway.plugins.base import ProviderKind, ReportedCost, ServedBy
+from gateway.plugins.base import ProviderKind, ReportedCost, ServedBy, bearer_headers
 
 #: Where a counterparty that reports the serving endpoint in the *body* puts it.
 #: OpenRouter does this. Read here rather than in the recorder, which is where it
@@ -32,27 +31,38 @@ class GenericOpenAIPlugin:
     name = "generic"
     label = "OpenAI-compatible"
     description = (
-        "Forwards requests unchanged. Tokens are counted here and billed from the price "
-        "rows you set — the provider is never asked what it charged."
+        "Forwards requests unchanged. Billed from the configured prices, never from the "
+        "provider's own figure."
     )
     kind = ProviderKind.PROVIDER
-    # An operator declaring a unit is not the vendor asserting a charge.
+    # It reports no cost at all, so there is nothing to assert. This is what
+    # keeps pass-through billing unselectable for a nameless endpoint.
     reports_authoritative_cost = False
 
-    def __init__(self, reported_cost_unit: str | None = None) -> None:
-        """*reported_cost_unit* is an operator's declaration, from the provider row.
+    # -- shaping a request --------------------------------------------------
 
-        Some OpenAI-compatible endpoints put a number in ``usage.cost`` and
-        nothing says what unit it is in, so an operator may declare one. That
-        makes the figure *readable*; it does not make it **authoritative**.
+    def auth_headers(self, credential: str) -> Mapping[str, str]:
+        return bearer_headers(credential)
 
-        The distinction is the whole point of the flag: an operator saying "read
-        this as micro-EUR" is not the vendor asserting "this is what we charged
-        you". So a generic provider can never be put in `provider_reported`
-        billing mode — that needs a plugin that knows the counterparty well
-        enough to make the claim.
+    def prepare_payload(self, payload: dict[str, Any], *, surface: ApiSurface) -> dict[str, Any]:
+        """Ask for usage on a streamed chat completion, and change nothing else.
+
+        Without this a streamed response carries no token counts at all and
+        accounting records zero for every streaming request — so for an endpoint
+        that says nothing unusual about itself, asking is the safe default. The
+        counterparties that dislike being asked say so, and say it in their own
+        plugin: this used to be ``providers.forward_stream_options``, defaulting
+        true for exactly this reason (ADR 0028).
+
+        Merged rather than replaced, so a stream option the client set survives.
+        Only the chat surface: ``/v1/responses`` carries usage without being
+        asked, and ``/v1/messages`` has no such parameter.
         """
-        self._unit = reported_cost_unit
+        if surface is ApiSurface.CHAT_COMPLETIONS and payload.get("stream"):
+            options = dict(payload.get("stream_options") or {})
+            options["include_usage"] = True
+            payload["stream_options"] = options
+        return payload
 
     def read_usage(self, usage: dict[str, Any] | None, *, surface: ApiSurface) -> TokenCounts:
         # One reader per surface, because the surfaces disagree about where usage
@@ -75,38 +85,20 @@ class GenericOpenAIPlugin:
         return None
 
     def read_reported_cost(self, usage: dict[str, Any] | None) -> ReportedCost | None:
-        """``usage.cost``, but only if an operator declared what unit it is in.
+        """Nothing. An endpoint with no name cannot have its numbers believed.
 
-        Deliberately not a tolerant search for anything that looks like a
-        charge: a number a vendor happens to label ``cost`` is not one, and
-        treating it as such is how a figure gets billed from that should not
-        have been. With no declared unit this reports nothing at all.
+        Some OpenAI-compatible endpoints do put a figure in ``usage.cost``, and
+        for a while an operator could declare its unit on the provider row.
+        That was removed with ``providers.upstream_cost_unit``, because the
+        declaration was the wrong shape for the knowledge: a number labelled
+        ``cost`` is micro-EUR from one counterparty and credits from another, and
+        nothing in the payload says which. Asking an operator to know is asking
+        them to be the plugin.
+
+        So this reports nothing, and reading such a figure is a plugin — twenty
+        lines and a name, registered under ``llmp.providers``. That is a higher
+        bar than typing a unit into a form, deliberately: a wrong unit here is a
+        reconciliation report off by a factor of a million, which reads as a
+        provider overcharging rather than as a configuration mistake.
         """
-        if not usage or not self._unit:
-            return None
-        scale = UPSTREAM_COST_UNITS.get(self._unit)
-        if scale is None:
-            return None
-
-        raw = usage.get("cost")
-        # `True` is an int in Python and is not a cost.
-        if raw is None or isinstance(raw, bool):
-            return None
-        try:
-            # Via `str`, so a float never imports its binary rounding into a
-            # column that holds money.
-            amount = Decimal(str(raw))
-        except (ArithmeticError, TypeError, ValueError):
-            return None
-        if amount < 0:
-            return None
-
-        factor, currency = scale
-        details = usage.get("cost_details")
-        return ReportedCost(
-            amount=amount * factor,
-            currency=currency,
-            # Never. See __init__: a declared unit is not a vendor's assertion.
-            authoritative=False,
-            details=dict(details) if isinstance(details, dict) else {},
-        )
+        return None

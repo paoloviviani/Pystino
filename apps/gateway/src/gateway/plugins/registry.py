@@ -24,6 +24,7 @@ import logging
 from collections.abc import Callable
 from importlib.metadata import entry_points
 
+from gateway.plugins.anthropic import AnthropicPlugin
 from gateway.plugins.base import ProviderPlugin
 from gateway.plugins.cortecs import CortecsRouterPlugin
 from gateway.plugins.generic import GenericOpenAIPlugin
@@ -36,31 +37,21 @@ ENTRY_POINT_GROUP = "llmp.providers"
 #: had before plugins existed.
 DEFAULT_PLUGIN = "generic"
 
-#: Built with the provider row's declared cost unit, which only the generic
-#: plugin uses — a plugin that knows its counterparty knows the unit already.
-PluginFactory = Callable[..., ProviderPlugin]
+#: Every plugin is constructed with no arguments. It was briefly otherwise — the
+#: generic one took the provider row's declared cost unit — and that parameter
+#: went with the column it came from: a plugin that knows its counterparty knows
+#: the unit already, and one that does not should not be guessing.
+PluginFactory = Callable[[], ProviderPlugin]
 
 _BUILTIN: dict[str, PluginFactory] = {
     "generic": GenericOpenAIPlugin,
+    "anthropic": AnthropicPlugin,
     "cortecs": CortecsRouterPlugin,
 }
 
 
 class UnknownPluginError(ValueError):
     """The configured plugin name resolves to nothing."""
-
-
-def _build(factory: PluginFactory, unit: str | None) -> ProviderPlugin:
-    """Construct a plugin, passing the declared unit only if it accepts one.
-
-    Most plugins take no arguments; the generic one takes a unit. Trying and
-    falling back keeps third-party plugins working without forcing them to
-    accept a parameter they have no use for.
-    """
-    try:
-        return factory(unit)
-    except TypeError:
-        return factory()
 
 
 def _discovered() -> dict[str, PluginFactory]:
@@ -118,20 +109,14 @@ def describe() -> list[dict[str, object]]:
     return described
 
 
-def resolve(name: str | None, *, reported_cost_unit: str | None = None) -> ProviderPlugin:
-    """The plugin for *name*, or the generic one when a row names none.
-
-    *reported_cost_unit* comes from the provider row and is only meaningful to
-    the generic plugin; the others know their counterparty's unit already and
-    ignore it. Passed rather than read from settings so there is one code path
-    for reading a reported cost, not two.
-    """
+def resolve(name: str | None) -> ProviderPlugin:
+    """The plugin for *name*, or the generic one when a row names none."""
     wanted = name or DEFAULT_PLUGIN
 
     # Built-ins win over plugins of the same name, so an installed package cannot
     # silently replace `generic` with something that behaves differently.
     if wanted in _BUILTIN:
-        return _build(_BUILTIN[wanted], reported_cost_unit)
+        return _BUILTIN[wanted]()
 
     for entry in entry_points(group=ENTRY_POINT_GROUP):
         if entry.name != wanted:
@@ -143,7 +128,7 @@ def resolve(name: str | None, *, reported_cost_unit: str | None = None) -> Provi
                 f"the provider plugin {wanted!r} is registered by an installed package "
                 f"but failed to load: {exc}"
             ) from exc
-        return _build(factory, reported_cost_unit)
+        return factory()
 
     raise UnknownPluginError(
         f"unknown provider plugin {wanted!r}. Available: {', '.join(available())}. "

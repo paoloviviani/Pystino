@@ -6,12 +6,14 @@ repeating at the door: **a plugin returns facts and never computes money.**
 
 from __future__ import annotations
 
+from gateway.plugins.anthropic import AnthropicPlugin
 from gateway.plugins.base import (
     CataloguePrice,
     ProviderKind,
     ProviderPlugin,
     ReportedCost,
     ServedBy,
+    bearer_headers,
 )
 from gateway.plugins.cortecs import CortecsRouterPlugin
 from gateway.plugins.generic import GenericOpenAIPlugin
@@ -26,6 +28,7 @@ from gateway.plugins.registry import (
 __all__ = [
     "DEFAULT_PLUGIN",
     "ENTRY_POINT_GROUP",
+    "AnthropicPlugin",
     "CataloguePrice",
     "CortecsRouterPlugin",
     "GenericOpenAIPlugin",
@@ -35,5 +38,6 @@ __all__ = [
     "ServedBy",
     "UnknownPluginError",
     "available",
+    "bearer_headers",
     "resolve",
 ]

@@ -9,6 +9,12 @@ unit it arrived in — never converted, never scaled to a billing currency.
 **Providers and routers differ in what must be recorded.** A router chooses the
 serving endpoint per request, so that endpoint is a fact to capture; for a
 provider it is implied by the model.
+
+The request-shaping tests below were three columns before slice 3 —
+`auth_scheme`, `forward_stream_options` and `upstream_cost_unit` — each added for
+one counterparty's habit. They test the same behaviours; what changed is that
+the answer now comes from a plugin, so the next counterparty does not need a
+fourth column.
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ import pytest
 from conftest import FakeUpstream, Seeded
 from gateway.models import ApiSurface, Provider
 from gateway.plugins import (
+    AnthropicPlugin,
     CortecsRouterPlugin,
     GenericOpenAIPlugin,
     ProviderKind,
@@ -33,7 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class TestRegistry:
     def test_the_builtins_are_there(self) -> None:
-        assert {"generic", "cortecs"} <= set(available())
+        assert {"generic", "anthropic", "cortecs"} <= set(available())
 
     def test_no_name_is_the_generic_provider(self) -> None:
         """Every row that predates plugins resolves to the old behaviour."""
@@ -155,6 +162,87 @@ class TestGenericProvider:
     def test_a_header_alone_tells_it_nothing(self) -> None:
         """It has no business knowing another counterparty's header."""
         assert GenericOpenAIPlugin().read_served_by({}, {"x-cortecs-provider": "ovh"}) is None
+
+
+class TestAuthHeaders:
+    """What ``providers.auth_scheme`` used to decide.
+
+    The column had exactly two values and the second one existed because
+    Anthropic's own API rejects a bearer token. Dropping it without a home for
+    that answer would have removed the capability, so migration 0010 translates
+    the value into a plugin choice.
+    """
+
+    def test_openai_shaped_endpoints_get_a_bearer_token(self) -> None:
+        for plugin in (GenericOpenAIPlugin(), CortecsRouterPlugin()):
+            assert plugin.auth_headers("sk-x") == {"authorization": "Bearer sk-x"}
+
+    def test_anthropic_gets_x_api_key_and_a_version(self) -> None:
+        headers = AnthropicPlugin().auth_headers("sk-ant")
+        assert headers["x-api-key"] == "sk-ant"
+        assert "authorization" not in headers
+        # Their API refuses a request without it.
+        assert headers["anthropic-version"]
+
+    def test_a_router_serving_anthropics_shape_still_uses_bearer(self) -> None:
+        """The reason this is per counterparty and not per route (ADR 0030).
+
+        The reference router serves /v1/messages with a bearer token like
+        everything else. A plugin keyed on the surface would get this wrong.
+        """
+        assert "authorization" in CortecsRouterPlugin().auth_headers("k")
+
+
+class TestPreparePayload:
+    """What ``providers.forward_stream_options`` used to decide."""
+
+    def test_a_generic_endpoint_is_asked_for_stream_usage(self) -> None:
+        """Without it a streamed response carries no counts and we record zero."""
+        payload = GenericOpenAIPlugin().prepare_payload(
+            {"model": "m", "stream": True}, surface=ApiSurface.CHAT_COMPLETIONS
+        )
+        assert payload["stream_options"] == {"include_usage": True}
+
+    def test_what_the_client_sent_survives(self) -> None:
+        """Merged, not replaced. Forwarding what was sent is the whole contract."""
+        payload = GenericOpenAIPlugin().prepare_payload(
+            {"model": "m", "stream": True, "stream_options": {"chunk_size_hint": 4}},
+            surface=ApiSurface.CHAT_COMPLETIONS,
+        )
+        assert payload["stream_options"] == {"chunk_size_hint": 4, "include_usage": True}
+
+    def test_nothing_is_added_to_a_non_streaming_request(self) -> None:
+        payload = GenericOpenAIPlugin().prepare_payload(
+            {"model": "m"}, surface=ApiSurface.CHAT_COMPLETIONS
+        )
+        assert "stream_options" not in payload
+
+    @pytest.mark.parametrize(
+        "surface", [ApiSurface.RESPONSES, ApiSurface.MESSAGES, ApiSurface.EMBEDDINGS]
+    )
+    def test_only_the_chat_surface_gets_it(self, surface: ApiSurface) -> None:
+        """/v1/responses carries usage unasked and /v1/messages has no such field."""
+        payload = GenericOpenAIPlugin().prepare_payload(
+            {"model": "m", "stream": True}, surface=surface
+        )
+        assert "stream_options" not in payload
+
+    def test_the_reference_router_is_not_asked(self) -> None:
+        """It reports usage either way and warns against undocumented parameters.
+
+        A behaviour change from the column, whose default was to ask. Migration
+        0010 names the rows it changes rather than leaving it to be noticed.
+        """
+        payload = CortecsRouterPlugin().prepare_payload(
+            {"model": "m", "stream": True}, surface=ApiSurface.CHAT_COMPLETIONS
+        )
+        assert "stream_options" not in payload
+
+    def test_anthropic_is_not_asked_either(self) -> None:
+        payload = AnthropicPlugin().prepare_payload(
+            {"model": "m", "stream": True}, surface=ApiSurface.MESSAGES
+        )
+        assert "stream_options" not in payload
 
 
 class TestItReachesTheLedger:

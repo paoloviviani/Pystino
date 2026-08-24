@@ -132,33 +132,24 @@ def build_upstream_payload(
     *,
     outcome: RedactionOutcome,
     upstream_model: str,
-    forward_stream_options: bool = True,
 ) -> dict[str, Any]:
-    """The request we actually send.
+    """The request we actually send, before the counterparty's plugin sees it.
 
     ``exclude_unset`` forwards exactly what the client sent — including every
     parameter this gateway knows nothing about — and nothing it did not. Adding
     defaults of our own would silently change model behaviour.
+
+    Which is why ``stream_options.include_usage`` is no longer added here. Asking
+    for usage on a stream is not a property of this route: a generic
+    OpenAI-compatible endpoint sends none unless asked, while the reference router
+    sends it either way and warns against undocumented parameters. That was
+    ``providers.forward_stream_options`` and is now
+    ``GenericOpenAIPlugin.prepare_payload`` — see ADR 0032. The route calls
+    ``metered.shape_payload`` next.
     """
     payload = body.model_dump(exclude_unset=True)
     payload["model"] = upstream_model
     payload["messages"] = outcome.messages
-
-    if body.stream and forward_stream_options:
-        # Without this, a streamed response carries no token counts at all and
-        # accounting would record zero for every streaming request. Merged rather
-        # than replaced, so other stream options the client set survive.
-        #
-        # Per provider, because the right answer differs: a generic
-        # OpenAI-compatible endpoint only sends usage if asked, while Cortecs
-        # sends it on the last chunk unconditionally and warns that undocumented
-        # parameters "can cause requests to fail or limit the providers able to
-        # process them" (ADR 0028). Whatever the client itself set is still
-        # forwarded — this only controls our addition.
-        options = dict(body.stream_options or {})
-        options["include_usage"] = True
-        payload["stream_options"] = options
-
     return payload
 
 
@@ -215,11 +206,9 @@ async def chat_completions(
         return metered
 
     payload = build_upstream_payload(
-        body,
-        outcome=outcome,
-        upstream_model=model.upstream_model,
-        forward_stream_options=model.provider.forward_stream_options,
+        body, outcome=outcome, upstream_model=model.upstream_model
     )
+    payload = metered.shape_payload(payload, surface=SURFACE)
 
     if body.stream:
         return await _stream_response(

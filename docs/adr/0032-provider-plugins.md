@@ -111,7 +111,9 @@ asserts the figure is the counterparty's actual charge rather than an estimate.
 The unit because nothing in a payload says whether `136` means micro-EUR or
 credits — the point already made by `UPSTREAM_COST_UNITS`, and moving it into the
 plugin removes both the `upstream_cost_unit` column and the operator's obligation
-to know it. The assertion because decision 6 lets a deployment bill from that
+to know it. **Built:** the column is gone, and so are `UPSTREAM_COST_UNITS` and
+`read_upstream_cost`, which had no caller left once every plugin knew its own
+unit. The capability that went with them is named in the consequences below. The assertion because decision 6 lets a deployment bill from that
 figure, and a plugin that merely passes through something a vendor calls "cost"
 should not be selectable for that.
 
@@ -381,12 +383,80 @@ deployment is EUR.
    `llmp.providers` entry point supported so a deployment can add a counterparty
    without forking. Same shape as ADR 0026.
 
-## Open questions, for whoever reviews this
+## Resolved while building slice 3, 2026-08-24
 
-1. **How is a plugin bound to a provider row?** A `plugin` column naming it,
-   validated at startup against the registry like the redaction engine — which
-   refuses an unknown name rather than falling back.
-2. **What happens to a provider row whose plugin disappears?** Refusing at
-   startup is consistent with redaction; refusing means one uninstalled package
-   takes the gateway down. Probably: refuse to *serve that provider*, loudly, and
-   keep running.
+Both open questions turned out to have the same answer, arrived at from two
+directions.
+
+1. **How is a plugin bound to a provider row?** `providers.plugin`, a plain
+   string, validated **at save time** by `PluginName` in `schemas.py` against the
+   registry — not at startup. Startup validation was the redaction parallel, but
+   the cases differ: there is one redaction engine for the process and a plugin
+   per provider row, so a startup check would refuse to boot over a row that no
+   traffic touches.
+
+2. **What happens to a provider row whose plugin disappears?** It degrades to
+   generic and says so at ERROR, in **two** places, and the two consequences are
+   not the same:
+
+   * `RequestAccounting` loses the counterparty's reported cost and its serving
+     endpoint. Bad, and recoverable — the row is still billed from our prices.
+   * `ProviderRegistry` presents the credential as a bearer token, which for a
+     row that needed `x-api-key` is a 401 that reads like an outage. Worse, and
+     the reason its log line names the plugin.
+
+   Refusing to serve the provider was the other candidate. Rejected: it turns a
+   missing optional package into an outage for every model behind that provider,
+   where degrading turns it into a wrong number in a reconciliation column. Both
+   are bad; only one is silent, and the log lines are what stop it being.
+
+## Slice 3: the three columns, removed
+
+Built 2026-08-24. `auth_scheme`, `forward_stream_options` and
+`upstream_cost_unit` are gone, replaced by `auth_headers` and `prepare_payload`
+on the plugin, plus the plugin's own knowledge of its counterparty's cost unit.
+
+**One value was translatable and is translated.** `auth_scheme` had two values
+and its second existed because Anthropic's own API rejects a bearer token.
+Dropping the column without a home for that answer would have removed the
+capability, so there is now an `anthropic` plugin and migration 0010 rewrites
+`auth_scheme = 'x_api_key'` to `plugin = 'anthropic'`. Such a row authenticates
+exactly as before, and gains the `anthropic-version` header it also needed and
+previously had to be given by hand through `extra_headers`.
+
+**Two values were not, and this is the cost of the decision.** A per-row knob
+became per-plugin behaviour, so a deployment with two providers of the same type
+that need different answers can no longer express that. The replacement is a
+plugin — twenty lines and an entry-point name. That is a higher bar than a
+checkbox, deliberately for the cost unit (a wrong unit is a reconciliation report
+off by a factor of a million, which reads as a provider overcharging rather than
+as a typo) and reluctantly for the stream option.
+
+Concretely, two behaviours change at upgrade:
+
+* A provider row on the `cortecs` plugin **stops sending**
+  `stream_options.include_usage`. Cortecs reports usage either way — measured —
+  so this buys nothing and may buy routing breadth back; whether it does is still
+  unverified, because they do not name the serving sub-provider in stream frames.
+* A generic provider row with a declared cost unit **stops recording** the
+  counterparty's figure. Past rows keep what they were recorded with.
+
+Migration 0010 prints a line naming every affected provider rather than failing
+or being silent. Failing would leave a deployment unable to upgrade over a
+configuration question; silence would let a reconciliation column quietly stop
+being populated. It also cannot restore those two values on downgrade, which is
+what the warning is for.
+
+**The console gained the simplification this was for.** The provider dialog
+asked for four things — type, billing mode, credential header, stream options —
+where three of them were the same question asked in different words. It now asks
+for the type, and derives the rest.
+
+### A bug found while doing it
+
+`AdminProviders.test.tsx` asserted that the type column read `cortecs`, which is
+the *fallback* the cell renders before `/api/admin/provider-plugins` resolves;
+once loaded it reads `Cortecs (router)`. The assertion was passing on a transient
+state and only failed when unrelated copy changes shifted the timing. Now it
+waits on the label, which is both the deterministic assertion and the one that
+describes what an operator sees.

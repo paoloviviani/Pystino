@@ -191,21 +191,17 @@ class TestProviderReported:
         session: AsyncSession,
         fake_upstream: FakeUpstream,
     ) -> None:
-        """The generic plugin reads a figure but asserts nothing about it.
+        """A plugin reads a figure but asserts nothing about it.
 
-        An operator declaring a unit says how to *read* the number; it is not the
-        vendor saying "this is what we charged you". So even in pass-through mode
-        it must not become the charge. The API refuses this configuration, but
-        the request path must not trust it either.
+        Reporting a number is not claiming it is the charge, and that distinction
+        is the plugin's to make rather than an operator's. So even in pass-through
+        mode a non-authoritative figure must not become the charge. The API
+        refuses this configuration; the request path must not trust it either.
         """
         await session.execute(
             update(Provider)
             .where(Provider.id == seeded.provider.id)
-            .values(
-                billing_mode=BillingMode.PROVIDER_REPORTED,
-                plugin=None,
-                upstream_cost_unit="micro_eur",
-            )
+            .values(billing_mode=BillingMode.PROVIDER_REPORTED, plugin="indicative")
         )
         await session.commit()
 
@@ -236,7 +232,7 @@ class TestProviderReported:
             name="dollar-router",
             base_url=seeded.provider.base_url,
             billing_mode=BillingMode.PROVIDER_REPORTED,
-            upstream_cost_unit="usd",
+            plugin="dollar-shop",
         )
         session.add(dollars)
         await session.flush()

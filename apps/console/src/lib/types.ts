@@ -296,11 +296,14 @@ export interface AdminProvider {
   has_api_key: boolean;
   extra_headers: Record<string, string>;
   is_active: boolean;
-  /** Whether the gateway adds `stream_options.include_usage` to streaming calls. */
-  forward_stream_options: boolean;
-  /** How the credential is presented. Anthropic's own API rejects a bearer token. */
-  auth_scheme: "bearer" | "x_api_key";
-  /** Which plugin carries this counterparty's quirks. Null is the default type. */
+  /**
+   * Which plugin carries this counterparty's quirks. Null is the default type.
+   *
+   * It replaced three fields that were each added for one provider's habit —
+   * `auth_scheme`, `forward_stream_options` and `upstream_cost_unit`. The type
+   * now decides all three, which is why the dialog asks for one selection
+   * instead of four (ADR 0032).
+   */
   plugin: string | null;
   kind: "provider" | "router";
   /** What the named plugin actually is, so a mismatch with `kind` is visible. */

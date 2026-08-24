@@ -27,7 +27,9 @@ from datetime import datetime
 import httpx
 
 from gateway.config import UpstreamSettings
-from gateway.models import AuthScheme, Provider
+from gateway.models import Provider
+from gateway.plugins import registry
+from gateway.plugins.base import ProviderPlugin
 from gateway.secrets import SecretBox, SecretDecryptionError
 from gateway.upstream import OpenAICompatibleUpstream, build_http_client
 
@@ -79,9 +81,33 @@ class ProviderRegistry:
 
     @staticmethod
     def _fingerprint(provider: Provider) -> tuple[str, str, datetime]:
-        # `updated_at` covers every other editable field, including the auth
-        # scheme: an edit bumps it, which retires the cached client.
+        # `updated_at` covers every other editable field, including the plugin —
+        # and therefore how the credential is presented: an edit bumps it, which
+        # retires the cached client.
         return (provider.base_url, provider.api_key_encrypted, provider.updated_at)
+
+    @staticmethod
+    def _plugin_for(provider: Provider) -> ProviderPlugin:
+        """The plugin for *provider*, degrading to generic if it is not installed.
+
+        Refusing here would take a provider offline for a configuration mistake
+        that the admin API already rejects on save; the case this covers is a
+        plugin that was installed when the row was written and is not now. It
+        degrades and says so loudly, matching how the recorder handles the same
+        situation — but note the two consequences differ: the recorder loses a
+        reported cost, this one may present the credential the wrong way and get
+        a 401 that reads like an outage. Hence the log line naming the plugin.
+        """
+        try:
+            return registry.resolve(provider.plugin)
+        except registry.UnknownPluginError:
+            logger.error(
+                "provider %s names the plugin %r, which is not installed; "
+                "presenting its credential as a bearer token, which may be refused",
+                provider.name,
+                provider.plugin,
+            )
+            return registry.resolve(None)
 
     def _settings_for(self, provider: Provider) -> UpstreamSettings:
         api_key = ""
@@ -99,10 +125,6 @@ class ProviderRegistry:
                 "base_url": provider.base_url.rstrip("/"),
                 "api_key": _as_secret(api_key),
                 "extra_headers": dict(provider.extra_headers or {}),
-                # `or BEARER` because a Provider built in memory and not yet
-                # flushed has no column default applied; the registry is handed
-                # such objects by the provider connection test.
-                "auth_scheme": (provider.auth_scheme or AuthScheme.BEARER).value,
             }
         )
 
@@ -128,7 +150,9 @@ class ProviderRegistry:
 
             settings = self._settings_for(provider)
             client = self._build_client(settings)
-            upstream = OpenAICompatibleUpstream(settings, client)
+            upstream = OpenAICompatibleUpstream(
+                settings, client, plugin=self._plugin_for(provider)
+            )
 
             stale = self._entries.get(provider.id)
             self._entries[provider.id] = _Entry(upstream, client, fingerprint)
@@ -166,7 +190,7 @@ class ProviderRegistry:
         """
         settings = self._settings_for(provider)
         client = self._build_client(settings)
-        return OpenAICompatibleUpstream(settings, client), client
+        return OpenAICompatibleUpstream(settings, client, plugin=self._plugin_for(provider)), client
 
 
 async def _close_quietly(client: httpx.AsyncClient, label: str) -> None:

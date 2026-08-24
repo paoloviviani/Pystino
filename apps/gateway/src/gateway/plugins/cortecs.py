@@ -26,6 +26,10 @@ Three findings drive the code:
   7.03 becomes 8. Bounded, always upward, and proportionally large on small
   requests — about 25% on a 40-token one. Recorded rather than corrected: it is
   their charge, and adjusting it would be inventing a number.
+
+A fourth finding shapes the request rather than the reading: it **warns against
+sending undocumented parameters**, and reports usage on a streamed response
+whether or not it is asked to. So ``prepare_payload`` adds nothing.
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ from typing import Any
 
 from gateway.accounting.cost import TokenCounts
 from gateway.models import ApiSurface
-from gateway.plugins.base import ProviderKind, ReportedCost, ServedBy
+from gateway.plugins.base import ProviderKind, ReportedCost, ServedBy, bearer_headers
 
 #: Micro-EUR. Derived, then checked four ways against catalogue rates — a
 #: 1152-token prompt at 0.117/Mtok was reported as 135, and 134.78 is what the
@@ -63,12 +67,44 @@ class CortecsRouterPlugin:
     label = "Cortecs (router)"
     description = (
         "Chooses a sub-provider per request and names it in a response header. Reports its "
-        "own cost in micro-EUR, so it can bill from either your prices or its figure."
+        "own cost, so either that or the configured prices can be the charge."
     )
     kind = ProviderKind.ROUTER
     # Reconciled against their listed prices on three sub-providers,
     # agreeing to within their own rounding. It is what they charge.
     reports_authoritative_cost = True
+
+    # -- shaping a request --------------------------------------------------
+
+    def auth_headers(self, credential: str) -> Mapping[str, str]:
+        """Bearer, on every route including ``/v1/messages``.
+
+        Worth stating because the obvious guess is wrong: Anthropic's own API
+        rejects a bearer token on that route, and a router serving Anthropic's
+        shape does not inherit Anthropic's auth (ADR 0030).
+        """
+        return bearer_headers(credential)
+
+    def prepare_payload(self, payload: dict[str, Any], *, surface: ApiSurface) -> dict[str, Any]:
+        """Unchanged — deliberately, and this is a behaviour change from the column.
+
+        Cortecs reports usage on the last chunk of a stream whether or not
+        ``stream_options.include_usage`` is sent — checked against the live API —
+        so sending it buys nothing. What it may cost is routing breadth: their
+        documentation warns that undocumented parameters "can cause requests to
+        fail or limit the providers able to process them". Whether it actually
+        narrows the pool is **unverified**, because they do not name the serving
+        sub-provider in stream frames, so ``scripts/check_cortecs_stream_options.py``
+        reports that part as unknown.
+
+        Not sending it is therefore the choice with no downside and an unquantified
+        upside. Rows migrated from ``forward_stream_options = true`` stop sending
+        it at upgrade, which migration 0010 says out loud rather than leaving to be
+        noticed.
+        """
+        return payload
+
+    # -- reading a response: facts only ------------------------------------
 
     def read_usage(self, usage: dict[str, Any] | None, *, surface: ApiSurface) -> TokenCounts:
         """Cortecs speaks each surface's own convention, so the shared readers apply.
