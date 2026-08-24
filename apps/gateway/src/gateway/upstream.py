@@ -27,6 +27,7 @@ import httpx
 import orjson
 
 from gateway.config import UpstreamSettings
+from gateway.plugins.base import ProviderPlugin, bearer_headers
 
 #: Anthropic requires an API version on every request and rejects one without
 #: it. Harmless on providers that proxy the shape and ignore the header, so it
@@ -102,9 +103,21 @@ class OpenAICompatibleUpstream:
     connection pools to the same host.
     """
 
-    def __init__(self, settings: UpstreamSettings, client: httpx.AsyncClient) -> None:
+    def __init__(
+        self,
+        settings: UpstreamSettings,
+        client: httpx.AsyncClient,
+        *,
+        plugin: ProviderPlugin | None = None,
+    ) -> None:
         self._settings = settings
         self._client = client
+        # How this counterparty wants its credential presented, which used to be
+        # `providers.auth_scheme` (ADR 0032). None means bearer, which is what
+        # every OpenAI-compatible endpoint wants and what the column defaulted
+        # to — so a caller that has no provider row, such as a test or a probe
+        # built from settings alone, behaves as before.
+        self._plugin = plugin
 
     def _headers(self, *, request_id: str | None = None) -> dict[str, str]:
         headers = {
@@ -112,14 +125,17 @@ class OpenAICompatibleUpstream:
             "accept": "application/json",
         }
         if api_key := self._settings.api_key.get_secret_value():
-            if self._settings.auth_scheme == "x_api_key":
-                # Anthropic's own API authenticates this way and rejects a
-                # bearer token. The reference provider uses bearer for every
-                # route including /v1/messages, so this is per provider rather
-                # than per route (ADR 0030).
-                headers["x-api-key"] = api_key
+            # The plugin decides. Anthropic's own API authenticates with
+            # `x-api-key` and rejects a bearer token; the reference router uses
+            # bearer for every route including /v1/messages, which is why this is
+            # per counterparty rather than per route (ADR 0030, ADR 0032).
+            if self._plugin is not None:
+                headers.update(self._plugin.auth_headers(api_key))
             else:
-                headers["authorization"] = f"Bearer {api_key}"
+                headers.update(bearer_headers(api_key))
+        # After the plugin, so a deployment can still override a header the
+        # plugin sets — Anthropic's `anthropic-version` is the case that matters,
+        # and pinning a newer one should not need a release.
         headers.update(self._settings.extra_headers)
         if request_id:
             # Helps correlate our ledger with a provider's own logs when

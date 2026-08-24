@@ -293,7 +293,7 @@ async def _reconciliation(
 
     Only rows with a provider figure count, on **both** sides. Anything else
     would reintroduce the same mismatch inside a single provider: a request made
-    before its ``upstream_cost_unit`` was declared has our cost and not theirs.
+    before it named a plugin that reads its figure has our cost and not theirs.
 
     The provider comes from the model, since ``usage_records`` records the
     provider the *upstream* named rather than our row. A record whose model has

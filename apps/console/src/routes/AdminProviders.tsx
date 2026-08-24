@@ -238,8 +238,6 @@ function ProviderDialog({
   const [description, setDescription] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
-  const [streamOptions, setStreamOptions] = useState(true);
-  const [authScheme, setAuthScheme] = useState<"bearer" | "x_api_key">("bearer");
   // The provider *type*. Read from the API rather than hardcoded, so installing
   // a plugin makes it selectable without a console release (ADR 0032).
   const plugins = useProviderPlugins();
@@ -256,8 +254,6 @@ function ProviderDialog({
     setDescription(provider?.description ?? "");
     setApiKey("");
     setClearKey(false);
-    setStreamOptions(provider?.forward_stream_options ?? true);
-    setAuthScheme(provider?.auth_scheme ?? "bearer");
     setPlugin(provider?.plugin ?? "");
     setBillingMode(provider?.billing_mode ?? "own_prices");
   }
@@ -282,8 +278,6 @@ function ProviderDialog({
           name,
           base_url: baseUrl,
           description: description || null,
-          forward_stream_options: streamOptions,
-          auth_scheme: authScheme,
           plugin: plugin || null,
           // Taken from the plugin rather than asked for separately: whether the
           // serving endpoint is chosen per request is a property of the
@@ -302,8 +296,6 @@ function ProviderDialog({
           name,
           base_url: baseUrl,
           description: description || null,
-          forward_stream_options: streamOptions,
-          auth_scheme: authScheme,
           plugin: plugin || null,
           kind: chosen?.kind ?? "provider",
           billing_mode: effectiveMode,
@@ -346,9 +338,9 @@ function ProviderDialog({
         placeholder="cortecs"
         hint={
           editing
-            ? "Letters, digits, dot, dash and underscore. Renaming is safe: models" +
-              " reference the provider by id and past spend keeps its attribution." +
-              " It does change owned_by on every /v1/models card this provider serves."
+            ? "Letters, digits, dot, dash and underscore. Renaming is safe — models" +
+              " reference the provider by id, so past spend keeps its attribution." +
+              " It does change owned_by on this provider's /v1/models cards."
             : "Letters, digits, dot, dash and underscore."
         }
       />
@@ -360,7 +352,7 @@ function ProviderDialog({
         hint={
           chosen
             ? chosen.description
-            : "How this counterparty is talked to, and what may be believed about what it charged."
+            : "How this provider is talked to, and whether its reported cost can be believed."
         }
       >
         {(plugins.data ?? []).map((entry) => (
@@ -380,8 +372,8 @@ function ProviderDialog({
           onChange={(event) =>
             setBillingMode(event.target.value as "own_prices" | "provider_reported")
           }
-          hint="Which figure is charged. Both are always recorded, so a divergence stays
-            reconstructable either way."
+          hint="Which figure is charged. Both are recorded either way, so a divergence
+            stays reconstructable."
         >
           <option value="own_prices">Our prices — tokens counted here</option>
           <option value="provider_reported">
@@ -392,9 +384,9 @@ function ProviderDialog({
 
       {effectiveMode === "provider_reported" && (
         <Notice tone="warn">
-          Prices are still needed: admission happens before the request and the provider's
-          figure only arrives after, so an unpriced model reserves nothing and no cost
-          ceiling ever trips for it.
+          Prices are still needed. Admission happens before the request and the provider's
+          figure arrives after it, so an unpriced model reserves nothing and no cost ceiling
+          trips.
         </Notice>
       )}
 
@@ -439,36 +431,9 @@ function ProviderDialog({
         </label>
       )}
 
-      <label className={styles.checkItem}>
-        <input
-          type="checkbox"
-          checked={streamOptions}
-          onChange={(event) => setStreamOptions(event.target.checked)}
-        />
-        <span>
-          Ask for token usage on streamed responses
-          <span className={styles.muted}>
-            {" "}— turn off for a provider that sends usage anyway and rejects unknown
-            parameters. Cortecs is one.
-          </span>
-        </span>
-      </label>
-
-      <Select
-        label="Credential header"
-        value={authScheme}
-        onChange={(event) => setAuthScheme(event.target.value as "bearer" | "x_api_key")}
-        hint="Anthropic's own API takes x-api-key and rejects a bearer token. Every
-          OpenAI-compatible endpoint — including Cortecs, for all of its routes — takes bearer."
-      >
-        <option value="bearer">Authorization: Bearer</option>
-        <option value="x_api_key">x-api-key (Anthropic)</option>
-      </Select>
-
       <Notice tone="info">
-        Use <strong>Test</strong> after saving. It calls the provider&apos;s <code>/models</code>
-        {" "}with the credential as stored, so a wrong URL or a stale key shows up now rather than
-        in someone&apos;s request.
+        <strong>Test</strong> calls the provider&apos;s <code>/models</code> with the credential
+        {" "}as stored, so a wrong URL or a stale key shows up here rather than in a request.
       </Notice>
     </Dialog>
   );

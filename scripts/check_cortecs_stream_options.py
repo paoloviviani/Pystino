@@ -6,7 +6,7 @@ documentation. Cortecs sends usage on the last chunk of a stream
 unconditionally, and ``stream_options`` is absent from their published schema —
 but their schema also warns that unsupported parameters "can cause requests to
 fail or limit the providers able to process them". Those two readings imply
-different defaults for ``providers.forward_stream_options``, and guessing
+different answers from a plugin's ``prepare_payload``, and guessing
 between them is exactly what this project does not do.
 
 So it is a script rather than a decision. **It needs a real Cortecs API key and
@@ -24,8 +24,9 @@ It answers three things:
    providers able to process them" clause, which is the failure mode that
    would never show up as an error.
 
-Read the recommendation it prints, then set ``forward_stream_options`` on the
-provider in the console to match.
+Read the recommendation it prints. Acting on it is now a change to a plugin
+rather than to a column: ``CortecsRouterPlugin.prepare_payload`` decides this,
+and today it adds nothing.
 """
 
 from __future__ import annotations
@@ -164,11 +165,11 @@ def main() -> int:
 
     print("=== conclusion ===")
     if rejected:
-        print("  stream_options is REJECTED. Set forward_stream_options = false.")
+        print("  stream_options is REJECTED. prepare_payload must not add it.")
         return 0
     if not usage_without:
         print("  stream_options is accepted and is REQUIRED — usage is missing without it.")
-        print("  Set forward_stream_options = true.")
+        print("  prepare_payload should add it.")
         return 0
 
     print("  stream_options is accepted, and usage arrives without it either way.")
@@ -179,7 +180,7 @@ def main() -> int:
             f"  Providers differ: with={sorted(providers_with)} without={sorted(providers_without)}"
         )
         print("  This is the 'limits the providers able to process them' case.")
-        print("  Set forward_stream_options = false — sending it costs routing breadth")
+        print("  prepare_payload should not add it — sending it costs routing breadth")
         print("  and buys nothing.")
     else:
         print("  No routing difference observed in this sample. Either setting works;")

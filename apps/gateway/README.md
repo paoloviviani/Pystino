@@ -156,9 +156,10 @@ found.
   `store` are refused: a stored prefix is billed on every follow-up and this
   gateway would have no record of what it contained.
 - Retrying an upstream request without `stream_options` when a provider rejects unknown
-  parameters. A provider that does is configured with `forward_stream_options = false`
-  instead, which costs nothing at request time.
-  ([ADR 0028](../../docs/adr/0028-embeddings-and-served-model.md))
+  parameters. A provider that does gets a plugin whose `prepare_payload` never adds it,
+  which costs nothing at request time.
+  ([ADR 0028](../../docs/adr/0028-embeddings-and-served-model.md),
+  [ADR 0032](../../docs/adr/0032-provider-plugins.md))
 - A hard mid-stream quota ceiling via `max_tokens` clamping. The chosen policy admits the
   request that crosses the limit. ([ADR 0009](../../docs/adr/0009-quota-model.md))
 

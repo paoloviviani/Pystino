@@ -25,8 +25,6 @@ function provider(overrides: Partial<AdminProvider> = {}): AdminProvider {
     has_api_key: true,
     extra_headers: {},
     is_active: true,
-    forward_stream_options: true,
-    auth_scheme: "bearer",
     plugin: null,
     kind: "provider",
     plugin_kind: "provider",
@@ -347,7 +345,11 @@ describe("AdminProviders: choosing a type", () => {
     renderScreen(<AdminProviders />);
 
     const table = within(await screen.findByRole("table"));
-    await waitFor(() => expect(table.getByText("cortecs")).toBeInTheDocument());
+    // The *label*, not the plugin's internal name. Waiting on the label is also
+    // what makes this deterministic: until the type list arrives the cell falls
+    // back to the raw name, so asserting "cortecs" was asserting a state that
+    // exists only before the query settles.
+    await waitFor(() => expect(table.getByText("Cortecs (router)")).toBeInTheDocument());
     expect(table.getByText("router")).toBeInTheDocument();
     expect(table.getByText("bills from provider")).toBeInTheDocument();
     expect(table.getByText("2 unpriced")).toBeInTheDocument();

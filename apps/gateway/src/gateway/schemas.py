@@ -29,7 +29,6 @@ from pydantic import (
     model_validator,
 )
 
-from gateway.accounting.cost import UPSTREAM_COST_UNITS
 from gateway.plugins import registry as plugin_registry
 
 if TYPE_CHECKING:
@@ -401,9 +400,6 @@ class ProviderResponse(BaseModel):
     has_api_key: bool
     extra_headers: dict[str, str]
     is_active: bool
-    forward_stream_options: bool
-    auth_scheme: str
-    upstream_cost_unit: str | None = None
     plugin: str | None = None
     kind: str = "provider"
     billing_mode: str = "own_prices"
@@ -445,28 +441,6 @@ def _known_plugin(value: str | None) -> str | None:
 PluginName = Annotated[str | None, AfterValidator(_known_plugin)]
 
 
-def _known_cost_unit(value: str | None) -> str | None:
-    """Refuse a unit name the arithmetic does not know.
-
-    A typo here would silently stop recording the provider's figure — the exact
-    kind of quiet nothing that makes a reconciliation column untrustworthy — so
-    it is rejected at the boundary with the list of what is accepted.
-    """
-    if value is None or value == "":
-        return None
-    normalised = value.strip().lower()
-    if normalised not in UPSTREAM_COST_UNITS:
-        raise ValueError(
-            f"unknown upstream cost unit {value!r}; expected one of "
-            f"{', '.join(sorted(UPSTREAM_COST_UNITS))}"
-        )
-    return normalised
-
-
-#: Empty string clears it, matching the `api_key` convention on the same model.
-UpstreamCostUnit = Annotated[str | None, AfterValidator(_known_cost_unit)]
-
-
 class ProviderCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9._-]+$")
     description: str | None = None
@@ -475,16 +449,10 @@ class ProviderCreateRequest(BaseModel):
     api_key: SecretStr | None = None
     extra_headers: dict[str, str] = Field(default_factory=dict)
     is_active: bool = True
-    # Off for a provider that sends usage unconditionally and dislikes unknown
-    # fields — Cortecs documents both (ADR 0028).
-    forward_stream_options: bool = True
-    # "bearer" for anything OpenAI-shaped, "x_api_key" for Anthropic's own API.
-    auth_scheme: Literal["bearer", "x_api_key"] = "bearer"
-    # How to read this provider's self-reported cost. Null ignores it, which is
-    # the default because nothing in a response says which unit it used.
-    upstream_cost_unit: UpstreamCostUnit = None
     # Which plugin carries this counterparty's quirks, and what kind it is
-    # (ADR 0032). Null plugin is the generic OpenAI-compatible behaviour.
+    # (ADR 0032). Null plugin is the generic OpenAI-compatible behaviour. It
+    # replaced `auth_scheme`, `forward_stream_options` and `upstream_cost_unit`,
+    # each of which was a column added for one counterparty's habit.
     plugin: PluginName = None
     kind: Literal["provider", "router"] = "provider"
     # Whose figure is the charge (ADR 0032 decision 6). Validated against the
@@ -517,9 +485,6 @@ class ProviderUpdateRequest(BaseModel):
     api_key: SecretStr | None = None
     extra_headers: dict[str, str] | None = None
     is_active: bool | None = None
-    forward_stream_options: bool | None = None
-    auth_scheme: Literal["bearer", "x_api_key"] | None = None
-    upstream_cost_unit: UpstreamCostUnit = None
     plugin: PluginName = None
     kind: Literal["provider", "router"] | None = None
     billing_mode: Literal["own_prices", "provider_reported"] | None = None
@@ -840,7 +805,7 @@ class BillingDrift(BaseModel):
 
     `requests` and `cost` cover **only** the requests that carried a provider
     figure, which is narrower than that provider's total spend: a request made
-    before the operator declared `upstream_cost_unit`, or one the provider
+    before the provider named a plugin that reads its figure, or one the provider
     reported no cost for, is excluded from both sides rather than from one.
     """
 

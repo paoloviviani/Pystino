@@ -188,10 +188,15 @@ do not rely on it either way without checking.
 
    Reading `usage.cost` needs a **declared unit**: nothing in the payload says
    whether `136` means micro-EUR or credits, and the two differ by a factor of a
-   million. So `providers.upstream_cost_unit` is null by default and the figure
-   is ignored until an operator names the convention. Accepted names live in
-   `UPSTREAM_COST_UNITS` beside the arithmetic, and the API refuses an unknown
-   one rather than silently recording nothing.
+   million.
+
+   *Superseded 2026-08-24, same conclusion by a better route.* This was
+   `providers.upstream_cost_unit`, null by default, with the accepted names in
+   `UPSTREAM_COST_UNITS`. [ADR 0032](adr/0032-provider-plugins.md) slice 3 moved
+   the answer into the plugin and dropped the column: the unit is knowledge about
+   a counterparty, and asking an operator to fill it in was asking them to be the
+   plugin. A provider whose plugin does not read a cost reports none — which is
+   the same safe default, reached without a form field that can be typed wrong.
 
    The admin usage report sums it and says so in a disclosure when present,
    because a column nothing reads is a column nobody trusts.

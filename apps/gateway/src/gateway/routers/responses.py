@@ -112,6 +112,7 @@ async def create_response(
         return metered
 
     payload = body.upstream_payload(outcome, upstream_model=model.upstream_model)
+    payload = metered.shape_payload(payload, surface=SURFACE)
 
     if body.stream:
         return await _stream(

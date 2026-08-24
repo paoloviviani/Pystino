@@ -19,12 +19,7 @@ from decimal import Decimal
 import httpx
 import pytest
 from conftest import FakeUpstream, Seeded
-from gateway.accounting.cost import (
-    UPSTREAM_COST_UNITS,
-    TokenCounts,
-    compute_cost,
-    read_upstream_cost,
-)
+from gateway.accounting.cost import TokenCounts, compute_cost
 from gateway.models import (
     GroupModelAccess,
     ModelDef,
@@ -33,6 +28,8 @@ from gateway.models import (
     Provider,
     UsageRecord,
 )
+from gateway.plugins.cortecs import CortecsRouterPlugin
+from gateway.plugins.generic import GenericOpenAIPlugin
 from gateway.reporting import GroupBy, ReportFilter, build_report, resolve_period
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -309,45 +306,62 @@ class TestBilling:
 
 
 class TestUpstreamReportedCost:
-    """The provider's own figure: recorded for reconciliation, never billed from."""
+    """The counterparty's own figure: read by its plugin, never billed from here.
+
+    This moved. It used to be ``read_upstream_cost(usage, unit)``, with the unit
+    declared by an operator on the provider row. The unit is the plugin's to know
+    (ADR 0032): nothing in a payload says whether ``cost: 136`` is micro-EUR or
+    credits, and asking an operator to know was asking them to be the plugin.
+    """
 
     def test_micro_eur_is_scaled(self) -> None:
         # The observed payload: 136 micro-EUR for one small request.
-        result = read_upstream_cost({"cost": 136}, "micro_eur")
-        assert result == (Decimal("0.000136"), "EUR")
+        reported = CortecsRouterPlugin().read_reported_cost({"cost": 136})
+        assert reported is not None
+        assert (reported.amount, reported.currency) == (Decimal("0.000136"), "EUR")
 
-    def test_no_declared_unit_means_the_figure_is_ignored(self) -> None:
-        """Nothing in the payload says which unit it used.
+    def test_it_is_authoritative_which_is_what_makes_it_billable(self) -> None:
+        """The flag is the whole difference between recording and billing.
 
-        The reference provider means micro-EUR by `cost: 136`; OpenRouter means
-        a decimal number of credits. Guessing is wrong by a factor of a million,
-        so silence is the only safe default.
+        Reconciled against their listed prices on three sub-providers, so the
+        plugin asserts it — which is what lets a deployment select pass-through
+        billing against it and nothing else.
         """
-        assert read_upstream_cost({"cost": 136}, None) is None
+        reported = CortecsRouterPlugin().read_reported_cost({"cost": 136})
+        assert reported is not None and reported.authoritative is True
 
-    def test_an_unknown_unit_is_ignored_rather_than_assumed(self) -> None:
-        assert read_upstream_cost({"cost": 136}, "furlongs") is None
+    def test_a_nameless_endpoint_reports_nothing(self) -> None:
+        """The generic plugin reads no cost at all, whatever the payload says.
+
+        A number a vendor happens to label ``cost`` is not a charge in a known
+        unit, and this used to be settleable by typing a unit into a form. A
+        wrong unit there is a reconciliation report off by a factor of a million,
+        which reads as a provider overcharging rather than as a typo.
+        """
+        assert GenericOpenAIPlugin().read_reported_cost({"cost": 136}) is None
 
     def test_a_provider_that_reports_nothing(self) -> None:
-        assert read_upstream_cost({"prompt_tokens": 10}, "micro_eur") is None
-        assert read_upstream_cost(None, "micro_eur") is None
+        plugin = CortecsRouterPlugin()
+        assert plugin.read_reported_cost({"prompt_tokens": 10}) is None
+        assert plugin.read_reported_cost(None) is None
 
     def test_a_float_does_not_import_binary_rounding(self) -> None:
         """Via `str`, so 0.1 is a tenth and not 0.1000000000000000055511151231."""
-        result = read_upstream_cost({"cost": 0.1}, "usd")
-        assert result == (Decimal("0.1"), "USD")
+        reported = CortecsRouterPlugin().read_reported_cost({"cost": 0.1})
+        assert reported is not None and reported.amount == Decimal("0.0000001")
 
     def test_nonsense_is_refused(self) -> None:
-        assert read_upstream_cost({"cost": "gratis"}, "eur") is None
-        assert read_upstream_cost({"cost": -5}, "eur") is None
+        plugin = CortecsRouterPlugin()
+        assert plugin.read_reported_cost({"cost": "gratis"}) is None
+        assert plugin.read_reported_cost({"cost": -5}) is None
         # `True` is an int in Python; it is not a cost.
-        assert read_upstream_cost({"cost": True}, "eur") is None
+        assert plugin.read_reported_cost({"cost": True}) is None
 
-    def test_the_currency_comes_from_the_unit(self) -> None:
-        """One claim about one API, not two independently-settable columns."""
-        for unit, (_, currency) in UPSTREAM_COST_UNITS.items():
-            result = read_upstream_cost({"cost": 1}, unit)
-            assert result is not None and result[1] == currency
+    def test_the_breakdown_is_kept_verbatim(self) -> None:
+        """Their shape, not ours, because normalising it would lose the evidence."""
+        details = {"prompt_cost": 45, "cache_read_cost": 21, "completion_cost": 1}
+        reported = CortecsRouterPlugin().read_reported_cost({"cost": 67, "cost_details": details})
+        assert reported is not None and reported.details == details
 
 
 class TestItReachesTheLedger:
@@ -368,10 +382,14 @@ class TestItReachesTheLedger:
         # An explicit UPDATE, not a mutation of `seeded.provider`: that object
         # belongs to the fixture's own session, so assigning to it here would
         # look like it worked and persist nothing.
+        #
+        # `plugin="cortecs"` is what makes the reported figure readable at all.
+        # It used to be `upstream_cost_unit="micro_eur"`, and the fake upstream's
+        # payload is the reference router's, so the unit is the same either way.
         await session.execute(
             update(Provider)
             .where(Provider.id == seeded.provider.id)
-            .values(upstream_cost_unit="micro_eur")
+            .values(plugin="cortecs")
         )
         await session.commit()
 
@@ -451,7 +469,7 @@ class TestReconciliationIsPerProvider:
         await session.execute(
             update(Provider)
             .where(Provider.id == seeded.provider.id)
-            .values(upstream_cost_unit="micro_eur")
+            .values(plugin="cortecs")
         )
         await session.commit()
 
@@ -504,7 +522,7 @@ class TestReconciliationIsPerProvider:
         session: AsyncSession,
         fake_upstream: FakeUpstream,
     ) -> None:
-        """No unit declared, so there is nothing to reconcile and no row."""
+        """No plugin that reads a cost, so there is nothing to reconcile and no row."""
         fake_upstream.set_json(
             {
                 "id": "c",
@@ -538,7 +556,7 @@ class TestReconciliationIsPerProvider:
         await session.execute(
             update(Provider)
             .where(Provider.id == seeded.provider.id)
-            .values(upstream_cost_unit="micro_eur")
+            .values(plugin="cortecs")
         )
         await session.commit()
         fake_upstream.set_json(
@@ -580,16 +598,16 @@ class TestReconciliationIsPerProvider:
         be exactly the arithmetic this refuses to do.
         """
         # One provider reporting micro-EUR, a second reporting dollars, both
-        # pointed at the same upstream so only the declared unit differs.
+        # pointed at the same upstream so only the plugin differs.
         await session.execute(
             update(Provider)
             .where(Provider.id == seeded.provider.id)
-            .values(upstream_cost_unit="micro_eur")
+            .values(plugin="cortecs")
         )
         dollars = Provider(
             name="dollar-shop",
             base_url=seeded.provider.base_url,
-            upstream_cost_unit="usd",
+            plugin="dollar-shop",
         )
         session.add(dollars)
         await session.flush()

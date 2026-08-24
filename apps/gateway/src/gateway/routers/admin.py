@@ -46,7 +46,6 @@ from gateway.deps import (
 from gateway.errors import BadRequestError, GatewayError, UpstreamUnavailableError
 from gateway.models import (
     ApiKey,
-    AuthScheme,
     BillingMode,
     Group,
     GroupModelAccess,
@@ -317,9 +316,6 @@ def _provider_response(
         has_api_key=bool(provider.api_key_encrypted),
         extra_headers=dict(provider.extra_headers or {}),
         is_active=provider.is_active,
-        forward_stream_options=provider.forward_stream_options,
-        auth_scheme=provider.auth_scheme.value,
-        upstream_cost_unit=provider.upstream_cost_unit,
         plugin=provider.plugin,
         kind=provider.kind.value,
         billing_mode=provider.billing_mode.value,
@@ -412,9 +408,6 @@ async def create_provider(
         base_url=payload.base_url.rstrip("/"),
         extra_headers=payload.extra_headers,
         is_active=payload.is_active,
-        forward_stream_options=payload.forward_stream_options,
-        auth_scheme=AuthScheme(payload.auth_scheme),
-        upstream_cost_unit=payload.upstream_cost_unit,
         plugin=payload.plugin,
         kind=ProviderKind(payload.kind),
         billing_mode=BillingMode(payload.billing_mode),
@@ -469,8 +462,6 @@ async def update_provider(
 
     if (base_url := fields.pop("base_url", None)) is not None:
         provider.base_url = base_url.rstrip("/")
-    if (scheme := fields.pop("auth_scheme", None)) is not None:
-        provider.auth_scheme = AuthScheme(scheme)
     if (kind := fields.pop("kind", None)) is not None:
         provider.kind = ProviderKind(kind)
     if (mode := fields.pop("billing_mode", None)) is not None:

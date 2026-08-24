@@ -13,7 +13,8 @@ it. It needs:
 
 * the stack up, with a provider whose upstream really caches, and a model from it
   catalogued and granted to the caller;
-* that provider's `upstream_cost_unit` set, for the reconciliation check.
+* that provider naming a plugin that reads its reported cost — `cortecs` is the
+  one that does — for the reconciliation check.
 
 It spends a small amount of real money — two short completions over a ~1500 token
 prompt. Skips rather than fails when the preconditions are absent, so it is safe
@@ -50,6 +51,19 @@ FILLER = (
     "A fixed reference document about European research infrastructure funding "
     "and its administrative overheads. "
 ) * 60
+
+
+#: Which installed plugins assert a reported cost worth reconciling against.
+#: Asked of the provider row rather than of a declared unit column, which is
+#: what this used to read: since ADR 0032 slice 3 the unit is the plugin's
+#: knowledge. Named here rather than fetched from /api/admin/provider-plugins
+#: because the listing says whether a plugin *can* claim an authoritative figure,
+#: which is the same question one indirection away.
+_REPORTS_COST = {"cortecs"}
+
+
+def _reads_a_reported_cost(provider: dict) -> bool:
+    return provider.get("plugin") in _REPORTS_COST
 
 
 def expect(label: str, condition: bool, detail: str = "") -> None:
@@ -122,9 +136,9 @@ def main() -> int:
     provider = providers.get(model["provider_id"], {})
     print(f"  using {model['name']} on {provider.get('name')} "
           f"(cache read {model['current_price']['cache_read_per_mtok']}/Mtok)")
-    if not provider.get("upstream_cost_unit"):
-        print(f"  note: {provider.get('name')} has no upstream_cost_unit set, so the "
-              "reconciliation check is skipped")
+    if not _reads_a_reported_cost(provider):
+        print(f"  note: {provider.get('name')} names no plugin that reads a reported "
+              "cost, so the reconciliation check is skipped")
 
     status, _, body = request(dave, f"{GATEWAY}/api/me/keys", method="POST",
                               json_body={"name": "cache-accounting-live"})
@@ -199,7 +213,7 @@ def main() -> int:
         f"{stored_cached} read + {written} written of {prompt} prompt",
     )
 
-    if provider.get("upstream_cost_unit") and upstream:
+    if _reads_a_reported_cost(provider) and upstream:
         ours, theirs = Decimal(cost), Decimal(upstream)
         # Their figure is rounded to whole micro-units per component, so exact
         # equality is not expected; an order-of-magnitude gap is the signal.

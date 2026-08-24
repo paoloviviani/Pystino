@@ -108,6 +108,7 @@ async def create_embeddings(
     # position, and turning one string into a one-element list would change the
     # shape the caller gets back.
     payload["input"] = redacted[0] if isinstance(body.input, str) else redacted
+    payload = metered.shape_payload(payload, surface=SURFACE)
 
     try:
         response = await upstream.embeddings(payload, request_id=request_id)

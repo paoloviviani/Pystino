@@ -116,13 +116,6 @@ class UsageSource(enum.StrEnum):
     UNAVAILABLE = "unavailable"
 
 
-class AuthScheme(enum.StrEnum):
-    """How a provider expects its API key to be presented."""
-
-    BEARER = "bearer"
-    X_API_KEY = "x_api_key"
-
-
 class ApiSurface(enum.StrEnum):
     """Which endpoint a request came in through.
 
@@ -365,31 +358,18 @@ class Provider(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
-    # Whether to add `stream_options: {"include_usage": true}` to streaming
-    # requests. True is right for a generic OpenAI-compatible endpoint, where
-    # asking is the only way to get usage. False for one that sends usage
-    # unconditionally and rejects or deprioritises unknown fields — Cortecs
-    # documents both of those (ADR 0028).
-    forward_stream_options: Mapped[bool] = mapped_column(
-        Boolean, default=True, server_default=text("true")
-    )
-
-    # How this provider wants the credential presented. Anthropic's own API
-    # takes `x-api-key` and rejects a bearer token; everything OpenAI-shaped —
-    # including the reference provider's /v1/messages — takes bearer, which is
-    # why this is a property of the provider and not of the route (ADR 0030).
-    auth_scheme: Mapped[AuthScheme] = mapped_column(
-        _enum(AuthScheme, "auth_scheme"),
-        default=AuthScheme.BEARER,
-        server_default=AuthScheme.BEARER.value,
-    )
-
     # Which plugin carries this counterparty's quirks, and what kind of
     # counterparty it is (ADR 0032). Null plugin means the generic
     # OpenAI-compatible behaviour, which is what every row had before plugins
     # existed. Not an enum column for the same reason the redaction engine is
     # not: the accepted names live in the registry beside the code, and an
     # installed package can add one.
+    #
+    # This column replaced three that were added reactively, one per discovery:
+    # `auth_scheme`, `forward_stream_options` and `upstream_cost_unit`. Each was
+    # the right local fix; the pattern was that the next counterparty needed a
+    # fourth. Migration 0010 dropped them and translated their values into a
+    # plugin choice.
     plugin: Mapped[str | None] = mapped_column(String(64), default=None)
     # A router chooses the serving endpoint per request; a provider's is implied
     # by the model. That difference decides whether "which endpoint ran" is a
@@ -407,17 +387,6 @@ class Provider(Base):
         default=BillingMode.OWN_PRICES,
         server_default=BillingMode.OWN_PRICES.value,
     )
-
-    # How to read this provider's self-reported cost, if it reports one. Not an
-    # enum column: the accepted names live in `UPSTREAM_COST_UNITS` beside the
-    # arithmetic that uses them, the same way redaction engine names are
-    # validated by their registry rather than by the schema.
-    #
-    # Null means "ignore what it reports", which is the default and the only
-    # safe one — nothing in the payload says whether `cost: 136` means 136
-    # micro-EUR or 136 of something else, and guessing is wrong by a factor of a
-    # million. The reference provider is `micro_eur`.
-    upstream_cost_unit: Mapped[str | None] = mapped_column(String(32), default=None)
 
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

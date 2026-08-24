@@ -154,6 +154,20 @@ class Metered:
     reservation: Reservation
     quota: QuotaEngine
 
+    def shape_payload(self, payload: dict[str, Any], *, surface: ApiSurface) -> dict[str, Any]:
+        """Let the counterparty's plugin adjust the body before it is sent.
+
+        Called by every ``/v1`` route rather than by the one that happened to
+        need it, so the seam is not a trap: this replaced
+        ``providers.forward_stream_options``, which lived in the chat route
+        alone, and the next thing a counterparty needs adding to a body will
+        have somewhere to go without another column.
+
+        Reuses the plugin the recorder already resolved, so a request cannot
+        shape its body with one plugin and read its usage with another.
+        """
+        return self.accounting.plugin.prepare_payload(payload, surface=surface)
+
     async def upstream_unreachable(self, exc: Exception) -> UpstreamUnavailableError:
         """Record the failure, settle at the true cost, and build the 503.
 
@@ -257,7 +271,6 @@ async def begin(
             redaction_engine=outcome.engine if outcome else None,
             redacted_entity_count=outcome.entity_count if outcome else 0,
             surface=surface,
-            upstream_cost_unit=model.provider.upstream_cost_unit,
             plugin=model.provider.plugin,
             billing_mode=model.provider.billing_mode.value,
         ),

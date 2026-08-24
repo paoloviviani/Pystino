@@ -272,65 +272,6 @@ def _as_int(value: Any) -> int:
         return 0
 
 
-#: How to read a provider's self-reported cost, by declared unit name.
-#:
-#: There is no standard here and nothing in the payload says which convention is
-#: in use: the reference provider sends ``"cost": 136`` meaning 136 micro-EUR,
-#: while OpenRouter sends a decimal number of credits. Reading either as the
-#: other is wrong by a factor of a million, so the unit is **declared per
-#: provider** and never inferred. A provider that has not declared one has its
-#: reported cost ignored, which is the only safe default.
-#:
-#: The currency is part of the unit name rather than a separate column, because
-#: the two are one claim about one API: "this provider reports micro-EUR". A
-#: provider that changes what it reports needs an operator to say so, and adding
-#: a name here is a deliberate act with a test behind it.
-UPSTREAM_COST_UNITS: dict[str, tuple[Decimal, str]] = {
-    "micro_eur": (Decimal("0.000001"), "EUR"),
-    "micro_usd": (Decimal("0.000001"), "USD"),
-    "eur": (Decimal(1), "EUR"),
-    "usd": (Decimal(1), "USD"),
-}
-
-
-def read_upstream_cost(
-    usage: dict[str, Any] | None, unit: str | None
-) -> tuple[Decimal, str] | None:
-    """What the provider says the request cost, in its own currency.
-
-    Recorded for reconciliation and **never billed from**. Three reasons, all of
-    which would otherwise show up as an invoice nobody can explain: it arrives
-    pre-rounded (the reference provider rounds to whole micro-EUR, turning a
-    0.502 completion charge into 1), it is denominated in the provider's currency
-    rather than the billing one and this gateway refuses to convert, and it
-    describes what *they* charged rather than what we agreed to charge a group.
-
-    What it is good for is catching the two failures our own arithmetic cannot
-    see: a stale price row, and a provider changing a rate without telling us.
-    Both look like a steady divergence between this figure and ``cost``.
-    """
-    if not usage or not unit:
-        return None
-    scale = UPSTREAM_COST_UNITS.get(unit)
-    if scale is None:
-        return None
-
-    raw = usage.get("cost")
-    if raw is None or isinstance(raw, bool):
-        return None
-    try:
-        # Via `str`, so a provider sending a float does not import its binary
-        # rounding into a Decimal column.
-        amount = Decimal(str(raw))
-    except (ArithmeticError, TypeError, ValueError):
-        return None
-    if amount < 0:
-        return None
-
-    factor, currency = scale
-    return amount * factor, currency
-
-
 @dataclass(frozen=True, slots=True)
 class CostBreakdown:
     input_cost: Decimal

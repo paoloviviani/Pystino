@@ -462,7 +462,7 @@ function EditModelDialog({ model, onClose }: { model: AdminModel | null; onClose
         key={`inputs-${loadedFor}`}
         label="Accepts"
         otherLabel="Other input modalities"
-        hint="What you can send it."
+        hint="What can be sent to it."
         known={KNOWN_INPUTS}
         value={inputs}
         onChange={setInputs}
@@ -606,7 +606,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
         key={`inputs-${generation}`}
         label="Accepts"
         otherLabel="Other input modalities"
-        hint="What you can send it."
+        hint="What can be sent to it."
         known={KNOWN_INPUTS}
         value={inputs}
         onChange={setInputs}

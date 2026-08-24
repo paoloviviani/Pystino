@@ -82,10 +82,12 @@ Inside the gateway, the pieces that carry the most weight:
   nothing — never silent, because that would be billing from a price table
   nobody maintains. An unpriced model reserves nothing, so it has no cost
   ceiling at all; `unpriced_model_count` on the provider listing is the warning.
-- **A provider's own reported cost needs a declared unit.** `usage.cost` is
+- **A provider's own reported cost is its plugin's to read.** `usage.cost` is
   micro-EUR from Cortecs and credits from OpenRouter, and nothing in the payload
-  says which. `providers.upstream_cost_unit` is null by default, which means
-  "ignore it". It is recorded for reconciliation and never billed from.
+  says which — so the unit lives in the plugin, not in a column an operator fills
+  in. A plugin that does not read a cost reports none, which is the safe default.
+  `ReportedCost.authoritative` is separate and is what gates pass-through
+  billing: reporting a figure is not claiming it is the charge.
 - **SQLite is more forgiving than PostgreSQL** in ways that hide real bugs. It
   will `SELECT DISTINCT` over a JSON column; PostgreSQL has no equality
   operator for `json` at all. The unit suite runs on SQLite, so anything
@@ -192,11 +194,17 @@ rediscovered — one being built, one not started:
   reconstructable and a fallback is never silent.
 
   Built so far: the plugin protocol and registry (`gateway/plugins/`, in-tree
-  plus the `llmp.providers` entry point), the generic and Cortecs plugins,
-  `providers.plugin` / `providers.kind`, `upstream_provider` finally populated
-  for routers, and both billing modes with `computed_cost` / `cost_source` /
-  `upstream_cost_details`. Still to come: removing the three reactive columns the
-  plugins supersede, then `catalogue()` replacing
+  plus the `llmp.providers` entry point), the generic, Anthropic and Cortecs
+  plugins, `providers.plugin` / `providers.kind`, `upstream_provider` finally
+  populated for routers, both billing modes with `computed_cost` / `cost_source`
+  / `upstream_cost_details`, the console's provider-type selector, and the three
+  reactive columns removed — `auth_scheme`, `forward_stream_options` and
+  `upstream_cost_unit` are now `auth_headers` / `prepare_payload` and the
+  plugin's own knowledge of its counterparty's unit. **Note what that costs:** a
+  per-row knob became per-plugin behaviour, so two providers of the same type
+  that need different answers now need two plugins. Migration 0010 translates
+  `auth_scheme = x_api_key` into `plugin = anthropic` and prints a line naming
+  every row whose behaviour changes. Still to come: `catalogue()` replacing
   `scripts/import_cortecs_pricing.py`.
 
 
@@ -214,9 +222,9 @@ Known open items, none of them blocking:
 - **Pagination**: done. **Concurrency**: done and verified. Both were the last
   outstanding items from Phase 2.
 - Cortecs **accepts** `stream_options` and reports usage with or without it, so
-  `forward_stream_options = false` stays the right default (checked against the
-  live API). Still unverified is whether sending it narrows the routing pool —
-  Cortecs does not name the serving provider in its stream frames, so
+  `CortecsRouterPlugin.prepare_payload` adds nothing (checked against the live
+  API). Still unverified is whether sending it narrows the routing pool — Cortecs
+  does not name the serving provider in its stream frames, so
   `scripts/check_cortecs_stream_options.py` reports that part as unknown.
 - Deferred by the user: per-provider default body params (`eu_native`,
   `allow_zero_data_retention`), image editing and variations, per-size image
