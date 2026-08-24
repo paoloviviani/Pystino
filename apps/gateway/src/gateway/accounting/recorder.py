@@ -25,7 +25,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 from sqlalchemy import update
@@ -35,20 +35,42 @@ from gateway.accounting.cost import (
     CostBreakdown,
     TokenCounts,
     compute_cost,
-    read_upstream_cost,
     select_price,
 )
 from gateway.accounting.tokens import TokenEstimator
 from gateway.config import Settings
-from gateway.models import ApiSurface, ModelDef, UsageRecord, UsageSource, UsageStatus
-from gateway.plugins import registry as plugin_registry
-from gateway.plugins.base import ProviderPlugin, ServedBy
+from gateway.models import (
+    ApiSurface,
+    BillingMode,
+    CostSource,
+    ModelDef,
+    UsageRecord,
+    UsageSource,
+    UsageStatus,
+)
 from gateway.protocols import reader_for
 from gateway.quota import QuotaAmounts
 from gateway.sse.events import SSEEvent
 from gateway.types import utcnow
 
+if TYPE_CHECKING:
+    from gateway.plugins.base import ProviderPlugin, ServedBy
+
 logger = logging.getLogger(__name__)
+
+
+def _plugins() -> Any:
+    """The plugin registry, imported on first use.
+
+    Deferred because the dependency runs both ways: a plugin returns
+    `TokenCounts`, which lives in this package, so importing the registry at
+    module scope closes a cycle through `gateway.accounting.__init__`. One
+    function call on construction is cheaper than restructuring two packages to
+    avoid it.
+    """
+    from gateway.plugins import registry
+
+    return registry
 
 
 @dataclass(slots=True)
@@ -125,6 +147,8 @@ class RequestContext:
     #: `providers.plugin`. By name for the same reason as above, and null
     #: resolves to the generic OpenAI-compatible behaviour.
     plugin: str | None = None
+    #: Whose figure is the charge, from `providers.billing_mode` (ADR 0032).
+    billing_mode: str = "own_prices"
 
 
 class RequestAccounting:
@@ -149,14 +173,16 @@ class RequestAccounting:
         # that should have been caught when the provider was saved; here it must
         # not lose a usage row, so it degrades to generic and says so loudly.
         try:
-            self._plugin = plugin_registry.resolve(context.plugin)
-        except plugin_registry.UnknownPluginError:
+            self._plugin = _plugins().resolve(
+                context.plugin, reported_cost_unit=context.upstream_cost_unit
+            )
+        except _plugins().UnknownPluginError:
             logger.error(
                 "provider plugin %r is not installed; recording this request with the "
                 "generic reader, which reports no cost and no serving endpoint",
                 context.plugin,
             )
-            self._plugin = plugin_registry.resolve(None)
+            self._plugin = _plugins().resolve(None)
 
         self.record_id: uuid.UUID | None = None
         self._choices: dict[int, ChoiceAccumulator] = {}
@@ -222,7 +248,8 @@ class RequestAccounting:
         frames carry no headers, so the route asks the plugin and hands back the
         answer rather than the recorder growing a second way in.
         """
-        return self._plugin
+        plugin: ProviderPlugin = self._plugin
+        return plugin
 
     def observe_served_by(self, served: ServedBy | None) -> None:
         """Record the endpoint that ran the request, first answer wins.
@@ -463,12 +490,47 @@ class RequestAccounting:
                 )
                 price = None
 
-        # What the provider said it cost, if it said anything and the operator
-        # has declared how to read it. Deliberately outside the try above: a
-        # failure to price locally must not also discard the provider's figure,
-        # which is the one number still available when our own price row is the
-        # thing that is broken.
-        reported = read_upstream_cost(self._upstream_usage, self._ctx.upstream_cost_unit)
+        # What the counterparty said it cost. Deliberately outside the try above:
+        # a failure to price locally must not also discard their figure, which is
+        # the one number still available when our own price row is the thing that
+        # is broken.
+        reported = self._plugin.read_reported_cost(self._upstream_usage)
+
+        # Both figures are recorded in either mode, so a divergence is always
+        # reconstructable (ADR 0032 decision 6). Only which one becomes `cost`
+        # depends on the mode.
+        computed = breakdown.total
+        charged, charged_currency, cost_source = computed, breakdown.currency, CostSource.OWN_PRICES
+        if self._ctx.billing_mode == BillingMode.PROVIDER_REPORTED:
+            billable = (
+                reported is not None
+                and reported.authoritative
+                # Billing in a unit the quota engine cannot count would let a
+                # cost ceiling silently stop applying: counters sum `cost`
+                # across rows, and summing dollars into a euro budget is the one
+                # arithmetic this refuses to do. Reporting another currency is
+                # fine and happens above — `upstream_cost` keeps it — but
+                # *billing* in one waits on currency-aware quotas (ADR 0032).
+                and reported.currency.upper() == breakdown.currency.upper()
+            )
+            if billable and reported is not None:
+                charged = reported.amount
+                charged_currency = reported.currency
+                cost_source = CostSource.PROVIDER_REPORTED
+            else:
+                if reported is not None and reported.authoritative:
+                    logger.warning(
+                        "provider reported %s %s but this gateway bills %s; charging our own "
+                        "price instead. Recording it as a fallback rather than converting.",
+                        reported.amount,
+                        reported.currency,
+                        breakdown.currency,
+                    )
+                # Named rather than silent. A pass-through deployment quietly
+                # billing from a price table nobody maintains is exactly the
+                # failure this distinction exists to surface, and reports
+                # disclose the count.
+                cost_source = CostSource.OWN_PRICES_FALLBACK
 
         now = utcnow()
         latency_ms = int((now - self._started_at).total_seconds() * 1000)
@@ -503,10 +565,14 @@ class RequestAccounting:
             "upstream_model": self._upstream_model,
             "upstream_provider": self._upstream_provider,
             "model_substituted": self._was_substituted(),
-            "cost": breakdown.total,
-            "currency": breakdown.currency,
-            "upstream_cost": reported[0] if reported else None,
-            "upstream_cost_currency": reported[1] if reported else None,
+            "cost": charged,
+            "currency": charged_currency,
+            "computed_cost": computed,
+            "cost_source": cost_source,
+            "upstream_cost": reported.amount if reported else None,
+            "upstream_cost_currency": reported.currency if reported else None,
+            "upstream_cost_details": dict(reported.details) if reported and reported.details
+            else None,
             "price_id": price.id if price is not None else None,
             "finish_reason": self.finish_reason(),
             "upstream_status": upstream_status,

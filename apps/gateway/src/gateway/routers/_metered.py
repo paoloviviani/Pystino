@@ -259,6 +259,7 @@ async def begin(
             surface=surface,
             upstream_cost_unit=model.provider.upstream_cost_unit,
             plugin=model.provider.plugin,
+            billing_mode=model.provider.billing_mode.value,
         ),
         session_factory=request.app.state.session_factory,
         settings=settings,

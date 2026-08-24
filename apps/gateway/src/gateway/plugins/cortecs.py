@@ -61,6 +61,9 @@ class CortecsRouterPlugin:
 
     name = "cortecs"
     kind = ProviderKind.ROUTER
+    # Reconciled against their listed prices on three sub-providers,
+    # agreeing to within their own rounding. It is what they charge.
+    reports_authoritative_cost = True
 
     def read_usage(self, usage: dict[str, Any] | None, *, surface: ApiSurface) -> TokenCounts:
         """Cortecs speaks each surface's own convention, so the shared readers apply.

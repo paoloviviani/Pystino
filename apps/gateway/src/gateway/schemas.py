@@ -406,6 +406,13 @@ class ProviderResponse(BaseModel):
     upstream_cost_unit: str | None = None
     plugin: str | None = None
     kind: str = "provider"
+    billing_mode: str = "own_prices"
+    #: Active models behind this provider with no price row. Reported because a
+    #: provider in `provider_reported` billing mode still needs prices: admission
+    #: happens *before* the request and the counterparty's figure only exists
+    #: after, so an unpriced model reserves nothing and has no cost ceiling at
+    #: all. Worth a warning on the console rather than an overspend.
+    unpriced_model_count: int = 0
     #: What the named plugin actually is, so the console can show that a router
     #: is configured as one rather than only that somebody typed the word.
     plugin_kind: str | None = None
@@ -480,6 +487,15 @@ class ProviderCreateRequest(BaseModel):
     # (ADR 0032). Null plugin is the generic OpenAI-compatible behaviour.
     plugin: PluginName = None
     kind: Literal["provider", "router"] = "provider"
+    # Whose figure is the charge (ADR 0032 decision 6). Validated against the
+    # named plugin below: pass-through needs a plugin that asserts its figure is
+    # the counterparty's actual charge.
+    billing_mode: Literal["own_prices", "provider_reported"] = "own_prices"
+
+    @model_validator(mode="after")
+    def _billing_mode_needs_a_plugin_that_can_claim_it(self) -> ProviderCreateRequest:
+        _check_billing_mode(self.plugin, self.billing_mode)
+        return self
 
 
 class ProviderUpdateRequest(BaseModel):
@@ -506,6 +522,37 @@ class ProviderUpdateRequest(BaseModel):
     upstream_cost_unit: UpstreamCostUnit = None
     plugin: PluginName = None
     kind: Literal["provider", "router"] | None = None
+    billing_mode: Literal["own_prices", "provider_reported"] | None = None
+
+    @model_validator(mode="after")
+    def _billing_mode_needs_a_plugin_that_can_claim_it(self) -> ProviderUpdateRequest:
+        # `plugin` may be unset on a partial update, in which case this validates
+        # against the generic default and refuses — which is the safe answer: a
+        # mode change and the plugin that justifies it belong in one request.
+        _check_billing_mode(self.plugin, self.billing_mode)
+        return self
+
+
+def _check_billing_mode(plugin: str | None, mode: str | None) -> None:
+    """Pass-through billing needs a plugin that asserts an authoritative figure.
+
+    Refused here rather than discovered later: with no such assertion every
+    request would take the fallback path and bill from our own prices anyway, so
+    the configuration would claim one thing and do another.
+    """
+    if mode != "provider_reported":
+        return
+    try:
+        resolved = plugin_registry.resolve(plugin)
+    except plugin_registry.UnknownPluginError as exc:  # pragma: no cover - caught earlier
+        raise ValueError(str(exc)) from exc
+    if not getattr(resolved, "reports_authoritative_cost", False):
+        raise ValueError(
+            f"the {resolved.name!r} plugin does not assert that the cost it reads is the "
+            "counterparty's actual charge, so it cannot be billed from. Name a plugin that "
+            "does, or leave billing_mode as 'own_prices'."
+        )
+
 
 
 class ProviderTestResponse(BaseModel):

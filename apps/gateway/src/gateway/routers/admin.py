@@ -47,6 +47,7 @@ from gateway.errors import BadRequestError, GatewayError, UpstreamUnavailableErr
 from gateway.models import (
     ApiKey,
     AuthScheme,
+    BillingMode,
     Group,
     GroupModelAccess,
     LimitMetric,
@@ -157,6 +158,27 @@ class NotFoundError(GatewayError):
     status_code = status.HTTP_404_NOT_FOUND
     error_type = "invalid_request_error"
     code = "not_found"
+
+
+async def _unpriced_counts(session: SessionDep) -> dict[uuid.UUID, int]:
+    """Active models with no price row, per provider.
+
+    An unpriced model bills zero and, more importantly, *reserves* zero — so a
+    cost ceiling never trips for it. That is a hole in any billing mode, and a
+    sharp one in `provider_reported`, where the counterparty's figure arrives too
+    late to admit on.
+    """
+    stmt = (
+        select(ModelDef.provider_id, func.count(ModelDef.id))
+        .outerjoin(ModelPrice, ModelPrice.model_id == ModelDef.id)
+        .where(ModelDef.is_active.is_(True), ModelPrice.id.is_(None))
+        .group_by(ModelDef.provider_id)
+    )
+    return _pairs((await session.execute(stmt)).all())
+
+
+async def _unpriced_count(session: SessionDep, provider_id: uuid.UUID) -> int:
+    return (await _unpriced_counts(session)).get(provider_id, 0)
 
 
 def _plugin_kind(name: str | None) -> str | None:
@@ -282,7 +304,9 @@ async def _load_provider(session: SessionDep, provider_id: uuid.UUID) -> Provide
 # out, only a hint.
 
 
-def _provider_response(provider: Provider, model_count: int) -> ProviderResponse:
+def _provider_response(
+    provider: Provider, model_count: int, unpriced: int = 0
+) -> ProviderResponse:
     return ProviderResponse(
         id=provider.id,
         name=provider.name,
@@ -297,6 +321,8 @@ def _provider_response(provider: Provider, model_count: int) -> ProviderResponse
         upstream_cost_unit=provider.upstream_cost_unit,
         plugin=provider.plugin,
         kind=provider.kind.value,
+        billing_mode=provider.billing_mode.value,
+        unpriced_model_count=unpriced,
         plugin_kind=_plugin_kind(provider.plugin),
         model_count=model_count,
         created_at=provider.created_at,
@@ -344,8 +370,14 @@ async def list_providers(
     total = await count_of(session, stmt)
     providers = (await session.execute(page.apply(stmt))).scalars().all()
     counts = await _model_counts(session)
+    unpriced = await _unpriced_counts(session)
     return page.page(
-        [_provider_response(provider, counts.get(provider.id, 0)) for provider in providers],
+        [
+            _provider_response(
+                provider, counts.get(provider.id, 0), unpriced.get(provider.id, 0)
+            )
+            for provider in providers
+        ],
         total,
     )
 
@@ -373,6 +405,7 @@ async def create_provider(
         upstream_cost_unit=payload.upstream_cost_unit,
         plugin=payload.plugin,
         kind=ProviderKind(payload.kind),
+        billing_mode=BillingMode(payload.billing_mode),
     )
     if payload.api_key is not None:
         _store_api_key(provider, secrets, payload.api_key.get_secret_value())
@@ -426,6 +459,10 @@ async def update_provider(
         provider.base_url = base_url.rstrip("/")
     if (scheme := fields.pop("auth_scheme", None)) is not None:
         provider.auth_scheme = AuthScheme(scheme)
+    if (kind := fields.pop("kind", None)) is not None:
+        provider.kind = ProviderKind(kind)
+    if (mode := fields.pop("billing_mode", None)) is not None:
+        provider.billing_mode = BillingMode(mode)
     for field, value in fields.items():
         setattr(provider, field, value)
 
@@ -445,7 +482,9 @@ async def update_provider(
     await providers.forget(provider.id)
 
     counts = await _model_counts(session)
-    return _provider_response(provider, counts.get(provider.id, 0))
+    return _provider_response(
+        provider, counts.get(provider.id, 0), await _unpriced_count(session, provider.id)
+    )
 
 
 @router.delete("/providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)

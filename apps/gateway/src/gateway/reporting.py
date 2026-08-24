@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gateway.errors import BadRequestError
 from gateway.models import (
     ApiKey,
+    CostSource,
     Group,
     ModelDef,
     Provider,
@@ -348,6 +349,7 @@ def _disclosures(
     in_flight: int,
     substituted: int = 0,
     reconciliation: Sequence[BillingDrift] | None = None,
+    fell_back: int = 0,
 ) -> list[str]:
     notes: list[str] = []
     if totals.estimated_requests:
@@ -373,6 +375,13 @@ def _disclosures(
             f"{totals.images} image(s) were generated. Image models are commonly priced "
             "per image rather than per token, so those requests contribute cost without "
             "contributing tokens."
+        )
+    if fell_back:
+        notes.append(
+            f"{fell_back} request(s) went to a provider configured to bill from its own "
+            "reported cost, which reported none — so they are charged from our price table "
+            "instead. Said out loud because a pass-through deployment silently billing from "
+            "prices nobody maintains looks identical to one that is working."
         )
     for drift in reconciliation or ():
         notes.append(
@@ -444,6 +453,21 @@ async def build_report(
         )
     ).scalar_one()
 
+    # Requests where the provider is configured for pass-through billing but
+    # reported nothing, so our own prices were used instead. Counted because a
+    # silent fallback means a deployment billing from a price table nobody is
+    # maintaining, which looks exactly like one that is working.
+    fell_back = (
+        await session.execute(
+            select(func.count(UsageRecord.id)).where(
+                UsageRecord.created_at >= filters.period.start,
+                UsageRecord.created_at < filters.period.end,
+                UsageRecord.status != UsageStatus.IN_PROGRESS,
+                UsageRecord.cost_source == CostSource.OWN_PRICES_FALLBACK,
+            )
+        )
+    ).scalar_one()
+
     reconciliation = await _reconciliation(session, filters, currency=currency)
 
     return UsageReport(
@@ -460,7 +484,11 @@ async def build_report(
         totals=totals,
         reconciliation=reconciliation,
         disclosures=_disclosures(
-            totals, int(in_flight or 0), int(substituted or 0), reconciliation
+            totals,
+            int(in_flight or 0),
+            int(substituted or 0),
+            reconciliation,
+            int(fell_back or 0),
         ),
     )
 

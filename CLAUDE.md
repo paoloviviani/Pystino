@@ -75,6 +75,13 @@ Inside the gateway, the pieces that carry the most weight:
   from the rule above is the point: those differ in **meaning**, these differ
   only in **spelling**. See
   [docs/cache-accounting-findings.md](docs/cache-accounting-findings.md).
+- **Three cost figures, one meaning each.** `cost` is what we charge and is what
+  quotas and reports read; `computed_cost` is always our arithmetic; and
+  `upstream_cost` is always the counterparty's. `cost_source` says which one
+  billed, and `own_prices_fallback` means a pass-through provider reported
+  nothing — never silent, because that would be billing from a price table
+  nobody maintains. An unpriced model reserves nothing, so it has no cost
+  ceiling at all; `unpriced_model_count` on the provider listing is the warning.
 - **A provider's own reported cost needs a declared unit.** `usage.cost` is
   micro-EUR from Cortecs and credits from OpenRouter, and nothing in the payload
   says which. `providers.upstream_cost_unit` is null by default, which means
@@ -121,7 +128,7 @@ Inside the gateway, the pieces that carry the most weight:
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services
-uv run pytest -q                       # 799 gateway tests, SQLite
+uv run pytest -q                       # 809 gateway tests, SQLite
 pnpm -r test                           # 21 packages/ui + 100 console
 ```
 
@@ -186,10 +193,11 @@ rediscovered — one being built, one not started:
 
   Built so far: the plugin protocol and registry (`gateway/plugins/`, in-tree
   plus the `llmp.providers` entry point), the generic and Cortecs plugins,
-  `providers.plugin` / `providers.kind`, and `upstream_provider` finally
-  populated for routers. Still to come: `catalogue()` replacing
-  `scripts/import_cortecs_pricing.py`, the two billing modes with `cost_source`,
-  and removing the three reactive columns the plugins supersede.
+  `providers.plugin` / `providers.kind`, `upstream_provider` finally populated
+  for routers, and both billing modes with `computed_cost` / `cost_source` /
+  `upstream_cost_details`. Still to come: removing the three reactive columns the
+  plugins supersede, then `catalogue()` replacing
+  `scripts/import_cortecs_pricing.py`.
 
 
 - **[docs/redaction-scoping-plan.md](docs/redaction-scoping-plan.md)** —
