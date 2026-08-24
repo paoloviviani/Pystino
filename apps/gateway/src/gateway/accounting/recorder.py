@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -40,6 +41,8 @@ from gateway.accounting.cost import (
 from gateway.accounting.tokens import TokenEstimator
 from gateway.config import Settings
 from gateway.models import ApiSurface, ModelDef, UsageRecord, UsageSource, UsageStatus
+from gateway.plugins import registry as plugin_registry
+from gateway.plugins.base import ProviderPlugin, ServedBy
 from gateway.protocols import reader_for
 from gateway.quota import QuotaAmounts
 from gateway.sse.events import SSEEvent
@@ -118,6 +121,10 @@ class RequestContext:
     #: touching a relationship on a model loaded elsewhere is a lazy load on a
     #: detached instance. Null means the provider's figure is ignored.
     upstream_cost_unit: str | None = None
+    #: Which plugin carries this counterparty's quirks (ADR 0032), from
+    #: `providers.plugin`. By name for the same reason as above, and null
+    #: resolves to the generic OpenAI-compatible behaviour.
+    plugin: str | None = None
 
 
 class RequestAccounting:
@@ -138,6 +145,18 @@ class RequestAccounting:
         self._settings = settings
         self._estimator = estimator
         self._model = model
+        # Resolved once, not per frame. An unknown name is a configuration error
+        # that should have been caught when the provider was saved; here it must
+        # not lose a usage row, so it degrades to generic and says so loudly.
+        try:
+            self._plugin = plugin_registry.resolve(context.plugin)
+        except plugin_registry.UnknownPluginError:
+            logger.error(
+                "provider plugin %r is not installed; recording this request with the "
+                "generic reader, which reports no cost and no serving endpoint",
+                context.plugin,
+            )
+            self._plugin = plugin_registry.resolve(None)
 
         self.record_id: uuid.UUID | None = None
         self._choices: dict[int, ChoiceAccumulator] = {}
@@ -195,8 +214,39 @@ class RequestAccounting:
             return
         self.observe_payload(payload)
 
-    def observe_payload(self, payload: dict[str, Any]) -> None:
-        """Accumulate one response frame, in whatever shape this surface uses."""
+    @property
+    def plugin(self) -> ProviderPlugin:
+        """The counterparty's plugin, for a caller holding facts we cannot see.
+
+        A streaming route has the response headers and the recorder does not:
+        frames carry no headers, so the route asks the plugin and hands back the
+        answer rather than the recorder growing a second way in.
+        """
+        return self._plugin
+
+    def observe_served_by(self, served: ServedBy | None) -> None:
+        """Record the endpoint that ran the request, first answer wins.
+
+        First wins because a stream repeats it, and the first is the one nothing
+        downstream can have rewritten.
+        """
+        if served is None:
+            return
+        if self._upstream_provider is None and served.endpoint:
+            self._upstream_provider = served.endpoint[:128]
+        # Only as a fallback: the body's `model` is the better source where it
+        # exists, and is already read above.
+        if self._upstream_model is None and served.model:
+            self._upstream_model = served.model[:255]
+
+    def observe_payload(
+        self, payload: dict[str, Any], *, headers: Mapping[str, str] | None = None
+    ) -> None:
+        """Accumulate one response frame, in whatever shape this surface uses.
+
+        ``headers`` is optional because streamed frames arrive without them; the
+        route passes the response's headers on the first call it makes.
+        """
         if self._first_token_at is None:
             self._first_token_at = utcnow()
 
@@ -222,8 +272,13 @@ class RequestAccounting:
             # touched.
             if self._upstream_model is None and isinstance(served := frame.get("model"), str):
                 self._upstream_model = served
-            if self._upstream_provider is None and isinstance(by := frame.get("provider"), str):
-                self._upstream_provider = by
+
+        # Which endpoint actually ran this. Asked of the plugin rather than
+        # guessed at, because counterparties disagree about where they put it:
+        # one names it in the body, and the reference router names it *only* in a
+        # response header — which is why this column was null for every request
+        # through it until ADR 0032.
+        self.observe_served_by(self._plugin.read_served_by(payload, headers or {}))
 
         for index, delta in self._reader.deltas(payload):
             slot = self._choices.setdefault(index, ChoiceAccumulator())

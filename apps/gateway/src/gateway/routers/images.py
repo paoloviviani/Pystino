@@ -113,7 +113,7 @@ async def create_image(
         )
 
     out = dict(response.payload or {})
-    metered.accounting.observe_payload(out)
+    metered.accounting.observe_payload(out, headers=response.headers)
     # Counted from what came back, not from what was asked for: a provider that
     # returns three images for a request for four must be billed for three.
     produced = sum(1 for entry in out.get("data") or [] if isinstance(entry, dict))

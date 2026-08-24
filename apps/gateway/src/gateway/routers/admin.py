@@ -58,6 +58,7 @@ from gateway.models import (
     ModelPrice,
     PriceSource,
     Provider,
+    ProviderKind,
     QuotaReset,
     UsageRecord,
     UsageSource,
@@ -67,6 +68,7 @@ from gateway.models import (
 )
 from gateway.pagination import Page, PageDep, count_of
 from gateway.periods import PeriodKind
+from gateway.plugins import registry as plugin_registry
 from gateway.pricing import CatalogueUnavailable, fetch_catalogue, parse_catalogue
 from gateway.providers import ProviderConfigurationError
 from gateway.redaction import Redactor
@@ -155,6 +157,19 @@ class NotFoundError(GatewayError):
     status_code = status.HTTP_404_NOT_FOUND
     error_type = "invalid_request_error"
     code = "not_found"
+
+
+def _plugin_kind(name: str | None) -> str | None:
+    """What the named plugin says it is, or None if it is not installed.
+
+    Reported alongside the configured `kind` so a mismatch is visible: naming
+    the Cortecs plugin while leaving `kind` as `provider` is a configuration a
+    console can point at rather than a silent inconsistency.
+    """
+    try:
+        return str(plugin_registry.resolve(name).kind.value)
+    except plugin_registry.UnknownPluginError:
+        return None
 
 
 def _price_response(price: ModelPrice | None) -> PriceResponse | None:
@@ -280,6 +295,9 @@ def _provider_response(provider: Provider, model_count: int) -> ProviderResponse
         forward_stream_options=provider.forward_stream_options,
         auth_scheme=provider.auth_scheme.value,
         upstream_cost_unit=provider.upstream_cost_unit,
+        plugin=provider.plugin,
+        kind=provider.kind.value,
+        plugin_kind=_plugin_kind(provider.plugin),
         model_count=model_count,
         created_at=provider.created_at,
         updated_at=provider.updated_at,
@@ -353,6 +371,8 @@ async def create_provider(
         forward_stream_options=payload.forward_stream_options,
         auth_scheme=AuthScheme(payload.auth_scheme),
         upstream_cost_unit=payload.upstream_cost_unit,
+        plugin=payload.plugin,
+        kind=ProviderKind(payload.kind),
     )
     if payload.api_key is not None:
         _store_api_key(provider, secrets, payload.api_key.get_secret_value())

@@ -139,7 +139,7 @@ async def create_response(
         )
 
     out = dict(response.payload or {})
-    metered.accounting.observe_payload(out)
+    metered.accounting.observe_payload(out, headers=response.headers)
 
     # Our model name, not the provider's, and placeholders restored wherever
     # this surface repeats the answer.
@@ -213,6 +213,12 @@ async def _stream(
             content=content
             or error_payload("The upstream provider returned an error.", type_="api_error"),
         )
+
+    # The serving endpoint is a response *header* on some counterparties, and a
+    # stream's frames never carry it. Told once, when the stream opens.
+    metered.accounting.observe_served_by(
+        metered.accounting.plugin.read_served_by(None, upstream_response.headers)
+    )
 
     async def body_iterator() -> AsyncIterator[bytes]:
         completed = False

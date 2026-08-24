@@ -123,7 +123,9 @@ async def create_embeddings(
 
     if response.payload is not None:
         # Feeds usage, and the model/provider that actually served it.
-        metered.accounting.observe_payload(response.payload)
+        metered.accounting.observe_payload(
+            response.payload, headers=response.headers
+        )
 
     await metered.completed(upstream_status=response.status_code)
 

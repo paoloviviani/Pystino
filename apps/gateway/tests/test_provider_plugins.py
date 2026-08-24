@@ -1,0 +1,236 @@
+"""Counterparty plugins (ADR 0032).
+
+Two properties carry the design and both are pinned here.
+
+**A plugin returns facts and never computes money.** The protocol has no method
+that could price a request, and `read_reported_cost` returns a figure with the
+unit it arrived in — never converted, never scaled to a billing currency.
+
+**Providers and routers differ in what must be recorded.** A router chooses the
+serving endpoint per request, so that endpoint is a fact to capture; for a
+provider it is implied by the model.
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+
+import httpx
+import pytest
+from conftest import FakeUpstream, Seeded
+from gateway.models import ApiSurface, Provider
+from gateway.plugins import (
+    CortecsRouterPlugin,
+    GenericOpenAIPlugin,
+    ProviderKind,
+    UnknownPluginError,
+    available,
+    resolve,
+)
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+class TestRegistry:
+    def test_the_builtins_are_there(self) -> None:
+        assert {"generic", "cortecs"} <= set(available())
+
+    def test_no_name_is_the_generic_provider(self) -> None:
+        """Every row that predates plugins resolves to the old behaviour."""
+        plugin = resolve(None)
+        assert plugin.name == "generic"
+        assert plugin.kind is ProviderKind.PROVIDER
+
+    def test_cortecs_is_a_router(self) -> None:
+        assert resolve("cortecs").kind is ProviderKind.ROUTER
+
+    def test_an_unknown_name_is_refused_and_lists_what_exists(self) -> None:
+        """Never silently downgraded to generic.
+
+        The generic plugin reports no cost and no serving endpoint, so a router
+        configured by name and quietly replaced would look like a working
+        deployment that had stopped recording where its money went.
+        """
+        with pytest.raises(UnknownPluginError) as caught:
+            resolve("not-a-plugin")
+        assert "cortecs" in str(caught.value)
+
+
+class TestCortecsRouter:
+    """Behaviour measured against the live API, not read from documentation."""
+
+    def test_the_serving_endpoint_comes_from_a_header(self) -> None:
+        """The finding this plugin exists for.
+
+        Cortecs names the sub-provider *only* in a response header — not in the
+        body, not in the stream frames — so the recorder's old body-field guess
+        left `upstream_provider` null for every request through it.
+        """
+        served = CortecsRouterPlugin().read_served_by(
+            {"id": "c", "model": "gpt-oss-120b"},
+            {"x-cortecs-provider": "ovh", "x-cortecs-model": "gpt-oss-120b"},
+        )
+        assert served is not None
+        assert served.endpoint == "ovh"
+        assert served.model == "gpt-oss-120b"
+
+    @pytest.mark.parametrize("casing", ["x-cortecs-provider", "X-Cortecs-Provider"])
+    def test_header_casing_does_not_matter(self, casing: str) -> None:
+        served = CortecsRouterPlugin().read_served_by(None, {casing: "nebius"})
+        assert served is not None and served.endpoint == "nebius"
+
+    def test_no_header_means_no_claim(self) -> None:
+        assert CortecsRouterPlugin().read_served_by({"model": "x"}, {}) is None
+
+    def test_cost_is_micro_eur_and_authoritative(self) -> None:
+        """Derived and checked four ways against catalogue rates."""
+        cost = CortecsRouterPlugin().read_reported_cost(
+            {"cost": 136, "cost_details": {"prompt_cost": 135, "completion_cost": 1}}
+        )
+        assert cost is not None
+        assert cost.amount == Decimal("0.000136")
+        assert cost.currency == "EUR"
+        # It reconciled against their listed prices on three sub-providers, so a
+        # deployment is allowed to bill from it.
+        assert cost.authoritative is True
+        # Their breakdown, kept verbatim: the shape is theirs, not ours.
+        assert cost.details == {"prompt_cost": 135, "completion_cost": 1}
+
+    @pytest.mark.parametrize("usage", [None, {}, {"prompt_tokens": 10}, {"cost": None}])
+    def test_no_figure_means_none(self, usage: dict[str, int] | None) -> None:
+        assert CortecsRouterPlugin().read_reported_cost(usage) is None
+
+    @pytest.mark.parametrize("bad", [{"cost": "free"}, {"cost": -1}, {"cost": True}])
+    def test_nonsense_is_refused(self, bad: dict[str, object]) -> None:
+        """`True` is an int in Python, and is not a cost."""
+        assert CortecsRouterPlugin().read_reported_cost(bad) is None
+
+    def test_a_float_does_not_import_binary_rounding(self) -> None:
+        cost = CortecsRouterPlugin().read_reported_cost({"cost": 1.5})
+        assert cost is not None and cost.amount == Decimal("0.0000015")
+
+    def test_usage_reading_keeps_the_surface_conventions(self) -> None:
+        """The two prompt conventions are opposites and must stay so.
+
+        A router passes each sub-provider's shape through, so the plugin defers
+        to the per-surface readers rather than keeping a second copy of the rule.
+        """
+        plugin = CortecsRouterPlugin()
+        openai = plugin.read_usage(
+            {
+                "prompt_tokens": 1152,
+                "completion_tokens": 2,
+                "prompt_tokens_details": {"cached_tokens": 768, "created_cache_tokens": 256},
+            },
+            surface=ApiSurface.CHAT_COMPLETIONS,
+        )
+        anthropic = plugin.read_usage(
+            {
+                "input_tokens": 128,
+                "cache_read_input_tokens": 768,
+                "cache_creation_input_tokens": 256,
+                "output_tokens": 2,
+            },
+            surface=ApiSurface.MESSAGES,
+        )
+        assert openai.prompt == anthropic.prompt == 1152
+        assert openai.billable_prompt == anthropic.billable_prompt == 128
+
+
+class TestGenericProvider:
+    def test_it_reports_no_cost_of_its_own(self) -> None:
+        """Deliberately not a tolerant search for anything called `cost`.
+
+        A number a vendor happens to label that way is not a charge, and
+        treating it as one is how a figure gets billed from that should not
+        have been.
+        """
+        assert GenericOpenAIPlugin().read_reported_cost({"cost": 999}) is None
+
+    def test_it_reads_a_serving_endpoint_from_the_body(self) -> None:
+        """Where a different router puts it. This used to live in the recorder."""
+        served = GenericOpenAIPlugin().read_served_by({"provider": "deepinfra"}, {})
+        assert served is not None and served.endpoint == "deepinfra"
+
+    def test_a_header_alone_tells_it_nothing(self) -> None:
+        """It has no business knowing another counterparty's header."""
+        assert GenericOpenAIPlugin().read_served_by({}, {"x-cortecs-provider": "ovh"}) is None
+
+
+class TestItReachesTheLedger:
+    async def test_a_router_records_which_endpoint_served(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """The column that was null for every Cortecs request until now."""
+        await session.execute(
+            update(Provider).where(Provider.id == seeded.provider.id).values(plugin="cortecs")
+        )
+        await session.commit()
+
+        fake_upstream.set_json(
+            {
+                "id": "c",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+            },
+            headers={"x-cortecs-provider": "inceptron"},
+        )
+        response = await client.post(
+            "/v1/chat/completions",
+            json={"model": seeded.model.name, "messages": [{"role": "user", "content": "hi"}]},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+
+        from gateway.models import UsageRecord
+
+        record = (
+            (
+                await session.execute(
+                    select(UsageRecord).order_by(UsageRecord.created_at.desc()).limit(1)
+                )
+            )
+            .scalars()
+            .one()
+        )
+        assert record.upstream_provider == "inceptron"
+
+    async def test_a_missing_plugin_does_not_lose_the_usage_row(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """Degrades loudly rather than failing the request.
+
+        An unknown plugin name should have been refused when the provider was
+        saved. Reaching here means it was not, and losing the usage row — the
+        billing record — would be a worse outcome than recording it with less
+        detail.
+        """
+        await session.execute(
+            update(Provider).where(Provider.id == seeded.provider.id).values(plugin="vanished")
+        )
+        await session.commit()
+
+        fake_upstream.set_json(
+            {
+                "id": "c",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+            }
+        )
+        assert (
+            await client.post(
+                "/v1/chat/completions",
+                json={"model": seeded.model.name, "messages": [{"role": "user", "content": "hi"}]},
+                headers=seeded.auth,
+            )
+        ).status_code == 200
