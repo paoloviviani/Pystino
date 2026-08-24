@@ -30,6 +30,7 @@ from pydantic import (
 )
 
 from gateway.accounting.cost import UPSTREAM_COST_UNITS
+from gateway.plugins import registry as plugin_registry
 
 if TYPE_CHECKING:
     from gateway.redaction import RedactionOutcome as RedactionOutcomeLike
@@ -403,9 +404,38 @@ class ProviderResponse(BaseModel):
     forward_stream_options: bool
     auth_scheme: str
     upstream_cost_unit: str | None = None
+    plugin: str | None = None
+    kind: str = "provider"
+    #: What the named plugin actually is, so the console can show that a router
+    #: is configured as one rather than only that somebody typed the word.
+    plugin_kind: str | None = None
     model_count: int
     created_at: datetime
     updated_at: datetime
+
+
+def _known_plugin(value: str | None) -> str | None:
+    """Refuse a plugin name the registry does not know.
+
+    At the boundary, because the alternative is discovering it at request time —
+    and the recorder's fallback there is the generic reader, which reports no
+    cost and no serving endpoint. A router accepted by name and silently read as
+    a plain provider looks like a working deployment that has stopped recording
+    where its money went.
+    """
+    if value is None or value == "":
+        return None
+    normalised = value.strip().lower()
+    if normalised not in plugin_registry.available():
+        raise ValueError(
+            f"unknown provider plugin {value!r}; installed: "
+            f"{', '.join(plugin_registry.available())}"
+        )
+    return normalised
+
+
+#: Empty string clears it, back to the generic OpenAI-compatible behaviour.
+PluginName = Annotated[str | None, AfterValidator(_known_plugin)]
 
 
 def _known_cost_unit(value: str | None) -> str | None:
@@ -446,6 +476,10 @@ class ProviderCreateRequest(BaseModel):
     # How to read this provider's self-reported cost. Null ignores it, which is
     # the default because nothing in a response says which unit it used.
     upstream_cost_unit: UpstreamCostUnit = None
+    # Which plugin carries this counterparty's quirks, and what kind it is
+    # (ADR 0032). Null plugin is the generic OpenAI-compatible behaviour.
+    plugin: PluginName = None
+    kind: Literal["provider", "router"] = "provider"
 
 
 class ProviderUpdateRequest(BaseModel):
@@ -470,6 +504,8 @@ class ProviderUpdateRequest(BaseModel):
     forward_stream_options: bool | None = None
     auth_scheme: Literal["bearer", "x_api_key"] | None = None
     upstream_cost_unit: UpstreamCostUnit = None
+    plugin: PluginName = None
+    kind: Literal["provider", "router"] | None = None
 
 
 class ProviderTestResponse(BaseModel):

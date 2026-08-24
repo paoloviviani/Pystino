@@ -71,9 +71,19 @@ class FakeUpstream:
         assert self.bodies, "the upstream was never called"
         return self.bodies[-1]
 
-    def set_json(self, payload: dict, *, status: int = 200) -> None:
+    def set_json(
+        self, payload: dict, *, status: int = 200, headers: dict[str, str] | None = None
+    ) -> None:
+        """A JSON response, optionally with headers.
+
+        `headers` exists because some counterparties report facts there rather
+        than in the body — a router naming the sub-provider that served the
+        request is the case that matters (ADR 0032), and it cannot be simulated
+        from the payload alone.
+        """
+
         def responder(_: httpx.Request) -> httpx.Response:
-            return httpx.Response(status, json=payload)
+            return httpx.Response(status, json=payload, headers=headers)
 
         self._responder = responder
 

@@ -138,6 +138,18 @@ class ApiSurface(enum.StrEnum):
     IMAGES = "images"
 
 
+class ProviderKind(enum.StrEnum):
+    """Whether the serving endpoint is implied by the model or chosen per request.
+
+    Mirrors `gateway.plugins.base.ProviderKind`, deliberately duplicated so the
+    model layer does not depend on the plugin package — the plugins import the
+    models, and the reverse would be a cycle.
+    """
+
+    PROVIDER = "provider"
+    ROUTER = "router"
+
+
 class PriceSource(enum.StrEnum):
     MANUAL = "manual"
     CORTECS = "cortecs"
@@ -343,6 +355,22 @@ class Provider(Base):
         _enum(AuthScheme, "auth_scheme"),
         default=AuthScheme.BEARER,
         server_default=AuthScheme.BEARER.value,
+    )
+
+    # Which plugin carries this counterparty's quirks, and what kind of
+    # counterparty it is (ADR 0032). Null plugin means the generic
+    # OpenAI-compatible behaviour, which is what every row had before plugins
+    # existed. Not an enum column for the same reason the redaction engine is
+    # not: the accepted names live in the registry beside the code, and an
+    # installed package can add one.
+    plugin: Mapped[str | None] = mapped_column(String(64), default=None)
+    # A router chooses the serving endpoint per request; a provider's is implied
+    # by the model. That difference decides whether "which endpoint ran" is a
+    # fact worth recording per request.
+    kind: Mapped[ProviderKind] = mapped_column(
+        _enum(ProviderKind, "provider_kind"),
+        default=ProviderKind.PROVIDER,
+        server_default=ProviderKind.PROVIDER.value,
     )
 
     # How to read this provider's self-reported cost, if it reports one. Not an

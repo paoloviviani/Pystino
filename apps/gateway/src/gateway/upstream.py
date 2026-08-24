@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import httpx
@@ -52,6 +52,11 @@ class UpstreamResponse:
     status_code: int
     payload: dict[str, Any] | None
     raw: bytes
+    #: Response headers, because a counterparty may name the endpoint that
+    #: actually served the request there rather than in the body — the reference
+    #: router names it *only* there. Defaulted so the places that construct one
+    #: for a test need not care.
+    headers: Mapping[str, str] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -156,7 +161,12 @@ class OpenAICompatibleUpstream:
             parsed = candidate if isinstance(candidate, dict) else None
         except orjson.JSONDecodeError:
             parsed = None
-        return UpstreamResponse(status_code=response.status_code, payload=parsed, raw=raw)
+        return UpstreamResponse(
+            status_code=response.status_code,
+            payload=parsed,
+            raw=raw,
+            headers=dict(response.headers),
+        )
 
     async def embeddings(
         self, payload: Mapping[str, Any], *, request_id: str | None = None
@@ -197,7 +207,12 @@ class OpenAICompatibleUpstream:
             parsed = candidate if isinstance(candidate, dict) else None
         except orjson.JSONDecodeError:
             parsed = None
-        return UpstreamResponse(status_code=response.status_code, payload=parsed, raw=raw)
+        return UpstreamResponse(
+            status_code=response.status_code,
+            payload=parsed,
+            raw=raw,
+            headers=dict(response.headers),
+        )
 
     async def chat_completion(
         self, payload: Mapping[str, Any], *, request_id: str | None = None

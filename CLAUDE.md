@@ -91,6 +91,11 @@ Inside the gateway, the pieces that carry the most weight:
   Capacity planning is redaction planning; see
   [docs/performance.md](docs/performance.md). Its detection cache is a
   *per-process* LRU, so adding workers lowers the hit rate.
+- **Vendor quirks belong in a plugin, not in the accounting.** `gateway/plugins/`
+  owns which header names a counterparty uses, what unit it reports cost in, and
+  whether it is a provider or a router. The rule that keeps this safe is that a
+  **plugin returns facts and never computes money** — there is deliberately
+  nothing it can return that would let it price a request (ADR 0032).
 - **Per-request round trips are pinned by a test.** `test_query_counts.py`
   bounds them at 3 selects to authenticate and 5 + 2 writes for a metered
   request. `selectinload` on a many-to-one relation costs a round trip that
@@ -116,7 +121,7 @@ Inside the gateway, the pieces that carry the most weight:
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services
-uv run pytest -q                       # 775 gateway tests, SQLite
+uv run pytest -q                       # 799 gateway tests, SQLite
 pnpm -r test                           # 21 packages/ui + 100 console
 ```
 
@@ -163,10 +168,10 @@ Phase 2 is complete: gateway, redaction, console, providers, quotas, reporting,
 five `/v1` surfaces. `docs/phase-2-plan.md` records what was planned and what
 was added afterwards, including the bugs each addition surfaced.
 
-Two pieces of designed-but-unbuilt work, with the reasoning written down rather
-than left to be rediscovered:
+Two pieces of work with their reasoning written down rather than left to be
+rediscovered — one being built, one not started:
 
-- **[ADR 0032](docs/adr/0032-provider-plugins.md)** *(proposed)* — providers and
+- **[ADR 0032](docs/adr/0032-provider-plugins.md)** *(accepted; being built)* — providers and
   routers are different kinds, distinguished by whether the serving endpoint is
   implied by the model or chosen per request. Vendor knowledge moves into
   plugins, pricing with it, and the load-bearing rule is that **a plugin returns
@@ -178,6 +183,13 @@ than left to be rediscovered:
   configurable modes — our prices, or the counterparty's reported figure — and
   **both figures are recorded in both modes**, so a divergence is always
   reconstructable and a fallback is never silent.
+
+  Built so far: the plugin protocol and registry (`gateway/plugins/`, in-tree
+  plus the `llmp.providers` entry point), the generic and Cortecs plugins,
+  `providers.plugin` / `providers.kind`, and `upstream_provider` finally
+  populated for routers. Still to come: `catalogue()` replacing
+  `scripts/import_cortecs_pricing.py`, the two billing modes with `cost_source`,
+  and removing the three reactive columns the plugins supersede.
 
 
 - **[docs/redaction-scoping-plan.md](docs/redaction-scoping-plan.md)** —
