@@ -2,14 +2,20 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-width: 12rem;
 }
 
 /* A ruled rectangle with a solid fill, rather than a rounded capsule. Taller
  * than it was, and outlined: at 0.4rem with no border a bar reads as a hairline,
- * and this style wants it to read as a measured quantity. */
+ * and this style wants it to read as a measured quantity.
+ *
+ * **A fixed width, not `flex: 1`.** It was flexible, which meant the track took
+ * whatever the caption left it — and captions differ ("€0.00 of €1.00" against
+ * "€7.32012 of €1 000.00"), so every bar in a column came out a different length.
+ * A bar chart whose bars have different *axes* is not a chart; two rules at 40%
+ * that are not the same length cannot be compared, which is the only thing a
+ * column of these is for. The caption takes the slack instead. */
 .track {
-  flex: 1;
+  flex: 0 0 7rem;
   height: 0.6rem;
   border: var(--border-width-quiet) solid var(--colour-border);
   border-radius: var(--radius-sm);

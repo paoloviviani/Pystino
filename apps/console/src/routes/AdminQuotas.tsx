@@ -78,7 +78,7 @@ export function AdminQuotas() {
               ? formatMoney(rule.limit_value, "EUR")
               : `${Number(rule.limit_value).toLocaleString()} ${rule.metric}`}
           </div>
-          <div className={styles.muted}>per {describeWindow(rule)}</div>
+          <div className={`${styles.muted} ${styles.nowrap}`}>per {describeWindow(rule)}</div>
         </>
       ),
     },

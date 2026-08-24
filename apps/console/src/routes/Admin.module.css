@@ -211,3 +211,10 @@
     align-items: stretch;
   }
 }
+
+/* Short labels that must not break mid-phrase. "per 24 / hours" split across two
+ * lines reads as a layout fault rather than as prose; a long *name* wrapping does
+ * not, which is why this is opt-in per cell rather than set on the table. */
+.nowrap {
+  white-space: nowrap;
+}
