@@ -101,6 +101,12 @@ class ProviderPlugin(Protocol):
 
     name: str
     kind: ProviderKind
+    #: Whether this plugin's ``read_reported_cost`` asserts the counterparty's
+    #: *actual charge* rather than an indicative number. Declared rather than
+    #: probed, so a deployment can be stopped from selecting pass-through
+    #: billing against a plugin that cannot make the claim — before a request is
+    #: ever made, not after an invoice is wrong.
+    reports_authoritative_cost: bool
 
     # -- reading a response: facts only ------------------------------------
 

@@ -21,7 +21,7 @@ import enum
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from sqlalchemy import (
     JSON,
@@ -136,6 +136,33 @@ class ApiSurface(enum.StrEnum):
     RESPONSES = "responses"
     MESSAGES = "messages"
     IMAGES = "images"
+
+
+class BillingMode(enum.StrEnum):
+    """Which figure is the charge for a counterparty's requests (ADR 0032).
+
+    ``OWN_PRICES`` multiplies our price row by the token counts. ``PROVIDER_REPORTED``
+    takes the counterparty's own figure, for a deployment whose policy is strict
+    pass-through cost recovery. Both figures are recorded in either mode, so a
+    divergence is always reconstructable.
+    """
+
+    OWN_PRICES = "own_prices"
+    PROVIDER_REPORTED = "provider_reported"
+
+
+class CostSource(enum.StrEnum):
+    """Which figure actually produced ``usage_records.cost``.
+
+    ``OWN_PRICES_FALLBACK`` is the one that matters: the provider is configured
+    for pass-through but reported nothing for this request, so our arithmetic was
+    used instead. Recorded rather than silent — a pass-through deployment quietly
+    billing from a price table nobody maintains is the failure this names.
+    """
+
+    OWN_PRICES = "own_prices"
+    PROVIDER_REPORTED = "provider_reported"
+    OWN_PRICES_FALLBACK = "own_prices_fallback"
 
 
 class ProviderKind(enum.StrEnum):
@@ -371,6 +398,14 @@ class Provider(Base):
         _enum(ProviderKind, "provider_kind"),
         default=ProviderKind.PROVIDER,
         server_default=ProviderKind.PROVIDER.value,
+    )
+
+    # Whose figure is the charge. Defaults to our own prices, which is what
+    # every row did before this existed.
+    billing_mode: Mapped[BillingMode] = mapped_column(
+        _enum(BillingMode, "billing_mode"),
+        default=BillingMode.OWN_PRICES,
+        server_default=BillingMode.OWN_PRICES.value,
     )
 
     # How to read this provider's self-reported cost, if it reports one. Not an
@@ -639,6 +674,21 @@ class UsageRecord(Base):
     # only signal that catches a stale price row or an upstream rate change.
     upstream_cost: Mapped[Decimal | None] = mapped_column(default=None)
     upstream_cost_currency: Mapped[str | None] = mapped_column(String(3), default=None)
+    # The counterparty's own breakdown, kept verbatim. JSON because the shape is
+    # theirs: the reference router reports five components including
+    # `prompt_audio_cost`, and the next one will report something else.
+    # Never put this in a DISTINCT or GROUP BY — PostgreSQL has no equality
+    # operator for `json`.
+    upstream_cost_details: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+    # Always our arithmetic from the price row in force, whichever figure was
+    # billed. Equal to `cost` under `own_prices`; the evidence under
+    # `provider_reported`.
+    computed_cost: Mapped[Decimal] = mapped_column(default=Decimal(0), server_default=text("0"))
+    cost_source: Mapped[CostSource] = mapped_column(
+        _enum(CostSource, "cost_source"),
+        default=CostSource.OWN_PRICES,
+        server_default=CostSource.OWN_PRICES.value,
+    )
     # Which price row produced `cost`. Null when the model had no price.
     price_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("model_prices.id", ondelete="SET NULL"), default=None

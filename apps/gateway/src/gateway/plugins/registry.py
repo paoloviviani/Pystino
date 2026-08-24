@@ -36,7 +36,9 @@ ENTRY_POINT_GROUP = "llmp.providers"
 #: had before plugins existed.
 DEFAULT_PLUGIN = "generic"
 
-PluginFactory = Callable[[], ProviderPlugin]
+#: Built with the provider row's declared cost unit, which only the generic
+#: plugin uses — a plugin that knows its counterparty knows the unit already.
+PluginFactory = Callable[..., ProviderPlugin]
 
 _BUILTIN: dict[str, PluginFactory] = {
     "generic": GenericOpenAIPlugin,
@@ -46,6 +48,19 @@ _BUILTIN: dict[str, PluginFactory] = {
 
 class UnknownPluginError(ValueError):
     """The configured plugin name resolves to nothing."""
+
+
+def _build(factory: PluginFactory, unit: str | None) -> ProviderPlugin:
+    """Construct a plugin, passing the declared unit only if it accepts one.
+
+    Most plugins take no arguments; the generic one takes a unit. Trying and
+    falling back keeps third-party plugins working without forcing them to
+    accept a parameter they have no use for.
+    """
+    try:
+        return factory(unit)
+    except TypeError:
+        return factory()
 
 
 def _discovered() -> dict[str, PluginFactory]:
@@ -69,14 +84,20 @@ def available() -> list[str]:
     return sorted({*_BUILTIN, *_discovered()})
 
 
-def resolve(name: str | None) -> ProviderPlugin:
-    """The plugin for *name*, or the generic one when a row names none."""
+def resolve(name: str | None, *, reported_cost_unit: str | None = None) -> ProviderPlugin:
+    """The plugin for *name*, or the generic one when a row names none.
+
+    *reported_cost_unit* comes from the provider row and is only meaningful to
+    the generic plugin; the others know their counterparty's unit already and
+    ignore it. Passed rather than read from settings so there is one code path
+    for reading a reported cost, not two.
+    """
     wanted = name or DEFAULT_PLUGIN
 
     # Built-ins win over plugins of the same name, so an installed package cannot
     # silently replace `generic` with something that behaves differently.
     if wanted in _BUILTIN:
-        return _BUILTIN[wanted]()
+        return _build(_BUILTIN[wanted], reported_cost_unit)
 
     for entry in entry_points(group=ENTRY_POINT_GROUP):
         if entry.name != wanted:
@@ -88,7 +109,7 @@ def resolve(name: str | None) -> ProviderPlugin:
                 f"the provider plugin {wanted!r} is registered by an installed package "
                 f"but failed to load: {exc}"
             ) from exc
-        return factory()
+        return _build(factory, reported_cost_unit)
 
     raise UnknownPluginError(
         f"unknown provider plugin {wanted!r}. Available: {', '.join(available())}. "
