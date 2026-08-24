@@ -25,7 +25,14 @@ from gateway.accounting.cost import (
     compute_cost,
     read_upstream_cost,
 )
-from gateway.models import ModelPrice, Provider, UsageRecord
+from gateway.models import (
+    GroupModelAccess,
+    ModelDef,
+    ModelKind,
+    ModelPrice,
+    Provider,
+    UsageRecord,
+)
 from gateway.reporting import GroupBy, ReportFilter, build_report, resolve_period
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -556,3 +563,81 @@ class TestReconciliationIsPerProvider:
         note = next(n for n in report.disclosures if seeded.provider.name in n)
         assert "not comparable to the totals" in note
         assert "1 request(s)" in note
+
+    async def test_a_provider_that_bills_in_another_currency_is_reported_in_it(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """If the upstream bills dollars, the report says dollars.
+
+        Several units are supported and none are converted: an exchange rate
+        applied silently produces invoices that look right and are wrong. So the
+        reported figure keeps the unit it arrived in, and the grouping is by
+        provider *and* currency — summing a dollar figure into a euro total would
+        be exactly the arithmetic this refuses to do.
+        """
+        # One provider reporting micro-EUR, a second reporting dollars, both
+        # pointed at the same upstream so only the declared unit differs.
+        await session.execute(
+            update(Provider)
+            .where(Provider.id == seeded.provider.id)
+            .values(upstream_cost_unit="micro_eur")
+        )
+        dollars = Provider(
+            name="dollar-shop",
+            base_url=seeded.provider.base_url,
+            upstream_cost_unit="usd",
+        )
+        session.add(dollars)
+        await session.flush()
+        model = ModelDef(
+            name="priced-in-dollars",
+            upstream_model="vendor/x",
+            provider_id=dollars.id,
+            kind=ModelKind.CHAT,
+        )
+        session.add(model)
+        await session.flush()
+        session.add(GroupModelAccess(group_id=seeded.group.id, model_id=model.id))
+        await session.commit()
+
+        for name, cost in ((seeded.model.name, 500), (model.name, 2)):
+            fake_upstream.set_json(
+                {
+                    "id": "c",
+                    "object": "chat.completion",
+                    "choices": [
+                        {"index": 0, "message": {"role": "assistant", "content": "x"}}
+                    ],
+                    "usage": {"prompt_tokens": 10, "completion_tokens": 2, "cost": cost},
+                }
+            )
+            assert (
+                await client.post(
+                    "/v1/chat/completions",
+                    json={"model": name, "messages": [{"role": "user", "content": "hi"}]},
+                    headers=seeded.auth,
+                )
+            ).status_code == 200
+
+        report = await build_report(
+            session,
+            ReportFilter(period=resolve_period("", None, None, "UTC"), group_by=GroupBy.TOTAL),
+            currency="EUR",
+            timezone="UTC",
+        )
+
+        by_provider = {row.provider: row for row in report.reconciliation}
+        assert by_provider[seeded.provider.name].upstream_currency == "EUR"
+        assert by_provider[seeded.provider.name].upstream_cost == Decimal("0.000500")
+        # Two dollars, reported as two dollars — not converted, not folded in.
+        assert by_provider["dollar-shop"].upstream_currency == "USD"
+        assert by_provider["dollar-shop"].upstream_cost == Decimal(2)
+
+        # And the note says which unit each figure is in, so a reader cannot
+        # mistake one for the other.
+        notes = " ".join(report.disclosures)
+        assert "USD" in notes and "EUR" in notes
