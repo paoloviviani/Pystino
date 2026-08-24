@@ -19,6 +19,7 @@ Two rules the endpoints enforce rather than trust:
 
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from collections.abc import Sequence
@@ -30,6 +31,7 @@ from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from gateway.accounting.cost import select_price
@@ -45,7 +47,7 @@ from gateway.deps import (
 )
 from gateway.errors import BadRequestError, GatewayError, UpstreamUnavailableError
 from gateway.models import (
-    ApiKey,
+ApiKey,
     BillingMode,
     Group,
     GroupModelAccess,
@@ -60,6 +62,7 @@ from gateway.models import (
     Provider,
     ProviderKind,
     QuotaReset,
+    RedactionConfig,
     UsageRecord,
     UsageSource,
     UsageStatus,
@@ -73,6 +76,7 @@ from gateway.pricing import CatalogueUnavailable, fetch_catalogue, parse_catalog
 from gateway.providers import ProviderConfigurationError
 from gateway.redaction import Redactor
 from gateway.redaction import registry as redaction_registry
+from gateway.redaction.resolver import RedactionResolver, build_for, current_engine
 from gateway.reporting import (
     GroupBy,
     GroupByParam,
@@ -82,7 +86,7 @@ from gateway.reporting import (
     resolve_period,
 )
 from gateway.schemas import (
-    CatalogueDiscoveryResponse,
+CatalogueDiscoveryResponse,
     CatalogueDriftRow,
     DiscoveredModel,
     GroupAdminResponse,
@@ -106,6 +110,9 @@ from gateway.schemas import (
     ProviderUpdateRequest,
     QuotaResetResponse,
     RedactionActivity,
+    RedactionConfigChange,
+    RedactionEngineOption,
+    RedactionEngineRequest,
     RedactionServiceHealth,
     RedactionStatusResponse,
     UsageReport,
@@ -144,6 +151,8 @@ def _matches(needle: str, *columns: InstrumentedAttribute[str | None]) -> Column
     pattern = f"%{escaped}%"
     return or_(*(column.ilike(pattern, escape="\\") for column in columns))
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/admin", tags=["administration"])
 
@@ -1657,6 +1666,38 @@ async def usage_by_group(
 # which engine, and is it answering", which it previously could not.
 
 
+def _engine_redacts(engine: str) -> bool:
+    """Whether the named engine removes anything at all.
+
+    Asked of the registry rather than compared against the string "noop". The
+    difference matters now that engines are installable: a third-party engine
+    that redacts nothing would otherwise report as enabled, and "enabled" is the
+    single word this whole screen exists to get right. An unknown name is assumed
+    to redact, because assuming the opposite would show a working layer as off.
+    """
+    for info in redaction_registry.describe():
+        if info.name == engine:
+            return info.redacts
+    return True
+
+
+async def _close_quietly(redactor: Redactor) -> None:
+    """Release an engine built only to prove it could be built.
+
+    The construction check and the service probe both need a real engine, and the
+    HTTP one opens a connection pool in its constructor. Leaking one per rejected
+    PUT is a slow leak on an admin route, which is the kind that goes unnoticed
+    for a year.
+    """
+    closer = getattr(redactor, "aclose", None)
+    if closer is None:
+        return
+    try:
+        await closer()
+    except Exception:
+        logger.warning("could not close a probe redaction engine", exc_info=True)
+
+
 def _sanitised_endpoint(endpoint: str) -> str | None:
     """The detection endpoint, without any credential embedded in it.
 
@@ -1674,7 +1715,7 @@ def _sanitised_endpoint(endpoint: str) -> str | None:
 
 
 async def _redaction_service_health(
-    http: Any, settings: Settings
+    http: Any, settings: Settings, engine: str | None = None
 ) -> RedactionServiceHealth | None:
     """Ask the detection service what it is and whether it is there.
 
@@ -1683,8 +1724,12 @@ async def _redaction_service_health(
     the useful answer, and an exception would replace it with a generic error on
     a page whose whole job is to say what is wrong.
     """
+    # The *effective* engine, which since ADR 0033 may be an admin's choice
+    # rather than the environment's. Asking the service about a configuration
+    # that is not running is how a screen ends up reassuring about the wrong
+    # deployment.
     endpoint = settings.redaction.endpoint
-    if settings.redaction.engine != "http" or not endpoint:
+    if (engine or settings.redaction.engine) != "http" or not endpoint:
         return None
 
     started = time.monotonic()
@@ -1777,10 +1822,10 @@ def _redaction_warnings(
     """
     notes: list[str] = []
 
-    if engine == "noop":
+    if not _engine_redacts(engine):
         notes.append(
-            "Redaction is not enabled: the engine is 'noop', so prompts reach the provider "
-            "exactly as the caller sent them."
+            f"Redaction is not enabled: the engine is '{engine}', so prompts reach the "
+            "provider exactly as the caller sent them."
         )
         return notes
 
@@ -1831,6 +1876,121 @@ def _redaction_warnings(
     return notes
 
 
+def _engine_options(
+    settings: Settings, active: str, service: RedactionServiceHealth | None
+) -> list[RedactionEngineOption]:
+    """Every installed engine, with what stops each one being enabled.
+
+    Computed server-side for the same reason the warnings are: the console must
+    not offer a button the PATCH would refuse, and the rule that decides is the
+    engine's own constructor plus the environment it would run in. Working that
+    out in the browser would mean the browser knowing which settings each engine
+    needs, which is exactly the vendor knowledge a registry exists to hold.
+    """
+    options: list[RedactionEngineOption] = []
+    for info in redaction_registry.describe():
+        blocked: str | None = None
+        if info.needs_endpoint and not settings.redaction.endpoint:
+            blocked = (
+                "No detection endpoint is configured. Set GATEWAY_REDACTION__ENDPOINT and "
+                "restart, then this engine can be enabled."
+            )
+        elif info.needs_endpoint and not settings.redaction.placeholder_key.get_secret_value():
+            blocked = (
+                "No placeholder key is configured. Set GATEWAY_REDACTION__PLACEHOLDER_KEY "
+                "and restart — placeholders derive from it, and it must stay stable for as "
+                "long as the transcripts it labelled are kept."
+            )
+        # The unreachable check applies only to an engine that is *not* already
+        # running: the health of the one in force is reported separately, and
+        # refusing to re-enable a currently-broken engine would leave an operator
+        # unable to switch away from it and back during an incident.
+        elif (
+            info.needs_endpoint
+            and info.name != active
+            and service is not None
+            and not service.reachable
+        ):
+            blocked = f"The detection service is not answering: {service.detail}"
+        options.append(
+            RedactionEngineOption(
+                name=info.name,
+                label=info.label,
+                description=info.description,
+                needs_endpoint=info.needs_endpoint,
+                redacts=info.redacts,
+                is_active=info.name == active,
+                blocked_reason=blocked,
+            )
+        )
+    return options
+
+
+async def _redaction_response(
+    *,
+    session: AsyncSession,
+    settings: Settings,
+    request: Request,
+    http: Any,
+    window_seconds: int,
+) -> RedactionStatusResponse:
+    """The whole status document, shared by the GET and the PATCH.
+
+    The PATCH returns the same shape so the console never has to guess what its
+    own change produced — and so a change that was accepted but has not reached
+    the other workers yet is visible as ``propagation_seconds`` rather than as a
+    screen that looks wrong.
+    """
+    config = settings.redaction
+    resolver: RedactionResolver | None = getattr(request.app.state, "redaction", None)
+    # From the constructed redactor, not the setting and not the stored row: if
+    # they ever disagree, reporting anything else describes a deployment that
+    # does not exist.
+    live: Redactor | None = getattr(request.app.state, "redactor", None)
+    engine = getattr(live, "name", None) or config.engine
+
+    service = await _redaction_service_health(http, settings, engine)
+    stored = await current_engine(session)
+    changed_by: str | None = None
+    if stored is not None and stored.created_by is not None:
+        changed_by = (
+            await session.execute(select(User.email).where(User.id == stored.created_by))
+        ).scalar_one_or_none()
+
+    return RedactionStatusResponse(
+        engine=engine,
+        enabled=_engine_redacts(engine),
+        endpoint=_sanitised_endpoint(config.endpoint),
+        installed_engines=redaction_registry.available(),
+        engines=_engine_options(settings, engine, service),
+        source=resolver.source if resolver is not None else "environment",
+        configured=(
+            RedactionConfigChange(
+                engine=stored.engine,
+                reason=stored.reason,
+                changed_at=stored.created_at,
+                changed_by=changed_by,
+            )
+            if stored is not None
+            else None
+        ),
+        propagation_seconds=(
+            resolver.refresh_seconds if resolver is not None else 0.0
+        ),
+        fail_open=config.fail_open,
+        restore_in_response=config.restore_in_response,
+        language=config.language,
+        score_threshold=config.score_threshold,
+        entity_types=list(config.entity_types) if config.entity_types else None,
+        timeout_seconds=config.timeout_seconds,
+        cache_size=config.cache_size,
+        placeholder_key_set=bool(config.placeholder_key.get_secret_value()),
+        service=service,
+        activity=await _redaction_activity(session, window_seconds),
+        warnings=_redaction_warnings(config, engine, service),
+    )
+
+
 @router.get("/redaction", response_model=RedactionStatusResponse)
 async def redaction_status(
     admin: AdminUserDep,
@@ -1843,28 +2003,113 @@ async def redaction_status(
     """The redaction layer as this worker is running it."""
     if not 60 <= window_seconds <= 366 * 86_400:
         raise BadRequestError("window_seconds must be between 60 and one year.")
+    return await _redaction_response(
+        session=session,
+        settings=settings,
+        request=request,
+        http=http,
+        window_seconds=window_seconds,
+    )
 
-    config = settings.redaction
-    service = await _redaction_service_health(http, settings)
-    # From the constructed redactor, not the setting: if the two ever disagreed,
-    # reporting the setting would describe a deployment that does not exist.
+
+@router.put("/redaction/engine", response_model=RedactionStatusResponse)
+async def set_redaction_engine(
+    payload: RedactionEngineRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    http: ControlHttpDep,
+    request: Request,
+) -> RedactionStatusResponse:
+    """Enable one installed engine, or switch the layer off by naming ``noop``.
+
+    PUT rather than PATCH: there is one field and it is set outright, and a
+    partial update of a single value is a distinction without a difference.
+
+    Four refusals, in this order, and each of them prevents a *silent* failure
+    rather than a noisy one:
+
+    1. **An engine that is not installed.** Named with what is, never substituted.
+       The registry's own rule, for its own reason: a gateway that believes
+       redaction is on when it is not is the worst available outcome.
+    2. **An engine the environment cannot satisfy** — a detection engine with no
+       endpoint, or no placeholder key. Refused before the row is written rather
+       than after, so the database never holds a configuration that cannot run.
+       Saving it would mean every worker logging a construction failure on its
+       next poll and continuing with the old engine, which looks like the change
+       not working and reads like a bug.
+    3. **A detection engine whose service is not answering.** Test before save,
+       the same rule providers follow. Skipped when it is already the engine in
+       force, or an operator could not switch away from a broken engine and back.
+    4. **Switching the layer off without saying why.** The one change that makes
+       the system quietly stop protecting anything, so it is the one that has to
+       be typed out. Recorded on the row, permanently.
+
+    The redactor for *this* worker is replaced before returning, so the operator's
+    own next request sees the change. Other workers pick it up within
+    ``propagation_seconds``.
+    """
+    engine = payload.engine.strip()
+    info = {entry.name: entry for entry in redaction_registry.describe()}.get(engine)
+    if info is None:
+        raise BadRequestError(
+            f"unknown redaction engine {engine!r}. Installed: "
+            f"{', '.join(redaction_registry.available())}. Third-party engines register "
+            "under the 'llmp.redactors' entry-point group; see "
+            "docs/adr/0026-pluggable-detection.md."
+        )
+
+    reason = payload.reason.strip()
+    if not info.redacts and not reason:
+        raise BadRequestError(
+            f"switching to {engine!r} stops redaction entirely: prompts will reach "
+            "providers exactly as callers sent them. Say why — the reason is kept on "
+            "the record and is what a later review reads."
+        )
+
+    # Proves the engine can actually be built in this environment, using the same
+    # code path the resolver will use. Refusing here is the difference between an
+    # error the operator sees and a construction failure in a log they do not.
+    try:
+        candidate = build_for(settings.redaction, engine)
+    except (redaction_registry.UnknownEngineError, ValueError) as exc:
+        raise BadRequestError(
+            f"{engine!r} cannot run with this deployment's configuration: {exc}"
+        ) from exc
+
     live: Redactor | None = getattr(request.app.state, "redactor", None)
-    engine = getattr(live, "name", None) or config.engine
+    already_running = getattr(live, "name", None) == engine
+    if info.needs_endpoint and not already_running:
+        probe = await _redaction_service_health(http, settings, engine)
+        if probe is not None and not probe.reachable:
+            await _close_quietly(candidate)
+            raise ConflictError(
+                f"the detection service is not answering, so {engine!r} was not enabled: "
+                f"{probe.detail}. Enabling it would fail every request needing redaction "
+                "(or, with fail_open on, forward every prompt unredacted)."
+            )
 
-    return RedactionStatusResponse(
-        engine=engine,
-        enabled=engine != "noop",
-        endpoint=_sanitised_endpoint(config.endpoint),
-        installed_engines=redaction_registry.available(),
-        fail_open=config.fail_open,
-        restore_in_response=config.restore_in_response,
-        language=config.language,
-        score_threshold=config.score_threshold,
-        entity_types=list(config.entity_types) if config.entity_types else None,
-        timeout_seconds=config.timeout_seconds,
-        cache_size=config.cache_size,
-        placeholder_key_set=bool(config.placeholder_key.get_secret_value()),
-        service=service,
-        activity=await _redaction_activity(session, window_seconds),
-        warnings=_redaction_warnings(config, engine, service),
+    session.add(RedactionConfig(engine=engine, reason=reason, created_by=admin.id))
+    await session.commit()
+
+    # This worker, immediately. The resolver would get there within its poll
+    # interval anyway, but an operator who just changed the engine should not have
+    # to reload twice to see it, and `refresh` is what keeps the row id in step so
+    # the next poll does not rebuild again.
+    await _close_quietly(candidate)
+    if (resolver := getattr(request.app.state, "redaction", None)) is not None:
+        await resolver.refresh()
+
+    logger.warning(
+        "redaction engine set to %r by %s (%s)",
+        engine,
+        admin.email or admin.id,
+        reason or "no reason given",
+    )
+    return await _redaction_response(
+        session=session,
+        settings=settings,
+        request=request,
+        http=http,
+        window_seconds=86_400,
     )

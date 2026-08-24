@@ -152,3 +152,62 @@
     margin-bottom: var(--space-3);
   }
 }
+
+/* -- the redaction engine list ------------------------------------------- */
+/*
+ * A list of choices rather than a table: each row carries a paragraph of
+ * description and one action, which is the shape a table renders badly. And
+ * rather than a dropdown, because the *description* is what an operator is
+ * choosing between — a name alone does not say which engine leaves personal
+ * data in a prompt.
+ */
+.engineList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.engine {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--colour-border);
+  border-radius: var(--radius-md);
+  background: var(--colour-surface);
+}
+
+/* The engine in force is the one fact this list must make unmissable. */
+.engineActive {
+  border-color: var(--colour-accent);
+  box-shadow: inset 3px 0 0 0 var(--colour-accent);
+}
+
+.engineBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.engineName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-weight: 600;
+}
+
+.engineAction {
+  flex-shrink: 0;
+}
+
+/* Stacked on a narrow screen: the action under the description reads better
+   than a button squeezed against the right edge. */
+@media (max-width: 640px) {
+  .engine {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

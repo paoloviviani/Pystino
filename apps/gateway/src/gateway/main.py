@@ -26,7 +26,8 @@ from gateway.quota import (
     QuotaEngine,
     ValkeyCounterStore,
 )
-from gateway.redaction import build_redactor
+from gateway.redaction.base import Redactor
+from gateway.redaction.resolver import RedactionResolver
 from gateway.routers import (
     admin,
     auth,
@@ -130,7 +131,24 @@ async def init_app_state(
         # report agree about when the month started (ADR 0024).
         billing_timezone=settings.billing_timezone,
     )
-    app.state.redactor = build_redactor(settings.redaction)
+    # `app.state.redactor` stays the one place the request path reads, so
+    # `get_redactor` remains a single attribute lookup. The resolver replaces it
+    # when an admin changes the engine, and polls to learn about a change another
+    # worker's request made (ADR 0033).
+    def _swap_redactor(replacement: Redactor) -> None:
+        app.state.redactor = replacement
+
+    resolver = RedactionResolver(
+        settings.redaction, session_factory, on_change=_swap_redactor
+    )
+    app.state.redaction = resolver
+    app.state.redactor = resolver.redactor
+    # Read once before serving, so a worker never answers a request with the
+    # environment's engine when the console has already overridden it. Failure is
+    # non-fatal by construction: `refresh` keeps the environment's engine and
+    # logs, rather than refusing to boot over a database blip.
+    await resolver.refresh()
+    resolver.start()
     app.state.token_estimator = DEFAULT_ESTIMATOR
     # Strong references to detached finalisation tasks; see chat.py.
     app.state.background_tasks = set()
@@ -175,11 +193,12 @@ async def shutdown_app_state(app: FastAPI) -> None:
     await app.state.control_http.aclose()
     if (providers := getattr(app.state, "providers", None)) is not None:
         await providers.aclose()
-    # A redaction engine may own a connection pool. Optional rather than part of
-    # the Redactor protocol: most engines have nothing to release, and requiring
-    # an empty aclose() from every plugin author is friction for no benefit.
-    if (closer := getattr(app.state.redactor, "aclose", None)) is not None:
-        await closer()
+    # Stops the poller and releases the engine's own resources — a connection
+    # pool, for the HTTP one. The optional-aclose dance moved into the resolver,
+    # which is also the only thing that knows which engine is currently in force
+    # after a console change.
+    if (resolver := getattr(app.state, "redaction", None)) is not None:
+        await resolver.aclose()
     if (valkey := getattr(app.state, "valkey", None)) is not None:
         await valkey.aclose()
     await app.state.engine.dispose()

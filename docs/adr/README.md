@@ -43,7 +43,8 @@ verified is marked as such in the ADR that depends on it.
 | [0029](0029-pagination.md) | Pagination on the management listings, and server-side search |
 | [0030](0030-more-surfaces.md) | Responses, Anthropic Messages and image generation, over one metering path |
 | [0031](0031-model-capabilities.md) | Model capabilities: imported from the catalogue, exposed to callers, editable |
-| [0032](0032-provider-plugins.md) | Providers versus routers, and a plugin seam that returns facts rather than computing money *(proposed)* |
+| [0032](0032-provider-plugins.md) | Providers versus routers, and a plugin seam that returns facts rather than computing money |
+| [0033](0033-redaction-engine-selection.md) | The redaction engine becomes an admin decision, on an append-only record |
 
 ## Decisions recorded now, implemented later
 

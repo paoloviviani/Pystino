@@ -245,12 +245,55 @@ export interface RedactionActivity {
   engines: string[];
 }
 
-/** The redaction layer as the gateway is actually running it (ADR 0012). */
+/**
+ * One installed engine, as something an admin can choose.
+ *
+ * Read from the API rather than hardcoded, so installing an engine through the
+ * `llmp.redactors` entry point makes it selectable without a console release —
+ * the same argument the provider-type list makes (ADR 0026, ADR 0033).
+ */
+export interface RedactionEngineOption {
+  name: string;
+  label: string;
+  description: string;
+  /** Whether it calls a detection service. */
+  needs_endpoint: boolean;
+  /**
+   * Whether it removes anything at all. `noop` is a real recorded engine rather
+   * than an absence, so this cannot be derived from the name without hardcoding
+   * that name here.
+   */
+  redacts: boolean;
+  is_active: boolean;
+  /** Null when it can be enabled; otherwise why not, computed server-side. */
+  blocked_reason: string | null;
+}
+
+/** Who last changed the engine, when, and why. Null when the environment decides. */
+export interface RedactionConfigChange {
+  engine: string;
+  reason: string;
+  changed_at: string;
+  /** Null once the user has been erased — the record of the change outlives them. */
+  changed_by: string | null;
+}
+
+/** The redaction layer as the gateway is actually running it (ADR 0012, ADR 0033). */
 export interface RedactionStatus {
   engine: string;
   enabled: boolean;
   endpoint: string | null;
   installed_engines: string[];
+  engines: RedactionEngineOption[];
+  /** `console` when a stored decision is in force, `environment` otherwise. */
+  source: "console" | "environment";
+  configured: RedactionConfigChange | null;
+  /**
+   * How long another worker may still run the previous engine after a change.
+   * Reported rather than implied: a change that looks instant and is not is
+   * worse than one that says how long it takes.
+   */
+  propagation_seconds: number;
   fail_open: boolean;
   restore_in_response: boolean;
   language: string;

@@ -877,24 +877,95 @@ class RedactionActivity(BaseModel):
     engines: list[str] = Field(default_factory=list)
 
 
+class RedactionEngineOption(BaseModel):
+    """One installed engine, as something an admin can choose.
+
+    Built from the registry rather than written out in the console, so installing
+    an engine through the ``llmp.redactors`` entry point makes it selectable
+    without a console release (ADR 0026, ADR 0033).
+    """
+
+    name: str
+    label: str
+    description: str
+    #: Whether it calls a detection service. Decides what must be validated
+    #: before it can be enabled, and whether "unreachable" means anything for it.
+    needs_endpoint: bool = False
+    #: Whether it removes anything at all. ``noop`` is a real recorded engine
+    #: rather than an absence, so the console cannot derive this from the name
+    #: without hardcoding that name.
+    redacts: bool = True
+    #: The engine currently in force.
+    is_active: bool = False
+    #: Null when it can be enabled. Otherwise the reason it cannot, in words —
+    #: a missing endpoint, an unset placeholder key, a service not answering.
+    #: Computed here so the console offers no button that the PATCH would refuse.
+    blocked_reason: str | None = None
+
+
+class RedactionConfigChange(BaseModel):
+    """Who last changed the engine, when, and why.
+
+    Present only when the console set it. Rows are append-only, so this is the
+    newest one; the trail behind it is not exposed yet because nothing asks for
+    it, and the table keeps it either way.
+    """
+
+    engine: str
+    reason: str
+    changed_at: datetime
+    #: Null once a user has been erased. The record of the change survives them,
+    #: which is the point of the column being nullable rather than cascading.
+    changed_by: str | None = None
+
+
+class RedactionEngineRequest(BaseModel):
+    """Enable one engine, or switch the layer off by naming ``noop``.
+
+    One field plus a reason, deliberately. The endpoint, the placeholder key and
+    the detection parameters stay in the environment: the key is a secret whose
+    rotation re-labels every transcript it ever labelled, and an endpoint that
+    can be typed here is an endpoint that can be pointed at a logger.
+    """
+
+    engine: str = Field(min_length=1, max_length=64)
+    #: Required when the chosen engine redacts nothing, optional otherwise.
+    #: Checked in the route rather than here, because the rule depends on the
+    #: registry — which engines redact — and a schema that had to consult the
+    #: registry to validate one field would be the wrong place for it.
+    reason: str = Field(default="", max_length=500)
+
+
 class RedactionStatusResponse(BaseModel):
     """The redaction layer as it is actually running.
 
-    Read-only. Everything here comes from process configuration read at startup
-    (ADR 0012), so it describes this worker — which is the honest scope, and the
-    reason a future per-scope configuration needs a database row rather than more
-    environment variables.
+    Everything except ``engine`` still comes from process configuration read at
+    startup (ADR 0012). ``engine`` is now an admin decision that may override it
+    (ADR 0033), which is why ``source`` exists: "the console says one thing and
+    the environment says another" is otherwise invisible, and it is exactly the
+    confusion a database override introduces.
     """
 
     #: The engine in force, taken from the constructed redactor rather than from
     #: the setting, so a mismatch cannot hide behind agreeing documentation.
     engine: str
-    #: False when the engine is ``noop``: configured, and redacting nothing.
+    #: False when the engine redacts nothing: configured, and stripping nothing.
     enabled: bool
     endpoint: str | None = None
-    #: Names the registry will accept, so the future dropdown has a source and an
-    #: operator can see what an install added.
+    #: Names the registry will accept. Kept alongside ``engines`` because it is
+    #: the flat answer to "did my install register" and costs nothing.
     installed_engines: list[str] = Field(default_factory=list)
+    #: Every installed engine as a choice, with what blocks each one.
+    engines: list[RedactionEngineOption] = Field(default_factory=list)
+    #: ``console`` when a stored decision is in force, ``environment`` otherwise.
+    source: str = "environment"
+    #: The stored decision, when there is one.
+    configured: RedactionConfigChange | None = None
+    #: How long another worker may still be running the previous engine after a
+    #: change. Bounded by the resolver's poll interval and reported rather than
+    #: implied, because a change that looks instant and is not is worse than one
+    #: that says how long it takes.
+    propagation_seconds: float = 0.0
 
     #: On failure: refuse the request, or forward it unredacted. Default false,
     #: and true deserves to be shown as a warning rather than a setting.

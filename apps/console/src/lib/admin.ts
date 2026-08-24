@@ -138,6 +138,26 @@ export function useRedactionStatus() {
   });
 }
 
+/**
+ * Enable one redaction engine, or switch the layer off.
+ *
+ * Writes the whole status document back into the cache from the response rather
+ * than invalidating and refetching. The PUT returns the same shape precisely so
+ * that the screen shows what the change produced — including `propagation_seconds`
+ * and any warning it introduced — without a round trip in which the screen would
+ * briefly show the old engine.
+ */
+export function useSetRedactionEngine() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { engine: string; reason: string }) =>
+      request<RedactionStatus>("/api/admin/redaction/engine", { method: "PUT", body }),
+    onSuccess: (status) => {
+      client.setQueryData(adminKeys.redaction, status);
+    },
+  });
+}
+
 export function useUpdateProvider() {
   const client = useQueryClient();
   return useMutation({

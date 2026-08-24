@@ -49,7 +49,7 @@ packages/shared-py  detection contract and the deterministic placeholder scheme
 services/redaction  Presidio behind a swappable contract, out of process
 deploy/compose   the stack: base + smoke + keycloak + redaction overlays
 scripts/         live checks against a running stack (see below)
-docs/adr/        31 ADRs. Read the index; they are the design record.
+docs/adr/        33 ADRs. Read the index; they are the design record.
 ```
 
 Inside the gateway, the pieces that carry the most weight:
@@ -209,7 +209,15 @@ rediscovered — one being built, one not started:
 
 
 - **[docs/redaction-scoping-plan.md](docs/redaction-scoping-plan.md)** —
-  visibility is **done** (`GET /api/admin/redaction`, the Redaction screen).
+  visibility is **done** (`GET /api/admin/redaction`, the Redaction screen), and
+  so is **choosing the engine** ([ADR 0033](docs/adr/0033-redaction-engine-selection.md)):
+  the registry describes every installed engine, `redaction_config` is an
+  append-only row that overrides `GATEWAY_REDACTION__ENGINE`, and
+  `RedactionResolver` polls it every 10s so a change reaches the other worker
+  without a restart and without a query on the request path. Switching to an
+  engine that redacts nothing needs a written reason, kept permanently. Note
+  `_engine_redacts` asks the registry rather than comparing against `"noop"` — an
+  installable engine could redact nothing under any name.
   Still to do: redaction is process-global when it needs to be scopeable per
   model, provider, user or group, and the engine is not configurable from the
   console. The precedence rule to copy is the quota engine's, inverted — quotas

@@ -1,9 +1,10 @@
 # 0032 — Providers, routers, and a plugin seam for both
 
 - Date: 2026-08-22
-- Status: **proposed** — the design is here to be argued with before the money
-  path is touched. Ground rule 3 applies: this is where a wrong answer is a
-  wrong invoice.
+- Status: **accepted, and built except for `catalogue()`** — the design was
+  argued with before the money path was touched and survived it, with decision 6
+  (two billing modes) added in review. Ground rule 3 applies: this is where a
+  wrong answer is a wrong invoice.
 - Supersedes the per-provider knobs added by
   [0027](0027-inference-providers.md), [0028](0028-embeddings-and-served-model.md)
   and [0030](0030-more-surfaces.md).
