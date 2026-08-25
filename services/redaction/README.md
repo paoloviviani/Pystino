@@ -163,10 +163,42 @@ the internal network and receives text the gateway has already authenticated.
 Publishing its port would make that assumption false — it would be an unauthenticated
 endpoint that accepts arbitrary text.
 
-## Presidio has moved
+## Presidio has moved, and why this is not the prebuilt image
 
 No longer a Microsoft project: community-governed under `data-privacy-stack` since
-2026, still MIT. The old `mcr.microsoft.com/presidio-analyzer:latest` tag still
-resolves but no longer tracks releases, so pointing at it silently pins an old
-detector. This service installs `presidio-analyzer` from PyPI rather than using the
-prebuilt image, because it needs the shared contract package alongside it.
+2026, still MIT.
+
+**Check which registry you are looking at.** The old
+`mcr.microsoft.com/presidio-analyzer:latest` tag still resolves and no longer
+tracks releases — checked 2026-08-25: that image was built 2026-03-15 and its
+tags stop at 2.2.362, so pointing at it silently pins a detector five months
+behind. The project's own registry is current:
+`ghcr.io/data-privacy-stack/presidio-analyzer` carries 2.2.363 and 2.2.364, and
+its `latest` was built the same day PyPI got 2.2.364.
+
+So staleness is not the reason this service exists. The reasons are:
+
+1. **The gateway speaks our contract, not a vendor's.** `POST /detect` returns
+   spans in `llmp_shared.redaction`'s schema. Pointing the gateway at Presidio's
+   `/analyze` would put one engine's wire format in the gateway and make every
+   future detector imitate it — exactly what
+   [ADR 0026](../../docs/adr/0026-pluggable-detection.md) refuses. Presidio is *a*
+   detector we ship, not *the* detector the design assumes.
+2. **The licence gate is a build decision.** The stock image ships English only,
+   and `it_core_news_lg` is CC BY-NC-SA 3.0 — so an Italian-capable deployment
+   needs a built image whatever else is true. Ours makes that a build arg that
+   prints the obligation, and bakes what was actually installed into
+   `models.env`, so `/healthz` cannot claim a language whose weights are absent.
+3. **The registry needed correcting, and the corrections have to be reported.**
+   The Italian pattern recognisers dropped under an English-only registry, and
+   Presidio's default phone regions have no IT. Both fixes are at least partly
+   expressible through the image's `RECOGNIZER_REGISTRY_CONF_FILE`; what is not
+   is `degraded_languages` and the entity list on `/healthz`, read from the live
+   analyzer — which exists precisely because the first version of this service
+   advertised `IT_FISCAL_CODE` while Presidio had silently registered nothing.
+
+What that leaves as the honest alternative: the stock image plus a mounted
+recogniser conf plus a small adapter translating `/detect` to `/analyze` — two
+containers and an adapter rather than one container, with the health reporting
+still to write in the adapter. Batching is no longer a difference: `/analyze`
+takes a list of texts as of 2.2.36x, as this contract always has.
