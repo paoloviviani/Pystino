@@ -52,7 +52,7 @@ from gateway.periods import (
     period_containing,
 )
 from gateway.schemas import BillingDrift, PeriodResponse, UsageReport, UsageReportRow
-from gateway.types import utcnow
+from gateway.types import format_money_prose, utcnow
 
 
 class GroupBy(StrEnum):
@@ -384,13 +384,31 @@ def _disclosures(
             "prices nobody maintains looks identical to one that is working."
         )
     for drift in reconciliation or ():
+        # Rounded to milli-units, like every other figure a person reads. The
+        # exact amounts stay on the `BillingDrift` model beside this sentence, so
+        # an administrator reconciling against an invoice still has all twelve
+        # decimal places — see `format_money_prose`.
+        theirs = format_money_prose(drift.upstream_cost, drift.upstream_currency)
+        ours = format_money_prose(drift.cost, drift.currency)
+        # Printing the same rounded figure twice — "it reported 0.004 EUR against
+        # 0.004 EUR charged here" — reads as a warning about nothing and invites
+        # the reader to hunt for a gap that is smaller than the precision shown.
+        # Agreement is the useful thing to say when that is what happened.
+        if theirs == ours:
+            headline = (
+                f"{drift.provider}: its reported cost agrees with ours to within a "
+                f"milli-unit over {drift.requests} request(s), at {ours}."
+            )
+        else:
+            headline = (
+                f"{drift.provider}: it reported {theirs} for {drift.requests} "
+                f"request(s) against {ours} charged here."
+            )
         notes.append(
-            f"{drift.provider}: it reported {drift.upstream_cost} {drift.upstream_currency} "
-            f"for {drift.requests} request(s) against {drift.cost} {drift.currency} charged "
-            "here. Covers only the requests that provider reported a cost for, so it is not "
-            "comparable to the totals above. A persistent gap means a stale price row or an "
-            "upstream rate change; the provider's figure is informational and never billed "
-            "from."
+            f"{headline} Covers only the requests that provider reported a cost for, so "
+            "it is not comparable to the totals above. A persistent gap means a stale "
+            "price row or an upstream rate change; the provider's figure is informational "
+            "and never billed from."
         )
     if substituted:
         # A router with model fallback can serve a different model than the one

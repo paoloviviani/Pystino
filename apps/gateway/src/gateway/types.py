@@ -13,7 +13,7 @@ Two things here are load-bearing for correctness:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from sqlalchemy import DateTime, Dialect, Numeric
@@ -80,3 +80,36 @@ def as_decimal(value: Any) -> Decimal:
     if isinstance(value, float):
         return Decimal(repr(value))
     return Decimal(value)
+
+
+#: How many decimals a money figure gets when it is written into *prose*.
+#:
+#: Milli-units. The ledger holds twelve decimal places and that precision is real
+#: — a single cheap request costs a fraction of a cent — but a sentence carrying
+#: `0.003849000000 EUR` is a sentence nobody reads. Three places is the figure a
+#: person acts on; the exact one stays in the structured field beside the prose,
+#: which is what the console reveals when an administrator asks for it.
+DISPLAY_DECIMALS = 3
+
+
+def format_money_prose(amount: Decimal | str, currency: str) -> str:
+    """An amount for a sentence, rounded to milli-units, never to a false zero.
+
+    Used where a figure is embedded in a disclosure the console renders verbatim.
+    Two rules, both learned in the browser first (see `formatMoney` in
+    `packages/ui`, which this deliberately mirrors):
+
+    * **Round half up, never truncate.** Truncation always understates a bill,
+      and a figure that is quietly low is worse than one that is visibly rounded.
+    * **A real amount must never round to zero.** `0.0000004 EUR` becoming
+      `0.000 EUR` in a sentence about what a provider charged would say it
+      charged nothing. It says `< 0.001` instead.
+    """
+    value = as_decimal(amount)
+    rounded = value.quantize(Decimal(1).scaleb(-DISPLAY_DECIMALS), rounding=ROUND_HALF_UP)
+    if rounded == 0 and value != 0:
+        smallest = Decimal(1).scaleb(-DISPLAY_DECIMALS)
+        # The inequality flips for a credit: an amount nearer zero than the
+        # smallest unit shown is *greater* than minus that unit.
+        return f"> -{smallest} {currency}" if value < 0 else f"< {smallest} {currency}"
+    return f"{rounded} {currency}"

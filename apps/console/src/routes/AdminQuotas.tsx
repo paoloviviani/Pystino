@@ -12,7 +12,7 @@ import {
   Table,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
-import { formatMoney } from "@llmp/ui";
+import { formatMoney, useExactMoney } from "@llmp/ui";
 import { useState } from "react";
 import {
   useCreateLimit,
@@ -55,6 +55,11 @@ export function AdminQuotas() {
     return shortId(rule.scope_id);
   };
 
+  // Both money cells honour the reader's precision preference. `formatMoney` is
+  // called for a string here rather than rendered as <Money>, because these
+  // figures sit inside a sentence — so the context has to be read by hand.
+  const exact = useExactMoney();
+
   const columns: Column<LimitRule>[] = [
     {
       key: "rule",
@@ -75,7 +80,7 @@ export function AdminQuotas() {
         <>
           <div>
             {rule.metric === "cost"
-              ? formatMoney(rule.limit_value, "EUR")
+              ? formatMoney(rule.limit_value, "EUR", { exact })
               : `${Number(rule.limit_value).toLocaleString()} ${rule.metric}`}
           </div>
           <div className={`${styles.muted} ${styles.nowrap}`}>per {describeWindow(rule)}</div>
@@ -181,6 +186,7 @@ export function AdminQuotas() {
  * render an empty bar that reads as "plenty of budget left".
  */
 function Consumption({ rule }: { rule: LimitRule }) {
+  const exact = useExactMoney();
   if (rule.current_value === null) {
     return <span className={styles.muted}>counter unavailable</span>;
   }
@@ -189,7 +195,11 @@ function Consumption({ rule }: { rule: LimitRule }) {
   const limit = Number(rule.limit_value);
   const caption =
     rule.metric === "cost"
-      ? `${formatMoney(rule.current_value, "EUR")} of ${formatMoney(rule.limit_value, "EUR")}`
+      ? `${formatMoney(rule.current_value, "EUR", { exact })} of ${formatMoney(
+          rule.limit_value,
+          "EUR",
+          { exact },
+        )}`
       : `${used.toLocaleString()} of ${limit.toLocaleString()}`;
 
   return (

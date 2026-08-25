@@ -153,9 +153,10 @@ describe("Overview", () => {
     vi.stubGlobal("fetch", respondWith(report()));
     renderScreen(<Overview me={ME} />);
 
-    // Three decimals: this screen is for a person reading what they spent, and
-    // the ledger's twelve places are noise here.
-    await waitFor(() => expect(screen.getAllByText("€3.250").length).toBeGreaterThan(0));
+    // At most three decimals: this screen is for a person reading what they
+    // spent, and the ledger's twelve places are noise here. "At most", so a
+    // round amount is written the way money is written — €3.25, not €3.250.
+    await waitFor(() => expect(screen.getAllByText("€3.25").length).toBeGreaterThan(0));
   });
 
   it("rounds spend to milli, rather than showing the ledger's full precision", async () => {
@@ -219,7 +220,7 @@ describe("Overview", () => {
     vi.stubGlobal("fetch", respondWith(empty));
     renderScreen(<Overview me={ME} />);
 
-    await waitFor(() => expect(screen.getAllByText("€0.000").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("€0.00").length).toBeGreaterThan(0));
   });
 
   describe("API keys", () => {

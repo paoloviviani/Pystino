@@ -6,16 +6,28 @@ import { formatMoney } from "./Money";
  * precisely so no float ever touches an amount. This function is the last place
  * that could undo it, so what is tested here is mostly that it does not: no
  * `Number()`, no rounding that loses a real sub-cent cost, no locale surprise.
+ *
+ * **The default is milli-units, and that is a reversal.** It used to be full
+ * stored precision, with the cap opt-in — which meant a call site leaked twelve
+ * decimal places by *saying nothing*, and four of the five screens said nothing.
+ * `€0.003847493000` in a table is not a figure anybody reads. Exactness is now
+ * the deliberate act, spelled `{ exact: true }`.
  */
-describe("formatMoney", () => {
-  it("shows two decimals for an ordinary amount", () => {
+describe("formatMoney, at the default precision", () => {
+  it("writes an ordinary amount the way money is written", () => {
+    // Not €12.500. "At most" milli-units, so the third place appears only when
+    // it carries something.
     expect(formatMoney("12.500000000000", "EUR")).toBe("€12.50");
   });
 
-  it("keeps sub-cent precision rather than rounding it to nothing", () => {
-    // A single cheap request genuinely costs a fraction of a cent. Showing
+  it("uses the third decimal when it carries something", () => {
+    expect(formatMoney("0.003847493000", "EUR")).toBe("€0.004");
+  });
+
+  it("says 'less than' rather than claiming nothing was spent", () => {
+    // The trap. A single cheap request genuinely costs a fraction of a cent, and
     // "€0.00" for real spend makes the ledger look broken.
-    expect(formatMoney("0.000000100000", "EUR")).toBe("€0.0000001");
+    expect(formatMoney("0.000000100000", "EUR")).toBe("< €0.001");
   });
 
   it("never produces scientific notation", () => {
@@ -42,14 +54,8 @@ describe("formatMoney", () => {
   });
 
   it("expands an exponent without going near a float", () => {
-    expect(formatMoney("1.5E-7", "EUR")).toBe("€0.00000015");
     expect(formatMoney("1.5E+3", "EUR")).toBe("€1\u00a0500.00");
     expect(formatMoney("-2E-3", "EUR")).toBe("−€0.002");
-  });
-
-  it("leaves an ordinary decimal string alone", () => {
-    // The expansion must not touch the common case.
-    expect(formatMoney("0.000000000000", "EUR")).toBe("€0.00");
   });
 
   it("uses a real minus sign for a negative amount", () => {
@@ -73,12 +79,43 @@ describe("formatMoney", () => {
   });
 });
 
-describe("formatMoney with capped decimals", () => {
+describe("formatMoney with exact precision", () => {
+  /**
+   * What an administrator reconciling against a provider's invoice needs: a
+   * divergence can be smaller than a milli-unit and still be the thing they are
+   * looking for. Reached by the console's "Exact figures" toggle.
+   */
+
+  it("shows every digit the ledger holds", () => {
+    expect(formatMoney("0.001497172000", "EUR", { exact: true })).toBe("€0.001497172");
+  });
+
+  it("keeps sub-cent precision rather than rounding it away", () => {
+    expect(formatMoney("0.000000100000", "EUR", { exact: true })).toBe("€0.0000001");
+    expect(formatMoney("1.5E-7", "EUR", { exact: true })).toBe("€0.00000015");
+  });
+
+  it("still writes an ordinary amount with two decimals", () => {
+    expect(formatMoney("12.500000000000", "EUR", { exact: true })).toBe("€12.50");
+    expect(formatMoney("0.000000000000", "EUR", { exact: true })).toBe("€0.00");
+  });
+
+  it("overrides a decimal cap rather than being overridden by one", () => {
+    // The caller asking for exactness means it. A screen that passes both is
+    // asking for its usual rounding *unless* the reader has asked to see
+    // everything, which is exactly how the toggle reaches <Money>.
+    expect(formatMoney("0.001497172000", "EUR", { maxDecimals: 3, exact: true })).toBe(
+      "€0.001497172",
+    );
+  });
+});
+
+describe("formatMoney with an explicit cap", () => {
   /**
    * Two audiences, two precisions. Someone reading what they spent wants
-   * milli-EUR; an administrator reconciling against a provider's invoice wants
-   * every digit the ledger holds. The cap is opt-in so the default stays the
-   * precise one.
+   * milli-units; an administrator reconciling against a provider's invoice wants
+   * every digit the ledger holds. A screen can still name its own cap — the
+   * default is only what it gets for saying nothing.
    */
 
   it("rounds to the requested places", () => {
@@ -96,8 +133,8 @@ describe("formatMoney with capped decimals", () => {
   it("carries into the integer part", () => {
     // The case a naive implementation gets wrong: 999.999 must not become
     // 1000.999 or 999.000.
-    expect(formatMoney("999.9995", "EUR", { maxDecimals: 3 })).toBe("€1\u00a0000.000");
-    expect(formatMoney("9.9999", "EUR", { maxDecimals: 3 })).toBe("€10.000");
+    expect(formatMoney("999.9995", "EUR", { maxDecimals: 3 })).toBe("€1\u00a0000.00");
+    expect(formatMoney("9.9999", "EUR", { maxDecimals: 3 })).toBe("€10.00");
   });
 
   it("says 'less than' rather than claiming nothing was spent", () => {
@@ -108,12 +145,19 @@ describe("formatMoney with capped decimals", () => {
   });
 
   it("shows a true zero as zero", () => {
-    expect(formatMoney("0", "EUR", { maxDecimals: 3 })).toBe("€0.000");
-    expect(formatMoney("0.000000000000", "EUR", { maxDecimals: 3 })).toBe("€0.000");
+    expect(formatMoney("0", "EUR", { maxDecimals: 3 })).toBe("€0.00");
+    expect(formatMoney("0.000000000000", "EUR", { maxDecimals: 3 })).toBe("€0.00");
   });
 
-  it("pads a short fraction rather than shortening the column", () => {
-    expect(formatMoney("1.5", "EUR", { maxDecimals: 3 })).toBe("€1.500");
+  it("trims a trailing zero back to the two decimals money is written in", () => {
+    // It used to pad, for column alignment. Reversed: €1.500 is not how an
+    // amount is written, and `tabular-nums` keeps the digits aligned anyway.
+    expect(formatMoney("1.5", "EUR", { maxDecimals: 3 })).toBe("€1.50");
+    expect(formatMoney("1.5", "EUR", { maxDecimals: 6 })).toBe("€1.50");
+  });
+
+  it("keeps whole units whole when asked for none", () => {
+    expect(formatMoney("1234.56", "EUR", { maxDecimals: 0 })).toBe("€1\u00a0235");
   });
 
   it("keeps the minus sign on a rounded negative", () => {
@@ -123,8 +167,7 @@ describe("formatMoney with capped decimals", () => {
     expect(formatMoney("-0.0000001", "EUR", { maxDecimals: 3 })).toBe("> −€0.001");
   });
 
-  it("leaves full precision alone when no cap is asked for", () => {
-    // The admin path, unchanged.
-    expect(formatMoney("0.001497172000", "EUR")).toBe("€0.001497172");
+  it("rounds when no cap is asked for, because that is now the default", () => {
+    expect(formatMoney("0.001497172000", "EUR")).toBe("€0.001");
   });
 });

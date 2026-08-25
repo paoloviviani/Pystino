@@ -104,6 +104,18 @@ Inside the gateway, the pieces that carry the most weight:
 - **Money is a string end to end.** `Numeric(24,12)` round-trips zero as
   `Decimal("0E-12")`; the `Money` annotated type in `schemas.py` forces plain
   digits. Never parse an amount into a float, including in the browser.
+- **Stored precision is twelve places; *displayed* precision is three.** The
+  ledger's precision is real and is kept; putting it on a screen is not. Both
+  formatters default to milli-units — `formatMoney` in `packages/ui` and
+  `format_money_prose` in `gateway/types.py`, for figures embedded in a
+  disclosure the console renders verbatim. Three things about that default:
+  it is **opt-out** (`{ exact: true }`), because when it was opt-in four of the
+  five screens leaked twelve decimals by saying nothing; it is *at most* three,
+  so €12.50 is not written €12.500; and a real amount **never rounds to zero** —
+  it reads `< €0.001`, because "€0.00" for genuine spend makes the ledger look
+  broken. Admins reach full precision with the **Exact figures** toggle in the
+  identity menu, which is a `MoneyPrecisionContext` — a `formatMoney` call made
+  outside `<Money>` has to read it by hand (`useExactMoney`).
 - **Redaction is ~90% of the CPU, and it scales with prompt length** — about
   0.1ms per prompt token, against a gateway cost that stays flat at 24-31ms.
   Capacity planning is redaction planning; see

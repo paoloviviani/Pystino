@@ -31,6 +31,7 @@ from gateway.models import (
 from gateway.plugins.cortecs import CortecsRouterPlugin
 from gateway.plugins.generic import GenericOpenAIPlugin
 from gateway.reporting import GroupBy, ReportFilter, build_report, resolve_period
+from gateway.types import format_money_prose
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -449,6 +450,44 @@ class TestItReachesTheLedger:
         assert record.upstream_cost_currency is None
 
 
+class TestFiguresInProse:
+    """A figure written into a sentence is rounded to milli-units.
+
+    The ledger's twelve decimal places are real and are kept — in the structured
+    field beside the prose, which is what the console reveals when an
+    administrator asks for exact figures. A *sentence* carrying
+    `0.003849000000 EUR` is a sentence nobody reads, and a report whose
+    disclosures are unreadable might as well not have them.
+    """
+
+    def test_it_rounds_to_milli_units(self) -> None:
+        assert format_money_prose(Decimal("0.003849000000"), "EUR") == "0.004 EUR"
+        assert format_money_prose(Decimal("12.3456"), "EUR") == "12.346 EUR"
+
+    def test_it_rounds_half_up_rather_than_truncating(self) -> None:
+        """Truncation always understates a bill."""
+        assert format_money_prose(Decimal("0.0015"), "EUR") == "0.002 EUR"
+        assert format_money_prose(Decimal("0.0014999"), "EUR") == "0.001 EUR"
+
+    def test_a_real_amount_never_rounds_to_nothing(self) -> None:
+        """The trap. "It reported 0.000 EUR" would say it charged nothing."""
+        assert format_money_prose(Decimal("0.0000004"), "EUR") == "< 0.001 EUR"
+        # The inequality flips for a credit: nearer zero than the smallest unit
+        # shown is *greater* than minus that unit.
+        assert format_money_prose(Decimal("-0.0000001"), "EUR") == "> -0.001 EUR"
+
+    def test_a_true_zero_is_zero(self) -> None:
+        assert format_money_prose(Decimal("0"), "EUR") == "0.000 EUR"
+
+    def test_it_carries_the_currency_it_was_given(self) -> None:
+        """No conversion, here least of all — this is the reconciliation note."""
+        assert format_money_prose(Decimal("2"), "USD") == "2.000 USD"
+
+    def test_a_float_never_touches_it(self) -> None:
+        """Via `as_decimal`, so 0.1 is a tenth and not 0.1000000000000000055."""
+        assert format_money_prose("0.1", "EUR") == "0.100 EUR"
+
+
 class TestReconciliationIsPerProvider:
     """The bug: a total is not a comparison.
 
@@ -581,6 +620,9 @@ class TestReconciliationIsPerProvider:
         note = next(n for n in report.disclosures if seeded.provider.name in n)
         assert "not comparable to the totals" in note
         assert "1 request(s)" in note
+        # Milli-units in prose, never the ledger's twelve places. This sentence
+        # used to read "it reported 0.000042000000 EUR against 0.000041...".
+        assert "000000" not in note
 
     async def test_a_provider_that_bills_in_another_currency_is_reported_in_it(
         self,
