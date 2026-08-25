@@ -1,0 +1,74 @@
+# The reverse proxy in front of the stack, in either of two configurations.
+#
+# Both are the same file. What differs is what deploy/.env sets, and the two
+# shapes are described there in full:
+#
+#   dev   PUBLIC_HOST=130.192.84.103  HTTPS_PORT=8443  TLS_DIRECTIVE="tls internal"
+#         An IP address and Caddy's own CA. The browser warns once, because
+#         nothing has heard of that CA — which is what a self-signed certificate
+#         is, however it was produced.
+#
+#   prod  PUBLIC_HOST=llm.example.org HTTPS_PORT=443   TLS_DIRECTIVE=
+#         A name, and an empty directive so Caddy's automatic HTTPS takes over:
+#         it obtains and renews a Let's Encrypt certificate on its own. That
+#         needs the name to resolve to this host and ports 80 and 443 reachable
+#         from the internet, because the challenge arrives on one of them.
+#
+# Let's Encrypt will not issue for an IP address and Caddy's internal CA is
+# trusted by nothing, so the two are not interchangeable: which one you get is
+# decided by whether you have a name, and the variables say so out loud rather
+# than it being inferred from the shape of the host.
+#
+# ## One origin, and Keycloak under /kc
+#
+# The obvious arrangement is two ports — the gateway on one, Keycloak on another
+# — because the gateway owns /auth/callback and Keycloak owns /realms,
+# /resources and /admin, and those collide at the root. It was built that way
+# first and then abandoned: the LINKS development host reaches the internet
+# through a firewall that permits exactly one of these ports, so a deployment
+# needing two is a deployment that does not come up.
+#
+# `KC_HTTP_RELATIVE_PATH=/kc` (set in docker-compose.proxy.yml) moves *every*
+# Keycloak URL under one prefix, including the ones its login page generates for
+# its own stylesheets, so there is nothing left to collide and nothing for this
+# file to rewrite. Stripping the prefix here instead is the trap: the proxy would
+# be correct and the login page would ask for /resources/... on the gateway.
+
+{
+	# Only used in prod, where Caddy needs somewhere to send expiry warnings.
+	# Ignored entirely by `tls internal`.
+	email {$ACME_EMAIL:admin@example.org}
+
+	# Without this the IP configuration fails every handshake with a TLS
+	# "internal error" alert, and logs nothing above debug level.
+	#
+	# SNI may not carry a literal IP address (RFC 6066), so no client sends one
+	# for https://130.192.84.103 — and Caddy, given no server name, falls back to
+	# matching the connection's *local* address against the certificates it
+	# holds. Behind Docker's NAT that address is the container's 172.x, which
+	# matches nothing, so it has no certificate to offer. Naming the default
+	# explicitly is what makes an address-only deployment serve at all.
+	default_sni {$PUBLIC_HOST}
+}
+
+{$PUBLIC_ORIGIN} {
+	{$TLS_DIRECTIVE}
+
+	# Both, because `/kc/*` does not match `/kc` itself, and that bare path is
+	# what a human types when they want the admin console.
+	@keycloak path /kc /kc/*
+	handle @keycloak {
+		reverse_proxy keycloak:8080
+	}
+
+	handle {
+		# `-1` means flush every write straight through instead of buffering.
+		# Caddy already does this when it recognises text/event-stream, but every
+		# /v1 surface here can stream and the recogniser is a content-type match;
+		# stating it removes the question. Buffering a stream produces no error —
+		# the bytes are all correct and all late.
+		reverse_proxy gateway:8000 {
+			flush_interval -1
+		}
+	}
+}

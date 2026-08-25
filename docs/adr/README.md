@@ -46,6 +46,7 @@ verified is marked as such in the ADR that depends on it.
 | [0032](0032-provider-plugins.md) | Providers versus routers, and a plugin seam that returns facts rather than computing money |
 | [0033](0033-redaction-engine-selection.md) | The redaction engine becomes an admin decision, on an append-only record |
 | [0034](0034-bauhaus-design-language.md) | Bauhaus as the design language, and a self-hosted geometric sans |
+| [0035](0035-public-tls-exposure.md) | A TLS reverse proxy, and the four holes that made "never on a routable address" the rule |
 
 ## Decisions recorded now, implemented later
 

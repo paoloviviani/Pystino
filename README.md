@@ -20,7 +20,7 @@ it implies.
 | `CLAUDE.md` | The context needed to pick this up elsewhere: ground rules, the traps, and how to verify a change. |
 | `apps/web`, `apps/desktop`, `services/rag`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |
 
-733 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
+842 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
 exercises the whole slice over real HTTP, and the full `docker compose` stack has been
 built and run against PostgreSQL 18, Valkey and Keycloak — including the complete OIDC
 login flow and the reporting API (`./scripts/test_reporting_live.py`, which covers the
@@ -202,9 +202,13 @@ frontend/backchannel split in
 [docker-compose.keycloak.yml](deploy/compose/docker-compose.keycloak.yml)
 explains why.
 
-And do not put this stack on a routable address as it stands: Keycloak runs
+And do not put this stack on a routable address *as it stands*: Keycloak runs
 `start-dev` with `admin`/`admin` and an in-memory database, there is no TLS, the
 session cookie is not `Secure`, and the seeded users have published passwords.
+Those four things are the whole reason for the rule — "On a public address,
+behind TLS" below closes all four, and
+[ADR 0035](docs/adr/0035-public-tls-exposure.md) says what is still true
+afterwards.
 
 ### Without a tunnel, over a private overlay network
 
@@ -247,6 +251,78 @@ Three things worth knowing before you use it:
 - **It narrows where the stack is reachable from, and nothing else.** Keycloak
   still has `admin`/`admin`, there is still no TLS, and the gateway still holds
   real provider credentials that anyone with a session can spend.
+
+## On a public address, behind TLS
+
+`docker-compose.proxy.yml` puts Caddy in front of everything and terminates TLS,
+in either of two configurations. Which one you are in is decided by whether you
+have a name, and `deploy/.env` says so rather than the file guessing:
+
+| | `PUBLIC_HOST` | `TLS_DIRECTIVE` | certificate |
+|---|---|---|---|
+| dev | an IP address | `tls internal` | Caddy's own CA — a browser warns once |
+| prod | an FQDN | *(empty)* | Let's Encrypt, obtained and renewed automatically |
+
+Let's Encrypt will not issue for an IP address, so the first is the only option
+without a name; automatic HTTPS additionally needs the name to resolve to this
+host and **ports 80 and 443 reachable from the internet**, because that is where
+the challenge arrives.
+
+```bash
+# deploy/.env
+PUBLIC_HOST=130.192.84.103
+HTTPS_PORT=8443
+TLS_DIRECTIVE="tls internal"
+KEYCLOAK_ADMIN_PASSWORD=...    # required, no default
+KEYCLOAK_SEED_PASSWORD=...     # required, no default
+KEYCLOAK_CLIENT_SECRET=...     # required, no default
+
+docker compose --env-file deploy/.env \
+  -f deploy/compose/docker-compose.yml \
+  -f deploy/compose/docker-compose.smoke.yml \
+  -f deploy/compose/docker-compose.keycloak.yml \
+  -f deploy/compose/docker-compose.redaction.yml \
+  -f deploy/compose/docker-compose.proxy.yml up -d --build
+```
+
+The console is then at **<https://130.192.84.103:8443/console>** and Keycloak at
+`/kc` of the same origin — one origin and one port, because the gateway owns
+`/auth/callback` and Keycloak owns `/realms`, and `KC_HTTP_RELATIVE_PATH` is what
+separates them.
+
+**The three required passwords are the point.** This stack's fourth ground rule
+is that it never goes on a routable address, and that rule is a list of four
+specific holes: plaintext, `admin`/`admin`, a session cookie without `Secure`,
+and seeded users whose passwords are in this repository. The proxy overlay closes
+all four — the last by resetting the admin password, every seeded user's password
+and the OIDC client secret from the environment on **every** `up`, because
+Keycloak's in-memory database re-imports the fixture, published passwords and all,
+whenever the container is recreated. Set them and the fixture stops being a
+credential; leave them unset and compose refuses to start.
+
+To check it is only what it claims to be:
+
+```bash
+# Caddy's CA, so the checks can verify properly rather than skip verification
+docker compose --env-file deploy/.env -f deploy/compose/docker-compose.yml \
+  -f deploy/compose/docker-compose.proxy.yml exec proxy \
+  cat /data/caddy/pki/authorities/local/root.crt > deploy/tls/caddy-root.crt
+
+set -a; . deploy/.env; set +a     # the live scripts follow PUBLIC_HOST
+./scripts/test_public_tls_live.py
+```
+
+It asserts the certificate verifies, that `admin`/`admin` and `dave-password` and
+the published client secret are refused, that the session cookie is `Secure`,
+that a completion still streams through the proxy, and that PostgreSQL, Valkey,
+the fake upstream and both plaintext application ports are reachable on loopback
+and **refused on this host's routable address**.
+
+Read [ADR 0035](docs/adr/0035-public-tls-exposure.md) before calling this a
+production deployment. It is not one: Keycloak is still `start-dev` on an
+in-memory database, the self-signed configuration still trains people to click
+through a warning, and a session holder can still spend real provider
+credentials.
 
 ## Local development without Docker
 

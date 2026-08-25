@@ -18,6 +18,15 @@ Admin console: <http://localhost:8080> — `admin` / `admin`.
 below contains plaintext credentials on purpose. A production deployment needs its
 own database, TLS and real secrets.
 
+**With `docker-compose.proxy.yml` the passwords in this file are not the ones that
+work.** That overlay serves the stack on a routable address, so a one-shot `kcadm`
+container resets the admin password, every seeded user's password and the OIDC
+client secret from `deploy/.env` on every `up` — it has to run every time, because
+the in-memory database re-imports this fixture, published passwords and all,
+whenever the container is recreated. The table below still describes what each user
+*proves*; `KEYCLOAK_SEED_PASSWORD` is what each one's password *is*. See
+[ADR 0035](../../docs/adr/0035-public-tls-exposure.md).
+
 `realm-llm-platform.json` deliberately contains **no comments**: Keycloak's realm
 importer rejects unrecognised fields outright, so a `_comment` key anywhere in the
 file makes the container exit 1 with `Unrecognized field "_comment"`. Hence this

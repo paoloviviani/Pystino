@@ -31,3 +31,9 @@ deploy/.env
 
 # Local screenshots from manual UI checks.
 .console-shots/
+
+# Credential files that are not *.env — the pattern above does not catch them.
+.gitlab-tokens
+
+# Self-signed material and Caddy state, if either is ever written outside a volume.
+deploy/tls/
