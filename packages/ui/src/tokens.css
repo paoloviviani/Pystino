@@ -56,7 +56,17 @@
  */
 @font-face {
   font-family: "Jost";
-  src: url("./fonts/jost-variable-latin.woff2") format("woff2-variations");
+  /* `format("woff2")`, not `format("woff2-variations")`.
+   *
+   * The latter is the legacy syntax from before variable fonts were finalised.
+   * Chromium accepts it, Safari rejects the whole rule — and a rejected @font-face
+   * is silent: the page renders in the fallback stack and nothing reports an
+   * error. Since the fallbacks here are Futura and Century Gothic, which are
+   * wider than Jost and installed on most machines, the symptom is not "the font
+   * is missing" but "the layout is subtly wider", which is far harder to
+   * attribute. The variable range is declared by `font-weight` below; the file
+   * being variable needs no announcing. */
+  src: url("./fonts/jost-variable-latin.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
