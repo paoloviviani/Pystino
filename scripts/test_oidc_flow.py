@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """Drive the whole OIDC login flow against a real Keycloak and check the result.
 
 The unit suite covers everything on our side of the redirect — claim resolution,
@@ -37,10 +37,12 @@ import http.cookiejar
 import json
 import os
 import re
+import ssl
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 # The gateway must be reached on the *same origin* as its registered redirect
@@ -50,14 +52,56 @@ from typing import Any
 # progress in this browser", which reads like a broken flow rather than a
 # mismatched hostname. Hence this follows OVERLAY_ADDR too.
 GATEWAY_HOST = os.environ.get("GATEWAY_HOST") or os.environ.get("OVERLAY_ADDR") or "localhost"
-GATEWAY = os.environ.get(
-    "GATEWAY_URL", f"http://{GATEWAY_HOST}:{os.environ.get('GATEWAY_PORT', '8000')}"
+
+# ...and the same reasoning again, for the deployment that is behind the TLS
+# proxy (docker-compose.proxy.yml). There the whole flow is on one https origin
+# and Keycloak lives under /kc of it, so one variable moves both. Sourcing
+# deploy/.env is enough to point this script at that deployment:
+#
+#   set -a; . deploy/.env; set +a; ./scripts/test_oidc_flow.py
+PUBLIC_ORIGIN = os.environ.get("PUBLIC_ORIGIN") or (
+    f"https://{os.environ['PUBLIC_HOST']}:{os.environ.get('HTTPS_PORT', '443')}"
+    if os.environ.get("PUBLIC_HOST")
+    else ""
 )
+GATEWAY = (
+    os.environ.get("GATEWAY_URL")
+    or PUBLIC_ORIGIN
+    or (f"http://{GATEWAY_HOST}:{os.environ.get('GATEWAY_PORT', '8000')}")
+)
+
+# Caddy's internal CA signs the certificate in the IP configuration, and nothing
+# has heard of it — including this script, which verifies properly rather than
+# skipping verification. Export it once:
+#
+#   docker compose ... exec proxy cat \
+#     /data/caddy/pki/authorities/local/root.crt > deploy/tls/caddy-root.crt
+#
+# Verifying against that file is the whole point: `ssl._create_unverified_context`
+# would make these checks pass against anything that answered on the address.
+CA_BUNDLE = os.environ.get(
+    "GATEWAY_CA_BUNDLE", str(Path(__file__).resolve().parent.parent / "deploy/tls/caddy-root.crt")
+)
+_SSL_CONTEXT: ssl.SSLContext | None = None
+if GATEWAY.startswith("https://") and Path(CA_BUNDLE).exists():
+    _SSL_CONTEXT = ssl.create_default_context(cafile=CA_BUNDLE)
+    # Also as the process default, because not every call here goes through
+    # new_session(): the API-key checks use a bare urlopen deliberately, to prove
+    # a key works with no cookie jar in play. Installed rather than assigned to
+    # ssl._create_default_https_context, and built without the redirect and
+    # cookie handlers, so those calls keep behaving as they did.
+    urllib.request.install_opener(
+        urllib.request.build_opener(urllib.request.HTTPSHandler(context=_SSL_CONTEXT))
+    )
+
 # Keycloak's *frontend* URL is pinned to the public name and its backchannel is
 # left dynamic (see docker-compose.keycloak.yml), so browser-facing URLs already
 # point at the advertised host and this rewrite is a no-op. It is kept only so
 # the script still works if someone pins the frontend to the internal name.
-KEYCLOAK_INTERNAL = "keycloak:8080"
+#
+# Longest prefix first: behind the proxy every Keycloak URL is under /kc, and
+# matching the bare authority would leave the path prefix doubled.
+KEYCLOAK_INTERNAL_PREFIXES = ("http://keycloak:8080/kc", "http://keycloak:8080")
 # The host a *browser* is sent to, which is whatever KC_HOSTNAME advertises —
 # not necessarily localhost. With docker-compose.overlay.yml it is the overlay
 # address, and asserting on localhost would fail against a stack that is
@@ -66,21 +110,29 @@ KEYCLOAK_INTERNAL = "keycloak:8080"
 KEYCLOAK_HOST = os.environ.get("KEYCLOAK_HOST") or os.environ.get("OVERLAY_ADDR") or "localhost"
 # KEYCLOAK_PORT moves the published port and the advertised hostname together —
 # set it when something already owns 8080 on the machine you browse from.
-KEYCLOAK_EXTERNAL = f"{KEYCLOAK_HOST}:{os.environ.get('KEYCLOAK_PORT', '8080')}"
+KEYCLOAK_BASE = os.environ.get("KEYCLOAK_URL") or (
+    f"{PUBLIC_ORIGIN}/kc"
+    if PUBLIC_ORIGIN
+    else f"http://{KEYCLOAK_HOST}:{os.environ.get('KEYCLOAK_PORT', '8080')}"
+)
 
+# The fixture's published passwords, unless the deployment rotated them. It has
+# to on a public address: docker-compose.proxy.yml resets every seeded user to
+# KEYCLOAK_SEED_PASSWORD on each `up`, precisely because the values below are in
+# this repository and on the public web.
+SEED_PASSWORD = os.environ.get("KEYCLOAK_SEED_PASSWORD")
 PASSWORDS = {
-    "alice": "alice-password",
-    "bob": "bob-password",
-    "carol": "carol-password",
-    "dave": "dave-password",
-    "erin": "erin-password",
+    user: SEED_PASSWORD or f"{user}-password" for user in ("alice", "bob", "carol", "dave", "erin")
 }
 
 failures: list[str] = []
 
 
 def reachable(url: str) -> str:
-    return url.replace(KEYCLOAK_INTERNAL, KEYCLOAK_EXTERNAL)
+    for prefix in KEYCLOAK_INTERNAL_PREFIXES:
+        if url.startswith(prefix):
+            return KEYCLOAK_BASE + url[len(prefix) :]
+    return url
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -112,7 +164,10 @@ class LocalhostSecureCookiePolicy(http.cookiejar.DefaultCookiePolicy):
 
 def new_session() -> urllib.request.OpenerDirector:
     jar = http.cookiejar.CookieJar(policy=LocalhostSecureCookiePolicy())
-    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), NoRedirect)
+    handlers: list[Any] = [urllib.request.HTTPCookieProcessor(jar), NoRedirect]
+    if _SSL_CONTEXT is not None:
+        handlers.append(urllib.request.HTTPSHandler(context=_SSL_CONTEXT))
+    return urllib.request.build_opener(*handlers)
 
 
 def request(
@@ -248,7 +303,7 @@ def main() -> int:
     opener = new_session()
     status, _, body = request(
         opener,
-        f"http://{KEYCLOAK_EXTERNAL}/realms/llm-platform/.well-known/openid-configuration",
+        f"{KEYCLOAK_BASE}/realms/llm-platform/.well-known/openid-configuration",
     )
     if status != 200:
         print(f"  Keycloak is not reachable (HTTP {status}). Is the stack up?")
@@ -259,12 +314,12 @@ def main() -> int:
     # somewhere they cannot resolve.
     check(
         "issuer is the public, browser-reachable hostname",
-        KEYCLOAK_EXTERNAL in discovery["issuer"],
+        discovery["issuer"].startswith(KEYCLOAK_BASE),
         discovery["issuer"],
     )
     check(
         "the authorization endpoint is browser-reachable",
-        KEYCLOAK_INTERNAL not in discovery["authorization_endpoint"],
+        "keycloak:8080" not in discovery["authorization_endpoint"],
         discovery["authorization_endpoint"],
     )
     check(

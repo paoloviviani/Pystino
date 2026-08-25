@@ -1,0 +1,223 @@
+# Puts a TLS reverse proxy in front of the stack and serves it on a real
+# address, in either of the two configurations described in
+# deploy/caddy/Caddyfile: an IP with a self-signed certificate, or an FQDN with
+# Let's Encrypt.
+#
+#   docker compose --env-file deploy/.env \
+#     -f deploy/compose/docker-compose.yml \
+#     -f deploy/compose/docker-compose.smoke.yml \
+#     -f deploy/compose/docker-compose.keycloak.yml \
+#     -f deploy/compose/docker-compose.redaction.yml \
+#     -f deploy/compose/docker-compose.proxy.yml up -d --build
+#
+#   ./scripts/test_public_tls_live.py     # checks what this file claims
+#
+# Requires docker-compose.keycloak.yml: it configures that service rather than
+# defining it, and compose refuses a file that overrides a service nobody
+# declared.
+#
+# ## Against the fourth ground rule
+#
+# CLAUDE.md says the dev stack never goes on a routable address. That rule is not
+# a superstition about routable addresses; it is a list of four specific holes —
+# plaintext HTTP, a Keycloak admin console on admin/admin, a session cookie
+# without `Secure`, and five seeded users whose passwords are in the repository.
+# This file closes all four rather than arguing with it, and ADR 0035 records the
+# decision and what is still true afterwards.
+#
+#   plaintext            → Caddy terminates TLS. The plaintext hop is inside the
+#                          compose network; nothing published is http.
+#   admin/admin          → KEYCLOAK_ADMIN_PASSWORD, required, no default.
+#   non-Secure cookie    → GATEWAY_SESSION_COOKIE_SECURE=true, which is only
+#                          safe to set *because* of the first line.
+#   published passwords  → keycloak-proxy-setup resets every seeded user, and
+#                          the client secret, from the environment on every `up`.
+#
+# ## PUBLIC_BIND is not the public address
+#
+# On a NAT-ed cloud instance the address a browser types is not an address the
+# host has: `ip -brief addr` on the LINKS development host shows 10.50.2.183 and
+# nothing else, while the world reaches it at 130.192.84.103. Docker cannot
+# publish on an address the host does not hold, so what gets *bound*
+# (PUBLIC_BIND, every interface by default) and what gets *typed* (PUBLIC_HOST,
+# which the certificate, the Caddyfile and every OIDC URL are built from) are
+# separate variables. This is exactly where docker-compose.overlay.yml's rule —
+# "must be an address that already exists on this host" — stops applying.
+
+services:
+  proxy:
+    image: caddy:2.11-alpine
+    restart: unless-stopped
+    ports:
+      # 80 is only useful in the Let's Encrypt configuration, where the HTTP-01
+      # challenge arrives on it. Published in both, because a browser sent to a
+      # bare address tries it first, and a connection refused is a worse answer
+      # than a redirect.
+      - "${PUBLIC_BIND:-0.0.0.0}:80:80"
+      - "${PUBLIC_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
+    environment:
+      # What a browser types, and the single source for every URL this
+      # deployment advertises. Defaults to host and port; set it explicitly to
+      # drop a default port from those URLs (see deploy/.env.example).
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://${PUBLIC_HOST:?set PUBLIC_HOST in deploy/.env}:${HTTPS_PORT:-443}}
+      # The host on its own. Caddy needs it separately for default_sni, which
+      # the Caddyfile explains.
+      PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in deploy/.env}
+      # "tls internal" for a self-signed certificate from Caddy's own CA; empty
+      # for automatic Let's Encrypt, which needs an FQDN and ports 80 and 443
+      # reachable from the internet.
+      TLS_DIRECTIVE: ${TLS_DIRECTIVE-tls internal}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.org}
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Not optional. This holds the issued certificates *and* the internal CA's
+      # key: losing it in the Let's Encrypt configuration means re-issuing on
+      # every restart, which is how a deployment meets the rate limit; losing it
+      # in the self-signed one means a new CA, and every browser that accepted
+      # the old certificate warns again.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      gateway:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      # Proves the process is up and holding a config. Caddy's admin API is on
+      # loopback inside the container and is not published.
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  gateway:
+    environment:
+      # Where the browser is sent back to. It must match, byte for byte, the URI
+      # registered on the realm by keycloak-proxy-setup below: the gateway sends
+      # exactly one and Keycloak compares it as a string.
+      GATEWAY_OIDC__REDIRECT_URI: ${PUBLIC_ORIGIN:-https://${PUBLIC_HOST:?set PUBLIC_HOST in deploy/.env}:${HTTPS_PORT:-443}}/auth/callback
+      # The gateway still reaches Keycloak over the compose network in plaintext,
+      # and so needs no trust in the proxy's certificate — but the path moved
+      # with KC_HTTP_RELATIVE_PATH below, and this is that same internal URL.
+      GATEWAY_OIDC__ISSUER: http://keycloak:8080/kc/realms/llm-platform
+      # Which peers may be believed about X-Forwarded-Proto. uvicorn trusts
+      # 127.0.0.1 only, and the proxy reaches the gateway from the compose
+      # network, so out of the box every forwarded header from it is discarded
+      # and the app believes the request arrived over http. Nothing 500s: the
+      # /v1 surfaces never build a URL, the OIDC redirect URI is configured
+      # literally, and the *one* place that reads request.base_url is the
+      # post-logout landing URL — which then goes to Keycloak as http://, does
+      # not match the https URI registered on the client, and comes back 400
+      # after a login that worked perfectly. Docker's own bridge range, so it
+      # covers whichever subnet compose allocated, plus the published loopback
+      # port the live scripts use.
+      FORWARDED_ALLOW_IPS: "172.16.0.0/12,127.0.0.1"
+      # Only safe to turn on because TLS is terminated in front. On plain http a
+      # `Secure` cookie is set by the server and never sent back, and the symptom
+      # is a login that appears to succeed and lands on a signed-out console.
+      GATEWAY_SESSION_COOKIE_SECURE: "true"
+      # Rotated away from the value in docker-compose.keycloak.yml, which is in
+      # the repository. The setup job sets the same value on the client.
+      GATEWAY_OIDC__CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?set KEYCLOAK_CLIENT_SECRET in deploy/.env}
+
+  keycloak:
+    environment:
+      # The advertised frontend URL, and therefore the `iss` claim. Note what
+      # changing it costs: users are keyed on (issuer, subject), so moving from
+      # http://localhost:8080 to this makes every existing user a *new* row at
+      # their next login — same person, no memberships, no default billing group.
+      # Free on a fresh deployment; on one with history it is a migration nobody
+      # has written.
+      KC_HOSTNAME: ${PUBLIC_ORIGIN:-https://${PUBLIC_HOST:?set PUBLIC_HOST in deploy/.env}:${HTTPS_PORT:-443}}/kc
+      # Everything Keycloak serves moves under this prefix, including the URLs
+      # its own login page generates for its stylesheets. That is what lets one
+      # origin carry both applications — see the Caddyfile.
+      KC_HTTP_RELATIVE_PATH: /kc
+      # The management interface — which is where /health/ready lives, and what
+      # the base file's healthcheck probes — inherits the relative path unless it
+      # is told otherwise. Without this line Keycloak comes up perfectly and
+      # compose declares it unhealthy, so the gateway and the proxy never start:
+      # "dependency failed to start: container llm-platform-keycloak-1 is
+      # unhealthy", with nothing wrong in Keycloak's own log. Pinning it to the
+      # root keeps that healthcheck true wherever the public path moves to.
+      KC_HTTP_MANAGEMENT_RELATIVE_PATH: /
+      # Keycloak 26 ignores X-Forwarded-* unless told which family to trust, and
+      # then builds http:// URLs behind an https proxy. `xforwarded`, not
+      # `forwarded`: those are the headers Caddy sends.
+      KC_PROXY_HEADERS: xforwarded
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in deploy/.env}
+    ports:
+      # Replaces the keycloak overlay's entry rather than adding to it: compose
+      # merges `ports` by appending, and the point of putting Keycloak behind the
+      # proxy is that its own port is published nowhere else. 127.0.0.1 stays,
+      # because kcadm and the live scripts use it.
+      !override
+      - "127.0.0.1:${KEYCLOAK_PORT:-8080}:8080"
+
+  # Everything about the realm that must not sit in a tracked file.
+  #
+  # Runs on every `up`, idempotently, and has to: `start-dev` keeps the realm in
+  # an in-memory H2 database, so recreating the container re-imports
+  # realm-llm-platform.json and restores the published passwords with it. This
+  # job is what lets that fixture stay honest about being a fixture while the
+  # deployment stops using its values. Note the window it does not close:
+  # between Keycloak reporting healthy and this finishing, `dave-password` works.
+  keycloak-proxy-setup:
+    image: quay.io/keycloak/keycloak:26.7
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        kc=/opt/keycloak/bin/kcadm.sh
+        $$kc config credentials --server http://keycloak:8080/kc \
+          --realm master --user "$${KC_ADMIN_USER}" --password "$${KC_ADMIN_PASSWORD}"
+
+        # The exact callback and nothing else. A wildcard is the one thing not to
+        # do here: an open redirect on an OIDC client hands the authorization
+        # code to whoever asks for it. The localhost callbacks the fixture ships
+        # are dropped rather than kept alongside — the gateway now sends the
+        # public one, so they authorise nothing and only widen the list.
+        id=$$($$kc get clients -r llm-platform -q clientId=llm-gateway \
+          --fields id --format csv --noquotes)
+        $$kc update "clients/$${id}" -r llm-platform \
+          -s "redirectUris=[\"$${PUBLIC_ORIGIN}/auth/callback\"]" \
+          -s "webOrigins=[\"$${PUBLIC_ORIGIN}\"]" \
+          -s "secret=$${CLIENT_SECRET}" \
+          -s "attributes.\"post.logout.redirect.uris\"=\"$${PUBLIC_ORIGIN}/*\""
+        echo "registered $${PUBLIC_ORIGIN}/auth/callback"
+
+        # The seeded users keep their names and their groups — that is what the
+        # live scripts assert on — and lose the passwords published in
+        # deploy/keycloak/README.md.
+        for user in alice bob carol dave erin; do
+          uid=$$($$kc get users -r llm-platform -q "username=$${user}" --fields id --format csv --noquotes)
+          if [ -n "$${uid}" ]; then
+            $$kc set-password -r llm-platform --userid "$${uid}" --new-password "$${SEED_PASSWORD}"
+            echo "reset password: $${user}"
+          fi
+        done
+    environment:
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://${PUBLIC_HOST}:${HTTPS_PORT:-443}}
+      KC_ADMIN_USER: ${KEYCLOAK_ADMIN_USER:-admin}
+      KC_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      SEED_PASSWORD: ${KEYCLOAK_SEED_PASSWORD:?set KEYCLOAK_SEED_PASSWORD in deploy/.env}
+
+  # Only present when docker-compose.redaction.yml is also passed, which is the
+  # usual combination. That file publishes the fake upstream so the redaction
+  # check can read what the gateway sent — on 0.0.0.0, which is harmless behind a
+  # loopback-only stack and is a public, unauthenticated endpoint here.
+  fake-upstream:
+    ports:
+      !override
+      - "127.0.0.1:8081:9099"
+
+volumes:
+  caddy-data:
+  caddy-config:

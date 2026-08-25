@@ -16,13 +16,20 @@ anything; it is the context that is not recoverable from the code.
 3. **Accounting and quota logic get tests specifically.** That is where
    correctness actually matters, and where a wrong answer is a wrong invoice
    rather than a stack trace.
-4. **Never put the dev stack on a routable address.** Keycloak runs `start-dev`
-   with `admin`/`admin`, there is no TLS, the session cookie is not `Secure`,
-   and the seeded passwords are in the repo. The base compose files bind
-   `127.0.0.1` for this reason. To reach it from another machine, use the SSH
-   tunnel or `docker-compose.overlay.yml`, which publishes on a private
-   WireGuard-mesh address as well — see the README. A private overlay address
-   satisfies this rule; a public one does not, whatever else is done to it.
+4. **The dev stack goes on a routable address only with the proxy overlay.**
+   The rule used to be "never", and the reason was a list of four things, not a
+   principle: Keycloak runs `start-dev` with `admin`/`admin`, there is no TLS,
+   the session cookie is not `Secure`, and the seeded passwords are in the repo.
+   The base compose files bind `127.0.0.1` because all four are true of them.
+   `docker-compose.proxy.yml` closes all four — Caddy terminates TLS, and three
+   required, defaultless variables replace the admin password, every seeded
+   user's password and the OIDC client secret on every `up`
+   ([ADR 0035](docs/adr/0035-public-tls-exposure.md)); it is still not a
+   production deployment, and that ADR says exactly why. Without it, reach the
+   stack over the SSH tunnel or `docker-compose.overlay.yml`, which publishes on
+   a private WireGuard-mesh address — see the README. **Nothing else may be
+   published.** `scripts/test_public_tls_live.py` is what checks that, by
+   requiring every other port to be refused on this host's routable address.
 
 ## Explaining the work
 
@@ -47,9 +54,10 @@ apps/console     React admin SPA, served by the gateway at /console
 packages/ui      design tokens and primitives, shared with the Phase 3 chat app
 packages/shared-py  detection contract and the deterministic placeholder scheme
 services/redaction  Presidio behind a swappable contract, out of process
-deploy/compose   the stack: base + smoke + keycloak + redaction overlays
+deploy/compose   the stack: base + smoke + keycloak + redaction + proxy overlays
+deploy/caddy     the TLS reverse proxy's one config file, for both configurations
 scripts/         live checks against a running stack (see below)
-docs/adr/        34 ADRs. Read the index; they are the design record.
+docs/adr/        35 ADRs. Read the index; they are the design record.
 ```
 
 Inside the gateway, the pieces that carry the most weight:
@@ -142,6 +150,21 @@ Inside the gateway, the pieces that carry the most weight:
   the overlay address; `localhost` still serves `/v1` and the API, which is
   what the live scripts need. They follow `OVERLAY_ADDR` when it is set, so
   source `deploy/.env` before running them.
+- **Four things bite anything served behind the TLS proxy** (all of them found
+  building it, all recorded in [ADR 0035](docs/adr/0035-public-tls-exposure.md)).
+  **SNI may not carry an IP address**, so an address-only deployment offers no
+  certificate at all until `default_sni` names one — every handshake fails with a
+  TLS "internal error" and nothing above debug in the log. **uvicorn trusts
+  forwarded headers from `127.0.0.1` only**, and the proxy arrives from the
+  compose network, so without `FORWARDED_ALLOW_IPS` the app believes every
+  request is http; the only place that shows is the post-logout URL built from
+  `request.base_url`, which Keycloak then refuses with a 400 after a login that
+  worked. **Keycloak's management interface inherits `KC_HTTP_RELATIVE_PATH`**,
+  so moving Keycloak under `/kc` moves `/health/ready` with it and the healthcheck
+  fails against a perfectly healthy container — `KC_HTTP_MANAGEMENT_RELATIVE_PATH`
+  pins it. And **`iss` is part of a user's identity**: users are keyed on
+  `(issuer, subject)`, so changing `KC_HOSTNAME` re-provisions everyone as new
+  rows with no memberships at their next login.
 - **The demo user's cap is EUR 1/hour and the fake upstream bills 1M tokens per
   request.** Running several live scripts back to back exhausts it legitimately;
   they report that as skipped. Flushing Valkey alone does not reset it — the
@@ -151,7 +174,7 @@ Inside the gateway, the pieces that carry the most weight:
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services
-uv run pytest -q                       # 809 gateway tests, SQLite
+uv run pytest -q                       # 842 gateway tests, SQLite
 pnpm -r test                           # 21 packages/ui + 100 console
 ```
 
@@ -174,23 +197,48 @@ docker compose --env-file deploy/.env \
 ./scripts/test_quota_race_live.py   # admission under concurrency, real Valkey
 ./scripts/test_cache_accounting_live.py  # a real cache hit, and the ledger
 ./scripts/benchmark_live.py         # per-layer cost; see docs/performance.md
+./scripts/test_public_tls_live.py   # only with the proxy overlay: TLS, the
+                                    # rotated credentials, and that nothing else
+                                    # is on a routable address
 ```
+
+With the proxy overlay the live scripts need the deployment's own variables and
+Caddy's CA, because they verify the certificate rather than skipping
+verification:
+
+```bash
+docker compose ... exec proxy cat \
+  /data/caddy/pki/authorities/local/root.crt > deploy/tls/caddy-root.crt
+set -a; . deploy/.env; set +a       # PUBLIC_HOST, HTTPS_PORT, the seed password
+./scripts/test_oidc_flow.py
+```
+
+Sourcing `deploy/.env` is also what points them at the https origin: signing in
+only works there, because the gateway sends exactly one `redirect_uri` and the
+realm has exactly that one registered.
 
 **Run the live scripts.** More than half the serious bugs in this project's
 history were only findable against the running stack: a counter seeded at zero,
 a migration given the wrong environment, a 500 on `/v1/models` that every unit
 test passed through.
 
-This machine has 3 GB of RAM and 2 cores. The compose stack plus a `pnpm test`
-will swap, and the symptom is tests that fail having done nothing wrong — check
-`free -g` before believing a frontend failure.
+The `130.192.84.52` host has 3 GB of RAM and 2 cores. The compose stack plus a
+`pnpm test` will swap there, and the symptom is tests that fail having done
+nothing wrong — check `free -g` before believing a frontend failure.
+`130.192.84.103` has 14 GB and 5 cores and does not have this problem.
 
 ## Deployment
 
 Development host `130.192.84.52`, console over an SSH tunnel — the README's
 "Reaching the console from another machine" section has the command and why
-both ports must match. Git remote is GitLab; the token is in `.gitlab.env`,
-which may be sourced but should not be read.
+both ports must match. A second VM, `130.192.84.103`, runs the same stack behind
+the proxy overlay at <https://130.192.84.103:8443/console>; note that its
+firewall permits **8443 and 22 and nothing else**, which is why that deployment
+serves one origin with Keycloak under `/kc` rather than two ports, and why the
+Let's Encrypt configuration cannot be used there until 80 and 443 are opened.
+Git remote is GitLab; the tokens are in `.gitlab.env` and `.gitlab-tokens`,
+which may be sourced but should not be read. Both are gitignored — note that
+`*.env` does not match `.gitlab-tokens`, so it is listed by name.
 
 ## Where the project is
 
