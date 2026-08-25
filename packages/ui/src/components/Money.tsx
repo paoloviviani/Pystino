@@ -1,10 +1,11 @@
+import { useExactMoney } from "./MoneyPrecision";
 import styles from "./Money.module.css";
 
 export interface MoneyProps {
   /** The API sends money as a decimal *string*, and it must stay one. */
   amount: string;
   currency: string;
-  /** See `FormatMoneyOptions.maxDecimals`. Unset shows full stored precision. */
+  /** See `FormatMoneyOptions.maxDecimals`. Defaults to milli-units. */
   maxDecimals?: number;
 }
 
@@ -18,9 +19,16 @@ export interface MoneyProps {
  * the API, not in the browser.
  */
 export function Money({ amount, currency, maxDecimals }: MoneyProps) {
+  const exact = useExactMoney();
+  const shown = formatMoney(amount, currency, { maxDecimals, exact });
+  const full = formatMoney(amount, currency, { exact: true });
   return (
-    <span className={styles.money}>
-      {formatMoney(amount, currency, { maxDecimals })}
+    // `title` carries the exact figure whenever the rounded one is being shown,
+    // so a single amount can be checked on hover without turning exact mode on
+    // for the whole console. Not a substitute for the toggle — a tooltip is
+    // invisible on a touch screen and does not print — which is why both exist.
+    <span className={styles.money} title={shown === full ? undefined : full}>
+      {shown}
     </span>
   );
 }
@@ -86,19 +94,38 @@ function roundTo(whole: string, fraction: string, places: number): [string, stri
   return [carried.slice(0, cut).join("") || "0", carried.slice(cut).join("")];
 }
 
+/**
+ * Milli-units: three decimal places.
+ *
+ * The default, and the reason it is the default. The ledger holds twelve decimal
+ * places and that precision is real — a single cheap request costs a fraction of
+ * a cent — but nobody reads `€0.003847493000`, and a screen full of figures like
+ * that is a screen where the number that matters cannot be found.
+ */
+export const DISPLAY_DECIMALS = 3;
+
 export interface FormatMoneyOptions {
   /**
-   * Cap the decimals shown, rounding to fit.
+   * Cap the decimals shown, rounding to fit. Defaults to milli-units.
    *
-   * Left unset the full stored precision is shown, which is what an
-   * administrator reconciling against a provider's invoice needs. Set it for a
-   * reader who wants to know what they spent, not to audit it — three places
-   * (milli-EUR) is the useful figure there, and twelve is noise.
+   * **The cap used to be opt-in and is now opt-out**, which is the whole fix: it
+   * meant a call site leaked twelve decimal places by *saying nothing*, and four
+   * of the five screens said nothing. A default that is wrong when you forget it
+   * is a default facing the wrong way.
    */
   maxDecimals?: number;
+  /**
+   * Every digit the ledger holds, for an administrator reconciling against a
+   * provider's invoice.
+   *
+   * Deliberately a separate flag rather than `maxDecimals: 12`: the caller is
+   * asking for *exactness*, not for a particular number of places, and the
+   * stored precision is the schema's business rather than theirs.
+   */
+  exact?: boolean;
 }
 
-/** Trims the API's trailing zeros to two decimals without going through a float. */
+/** Formats an amount for display, without ever going through a float. */
 export function formatMoney(
   input: string,
   currency: string,
@@ -109,11 +136,25 @@ export function formatMoney(
   const negative = amount.startsWith("-");
   const [rawWhole = "0", rawFraction = ""] = amount.replace("-", "").split(".");
 
-  const { maxDecimals } = options;
+  const maxDecimals = options.exact
+    ? undefined
+    : (options.maxDecimals ?? DISPLAY_DECIMALS);
   if (maxDecimals !== undefined) {
     const [whole, fraction] = roundTo(rawWhole, rawFraction, maxDecimals);
     const grouped = group(whole);
-    const rendered = maxDecimals > 0 ? `${grouped}.${fraction}` : grouped;
+    // "At most" milli-units, not "exactly": a trailing zero is trimmed back to
+    // the two decimals money is conventionally written in, so €12.50 stays
+    // €12.50 rather than becoming €12.500. The third place appears only when it
+    // carries something — €0.004 — which is the whole reason for allowing it.
+    //
+    // The cost is that a column of figures can be a digit ragged on the right.
+    // Accepted: `font-variant-numeric: tabular-nums` keeps the digits themselves
+    // aligned, and a page of amounts written the way money is not written is the
+    // worse of the two.
+    const floor = Math.min(2, maxDecimals);
+    let shown = fraction;
+    while (shown.length > floor && shown.endsWith("0")) shown = shown.slice(0, -1);
+    const rendered = shown.length > 0 ? `${grouped}.${shown}` : grouped;
 
     // Rounding a real amount down to zero would say the reader spent nothing.
     // That is the mistake the full-precision branch below exists to avoid, so
@@ -130,9 +171,9 @@ export function formatMoney(
     return `${negative ? "−" : ""}${symbol}${rendered}`;
   }
 
-  // Two decimals is the display convention for money. Sub-cent precision is real
-  // in the ledger — a single cheap request can cost a fraction of a cent — so it
-  // is shown rather than rounded away to a misleading 0.00.
+  // `exact`: every digit the ledger holds, with the API's trailing zeros trimmed.
+  // Two decimals minimum, because that is the display convention for money, and
+  // sub-cent precision beyond it is shown rather than rounded away.
   const trimmed = rawFraction.replace(/0+$/, "");
   const decimals = trimmed.length > 2 ? trimmed : rawFraction.slice(0, 2).padEnd(2, "0");
   return `${negative ? "−" : ""}${symbol}${group(rawWhole)}.${decimals}`;

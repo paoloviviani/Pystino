@@ -11,7 +11,7 @@ import {
   Table,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
-import { formatMoney } from "@llmp/ui";
+import { formatMoney, useExactMoney } from "@llmp/ui";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import {
@@ -32,6 +32,10 @@ import { PageHeader } from "../components/PageHeader";
 import styles from "./Admin.module.css";
 
 export function AdminModels() {
+  // A rate is money too, so it follows the reader's precision preference. Read
+  // by hand rather than via <Money> because these figures sit inside a phrase
+  // ("0.117 in / 0.251 out").
+  const exact = useExactMoney();
   // A provider catalogue import can bring hundreds of models in one click, so
   // this is one of the two screens that genuinely needs the pager.
   const paged = usePaginated();
@@ -81,9 +85,17 @@ export function AdminModels() {
       render: (model) =>
         model.current_price ? (
           <>
-            <div>{formatMoney(model.current_price.input_per_mtok, model.current_price.currency)} in</div>
+            <div>
+              {formatMoney(model.current_price.input_per_mtok, model.current_price.currency, {
+                exact,
+              })}{" "}
+              in
+            </div>
             <div className={styles.muted}>
-              {formatMoney(model.current_price.output_per_mtok, model.current_price.currency)} out
+              {formatMoney(model.current_price.output_per_mtok, model.current_price.currency, {
+                exact,
+              })}{" "}
+              out
             </div>
           </>
         ) : (
@@ -807,6 +819,7 @@ function AccessDialog({ model, onClose }: { model: AdminModel | null; onClose: (
  * let a provider's release notes change what users can spend money on.
  */
 function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const exact = useExactMoney();
   const providers = useProviders();
   const [providerId, setProviderId] = useState("");
   // "What is on offer" is only a meaningful question about one endpoint, so
@@ -890,9 +903,10 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
       numeric: true,
       render: (row) =>
         row.input_per_mtok && row.currency
-          ? `${formatMoney(row.input_per_mtok, row.currency)} / ${formatMoney(
+          ? `${formatMoney(row.input_per_mtok, row.currency, { exact })} / ${formatMoney(
               row.output_per_mtok ?? "0",
               row.currency,
+              { exact },
             )}`
           : "—",
     },

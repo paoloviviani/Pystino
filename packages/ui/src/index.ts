@@ -34,8 +34,15 @@ export type { InputProps } from "./components/Input";
 export { Meter } from "./components/Meter";
 export type { MeterProps } from "./components/Meter";
 
-export { Money, formatMoney } from "./components/Money";
-export type { MoneyProps } from "./components/Money";
+export { DISPLAY_DECIMALS, Money, formatMoney } from "./components/Money";
+export type { FormatMoneyOptions, MoneyProps } from "./components/Money";
+
+export {
+  MoneyPrecisionContext,
+  MoneyPrecisionProvider,
+  useExactMoney,
+} from "./components/MoneyPrecision";
+export type { MoneyPrecisionProviderProps } from "./components/MoneyPrecision";
 
 export { Notice } from "./components/Notice";
 export type { NoticeProps } from "./components/Notice";

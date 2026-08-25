@@ -192,3 +192,73 @@ describe("Shell", () => {
     expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
   });
 });
+
+/**
+ * The exact-figures preference.
+ *
+ * Amounts are rounded to milli-units everywhere, because the ledger's twelve
+ * decimal places are noise on a screen someone is reading. This is the escape
+ * hatch for the one reader who needs them — an administrator reconciling against
+ * a provider's invoice, where a divergence can be smaller than a milli-unit and
+ * still be the thing they are looking for.
+ */
+describe("Shell: exact figures", () => {
+  afterEach(() => {
+    try {
+      window.localStorage.clear();
+    } catch {
+      // Nothing to clear if storage is unavailable, which is also fine.
+    }
+  });
+
+  it("offers the toggle to an administrator", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderShell();
+
+    await user.click(screen.getByRole("button", { name: /Dave/ }));
+    const toggle = screen.getByRole("checkbox", { name: /Exact figures/ });
+    // Off by default: the safe default is the readable one, and exactness is a
+    // deliberate act.
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("does not offer it to a reader who has no use for it", async () => {
+    // Every figure that needs reconciling against an invoice is on a screen a
+    // non-administrator cannot open.
+    const user = userEvent.setup({ delay: null });
+    renderShell(me({ is_admin: false }));
+
+    await user.click(screen.getByRole("button", { name: /Dave/ }));
+    expect(screen.queryByRole("checkbox", { name: /Exact figures/ })).not.toBeInTheDocument();
+  });
+
+  it("remembers the choice across a reload", async () => {
+    const user = userEvent.setup({ delay: null });
+    const first = renderShell();
+
+    await user.click(screen.getByRole("button", { name: /Dave/ }));
+    await user.click(screen.getByRole("checkbox", { name: /Exact figures/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("checkbox", { name: /Exact figures/ })).toBeChecked(),
+    );
+
+    first.unmount();
+    renderShell();
+    await user.click(screen.getByRole("button", { name: /Dave/ }));
+    expect(screen.getByRole("checkbox", { name: /Exact figures/ })).toBeChecked();
+  });
+
+  it("does not restore an administrator's choice for a non-administrator", async () => {
+    // Same browser, different person: the preference is stored per browser, so
+    // the admin check has to be applied on read as well as on render.
+    const user = userEvent.setup({ delay: null });
+    const first = renderShell();
+    await user.click(screen.getByRole("button", { name: /Dave/ }));
+    await user.click(screen.getByRole("checkbox", { name: /Exact figures/ }));
+    first.unmount();
+
+    renderShell(me({ is_admin: false }));
+    await user.click(screen.getByRole("button", { name: /Dave/ }));
+    expect(screen.queryByRole("checkbox", { name: /Exact figures/ })).not.toBeInTheDocument();
+  });
+});

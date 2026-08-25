@@ -192,6 +192,31 @@
   color: var(--colour-text-faint);
 }
 
+/* The exact-figures preference. A checkbox with its explanation under the label,
+   because "Exact figures" alone does not say what it costs a reader — twelve
+   decimal places on every amount — or what it is for. */
+.menuToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--border-width) solid var(--colour-border);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.menuToggle input {
+  /* Aligns the box with the first line of the label rather than its middle. */
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
+
+.menuHint {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--colour-text-faint);
+}
+
 .identityName {
   /* A long email should not push the badge off the header on a narrow window. */
   max-width: 16rem;
@@ -213,7 +238,32 @@
     padding: var(--space-3) var(--space-4);
   }
 
-  .identityName {
+  /* The exact-figures preference. A checkbox with its explanation under the label,
+   because "Exact figures" alone does not say what it costs a reader — twelve
+   decimal places on every amount — or what it is for. */
+.menuToggle {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--border-width) solid var(--colour-border);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.menuToggle input {
+  /* Aligns the box with the first line of the label rather than its middle. */
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
+
+.menuHint {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--colour-text-faint);
+}
+
+.identityName {
     max-width: 8rem;
   }
 

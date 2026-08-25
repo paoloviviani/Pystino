@@ -1,4 +1,4 @@
-import { Badge, Button } from "@llmp/ui";
+import { Badge, Button, MoneyPrecisionProvider } from "@llmp/ui";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { NavLink } from "react-router";
@@ -31,11 +31,46 @@ const NAV: NavItem[] = [
   { to: "/admin/redaction", label: "Redaction", adminOnly: true },
 ];
 
+/**
+ * Whether this reader has asked for exact figures, remembered across reloads.
+ *
+ * `localStorage` rather than a server-side preference: it is a property of how
+ * one person is reading one browser, not of who they are, and a round trip to
+ * store it would be a migration and an endpoint for a checkbox. Wrapped because
+ * a browser with site data blocked throws on access rather than returning null,
+ * and a console that will not load because it could not read a display
+ * preference is a worse outcome than a preference that does not stick.
+ */
+const EXACT_MONEY_KEY = "llmp.console.exactMoney";
+
+function readExactMoney(): boolean {
+  try {
+    return window.localStorage.getItem(EXACT_MONEY_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 export function Shell({ me, children }: ShellProps) {
   const items = NAV.filter((item) => !item.adminOnly || me.is_admin);
   const name = me.display_name || me.email || "Signed in";
 
+  // Administrators only. A reader looking at their own spend has no use for
+  // twelve decimal places, and the figures that need reconciling against a
+  // provider's invoice are all on screens they cannot open.
+  const [exactMoney, setExactMoney] = useState(() => me.is_admin && readExactMoney());
+  const toggleExactMoney = () => {
+    const next = !exactMoney;
+    setExactMoney(next);
+    try {
+      window.localStorage.setItem(EXACT_MONEY_KEY, String(next));
+    } catch {
+      // Not sticking across reloads is a small loss; failing the click is not.
+    }
+  };
+
   return (
+    <MoneyPrecisionProvider exact={exactMoney}>
     <div className={styles.shell}>
       <header className={styles.header}>
         <div className={styles.headerInner}>
@@ -65,12 +100,18 @@ export function Shell({ me, children }: ShellProps) {
             ))}
           </nav>
 
-          <UserMenu me={me} name={name} />
+          <UserMenu
+            me={me}
+            name={name}
+            exactMoney={exactMoney}
+            onToggleExactMoney={toggleExactMoney}
+          />
         </div>
       </header>
 
       <main className={styles.main}>{children}</main>
     </div>
+    </MoneyPrecisionProvider>
   );
 }
 
@@ -87,7 +128,17 @@ export function Shell({ me, children }: ShellProps) {
  * user than one that claims nothing. This is a disclosure containing ordinary
  * buttons: `aria-expanded` on the trigger, and Tab works.
  */
-function UserMenu({ me, name }: { me: Me; name: string }) {
+function UserMenu({
+  me,
+  name,
+  exactMoney,
+  onToggleExactMoney,
+}: {
+  me: Me;
+  name: string;
+  exactMoney: boolean;
+  onToggleExactMoney: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const container = useRef<HTMLDivElement>(null);
@@ -158,6 +209,21 @@ function UserMenu({ me, name }: { me: Me; name: string }) {
                 : "No default billing group"}
             </div>
           </div>
+          {/* A reader preference, so it lives with the other one — who you are
+              — rather than as a control on every screen that shows a figure.
+              Administrators only: see the Shell. */}
+          {me.is_admin && (
+            <label className={styles.menuToggle}>
+              <input type="checkbox" checked={exactMoney} onChange={onToggleExactMoney} />
+              <span>
+                Exact figures
+                <span className={styles.menuHint}>
+                  Every decimal the ledger holds, for reconciling against a provider&apos;s
+                  invoice. Otherwise amounts are rounded to milli-units.
+                </span>
+              </span>
+            </label>
+          )}
           <Button variant="ghost" busy={busy} onClick={signOut}>
             Sign out
           </Button>

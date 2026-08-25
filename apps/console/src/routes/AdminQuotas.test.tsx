@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LimitRule } from "../lib/types";
+import { MoneyPrecisionProvider } from "@llmp/ui";
 import { jsonResponse } from "../test-helpers";
 import { AdminQuotas } from "./AdminQuotas";
 
@@ -47,11 +48,13 @@ function routes(rules: LimitRule[]) {
   });
 }
 
-function renderScreen(element: ReactElement) {
+function renderScreen(element: ReactElement, exactMoney = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>{element}</MemoryRouter>
+      <MoneyPrecisionProvider exact={exactMoney}>
+        <MemoryRouter>{element}</MemoryRouter>
+      </MoneyPrecisionProvider>
     </QueryClientProvider>,
   );
 }
@@ -72,6 +75,33 @@ describe("AdminQuotas", () => {
     renderScreen(<AdminQuotas />);
 
     await waitFor(() => expect(screen.getByText("€31.40 of €50.00")).toBeInTheDocument());
+  });
+
+  it("rounds a sub-milli figure rather than printing the ledger at you", async () => {
+    // The complaint this fixes: "€7.32012 of €10.00" on a screen someone reads
+    // to decide whether to raise a cap.
+    vi.stubGlobal(
+      "fetch",
+      routes([rule({ current_value: "7.320119870000", limit_value: "10.000000000000" })]),
+    );
+    renderScreen(<AdminQuotas />);
+
+    await waitFor(() => expect(screen.getByText("€7.32 of €10.00")).toBeInTheDocument());
+  });
+
+  it("shows every digit when the reader has asked for exact figures", async () => {
+    // The escape hatch, reached from the identity menu. This screen reads the
+    // preference by hand because its figures sit inside a phrase, so the wiring
+    // is worth pinning rather than assuming.
+    vi.stubGlobal(
+      "fetch",
+      routes([rule({ current_value: "7.320119870000", limit_value: "10.000000000000" })]),
+    );
+    renderScreen(<AdminQuotas />, true);
+
+    await waitFor(() =>
+      expect(screen.getByText("€7.32011987 of €10.00")).toBeInTheDocument(),
+    );
   });
 
   it("names the window the rule uses", async () => {
