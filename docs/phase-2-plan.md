@@ -267,8 +267,8 @@ headers and the SPA fallback; session-cookie auth with a redirect to
 | `/` | Own spend for a named period, by model/day/group/key, CSV, API keys |
 | `/admin/reports` | Chargeback: period, six breakdowns, group and model filters, CSV, and what share of the figure is measured rather than inferred |
 | `/admin/quotas` | Rules with live consumption as a meter, over-budget and nearly-spent states, create, delete, reset-with-reason, reset history |
-| `/admin/models` | Catalogue with prices and grants, activate/deactivate, per-group access, provider discovery and selective import |
-| `/admin/pricing` | Append-only price history per model, with scheduled future prices marked |
+| `/admin/models` | Catalogue with prices and grants, activate/deactivate, provider discovery and selective import |
+| `/admin/models/:id` | One model: capabilities, append-only price history with scheduled prices marked, and who may reach it. Absorbed the separate `/admin/pricing` screen — [ADR 0036](adr/0036-model-page.md) |
 | `/admin/users` | Users, groups, keys, last login, enable/disable |
 
 **Found while building it:**
@@ -318,8 +318,8 @@ cookie authenticates it. See [0023](adr/0023-admin-console.md).
 | Route | Who | Content |
 |---|---|---|
 | `/` | any authenticated user | own spend, own groups' spend, API keys, default billing group |
-| `/admin/models` | admin | catalogue: create, edit, activate/deactivate; **discover** what the provider offers that we do not carry, and adopt with one click (API already built) |
-| `/admin/pricing` | admin | price history per model, append a new price, schedule a future one |
+| `/admin/models` | admin | catalogue: create, activate/deactivate; **discover** what the provider offers that we do not carry, and adopt with one click (API already built) |
+| `/admin/models/:id` | admin | one model: capabilities, access, price history, append a new price, schedule a future one. Planned as a separate `/admin/pricing` tab; folded in afterwards ([ADR 0036](adr/0036-model-page.md)) |
 | `/admin/quotas` | admin | rules with current consumption; budgets as "€31.40 of €50 this month, resets in 12 days"; which default each explicit rule shadows; a reset button with a required reason |
 | `/admin/reports` | admin | spend by group/user/model/period, CSV export |
 | `/admin/users` | admin | users, groups, keys, activity |

@@ -30,6 +30,10 @@ import type {
 export const adminKeys = {
   providers: ["admin", "providers"] as const,
   models: ["admin", "models"] as const,
+  // Prefixed by `models`, so every mutation that invalidates the catalogue
+  // refreshes an open model page too — which is the whole reason the page can
+  // afford to be a second view of the same row rather than its own cache.
+  model: (modelId: string) => ["admin", "models", modelId] as const,
   prices: (modelId: string) => ["admin", "models", modelId, "prices"] as const,
   discovery: ["admin", "models", "discover"] as const,
   groups: ["admin", "groups"] as const,
@@ -205,6 +209,22 @@ export function useModels(query: PageQuery = { limit: MAX_LIMIT }) {
   });
 }
 
+/**
+ * One model, for its own page.
+ *
+ * Not "find it in the listing we already have": the page is addressable, so it
+ * has to work when the listing was never fetched — a bookmark, a reload, a link
+ * pasted into a ticket.
+ */
+export function useModel(modelId: string | null) {
+  return useQuery({
+    queryKey: adminKeys.model(modelId ?? ""),
+    queryFn: () => request<AdminModel>(`/api/admin/models/${modelId}`),
+    enabled: modelId !== null,
+    retry: retryUnlessRejected,
+  });
+}
+
 export function usePrices(modelId: string | null, query: PageQuery = { limit: MAX_LIMIT }) {
   const search = pageParams(query);
   return useQuery({
@@ -342,6 +362,16 @@ export interface CreatePriceInput {
   modelId: string;
   input_per_mtok: string;
   output_per_mtok: string;
+  /**
+   * Cache rates, which the API has always accepted and no screen offered.
+   *
+   * Leaving them out is not neutral: a provider that bills cache reads at a
+   * fraction of the input rate is billed here at the *full* input rate, so the
+   * invoice and the ledger diverge on exactly the requests the cache was meant
+   * to make cheaper. See docs/cache-accounting-findings.md.
+   */
+  cache_read_per_mtok?: string | null;
+  cache_write_per_mtok?: string | null;
   /** Omitted for a token-priced model; the two are not alternatives. */
   per_image?: string | null;
   effective_from?: string | null;

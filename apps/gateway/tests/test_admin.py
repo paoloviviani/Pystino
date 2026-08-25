@@ -149,6 +149,52 @@ class TestModels:
         response = await client.patch(f"/api/admin/models/{uuid.uuid4()}", json={})
         assert response.status_code == 404
 
+    async def test_one_model_can_be_fetched_by_id(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """What a deep link to the console's model page needs.
+
+        The same shape as a row of the listing, grants and current price
+        included, so the page renders identically however it was reached.
+        """
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.get(f"/api/admin/models/{seeded.model.id}")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["id"] == str(seeded.model.id)
+        assert body["name"] == seeded.model.name
+        assert "granted_to" in body and "current_price" in body
+
+        listing = (await client.get("/api/admin/models")).json()["items"]
+        assert body in listing
+
+        missing = await client.get(f"/api/admin/models/{uuid.uuid4()}")
+        assert missing.status_code == 404
+
+    async def test_discover_is_not_shadowed_by_the_by_id_route(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """`/models/discover` is a literal path and `{model_id}` would eat it.
+
+        FastAPI matches in declaration order, so this passes or fails on where
+        the by-id route is declared — and the failure is a 422 about a malformed
+        uuid from an endpoint nobody asked for, which reads like a client bug.
+        """
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.get(
+            "/api/admin/models/discover", params={"provider_id": str(seeded.provider.id)}
+        )
+        assert response.status_code != 422, response.text
+
 
 class TestPrices:
     async def test_a_new_price_is_appended_never_edited(

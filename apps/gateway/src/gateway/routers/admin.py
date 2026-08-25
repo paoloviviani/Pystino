@@ -960,6 +960,30 @@ async def import_models(
     return ModelImportResponse(results=results)
 
 
+# Declared here, after /models/discover and /models/import, and that placement is
+# load-bearing: FastAPI matches in declaration order, so a `/models/{model_id}`
+# above them would swallow both and answer a discovery request with "422: value
+# is not a valid uuid" — a route that exists, reached by nobody.
+@router.get("/models/{model_id}", response_model=ModelAdminResponse)
+async def get_model(
+    model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> ModelAdminResponse:
+    """One model, with its grants and current price.
+
+    The listing carries the same shape, so this exists for the one thing a
+    listing cannot serve: a deep link. The console's model page is addressable —
+    a bookmark, a reload, a link pasted into a ticket — and searching the
+    catalogue by name to rebuild a page whose id is right there would be both
+    slower and wrong, because the name is editable and the id is not.
+    """
+    model = await _load_model(session, model_id)
+    grants = await _grants_by_model(session, [model.id])
+    user_grants = await _user_grants_by_model(session, [model.id])
+    return _model_response(
+        model, sorted(grants.get(model.id, [])), sorted(user_grants.get(model.id, []))
+    )
+
+
 # -- prices -----------------------------------------------------------------
 
 

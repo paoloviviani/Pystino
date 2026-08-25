@@ -47,6 +47,7 @@ verified is marked as such in the ADR that depends on it.
 | [0033](0033-redaction-engine-selection.md) | The redaction engine becomes an admin decision, on an append-only record |
 | [0034](0034-bauhaus-design-language.md) | Bauhaus as the design language, and a self-hosted geometric sans |
 | [0035](0035-public-tls-exposure.md) | A TLS reverse proxy, and the four holes that made "never on a routable address" the rule |
+| [0036](0036-model-page.md) | A model's price belongs on the model's page, not on a screen of its own |
 
 ## Decisions recorded now, implemented later
 

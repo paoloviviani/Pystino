@@ -1,0 +1,626 @@
+import {
+  Badge,
+  Button,
+  Card,
+  Input,
+  Money,
+  Notice,
+  Select,
+  Spinner,
+  Table,
+} from "@llmp/ui";
+import type { Column } from "@llmp/ui";
+import type { ReactNode } from "react";
+import { useState } from "react";
+import { Link, useParams } from "react-router";
+import {
+  CapabilityPicker,
+  KNOWN_FEATURES,
+  KNOWN_INPUTS,
+  KNOWN_OUTPUTS,
+} from "../components/CapabilityPicker";
+import { PageHeader } from "../components/PageHeader";
+import {
+  useCreatePrice,
+  useGroups,
+  useModel,
+  useModelAccess,
+  usePrices,
+  useUpdateModel,
+  useUserModelAccess,
+  useUsers,
+} from "../lib/admin";
+import { usePaginated } from "../lib/paging";
+import type { AdminModel, ModelKind, Price } from "../lib/types";
+import styles from "./Admin.module.css";
+
+/**
+ * One model, and everything that is true of it.
+ *
+ * Pricing used to be its own screen, with its own model picker. That made the
+ * two halves of one question — "what is this model, and what does it cost?" —
+ * into two navigations and a re-selection, and it made the dangerous state
+ * (catalogued, granted, unpriced, therefore billing zero) something you had to
+ * go and look for on another page. They are one page now, and the price is
+ * beside the grants that decide who can spend it.
+ *
+ * A page rather than a bigger dialog: there is a price *history* here, and a
+ * dialog that scrolls is a dialog that should have been a page. It also makes
+ * the model addressable — a link in a ticket, a bookmark, a reload that lands
+ * where it left off.
+ */
+export function AdminModelDetail() {
+  const { modelId = null } = useParams();
+  const model = useModel(modelId);
+
+  if (model.isPending) {
+    return (
+      <div className={styles.page}>
+        <Spinner label="Loading the model" />
+      </div>
+    );
+  }
+
+  if (model.error || !model.data) {
+    return (
+      <div className={styles.page}>
+        <Notice tone="danger" title="Could not load this model">
+          {model.error instanceof Error ? model.error.message : "Unknown error."}{" "}
+          <Link to="/admin/models">Back to the catalogue</Link>
+        </Notice>
+      </div>
+    );
+  }
+
+  return <ModelPage model={model.data} />;
+}
+
+function ModelPage({ model }: { model: AdminModel }) {
+  const update = useUpdateModel();
+
+  return (
+    <div className={styles.page}>
+      <PageHeader
+        title={model.name}
+        subtitle={
+          <>
+            <Link to="/admin/models">Models</Link> · served as{" "}
+            <code className={styles.code}>{model.upstream_model}</code> by {model.provider_name}
+          </>
+        }
+        actions={
+          <Button
+            busy={update.isPending}
+            onClick={() => update.mutate({ id: model.id, is_active: !model.is_active })}
+          >
+            {model.is_active ? "Deactivate" : "Activate"}
+          </Button>
+        }
+      />
+
+      {update.error ? (
+        <Notice tone="danger" title="Could not update the model">
+          {update.error instanceof Error ? update.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      {/* The two states worth interrupting someone about, and they are not
+          symmetrical: an inactive model serves nobody and is obvious the moment
+          anyone tries it, while an unpriced one serves everybody and records a
+          cost of zero, which nobody notices until the reconciliation. */}
+      {!model.current_price && (
+        <Notice tone="warn" title="This model has no price">
+          It will serve requests and record a cost of zero. Append a price below —
+          rates set now apply from now on, and cannot rewrite what earlier requests
+          were charged.
+        </Notice>
+      )}
+      {!model.provider_is_active && (
+        <Notice tone="danger" title={`${model.provider_name} is deactivated`}>
+          Every model behind it is out of service, whatever this model's own status says.
+        </Notice>
+      )}
+
+      <Card title="What it is">
+        <dl className={styles.details}>
+          <Detail label="Status">
+            {model.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
+          </Detail>
+          <Detail label="Name callers send">
+            <code className={styles.code}>{model.name}</code>
+          </Detail>
+          <Detail label="Upstream model">
+            <code className={styles.code}>{model.upstream_model}</code>
+          </Detail>
+          <Detail label="Provider">
+            <Link to="/admin/providers">{model.provider_name}</Link>
+          </Detail>
+        </dl>
+      </Card>
+
+      <Describe model={model} />
+      <Pricing model={model} />
+      <Access model={model} />
+    </div>
+  );
+}
+
+function Detail({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <>
+      <dt className={styles.detailLabel}>{label}</dt>
+      <dd className={styles.detailValue}>{children}</dd>
+    </>
+  );
+}
+
+/**
+ * Correcting what the catalogue claimed.
+ *
+ * Discovery imports the provider's own description, and a provider's catalogue
+ * is a claim rather than a contract — a model advertised as supporting tool
+ * calling may do it badly or not at all. Without somewhere to record that, the
+ * only options are to believe it or to stop importing.
+ *
+ * `kind` is editable for the sharper version of the same problem: it is
+ * inferred from modality tags, and inferring it wrong takes a model off the
+ * only route that would serve it.
+ */
+function Describe({ model }: { model: AdminModel }) {
+  const update = useUpdateModel();
+  const [kind, setKind] = useState<ModelKind>(model.kind);
+  const [inputs, setInputs] = useState<string[]>(model.input_modalities);
+  const [outputs, setOutputs] = useState<string[]>(model.output_modalities);
+  const [features, setFeatures] = useState<string[]>(model.supported_features);
+  const [context, setContext] = useState(
+    model.context_window ? String(model.context_window) : "",
+  );
+
+  return (
+    <Card
+      title="Capabilities"
+      description="What callers are told on /v1/models. Changing them does not change what the
+        provider will accept, and re-running Discover never overwrites an edit."
+    >
+      <div className={styles.form}>
+        {update.error ? (
+          <Notice tone="danger">
+            {update.error instanceof Error ? update.error.message : "Unknown error."}
+          </Notice>
+        ) : null}
+        {update.isSuccess && !update.isPending && <Notice tone="info">Saved.</Notice>}
+
+        <Select
+          label="Kind"
+          value={kind}
+          onChange={(event) => setKind(event.target.value as ModelKind)}
+          hint="Which routes will serve it. Discovery infers this from the provider's
+            modality tags and can get it wrong."
+        >
+          <option value="chat">Chat — /v1/chat/completions, /v1/responses, /v1/messages</option>
+          <option value="embedding">Embedding — /v1/embeddings</option>
+          <option value="image">Image — /v1/images/generations</option>
+        </Select>
+
+        <CapabilityPicker
+          label="Accepts"
+          otherLabel="Other input modalities"
+          hint="What can be sent to it."
+          known={KNOWN_INPUTS}
+          value={inputs}
+          onChange={setInputs}
+        />
+        <CapabilityPicker
+          label="Produces"
+          otherLabel="Other output modalities"
+          hint="What comes back."
+          known={KNOWN_OUTPUTS}
+          value={outputs}
+          onChange={setOutputs}
+        />
+        <CapabilityPicker
+          label="Features"
+          otherLabel="Other features"
+          hint="Not a fixed list — whatever the provider reports is kept, so a capability
+            it added last week is not silently dropped."
+          known={KNOWN_FEATURES}
+          value={features}
+          onChange={setFeatures}
+        />
+        <Input
+          label="Context window"
+          type="number"
+          min="1"
+          value={context}
+          onChange={(event) => setContext(event.target.value)}
+          hint="Tokens. Leave empty if unknown."
+        />
+
+        <div>
+          <Button
+            variant="primary"
+            busy={update.isPending}
+            onClick={() =>
+              update.mutate({
+                id: model.id,
+                kind,
+                input_modalities: inputs,
+                output_modalities: outputs,
+                supported_features: features,
+                context_window: context === "" ? null : Number(context),
+              })
+            }
+          >
+            Save capabilities
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Price history and the form that appends to it.
+ *
+ * There is no edit, and that is the design rather than a missing feature: a
+ * price is effective-dated and append-only, so a future date schedules a change
+ * and a past one cannot rewrite what already-recorded requests cost (ADR 0008).
+ */
+function Pricing({ model }: { model: AdminModel }) {
+  const prices = usePrices(model.id);
+  const now = new Date();
+
+  const columns: Column<Price>[] = [
+    {
+      key: "effective",
+      header: "Effective from",
+      render: (price) => (
+        <>
+          <div>{formatDateTime(price.effective_from)}</div>
+          {new Date(price.effective_from) > now && <Badge tone="accent">Scheduled</Badge>}
+        </>
+      ),
+    },
+    {
+      key: "input",
+      header: "Input / Mtok",
+      numeric: true,
+      render: (price) => <Money amount={price.input_per_mtok} currency={price.currency} />,
+    },
+    {
+      key: "output",
+      header: "Output / Mtok",
+      numeric: true,
+      render: (price) => <Money amount={price.output_per_mtok} currency={price.currency} />,
+    },
+    // Cache rates and the per-image rate are all optional, and a dash is not the
+    // same claim as a zero: "not priced this way" and "free" are different
+    // facts, and one of them is a decision somebody made.
+    {
+      key: "cache",
+      header: "Cache read / write",
+      numeric: true,
+      render: (price) =>
+        price.cache_read_per_mtok || price.cache_write_per_mtok ? (
+          <>
+            <div>
+              <Rate amount={price.cache_read_per_mtok} currency={price.currency} />
+            </div>
+            <div className={styles.muted}>
+              <Rate amount={price.cache_write_per_mtok} currency={price.currency} />
+            </div>
+          </>
+        ) : (
+          <span className={styles.muted}>—</span>
+        ),
+    },
+    {
+      key: "image",
+      header: "Per image",
+      numeric: true,
+      render: (price) => <Rate amount={price.per_image} currency={price.currency} />,
+    },
+    {
+      key: "source",
+      header: "Source",
+      render: (price) => <Badge>{price.source}</Badge>,
+    },
+  ];
+
+  return (
+    <>
+      <Card
+        title="Price history"
+        flush
+        description="Newest first. Nothing here is ever mutated — a correction is a new row."
+      >
+        {prices.isPending ? (
+          <Spinner />
+        ) : prices.error ? (
+          <Notice tone="danger" title="Could not load the price history">
+            {prices.error instanceof Error ? prices.error.message : "Unknown error."}
+          </Notice>
+        ) : (
+          <Table
+            columns={columns}
+            rows={prices.data?.items ?? []}
+            rowKey={(price) => price.id}
+            empty="No price has ever been set. This model records a cost of zero."
+            caption={`Price history for ${model.name}.`}
+          />
+        )}
+      </Card>
+      <AppendPrice model={model} />
+    </>
+  );
+}
+
+function Rate({ amount, currency }: { amount: string | null; currency: string }) {
+  if (!amount) return <span className={styles.muted}>—</span>;
+  return <Money amount={amount} currency={currency} />;
+}
+
+function AppendPrice({ model }: { model: AdminModel }) {
+  const create = useCreatePrice();
+  const [input, setInput] = useState("");
+  const [output, setOutput] = useState("");
+  const [cacheRead, setCacheRead] = useState("");
+  const [cacheWrite, setCacheWrite] = useState("");
+  const [perImage, setPerImage] = useState("");
+  const [effective, setEffective] = useState("");
+
+  const submit = () => {
+    create.mutate(
+      {
+        modelId: model.id,
+        input_per_mtok: input,
+        output_per_mtok: output,
+        // Omitted rather than sent as zero: zero is a real price meaning
+        // "free", and a model with no cache rate is billed at the input rate,
+        // which is a different statement from being billed nothing.
+        cache_read_per_mtok: cacheRead === "" ? null : cacheRead,
+        cache_write_per_mtok: cacheWrite === "" ? null : cacheWrite,
+        per_image: perImage === "" ? null : perImage,
+        // A datetime-local value carries no zone; converting through Date makes
+        // the browser's zone explicit rather than letting the server guess.
+        effective_from: effective ? new Date(effective).toISOString() : null,
+      },
+      {
+        onSuccess: () => {
+          setInput("");
+          setOutput("");
+          setCacheRead("");
+          setCacheWrite("");
+          setPerImage("");
+          setEffective("");
+        },
+      },
+    );
+  };
+
+  return (
+    <Card title="Append a price">
+      <div className={styles.form}>
+        {create.error ? (
+          <Notice tone="danger">
+            {create.error instanceof Error ? create.error.message : "Unknown error."}
+          </Notice>
+        ) : null}
+        {create.isSuccess && !create.isPending && (
+          <Notice tone="info">Price appended. It applies from its effective date onwards.</Notice>
+        )}
+
+        <div className={styles.formRow}>
+          <Input
+            label="Input per Mtok"
+            type="number"
+            min="0"
+            step="0.000001"
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            hint="In the gateway's billing currency"
+          />
+          <Input
+            label="Output per Mtok"
+            type="number"
+            min="0"
+            step="0.000001"
+            value={output}
+            onChange={(event) => setOutput(event.target.value)}
+          />
+          <Input
+            label="Cache read per Mtok"
+            type="number"
+            min="0"
+            step="0.000001"
+            value={cacheRead}
+            onChange={(event) => setCacheRead(event.target.value)}
+            hint="Leave empty and cached input is billed at the full input rate."
+          />
+          <Input
+            label="Cache write per Mtok"
+            type="number"
+            min="0"
+            step="0.000001"
+            value={cacheWrite}
+            onChange={(event) => setCacheWrite(event.target.value)}
+          />
+          <Input
+            label="Per image"
+            type="number"
+            min="0"
+            step="0.000001"
+            value={perImage}
+            onChange={(event) => setPerImage(event.target.value)}
+            hint="Image models only. Charged per picture, on top of any token rates."
+          />
+          <Input
+            label="Effective from"
+            type="datetime-local"
+            value={effective}
+            onChange={(event) => setEffective(event.target.value)}
+            hint="Leave empty for now. A future date schedules the change."
+          />
+        </div>
+
+        <div>
+          <Button
+            variant="primary"
+            busy={create.isPending}
+            disabled={input === "" || output === ""}
+            onClick={submit}
+          >
+            Append price
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Who may use this model.
+ *
+ * Groups and individuals are unioned at request time, so they are shown
+ * together rather than as alternatives — a person may reach a model through
+ * their group or personally, and removing one leaves the other.
+ */
+function Access({ model }: { model: AdminModel }) {
+  const groups = useGroups();
+  const access = useModelAccess();
+  const userAccess = useUserModelAccess();
+  const finder = usePaginated(20);
+
+  // The directory is searched, not downloaded. Nothing is requested until
+  // something is typed: granting one person access should not pull a page of
+  // accounts nobody asked about.
+  const users = useUsers(finder.page, finder.query.trim().length > 0);
+  const matching = finder.query.trim() ? (users.data?.items ?? []) : [];
+  const granted = model.granted_to_users;
+
+  return (
+    <Card title="Access" description="Absence of a grant means no access; there is no allow-all.">
+      {access.error ? (
+        <Notice tone="danger">
+          {access.error instanceof Error ? access.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      <p className={styles.muted}>Groups</p>
+      {groups.isPending ? (
+        <Spinner />
+      ) : (
+        <div className={styles.checkList}>
+          {(groups.data?.items ?? []).map((group) => {
+            const has = group.models.includes(model.name);
+            return (
+              <label key={group.id} className={styles.checkItem}>
+                <input
+                  type="checkbox"
+                  checked={has}
+                  disabled={access.isPending}
+                  onChange={() =>
+                    access.mutate({ groupId: group.id, modelId: model.id, grant: !has })
+                  }
+                />
+                <span>{group.name}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+
+      <p className={styles.muted}>
+        Individual people, in addition to their groups. Everyone already granted is listed
+        below; search to add someone else.
+      </p>
+      {granted.length > 0 && (
+        <div className={styles.checkList}>
+          {granted.map((email) => (
+            <label key={email} className={styles.checkItem}>
+              <input
+                type="checkbox"
+                checked
+                disabled={userAccess.isPending}
+                onChange={() => {
+                  // Revoking needs the id, and the grant list carries only the
+                  // label — so find the account by searching for it. Exact,
+                  // because an email is unique.
+                  const match = users.data?.items.find((entry) => entry.email === email);
+                  if (match) {
+                    userAccess.mutate({ userId: match.id, modelId: model.id, grant: false });
+                  } else {
+                    finder.setSearch(email);
+                  }
+                }}
+              />
+              <span>{email}</span>
+            </label>
+          ))}
+        </div>
+      )}
+      <Input
+        label="Find a person"
+        hideLabel
+        value={finder.search}
+        onChange={(event) => finder.setSearch(event.target.value)}
+        placeholder="email, name or subject"
+      />
+      {userAccess.error ? (
+        <Notice tone="danger">
+          {userAccess.error instanceof Error ? userAccess.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+      <div className={styles.checkList}>
+        {matching.map((user) => {
+          const has = granted.includes(user.email ?? "");
+          return (
+            <label key={user.id} className={styles.checkItem}>
+              <input
+                type="checkbox"
+                checked={has}
+                disabled={userAccess.isPending}
+                onChange={() =>
+                  userAccess.mutate({ userId: user.id, modelId: model.id, grant: !has })
+                }
+              />
+              <span>{user.email ?? user.display_name ?? user.subject}</span>
+            </label>
+          );
+        })}
+        {matching.length === 0 && (
+          <span className={styles.muted}>
+            {!finder.query.trim()
+              ? granted.length === 0
+                ? "No individual grants."
+                : "Type to find someone else."
+              : users.isFetching
+                ? "Searching…"
+                : "Nobody matches that."}
+          </span>
+        )}
+        {users.data && users.data.total > matching.length && (
+          <span className={styles.muted}>
+            Showing {matching.length} of {users.data.total.toLocaleString()} matches — narrow
+            the search to see the rest.
+          </span>
+        )}
+      </div>
+
+      <Notice tone="info">
+        Revoking takes effect on the next request. Deactivating the model instead takes it
+        away from everyone at once, and keeps historical spend attributable.
+      </Notice>
+    </Card>
+  );
+}
+
+function formatDateTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
