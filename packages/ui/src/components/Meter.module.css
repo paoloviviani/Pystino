@@ -1,7 +1,22 @@
+/*
+ * The caption sits **under** the bar, not beside it.
+ *
+ * Beside it, the cell's width demand was `bar + gap + caption`, which couples the
+ * bar's room to the length of a formatted money string — and that string's width
+ * depends on the locale, the figures, and which font actually loaded. Two bugs
+ * came out of that coupling in a row: bars of different lengths, then a caption
+ * overflowing its cell and being painted over by the next column's badge.
+ *
+ * Stacked, the demand is `max(bar, caption)` — roughly half — and no font metric
+ * or locale can make the caption compete with the bar for horizontal space. It
+ * also reads better: the number belongs to the bar above it, and a column of
+ * bars is easier to compare when nothing sits between them.
+ */
 .meter {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
 }
 
 /* A ruled rectangle with a solid fill, rather than a rounded capsule. Taller
@@ -13,9 +28,13 @@
  * "€7.32012 of €1 000.00"), so every bar in a column came out a different length.
  * A bar chart whose bars have different *axes* is not a chart; two rules at 40%
  * that are not the same length cannot be compared, which is the only thing a
- * column of these is for. The caption takes the slack instead. */
+ * column of these is for. */
 .track {
-  flex: 0 0 7rem;
+  /* A fixed width, so every bar in a column is the same length and two rules
+   * both at 40% render identically. `flex: none` because the flex direction is
+   * now the column: without it the track would stretch to the caption's width. */
+  flex: none;
+  width: 7rem;
   height: 0.6rem;
   border: var(--border-width-quiet) solid var(--colour-border);
   border-radius: var(--radius-sm);

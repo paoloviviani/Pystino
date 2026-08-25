@@ -172,6 +172,32 @@ the name, so it costs a screen reader nothing.
   length. That is the intended place for it: a design decision explained in a
   component is a decision made in the wrong file.
 
+## The font declaration, and a trap in it
+
+`src: ... format("woff2")` — **not** `format("woff2-variations")`, which is what
+this shipped with for one commit. The latter is the legacy syntax from before
+variable fonts were finalised: Chromium accepts it and Safari rejects the whole
+`@font-face` rule.
+
+A rejected rule is **silent**. There is no error and no missing-font symptom,
+because the fallback stack here is Futura and Century Gothic — Jost is a Futura
+revival, so those are the metrically closest fallbacks, and they are also
+installed on most machines and *wider*. So the failure does not look like "the
+font is missing". It looks like "the layout is slightly wider than it should be",
+which is far harder to attribute to its cause. It surfaced as a caption
+overflowing its table cell on a reviewer's machine and not on the developer's.
+
+Two lessons, and the second is the reusable one:
+
+- The variable range is declared by `font-weight: 100 900`. The file being
+  variable needs no announcing in `format()`.
+- **A layout that depends on a font's metrics is a layout that breaks when the
+  font does not load.** The fix for the symptom was not the font declaration; it
+  was making the affected component's width demand independent of text width. See
+  `Meter.module.css` — the caption moved under the bar so that the cell needs
+  `max(bar, caption)` rather than `bar + gap + caption`, and no font metric can
+  make one compete with the other.
+
 ## A bug found on the way, unrelated to the design
 
 The self-hosted woff2 was served as `application/octet-stream` in the container
