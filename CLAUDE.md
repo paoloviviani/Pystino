@@ -287,9 +287,20 @@ rediscovered — one being built, one not started:
   engine that redacts nothing needs a written reason, kept permanently. Note
   `_engine_redacts` asks the registry rather than comparing against `"noop"` — an
   installable engine could redact nothing under any name.
-  Still to do: redaction is process-global when it needs to be scopeable per
-  model, provider, user or group, and the engine is not configurable from the
-  console. The precedence rule to copy is the quota engine's, inverted — quotas
+  Still to do, and **read §5 of that doc first**: what the detector detects is
+  wrong before scoping is even reached. On the deployment, *"Riassumi le notizie
+  del giorno da ilpost.it"* reached the upstream as
+  `<PERSON_…> le notizie del giorno da <URL_…>` — the English model called the
+  Italian verb a person at 0.85, and the news site the user asked for a URL. Both
+  components behaved as designed. What that indicts is configuration: nothing sets
+  `entity_types` (so it means "everything Presidio knows"), the language is a
+  per-process constant that is silently wrong for half the prompts here, the
+  contract carries no allowlist, and nothing shows an operator which spans were
+  replaced. Scoping is still to do too — redaction is process-global when it needs
+  to be scopeable per model, provider, user or group, and the engine is not
+  configurable from the console — but scoping only makes redaction apply to fewer
+  requests; it does not make it right on the ones it applies to.
+  The precedence rule to copy is the quota engine's, inverted — quotas
   are *all rules must pass*, redaction is *any applicable scope requiring it
   wins* — so adding a scope can only tighten. The doc carries the table shape,
   where it plugs into `_metered`, and why the first version has no exemptions.

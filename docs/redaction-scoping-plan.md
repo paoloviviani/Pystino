@@ -168,6 +168,87 @@ deliberate, separate, auditable thing — not a side effect of ordering.
   redaction to apply. Without that, "why was this redacted" is unanswerable
   after the fact.
 
+## 5. What it detects is wrong, and that is the more urgent half
+
+Recorded 2026-08-25, from a real request on the deployment. Scoping (§4) decides
+*whether* redaction runs; this is about what it does when it does run, and it is
+the failure a user actually hit first.
+
+The prompt, in Italian, asking for a summary of a news site:
+
+```
+Riassumi le notizie del giorno da ilpost.it
+```
+
+What reached the upstream, from the real path (`build_redactor` against the
+running detector, engine `http`, language `en`, threshold 0.5, no
+`entity_types` filter):
+
+```
+<PERSON_7KKAPJPZOK> le notizie del giorno da <URL_LEH7B4IAET>
+```
+
+Two spans, both from a default deployment with nothing misconfigured:
+
+| Entity | Score | Text | What it actually is |
+|---|---|---|---|
+| `PERSON` | 0.85 | `Riassumi` | the **verb**: "summarise" |
+| `URL` | 0.50 | `ilpost.it` | the **source the user asked to read** |
+
+The model was asked, by a stranger with no name, to summarise nothing in
+particular from somewhere unnamed. It answered as well as that deserves. Note
+what is *not* here: no date was detected — the reported suspicion that the date
+had been replaced was wrong, and the verb is the surprise.
+
+### Why each one happens
+
+- **`PERSON` on an Italian verb.** The English spaCy model is doing NER on
+  Italian text. A capitalised sentence-initial word it does not know is a person,
+  confidently — 0.85, well above any threshold anyone would set. This is the
+  `degraded_languages` case from ADR 0026 arriving as a wrong answer rather than
+  a missing one, which is worse: the healthz field says Italian names are
+  *under*-detected, and what actually happens is that ordinary Italian words are
+  *over*-detected as names.
+- **`URL` on the source.** Presidio detects URLs because a URL can carry
+  identity — a profile link, a signed download. `ilpost.it` carries none. But the
+  detector has no way to tell those apart, and the gateway's job is to redact
+  what it is told is PII, so both halves behaved as designed and the result is
+  still useless.
+
+### What this says about the design, before anyone fixes it
+
+The two things the request asked for — "more configurable" and "more standard" —
+are the same conclusion from two directions:
+
+1. **`entity_types` exists and nothing sets it.** `RedactionSettings.entity_types`
+   is `None`, meaning "everything Presidio knows". Nobody chose that; it is the
+   default of a field that was never filled in. A deployment that redacts
+   `PERSON`, `EMAIL_ADDRESS`, `PHONE_NUMBER`, `IBAN_CODE`, `CREDIT_CARD` and the
+   national identifiers, and leaves `URL`, `DATE_TIME`, `LOCATION` and `NRP`
+   alone, would have answered this prompt correctly. That is one environment
+   variable today and needs no code — but it is per-process, which is exactly the
+   limitation §4 is about, and it is not discoverable from the console.
+2. **Language is a per-process constant, and the wrong one is not an error.**
+   `GATEWAY_REDACTION__LANGUAGE=en` against Italian prompts is not a
+   misconfiguration anyone gets warned about. Either the language travels with the
+   request (the detector already takes it per call), or it is a scope like any
+   other, or the detector is asked to decide. Whichever, "one language per
+   gateway" does not survive contact with a bilingual foundation.
+3. **An allowlist is missing.** Presidio has `allow_list` in its own request
+   model and the contract does not carry it. A deployment that knows `ilpost.it`,
+   `github.com` and its own domain are not identity should be able to say so once.
+4. **Nothing shows the operator what was replaced.** `redacted_entity_count` says
+   two; it does not say a verb became a `PERSON`. Somewhere between "trust it"
+   and "read the transcripts" there should be a way to see, for one request, what
+   the detector claimed — and that is the feature that would have found this in
+   an afternoon rather than in production.
+
+Note the ordering this implies. Scoping (§4) makes redaction apply to fewer
+requests; none of it makes redaction *correct* on the requests it does apply to.
+On the evidence above, tuning what is detected — entity types, language,
+allowlist, and a way to see the spans — is the more valuable half and is mostly
+configuration rather than schema.
+
 ## The write path, concretely
 
 Now that the read side exists, here is what step 2 actually costs. Recorded so
