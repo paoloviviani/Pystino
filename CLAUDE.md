@@ -165,6 +165,24 @@ Inside the gateway, the pieces that carry the most weight:
   pins it. And **`iss` is part of a user's identity**: users are keyed on
   `(issuer, subject)`, so changing `KC_HOSTNAME` re-provisions everyone as new
   rows with no memberships at their next login.
+- **An abandoned stream is billed from our price table, and the report blames
+  the provider for it.** Found reconciling this deployment against Cortecs'
+  dashboard on 2026-08-25. Their console said 34 requests / 244.3K tokens /
+  €0.02; the ledger said 39 / 295,873 / €0.025510. Nothing was lost — the 34
+  `upstream_exact` rows matched Cortecs exactly, to the token and to
+  €0.019410. The other five were all `status=client_disconnected`,
+  `upstream_status=200`, streamed: Cortecs served them for 2–15 seconds and the
+  client hung up before the terminal SSE frame, so **no usage arrived and no
+  reported cost did either**. Three consequences, none of them visible on the
+  screen: tokens are counted locally (`usage_source=estimated`), cost falls back
+  to our prices (`cost_source=own_prices_fallback`) on a provider configured to
+  pass through, and `_reconciliation` — which requires `upstream_cost IS NOT
+  NULL` on both sides, correctly — excludes them, so the drift row reads "34
+  requests, ours equals theirs" beside a total covering 39. The one sentence
+  that does mention them is wrong about why: `_disclosures` says *"the provider
+  did not report usage"* when the row itself records that the client left. That
+  wording is what sends an operator to the provider's dashboard to look for
+  requests that were never missing.
 - **The demo user's cap is EUR 1/hour and the fake upstream bills 1M tokens per
   request.** Running several live scripts back to back exhausts it legitimately;
   they report that as skipped. Flushing Valkey alone does not reset it — the
@@ -306,6 +324,14 @@ rediscovered — one being built, one not started:
   where it plugs into `_metered`, and why the first version has no exemptions.
 
 Known open items, none of them blocking:
+
+- **The estimated-usage disclosure attributes every case to the provider.**
+  `_disclosures` in `reporting.py` cannot tell "the provider reported no usage"
+  from "the client disconnected mid-stream", and says the former for both. The
+  row knows: `status` is `client_disconnected`. Splitting the sentence by status
+  — and saying that such requests are charged from our prices while the
+  counterparty charged nothing — is the fix. See the trap above for the
+  measurement it came from.
 
 - **Pagination**: done. **Concurrency**: done and verified. Both were the last
   outstanding items from Phase 2.
