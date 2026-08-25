@@ -37,3 +37,7 @@ deploy/.env
 
 # Self-signed material and Caddy state, if either is ever written outside a volume.
 deploy/tls/
+
+# The pnpm store, left behind when the JS toolchain is run in a container
+# (there is no node on the deployment host). Not a build output — a cache.
+.pnpm-store/

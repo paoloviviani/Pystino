@@ -25,8 +25,10 @@ const NAV: NavItem[] = [
   { to: "/admin/reports", label: "Reports", adminOnly: true },
   { to: "/admin/quotas", label: "Quotas", adminOnly: true },
   { to: "/admin/providers", label: "Providers", adminOnly: true },
+  // No Pricing entry: a model's prices live on the model's own page, because
+  // "what is this model" and "what does it cost" are one question asked in one
+  // place. See routes/AdminModelDetail.tsx.
   { to: "/admin/models", label: "Models", adminOnly: true },
-  { to: "/admin/pricing", label: "Pricing", adminOnly: true },
   { to: "/admin/users", label: "Users", adminOnly: true },
   { to: "/admin/redaction", label: "Redaction", adminOnly: true },
 ];

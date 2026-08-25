@@ -1,11 +1,11 @@
 import { Notice, Spinner } from "@llmp/ui";
-import { Route, Routes } from "react-router";
+import { Navigate, Route, Routes } from "react-router";
 import { RequireAdmin } from "./components/RequireAdmin";
 import { Shell } from "./components/Shell";
 import { NotAuthenticatedError, login } from "./lib/api";
 import { useMe } from "./lib/queries";
+import { AdminModelDetail } from "./routes/AdminModelDetail";
 import { AdminModels } from "./routes/AdminModels";
-import { AdminPricing } from "./routes/AdminPricing";
 import { AdminProviders } from "./routes/AdminProviders";
 import { AdminQuotas } from "./routes/AdminQuotas";
 import { AdminRedaction } from "./routes/AdminRedaction";
@@ -68,6 +68,14 @@ export function App() {
           }
         />
         <Route
+          path="/admin/models/:modelId"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminModelDetail />
+            </RequireAdmin>
+          }
+        />
+        <Route
           path="/admin/providers"
           element={
             <RequireAdmin me={me_}>
@@ -75,14 +83,13 @@ export function App() {
             </RequireAdmin>
           }
         />
-        <Route
-          path="/admin/pricing"
-          element={
-            <RequireAdmin me={me_}>
-              <AdminPricing />
-            </RequireAdmin>
-          }
-        />
+        {/* Pricing was its own screen, with its own model picker, until it
+            became a section of the model's page — a price is a fact about a
+            model, and asking for one meant navigating away and choosing the
+            model again. Kept as a redirect rather than deleted: the tab existed
+            long enough to be bookmarked, and a 404 would read as a broken
+            deployment rather than as a screen that moved. */}
+        <Route path="/admin/pricing" element={<Navigate to="/admin/models" replace />} />
         <Route
           path="/admin/quotas"
           element={

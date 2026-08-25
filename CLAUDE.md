@@ -57,7 +57,7 @@ services/redaction  Presidio behind a swappable contract, out of process
 deploy/compose   the stack: base + smoke + keycloak + redaction + proxy overlays
 deploy/caddy     the TLS reverse proxy's one config file, for both configurations
 scripts/         live checks against a running stack (see below)
-docs/adr/        35 ADRs. Read the index; they are the design record.
+docs/adr/        36 ADRs. Read the index; they are the design record.
 ```
 
 Inside the gateway, the pieces that carry the most weight:
@@ -174,8 +174,8 @@ Inside the gateway, the pieces that carry the most weight:
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services
-uv run pytest -q                       # 842 gateway tests, SQLite
-pnpm -r test                           # 21 packages/ui + 100 console
+uv run pytest -q                       # 844 gateway tests, SQLite
+pnpm -r test                           # 26 packages/ui + 127 console
 ```
 
 Then, for anything touching the request path, money, or SQL, against the real

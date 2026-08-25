@@ -12,19 +12,22 @@ import {
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney, useExactMoney } from "@llmp/ui";
-import type { ReactNode } from "react";
 import { useState } from "react";
+import { Link, useNavigate } from "react-router";
+import {
+  Capabilities,
+  CapabilityPicker,
+  KNOWN_FEATURES,
+  KNOWN_INPUTS,
+  KNOWN_OUTPUTS,
+} from "../components/CapabilityPicker";
 import {
   useCreateModel,
   useDiscovery,
-  useGroups,
   useImportModels,
-  useModelAccess,
   useModels,
   useProviders,
   useUpdateModel,
-  useUserModelAccess,
-  useUsers,
 } from "../lib/admin";
 import { usePaginated } from "../lib/paging";
 import type { AdminModel, DiscoveredModel, ModelKind } from "../lib/types";
@@ -42,9 +45,8 @@ export function AdminModels() {
   const models = useModels(paged.page);
   const update = useUpdateModel();
 
+  const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
-  const [access, setAccess] = useState<AdminModel | null>(null);
-  const [editing, setEditing] = useState<AdminModel | null>(null);
   const [discovering, setDiscovering] = useState(false);
 
   const columns: Column<AdminModel>[] = [
@@ -54,7 +56,10 @@ export function AdminModels() {
       render: (model) => (
         <>
           <div>
-            {model.name}{" "}
+            {/* The name is the link, not only the button beside it: it is what
+                someone points at, and a real anchor is what makes "open in a new
+                tab" and "copy link" work at all. */}
+            <Link to={`/admin/models/${model.id}`}>{model.name}</Link>{" "}
             {model.kind !== "chat" && <Badge tone="accent">{model.kind}</Badge>}
           </div>
           <div className={`${styles.muted} ${styles.code}`}>{model.upstream_model}</div>
@@ -136,8 +141,11 @@ export function AdminModels() {
       header: "",
       render: (model) => (
         <div className={styles.rowActions}>
-          <Button onClick={() => setAccess(model)}>Access</Button>
-          <Button onClick={() => setEditing(model)}>Edit</Button>
+          {/* Everything that configures one model — capabilities, price, who may
+              reach it — is on its page now. Access used to be a dialog here and
+              pricing a whole separate screen, which meant three places to change
+              one model and a price you had to go and look for. */}
+          <Button onClick={() => navigate(`/admin/models/${model.id}`)}>Edit</Button>
           <Button
             busy={update.isPending && update.variables?.id === model.id}
             onClick={() => update.mutate({ id: model.id, is_active: !model.is_active })}
@@ -223,299 +231,10 @@ export function AdminModels() {
       </Card>
 
       <CreateModelDialog open={creating} onClose={() => setCreating(false)} />
-      <EditModelDialog model={editing} onClose={() => setEditing(null)} />
-      <AccessDialog model={access} onClose={() => setAccess(null)} />
       <DiscoveryDialog open={discovering} onClose={() => setDiscovering(false)} />
     </div>
   );
 }
-
-/**
- * What a model accepts, produces and can do.
- *
- * Three lists rather than a column of yes/no flags, because the provider
- * documents its feature set as open — "current values include json_mode,
- * reasoning and tools" — and a fixed set of checkboxes would silently hide
- * whatever it added last week (ADR 0031).
- *
- * An empty set reads "not stated", never "cannot". Nobody has described most
- * of these models yet, and rendering that as a row of crosses would turn an
- * absence of information into a claim.
- */
-function Capabilities({ model }: { model: AdminModel }) {
-  const inputs = model.input_modalities.filter((item) => item !== "text");
-  const shown = [...inputs, ...model.supported_features];
-
-  if (shown.length === 0) {
-    return <span className={styles.muted}>not stated</span>;
-  }
-  return (
-    <div className={styles.chips}>
-      {shown.map((item) => (
-        <Badge key={item}>{item.replace(/_/g, " ")}</Badge>
-      ))}
-    </div>
-  );
-}
-
-const asList = (value: string): string[] =>
-  value
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-
-interface Vocabulary {
-  value: string;
-  /** A plain-English name for a value whose own name does not give it away. */
-  gloss?: string;
-}
-
-/**
- * The values that get a checkbox.
- *
- * Not a design opinion: this is every value the reference provider's catalogue
- * actually uses, counted across all 107 models it offers. `input_modalities`
- * is never anything but text, image or audio; `supported_features` is never
- * anything but tools, json_mode or reasoning. A checkbox for a value no
- * provider emits is clutter, and one missing for a value they do emit is the
- * bug this is meant to avoid.
- *
- * The two extra output modalities come from this gateway's own model kinds
- * rather than from the catalogue — nothing in it produces embeddings or
- * images, but migration 0006 backfills both and an operator cataloguing such a
- * model by hand needs to say so.
- *
- * These lists are a convenience, never a filter. Anything outside them is
- * typed into the Other box and kept verbatim, which is the whole point of
- * ADR 0031: the capability most worth hearing about is the one the provider
- * added last week, and a vocabulary compiled today would discard exactly that.
- */
-const KNOWN_INPUTS: readonly Vocabulary[] = [
-  { value: "text" },
-  { value: "image", gloss: "vision" },
-  { value: "audio" },
-];
-
-const KNOWN_OUTPUTS: readonly Vocabulary[] = [
-  { value: "text" },
-  { value: "image" },
-  { value: "embeddings" },
-];
-
-const KNOWN_FEATURES: readonly Vocabulary[] = [
-  { value: "tools", gloss: "function calling" },
-  { value: "json_mode", gloss: "structured output" },
-  { value: "reasoning" },
-];
-
-/**
- * A capability set: checkboxes for the values providers actually use, and a
- * comma-separated box for everything else.
- *
- * The Other box is not a fallback nobody is expected to reach. It is seeded
- * with whatever the import found that has no checkbox, so an unrecognised
- * capability is *visible and editable* rather than quietly absent — a value
- * with nowhere to render would be dropped by the first save, and the operator
- * would have destroyed information by opening a dialog and clicking Save.
- */
-function CapabilityPicker({
-  label,
-  otherLabel,
-  hint,
-  known,
-  value,
-  onChange,
-}: {
-  label: string;
-  otherLabel: string;
-  hint: ReactNode;
-  known: readonly Vocabulary[];
-  value: string[];
-  onChange: (next: string[]) => void;
-}) {
-  const vocabulary = known.map((entry) => entry.value);
-
-  // Seeded once, then owned by the input. Deriving this from `value` on every
-  // render would fight the person typing: splitting on the comma they just
-  // pressed and joining the result back removes it before they type the next
-  // word. The dialog remounts this component when it loads a different model.
-  const [other, setOther] = useState(() =>
-    value.filter((item) => !vocabulary.includes(item)).join(", "),
-  );
-
-  // Set union rather than concatenation: typing a value into Other that also
-  // has a checkbox should tick it, not list it twice.
-  const emit = (ticked: string[], extras: string) =>
-    onChange([...new Set([...ticked, ...asList(extras)])]);
-
-  return (
-    <fieldset className={styles.capabilities}>
-      <legend className={styles.capabilitiesLegend}>{label}</legend>
-      <div className={styles.checkList}>
-        {known.map((entry) => (
-          <label key={entry.value} className={styles.checkItem}>
-            <input
-              type="checkbox"
-              checked={value.includes(entry.value)}
-              onChange={(event) =>
-                emit(
-                  vocabulary.filter((item) =>
-                    item === entry.value ? event.target.checked : value.includes(item),
-                  ),
-                  other,
-                )
-              }
-            />
-            <span>
-              {entry.value}
-              {entry.gloss && <span className={styles.muted}> ({entry.gloss})</span>}
-            </span>
-          </label>
-        ))}
-      </div>
-      <Input
-        label={otherLabel}
-        value={other}
-        onChange={(event) => {
-          setOther(event.target.value);
-          emit(
-            value.filter((item) => vocabulary.includes(item)),
-            event.target.value,
-          );
-        }}
-        placeholder="comma separated"
-        hint={hint}
-      />
-    </fieldset>
-  );
-}
-
-/**
- * Correcting what the catalogue claimed.
- *
- * Discovery imports the provider's own description, and a provider's catalogue
- * is a claim rather than a contract — a model advertised as supporting tool
- * calling may do it badly or not at all. Without somewhere to record that, the
- * only options are to believe it or to stop importing.
- *
- * `kind` is editable for the sharper version of the same problem: it is
- * inferred from modality tags, and inferring it wrong takes a model off the
- * only route that would serve it.
- */
-function EditModelDialog({ model, onClose }: { model: AdminModel | null; onClose: () => void }) {
-  const update = useUpdateModel();
-  const [kind, setKind] = useState<ModelKind>("chat");
-  const [inputs, setInputs] = useState<string[]>([]);
-  const [outputs, setOutputs] = useState<string[]>([]);
-  const [features, setFeatures] = useState<string[]>([]);
-  const [context, setContext] = useState("");
-  const [loadedFor, setLoadedFor] = useState<string | null>(null);
-
-  // Keyed remount: without this the fields keep the previous model's values.
-  if (model && loadedFor !== model.id) {
-    setLoadedFor(model.id);
-    setKind(model.kind);
-    setInputs(model.input_modalities);
-    setOutputs(model.output_modalities);
-    setFeatures(model.supported_features);
-    setContext(model.context_window ? String(model.context_window) : "");
-  }
-
-  const submit = () => {
-    if (!model) return;
-    update.mutate(
-      {
-        id: model.id,
-        kind,
-        input_modalities: inputs,
-        output_modalities: outputs,
-        supported_features: features,
-        context_window: context === "" ? null : Number(context),
-      },
-      { onSuccess: onClose },
-    );
-  };
-
-  return (
-    <Dialog
-      open={model !== null}
-      title={`Edit ${model?.name ?? ""}`}
-      onClose={onClose}
-      footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" busy={update.isPending} onClick={submit}>
-            Save
-          </Button>
-        </>
-      }
-    >
-      {update.error ? (
-        <Notice tone="danger">
-          {update.error instanceof Error ? update.error.message : "Unknown error."}
-        </Notice>
-      ) : null}
-
-      <Select
-        label="Kind"
-        value={kind}
-        onChange={(event) => setKind(event.target.value as ModelKind)}
-        hint="Which routes will serve it. Discovery infers this from the provider's
-          modality tags and can get it wrong."
-      >
-        <option value="chat">Chat — /v1/chat/completions, /v1/responses, /v1/messages</option>
-        <option value="embedding">Embedding — /v1/embeddings</option>
-        <option value="image">Image — /v1/images/generations</option>
-      </Select>
-
-      {/* Remounted per model: each picker seeds its Other box once, from the
-          capabilities the model arrived with. */}
-      <CapabilityPicker
-        key={`inputs-${loadedFor}`}
-        label="Accepts"
-        otherLabel="Other input modalities"
-        hint="What can be sent to it."
-        known={KNOWN_INPUTS}
-        value={inputs}
-        onChange={setInputs}
-      />
-      <CapabilityPicker
-        key={`outputs-${loadedFor}`}
-        label="Produces"
-        otherLabel="Other output modalities"
-        hint="What comes back."
-        known={KNOWN_OUTPUTS}
-        value={outputs}
-        onChange={setOutputs}
-      />
-      <CapabilityPicker
-        key={`features-${loadedFor}`}
-        label="Features"
-        otherLabel="Other features"
-        hint="Not a fixed list — whatever the provider reports is kept, so a capability
-          it added last week is not silently dropped."
-        known={KNOWN_FEATURES}
-        value={features}
-        onChange={setFeatures}
-      />
-      <Input
-        label="Context window"
-        type="number"
-        min="1"
-        value={context}
-        onChange={(event) => setContext(event.target.value)}
-        hint="Tokens. Leave empty if unknown."
-      />
-
-      <Notice tone="info">
-        These describe the model to callers on <code>/v1/models</code>; they do not change
-        what the provider will actually accept. Re-running Discover does not overwrite an
-        edit — it only reports models we do not already carry.
-      </Notice>
-    </Dialog>
-  );
-}
-
 
 function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const create = useCreateModel();
@@ -678,138 +397,6 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
  * invites the reading that one overrides the other. Nothing here can *remove*
  * access a group grants — there are no denials.
  */
-function AccessDialog({ model, onClose }: { model: AdminModel | null; onClose: () => void }) {
-  const groups = useGroups();
-  const access = useModelAccess();
-  const userAccess = useUserModelAccess();
-  const finder = usePaginated(20);
-
-  // The directory is searched, not downloaded. Nothing is requested until
-  // something is typed: opening this dialog to grant one person access should
-  // not pull a page of accounts nobody asked about.
-  const users = useUsers(finder.page, finder.query.trim().length > 0);
-  const matching = finder.query.trim() ? (users.data?.items ?? []) : [];
-  const granted = model?.granted_to_users ?? [];
-
-  return (
-    <Dialog open={model !== null} title={`Access · ${model?.name ?? ""}`} onClose={onClose}>
-      {access.error ? (
-        <Notice tone="danger">
-          {access.error instanceof Error ? access.error.message : "Unknown error."}
-        </Notice>
-      ) : null}
-
-      <p className={styles.muted}>Groups</p>
-      {groups.isPending ? (
-        <Spinner />
-      ) : (
-        <div className={styles.checkList}>
-          {(groups.data?.items ?? []).map((group) => {
-            const granted = model ? group.models.includes(model.name) : false;
-            return (
-              <label key={group.id} className={styles.checkItem}>
-                <input
-                  type="checkbox"
-                  checked={granted}
-                  disabled={access.isPending}
-                  onChange={() =>
-                    model &&
-                    access.mutate({ groupId: group.id, modelId: model.id, grant: !granted })
-                  }
-                />
-                <span>{group.name}</span>
-              </label>
-            );
-          })}
-        </div>
-      )}
-
-      <p className={styles.muted}>
-        Individual people, in addition to their groups. Everyone already granted is listed
-        below; search to add someone else.
-      </p>
-      {granted.length > 0 && (
-        <div className={styles.checkList}>
-          {granted.map((email) => (
-            <label key={email} className={styles.checkItem}>
-              <input
-                type="checkbox"
-                checked
-                disabled={userAccess.isPending}
-                onChange={() => {
-                  // Revoking needs the id, and the grant list carries only the
-                  // label — so find the account by searching for it. Exact,
-                  // because an email is unique.
-                  const match = users.data?.items.find((entry) => entry.email === email);
-                  if (match && model) {
-                    userAccess.mutate({ userId: match.id, modelId: model.id, grant: false });
-                  } else {
-                    finder.setSearch(email);
-                  }
-                }}
-              />
-              <span>{email}</span>
-            </label>
-          ))}
-        </div>
-      )}
-      <Input
-        label="Find a person"
-        hideLabel
-        value={finder.search}
-        onChange={(event) => finder.setSearch(event.target.value)}
-        placeholder="email, name or subject"
-      />
-      {userAccess.error ? (
-        <Notice tone="danger">
-          {userAccess.error instanceof Error ? userAccess.error.message : "Unknown error."}
-        </Notice>
-      ) : null}
-      <div className={styles.checkList}>
-        {matching.map((user) => {
-          const has = granted.includes(user.email ?? "");
-          return (
-            <label key={user.id} className={styles.checkItem}>
-              <input
-                type="checkbox"
-                checked={has}
-                disabled={userAccess.isPending}
-                onChange={() =>
-                  model && userAccess.mutate({ userId: user.id, modelId: model.id, grant: !has })
-                }
-              />
-              <span>{user.email ?? user.display_name ?? user.subject}</span>
-            </label>
-          );
-        })}
-        {matching.length === 0 && (
-          <span className={styles.muted}>
-            {!finder.query.trim()
-              ? granted.length === 0
-                ? "No individual grants."
-                : "Type to find someone else."
-              : users.isFetching
-                ? "Searching…"
-                : "Nobody matches that."}
-          </span>
-        )}
-        {users.data && users.data.total > matching.length && (
-          <span className={styles.muted}>
-            Showing {matching.length} of {users.data.total.toLocaleString()} matches — narrow
-            the search to see the rest.
-          </span>
-        )}
-      </div>
-
-      <Notice tone="info">
-        Absence of a grant means no access — there is no global allow-all. A person
-        may reach a model through their group or personally; removing one leaves the
-        other. Revoking takes effect on the next request.
-      </Notice>
-    </Dialog>
-  );
-}
-
 /**
  * What the provider offers against what we carry.
  *
