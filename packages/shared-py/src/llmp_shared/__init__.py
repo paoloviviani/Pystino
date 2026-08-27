@@ -8,6 +8,7 @@ from llmp_shared.redaction import (
     PlaceholderMap,
     TextFindings,
     normalise_entity,
+    opaque_placeholder,
     placeholder_for,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "PlaceholderMap",
     "TextFindings",
     "normalise_entity",
+    "opaque_placeholder",
     "placeholder_for",
 ]

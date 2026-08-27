@@ -47,7 +47,7 @@ from gateway.deps import (
 )
 from gateway.errors import BadRequestError, GatewayError, UpstreamUnavailableError
 from gateway.models import (
-ApiKey,
+    ApiKey,
     BillingMode,
     Group,
     GroupModelAccess,
@@ -86,7 +86,7 @@ from gateway.reporting import (
     resolve_period,
 )
 from gateway.schemas import (
-CatalogueDiscoveryResponse,
+    CatalogueDiscoveryResponse,
     CatalogueDriftRow,
     DiscoveredModel,
     GroupAdminResponse,
@@ -113,6 +113,7 @@ CatalogueDiscoveryResponse,
     RedactionConfigChange,
     RedactionEngineOption,
     RedactionEngineRequest,
+    RedactionPolicyRequest,
     RedactionServiceHealth,
     RedactionStatusResponse,
     UsageReport,
@@ -313,9 +314,7 @@ async def _load_provider(session: SessionDep, provider_id: uuid.UUID) -> Provide
 # out, only a hint.
 
 
-def _provider_response(
-    provider: Provider, model_count: int, unpriced: int = 0
-) -> ProviderResponse:
+def _provider_response(provider: Provider, model_count: int, unpriced: int = 0) -> ProviderResponse:
     return ProviderResponse(
         id=provider.id,
         name=provider.name,
@@ -379,9 +378,7 @@ async def list_providers(
     unpriced = await _unpriced_counts(session)
     return page.page(
         [
-            _provider_response(
-                provider, counts.get(provider.id, 0), unpriced.get(provider.id, 0)
-            )
+            _provider_response(provider, counts.get(provider.id, 0), unpriced.get(provider.id, 0))
             for provider in providers
         ],
         total,
@@ -1798,9 +1795,7 @@ async def _redaction_activity(session: SessionDep, window_seconds: int) -> Redac
     is what makes "one engine or two in this window" answerable at all.
     """
     since = utcnow() - timedelta(seconds=window_seconds)
-    redacting = UsageRecord.redaction_engine.is_not(None) & (
-        UsageRecord.redaction_engine != "noop"
-    )
+    redacting = UsageRecord.redaction_engine.is_not(None) & (UsageRecord.redaction_engine != "noop")
     row = (
         await session.execute(
             select(
@@ -1998,14 +1993,17 @@ async def _redaction_response(
             if stored is not None
             else None
         ),
-        propagation_seconds=(
-            resolver.refresh_seconds if resolver is not None else 0.0
-        ),
+        propagation_seconds=(resolver.refresh_seconds if resolver is not None else 0.0),
         fail_open=config.fail_open,
         restore_in_response=config.restore_in_response,
         language=config.language,
         score_threshold=config.score_threshold,
         entity_types=list(config.entity_types) if config.entity_types else None,
+        # From the resolver, not from the environment: the policy in force may be
+        # a stored one, and reporting the setting instead would describe a
+        # deployment that does not exist — the same rule `engine` follows above.
+        policy=resolver.policy if resolver is not None else config.policy,
+        policy_source=resolver.policy_source if resolver is not None else "environment",
         timeout_seconds=config.timeout_seconds,
         cache_size=config.cache_size,
         placeholder_key_set=bool(config.placeholder_key.get_secret_value()),
@@ -2129,6 +2127,84 @@ async def set_redaction_engine(
         engine,
         admin.email or admin.id,
         reason or "no reason given",
+    )
+    return await _redaction_response(
+        session=session,
+        settings=settings,
+        request=request,
+        http=http,
+        window_seconds=86_400,
+    )
+
+
+@router.put("/redaction/policy", response_model=RedactionStatusResponse)
+async def set_redaction_policy(
+    payload: RedactionPolicyRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    http: ControlHttpDep,
+    request: Request,
+) -> RedactionStatusResponse:
+    """Set which entity types are acted on, and how (ADR 0037).
+
+    Written as a new ``redaction_config`` row carrying the engine currently in
+    force, so the table keeps meaning what it meant: append-only, newest wins,
+    and the history answers "who changed what, when, and why" about a window that
+    has already closed. A policy change is exactly that kind of decision — it
+    decides what personal data leaves this deployment.
+
+    **A reason is required only when the change protects less**: an entity type
+    switched off, a mode downgraded, or a value added to the allow-list. Turning
+    protection *on* needs no justification, and demanding a sentence for every
+    checkbox is how a prompt gets answered with "x" (the argument in ADR 0033,
+    applied to the field below the engine).
+
+    Note what is *not* refused: a policy that turns everything off. That is what
+    the engine switch is for, it is already loud, and refusing it here would
+    leave an operator who wants the layer off with two screens and one of them
+    lying about the result.
+    """
+    resolver: RedactionResolver | None = getattr(request.app.state, "redaction", None)
+    in_force = resolver.policy if resolver is not None else settings.redaction.policy
+
+    reason = payload.reason.strip()
+    if payload.policy.weakens(in_force) and not reason:
+        raise BadRequestError(
+            "this policy protects less than the one in force — an entity type turned "
+            "off, a mode downgraded, or a value exempted. Say why: the reason is kept "
+            "on the record and is what a later review reads.",
+            code="redaction_policy_reason_required",
+        )
+
+    # The engine is carried forward rather than defaulted: a policy change must
+    # not quietly reset the engine to whatever the environment says, which is
+    # what writing a row with `settings.redaction.engine` would do to a
+    # deployment whose console had already chosen a different one.
+    live: Redactor | None = getattr(request.app.state, "redactor", None)
+    engine = getattr(live, "name", None) or settings.redaction.engine
+
+    session.add(
+        RedactionConfig(
+            engine=engine,
+            policy=payload.policy.model_dump(mode="json"),
+            reason=reason,
+            created_by=admin.id,
+        )
+    )
+    await session.commit()
+
+    if resolver is not None:
+        await resolver.refresh()
+
+    logger.warning(
+        "redaction policy changed by %s (%s): default=%s, %d entity rule(s), "
+        "%d allow-list entr(y/ies)",
+        admin.email or admin.id,
+        reason or "no reason given",
+        payload.policy.default_mode,
+        len(payload.policy.entities),
+        len(payload.policy.allow_list),
     )
     return await _redaction_response(
         session=session,

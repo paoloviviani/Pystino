@@ -593,9 +593,7 @@ class UsageRecord(Base):
     # Prompt tokens written to a provider-side cache. Billed at its own rate and
     # until now computed but never stored, so a cached request could not be
     # explained after the fact and the ledger could not be repriced.
-    cache_write_tokens: Mapped[int] = mapped_column(
-        Integer, default=0, server_default=text("0")
-    )
+    cache_write_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     reasoning_tokens: Mapped[int] = mapped_column(Integer, default=0)
 
     usage_source: Mapped[UsageSource] = mapped_column(
@@ -808,6 +806,17 @@ class RedactionConfig(Base):
     #: written, which is stricter than an enum would be — it also proves the
     #: engine is *installed*, not merely spelled correctly.
     engine: Mapped[str] = mapped_column(String(64))
+    #: The per-entity policy in force, as ``RedactionPolicy`` serialises it
+    #: (ADR 0037). Nullable, and null is not "redact nothing": it means this row
+    #: predates the policy or changed only the engine, so the deployment's own
+    #: default applies — the same "no row means the environment decides" rule
+    #: one level down.
+    #:
+    #: JSON rather than a table of entity rows. The shape is one document an
+    #: admin edits and saves whole, it is read once per poll and never queried
+    #: across, and a policy is meaningless split into pieces: half of one is not
+    #: a weaker policy, it is a different one.
+    policy: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     #: Why. Required by the API when switching to an engine that redacts nothing,
     #: optional otherwise: turning the layer off is the change that needs
     #: explaining, and demanding a sentence for every change trains people to

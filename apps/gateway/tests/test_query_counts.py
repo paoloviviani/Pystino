@@ -86,9 +86,7 @@ class TestTheMeteredPath:
 
         selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
         writes = [
-            s
-            for s in statements
-            if s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+            s for s in statements if s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
         ]
 
         # Two writes by design: the in-progress row is created before the

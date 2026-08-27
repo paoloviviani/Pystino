@@ -51,6 +51,12 @@ function status(overrides: Partial<RedactionStatus> = {}): RedactionStatus {
     language: "en",
     score_threshold: 0.5,
     entity_types: null,
+    policy: {
+      default_mode: "anonymise_restore",
+      entities: { URL: { mode: "off", threshold: null } },
+      allow_list: [],
+    },
+    policy_source: "environment",
     timeout_seconds: 5,
     cache_size: 2048,
     placeholder_key_set: true,
@@ -340,7 +346,9 @@ describe("AdminRedaction", () => {
       expect(screen.getByText(/Every type the engine offers/)).toBeInTheDocument(),
     );
     // Falls back to the service's list so the reader can see what that means.
-    expect(screen.getByText("PERSON")).toBeInTheDocument();
+    // `getAllByText`, because the policy editor lists the same types as rows —
+    // that is the screen agreeing with itself, not an ambiguity.
+    expect(screen.getAllByText("PERSON").length).toBeGreaterThan(0);
     unmount();
 
     vi.stubGlobal("fetch", respondWith(status({ entity_types: ["PERSON"] })));
@@ -395,5 +403,70 @@ describe("AdminRedaction", () => {
     renderScreen(<AdminRedaction />);
 
     await waitFor(() => expect(screen.getByText("Admin access required.")).toBeInTheDocument());
+  });
+
+  it("offers a mode per entity type, from the detector's own list", async () => {
+    // Hard-coding the list here would mean a console that silently omits a
+    // recogniser the engine gained last week — the failure this feature fixes.
+    vi.stubGlobal("fetch", respondWith(status()));
+    renderScreen(<AdminRedaction />);
+
+    await waitFor(() => expect(screen.getByLabelText("PERSON")).toBeInTheDocument());
+    expect(screen.getByLabelText("EMAIL_ADDRESS")).toBeInTheDocument();
+    // The one the default policy turns off, shown as such rather than hidden.
+    expect(screen.getByLabelText("URL")).toHaveValue("off");
+  });
+
+  it("sends the whole policy, with the allow-list split", async () => {
+    const user = userEvent.setup({ delay: null });
+    const { fetch: stub, captured } = withEngineChange(status(), status());
+    vi.stubGlobal("fetch", stub);
+    renderScreen(<AdminRedaction />);
+
+    await waitFor(() => expect(screen.getByLabelText("PERSON")).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText("PERSON"), "redact");
+    await user.type(screen.getByLabelText("Never redact these values"), "ilpost.it, acme.test");
+    await user.type(screen.getByLabelText("Reason for this change"), "URLs are the source");
+    await user.click(screen.getByRole("button", { name: "Save policy" }));
+
+    await waitFor(() => expect(captured.puts).toHaveLength(1));
+    const put = captured.puts[0] as { url: string; body: Record<string, any> };
+    expect(put.url).toContain("/api/admin/redaction/policy");
+    expect(put.body.policy.entities.PERSON.mode).toBe("redact");
+    expect(put.body.policy.allow_list).toEqual(["ilpost.it", "acme.test"]);
+    expect(put.body.reason).toBe("URLs are the source");
+  });
+
+  it("shows the refusal when a weaker policy arrives without a reason", async () => {
+    // The rule lives in the API, because "protects less" is a comparison against
+    // what is running. The screen's job is to render the sentence, not to
+    // re-derive it — two copies of that rule would disagree.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "PUT") {
+          return new Response(
+            JSON.stringify({
+              error: { message: "this policy protects less than the one in force" },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify(status()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    renderScreen(<AdminRedaction />);
+
+    await waitFor(() => expect(screen.getByLabelText("PERSON")).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText("PERSON"), "off");
+    await user.click(screen.getByRole("button", { name: "Save policy" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/protects less than the one in force/)).toBeInTheDocument(),
+    );
   });
 });

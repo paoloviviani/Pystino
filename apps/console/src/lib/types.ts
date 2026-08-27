@@ -279,6 +279,28 @@ export interface RedactionConfigChange {
 }
 
 /** The redaction layer as the gateway is actually running it (ADR 0012, ADR 0033). */
+/**
+ * What happens to one kind of detected entity (ADR 0037).
+ *
+ * Two questions, not one: what the model sees, and what the reader gets back.
+ * Ordered weakest to strongest, which is the order the screen lists them.
+ */
+export type EntityMode = "off" | "anonymise_restore" | "anonymise" | "redact";
+
+export interface EntityPolicy {
+  mode: EntityMode;
+  /** Overrides the global score threshold for this type. Null means it applies. */
+  threshold: number | null;
+}
+
+export interface RedactionPolicy {
+  /** What happens to a type nobody has ruled on. Defaults to protecting it. */
+  default_mode: EntityMode;
+  entities: Record<string, EntityPolicy>;
+  /** Values never redacted, whatever the detector says. Matched exactly. */
+  allow_list: string[];
+}
+
 export interface RedactionStatus {
   engine: string;
   enabled: boolean;
@@ -298,8 +320,15 @@ export interface RedactionStatus {
   restore_in_response: boolean;
   language: string;
   score_threshold: number;
-  /** Null means every type the engine offers, not none. */
+  /** Null means every type the engine offers, not none. Superseded by `policy`. */
   entity_types: string[] | null;
+  /** What is acted on and how, per entity type. */
+  policy: RedactionPolicy;
+  /**
+   * `console` when the row in force carries a policy. Separate from `source`
+   * because a row may set the engine and say nothing about the policy.
+   */
+  policy_source: "console" | "environment";
   timeout_seconds: number;
   cache_size: number;
   /** Whether the HMAC key is set. Never the key. */

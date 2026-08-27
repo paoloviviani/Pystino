@@ -131,6 +131,7 @@ async def init_app_state(
         # report agree about when the month started (ADR 0024).
         billing_timezone=settings.billing_timezone,
     )
+
     # `app.state.redactor` stays the one place the request path reads, so
     # `get_redactor` remains a single attribute lookup. The resolver replaces it
     # when an admin changes the engine, and polls to learn about a change another
@@ -138,9 +139,7 @@ async def init_app_state(
     def _swap_redactor(replacement: Redactor) -> None:
         app.state.redactor = replacement
 
-    resolver = RedactionResolver(
-        settings.redaction, session_factory, on_change=_swap_redactor
-    )
+    resolver = RedactionResolver(settings.redaction, session_factory, on_change=_swap_redactor)
     app.state.redaction = resolver
     app.state.redactor = resolver.redactor
     # Read once before serving, so a worker never answers a request with the

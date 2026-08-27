@@ -205,9 +205,7 @@ async def chat_completions(
     if isinstance(metered, JSONResponse):
         return metered
 
-    payload = build_upstream_payload(
-        body, outcome=outcome, upstream_model=model.upstream_model
-    )
+    payload = build_upstream_payload(body, outcome=outcome, upstream_model=model.upstream_model)
     payload = metered.shape_payload(payload, surface=SURFACE)
 
     if body.stream:

@@ -24,10 +24,16 @@ from llmp_shared import (
     DetectionResponse,
     EntitySpan,
     PlaceholderMap,
+    opaque_placeholder,
     placeholder_for,
 )
 
-from gateway.config import RedactionSettings
+from gateway.config import (
+    DEFAULT_REDACTION_POLICY,
+    EntityMode,
+    RedactionPolicy,
+    RedactionSettings,
+)
 from gateway.errors import GatewayError
 from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome, TextRewriteStage
@@ -115,8 +121,10 @@ def apply_spans(
     *,
     key: bytes,
     placeholders: PlaceholderMap,
+    policy: RedactionPolicy | None = None,
+    default_threshold: float = 0.0,
 ) -> tuple[str, int]:
-    """Substitute placeholders for *spans* in *text*.
+    """Substitute placeholders for *spans* in *text*, according to *policy*.
 
     Right to left, so each replacement leaves earlier offsets valid — rewriting
     left to right invalidates every span after the first.
@@ -125,11 +133,37 @@ def apply_spans(
     longest. Two detectors disagreeing about the same characters is normal (an
     IBAN is also a long number), and replacing one inside another produces
     corrupted text rather than a redaction.
+
+    **The policy is applied before overlap resolution, not after**, and the order
+    is load-bearing: a span the policy discards must not have suppressed the one
+    it overlapped. A `URL` set to off, covering the same characters as a
+    `PERSON`, would otherwise take the person with it.
+
+    What each mode writes, and what it records:
+
+    ``off``                 nothing; the text is left as the caller wrote it.
+    ``anonymise_restore``   a derived placeholder, remembered, so the answer can
+                            have the real value put back.
+    ``anonymise``           the same placeholder, *not* remembered — so the
+                            reader sees the placeholder too.
+    ``redact``              ``<PERSON>``: no token, nothing to remember, and two
+                            people become the same label.
     """
     if not spans:
         return text, 0
 
-    ordered = sorted(spans, key=lambda span: (span.start, -span.score, -(span.end - span.start)))
+    policy = policy or DEFAULT_REDACTION_POLICY
+    eligible = [
+        span
+        for span in spans
+        if policy.mode_for(span.entity_type) is not EntityMode.OFF
+        and span.score >= policy.threshold_for(span.entity_type, default_threshold)
+        and not policy.allows(span.slice_of(text))
+    ]
+    if not eligible:
+        return text, 0
+
+    ordered = sorted(eligible, key=lambda span: (span.start, -span.score, -(span.end - span.start)))
     chosen: list[EntitySpan] = []
     for span in ordered:
         if span.start >= span.end or span.end > len(text):
@@ -147,8 +181,16 @@ def apply_spans(
 
     for span in reversed(chosen):
         original = span.slice_of(text)
-        placeholder = placeholder_for(span.entity_type, original, key=key)
-        placeholders.add(span.entity_type, original, placeholder)
+        mode = policy.mode_for(span.entity_type)
+        if mode is EntityMode.REDACT:
+            placeholder = opaque_placeholder(span.entity_type)
+        else:
+            placeholder = placeholder_for(span.entity_type, original, key=key)
+            if mode is EntityMode.ANONYMISE_RESTORE:
+                # The map is the only thing that makes a placeholder reversible,
+                # so *not* adding is how "anonymise" differs from "anonymise and
+                # restore". RestoreStage leaves what it did not issue alone.
+                placeholders.add(span.entity_type, original, placeholder)
         text = text[: span.start] + placeholder + text[span.end :]
 
     return text, len(chosen)
@@ -211,10 +253,24 @@ class HttpDetectionRedactor:
     async def detect(self, texts: list[str]) -> list[list[EntitySpan]]:
         """Spans for each text, cached, in one round trip for the misses."""
         settings = self._settings
-        keys = [
-            _Cache.key(text, settings.language, settings.score_threshold, settings.entity_types)
-            for text in texts
-        ]
+        # What the policy will actually act on, not what the engine can find.
+        # Narrowing here is free detection time when an admin has enumerated the
+        # set; when they have not, it is None and everything comes back to be
+        # filtered locally — an engine's entity list is its own and cannot be
+        # enumerated from here (ADR 0026).
+        wanted = settings.policy.detected_types()
+        # The lowest bar any enabled type sets. Filtering to each type's own
+        # threshold happens in apply_spans: asking the detector for the strictest
+        # would drop spans a laxer type still wants.
+        floor = min(
+            [settings.score_threshold]
+            + [
+                entry.threshold
+                for entry in settings.policy.entities.values()
+                if entry.threshold is not None and entry.mode is not EntityMode.OFF
+            ]
+        )
+        keys = [_Cache.key(text, settings.language, floor, wanted) for text in texts]
         results: list[list[EntitySpan] | None] = [self._cache.get(key) for key in keys]
 
         pending = [index for index, spans in enumerate(results) if spans is None]
@@ -224,8 +280,8 @@ class HttpDetectionRedactor:
         request = DetectionRequest(
             texts=[texts[index] for index in pending],
             language=settings.language,
-            score_threshold=settings.score_threshold,
-            entity_types=settings.entity_types,
+            score_threshold=floor,
+            entity_types=wanted,
         )
         found = await self._post(request)
 
@@ -291,7 +347,14 @@ class HttpDetectionRedactor:
         total = 0
 
         for (message_index, part_index), text, spans in zip(locations, texts, found, strict=True):
-            redacted, count = apply_spans(text, spans, key=self._key, placeholders=placeholders)
+            redacted, count = apply_spans(
+                text,
+                spans,
+                key=self._key,
+                placeholders=placeholders,
+                policy=self._settings.policy,
+                default_threshold=self._settings.score_threshold,
+            )
             total += count
             if not count:
                 continue

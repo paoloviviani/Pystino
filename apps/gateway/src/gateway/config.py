@@ -7,6 +7,7 @@ a double underscore, e.g. ``GATEWAY_OIDC__ISSUER``.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from functools import lru_cache
 from typing import Literal
 
@@ -94,6 +95,157 @@ class OIDCSettings(BaseModel):
         return value.rstrip("/")
 
 
+class EntityMode(StrEnum):
+    """What happens to one kind of detected entity.
+
+    Two independent questions, and collapsing them into one switch is what makes
+    a redaction screen confusing: *what does the model see*, and *what does the
+    reader get back*. Four combinations are useful and the fifth
+    (opaque upstream, real value back) is not — an opaque label cannot be mapped
+    to anything, which is the whole point of choosing it.
+
+    Ordered weakest to strongest, which is also the order the console lists them
+    and the order ``weakens`` compares by.
+    """
+
+    #: Detected and left alone. For things that are context rather than identity
+    #: — a news site's domain, today's date — where redacting destroys the
+    #: request and protects nobody.
+    OFF = "off"
+    #: Stable placeholder upstream, real value restored in the answer. The
+    #: default, and the only mode where the reader never sees the machinery.
+    ANONYMISE_RESTORE = "anonymise_restore"
+    #: Stable placeholder upstream and in the answer. For values that must not
+    #: re-enter text this deployment stores or displays, where the model still
+    #: needs to tell one from another.
+    ANONYMISE = "anonymise"
+    #: ``<PERSON>``, with no derived token. Strongest and lossiest: two people
+    #: in one prompt become the same label, so the model cannot tell them apart.
+    REDACT = "redact"
+
+
+class EntityPolicy(BaseModel):
+    """How one entity type is treated, and how sure the detector must be."""
+
+    mode: EntityMode = EntityMode.ANONYMISE_RESTORE
+    #: Overrides ``score_threshold`` for this type alone. ``PERSON`` at 0.85 and
+    #: ``URL`` at 0.5 are not the same judgement, and one global number forces
+    #: them to be. None means the global value applies.
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class RedactionPolicy(BaseModel):
+    """Per-entity redaction policy: the admin's answer to "redact *what*".
+
+    Before this existed, ``entity_types`` was ``None`` — "everything the engine
+    knows" — and nobody had chosen it; it was the default of a field never
+    filled in. On a real request that meant *"Riassumi le notizie del giorno da
+    ilpost.it"* reaching the provider as ``<PERSON_…> le notizie del giorno da
+    <URL_…>``: the verb read as a name, and the source the user asked for read as
+    identity. See ADR 0037.
+
+    ``default_mode`` is the answer for a type nobody has listed, and it defaults
+    to *on* rather than off. That direction matters: a detector that gains a new
+    national-identifier recogniser next release should start protecting it
+    without an admin noticing, and an entity type nobody has ruled on is exactly
+    the case to be conservative about.
+    """
+
+    default_mode: EntityMode = EntityMode.ANONYMISE_RESTORE
+    entities: dict[str, EntityPolicy] = Field(default_factory=dict)
+    #: Values never redacted, whatever a detector says about them. Compared
+    #: case-insensitively against the matched text, exactly — a substring rule
+    #: would let "it" allow every Italian domain. This is the answer to a
+    #: detector that is right about the shape and wrong about the meaning: a
+    #: corporate domain *is* a URL, and it identifies nobody.
+    allow_list: list[str] = Field(default_factory=list)
+
+    @field_validator("entities")
+    @classmethod
+    def _upper(cls, value: dict[str, EntityPolicy]) -> dict[str, EntityPolicy]:
+        # Entity labels are free-form strings from whatever engine is installed
+        # (ADR 0026), and case is the one difference that is never meaningful.
+        return {key.upper(): policy for key, policy in value.items()}
+
+    def mode_for(self, entity_type: str) -> EntityMode:
+        entry = self.entities.get(entity_type.upper())
+        return entry.mode if entry is not None else self.default_mode
+
+    def threshold_for(self, entity_type: str, default: float) -> float:
+        entry = self.entities.get(entity_type.upper())
+        if entry is None or entry.threshold is None:
+            return default
+        return entry.threshold
+
+    def allows(self, text: str) -> bool:
+        return text.strip().casefold() in self._allowed
+
+    @property
+    def _allowed(self) -> set[str]:
+        return {item.strip().casefold() for item in self.allow_list if item.strip()}
+
+    def detected_types(self) -> list[str] | None:
+        """What to ask the detector for, or None for "everything it knows".
+
+        Only a narrowing: when the default is on, the set cannot be enumerated —
+        an engine's entity list is its own and may grow — so everything is
+        requested and the disabled types are dropped here. When the default is
+        off, the enabled set *is* enumerable, and sending it saves the detector
+        the work.
+        """
+        if self.default_mode is not EntityMode.OFF:
+            return None
+        return sorted(
+            name for name, entry in self.entities.items() if entry.mode is not EntityMode.OFF
+        )
+
+    def protects(self) -> set[str]:
+        """Entity types this policy does something about. Used to compare two."""
+        return {name for name, entry in self.entities.items() if entry.mode is not EntityMode.OFF}
+
+    def weakens(self, previous: RedactionPolicy) -> bool:
+        """Whether moving from *previous* to this one protects strictly less.
+
+        The direction that has to be explained. Turning protection *on* needs no
+        justification — a prompt with no reader trains people to type "x"
+        (ADR 0033) — but turning it off, or downgrading a mode, is a decision a
+        later review asks about.
+        """
+        if previous.default_mode is not EntityMode.OFF and self.default_mode is EntityMode.OFF:
+            return True
+        names = set(self.entities) | set(previous.entities)
+        order = list(EntityMode)
+        for name in names:
+            if order.index(self.mode_for(name)) < order.index(previous.mode_for(name)):
+                return True
+        # Exempting more values is the same decision by another route: an
+        # allow-list entry means "never redact this", whatever the detector says.
+        return not set(self.allow_list).issubset(previous.allow_list)
+
+
+#: What a deployment redacts when nobody has said otherwise.
+#:
+#: Everything the engine finds, except four types that are context rather than
+#: identity. Not a curated allowlist of "real PII": a list of what to protect
+#: would silently omit whatever the detector learns next, and the failure
+#: direction of this file must be over-protection, never under.
+#:
+#: The four exclusions are the ones measured to break ordinary requests. A URL is
+#: the source someone asked to be read; a date is when they asked; a location and
+#: a nationality are usually the subject of the question rather than the identity
+#: of the asker. Each is still *detected* — an admin can switch any of them on in
+#: the console and see it take effect.
+DEFAULT_REDACTION_POLICY = RedactionPolicy(
+    default_mode=EntityMode.ANONYMISE_RESTORE,
+    entities={
+        "URL": EntityPolicy(mode=EntityMode.OFF),
+        "DATE_TIME": EntityPolicy(mode=EntityMode.OFF),
+        "LOCATION": EntityPolicy(mode=EntityMode.OFF),
+        "NRP": EntityPolicy(mode=EntityMode.OFF),
+    },
+)
+
+
 class RedactionSettings(BaseModel):
     """Redaction/guardrail layer.
 
@@ -122,7 +274,17 @@ class RedactionSettings(BaseModel):
 
     language: str = "en"
     score_threshold: float = 0.5
+    #: Superseded by ``policy`` and kept because deployments set it. When
+    #: present it *is* the policy: exactly these types, anonymised and restored,
+    #: everything else off. One rule rather than two mechanisms that can
+    #: disagree — and the console shows the result either way.
     entity_types: list[str] | None = None
+    #: Per-entity policy: which types are acted on, how, and how sure the
+    #: detector must be (ADR 0037). Overridden by the newest ``redaction_config``
+    #: row when the console has set one; this is the deployment's fallback.
+    policy: RedactionPolicy = Field(
+        default_factory=lambda: DEFAULT_REDACTION_POLICY.model_copy(deep=True)
+    )
 
     # Swap placeholders back to real values in the response. See the asymmetry
     # note in llmp_shared.redaction.
@@ -138,6 +300,21 @@ class RedactionSettings(BaseModel):
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def _entity_types_become_the_policy(self) -> RedactionSettings:
+        """``GATEWAY_REDACTION__ENTITY_TYPES`` still means what it always did.
+
+        Translated into a policy rather than consulted beside one: two
+        mechanisms deciding the same question is how a deployment ends up
+        redacting something the screen says it does not.
+        """
+        if self.entity_types is not None and "policy" not in self.model_fields_set:
+            self.policy = RedactionPolicy(
+                default_mode=EntityMode.OFF,
+                entities={name: EntityPolicy() for name in self.entity_types},
+            )
+        return self
 
     @model_validator(mode="after")
     def _check_http_engine(self) -> RedactionSettings:

@@ -69,9 +69,7 @@ class TestWarnings:
 
     def test_an_unreachable_service_says_what_that_means_now(self) -> None:
         """Fail-closed and fail-open are different emergencies."""
-        closed = _redaction_warnings(
-            settings(fail_open=False), "http", healthy(reachable=False)
-        )
+        closed = _redaction_warnings(settings(fail_open=False), "http", healthy(reachable=False))
         assert any("being refused" in note for note in closed)
 
         opened = _redaction_warnings(settings(fail_open=True), "http", healthy(reachable=False))

@@ -113,6 +113,21 @@ def placeholder_for(
     return f"<{label}_{token}>"
 
 
+def opaque_placeholder(entity_type: str) -> str:
+    """The label-only placeholder, e.g. ``<PERSON>``.
+
+    What "redact" means, as distinct from "anonymise": no derived token, so two
+    people in one prompt become the same ``<PERSON>`` and the model cannot tell
+    them apart. That loss is the point of choosing it — the strongest option on
+    the screen, and the one that costs the answer the most.
+
+    Shares :func:`_safe_label` with :func:`placeholder_for` deliberately: both
+    end up in text a restore pass reads, and two label spellings would mean a
+    placeholder that cannot be matched back.
+    """
+    return f"<{_safe_label(entity_type)}>"
+
+
 def _safe_label(entity_type: str) -> str:
     """Coerce an engine's entity label into ``[A-Z][A-Z0-9_]*``.
 
