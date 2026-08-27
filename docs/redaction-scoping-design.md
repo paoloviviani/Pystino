@@ -318,23 +318,52 @@ operator which spans were replaced. One caution to write next to it: the sample
 box will contain real personal data within a week of shipping, so the request
 body must not be logged.
 
+
+## Decisions taken
+
+Settled with the user on 2026-08-27, after the research above. The open questions
+that these answer are struck from the list at the end.
+
+1. **`redaction_rules` is editable, like `limit_rules`** — `is_active`, updated in
+   place — and every request records `redaction_scope` and `redaction_rule_id` on
+   its `usage_records` row. The history that a data-protection review asks about
+   is the history of *requests*, and stamping the rule onto each one answers it
+   even after the rule is edited. A second audit table would answer the same
+   question twice.
+
+2. **A blocked request writes a `usage_records` row with `status=blocked`**, zero
+   tokens and zero cost, at the moment the block fires. Not for billing — there
+   is nothing to bill — but because "this deployment refused 400 prompts last
+   month" is the number a review asks for, and a 403 that leaves no trace cannot
+   produce it. One extra write on a rare path, and `_metered`'s ordering is left
+   alone.
+
+3. **User-supplied patterns run under `google-re2`** (BSD-3), which cannot
+   backtrack, so a pattern that hangs a worker is structurally impossible rather
+   than merely unlikely. Measured motivation: `re.search(r"(a+)+$", "a"*26+"!")`
+   takes **10.8 s** on Python's `re`, which has no timeout, and that shape is
+   easy to write by accident. A save-time probe still runs — it rejects patterns
+   that are merely wrong, with the string that beat them, which is a message an
+   author can act on.
+
+4. **The user scope applies to API-key traffic**, because that is the only
+   traffic there is. There is no chat frontend yet (Phase 3); `/v1` is API keys
+   and nothing else, and the console session exists only so a person can
+   authenticate *as a person* to set the rule. `ApiKey.user_id`
+   (`models.py:282`, `lazy="joined"`) and `Principal.user` (`deps.py:43`) make
+   the scope reachable on every request with no extra query.
+
+   State the consequence on the screen: tightening your own policy affects every
+   key you own, including an unattended one. Because it can only tighten, the
+   symptom is "my agent's prompts come back with more placeholders", never
+   "my key stopped working".
+
 ## Open questions
 
-1. Should `redaction_rules` be append-only like `redaction_config`, or mutable
-   with `is_active` like `limit_rules`? Mutable loses "who weakened the group's
-   policy in March", which is the question a review asks.
-2. Do we record a blocked request in `usage_records` (needs the row opened before
-   redaction, reordering `_metered`), in a separate audit table, or nowhere?
-3. Is `google-re2` (BSD-3, new dependency) acceptable for user-supplied patterns,
-   or do we bound them with a length limit, a compile-time check and a thread
-   deadline instead?
-4. Should a user's own rule apply to requests made with their **API keys**, or
-   only to the console/chat app? (It applies to the user id, so today's answer
-   would be "both".)
-5. Per-scope `language` — the other half of the original Italian bug — in this
+1. Per-scope `language` — the other half of the original Italian bug — in this
    table, or a separate decision? It is per-process today and silently wrong for
    half the prompts here.
-6. `api_key` as a fifth scope: genuinely useful for "this CI key needs stricter
+2. `api_key` as a fifth scope: genuinely useful for "this CI key needs stricter
    handling", or a scope nobody will set?
-7. Should the three unproducible types (`AGE`, `EMAIL`, `ID`) be hidden from the
+3. Should the three unproducible types (`AGE`, `EMAIL`, `ID`) be hidden from the
    console, or shown greyed with "this model cannot produce it"?
