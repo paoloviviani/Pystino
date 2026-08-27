@@ -31,7 +31,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
 
 ENGINE_URL = "/api/admin/redaction/engine"
-POLICY_URL = "/api/admin/redaction/policy"
 
 
 def settings(**overrides: object) -> RedactionSettings:
@@ -261,136 +260,11 @@ class TestTheRoute:
         ).status_code in (401, 403)
 
 
-class TestThePolicyRoute:
-    """Setting which entity types are acted on, and how (ADR 0037)."""
-
-    async def test_a_policy_is_stored_and_reported_as_in_force(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session: AsyncSession,
-        session_factory: object,
-    ) -> None:
-        admin = await make_admin(session_factory, seeded)  # type: ignore[arg-type]
-        as_user(app, admin)
-        response = await client.put(
-            POLICY_URL,
-            json={
-                "policy": {
-                    "default_mode": "anonymise_restore",
-                    "entities": {"person": {"mode": "redact"}, "URL": {"mode": "off"}},
-                    "allow_list": ["ilpost.it"],
-                },
-                "reason": "URLs are the source, not the identity",
-            },
-        )
-        assert response.status_code == 200, response.text
-
-        row = (await session.execute(select(RedactionConfig))).scalar_one()
-        assert row.policy is not None
-        # Upper-cased on the way in: entity labels are free-form strings and case
-        # is the one difference that is never meaningful.
-        assert row.policy["entities"]["PERSON"]["mode"] == "redact"
-        assert row.created_by == admin.id
-
-        body = response.json()
-        assert body["policy_source"] == "console"
-        assert body["policy"]["entities"]["URL"]["mode"] == "off"
-        assert body["policy"]["allow_list"] == ["ilpost.it"]
-
-    async def test_the_engine_in_force_is_carried_forward(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session: AsyncSession,
-        session_factory: object,
-    ) -> None:
-        """A policy change must not quietly reset the engine.
-
-        Writing the row with the *environment's* engine would do exactly that to
-        a deployment whose console had already chosen a different one.
-        """
-        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
-        await client.put(ENGINE_URL, json={"engine": "noop", "reason": "migration"})
-        await client.put(POLICY_URL, json={"policy": {"entities": {}}, "reason": ""})
-
-        rows = (
-            (await session.execute(select(RedactionConfig).order_by(RedactionConfig.created_at)))
-            .scalars()
-            .all()
-        )
-        assert [row.engine for row in rows] == ["noop", "noop"]
-        assert (await client.get("/api/admin/redaction")).json()["engine"] == "noop"
-
-    async def test_protecting_less_without_a_reason_is_refused(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session: AsyncSession,
-        session_factory: object,
-    ) -> None:
-        """The direction that has to be explained, and only that direction.
-
-        Demanding a sentence for every checkbox is how a prompt gets answered
-        with "x" — the argument ADR 0033 makes about the engine, applied to the
-        field below it.
-        """
-        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
-        response = await client.put(
-            POLICY_URL,
-            json={"policy": {"entities": {"PERSON": {"mode": "off"}}}, "reason": "  "},
-        )
-        assert response.status_code == 400
-        assert "protects less" in response.text
-        assert (await session.execute(select(RedactionConfig))).first() is None
-
-    async def test_protecting_more_needs_no_reason(
-        self, app: object, client: httpx.AsyncClient, seeded: Seeded, session_factory: object
-    ) -> None:
-        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
-        response = await client.put(
-            POLICY_URL,
-            json={"policy": {"entities": {"URL": {"mode": "anonymise_restore"}}}, "reason": ""},
-        )
-        assert response.status_code == 200, response.text
-
-    async def test_this_worker_applies_it_immediately(
-        self, app: object, client: httpx.AsyncClient, seeded: Seeded, session_factory: object
-    ) -> None:
-        """The operator's own next request must not still be under the old policy."""
-        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
-        await client.put(
-            POLICY_URL,
-            json={
-                "policy": {"entities": {"PERSON": {"mode": "redact"}}},
-                "reason": "",
-            },
-        )
-        body = (await client.get("/api/admin/redaction")).json()
-        assert body["policy"]["entities"]["PERSON"]["mode"] == "redact"
-        assert body["policy_source"] == "console"
-
-    async def test_an_unknown_mode_is_refused(
-        self, app: object, client: httpx.AsyncClient, seeded: Seeded, session_factory: object
-    ) -> None:
-        """400 rather than 422: this gateway renders validation errors in its own
-        envelope (`main.validation_error_handler`), so an OpenAI client sees the
-        same error shape from every route."""
-        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
-        response = await client.put(
-            POLICY_URL, json={"policy": {"entities": {"PERSON": {"mode": "shred"}}}}
-        )
-        assert response.status_code == 400
-        assert "mode" in response.text
-
-    async def test_a_non_admin_cannot_change_it(
-        self, app: object, client: httpx.AsyncClient, seeded: Seeded
-    ) -> None:
-        as_user(app, seeded.user)
-        assert (await client.put(POLICY_URL, json={"policy": {}})).status_code == 403
+# The policy route is gone. Setting what a deployment redacts is now writing a
+# rule scoped to `all`, like every other scope (ADR 0039), and
+# test_redaction_rules.py covers it there — including that it is the base of the
+# fold. Deleted rather than left asserting a 404: a test whose subject no longer
+# exists is a test nobody can read.
 
 
 class TestTheResolver:

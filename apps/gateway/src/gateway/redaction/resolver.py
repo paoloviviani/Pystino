@@ -42,7 +42,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -67,6 +67,12 @@ DEFAULT_REFRESH_SECONDS = 10.0
 #: silently truncated: a deployment that hits this is one whose redaction is
 #: quietly not what its console says.
 MAX_RULES = 2000
+
+#: Stands in for the catch-all scope's absent subject, so one loop can ask about
+#: every scope. Not ``None``, which is also what "this request has no such
+#: subject" looks like — an unauthenticated model id, say — and conflating the
+#: two would apply the catch-all rule by accident and, worse, sometimes not.
+_EVERYTHING = object()
 
 
 async def load_rules(session: AsyncSession) -> list[RedactionRule]:
@@ -145,7 +151,7 @@ class RedactionResolver:
         self._policy: RedactionPolicy = settings.policy
         #: Scoped rules, by (scope, subject id). Loaded in the same poll as the
         #: engine, so `policy_for` is dictionary lookups and no query at all.
-        self._rules: dict[tuple[str, uuid.UUID], _Rule] = {}
+        self._rules: dict[tuple[str, uuid.UUID | None], _Rule] = {}
         #: Folded results, keyed by the rule ids that produced them. A fold is
         #: microseconds against a 65ms detection floor, but it runs on every
         #: request and the inputs repeat; cleared whenever the rules reload.
@@ -156,7 +162,6 @@ class RedactionResolver:
         #: see the second change take effect.
         self._config_id: Any = None
         self._source = "environment"
-        self._policy_source = "environment"
         self._task: asyncio.Task[None] | None = None
 
     # -- what the request path reads ---------------------------------------
@@ -167,14 +172,22 @@ class RedactionResolver:
 
     @property
     def policy(self) -> RedactionPolicy:
-        """The deployment policy, before any scoped rule."""
-        return self._policy
+        """What applies to a request no rule is narrower about.
+
+        The catch-all rule when there is one, and otherwise the environment's
+        policy — which ships filtering nothing (ADR 0039). Reported on the admin
+        screen so "everything" is visible as a policy rather than as an absence.
+        """
+        rule = self.rule_for(RedactionScope.ALL, None)
+        return rule.policy if rule is not None else self._policy
 
     @property
     def rule_count(self) -> int:
         return len(self._rules)
 
-    def rule_for(self, scope: RedactionScope | str, subject_id: uuid.UUID) -> _Rule | None:
+    def rule_for(
+        self, scope: RedactionScope | str, subject_id: uuid.UUID | None
+    ) -> _Rule | None:
         """One rule by subject, for callers that need to know who wrote it."""
         return self._rules.get((str(scope), subject_id))
 
@@ -189,13 +202,21 @@ class RedactionResolver:
     ) -> EffectivePolicy:
         """The policy governing one request, and which rule to blame for it.
 
-        Order matters and is widest first: ``combine`` takes the allow-list from
-        the first policy alone, and the first is always the deployment's.
-        Everything else folds by strictest-wins, so the order of the rest is
-        irrelevant to the result — but keeping it widest-to-narrowest is what
-        makes "the narrowest rule that applied" meaningful below.
+        Order matters and is widest first. ``combine`` takes the allow-list from
+        the first policy alone, and the first is the catch-all rule when there is
+        one — an allow-list is an exemption from redaction, so it belongs to the
+        broadest statement anyone has made, not to a narrower one that could
+        otherwise exempt what a wider rule protects. Everything else folds by
+        strictest-wins, so the order of the rest does not change the result; it
+        is kept widest-to-narrowest so that "the narrowest rule that applied",
+        recorded below, means what it says.
+
+        The catch-all is a rule like any other (ADR 0039). There is no separate
+        deployment policy to fold in ahead of it, and no rules at all means the
+        environment's policy — which ships filtering nothing.
         """
         subjects = (
+            (RedactionScope.ALL, _EVERYTHING),
             (RedactionScope.PROVIDER, provider_id),
             (RedactionScope.MODEL, model_id),
             (RedactionScope.GROUP, group_id),
@@ -205,7 +226,8 @@ class RedactionResolver:
         applicable = [
             rule
             for scope, subject in subjects
-            if subject is not None and (rule := self._rules.get((scope.value, subject))) is not None
+            if subject is not None
+            and (rule := self.rule_for(scope, _subject_id(subject))) is not None
         ]
         if not applicable:
             return EffectivePolicy(policy=self._policy)
@@ -213,7 +235,7 @@ class RedactionResolver:
         key = tuple(rule.id for rule in applicable)
         folded = self._folded.get(key)
         if folded is None:
-            folded = RedactionPolicy.combine([self._policy, *(rule.policy for rule in applicable)])
+            folded = RedactionPolicy.combine([rule.policy for rule in applicable])
             self._folded[key] = folded
 
         # The narrowest, because that is the one somebody set deliberately for
@@ -227,8 +249,8 @@ class RedactionResolver:
 
     @property
     def policy_source(self) -> str:
-        """``console`` when the row in force carries a policy of its own."""
-        return self._policy_source
+        """``rule`` when a catch-all rule decides it, ``environment`` otherwise."""
+        return "rule" if self.rule_for(RedactionScope.ALL, None) is not None else "environment"
 
     @property
     def source(self) -> str:
@@ -258,7 +280,6 @@ class RedactionResolver:
                 rules = await load_rules(session)
                 row_id = row.id if row is not None else None
                 engine = row.engine if row is not None else self._settings.engine
-                policy = _policy_of(row)
                 changed = self._reload_rules(rules)
                 if row_id == self._config_id:
                     # Rules reloaded either way: they are a dictionary swap, not
@@ -270,7 +291,7 @@ class RedactionResolver:
             return False
 
         try:
-            replacement = build_for(self._settings, engine, policy)
+            replacement = build_for(self._settings, engine)
         except (UnknownEngineError, ValueError):
             # The engine was validated when it was saved, so reaching here means
             # the deployment changed underneath it — a plugin uninstalled, or an
@@ -289,8 +310,6 @@ class RedactionResolver:
         self._redactor = replacement
         self._config_id = row_id
         self._source = "console" if row_id is not None else "environment"
-        self._policy = policy or self._settings.policy
-        self._policy_source = "console" if policy is not None else "environment"
         if self._on_change is not None:
             self._on_change(replacement)
         logger.info(
@@ -361,29 +380,12 @@ class _Rule:
     created_by: uuid.UUID | None = None
 
 
-def _policy_of(row: RedactionConfig | None) -> RedactionPolicy | None:
-    """The policy a row carries, or None if it carries none.
-
-    A stored policy that no longer parses is treated as absent and logged, not
-    raised: the alternative is a worker that stops redacting because a column it
-    could not read was malformed, which is the failure this whole module exists
-    to avoid.
-    """
-    if row is None or row.policy is None:
-        return None
-    try:
-        return RedactionPolicy.model_validate(row.policy)
-    except ValidationError:
-        logger.error(
-            "the stored redaction policy on row %s could not be read; using the "
-            "deployment default instead",
-            row.id,
-            exc_info=True,
-        )
-        return None
+def _subject_id(subject: object) -> uuid.UUID | None:
+    """The catch-all's sentinel back to the null it is stored as."""
+    return None if subject is _EVERYTHING else cast("uuid.UUID", subject)
 
 
-def _rules_of(rows: Sequence[RedactionRule]) -> dict[tuple[str, uuid.UUID], _Rule]:
+def _rules_of(rows: Sequence[RedactionRule]) -> dict[tuple[str, uuid.UUID | None], _Rule]:
     """Parse rows into rules, dropping any whose policy no longer reads.
 
     Dropped rather than raised, and logged loudly: one malformed row must not
@@ -391,7 +393,7 @@ def _rules_of(rows: Sequence[RedactionRule]) -> dict[tuple[str, uuid.UUID], _Rul
     otherwise cause is the worst kind — redaction stops for everyone because one
     group's rule has a typo.
     """
-    parsed: dict[tuple[str, uuid.UUID], _Rule] = {}
+    parsed: dict[tuple[str, uuid.UUID | None], _Rule] = {}
     for row in rows:
         try:
             policy = RedactionPolicy.model_validate(row.policy or {})

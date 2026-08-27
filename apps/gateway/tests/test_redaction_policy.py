@@ -28,6 +28,12 @@ from pydantic import ValidationError
 KEY = b"test-placeholder-key"
 
 
+#: A policy that acts on whatever is reported. Since ADR 0039 the shipped
+#: default filters nothing, so a test about *substitution* must ask for it — or
+#: it is testing the default and would pass against a redactor that does nothing.
+PROTECT_EVERYTHING = RedactionPolicy(default_mode=EntityMode.ANONYMISE_RESTORE)
+
+
 def redact(
     text: str,
     spans: list[EntitySpan],
@@ -40,7 +46,7 @@ def redact(
         spans,
         key=KEY,
         placeholders=placeholders,
-        policy=policy,
+        policy=policy if policy is not None else PROTECT_EVERYTHING,
         default_threshold=threshold,
     )
     return result, count, placeholders
@@ -51,42 +57,52 @@ def span(start: int, end: int, entity_type: str, score: float = 0.9) -> EntitySp
 
 
 class TestTheDefaultPolicy:
-    def test_a_news_site_survives_the_request_that_asked_for_it(self) -> None:
-        """The measurement this whole feature came from.
+    """What a deployment does before anybody writes a rule: nothing (ADR 0039)."""
 
-        "Riassumi le notizie del giorno da ilpost.it" reached the provider as
-        "<PERSON_…> le notizie del giorno da <URL_…>" — the source the user asked
-        to be summarised, replaced by a token meaning nothing to the model. A URL
-        is context, not identity.
+    def test_nothing_is_redacted_until_a_rule_says_so(self) -> None:
+        """The inversion of ADR 0037, and the reason for it.
+
+        That version shipped a policy protecting everything the engine found, and
+        the measured result was ordinary requests arriving mangled — the verb in
+        "Riassumi le notizie del giorno da ilpost.it" replaced by a placeholder.
+        A filter nobody chose is a filter nobody has thought about.
         """
-        text = "Riassumi le notizie del giorno da ilpost.it"
-        result, count, _ = redact(text, [span(33, 42, "URL", score=0.5)])
-
-        assert result == text
-        assert count == 0
-
-    @pytest.mark.parametrize("entity_type", ["URL", "DATE_TIME", "LOCATION", "NRP"])
-    def test_the_four_context_types_are_off(self, entity_type: str) -> None:
-        assert DEFAULT_REDACTION_POLICY.mode_for(entity_type) is EntityMode.OFF
-
-    def test_everything_else_is_still_redacted_and_restorable(self) -> None:
-        """Default *on*, not a curated allowlist.
-
-        A list of what to protect silently omits whatever the detector learns
-        next; the failure direction here has to be over-protection.
-        """
-        result, count, placeholders = redact(
-            "write to mario@example.org", [span(9, 26, "EMAIL_ADDRESS")]
+        text = "Riassumi le notizie del giorno da ilpost.it, chiedi a Mario Rossi"
+        result, count, _ = redact(
+            text,
+            [
+                span(0, 8, "PERSON", score=0.85),
+                span(33, 42, "URL", score=0.5),
+                span(53, 64, "PERSON", score=0.9),
+            ],
+            DEFAULT_REDACTION_POLICY,
         )
-        assert count == 1
-        assert "<EMAIL_ADDRESS_" in result
-        assert placeholders.restore(result) == "write to mario@example.org"
 
-    def test_an_entity_type_nobody_has_ruled_on_is_protected(self) -> None:
-        """A recogniser added by the next release of the engine, in other words."""
-        result, count, _ = redact("id NEWTYPE-1", [span(3, 12, "SOMETHING_NEW")])
+        assert (result, count) == (text, 0)
+
+    def test_it_asks_the_detector_for_nothing(self) -> None:
+        """Not merely "ignores the answer": an enumerable policy narrows the
+        request, and the empty policy enumerates to nothing."""
+        assert DEFAULT_REDACTION_POLICY.detected_types() == []
+
+    def test_a_rule_is_how_protection_is_turned_on(self) -> None:
+        protective = RedactionPolicy(entities={"PERSON": EntityPolicy()})
+        result, count, placeholders = redact(
+            "ask Mario Rossi", [span(4, 15, "PERSON")], protective
+        )
+
         assert count == 1
-        assert "<SOMETHING_NEW_" in result
+        assert "<PERSON_" in result
+        assert placeholders.restore(result) == "ask Mario Rossi"
+
+    def test_a_policy_says_nothing_about_types_it_does_not_name(self) -> None:
+        """`default_mode` is off, so a rule about one type is a statement about
+        that type — not a decision about every other one."""
+        protective = RedactionPolicy(entities={"PERSON": EntityPolicy()})
+
+        assert protective.mode_for("PERSON") is EntityMode.ANONYMISE_RESTORE
+        assert protective.mode_for("URL") is EntityMode.OFF
+        assert protective.mode_for("SOMETHING_NEW") is EntityMode.OFF
 
 
 class TestModes:
@@ -183,7 +199,9 @@ class TestOrdering:
         overlap and then be discarded by the policy, leaving the person in the
         prompt — protection removed by a rule that was meant to remove noise.
         """
-        policy = RedactionPolicy(entities={"URL": EntityPolicy(mode=EntityMode.OFF)})
+        policy = RedactionPolicy(
+            entities={"URL": EntityPolicy(mode=EntityMode.OFF), "PERSON": EntityPolicy()}
+        )
         result, count, _ = redact(
             "mail mario@example.org now",
             [
@@ -205,8 +223,12 @@ class TestWhatTheDetectorIsAsked:
         assert policy.detected_types() == ["PERSON"]
 
     def test_a_default_on_policy_asks_for_everything(self) -> None:
-        """An engine's entity list is its own and cannot be enumerated here."""
-        assert DEFAULT_REDACTION_POLICY.detected_types() is None
+        """An engine's entity list is its own and cannot be enumerated here, so
+        a policy that acts on unnamed types has to ask for all of them."""
+        assert PROTECT_EVERYTHING.detected_types() is None
+
+    def test_the_shipped_default_asks_for_nothing(self) -> None:
+        assert DEFAULT_REDACTION_POLICY.detected_types() == []
 
     def test_the_environment_variable_still_means_what_it_did(self) -> None:
         settings = RedactionSettings(entity_types=["PERSON", "EMAIL_ADDRESS"])
@@ -244,7 +266,7 @@ class TestWeakening:
 
     def test_turning_the_default_off_weakens(self) -> None:
         after = RedactionPolicy(default_mode=EntityMode.OFF)
-        assert after.weakens(DEFAULT_REDACTION_POLICY)
+        assert after.weakens(PROTECT_EVERYTHING)
 
     def test_saying_the_same_thing_twice_does_not(self) -> None:
         assert not DEFAULT_REDACTION_POLICY.weakens(DEFAULT_REDACTION_POLICY)

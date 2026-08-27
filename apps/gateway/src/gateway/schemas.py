@@ -939,22 +939,6 @@ class RedactionEngineRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
-class RedactionPolicyRequest(BaseModel):
-    """Set the per-entity policy: which types are acted on, and how (ADR 0037).
-
-    The whole policy, not a patch. An admin edits a screen and saves it, and a
-    partial update of a document whose meaning is the *combination* of its
-    entries invites two sessions to each save half of what they meant.
-    """
-
-    policy: RedactionPolicy
-    #: Required when the new policy protects less than the one in force —
-    #: turning protection off, downgrading a mode, or exempting more values.
-    #: Checked in the route, because "less" is a comparison against what is
-    #: running and a schema cannot see that.
-    reason: str = Field(default="", max_length=500)
-
-
 class RedactionStatusResponse(BaseModel):
     """The redaction layer as it is actually running.
 
@@ -996,11 +980,12 @@ class RedactionStatusResponse(BaseModel):
     #: by ``policy`` and still reported, because a deployment that sets it is
     #: entitled to see the value it set.
     entity_types: list[str] | None = None
-    #: What is acted on and how, per entity type (ADR 0037).
+    #: What applies to a request no rule is narrower about: the catch-all rule
+    #: when one exists, the environment's policy otherwise (ADR 0039). Read-only
+    #: here — it is edited as a rule, like every other scope.
     policy: RedactionPolicy
-    #: ``console`` when the row in force carries a policy, ``environment``
-    #: otherwise. Separate from ``source`` because a row may set the engine and
-    #: say nothing about the policy, in which case the two genuinely differ.
+    #: ``rule`` when a catch-all rule decides it, ``environment`` when nobody
+    #: has written one and the deployment's own setting stands.
     policy_source: str = "environment"
     timeout_seconds: float
     cache_size: int
@@ -1024,7 +1009,7 @@ class RedactionStatusResponse(BaseModel):
 
 #: The five subjects a rule can name. Not ``LimitScope``: quotas scope to who
 #: pays, redaction to the endpoint text reaches and the person who wrote it.
-RedactionScopeName = Literal["provider", "model", "group", "user", "api_key"]
+RedactionScopeName = Literal["all", "provider", "model", "group", "user", "api_key"]
 
 
 class RedactionRuleResponse(BaseModel):
@@ -1038,7 +1023,8 @@ class RedactionRuleResponse(BaseModel):
     id: uuid.UUID
     name: str
     scope: RedactionScopeName
-    scope_id: uuid.UUID
+    #: Null for the catch-all scope, whose subject is every request.
+    scope_id: uuid.UUID | None
     #: The model name, provider name, group name, user email or key prefix.
     #: **Null means the subject no longer exists**, which is the one thing this
     #: field must be able to say: a rule pointing at a deleted group is inert and
@@ -1068,7 +1054,11 @@ class RedactionRuleCreateRequest(BaseModel):
 
     name: str = Field(default="", max_length=255)
     scope: RedactionScopeName
-    scope_id: uuid.UUID
+    #: Null for, and only for, the catch-all scope, whose subject is every
+    #: request. Checked in the route rather than here: "which scopes need a
+    #: subject" is the model's rule and the database's CHECK, and a third copy
+    #: in a schema is a third thing to keep in step.
+    scope_id: uuid.UUID | None = None
     policy: RedactionPolicy
     is_active: bool = True
     reason: str = Field(default="", max_length=500)

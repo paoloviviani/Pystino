@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 import pytest
-from gateway.config import RedactionSettings
+from gateway.config import EntityMode, RedactionPolicy, RedactionSettings
 from gateway.redaction import (
     NoOpRedactor,
     RedactionUnavailableError,
@@ -30,11 +30,21 @@ from pydantic import SecretStr
 KEY = "test-placeholder-key"
 
 
+#: A policy that acts on whatever the detector reports.
+#:
+#: Since ADR 0039 a deployment filters nothing until somebody writes a rule, so a
+#: test about *substitution* has to say it wants substitution — otherwise it is
+#: really testing the default, and every assertion below would pass against a
+#: redactor that does nothing at all.
+PROTECT_EVERYTHING = RedactionPolicy(default_mode=EntityMode.ANONYMISE_RESTORE)
+
+
 def settings(**overrides: Any) -> RedactionSettings:
     base: dict[str, Any] = {
         "engine": "http",
         "endpoint": "http://detector:8080",
         "placeholder_key": SecretStr(KEY),
+        "policy": PROTECT_EVERYTHING,
     }
     return RedactionSettings(**{**base, **overrides})
 
@@ -278,6 +288,7 @@ class TestOverlappingSpans:
             ],
             key=KEY.encode(),
             placeholders=placeholders,
+            policy=PROTECT_EVERYTHING,
         )
         assert count == 1
         assert "IT_VAT_CODE" in text
@@ -293,6 +304,7 @@ class TestOverlappingSpans:
             ],
             key=KEY.encode(),
             placeholders=placeholders,
+            policy=PROTECT_EVERYTHING,
         )
         assert count == 2
         assert text.startswith("<A_") and "<B_" in text
@@ -305,6 +317,7 @@ class TestOverlappingSpans:
             [EntitySpan(start=0, end=500, entity_type="PERSON", score=1.0)],
             key=KEY.encode(),
             placeholders=placeholders,
+            policy=PROTECT_EVERYTHING,
         )
         assert (text, count) == ("short", 0)
 
@@ -319,6 +332,7 @@ class TestOverlappingSpans:
             ],
             key=KEY.encode(),
             placeholders=placeholders,
+            policy=PROTECT_EVERYTHING,
         )
         assert count == 2
         assert " said to " in text
