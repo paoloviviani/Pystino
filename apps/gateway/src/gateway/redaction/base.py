@@ -21,6 +21,7 @@ so the machinery is proven without shipping an engine.
 
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from llmp_shared import PlaceholderMap
 
+from gateway.config import EffectivePolicy
 from gateway.models import ApiSurface
 from gateway.protocols import reader_for
 from gateway.sse.events import SSEEvent
@@ -42,6 +44,11 @@ class RedactionOutcome:
     placeholder_map: PlaceholderMap = field(default_factory=PlaceholderMap)
     entity_count: int = 0
     engine: str = "noop"
+    #: Which scoped rule tightened this request, copied onto the usage row. The
+    #: rules table is mutable, so the trail that answers "why was this redacted"
+    #: has to live on the request rather than on the rule (ADR 0038).
+    scope: str | None = None
+    rule_id: uuid.UUID | None = None
 
     @property
     def changed(self) -> bool:
@@ -58,8 +65,16 @@ class Redactor(Protocol):
 
     name: str
 
-    async def redact_request(self, messages: list[dict[str, Any]]) -> RedactionOutcome:
-        """Rewrite outbound messages before they reach the upstream."""
+    async def redact_request(
+        self, messages: list[dict[str, Any]], *, policy: EffectivePolicy | None = None
+    ) -> RedactionOutcome:
+        """Rewrite outbound messages before they reach the upstream.
+
+        ``policy`` is the folded answer for this request's scopes (ADR 0038).
+        None means "the deployment policy this engine was built with", which is
+        what every caller did before scoping existed and what a test harness
+        without a resolver still does.
+        """
         ...
 
     def response_stage(

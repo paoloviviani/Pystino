@@ -363,7 +363,11 @@ class _ShoutyRedactor:
 
     name = "test"
 
-    async def redact_request(self, messages: list[dict]) -> RedactionOutcome:
+    async def redact_request(
+        self, messages: list[dict], *, policy: object | None = None
+    ) -> RedactionOutcome:
+        # `policy` accepted and ignored: this double is about the *seam*, not the
+        # policy, and every route now passes one (ADR 0038).
         rewritten = []
         count = 0
         for message in messages:

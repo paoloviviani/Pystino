@@ -38,16 +38,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Sequence
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from gateway.config import RedactionPolicy, RedactionSettings
-from gateway.models import RedactionConfig
+from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings
+from gateway.models import RedactionConfig, RedactionRule, RedactionScope
 from gateway.redaction.base import Redactor
 from gateway.redaction.registry import UnknownEngineError, resolve
 
@@ -57,6 +59,30 @@ logger = logging.getLogger(__name__)
 #: seconds: long enough that the poll is free, short enough that an operator who
 #: just switched the layer off does not wonder whether it worked.
 DEFAULT_REFRESH_SECONDS = 10.0
+
+
+#: A cap on how many scoped rules a worker will hold. Rules are loaded into
+#: memory so the request path stays query-free (ADR 0038), which trades an
+#: unbounded table for an unbounded footprint. Bounded and logged rather than
+#: silently truncated: a deployment that hits this is one whose redaction is
+#: quietly not what its console says.
+MAX_RULES = 2000
+
+
+async def load_rules(session: AsyncSession) -> list[RedactionRule]:
+    """Every active scoped rule, newest first, up to :data:`MAX_RULES`."""
+    return list(
+        (
+            await session.execute(
+                select(RedactionRule)
+                .where(RedactionRule.is_active.is_(True))
+                .order_by(RedactionRule.updated_at.desc())
+                .limit(MAX_RULES + 1)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
 async def current_engine(session: AsyncSession) -> RedactionConfig | None:
@@ -117,6 +143,13 @@ class RedactionResolver:
         #: one. Held here so the admin screen can report what is *running*
         #: rather than what is configured — the same rule the engine follows.
         self._policy: RedactionPolicy = settings.policy
+        #: Scoped rules, by (scope, subject id). Loaded in the same poll as the
+        #: engine, so `policy_for` is dictionary lookups and no query at all.
+        self._rules: dict[tuple[str, uuid.UUID], _Rule] = {}
+        #: Folded results, keyed by the rule ids that produced them. A fold is
+        #: microseconds against a 65ms detection floor, but it runs on every
+        #: request and the inputs repeat; cleared whenever the rules reload.
+        self._folded: dict[tuple[uuid.UUID, ...], RedactionPolicy] = {}
         #: The row this worker built from, or None while the environment decides.
         #: Compared by id, not by engine name: two rows naming the same engine are
         #: still two decisions, and an operator who switches away and back should
@@ -134,7 +167,59 @@ class RedactionResolver:
 
     @property
     def policy(self) -> RedactionPolicy:
+        """The deployment policy, before any scoped rule."""
         return self._policy
+
+    @property
+    def rule_count(self) -> int:
+        return len(self._rules)
+
+    def policy_for(
+        self,
+        *,
+        provider_id: uuid.UUID | None = None,
+        model_id: uuid.UUID | None = None,
+        group_id: uuid.UUID | None = None,
+        user_id: uuid.UUID | None = None,
+        api_key_id: uuid.UUID | None = None,
+    ) -> EffectivePolicy:
+        """The policy governing one request, and which rule to blame for it.
+
+        Order matters and is widest first: ``combine`` takes the allow-list from
+        the first policy alone, and the first is always the deployment's.
+        Everything else folds by strictest-wins, so the order of the rest is
+        irrelevant to the result — but keeping it widest-to-narrowest is what
+        makes "the narrowest rule that applied" meaningful below.
+        """
+        subjects = (
+            (RedactionScope.PROVIDER, provider_id),
+            (RedactionScope.MODEL, model_id),
+            (RedactionScope.GROUP, group_id),
+            (RedactionScope.USER, user_id),
+            (RedactionScope.API_KEY, api_key_id),
+        )
+        applicable = [
+            rule
+            for scope, subject in subjects
+            if subject is not None and (rule := self._rules.get((scope.value, subject))) is not None
+        ]
+        if not applicable:
+            return EffectivePolicy(policy=self._policy)
+
+        key = tuple(rule.id for rule in applicable)
+        folded = self._folded.get(key)
+        if folded is None:
+            folded = RedactionPolicy.combine([self._policy, *(rule.policy for rule in applicable)])
+            self._folded[key] = folded
+
+        # The narrowest, because that is the one somebody set deliberately for
+        # this subject and the first place an operator looks. A request under
+        # several rules names only this one; the others are visible on the rules
+        # screen, and ADR 0038 says so rather than implying the trail is complete.
+        narrowest = applicable[-1]
+        return EffectivePolicy(
+            policy=folded, scope=narrowest.scope, rule_id=narrowest.id
+        )
 
     @property
     def policy_source(self) -> str:
@@ -166,11 +251,16 @@ class RedactionResolver:
         try:
             async with self._session_factory() as session:
                 row = await current_engine(session)
+                rules = await load_rules(session)
                 row_id = row.id if row is not None else None
                 engine = row.engine if row is not None else self._settings.engine
                 policy = _policy_of(row)
+                changed = self._reload_rules(rules)
                 if row_id == self._config_id:
-                    return False
+                    # Rules reloaded either way: they are a dictionary swap, not
+                    # a redactor rebuild, so they cost nothing and must not wait
+                    # for an engine change that may never come.
+                    return changed
         except Exception:
             logger.warning("could not read the redaction configuration", exc_info=True)
             return False
@@ -207,6 +297,24 @@ class RedactionResolver:
         await _close_quietly(previous)
         return True
 
+    def _reload_rules(self, rows: Sequence[RedactionRule]) -> bool:
+        """Swap the rule table in. True when it changed."""
+        if len(rows) > MAX_RULES:
+            logger.error(
+                "more than %d active redaction rules; only the %d most recently "
+                "updated are in force on this worker",
+                MAX_RULES,
+                MAX_RULES,
+            )
+            rows = rows[:MAX_RULES]
+        parsed = _rules_of(rows)
+        if parsed == self._rules:
+            return False
+        self._rules = parsed
+        self._folded.clear()
+        logger.info("redaction rules reloaded: %d active", len(parsed))
+        return True
+
     def start(self) -> None:
         """Begin polling. Idempotent."""
         if self._task is None or self._task.done():
@@ -236,6 +344,15 @@ class RedactionResolver:
         await _close_quietly(self._redactor)
 
 
+@dataclass(frozen=True, slots=True)
+class _Rule:
+    """One scoped rule, parsed once at load rather than per request."""
+
+    id: uuid.UUID
+    scope: str
+    policy: RedactionPolicy
+
+
 def _policy_of(row: RedactionConfig | None) -> RedactionPolicy | None:
     """The policy a row carries, or None if it carries none.
 
@@ -256,6 +373,27 @@ def _policy_of(row: RedactionConfig | None) -> RedactionPolicy | None:
             exc_info=True,
         )
         return None
+
+
+def _rules_of(rows: Sequence[RedactionRule]) -> dict[tuple[str, uuid.UUID], _Rule]:
+    """Parse rows into rules, dropping any whose policy no longer reads.
+
+    Dropped rather than raised, and logged loudly: one malformed row must not
+    stop a worker resolving policy for every other scope. The failure it would
+    otherwise cause is the worst kind — redaction stops for everyone because one
+    group's rule has a typo.
+    """
+    parsed: dict[tuple[str, uuid.UUID], _Rule] = {}
+    for row in rows:
+        try:
+            policy = RedactionPolicy.model_validate(row.policy or {})
+        except ValidationError:
+            logger.error("redaction rule %s has an unreadable policy; ignoring it", row.id)
+            continue
+        parsed[(str(row.scope), row.scope_id)] = _Rule(
+            id=row.id, scope=str(row.scope), policy=policy
+        )
+    return parsed
 
 
 async def _close_quietly(redactor: Redactor) -> None:

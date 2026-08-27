@@ -80,7 +80,10 @@ async def create_embeddings(
     # Reuses the message-shaped interface so one engine covers both routes: each
     # input becomes a user message, and the redacted text comes back out. There
     # is no response path to restore — the response is an array of numbers.
-    outcome = await redactor.redact_request([{"role": "user", "content": text} for text in texts])
+    policy = _metered.redaction_policy(request, principal=principal, model=model)
+    outcome = await redactor.redact_request(
+        [{"role": "user", "content": text} for text in texts], policy=policy
+    )
     redacted = [str(message.get("content") or "") for message in outcome.messages]
 
     # -- reservation --------------------------------------------------------

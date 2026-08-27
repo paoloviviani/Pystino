@@ -134,6 +134,11 @@ class RequestContext:
     estimated_prompt_tokens: int = 0
     redaction_engine: str | None = None
     redacted_entity_count: int = 0
+    #: Which scoped rule tightened this request (ADR 0038). Recorded per request
+    #: because the rules table is mutable: an edited rule cannot answer "why was
+    #: this one redacted" six weeks later, and that is the question asked.
+    redaction_scope: str | None = None
+    redaction_rule_id: uuid.UUID | None = None
     #: Which endpoint served the request. Selects how response frames are read
     #: — the surfaces disagree about where usage lives and what its keys mean.
     surface: ApiSurface = ApiSurface.CHAT_COMPLETIONS
@@ -217,6 +222,8 @@ class RequestAccounting:
             cost=Decimal(0),
             redaction_engine=self._ctx.redaction_engine,
             redacted_entity_count=self._ctx.redacted_entity_count,
+            redaction_scope=self._ctx.redaction_scope,
+            redaction_rule_id=self._ctx.redaction_rule_id,
         )
         async with self._session_factory() as session:
             session.add(record)
