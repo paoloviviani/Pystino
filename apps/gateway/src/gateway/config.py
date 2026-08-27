@@ -226,7 +226,12 @@ class RedactionPolicy(BaseModel):
     the case to be conservative about.
     """
 
-    default_mode: EntityMode = EntityMode.ANONYMISE_RESTORE
+    #: What happens to a type this policy does not name. **Off**, so a policy
+    #: is a statement about the types it lists and silent about the rest. Any
+    #: other default would mean a rule about `IBAN_CODE` quietly deciding for
+    #: `PERSON` too, and — folded across scopes by `max` — a narrow rule could
+    #: raise the floor for everything.
+    default_mode: EntityMode = EntityMode.OFF
     entities: dict[str, EntityPolicy] = Field(default_factory=dict)
     #: Operator-written regexes, unioned across scopes when policies combine:
     #: adding a pattern can only find more, so union is the tightening direction.
@@ -406,27 +411,23 @@ class EffectivePolicy:
     rule_id: uuid.UUID | None = None
 
 
-#: What a deployment redacts when nobody has said otherwise.
+#: What a deployment redacts before anybody has written a rule: **nothing**.
 #:
-#: Everything the engine finds, except four types that are context rather than
-#: identity. Not a curated allowlist of "real PII": a list of what to protect
-#: would silently omit whatever the detector learns next, and the failure
-#: direction of this file must be over-protection, never under.
+#: This reverses ADR 0037, deliberately, and the reasoning is in ADR 0039. That
+#: version shipped a policy that protected everything the engine found except
+#: four noisy types, on the argument that the failure direction must be
+#: over-protection. Two things were wrong with it. It made the deployment policy
+#: a *special* object — not a rule, edited on its own screen, folded in ahead of
+#: the rules — so "what applies here" had two answers with different shapes. And
+#: a filter nobody chose is a filter nobody has thought about: the measured
+#: outcome was ordinary Italian requests arriving at the provider with the verb
+#: replaced by a placeholder.
 #:
-#: The four exclusions are the ones measured to break ordinary requests. A URL is
-#: the source someone asked to be read; a date is when they asked; a location and
-#: a nationality are usually the subject of the question rather than the identity
-#: of the asker. Each is still *detected* — an admin can switch any of them on in
-#: the console and see it take effect.
-DEFAULT_REDACTION_POLICY = RedactionPolicy(
-    default_mode=EntityMode.ANONYMISE_RESTORE,
-    entities={
-        "URL": EntityPolicy(mode=EntityMode.OFF),
-        "DATE_TIME": EntityPolicy(mode=EntityMode.OFF),
-        "LOCATION": EntityPolicy(mode=EntityMode.OFF),
-        "NRP": EntityPolicy(mode=EntityMode.OFF),
-    },
-)
+#: Redaction is now off until somebody says otherwise, and *saying otherwise* is
+#: one thing — writing a rule. A deployment that wants everything protected
+#: writes one rule, scoped to `all`, and can see it on the screen next to every
+#: other rule.
+DEFAULT_REDACTION_POLICY = RedactionPolicy()
 
 
 class RedactionSettings(BaseModel):

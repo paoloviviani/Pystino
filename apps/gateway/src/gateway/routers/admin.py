@@ -122,7 +122,6 @@ from gateway.schemas import (
     RedactionConfigChange,
     RedactionEngineOption,
     RedactionEngineRequest,
-    RedactionPolicyRequest,
     RedactionPreviewRequest,
     RedactionPreviewResponse,
     RedactionPreviewSpan,
@@ -2165,86 +2164,6 @@ async def set_redaction_engine(
     )
 
 
-@router.put("/redaction/policy", response_model=RedactionStatusResponse)
-async def set_redaction_policy(
-    payload: RedactionPolicyRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    settings: SettingsDep,
-    http: ControlHttpDep,
-    request: Request,
-) -> RedactionStatusResponse:
-    """Set which entity types are acted on, and how (ADR 0037).
-
-    Written as a new ``redaction_config`` row carrying the engine currently in
-    force, so the table keeps meaning what it meant: append-only, newest wins,
-    and the history answers "who changed what, when, and why" about a window that
-    has already closed. A policy change is exactly that kind of decision — it
-    decides what personal data leaves this deployment.
-
-    **A reason is required only when the change protects less**: an entity type
-    switched off, a mode downgraded, or a value added to the allow-list. Turning
-    protection *on* needs no justification, and demanding a sentence for every
-    checkbox is how a prompt gets answered with "x" (the argument in ADR 0033,
-    applied to the field below the engine).
-
-    Note what is *not* refused: a policy that turns everything off. That is what
-    the engine switch is for, it is already loud, and refusing it here would
-    leave an operator who wants the layer off with two screens and one of them
-    lying about the result.
-    """
-    resolver: RedactionResolver | None = getattr(request.app.state, "redaction", None)
-    in_force = resolver.policy if resolver is not None else settings.redaction.policy
-
-    reason = payload.reason.strip()
-    if payload.policy.weakens(in_force) and not reason:
-        # As above: the reason outlives the change and is what a later review
-        # reads. The list of what "weakens" means stays, because it is how an
-        # operator finds which part of their edit tripped this.
-        raise BadRequestError(
-            "this policy protects less than the one in force — an entity type turned "
-            "off, a mode downgraded, or a value exempted. Give a reason.",
-            code="redaction_policy_reason_required",
-        )
-
-    # The engine is carried forward rather than defaulted: a policy change must
-    # not quietly reset the engine to whatever the environment says, which is
-    # what writing a row with `settings.redaction.engine` would do to a
-    # deployment whose console had already chosen a different one.
-    live: Redactor | None = getattr(request.app.state, "redactor", None)
-    engine = getattr(live, "name", None) or settings.redaction.engine
-
-    session.add(
-        RedactionConfig(
-            engine=engine,
-            policy=payload.policy.model_dump(mode="json"),
-            reason=reason,
-            created_by=admin.id,
-        )
-    )
-    await session.commit()
-
-    if resolver is not None:
-        await resolver.refresh()
-
-    logger.warning(
-        "redaction policy changed by %s (%s): default=%s, %d entity rule(s), "
-        "%d allow-list entr(y/ies)",
-        admin.email or admin.id,
-        reason or "no reason given",
-        payload.policy.default_mode,
-        len(payload.policy.entities),
-        len(payload.policy.allow_list),
-    )
-    return await _redaction_response(
-        session=session,
-        settings=settings,
-        request=request,
-        http=http,
-        window_seconds=86_400,
-    )
-
-
 # -- scoped redaction rules --------------------------------------------------
 #
 # One policy per subject (ADR 0038). Everything dangerous about this table is
@@ -2253,6 +2172,11 @@ async def set_redaction_policy(
 # incident. What is left for the API is the two things construction cannot do —
 # refuse a rule for a subject that does not exist, and refuse a second rule for a
 # subject that already has one.
+
+
+#: What the catch-all scope is called on screen. A constant because it names no
+#: row: there is one subject and it is every request.
+EVERYTHING_LABEL = "Every request"
 
 
 def _subject_columns(scope: RedactionScope) -> tuple[Any, Any]:
@@ -2264,6 +2188,11 @@ def _subject_columns(scope: RedactionScope) -> tuple[Any, Any]:
     and a union type over them would be noise around a lookup table.
     """
     match scope:
+        case RedactionScope.ALL:
+            # Unreachable: every caller checks for the catch-all first, because
+            # it names no row. Raised rather than returned-as-None so a new
+            # caller that forgets fails here instead of querying `None`.
+            raise ValueError("the catch-all scope has no subject table")
         case RedactionScope.PROVIDER:
             return Provider.id, Provider.name
         case RedactionScope.MODEL:
@@ -2283,6 +2212,7 @@ def _subject_columns(scope: RedactionScope) -> tuple[Any, Any]:
 #: What to call each subject in a refusal. "No such group" is a message an
 #: operator can act on; "no such scope_id" is not.
 _SUBJECT_NOUNS = {
+    RedactionScope.ALL: "catch-all",
     RedactionScope.PROVIDER: "provider",
     RedactionScope.MODEL: "model",
     RedactionScope.GROUP: "group",
@@ -2293,7 +2223,7 @@ _SUBJECT_NOUNS = {
 
 async def _subject_labels(
     session: SessionDep, rules: Sequence[RedactionRule]
-) -> dict[tuple[RedactionScope, uuid.UUID], str]:
+) -> dict[tuple[RedactionScope, uuid.UUID | None], str]:
     """A human name for every rule's subject, in one query per scope kind.
 
     Per scope kind rather than per row: a page of fifty rules spans at most five
@@ -2303,9 +2233,14 @@ async def _subject_labels(
     """
     by_scope: dict[RedactionScope, set[uuid.UUID]] = {}
     for rule in rules:
-        by_scope.setdefault(rule.scope, set()).add(rule.scope_id)
+        # The catch-all names no row in any table, so there is nothing to look
+        # up and its label is a constant.
+        if rule.scope_id is not None:
+            by_scope.setdefault(rule.scope, set()).add(rule.scope_id)
 
-    labels: dict[tuple[RedactionScope, uuid.UUID], str] = {}
+    labels: dict[tuple[RedactionScope, uuid.UUID | None], str] = {}
+    if any(rule.scope is RedactionScope.ALL for rule in rules):
+        labels[(RedactionScope.ALL, None)] = EVERYTHING_LABEL
     for scope, ids in by_scope.items():
         id_column, label_column = _subject_columns(scope)
         rows = (
@@ -2316,7 +2251,9 @@ async def _subject_labels(
     return labels
 
 
-async def _check_subject(session: SessionDep, scope: RedactionScope, scope_id: uuid.UUID) -> str:
+async def _check_subject(
+    session: SessionDep, scope: RedactionScope, scope_id: uuid.UUID | None
+) -> str:
     """The subject's label, or a refusal naming what kind of thing is missing.
 
     Checked before the row is written, the same rule ``_load_provider`` follows
@@ -2324,7 +2261,26 @@ async def _check_subject(session: SessionDep, scope: RedactionScope, scope_id: u
     nothing, and a redaction rule that silently matches nothing is precisely the
     failure this feature exists to prevent — it looks identical, on the screen,
     to one that is working.
+
+    The catch-all is the one scope with nothing to check: its subject is every
+    request. Both halves of the pairing are refused here, because a catch-all
+    rule carrying an id and a scoped rule carrying none are each a request that
+    means something the caller did not intend, and the database CHECK would
+    otherwise report it as a constraint name.
     """
+    if scope is RedactionScope.ALL:
+        if scope_id is not None:
+            raise BadRequestError(
+                "the catch-all scope applies to every request, so it takes no subject.",
+                code="unexpected_subject",
+            )
+        return EVERYTHING_LABEL
+    if scope_id is None:
+        raise BadRequestError(
+            f"a {_SUBJECT_NOUNS[scope]}-scoped rule needs the id of the "
+            f"{_SUBJECT_NOUNS[scope]} it applies to.",
+            code="missing_subject",
+        )
     id_column, label_column = _subject_columns(scope)
     row = (
         await session.execute(select(id_column, label_column).where(id_column == scope_id))
@@ -2561,7 +2517,7 @@ class _DetectingRedactor(Protocol):
 
 
 def _policy_for_subject(
-    resolver: RedactionResolver, scope: RedactionScope, scope_id: uuid.UUID
+    resolver: RedactionResolver, scope: RedactionScope, scope_id: uuid.UUID | None
 ) -> EffectivePolicy:
     """The folded policy one subject's requests would run under.
 
@@ -2570,6 +2526,10 @@ def _policy_for_subject(
     be a preview that silently showed the deployment policy instead.
     """
     match scope:
+        case RedactionScope.ALL:
+            # Every request already carries the catch-all, so previewing "as"
+            # it is just the base fold with no narrower subject.
+            return resolver.policy_for()
         case RedactionScope.PROVIDER:
             return resolver.policy_for(provider_id=scope_id)
         case RedactionScope.MODEL:

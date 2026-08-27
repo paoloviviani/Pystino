@@ -52,14 +52,26 @@ class TestTheFold:
         combined = RedactionPolicy.combine([deployment, stricter])
         assert combined.mode_for("PERSON") is EntityMode.BLOCK
 
-    def test_a_rule_that_names_one_type_does_not_lower_the_others(self) -> None:
-        """`mode_for` falls back to each policy's own default, so a narrow rule
-        contributes its default everywhere — and `max` makes that harmless."""
-        combined = RedactionPolicy.combine(
-            [DEFAULT_REDACTION_POLICY, policy(entities={"IBAN_CODE": EntityPolicy()})]
+    def test_a_narrow_rule_does_not_disturb_what_a_wider_one_decided(self) -> None:
+        """A policy contributes where it *names* a type and is silent elsewhere.
+
+        Both directions matter and both were bugs at some point: a rule about
+        IBAN must not switch EMAIL_ADDRESS on (its own default would, if
+        defaults fell through), and it must not switch URL off either.
+        """
+        catch_all = policy(
+            entities={
+                "EMAIL_ADDRESS": EntityPolicy(),
+                "URL": EntityPolicy(mode=EntityMode.OFF),
+            }
         )
+        combined = RedactionPolicy.combine(
+            [catch_all, policy(entities={"IBAN_CODE": EntityPolicy()})]
+        )
+
         assert combined.mode_for("EMAIL_ADDRESS") is EntityMode.ANONYMISE_RESTORE
         assert combined.mode_for("URL") is EntityMode.OFF
+        assert combined.mode_for("IBAN_CODE") is EntityMode.ANONYMISE_RESTORE
 
     def test_the_strictest_default_wins(self) -> None:
         combined = RedactionPolicy.combine(
@@ -97,6 +109,89 @@ class TestTheFold:
 
     def test_one_policy_folds_to_itself(self) -> None:
         assert RedactionPolicy.combine([DEFAULT_REDACTION_POLICY]) is DEFAULT_REDACTION_POLICY
+
+
+class TestTheCatchAll:
+    """The scope that is every request, and is a rule like any other (ADR 0039)."""
+
+    def resolver_with(self, *rules: RedactionRule) -> RedactionResolver:
+        resolver = RedactionResolver(RedactionSettings(), lambda: None)  # type: ignore[arg-type]
+        resolver._reload_rules(list(rules))
+        return resolver
+
+    def rule(
+        self, scope: RedactionScope, subject: uuid.UUID | None, **entities: EntityPolicy
+    ) -> RedactionRule:
+        return RedactionRule(
+            id=uuid.uuid4(),
+            scope=scope,
+            scope_id=subject,
+            policy=policy(entities=entities).model_dump(mode="json"),
+        )
+
+    def test_with_no_rules_at_all_nothing_is_redacted(self) -> None:
+        """The deployment default since ADR 0039, and the reason the catch-all
+        exists: turning redaction on is writing one rule, not editing a separate
+        object with its own screen and its own shape."""
+        effective = self.resolver_with().policy_for(user_id=uuid.uuid4())
+
+        assert effective.policy.entities == {}
+        assert effective.policy.default_mode is EntityMode.OFF
+        assert effective.scope is None
+
+    def test_it_applies_to_a_request_with_no_other_rule(self) -> None:
+        catch_all = self.rule(RedactionScope.ALL, None, PERSON=EntityPolicy())
+        effective = self.resolver_with(catch_all).policy_for(user_id=uuid.uuid4())
+
+        assert effective.policy.mode_for("PERSON") is EntityMode.ANONYMISE_RESTORE
+        assert effective.scope == RedactionScope.ALL
+        assert effective.rule_id == catch_all.id
+
+    def test_a_narrower_rule_tightens_it_and_takes_the_blame(self) -> None:
+        user_id = uuid.uuid4()
+        catch_all = self.rule(RedactionScope.ALL, None, PERSON=EntityPolicy())
+        theirs = self.rule(
+            RedactionScope.USER, user_id, PERSON=EntityPolicy(mode=EntityMode.BLOCK)
+        )
+        effective = self.resolver_with(catch_all, theirs).policy_for(user_id=user_id)
+
+        assert effective.policy.mode_for("PERSON") is EntityMode.BLOCK
+        # The narrowest is recorded, which is the one somebody set for this
+        # subject — the catch-all still applied.
+        assert effective.rule_id == theirs.id
+
+    def test_a_narrower_rule_cannot_undo_it(self) -> None:
+        user_id = uuid.uuid4()
+        catch_all = self.rule(
+            RedactionScope.ALL, None, PERSON=EntityPolicy(mode=EntityMode.REDACT)
+        )
+        wishful = self.rule(
+            RedactionScope.USER, user_id, PERSON=EntityPolicy(mode=EntityMode.OFF)
+        )
+        effective = self.resolver_with(catch_all, wishful).policy_for(user_id=user_id)
+
+        assert effective.policy.mode_for("PERSON") is EntityMode.REDACT
+
+    def test_its_allow_list_is_the_one_that_counts(self) -> None:
+        """`combine` takes the allow-list from the first policy, and the first is
+        the catch-all: an exemption belongs to the broadest statement anyone has
+        made, or a narrow rule could exempt what a wide one protects."""
+        user_id = uuid.uuid4()
+        catch_all = RedactionRule(
+            id=uuid.uuid4(),
+            scope=RedactionScope.ALL,
+            scope_id=None,
+            policy=policy(allow_list=["acme.test"]).model_dump(mode="json"),
+        )
+        theirs = RedactionRule(
+            id=uuid.uuid4(),
+            scope=RedactionScope.USER,
+            scope_id=user_id,
+            policy=policy(allow_list=["evil.test"]).model_dump(mode="json"),
+        )
+        effective = self.resolver_with(catch_all, theirs).policy_for(user_id=user_id)
+
+        assert effective.policy.allow_list == ["acme.test"]
 
 
 class TestResolution:

@@ -98,12 +98,17 @@ class RedactionScope(enum.StrEnum):
     **the person who wrote it**. Hence ``provider`` and ``model``, which quotas
     have no use for.
 
-    There is deliberately no ``global``: ``redaction_config`` already is the
-    global scope, append-only and with the reason on the record. A second home
-    for one value is how a screen ends up disagreeing with itself about which is
-    in force.
+    ``ALL`` is the catch-all, and it is a scope rather than a separate
+    "deployment policy" object (ADR 0039). Keeping it out of this enum was the
+    earlier design's mistake: it gave "what applies here" two answers with
+    different shapes — one edited on its own screen, one in a list — and an
+    operator had to know that the screen they were looking at was only half the
+    answer.
     """
 
+    #: Every request. The catch-all, and the only scope whose ``scope_id`` is
+    #: null: there is exactly one subject and it is "everything".
+    ALL = "all"
     PROVIDER = "provider"
     MODEL = "model"
     GROUP = "group"
@@ -842,17 +847,6 @@ class RedactionConfig(Base):
     #: written, which is stricter than an enum would be — it also proves the
     #: engine is *installed*, not merely spelled correctly.
     engine: Mapped[str] = mapped_column(String(64))
-    #: The per-entity policy in force, as ``RedactionPolicy`` serialises it
-    #: (ADR 0037). Nullable, and null is not "redact nothing": it means this row
-    #: predates the policy or changed only the engine, so the deployment's own
-    #: default applies — the same "no row means the environment decides" rule
-    #: one level down.
-    #:
-    #: JSON rather than a table of entity rows. The shape is one document an
-    #: admin edits and saves whole, it is read once per poll and never queried
-    #: across, and a policy is meaningless split into pieces: half of one is not
-    #: a weaker policy, it is a different one.
-    policy: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
     #: Why. Required by the API when switching to an engine that redacts nothing,
     #: optional otherwise: turning the layer off is the change that needs
     #: explaining, and demanding a sentence for every change trains people to
@@ -899,11 +893,19 @@ class RedactionRule(Base):
         # nullable nowhere here, but the partial-unique-on-active shape needs an
         # expression index anyway, and matching the neighbouring table keeps one
         # idiom rather than two.
+        # COALESCE for the same reason limit_rules does it: SQL treats NULLs as
+        # distinct, so a plain UNIQUE would happily accept two catch-all rules
+        # and then pick between them at request time.
         Index(
             "uq_redaction_rules_identity",
             text("scope"),
-            text("scope_id"),
+            text("coalesce(scope_id, '00000000-0000-0000-0000-000000000000')"),
             unique=True,
+        ),
+        CheckConstraint(
+            "(scope = 'all' AND scope_id IS NULL)"
+            " OR (scope <> 'all' AND scope_id IS NOT NULL)",
+            name="ck_redaction_rules_scope_id_presence",
         ),
         Index("ix_redaction_rules_lookup", "is_active", "scope", "scope_id"),
     )
@@ -912,8 +914,9 @@ class RedactionRule(Base):
     name: Mapped[str] = mapped_column(String(255), default="")
     scope: Mapped[RedactionScope] = mapped_column(_enum(RedactionScope, "redaction_scope"))
     #: Not a foreign key: it points at one of five tables, exactly as
-    #: ``limit_rules.scope_id`` does. The scope says which.
-    scope_id: Mapped[uuid.UUID] = mapped_column()
+    #: ``limit_rules.scope_id`` does. The scope says which — and it is null for
+    #: exactly one scope, ``all``, whose subject is every request.
+    scope_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
     #: A whole ``RedactionPolicy``, in the shape ``redaction_config.policy``
     #: uses, so one editor, one validator and one combiner serve both.
     policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

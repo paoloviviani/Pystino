@@ -69,6 +69,28 @@ def install_detector(app: Any, spans_for: dict[str, str]) -> None:
     app.state.redactor = FakeDetector(spans_for).redactor()
 
 
+async def catch_all(
+    app: Any, session_factory: async_sessionmaker[AsyncSession], **entities: EntityPolicy
+) -> RedactionRule:
+    """The rule that decides what every request gets, written directly.
+
+    Since ADR 0039 a deployment filters nothing until this exists, so a test
+    about anything downstream of it has to create it — and creating it through
+    the API would make every such test a test of the create route as well.
+    """
+    rule = RedactionRule(
+        scope=RedactionScope.ALL,
+        scope_id=None,
+        policy=policy(entities=entities or {"PERSON": EntityPolicy()}),
+    )
+    async with session_factory() as session:
+        session.add(rule)
+        await session.commit()
+        await session.refresh(rule)
+    await app.state.redaction.refresh()
+    return rule
+
+
 async def admin_client(
     app: Any, session_factory: async_sessionmaker[AsyncSession], seeded: Seeded
 ) -> None:
@@ -337,14 +359,21 @@ class TestMyPolicy:
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded, admin=False))
 
-        response = await client.get("/api/me/redaction")
+        empty = (await client.get("/api/me/redaction")).json()
+        # No rule of their own, and none anywhere: a deployment filters nothing
+        # until somebody writes a rule (ADR 0039).
+        assert empty["policy"] is None
+        assert empty["effective"]["entities"] == {}
+        assert empty["effective"]["default_mode"] == "off"
 
-        assert response.status_code == 200, response.text
-        body = response.json()
-        # No rule of their own yet, which is not "no protection".
+        await catch_all(app, session_factory, PERSON=EntityPolicy(mode=EntityMode.REDACT))
+
+        body = (await client.get("/api/me/redaction")).json()
+        # The catch-all is the floor, and it is visibly the *reason* for the
+        # floor rather than an unattributed default.
         assert body["policy"] is None
-        assert body["effective"]["default_mode"] == "anonymise_restore"
-        assert body["baseline"]["entities"]["URL"]["mode"] == "off"
+        assert body["baseline"]["entities"]["PERSON"]["mode"] == "redact"
+        assert body["effective"]["entities"]["PERSON"]["mode"] == "redact"
 
     async def test_a_rule_an_admin_wrote_about_them_cannot_be_relaxed(
         self,
@@ -440,6 +469,7 @@ class TestMyPolicy:
         """A weakening rule would be inert anyway. It is refused so that "it did
         nothing" is not what the person who wrote it discovers instead."""
         as_user(app, await make_admin(session_factory, seeded, admin=False))
+        rule = await catch_all(app, session_factory, PERSON=EntityPolicy())
 
         response = await client.put(
             "/api/me/redaction",
@@ -451,7 +481,9 @@ class TestMyPolicy:
         assert error["code"] == "redaction_policy_weakens"
         assert "PERSON" in error["message"]
         assert "off" in error["message"] and "anonymise_restore" in error["message"]
-        assert (await session.execute(select(RedactionRule))).scalars().all() == []
+        # Only the catch-all, so nothing of theirs was written.
+        written = (await session.execute(select(RedactionRule))).scalars().all()
+        assert [row.id for row in written] == [rule.id]
 
     async def test_a_raised_threshold_is_a_weakening_too(
         self,
@@ -620,6 +652,9 @@ class TestPreview:
         provider would see, which is the only question being asked."""
         await admin_client(app, session_factory, seeded)
         install_detector(app, {"Mario Rossi": "PERSON"})
+        # The preview runs the policy in force, and nothing is in force until a
+        # rule says so — which is the point of previewing at all.
+        await catch_all(app, session_factory, PERSON=EntityPolicy())
 
         response = await client.post(
             "/api/admin/redaction/preview",
