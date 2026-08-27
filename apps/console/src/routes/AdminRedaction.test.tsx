@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RedactionEngineOption, RedactionPreview, RedactionStatus } from "../lib/types";
 import { AdminRedaction } from "./AdminRedaction";
@@ -82,6 +82,18 @@ function status(overrides: Partial<RedactionStatus> = {}): RedactionStatus {
     warnings: [],
     ...overrides,
   };
+}
+
+/**
+ * Where the router went. MemoryRouter keeps its location to itself and nothing
+ * on screen spells the path out, so a component that reports it is the only way
+ * to tell "the control navigated" from "the control did nothing".
+ */
+const location = { pathname: "/" };
+
+function Probe() {
+  location.pathname = useLocation().pathname;
+  return null;
 }
 
 function respondWith(body: RedactionStatus) {
@@ -205,7 +217,10 @@ function renderScreen(element: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>{element}</MemoryRouter>
+      <MemoryRouter>
+        {element}
+        <Probe />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -746,17 +761,57 @@ describe("AdminRedaction", () => {
     await waitFor(() => expect(screen.getByText(/detects nothing/)).toBeInTheDocument());
   });
 
-  it("offers the way through to the scoped rules", async () => {
-    // Not a nav item: this is the second question about redaction, asked by
-    // somebody already looking at the first.
+  it("says whether scoped rules exist, and leads to them", async () => {
+    // Reported from the live console: the screen had a Save button and no sign
+    // that scopes existed at all, so somebody wanting a policy for one group had
+    // nowhere to start. The way through was a bare anchor in the header, next to
+    // buttons, and invisible among them.
+    const user = userEvent.setup({ delay: null });
     vi.stubGlobal("fetch", respondWith(status()));
     renderScreen(<AdminRedaction />);
 
     await waitFor(() =>
-      expect(screen.getByRole("link", { name: "Scoped rules" })).toHaveAttribute(
-        "href",
-        "/admin/redaction/rules",
-      ),
+      expect(screen.getByText("No scoped rules. The policy above applies to everyone.")).toBeInTheDocument(),
     );
+
+    await user.click(screen.getByRole("button", { name: "Add a rule" }));
+    expect(location.pathname).toBe("/admin/redaction/rules");
+  });
+
+  it("counts the rules in force, by scope", async () => {
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const body = String(input).includes("/redaction/rules")
+          ? {
+              items: [
+                { id: "r1", scope: "group", scope_id: "g1", policy: {}, is_active: true },
+                { id: "r2", scope: "user", scope_id: "u1", policy: {}, is_active: true },
+                { id: "r3", scope: "user", scope_id: "u2", policy: {}, is_active: true },
+                // Inactive rules are not in force, so they are not counted.
+                { id: "r4", scope: "model", scope_id: "m1", policy: {}, is_active: false },
+              ],
+              total: 4,
+              limit: 200,
+              offset: 0,
+            }
+          : status();
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    renderScreen(<AdminRedaction />);
+
+    await waitFor(() => expect(screen.getByText("1 group")).toBeInTheDocument());
+    expect(screen.getByText("2 users")).toBeInTheDocument();
+    // The inactive model rule is not in force, so it is not counted. Exact
+    // text, not /model/: the word is all over this screen.
+    expect(screen.queryByText("1 model")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Manage rules" }));
+    expect(location.pathname).toBe("/admin/redaction/rules");
   });
 });
