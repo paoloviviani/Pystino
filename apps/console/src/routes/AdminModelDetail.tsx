@@ -108,16 +108,16 @@ function ModelPage({ model }: { model: AdminModel }) {
           symmetrical: an inactive model serves nobody and is obvious the moment
           anyone tries it, while an unpriced one serves everybody and records a
           cost of zero, which nobody notices until the reconciliation. */}
+      {/* A price appended now applies from now on; it cannot rewrite what
+          earlier requests were charged. */}
       {!model.current_price && (
         <Notice tone="warn" title="This model has no price">
-          It will serve requests and record a cost of zero. Append a price below —
-          rates set now apply from now on, and cannot rewrite what earlier requests
-          were charged.
+          It will serve requests and record a cost of zero. Append a price below.
         </Notice>
       )}
       {!model.provider_is_active && (
         <Notice tone="danger" title={`${model.provider_name} is deactivated`}>
-          Every model behind it is out of service, whatever this model's own status says.
+          Every model behind it is out of service.
         </Notice>
       )}
 
@@ -179,8 +179,7 @@ function Describe({ model }: { model: AdminModel }) {
   return (
     <Card
       title="Capabilities"
-      description="What callers are told on /v1/models. Changing them does not change what the
-        provider will accept, and re-running Discover never overwrites an edit."
+      description="What callers are told on /v1/models. Discover never overwrites an edit."
     >
       <div className={styles.form}>
         {update.error ? (
@@ -194,8 +193,7 @@ function Describe({ model }: { model: AdminModel }) {
           label="Kind"
           value={kind}
           onChange={(event) => setKind(event.target.value as ModelKind)}
-          hint="Which routes will serve it. Discovery infers this from the provider's
-            modality tags and can get it wrong."
+          hint="Which routes will serve it. Discovery can infer it wrong."
         >
           <option value="chat">Chat — /v1/chat/completions, /v1/responses, /v1/messages</option>
           <option value="embedding">Embedding — /v1/embeddings</option>
@@ -221,8 +219,7 @@ function Describe({ model }: { model: AdminModel }) {
         <CapabilityPicker
           label="Features"
           otherLabel="Other features"
-          hint="Not a fixed list — whatever the provider reports is kept, so a capability
-            it added last week is not silently dropped."
+          hint="Whatever the provider reports is kept."
           known={KNOWN_FEATURES}
           value={features}
           onChange={setFeatures}
@@ -332,7 +329,7 @@ function Pricing({ model }: { model: AdminModel }) {
       <Card
         title="Price history"
         flush
-        description="Newest first. Nothing here is ever mutated — a correction is a new row."
+        description="Newest first. A correction is a new row."
       >
         {prices.isPending ? (
           <Spinner />
@@ -345,7 +342,7 @@ function Pricing({ model }: { model: AdminModel }) {
             columns={columns}
             rows={prices.data?.items ?? []}
             rowKey={(price) => price.id}
-            empty="No price has ever been set. This model records a cost of zero."
+            empty="No price set. This model records a cost of zero."
             caption={`Price history for ${model.name}.`}
           />
         )}
@@ -407,7 +404,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
           </Notice>
         ) : null}
         {create.isSuccess && !create.isPending && (
-          <Notice tone="info">Price appended. It applies from its effective date onwards.</Notice>
+          <Notice tone="info">Price appended. It applies from its effective date.</Notice>
         )}
 
         <div className={styles.formRow}>
@@ -435,7 +432,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
             step="0.000001"
             value={cacheRead}
             onChange={(event) => setCacheRead(event.target.value)}
-            hint="Leave empty and cached input is billed at the full input rate."
+            hint="Empty bills cached input at the full input rate."
           />
           <Input
             label="Cache write per Mtok"
@@ -452,7 +449,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
             step="0.000001"
             value={perImage}
             onChange={(event) => setPerImage(event.target.value)}
-            hint="Image models only. Charged per picture, on top of any token rates."
+            hint="Image models only, on top of any token rates."
           />
           <Input
             label="Effective from"
@@ -499,7 +496,7 @@ function Access({ model }: { model: AdminModel }) {
   const granted = model.granted_to_users;
 
   return (
-    <Card title="Access" description="Absence of a grant means no access; there is no allow-all.">
+    <Card title="Access" description="No grant means no access; there is no allow-all.">
       {access.error ? (
         <Notice tone="danger">
           {access.error instanceof Error ? access.error.message : "Unknown error."}
@@ -530,10 +527,7 @@ function Access({ model }: { model: AdminModel }) {
         </div>
       )}
 
-      <p className={styles.muted}>
-        Individual people, in addition to their groups. Everyone already granted is listed
-        below; search to add someone else.
-      </p>
+      <p className={styles.muted}>Individuals, in addition to their groups.</p>
       {granted.length > 0 && (
         <div className={styles.checkList}>
           {granted.map((email) => (
@@ -601,16 +595,15 @@ function Access({ model }: { model: AdminModel }) {
         )}
         {users.data && users.data.total > matching.length && (
           <span className={styles.muted}>
-            Showing {matching.length} of {users.data.total.toLocaleString()} matches — narrow
+            Showing {matching.length} of {users.data.total.toLocaleString()} matches. Narrow
             the search to see the rest.
           </span>
         )}
       </div>
 
-      <Notice tone="info">
-        Revoking takes effect on the next request. Deactivating the model instead takes it
-        away from everyone at once, and keeps historical spend attributable.
-      </Notice>
+      {/* Deactivating the model instead takes it away from everyone at once, and
+          keeps historical spend attributable. */}
+      <Notice tone="info">Revoking takes effect on the next request.</Notice>
     </Card>
   );
 }

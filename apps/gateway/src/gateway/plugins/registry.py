@@ -130,8 +130,9 @@ def resolve(name: str | None) -> ProviderPlugin:
             ) from exc
         return factory()
 
+    # Third-party plugins register under the ENTRY_POINT_GROUP entry point; see
+    # docs/adr/0032-provider-plugins.md. That is how a name reaches the available
+    # list, and is not an action for whoever typed the wrong one.
     raise UnknownPluginError(
-        f"unknown provider plugin {wanted!r}. Available: {', '.join(available())}. "
-        f"Third-party plugins register under the {ENTRY_POINT_GROUP!r} entry-point group; "
-        "see docs/adr/0032-provider-plugins.md."
+        f"unknown provider plugin {wanted!r}. Available: {', '.join(available())}."
     )

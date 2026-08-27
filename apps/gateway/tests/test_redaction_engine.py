@@ -164,7 +164,7 @@ class TestTheRoute:
         as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
         response = await client.put(ENGINE_URL, json={"engine": "noop", "reason": "   "})
         assert response.status_code == 400
-        assert "say why" in response.text.lower()
+        assert "give a reason" in response.text.lower()
 
     async def test_an_engine_the_environment_cannot_satisfy_is_refused_before_saving(
         self,

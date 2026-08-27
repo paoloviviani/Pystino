@@ -70,11 +70,12 @@ async def create_response(
     estimator: EstimatorDep,
 ) -> JSONResponse | StreamingResponse:
     if body.previous_response_id is not None or body.store:
+        # Refused rather than forwarded: a stored prefix is billed on every
+        # follow-up and this gateway would have no record of what it contained,
+        # so the ledger could not explain its own totals.
         raise BadRequestError(
-            "Server-side conversation state is not available through this gateway: "
-            "'previous_response_id' and 'store' are refused because a stored prefix "
-            "is billed on every follow-up and this gateway would have no record of "
-            "what it contained. Send the full conversation in 'input' instead.",
+            "'previous_response_id' and 'store' are not supported: this gateway keeps "
+            "no server-side conversation state. Send the full conversation in 'input'.",
             code="stateful_responses_unsupported",
         )
 

@@ -337,23 +337,20 @@ describe("AdminRedaction", () => {
     expect(screen.getByText("Forward unredacted")).toBeInTheDocument();
   });
 
-  it("distinguishes 'every entity type' from 'none'", async () => {
-    // Null and empty are different facts. Conflating them is the difference
-    // between redacting everything and redacting nothing.
+  it("shows the environment's entity list only when it is set", async () => {
+    // Null and a list are different facts, and conflating them is the difference
+    // between redacting everything and redacting nothing. Since ADR 0037 the
+    // policy editor is where that shows; this card only explains where a policy
+    // came from when the deprecated variable set it, so it is absent otherwise.
     vi.stubGlobal("fetch", respondWith(status({ entity_types: null })));
     const { unmount } = renderScreen(<AdminRedaction />);
-    await waitFor(() =>
-      expect(screen.getByText(/Every type the engine offers/)).toBeInTheDocument(),
-    );
-    // Falls back to the service's list so the reader can see what that means.
-    // `getAllByText`, because the policy editor lists the same types as rows —
-    // that is the screen agreeing with itself, not an ambiguity.
-    expect(screen.getAllByText("PERSON").length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByText("What is redacted")).toBeInTheDocument());
+    expect(screen.queryByText("Entity types")).not.toBeInTheDocument();
     unmount();
 
     vi.stubGlobal("fetch", respondWith(status({ entity_types: ["PERSON"] })));
     renderScreen(<AdminRedaction />);
-    await waitFor(() => expect(screen.getByText(/Only these are looked for/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Entity types")).toBeInTheDocument());
   });
 
   it("names the model backing the configured language", async () => {

@@ -514,8 +514,8 @@ async def delete_provider(
     counts = await _model_counts(session)
     if (count := counts.get(provider_id, 0)) > 0:
         raise ConflictError(
-            f"{count} model(s) still use this provider. Repoint or remove them first, "
-            "or deactivate the provider instead."
+            f"{count} model(s) still use this provider. Repoint or remove them, or "
+            "deactivate the provider instead."
         )
 
     await session.execute(delete(Provider).where(Provider.id == provider_id))
@@ -786,8 +786,8 @@ async def discover_models(
         blocked = None
         if price.currency != billing_currency:
             blocked = (
-                f"priced in {price.currency}; this gateway bills in "
-                f"{billing_currency}, so it cannot be imported with a price"
+                f"priced in {price.currency}, not {billing_currency}, so it cannot be "
+                "imported with a price"
             )
         available.append(
             DiscoveredModel(
@@ -905,6 +905,8 @@ async def import_models(
             )
             continue
         if price.currency != billing_currency:
+            # Not imported unpriced: a model with no price reserves nothing, so
+            # it has no cost ceiling at all.
             results.append(
                 ModelImportResult(
                     upstream_model=item.upstream_model,
@@ -912,8 +914,8 @@ async def import_models(
                     imported=False,
                     priced=False,
                     reason=(
-                        f"priced in {price.currency}, not {billing_currency}; import it "
-                        "manually and price it yourself rather than serving it unpriced"
+                        f"priced in {price.currency}, not {billing_currency}; import "
+                        "and price it manually"
                     ),
                 )
             )
@@ -1020,11 +1022,12 @@ async def create_price(
 
     currency = (payload.currency or settings.billing_currency).upper()
     if currency != settings.billing_currency.upper():
+        # Refused rather than converted: an exchange rate applied silently
+        # produces invoices that look right and are wrong.
         raise BadRequestError(
             f"This gateway bills in {settings.billing_currency}, so a price in "
-            f"{currency} would have to be converted — and a silent exchange rate "
-            "produces invoices that look correct and are not. Convert it yourself, "
-            "or change GATEWAY_BILLING_CURRENCY.",
+            f"{currency} would have to be converted. Convert it yourself, or change "
+            "GATEWAY_BILLING_CURRENCY.",
             code="price_currency_mismatch",
         )
 
@@ -1536,10 +1539,10 @@ async def update_user(
     fields = payload.model_dump(exclude_unset=True)
     if "is_admin" in fields and settings.oidc.admin_groups and user.issuer != "local":
         raise BadRequestError(
-            "GATEWAY_OIDC__ADMIN_GROUPS is configured, so admin follows identity "
-            f"provider group membership ({', '.join(settings.oidc.admin_groups)}) and "
-            "this change would be undone at the user's next login. Change it in the "
-            "identity provider instead.",
+            "GATEWAY_OIDC__ADMIN_GROUPS is set, so admin follows identity-provider "
+            f"group membership ({', '.join(settings.oidc.admin_groups)}) and this "
+            "change would be undone at the next login. Change it in the identity "
+            "provider.",
             code="admin_managed_by_idp",
         )
     for field, value in fields.items():
@@ -1849,10 +1852,12 @@ def _redaction_warnings(
         return notes
 
     if config.fail_open:
+        # Worth a warning at all because a redaction layer that silently stops
+        # redacting is worse than an outage: nothing else on the screen says the
+        # prompts of the last hour went out in the clear.
         notes.append(
-            "fail_open is on, so a detection failure forwards the prompt unredacted instead "
-            "of refusing the request. A redaction layer that silently stops redacting is "
-            "worse than an outage."
+            "fail_open is on, so a detection failure forwards the prompt unredacted "
+            "instead of refusing the request."
         )
 
     if service is not None and not service.reachable:
@@ -1868,9 +1873,8 @@ def _redaction_warnings(
     if service is not None and service.reachable:
         if service.languages and config.language not in service.languages:
             notes.append(
-                f"Configured for language '{config.language}', which the service does not "
-                f"serve — it offers {', '.join(service.languages)}. Detection will find "
-                "little or nothing."
+                f"The service does not serve language '{config.language}'; it offers "
+                f"{', '.join(service.languages)}, so detection finds little or nothing."
             )
         elif config.language in service.degraded_languages:
             notes.append(
@@ -1882,14 +1886,16 @@ def _redaction_warnings(
             unknown = sorted(set(config.entity_types) - set(service.entities))
             if unknown:
                 notes.append(
-                    "These entity types are configured but the service does not detect them, "
-                    f"so they are silently ignored: {', '.join(unknown)}."
+                    "Configured entity types the service does not detect, so they are "
+                    f"silently ignored: {', '.join(unknown)}."
                 )
 
     if not config.restore_in_response:
+        # Deliberate for some deployments and surprising in most, which is why it
+        # is a warning rather than a line in the configuration dump.
         notes.append(
-            "restore_in_response is off, so callers receive placeholders rather than the "
-            "original values. Deliberate for some deployments; surprising in most."
+            "restore_in_response is off, so callers receive placeholders rather than "
+            "the original values."
         )
 
     return notes
@@ -1911,14 +1917,17 @@ def _engine_options(
         blocked: str | None = None
         if info.needs_endpoint and not settings.redaction.endpoint:
             blocked = (
-                "No detection endpoint is configured. Set GATEWAY_REDACTION__ENDPOINT and "
-                "restart, then this engine can be enabled."
+                "No detection endpoint is configured. Set GATEWAY_REDACTION__ENDPOINT "
+                "and restart."
             )
         elif info.needs_endpoint and not settings.redaction.placeholder_key.get_secret_value():
+            # The stability caveat stays in the message: choosing a throwaway
+            # value here silently unlinks every placeholder in an old transcript
+            # from the one the next request produces.
             blocked = (
                 "No placeholder key is configured. Set GATEWAY_REDACTION__PLACEHOLDER_KEY "
-                "and restart — placeholders derive from it, and it must stay stable for as "
-                "long as the transcripts it labelled are kept."
+                "and restart; it must stay stable for as long as the transcripts it "
+                "labelled are kept."
             )
         # The unreachable check applies only to an engine that is *not* already
         # running: the health of the one in force is reported separately, and
@@ -2074,19 +2083,21 @@ async def set_redaction_engine(
     engine = payload.engine.strip()
     info = {entry.name: entry for entry in redaction_registry.describe()}.get(engine)
     if info is None:
+        # Third-party engines register under the 'llmp.redactors' entry-point
+        # group (docs/adr/0026-pluggable-detection.md). That is how a name gets
+        # into the installed list, and not something an operator acts on here.
         raise BadRequestError(
             f"unknown redaction engine {engine!r}. Installed: "
-            f"{', '.join(redaction_registry.available())}. Third-party engines register "
-            "under the 'llmp.redactors' entry-point group; see "
-            "docs/adr/0026-pluggable-detection.md."
+            f"{', '.join(redaction_registry.available())}."
         )
 
     reason = payload.reason.strip()
     if not info.redacts and not reason:
+        # The reason is kept permanently and is what a later review reads, which
+        # is the whole point of demanding one here.
         raise BadRequestError(
             f"switching to {engine!r} stops redaction entirely: prompts will reach "
-            "providers exactly as callers sent them. Say why — the reason is kept on "
-            "the record and is what a later review reads."
+            "providers exactly as callers sent them. Give a reason."
         )
 
     # Proves the engine can actually be built in this environment, using the same
@@ -2105,10 +2116,11 @@ async def set_redaction_engine(
         probe = await _redaction_service_health(http, settings, engine)
         if probe is not None and not probe.reachable:
             await _close_quietly(candidate)
+            # Enabling it anyway would fail every request needing redaction, or,
+            # with fail_open on, forward every prompt unredacted.
             raise ConflictError(
-                f"the detection service is not answering, so {engine!r} was not enabled: "
-                f"{probe.detail}. Enabling it would fail every request needing redaction "
-                "(or, with fail_open on, forward every prompt unredacted)."
+                f"the detection service is not answering, so {engine!r} was not "
+                f"enabled: {probe.detail}."
             )
 
     session.add(RedactionConfig(engine=engine, reason=reason, created_by=admin.id))
@@ -2170,10 +2182,12 @@ async def set_redaction_policy(
 
     reason = payload.reason.strip()
     if payload.policy.weakens(in_force) and not reason:
+        # As above: the reason outlives the change and is what a later review
+        # reads. The list of what "weakens" means stays, because it is how an
+        # operator finds which part of their edit tripped this.
         raise BadRequestError(
             "this policy protects less than the one in force — an entity type turned "
-            "off, a mode downgraded, or a value exempted. Say why: the reason is kept "
-            "on the record and is what a later review reads.",
+            "off, a mode downgraded, or a value exempted. Give a reason.",
             code="redaction_policy_reason_required",
         )
 

@@ -132,9 +132,8 @@ export function AdminProviders() {
     <div className={styles.page}>
       <PageHeader
         title="Providers"
-        subtitle="The inference endpoints models are served from. An API key entered here is
-          encrypted before it is stored and is never shown again — only a hint, enough to tell two
-          keys apart."
+        subtitle="The endpoints models are served from. API keys are encrypted and never
+          shown again."
         actions={
           <Button variant="primary" onClick={() => setCreating(true)}>
             Add provider
@@ -338,9 +337,8 @@ function ProviderDialog({
         placeholder="cortecs"
         hint={
           editing
-            ? "Letters, digits, dot, dash and underscore. Renaming is safe — models" +
-              " reference the provider by id, so past spend keeps its attribution." +
-              " It does change owned_by on this provider's /v1/models cards."
+            ? "Letters, digits, dot, dash and underscore. Renaming is safe; it changes" +
+              " owned_by on this provider's /v1/models cards."
             : "Letters, digits, dot, dash and underscore."
         }
       />
@@ -352,7 +350,7 @@ function ProviderDialog({
         hint={
           chosen
             ? chosen.description
-            : "How this provider is talked to, and whether its reported cost can be believed."
+            : "How it is talked to, and whether its reported cost can be believed."
         }
       >
         {(plugins.data ?? []).map((entry) => (
@@ -372,8 +370,7 @@ function ProviderDialog({
           onChange={(event) =>
             setBillingMode(event.target.value as "own_prices" | "provider_reported")
           }
-          hint="Which figure is charged. Both are recorded either way, so a divergence
-            stays reconstructable."
+          hint="Which figure is charged. Both are recorded either way."
         >
           <option value="own_prices">Our prices — tokens counted here</option>
           <option value="provider_reported">
@@ -382,10 +379,11 @@ function ProviderDialog({
         </Select>
       )}
 
+      {/* Admission happens before the request and the provider's figure arrives
+          after it, which is why prices are still needed in this mode. */}
       {effectiveMode === "provider_reported" && (
         <Notice tone="warn">
-          Prices are still needed. Admission happens before the request and the provider's
-          figure arrives after it, so an unpriced model reserves nothing and no cost ceiling
+          Prices are still needed: an unpriced model reserves nothing, so no cost ceiling
           trips.
         </Notice>
       )}
@@ -414,7 +412,7 @@ function ProviderDialog({
         placeholder={editing && provider?.has_api_key ? "unchanged" : "leave empty if none needed"}
         hint={
           editing && provider?.has_api_key
-            ? `Currently ${provider.api_key_hint}. Type a new key to replace it, or leave empty to keep it.`
+            ? `Currently ${provider.api_key_hint}. Type a new key to replace it; empty keeps it.`
             : "Encrypted before storage. A local vLLM or Ollama usually needs none."
         }
       />
@@ -431,9 +429,10 @@ function ProviderDialog({
         </label>
       )}
 
+      {/* So a wrong URL or a stale key shows up here rather than in a request. */}
       <Notice tone="info">
-        <strong>Test</strong> calls the provider&apos;s <code>/models</code> with the credential
-        {" "}as stored, so a wrong URL or a stale key shows up here rather than in a request.
+        <strong>Test</strong> calls the provider&apos;s <code>/models</code> with the stored
+        credential.
       </Notice>
     </Dialog>
   );

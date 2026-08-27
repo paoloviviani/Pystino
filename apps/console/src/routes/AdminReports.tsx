@@ -65,8 +65,7 @@ export function AdminReports() {
     <div className={styles.page}>
       <PageHeader
         title="Reports"
-        subtitle="Spend over a calendar period, for chargeback. Periods are named, so the same
-          request returns the same figures next year."
+        subtitle="Spend over a calendar period, for chargeback."
       />
 
       <Card title="Filters">
@@ -138,8 +137,8 @@ export function AdminReports() {
                 detail={
                   report.data.totals.estimated_requests + report.data.totals.unavailable_requests >
                   0
-                    ? "the rest is estimated or missing — see below"
-                    : "every request has exact usage from the provider"
+                    ? "the rest is estimated or missing"
+                    : "exact usage from the provider"
                 }
                 tone={measuredPercent(report.data.totals) < 100 ? "warn" : "ok"}
               />

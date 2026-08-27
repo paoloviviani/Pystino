@@ -161,9 +161,7 @@ export function AdminModels() {
     <div className={styles.page}>
       <PageHeader
         title="Models"
-        subtitle="The catalogue is an allowlist. A model is invisible to callers until a group is
-          granted it, and models are deactivated rather than deleted so historical spend stays
-          attributable."
+        subtitle="An allowlist: a model is invisible to callers until a group is granted it."
         actions={
           <>
             <Button onClick={() => setDiscovering(true)}>Discover</Button>
@@ -191,7 +189,7 @@ export function AdminModels() {
               hint={
                 models.data
                   ? `${models.data.total.toLocaleString()} matching`
-                  : "Matches both names, so a provider's list can be reconciled against ours."
+                  : "Matches name and upstream id."
               }
             />
           </div>
@@ -309,7 +307,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="fast-summariser"
-        hint="What callers send as `model`. Cannot be changed later — usage rows record it."
+        hint="What callers send as `model`. Cannot be changed later."
       />
       <Input
         label="Upstream model"
@@ -323,8 +321,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
         label="Kind"
         value={kind}
         onChange={(e) => setKind(e.target.value as ModelKind)}
-        hint="Decides which routes will serve it. A model asked for on the wrong one is
-          refused with a message naming the right one."
+        hint="Which routes will serve it."
       >
         <option value="chat">Chat — /v1/chat/completions, /v1/responses, /v1/messages</option>
         <option value="embedding">Embedding — /v1/embeddings</option>
@@ -355,7 +352,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
         key={`features-${generation}`}
         label="Features"
         otherLabel="Other features"
-        hint="Anything the provider reports. Not limited to the boxes above."
+        hint="Not limited to the boxes above."
         known={KNOWN_FEATURES}
         value={features}
         onChange={setFeatures}
@@ -375,16 +372,13 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
       </Select>
       {choices.length === 0 && !providers.isPending && (
         <Notice tone="warn">
-          No active provider. Add one on the Providers page first — a model has to
-          resolve to an endpoint.
+          No active provider. Add one on the Providers page first.
         </Notice>
       )}
 
-      <Notice tone="info">
-        No group is granted access, and no price is set. Both are deliberate: a new
-        model is invisible until someone chooses to expose it, and an unpriced model
-        would record a cost of zero.
-      </Notice>
+      {/* Both are deliberate: a new model is invisible until someone chooses to
+          expose it, and an unpriced model would record a cost of zero. */}
+      <Notice tone="info">No group is granted access, and no price is set.</Notice>
     </Dialog>
   );
 }
