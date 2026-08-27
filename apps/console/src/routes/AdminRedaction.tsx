@@ -1,10 +1,11 @@
 import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner, Stat, Table } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useId, useState } from "react";
-import { Link } from "react-router";
+import { useNavigate } from "react-router";
 import {
   usePreviewRedaction,
   useRedactionStatus,
+  useRedactionRules,
   useSetRedactionEngine,
   useSetRedactionPolicy,
 } from "../lib/admin";
@@ -46,13 +47,17 @@ import styles from "./Admin.module.css";
  */
 export function AdminRedaction() {
   const status = useRedactionStatus();
+  const navigate = useNavigate();
 
   return (
     <div className={styles.page}>
       <PageHeader
         title="Redaction"
         subtitle="What is stripped from prompts before they reach a provider."
-        actions={<Link to="/admin/redaction/rules">Scoped rules</Link>}
+        // A button, not a bare link: every other screen's header actions are
+        // buttons, and an anchor here was invisible next to them — the whole
+        // scoped-rules feature was unreachable in practice because of it.
+        actions={<Button onClick={() => navigate("/admin/redaction/rules")}>Scoped rules</Button>}
       />
 
       {status.isPending && <Spinner label="Loading redaction" />}
@@ -82,6 +87,7 @@ function Detail({ status }: { status: RedactionStatus }) {
 
       <EngineList status={status} />
       <PolicyEditor status={status} />
+      <ScopedRules />
       <PreviewBox />
 
       <Card>
@@ -242,6 +248,54 @@ function Detail({ status }: { status: RedactionStatus }) {
  * it is the one that can protect *less*, and that is what the reason field is
  * for.
  */
+/**
+ * What the deployment policy is *not*: the whole answer.
+ *
+ * Saving the card above sets one policy, the deployment's. Rules per provider,
+ * model, group, user or key layer on top of it and can only tighten (ADR 0038).
+ * Without this card the screen showed a Save button and no sign that scopes
+ * existed at all, so somebody setting a policy for one group had nowhere to
+ * start — reported from the live console, which is the only place it shows.
+ */
+function ScopedRules() {
+  const rules = useRedactionRules();
+  const navigate = useNavigate();
+  const items = rules.data?.items ?? [];
+
+  const counts = new Map<string, number>();
+  for (const rule of items) {
+    if (rule.is_active) counts.set(rule.scope, (counts.get(rule.scope) ?? 0) + 1);
+  }
+
+  return (
+    <Card
+      title="Scoped rules"
+      description="Policies for one provider, model, group, person or key. They layer on the
+        policy above and can only tighten it."
+    >
+      {rules.isPending ? (
+        <Spinner />
+      ) : counts.size === 0 ? (
+        <p className={styles.muted}>No scoped rules. The policy above applies to everyone.</p>
+      ) : (
+        <div className={styles.chips}>
+          {[...counts].map(([scope, count]) => (
+            <Badge key={scope}>
+              {count} {scopeNoun(scope as RedactionScope).toLowerCase()}
+              {count === 1 ? "" : "s"}
+            </Badge>
+          ))}
+        </div>
+      )}
+      <div>
+        <Button onClick={() => navigate("/admin/redaction/rules")}>
+          {counts.size === 0 ? "Add a rule" : "Manage rules"}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 function PolicyEditor({ status }: { status: RedactionStatus }) {
   const save = useSetRedactionPolicy();
   // Seeded once and then owned by the form. Deriving it from `status` on every
@@ -253,7 +307,11 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
     save.mutate({ policy: draft, reason: reason.trim() }, { onSuccess: () => setReason("") });
 
   return (
-    <Card title="Redacted entities" description="What is done with each type the detector finds.">
+    <Card
+      title="Redacted entities"
+      description="What is done with each type the detector finds. Applies everywhere; scoped
+        rules below can tighten it further."
+    >
       <div className={styles.form}>
         {save.error ? (
           <Notice tone="danger">
