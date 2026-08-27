@@ -168,7 +168,7 @@ deliberate, separate, auditable thing — not a side effect of ordering.
   redaction to apply. Without that, "why was this redacted" is unanswerable
   after the fact.
 
-## 5. What it detects is wrong, and that is the more urgent half
+## 5. What it detects is wrong, and that is the more urgent half — **fixed, ADR 0037**
 
 Recorded 2026-08-25, from a real request on the deployment. Scoping (§4) decides
 *whether* redaction runs; this is about what it does when it does run, and it is
@@ -215,7 +215,11 @@ had been replaced was wrong, and the verb is the surprise.
   what it is told is PII, so both halves behaved as designed and the result is
   still useless.
 
-### What this says about the design, before anyone fixes it
+### What this says about the design
+
+*Written before the fix; kept because it is the reasoning ADR 0037 acted on.
+Points 1, 2 and 3 are done — a per-entity policy with an allow-list, editable in
+the console. Point 4, showing an operator which spans were replaced, is not.*
 
 The two things the request asked for — "more configurable" and "more standard" —
 are the same conclusion from two directions:

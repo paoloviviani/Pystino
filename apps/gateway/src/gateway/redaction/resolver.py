@@ -42,10 +42,11 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from gateway.config import RedactionSettings
+from gateway.config import RedactionPolicy, RedactionSettings
 from gateway.models import RedactionConfig
 from gateway.redaction.base import Redactor
 from gateway.redaction.registry import UnknownEngineError, resolve
@@ -71,16 +72,24 @@ async def current_engine(session: AsyncSession) -> RedactionConfig | None:
     ).scalar_one_or_none()
 
 
-def build_for(settings: RedactionSettings, engine: str) -> Redactor:
+def build_for(
+    settings: RedactionSettings, engine: str, policy: RedactionPolicy | None = None
+) -> Redactor:
     """Construct *engine* using the environment's other redaction settings.
 
-    The engine name is the only thing the console can change; the endpoint, the
-    placeholder key and the detection parameters still come from the environment.
-    So this is a settings copy with one field replaced, and the engine's own
-    constructor is what refuses a combination that cannot work — a missing
-    endpoint, an unset placeholder key.
+    Two things the console can change — the engine and the per-entity policy —
+    and everything else still comes from the environment: the endpoint, the
+    placeholder key, the timeouts. So this is a settings copy with those fields
+    replaced, and the engine's own constructor is what refuses a combination that
+    cannot work — a missing endpoint, an unset placeholder key.
+
+    ``policy=None`` means the row said nothing about it, which is not "redact
+    nothing": the deployment's own policy stands.
     """
-    return resolve(engine)(settings.model_copy(update={"engine": engine}))
+    update: dict[str, object] = {"engine": engine}
+    if policy is not None:
+        update["policy"] = policy
+    return resolve(engine)(settings.model_copy(update=update))
 
 
 class RedactionResolver:
@@ -104,12 +113,17 @@ class RedactionResolver:
         self._refresh_seconds = refresh_seconds
 
         self._redactor: Redactor = resolve(settings.engine)(settings)
+        #: The policy in force, which is the environment's until a row carries
+        #: one. Held here so the admin screen can report what is *running*
+        #: rather than what is configured — the same rule the engine follows.
+        self._policy: RedactionPolicy = settings.policy
         #: The row this worker built from, or None while the environment decides.
         #: Compared by id, not by engine name: two rows naming the same engine are
         #: still two decisions, and an operator who switches away and back should
         #: see the second change take effect.
         self._config_id: Any = None
         self._source = "environment"
+        self._policy_source = "environment"
         self._task: asyncio.Task[None] | None = None
 
     # -- what the request path reads ---------------------------------------
@@ -117,6 +131,15 @@ class RedactionResolver:
     @property
     def redactor(self) -> Redactor:
         return self._redactor
+
+    @property
+    def policy(self) -> RedactionPolicy:
+        return self._policy
+
+    @property
+    def policy_source(self) -> str:
+        """``console`` when the row in force carries a policy of its own."""
+        return self._policy_source
 
     @property
     def source(self) -> str:
@@ -145,6 +168,7 @@ class RedactionResolver:
                 row = await current_engine(session)
                 row_id = row.id if row is not None else None
                 engine = row.engine if row is not None else self._settings.engine
+                policy = _policy_of(row)
                 if row_id == self._config_id:
                     return False
         except Exception:
@@ -152,7 +176,7 @@ class RedactionResolver:
             return False
 
         try:
-            replacement = build_for(self._settings, engine)
+            replacement = build_for(self._settings, engine, policy)
         except (UnknownEngineError, ValueError):
             # The engine was validated when it was saved, so reaching here means
             # the deployment changed underneath it — a plugin uninstalled, or an
@@ -171,6 +195,8 @@ class RedactionResolver:
         self._redactor = replacement
         self._config_id = row_id
         self._source = "console" if row_id is not None else "environment"
+        self._policy = policy or self._settings.policy
+        self._policy_source = "console" if policy is not None else "environment"
         if self._on_change is not None:
             self._on_change(replacement)
         logger.info(
@@ -208,6 +234,28 @@ class RedactionResolver:
                 await self._task
             self._task = None
         await _close_quietly(self._redactor)
+
+
+def _policy_of(row: RedactionConfig | None) -> RedactionPolicy | None:
+    """The policy a row carries, or None if it carries none.
+
+    A stored policy that no longer parses is treated as absent and logged, not
+    raised: the alternative is a worker that stops redacting because a column it
+    could not read was malformed, which is the failure this whole module exists
+    to avoid.
+    """
+    if row is None or row.policy is None:
+        return None
+    try:
+        return RedactionPolicy.model_validate(row.policy)
+    except ValidationError:
+        logger.error(
+            "the stored redaction policy on row %s could not be read; using the "
+            "deployment default instead",
+            row.id,
+            exc_info=True,
+        )
+        return None
 
 
 async def _close_quietly(redactor: Redactor) -> None:

@@ -29,6 +29,7 @@ from pydantic import (
     model_validator,
 )
 
+from gateway.config import RedactionPolicy
 from gateway.plugins import registry as plugin_registry
 
 if TYPE_CHECKING:
@@ -63,9 +64,12 @@ Money = Annotated[Decimal, PlainSerializer(_plain_decimal, return_type=str, when
 #: as vocabulary: the reference provider documents `supported_features` as an
 #: open set, and rejecting a value it added last week would make discovery fail
 #: on exactly the models an operator most wants to hear about (ADR 0031).
-Capabilities = Annotated[list[str], AfterValidator(lambda items: sorted({
-    str(item).strip().lower() for item in items if str(item).strip()
-}))]
+Capabilities = Annotated[
+    list[str],
+    AfterValidator(
+        lambda items: sorted({str(item).strip().lower() for item in items if str(item).strip()})
+    ),
+]
 
 
 class ChatCompletionRequest(BaseModel):
@@ -519,7 +523,6 @@ def _check_billing_mode(plugin: str | None, mode: str | None) -> None:
         )
 
 
-
 class ProviderPluginResponse(BaseModel):
     """An installed provider type, for the console's selector.
 
@@ -936,6 +939,22 @@ class RedactionEngineRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
+class RedactionPolicyRequest(BaseModel):
+    """Set the per-entity policy: which types are acted on, and how (ADR 0037).
+
+    The whole policy, not a patch. An admin edits a screen and saves it, and a
+    partial update of a document whose meaning is the *combination* of its
+    entries invites two sessions to each save half of what they meant.
+    """
+
+    policy: RedactionPolicy
+    #: Required when the new policy protects less than the one in force —
+    #: turning protection off, downgrading a mode, or exempting more values.
+    #: Checked in the route, because "less" is a comparison against what is
+    #: running and a schema cannot see that.
+    reason: str = Field(default="", max_length=500)
+
+
 class RedactionStatusResponse(BaseModel):
     """The redaction layer as it is actually running.
 
@@ -973,8 +992,16 @@ class RedactionStatusResponse(BaseModel):
     restore_in_response: bool
     language: str
     score_threshold: float
-    #: Null means "everything the engine offers" rather than "none".
+    #: Null means "everything the engine offers" rather than "none". Superseded
+    #: by ``policy`` and still reported, because a deployment that sets it is
+    #: entitled to see the value it set.
     entity_types: list[str] | None = None
+    #: What is acted on and how, per entity type (ADR 0037).
+    policy: RedactionPolicy
+    #: ``console`` when the row in force carries a policy, ``environment``
+    #: otherwise. Separate from ``source`` because a row may set the engine and
+    #: say nothing about the policy, in which case the two genuinely differ.
+    policy_source: str = "environment"
     timeout_seconds: float
     cache_size: int
     #: Whether the HMAC key placeholders derive from is set. Never the key.

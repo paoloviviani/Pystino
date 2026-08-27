@@ -150,9 +150,7 @@ class ProviderRegistry:
 
             settings = self._settings_for(provider)
             client = self._build_client(settings)
-            upstream = OpenAICompatibleUpstream(
-                settings, client, plugin=self._plugin_for(provider)
-            )
+            upstream = OpenAICompatibleUpstream(settings, client, plugin=self._plugin_for(provider))
 
             stale = self._entries.get(provider.id)
             self._entries[provider.id] = _Entry(upstream, client, fingerprint)

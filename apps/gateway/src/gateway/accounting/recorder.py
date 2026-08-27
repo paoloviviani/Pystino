@@ -566,7 +566,8 @@ class RequestAccounting:
             "cost_source": cost_source,
             "upstream_cost": reported.amount if reported else None,
             "upstream_cost_currency": reported.currency if reported else None,
-            "upstream_cost_details": dict(reported.details) if reported and reported.details
+            "upstream_cost_details": dict(reported.details)
+            if reported and reported.details
             else None,
             "price_id": price.id if price is not None else None,
             "finish_reason": self.finish_reason(),

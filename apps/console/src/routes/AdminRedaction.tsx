@@ -1,7 +1,17 @@
-import { Badge, Button, Card, Dialog, Input, Notice, Spinner, Stat } from "@llmp/ui";
+import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner, Stat } from "@llmp/ui";
 import { useState } from "react";
-import { useRedactionStatus, useSetRedactionEngine } from "../lib/admin";
-import type { RedactionEngineOption, RedactionStatus } from "../lib/types";
+import {
+  useRedactionStatus,
+  useSetRedactionEngine,
+  useSetRedactionPolicy,
+} from "../lib/admin";
+import type {
+  EntityMode,
+  EntityPolicy,
+  RedactionEngineOption,
+  RedactionPolicy,
+  RedactionStatus,
+} from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import styles from "./Admin.module.css";
 
@@ -65,6 +75,7 @@ function Detail({ status }: { status: RedactionStatus }) {
       ))}
 
       <EngineList status={status} />
+      <PolicyEditor status={status} />
 
       <Card>
         <div className={styles.stats}>
@@ -215,6 +226,194 @@ function Detail({ status }: { status: RedactionStatus }) {
     </>
   );
 }
+
+/**
+ * What each kind of detected entity is worth doing something about (ADR 0037).
+ *
+ * Two questions per row, not one, and collapsing them is what made this screen
+ * hard to write: *what does the model see*, and *what does the reader get back*.
+ * A single "redact / do not redact" switch cannot express "the model must not
+ * see this name, and the person reading the answer should" — which is the mode
+ * almost every deployment wants for almost every entity.
+ *
+ * The rows come from the detector rather than from a list here. Entity labels
+ * belong to whatever engine is installed (ADR 0026), so hard-coding them would
+ * mean a console that silently omits a recogniser the engine gained last week —
+ * the same failure this feature exists to fix, one level up.
+ */
+const MODES: { value: EntityMode; label: string; hint: string }[] = [
+  { value: "off", label: "Not redacted", hint: "left exactly as the caller wrote it" },
+  {
+    value: "anonymise_restore",
+    label: "Anonymise, restore in the answer",
+    hint: "placeholder upstream, real value back to the reader",
+  },
+  {
+    value: "anonymise",
+    label: "Anonymise",
+    hint: "placeholder upstream and in the answer",
+  },
+  { value: "redact", label: "Redact", hint: "<PERSON>, so two people look the same" },
+];
+
+function PolicyEditor({ status }: { status: RedactionStatus }) {
+  const save = useSetRedactionPolicy();
+  // Seeded once and then owned by the form. Deriving it from `status` on every
+  // render would discard an edit the moment the status query refetched.
+  const [draft, setDraft] = useState<RedactionPolicy>(() => structuredClone(status.policy));
+  const [allowList, setAllowList] = useState(() => status.policy.allow_list.join(", "));
+  const [reason, setReason] = useState("");
+
+  // Every type the detector actually holds, plus anything the policy already
+  // names — a rule about a type this engine does not report is still a rule, and
+  // dropping it from the screen would silently delete it on the next save.
+  const known = [
+    ...new Set([...(status.service?.entities ?? []), ...Object.keys(draft.entities)]),
+  ].sort();
+
+  const modeOf = (entity: string): EntityMode => draft.entities[entity]?.mode ?? draft.default_mode;
+
+  const setEntity = (entity: string, patch: Partial<EntityPolicy>) =>
+    setDraft((current) => ({
+      ...current,
+      entities: {
+        ...current.entities,
+        [entity]: {
+          mode: patch.mode ?? modeOf(entity),
+          threshold: patch.threshold !== undefined ? patch.threshold : (current.entities[entity]?.threshold ?? null),
+        },
+      },
+    }));
+
+  const submit = () =>
+    save.mutate(
+      {
+        policy: {
+          ...draft,
+          allow_list: allowList
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+        },
+        reason: reason.trim(),
+      },
+      { onSuccess: () => setReason("") },
+    );
+
+  return (
+    <Card
+      title="What is redacted"
+      description="Per entity type. The detector finds all of them; this decides which ones
+        are acted on, and how."
+    >
+      <div className={styles.form}>
+        {save.error ? (
+          <Notice tone="danger">
+            {save.error instanceof Error ? save.error.message : "Unknown error."}
+          </Notice>
+        ) : null}
+        {save.isSuccess && !save.isPending && (
+          <Notice tone="info">
+            Saved. Other workers apply it within {Math.round(status.propagation_seconds)}s.
+          </Notice>
+        )}
+        {status.policy_source === "environment" && (
+          <Notice tone="info">
+            This is the deployment&rsquo;s default policy. Saving here records a decision that
+            overrides it, and keeps who changed it and why.
+          </Notice>
+        )}
+
+        <Select
+          label="A type nobody has ruled on"
+          value={draft.default_mode}
+          onChange={(event) =>
+            setDraft((current) => ({
+              ...current,
+              default_mode: event.target.value as EntityMode,
+            }))
+          }
+          hint="Applies to anything not listed below — including a recogniser the engine
+            gains in a later release. Protecting it by default is the safer direction."
+        >
+          {MODES.map((mode) => (
+            <option key={mode.value} value={mode.value}>
+              {mode.label}
+            </option>
+          ))}
+        </Select>
+
+        {known.length === 0 ? (
+          <p className={styles.muted}>
+            The detection service has not reported which entity types it holds, so there is
+            nothing to list. The default above still applies to everything it finds.
+          </p>
+        ) : (
+          <div className={styles.checkList}>
+            {known.map((entity) => (
+              <div key={entity} className={styles.formRow}>
+                <Select
+                  label={entity}
+                  value={modeOf(entity)}
+                  onChange={(event) =>
+                    setEntity(entity, { mode: event.target.value as EntityMode })
+                  }
+                >
+                  {MODES.map((mode) => (
+                    <option key={mode.value} value={mode.value}>
+                      {mode.label}
+                    </option>
+                  ))}
+                </Select>
+                <Input
+                  label={`Confidence for ${entity}`}
+                  hideLabel
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  placeholder={`${status.score_threshold} (default)`}
+                  value={draft.entities[entity]?.threshold ?? ""}
+                  onChange={(event) =>
+                    setEntity(entity, {
+                      threshold: event.target.value === "" ? null : Number(event.target.value),
+                    })
+                  }
+                />
+              </div>
+            ))}
+          </div>
+        )}
+
+        <Input
+          label="Never redact these values"
+          value={allowList}
+          onChange={(event) => setAllowList(event.target.value)}
+          placeholder="ilpost.it, example.org"
+          hint="Comma separated, matched exactly and case-insensitively. For values a
+            detector is right about the shape of and wrong about the meaning of — a
+            corporate domain is a URL, and it identifies nobody."
+        />
+
+        <Input
+          label="Reason for this change"
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="why this changed"
+          hint="Required when the change protects less: a type switched off, a mode
+            downgraded, or a value exempted. Kept permanently, like an engine change."
+        />
+
+        <div>
+          <Button variant="primary" busy={save.isPending} onClick={submit}>
+            Save policy
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 
 /**
  * The installed engines, and which one is in force.

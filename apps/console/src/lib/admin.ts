@@ -14,6 +14,7 @@ import type {
   ProviderPlugin,
   ProviderTestResult,
   QuotaReset,
+  RedactionPolicy,
   RedactionStatus,
   UsageReport,
 } from "./types";
@@ -156,6 +157,24 @@ export function useSetRedactionEngine() {
   return useMutation({
     mutationFn: (body: { engine: string; reason: string }) =>
       request<RedactionStatus>("/api/admin/redaction/engine", { method: "PUT", body }),
+    onSuccess: (status) => {
+      client.setQueryData(adminKeys.redaction, status);
+    },
+  });
+}
+
+/**
+ * Set the per-entity policy (ADR 0037).
+ *
+ * Same cache treatment as the engine switch, for the same reason: the PUT
+ * returns the whole status document, so writing it back shows exactly what the
+ * change produced rather than a screen that briefly shows the old policy.
+ */
+export function useSetRedactionPolicy() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { policy: RedactionPolicy; reason: string }) =>
+      request<RedactionStatus>("/api/admin/redaction/policy", { method: "PUT", body }),
     onSuccess: (status) => {
       client.setQueryData(adminKeys.redaction, status);
     },

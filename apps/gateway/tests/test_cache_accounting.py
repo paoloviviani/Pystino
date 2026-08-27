@@ -388,9 +388,7 @@ class TestItReachesTheLedger:
         # It used to be `upstream_cost_unit="micro_eur"`, and the fake upstream's
         # payload is the reference router's, so the unit is the same either way.
         await session.execute(
-            update(Provider)
-            .where(Provider.id == seeded.provider.id)
-            .values(plugin="cortecs")
+            update(Provider).where(Provider.id == seeded.provider.id).values(plugin="cortecs")
         )
         await session.commit()
 
@@ -506,9 +504,7 @@ class TestReconciliationIsPerProvider:
         fake_upstream: FakeUpstream,
     ) -> None:
         await session.execute(
-            update(Provider)
-            .where(Provider.id == seeded.provider.id)
-            .values(plugin="cortecs")
+            update(Provider).where(Provider.id == seeded.provider.id).values(plugin="cortecs")
         )
         await session.commit()
 
@@ -593,9 +589,7 @@ class TestReconciliationIsPerProvider:
     ) -> None:
         """Unqualified, the note reads as covering the whole report."""
         await session.execute(
-            update(Provider)
-            .where(Provider.id == seeded.provider.id)
-            .values(plugin="cortecs")
+            update(Provider).where(Provider.id == seeded.provider.id).values(plugin="cortecs")
         )
         await session.commit()
         fake_upstream.set_json(
@@ -642,9 +636,7 @@ class TestReconciliationIsPerProvider:
         # One provider reporting micro-EUR, a second reporting dollars, both
         # pointed at the same upstream so only the plugin differs.
         await session.execute(
-            update(Provider)
-            .where(Provider.id == seeded.provider.id)
-            .values(plugin="cortecs")
+            update(Provider).where(Provider.id == seeded.provider.id).values(plugin="cortecs")
         )
         dollars = Provider(
             name="dollar-shop",
@@ -669,9 +661,7 @@ class TestReconciliationIsPerProvider:
                 {
                     "id": "c",
                     "object": "chat.completion",
-                    "choices": [
-                        {"index": 0, "message": {"role": "assistant", "content": "x"}}
-                    ],
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": "x"}}],
                     "usage": {"prompt_tokens": 10, "completion_tokens": 2, "cost": cost},
                 }
             )

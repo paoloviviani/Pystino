@@ -57,7 +57,7 @@ services/redaction  Presidio behind a swappable contract, out of process
 deploy/compose   the stack: base + smoke + keycloak + redaction + proxy overlays
 deploy/caddy     the TLS reverse proxy's one config file, for both configurations
 scripts/         live checks against a running stack (see below)
-docs/adr/        36 ADRs. Read the index; they are the design record.
+docs/adr/        37 ADRs. Read the index; they are the design record.
 ```
 
 Inside the gateway, the pieces that carry the most weight:
@@ -192,8 +192,8 @@ Inside the gateway, the pieces that carry the most weight:
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services
-uv run pytest -q                       # 844 gateway tests, SQLite
-pnpm -r test                           # 26 packages/ui + 127 console
+uv run pytest -q                       # 876 gateway tests, SQLite
+pnpm -r test                           # 26 packages/ui + 130 console
 ```
 
 Then, for anything touching the request path, money, or SQL, against the real
@@ -305,19 +305,22 @@ rediscovered — one being built, one not started:
   engine that redacts nothing needs a written reason, kept permanently. Note
   `_engine_redacts` asks the registry rather than comparing against `"noop"` — an
   installable engine could redact nothing under any name.
-  Still to do, and **read §5 of that doc first**: what the detector detects is
-  wrong before scoping is even reached. On the deployment, *"Riassumi le notizie
-  del giorno da ilpost.it"* reached the upstream as
-  `<PERSON_…> le notizie del giorno da <URL_…>` — the English model called the
-  Italian verb a person at 0.85, and the news site the user asked for a URL. Both
-  components behaved as designed. What that indicts is configuration: nothing sets
-  `entity_types` (so it means "everything Presidio knows"), the language is a
-  per-process constant that is silently wrong for half the prompts here, the
-  contract carries no allowlist, and nothing shows an operator which spans were
-  replaced. Scoping is still to do too — redaction is process-global when it needs
-  to be scopeable per model, provider, user or group, and the engine is not
-  configurable from the console — but scoping only makes redaction apply to fewer
-  requests; it does not make it right on the ones it applies to.
+  **What is redacted is now an admin decision**
+  ([ADR 0037](docs/adr/0037-redaction-policy.md)): a per-entity policy — four
+  modes on two axes (what the model sees, what the reader gets back), a
+  threshold per type, an allow-list — stored as JSON on that same append-only
+  row and picked up by the same poll. Two things easy to get wrong: the policy
+  is applied **before** overlap resolution, or a discarded `URL` span takes the
+  `PERSON` it overlapped with it; and a reason is required only when a change
+  protects *less*. The default protects everything the engine finds except
+  `URL`, `DATE_TIME`, `LOCATION` and `NRP` — which is what fixed *"Riassumi le
+  notizie del giorno da ilpost.it"* reaching the upstream as `<PERSON_…> le
+  notizie del giorno da <URL_…>`, the English model calling the Italian verb a
+  person at 0.85 and the news site a URL.
+  Still to do: **scoping** — redaction is deployment-wide when it needs to be
+  scopeable per model, provider, user or group — and **showing an operator which
+  spans were replaced**, which is the feature that would have caught that bug in
+  an afternoon. Read §4 and §5 of the plan first.
   The precedence rule to copy is the quota engine's, inverted — quotas
   are *all rules must pass*, redaction is *any applicable scope requiring it
   wins* — so adding a scope can only tighten. The doc carries the table shape,
