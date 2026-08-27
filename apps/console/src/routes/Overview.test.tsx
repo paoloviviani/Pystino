@@ -280,7 +280,7 @@ describe("Overview", () => {
       renderScreen(<Overview me={ME} />);
 
       const dialog = await openMintDialog(user);
-      await user.selectOptions(dialog.getByLabelText("Bills to"), "g1");
+      await user.selectOptions(dialog.getByLabelText("Billing group"), "g1");
       await user.selectOptions(dialog.getByLabelText("Expires"), "90");
       await user.click(dialog.getByRole("button", { name: "Create" }));
 

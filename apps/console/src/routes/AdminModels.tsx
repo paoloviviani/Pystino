@@ -257,7 +257,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
   return (
     <Dialog
       open={open}
-      title="Add a model"
+      title="New model"
       onClose={onClose}
       footer={
         <>

@@ -344,7 +344,7 @@ describe("AdminRedaction", () => {
     // came from when the deprecated variable set it, so it is absent otherwise.
     vi.stubGlobal("fetch", respondWith(status({ entity_types: null })));
     const { unmount } = renderScreen(<AdminRedaction />);
-    await waitFor(() => expect(screen.getByText("What is redacted")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Redacted entities")).toBeInTheDocument());
     expect(screen.queryByText("Entity types")).not.toBeInTheDocument();
     unmount();
 
@@ -422,8 +422,8 @@ describe("AdminRedaction", () => {
 
     await waitFor(() => expect(screen.getByLabelText("PERSON")).toBeInTheDocument());
     await user.selectOptions(screen.getByLabelText("PERSON"), "redact");
-    await user.type(screen.getByLabelText("Never redact these values"), "ilpost.it, acme.test");
-    await user.type(screen.getByLabelText("Reason for this change"), "URLs are the source");
+    await user.type(screen.getByLabelText("Allowlist"), "ilpost.it, acme.test");
+    await user.type(screen.getByLabelText("Change reason"), "URLs are the source");
     await user.click(screen.getByRole("button", { name: "Save policy" }));
 
     await waitFor(() => expect(captured.puts).toHaveLength(1));
