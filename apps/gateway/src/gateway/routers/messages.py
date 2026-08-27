@@ -79,8 +79,17 @@ async def create_message(
     model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
     upstream = await _metered.resolve_upstream(providers, model)
 
-    policy = _metered.redaction_policy(request, principal=principal, model=model)
-    outcome = await redactor.redact_request(body.as_messages(), policy=policy)
+    outcome = await _metered.redact_or_block(
+        request,
+        body.as_messages(),
+        redactor=redactor,
+        session=session,
+        principal=principal,
+        model=model,
+        settings=settings,
+        surface=SURFACE,
+        request_id=request_id,
+    )
 
     prompt_tokens = estimator.count_messages(outcome.messages)
     # `max_tokens` is required on this API, so the worst case is exact rather

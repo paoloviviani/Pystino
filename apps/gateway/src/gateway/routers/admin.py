@@ -25,17 +25,18 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
+from llmp_shared import EntitySpan, PlaceholderMap
 from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from gateway.accounting.cost import select_price
-from gateway.config import RedactionSettings, Settings
+from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings, Settings
 from gateway.deps import (
     AdminUserDep,
     ControlHttpDep,
@@ -45,7 +46,12 @@ from gateway.deps import (
     SessionDep,
     SettingsDep,
 )
-from gateway.errors import BadRequestError, GatewayError, UpstreamUnavailableError
+from gateway.errors import (
+    BadRequestError,
+    ContentBlockedError,
+    GatewayError,
+    UpstreamUnavailableError,
+)
 from gateway.models import (
     ApiKey,
     BillingMode,
@@ -63,6 +69,8 @@ from gateway.models import (
     ProviderKind,
     QuotaReset,
     RedactionConfig,
+    RedactionRule,
+    RedactionScope,
     UsageRecord,
     UsageSource,
     UsageStatus,
@@ -76,6 +84,7 @@ from gateway.pricing import CatalogueUnavailable, fetch_catalogue, parse_catalog
 from gateway.providers import ProviderConfigurationError
 from gateway.redaction import Redactor
 from gateway.redaction import registry as redaction_registry
+from gateway.redaction.http import apply_spans
 from gateway.redaction.resolver import RedactionResolver, build_for, current_engine
 from gateway.reporting import (
     GroupBy,
@@ -114,6 +123,13 @@ from gateway.schemas import (
     RedactionEngineOption,
     RedactionEngineRequest,
     RedactionPolicyRequest,
+    RedactionPreviewRequest,
+    RedactionPreviewResponse,
+    RedactionPreviewSpan,
+    RedactionRuleCreateRequest,
+    RedactionRuleResponse,
+    RedactionRuleUpdateRequest,
+    RedactionScopeName,
     RedactionServiceHealth,
     RedactionStatusResponse,
     UsageReport,
@@ -2226,4 +2242,453 @@ async def set_redaction_policy(
         request=request,
         http=http,
         window_seconds=86_400,
+    )
+
+
+# -- scoped redaction rules --------------------------------------------------
+#
+# One policy per subject (ADR 0038). Everything dangerous about this table is
+# handled by `RedactionPolicy.combine` rather than here: a scope can only
+# tighten, by construction, so a rule saved wrongly is inert rather than an
+# incident. What is left for the API is the two things construction cannot do —
+# refuse a rule for a subject that does not exist, and refuse a second rule for a
+# subject that already has one.
+
+
+def _subject_columns(scope: RedactionScope) -> tuple[Any, Any]:
+    """``(id column, label column)`` for the table a scope points at.
+
+    ``scope_id`` is not a foreign key — it names a row in one of five tables —
+    so this is the only place that knows which. Typed loosely on purpose: the
+    five columns are of four different ORM classes and one is a ``coalesce``,
+    and a union type over them would be noise around a lookup table.
+    """
+    match scope:
+        case RedactionScope.PROVIDER:
+            return Provider.id, Provider.name
+        case RedactionScope.MODEL:
+            return ModelDef.id, ModelDef.name
+        case RedactionScope.GROUP:
+            return Group.id, Group.name
+        case RedactionScope.USER:
+            # Email is nullable — an IdP need not release one — and the subject
+            # claim always exists, so a user row can always be named.
+            return User.id, func.coalesce(User.email, User.subject)
+        case RedactionScope.API_KEY:
+            # The prefix, never the key: it is the only part of a key that is
+            # safe to print and is what the console already labels keys by.
+            return ApiKey.id, ApiKey.prefix
+
+
+#: What to call each subject in a refusal. "No such group" is a message an
+#: operator can act on; "no such scope_id" is not.
+_SUBJECT_NOUNS = {
+    RedactionScope.PROVIDER: "provider",
+    RedactionScope.MODEL: "model",
+    RedactionScope.GROUP: "group",
+    RedactionScope.USER: "user",
+    RedactionScope.API_KEY: "API key",
+}
+
+
+async def _subject_labels(
+    session: SessionDep, rules: Sequence[RedactionRule]
+) -> dict[tuple[RedactionScope, uuid.UUID], str]:
+    """A human name for every rule's subject, in one query per scope kind.
+
+    Per scope kind rather than per row: a page of fifty rules spans at most five
+    tables, and the alternative is fifty round trips to render one screen — the
+    shape of thing that is invisible until an organisation is large, which is
+    what pagination exists for.
+    """
+    by_scope: dict[RedactionScope, set[uuid.UUID]] = {}
+    for rule in rules:
+        by_scope.setdefault(rule.scope, set()).add(rule.scope_id)
+
+    labels: dict[tuple[RedactionScope, uuid.UUID], str] = {}
+    for scope, ids in by_scope.items():
+        id_column, label_column = _subject_columns(scope)
+        rows = (
+            await session.execute(select(id_column, label_column).where(id_column.in_(ids)))
+        ).all()
+        for subject_id, label in rows:
+            labels[(scope, subject_id)] = str(label)
+    return labels
+
+
+async def _check_subject(session: SessionDep, scope: RedactionScope, scope_id: uuid.UUID) -> str:
+    """The subject's label, or a refusal naming what kind of thing is missing.
+
+    Checked before the row is written, the same rule ``_load_provider`` follows
+    for a real foreign key. Without it a typo produces a rule that matches
+    nothing, and a redaction rule that silently matches nothing is precisely the
+    failure this feature exists to prevent — it looks identical, on the screen,
+    to one that is working.
+    """
+    id_column, label_column = _subject_columns(scope)
+    row = (
+        await session.execute(select(id_column, label_column).where(id_column == scope_id))
+    ).first()
+    if row is None:
+        # 404, matching `POST /api/admin/limits` two hundred lines up, which
+        # answers the identical question about the identical kind of id. Two
+        # adjacent admin routes disagreeing about the status for "no such group"
+        # is the sort of thing a client works around once and then relies on.
+        raise NotFoundError(f"No {_SUBJECT_NOUNS[scope]} with id {scope_id}.")
+    return str(row[1])
+
+
+def _rule_response(
+    rule: RedactionRule, label: str | None, created_by_email: str | None = None
+) -> RedactionRuleResponse:
+    return RedactionRuleResponse(
+        id=rule.id,
+        name=rule.name,
+        scope=rule.scope.value,
+        scope_id=rule.scope_id,
+        subject_label=label,
+        # A row whose stored policy no longer parses is not silently replaced
+        # with an empty one here: the listing is where an operator would find out
+        # that the resolver is ignoring it, so it must raise rather than lie.
+        policy=RedactionPolicy.model_validate(rule.policy or {}),
+        is_active=rule.is_active,
+        reason=rule.reason,
+        created_by=rule.created_by,
+        created_by_email=created_by_email,
+        created_at=rule.created_at,
+        updated_at=rule.updated_at,
+    )
+
+
+async def _load_redaction_rule(session: SessionDep, rule_id: uuid.UUID) -> RedactionRule:
+    rule = (
+        await session.execute(select(RedactionRule).where(RedactionRule.id == rule_id))
+    ).scalar_one_or_none()
+    if rule is None:
+        raise NotFoundError(f"No redaction rule with id {rule_id}.")
+    return rule
+
+
+async def _refresh_resolver(request: Request) -> None:
+    """Make this worker see a rule change immediately.
+
+    The poll would get there within ``propagation_seconds`` anyway, but an
+    operator who just saved a rule and then tried a preview would otherwise see
+    the *old* answer and reasonably conclude the save had failed.
+    """
+    if (resolver := getattr(request.app.state, "redaction", None)) is not None:
+        await resolver.refresh()
+
+
+@router.get("/redaction/rules", response_model=Page[RedactionRuleResponse])
+async def list_redaction_rules(
+    admin: AdminUserDep,
+    session: SessionDep,
+    page: PageDep,
+    scope: RedactionScopeName | None = None,
+    is_active: bool | None = None,
+) -> Page[RedactionRuleResponse]:
+    """Every scoped rule, with the name of the thing each one attaches to.
+
+    Paginated in the database, unlike the quota listing: there are no live
+    counters to read first, so there is nothing to gain by loading them all.
+    """
+    stmt = select(RedactionRule, User.email).outerjoin(User, User.id == RedactionRule.created_by)
+    if scope is not None:
+        stmt = stmt.where(RedactionRule.scope == RedactionScope(scope))
+    if is_active is not None:
+        stmt = stmt.where(RedactionRule.is_active.is_(is_active))
+    stmt = stmt.order_by(RedactionRule.scope, RedactionRule.created_at.desc())
+
+    total = await count_of(session, stmt)
+    rows = (await session.execute(page.apply(stmt))).all()
+    labels = await _subject_labels(session, [rule for rule, _ in rows])
+    return page.page(
+        [
+            _rule_response(rule, labels.get((rule.scope, rule.scope_id)), email)
+            for rule, email in rows
+        ],
+        total,
+    )
+
+
+@router.post(
+    "/redaction/rules",
+    response_model=RedactionRuleResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_redaction_rule(
+    payload: RedactionRuleCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+) -> RedactionRuleResponse:
+    """Attach a policy to one provider, model, group, user or key.
+
+    Two refusals, and neither is about safety — the fold already guarantees that
+    a scope cannot weaken anything. Both are about a rule that would look right
+    and do nothing:
+
+    * **a subject that does not exist**, which produces a rule matching no
+      request, indistinguishable on screen from one that matches every request;
+    * **a second rule for a subject that already has one**, which the unique
+      index refuses anyway. Caught here so the operator is told to edit the
+      existing rule rather than reading a database constraint's name.
+    """
+    scope = RedactionScope(payload.scope)
+    label = await _check_subject(session, scope, payload.scope_id)
+
+    existing = (
+        await session.execute(
+            select(RedactionRule.id).where(
+                RedactionRule.scope == scope, RedactionRule.scope_id == payload.scope_id
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise ConflictError(
+            f"A redaction rule already exists for that {_SUBJECT_NOUNS[scope]} "
+            f"({label}). Edit it instead of adding a second one."
+        )
+
+    rule = RedactionRule(
+        name=payload.name,
+        scope=scope,
+        scope_id=payload.scope_id,
+        policy=payload.policy.model_dump(mode="json"),
+        is_active=payload.is_active,
+        reason=payload.reason,
+        created_by=admin.id,
+    )
+    session.add(rule)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # The pre-check above lost a race with another admin. Same message: the
+        # operator's next action is the same either way.
+        await session.rollback()
+        raise ConflictError(
+            f"A redaction rule already exists for that {_SUBJECT_NOUNS[scope]} "
+            f"({label}). Edit it instead of adding a second one."
+        ) from exc
+    await session.refresh(rule)
+    await _refresh_resolver(request)
+
+    logger.warning(
+        "redaction rule for %s %s created by %s: default=%s, %d entity rule(s)",
+        scope.value,
+        payload.scope_id,
+        admin.email or admin.id,
+        payload.policy.default_mode,
+        len(payload.policy.entities),
+    )
+    return _rule_response(rule, label, admin.email)
+
+
+@router.patch("/redaction/rules/{rule_id}", response_model=RedactionRuleResponse)
+async def update_redaction_rule(
+    rule_id: uuid.UUID,
+    payload: RedactionRuleUpdateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+) -> RedactionRuleResponse:
+    """Change a rule's policy, name, reason or active flag. Not its subject."""
+    rule = await _load_redaction_rule(session, rule_id)
+    fields = payload.model_dump(exclude_unset=True, mode="json")
+    for field, value in fields.items():
+        setattr(rule, field, value)
+    await session.commit()
+    await session.refresh(rule)
+    await _refresh_resolver(request)
+
+    labels = await _subject_labels(session, [rule])
+    email = (
+        await session.execute(select(User.email).where(User.id == rule.created_by))
+    ).scalar_one_or_none()
+    logger.warning(
+        "redaction rule %s (%s %s) edited by %s: %s",
+        rule.id,
+        rule.scope.value,
+        rule.scope_id,
+        admin.email or admin.id,
+        ", ".join(sorted(fields)) or "nothing",
+    )
+    return _rule_response(rule, labels.get((rule.scope, rule.scope_id)), email)
+
+
+@router.delete("/redaction/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_redaction_rule(
+    rule_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
+) -> None:
+    """Remove a rule outright.
+
+    Safe to delete, unlike a model or a key: nothing in the ledger points *at* a
+    rule. ``usage_records.redaction_rule_id`` is a stamp copied onto each
+    request, not a foreign key, which is exactly so that deleting a rule cannot
+    erase the record of what it did.
+    """
+    rule = await _load_redaction_rule(session, rule_id)
+    await session.execute(delete(RedactionRule).where(RedactionRule.id == rule_id))
+    await session.commit()
+    await _refresh_resolver(request)
+    logger.warning(
+        "redaction rule %s (%s %s) deleted by %s",
+        rule.id,
+        rule.scope.value,
+        rule.scope_id,
+        admin.email or admin.id,
+    )
+
+
+# -- the preview box ---------------------------------------------------------
+
+
+@runtime_checkable
+class _DetectingRedactor(Protocol):
+    """An engine that can report spans without rewriting anything.
+
+    Not part of the ``Redactor`` protocol: the request path never needs the
+    spans, only the rewritten messages, and widening the interface every engine
+    must implement for the sake of one admin screen is the wrong trade. Asked
+    for structurally instead, so ``noop`` — which detects nothing and says so —
+    simply does not match.
+    """
+
+    async def detect(
+        self, texts: list[str], *, policy: RedactionPolicy | None = ...
+    ) -> list[list[EntitySpan]]: ...
+
+
+def _policy_for_subject(
+    resolver: RedactionResolver, scope: RedactionScope, scope_id: uuid.UUID
+) -> EffectivePolicy:
+    """The folded policy one subject's requests would run under.
+
+    Spelled out per scope rather than built as ``{f"{scope}_id": id}``: the
+    keyword names are part of the resolver's signature, and a mistyped one would
+    be a preview that silently showed the deployment policy instead.
+    """
+    match scope:
+        case RedactionScope.PROVIDER:
+            return resolver.policy_for(provider_id=scope_id)
+        case RedactionScope.MODEL:
+            return resolver.policy_for(model_id=scope_id)
+        case RedactionScope.GROUP:
+            return resolver.policy_for(group_id=scope_id)
+        case RedactionScope.USER:
+            return resolver.policy_for(user_id=scope_id)
+        case RedactionScope.API_KEY:
+            return resolver.policy_for(api_key_id=scope_id)
+
+
+@router.post("/redaction/preview", response_model=RedactionPreviewResponse)
+async def preview_redaction(
+    payload: RedactionPreviewRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    request: Request,
+) -> RedactionPreviewResponse:
+    """Run the real redaction path over a sample and report what it did.
+
+    **Not a proxy to ``/detect``.** The spans alone answer "what does the
+    detector find", which is not the question anyone has: the question is *what
+    would the provider receive*, and that is the modes, the per-type thresholds,
+    the allow-list and the overlap resolution — none of which live in the
+    detector. So this calls ``apply_spans`` with the effective policy, over a
+    throwaway ``PlaceholderMap``, exactly as a request would.
+
+    Two things this route does deliberately differently from a request:
+
+    * **A block is a 200 with ``blocked: true``**, never a 403. This is a
+      preview; refusing it would make the tool look broken at the exact moment
+      it is doing its job, and an operator checking whether a rule blocks needs
+      the answer rather than an error.
+    * **Nothing here is logged.** Not the sample, not the spans, not the
+      rewrite. Within a week of shipping this box will contain the real prompt
+      that came back wrong — that is what it is for — and a redaction inspector
+      that writes unredacted personal data to the log file has defeated itself.
+    """
+    resolver: RedactionResolver | None = getattr(request.app.state, "redaction", None)
+    # Typed as `object` rather than `Redactor` so the structural check below can
+    # narrow it: an engine that can report spans is a wider interface than the
+    # request path's, not a narrower one.
+    redactor: object = getattr(request.app.state, "redactor", None)
+    engine = getattr(redactor, "name", None) or settings.redaction.engine
+
+    effective = EffectivePolicy(
+        policy=resolver.policy if resolver is not None else settings.redaction.policy
+    )
+    if payload.scope is not None and payload.scope_id is not None:
+        scope = RedactionScope(payload.scope)
+        # Same check as creating a rule: previewing "as" a group that does not
+        # exist would show the deployment policy and look like a rule that is
+        # not taking effect.
+        await _check_subject(session, scope, payload.scope_id)
+        if resolver is not None:
+            effective = _policy_for_subject(resolver, scope, payload.scope_id)
+
+    if not isinstance(redactor, _DetectingRedactor):
+        return RedactionPreviewResponse(
+            engine=engine,
+            scope=effective.scope,
+            rule_id=effective.rule_id,
+            policy=effective.policy,
+            redacted_text=payload.text,
+            note=(
+                f"the {engine!r} engine detects nothing, so this sample would reach "
+                "the provider exactly as it is written"
+            ),
+        )
+
+    spans = (await redactor.detect([payload.text], policy=effective.policy))[0]
+    described = [
+        RedactionPreviewSpan(
+            entity_type=span.entity_type,
+            start=span.start,
+            end=span.end,
+            score=span.score,
+            mode=effective.policy.mode_for(span.entity_type).value,
+            threshold=effective.policy.threshold_for(
+                span.entity_type, settings.redaction.score_threshold
+            ),
+            allow_listed=effective.policy.allows(span.slice_of(payload.text)),
+        )
+        for span in spans
+    ]
+
+    # A throwaway map: nothing here is restored into a response, and keeping it
+    # would be keeping the real values of whatever the admin pasted.
+    placeholders = PlaceholderMap()
+    try:
+        rewritten, count = apply_spans(
+            payload.text,
+            spans,
+            key=settings.redaction.placeholder_key.get_secret_value().encode(),
+            placeholders=placeholders,
+            policy=effective.policy,
+            default_threshold=settings.redaction.score_threshold,
+            scope=effective.scope,
+        )
+    except ContentBlockedError as exc:
+        return RedactionPreviewResponse(
+            engine=engine,
+            scope=effective.scope,
+            rule_id=effective.rule_id,
+            policy=effective.policy,
+            spans=described,
+            redacted_text=None,
+            blocked=True,
+            blocked_reason=str(exc),
+        )
+
+    return RedactionPreviewResponse(
+        engine=engine,
+        scope=effective.scope,
+        rule_id=effective.rule_id,
+        policy=effective.policy,
+        spans=described,
+        redacted_text=rewritten,
+        entity_count=count,
     )

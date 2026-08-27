@@ -55,6 +55,25 @@ class BadRequestError(GatewayError):
     code = "bad_request"
 
 
+class ContentBlockedError(GatewayError):
+    """A redaction policy refused the request before any provider saw it.
+
+    403 rather than 400: the request is well-formed and the caller is
+    authenticated; what is refused is the *content*, under a policy an
+    administrator set, and no amount of re-sending the same prompt will change
+    that (ADR 0038).
+
+    The message names the entity type and the scope whose rule decided, and
+    **never quotes the matched text**. Echoing a blocked credential into an
+    error body — which is logged, and which the caller may paste into a ticket —
+    would leak exactly what the block exists to contain.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    error_type = "invalid_request_error"
+    code = "content_blocked"
+
+
 class UpstreamUnavailableError(GatewayError):
     status_code = status.HTTP_502_BAD_GATEWAY
     error_type = "api_error"

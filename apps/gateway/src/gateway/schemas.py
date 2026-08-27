@@ -1015,6 +1015,191 @@ class RedactionStatusResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+# -- scoped redaction rules --------------------------------------------------
+#
+# One policy document per subject (ADR 0038). The shape is deliberately the
+# quota rules': an operator who has set a spending cap already knows where the
+# scope, the subject and the active flag live, and a second idiom for the same
+# idea is one more thing to learn for nothing.
+
+#: The five subjects a rule can name. Not ``LimitScope``: quotas scope to who
+#: pays, redaction to the endpoint text reaches and the person who wrote it.
+RedactionScopeName = Literal["provider", "model", "group", "user", "api_key"]
+
+
+class RedactionRuleResponse(BaseModel):
+    """One scoped rule, with enough about its subject to render a row.
+
+    ``subject_label`` is resolved server-side because the console would otherwise
+    have to hold five listings in memory to turn a ``scope_id`` into a word — and
+    would get it wrong for a subject it has no permission to list.
+    """
+
+    id: uuid.UUID
+    name: str
+    scope: RedactionScopeName
+    scope_id: uuid.UUID
+    #: The model name, provider name, group name, user email or key prefix.
+    #: **Null means the subject no longer exists**, which is the one thing this
+    #: field must be able to say: a rule pointing at a deleted group is inert and
+    #: looks identical to a working one without it. ``scope_id`` is not a foreign
+    #: key — it points at one of five tables — so nothing else catches that.
+    subject_label: str | None = None
+    policy: RedactionPolicy
+    is_active: bool
+    reason: str = ""
+    created_by: uuid.UUID | None = None
+    #: Null once the account is erased; the rule outlives its author.
+    created_by_email: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RedactionRuleCreateRequest(BaseModel):
+    """Attach a policy to one subject.
+
+    No reason is required, unlike the engine switch and unlike a deployment
+    policy change. A scoped rule can only ever tighten — ``RedactionPolicy.combine``
+    takes the strictest answer for every type — so there is no direction here
+    that a later review would ask about, and demanding a sentence per rule is how
+    a reason column fills up with "x" (ADR 0033's argument, applied one level
+    down).
+    """
+
+    name: str = Field(default="", max_length=255)
+    scope: RedactionScopeName
+    scope_id: uuid.UUID
+    policy: RedactionPolicy
+    is_active: bool = True
+    reason: str = Field(default="", max_length=500)
+
+
+class RedactionRuleUpdateRequest(BaseModel):
+    """No scope changes.
+
+    A rule *is* a decision about one subject; re-pointing it at another is a
+    different decision that happens to reuse a row, and it would silently make
+    the two subjects' histories read as one. Delete it and write the one you
+    want. (The same argument as ``LimitRuleUpdateRequest``, for a different
+    reason: there is no counter here to abandon, only a record to confuse.)
+    """
+
+    name: str | None = Field(default=None, max_length=255)
+    policy: RedactionPolicy | None = None
+    is_active: bool | None = None
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class MyRedactionResponse(BaseModel):
+    """A person's own redaction rule, and the two policies it sits between."""
+
+    #: The caller's own rule, or null when they have never written one. Null is
+    #: not "no protection": ``effective`` is what actually applies.
+    policy: RedactionPolicy | None = None
+    rule_id: uuid.UUID | None = None
+    updated_at: datetime | None = None
+    #: What governs this person's requests today: the deployment policy folded
+    #: with the rules an administrator set for their groups, and with their own.
+    #: Model- and provider-scoped rules are **not** included — which one applies
+    #: is not known until a request names a model.
+    effective: RedactionPolicy
+    #: The floor a submitted policy may not go below: the deployment policy
+    #: folded with the group rules. **This is the document to edit**: a type a
+    #: submitted policy does not name falls back to that policy's own default, so
+    #: starting from an empty one and adding a single entity is refused as a
+    #: weakening of everything else.
+    baseline: RedactionPolicy
+    #: How long another worker may still be applying the previous version.
+    propagation_seconds: float = 0.0
+
+
+class MyRedactionRequest(BaseModel):
+    """Set your own policy. It may only tighten.
+
+    The whole document, like the admin policy route: a policy's meaning is the
+    combination of its entries, and a partial update invites two sessions to each
+    save half of what they meant.
+    """
+
+    policy: RedactionPolicy
+    reason: str = Field(default="", max_length=500)
+
+
+class RedactionPreviewRequest(BaseModel):
+    """A sample to run the real redaction path over.
+
+    ``scope``/``scope_id`` preview *as* a subject, so an admin can see what a
+    group's rule actually does before saving it. Omitted, the deployment policy
+    applies.
+
+    **This body is never logged.** It will contain real personal data within a
+    week of shipping — an admin pastes the prompt that came back wrong — and a
+    tool for inspecting redaction that writes the unredacted sample to a log file
+    has defeated itself.
+    """
+
+    text: str = Field(min_length=1, max_length=20_000)
+    scope: RedactionScopeName | None = None
+    scope_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _scope_and_subject_together(self) -> RedactionPreviewRequest:
+        if (self.scope is None) != (self.scope_id is None):
+            raise ValueError("give both scope and scope_id, or neither")
+        return self
+
+
+class RedactionPreviewSpan(BaseModel):
+    """One thing the detector found, and what the policy says about it.
+
+    ``mode`` and ``threshold`` are the policy's answers for this type, and
+    ``allow_listed`` whether the matched text is exempt. They explain the
+    rewrite; they do not decide it — ``entity_count`` on the response is what
+    ``apply_spans`` actually replaced, and that is the authoritative number.
+    """
+
+    entity_type: str
+    start: int
+    end: int
+    score: float
+    mode: str
+    threshold: float
+    allow_listed: bool = False
+
+
+class RedactionPreviewResponse(BaseModel):
+    """What the model would receive, and why.
+
+    Item 4 of ADR 0037's "not done": until this existed, nothing anywhere showed
+    an operator *which* spans were replaced. The Italian bug — a verb read as a
+    name, the news site the user asked for read as identity — was only findable
+    by reading an upstream request body.
+    """
+
+    engine: str
+    #: The narrowest rule that contributed, and its id. Null when only the
+    #: deployment policy applied.
+    scope: RedactionScopeName | None = None
+    rule_id: uuid.UUID | None = None
+    #: The policy that was actually run, folded. Returned because a preview whose
+    #: result surprises an operator is exactly when they need to see the inputs.
+    policy: RedactionPolicy
+    spans: list[RedactionPreviewSpan] = Field(default_factory=list)
+    #: What the provider would receive. **Null when blocked**: nothing is
+    #: rewritten in that case, and echoing the sample back would read as "this is
+    #: what would be sent".
+    redacted_text: str | None = None
+    entity_count: int = 0
+    #: True when the policy would refuse the request. Reported as a field on a
+    #: 200, not as a 403 — this is a preview, and a preview that fails is a tool
+    #: that looks broken at the moment it is working.
+    blocked: bool = False
+    blocked_reason: str | None = None
+    #: Set when the engine in force cannot detect anything (``noop``), so an
+    #: empty result is not read as "nothing here to redact".
+    note: str | None = None
+
+
 class DiscoveredModel(BaseModel):
     """An upstream model the provider offers that we have not catalogued."""
 

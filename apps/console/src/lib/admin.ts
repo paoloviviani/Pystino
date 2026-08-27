@@ -15,6 +15,9 @@ import type {
   ProviderTestResult,
   QuotaReset,
   RedactionPolicy,
+  RedactionPreview,
+  RedactionRule,
+  RedactionScope,
   RedactionStatus,
   UsageReport,
 } from "./types";
@@ -42,6 +45,7 @@ export const adminKeys = {
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
   users: ["admin", "users"] as const,
   redaction: ["admin", "redaction"] as const,
+  redactionRules: ["admin", "redaction", "rules"] as const,
   providerPlugins: ["admin", "provider-plugins"] as const,
   report: (query: string) => ["admin", "report", query] as const,
 };
@@ -178,6 +182,89 @@ export function useSetRedactionPolicy() {
     onSuccess: (status) => {
       client.setQueryData(adminKeys.redaction, status);
     },
+  });
+}
+
+// -- scoped redaction rules --------------------------------------------------
+
+/**
+ * The rules, a page at a time.
+ *
+ * Keyed under `redaction` and never invalidated by the status mutations: a rule
+ * and the deployment policy are folded together at request time but are stored
+ * apart, so changing one leaves the other's cache honest.
+ */
+export function useRedactionRules(
+  query: PageQuery = { limit: MAX_LIMIT },
+  filters: { scope?: string; is_active?: string } = {},
+) {
+  const search = pageParams(query, {
+    scope: filters.scope ?? "",
+    is_active: filters.is_active ?? "",
+  });
+  return useQuery({
+    queryKey: pagedKey(adminKeys.redactionRules, search),
+    queryFn: () => request<Page<RedactionRule>>(`/api/admin/redaction/rules?${search}`),
+    ...pagedOptions,
+  });
+}
+
+export interface RedactionRuleInput {
+  name?: string;
+  scope: RedactionScope;
+  scope_id: string;
+  policy: RedactionPolicy;
+  is_active?: boolean;
+  reason?: string;
+}
+
+export function useCreateRedactionRule() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: RedactionRuleInput) =>
+      request<RedactionRule>("/api/admin/redaction/rules", { method: "POST", body: input }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
+  });
+}
+
+/** Everything but the scope: a rule is a decision about one subject (ADR 0038). */
+export function useUpdateRedactionRule() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string;
+      name?: string;
+      policy?: RedactionPolicy;
+      is_active?: boolean;
+      reason?: string;
+    }) => request<RedactionRule>(`/api/admin/redaction/rules/${id}`, { method: "PATCH", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
+  });
+}
+
+export function useDeleteRedactionRule() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<void>(`/api/admin/redaction/rules/${id}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
+  });
+}
+
+/**
+ * Run the real redaction path over a sample.
+ *
+ * A mutation rather than a query, for two reasons: it is a POST that runs the
+ * detector, so it must happen when asked and not on a render; and its body is
+ * the operator's sample text, which has no business in a cache key.
+ */
+export function usePreviewRedaction() {
+  return useMutation({
+    mutationFn: (body: { text: string; scope?: RedactionScope; scope_id?: string }) =>
+      request<RedactionPreview>("/api/admin/redaction/preview", { method: "POST", body }),
   });
 }
 

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RedactionEngineOption, RedactionStatus } from "../lib/types";
+import type { RedactionEngineOption, RedactionPreview, RedactionStatus } from "../lib/types";
 import { AdminRedaction } from "./AdminRedaction";
 
 /**
@@ -54,6 +54,7 @@ function status(overrides: Partial<RedactionStatus> = {}): RedactionStatus {
     policy: {
       default_mode: "anonymise_restore",
       entities: { URL: { mode: "off", threshold: null } },
+      patterns: [],
       allow_list: [],
     },
     policy_source: "environment",
@@ -125,6 +126,80 @@ function withEngineChange(
   });
   return { fetch: stub as unknown as typeof fetch, captured };
 }
+
+
+/**
+ * A preview result, and a stub that answers the POST with it.
+ *
+ * Offsets are into the sample the tests type, because that is what the screen
+ * slices to show each match — the API reports positions, not text.
+ */
+function preview(overrides: Partial<RedactionPreview> = {}): RedactionPreview {
+  return {
+    engine: "http",
+    scope: null,
+    rule_id: null,
+    policy: status().policy,
+    spans: [
+      {
+        entity_type: "PERSON",
+        start: 0,
+        end: 8,
+        score: 0.85,
+        mode: "redact",
+        threshold: 0.5,
+        allow_listed: false,
+      },
+      {
+        entity_type: "URL",
+        start: 34,
+        end: 43,
+        score: 0.6,
+        mode: "off",
+        threshold: 0.5,
+        allow_listed: true,
+      },
+    ],
+    redacted_text: "<PERSON> le notizie del giorno da ilpost.it",
+    entity_count: 1,
+    blocked: false,
+    blocked_reason: null,
+    note: null,
+    ...overrides,
+  };
+}
+
+function withPreview(result: RedactionPreview): { fetch: typeof fetch; posts: unknown[] } {
+  const posts: unknown[] = [];
+  const stub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("/api/admin/groups")) {
+      return new Response(
+        JSON.stringify({
+          items: [{ id: "g1", name: "clinical", description: null }],
+          total: 1,
+          limit: 50,
+          offset: 0,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (init?.method === "POST" && String(input).includes("/redaction/preview")) {
+      posts.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify(status()), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+  return { fetch: stub as unknown as typeof fetch, posts };
+}
+
+/** The sample the preview tests run, and the prompt the Italian bug came from. */
+const SAMPLE = "Riassumi le notizie del giorno da ilpost.it";
 
 function renderScreen(element: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
@@ -408,10 +483,10 @@ describe("AdminRedaction", () => {
     vi.stubGlobal("fetch", respondWith(status()));
     renderScreen(<AdminRedaction />);
 
-    await waitFor(() => expect(screen.getByLabelText("PERSON")).toBeInTheDocument());
-    expect(screen.getByLabelText("EMAIL_ADDRESS")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText(/PERSON/)).toBeInTheDocument());
+    expect(screen.getByLabelText(/EMAIL_ADDRESS/)).toBeInTheDocument();
     // The one the default policy turns off, shown as such rather than hidden.
-    expect(screen.getByLabelText("URL")).toHaveValue("off");
+    expect(screen.getByLabelText(/URL/)).toHaveValue("off");
   });
 
   it("sends the whole policy, with the allow-list split", async () => {
@@ -420,8 +495,8 @@ describe("AdminRedaction", () => {
     vi.stubGlobal("fetch", stub);
     renderScreen(<AdminRedaction />);
 
-    await waitFor(() => expect(screen.getByLabelText("PERSON")).toBeInTheDocument());
-    await user.selectOptions(screen.getByLabelText("PERSON"), "redact");
+    await waitFor(() => expect(screen.getByLabelText(/PERSON/)).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText(/PERSON/), "redact");
     await user.type(screen.getByLabelText("Allowlist"), "ilpost.it, acme.test");
     await user.type(screen.getByLabelText("Change reason"), "URLs are the source");
     await user.click(screen.getByRole("button", { name: "Save policy" }));
@@ -458,12 +533,230 @@ describe("AdminRedaction", () => {
     );
     renderScreen(<AdminRedaction />);
 
-    await waitFor(() => expect(screen.getByLabelText("PERSON")).toBeInTheDocument());
-    await user.selectOptions(screen.getByLabelText("PERSON"), "off");
+    await waitFor(() => expect(screen.getByLabelText(/PERSON/)).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText(/PERSON/), "off");
     await user.click(screen.getByRole("button", { name: "Save policy" }));
 
     await waitFor(() =>
       expect(screen.getByText(/protects less than the one in force/)).toBeInTheDocument(),
+    );
+  });
+
+  it("names each entity type in words, and keeps the label the policy stores", async () => {
+    // Both, not either: "Person name" is what a person understands and PERSON
+    // is what the policy stores, what the ledger counts and what a log is
+    // grepped for. A screen showing only one of them cannot be matched against
+    // the other.
+    vi.stubGlobal("fetch", respondWith(status()));
+    renderScreen(<AdminRedaction />);
+
+    await waitFor(() => expect(screen.getByText("Person name")).toBeInTheDocument());
+    expect(screen.getByText("PERSON")).toBeInTheDocument();
+    expect(screen.getByText("Email address")).toBeInTheDocument();
+    expect(screen.getByText("EMAIL_ADDRESS")).toBeInTheDocument();
+    // Where the detection comes from: a regex is exact, a model reading is a
+    // guess with a score — and it is the guesses that read an Italian verb as
+    // a person.
+    const person = screen.getByText("PERSON").closest("label")!;
+    expect(within(person).getByText("Model")).toBeInTheDocument();
+    const email = screen.getByText("EMAIL_ADDRESS").closest("label")!;
+    expect(within(email).getByText("Pattern")).toBeInTheDocument();
+  });
+
+  it("falls back to the raw label for a recogniser it has never heard of", async () => {
+    // The failure this feature exists to fix, one level up: a type nobody can
+    // see is a type nobody rules on.
+    vi.stubGlobal(
+      "fetch",
+      respondWith(status({ service: { ...status().service!, entities: ["ZX_NEW_THING"] } })),
+    );
+    renderScreen(<AdminRedaction />);
+
+    // Exactly the raw label, printed once: nothing here knows this type, and a
+    // name invented for it would be worse than none.
+    await waitFor(() => expect(screen.getByLabelText("ZX_NEW_THING")).toBeInTheDocument());
+  });
+
+  it("adds a custom pattern and sends it with the policy", async () => {
+    const user = userEvent.setup({ delay: null });
+    const { fetch: stub, captured } = withEngineChange(status(), status());
+    vi.stubGlobal("fetch", stub);
+    renderScreen(<AdminRedaction />);
+
+    await user.click(await screen.findByRole("button", { name: "Add pattern" }));
+    await user.type(screen.getByLabelText("Pattern 1 name"), "TICKET_ID");
+    await user.type(screen.getByLabelText("Pattern 1 regex"), "TICKET-\\d+");
+    await user.click(screen.getByRole("button", { name: "Save policy" }));
+
+    await waitFor(() => expect(captured.puts).toHaveLength(1));
+    const put = captured.puts[0] as { url: string; body: Record<string, any> };
+    expect(put.url).toContain("/api/admin/redaction/policy");
+    expect(put.body.policy.patterns).toEqual([
+      // Redact by default: a pattern somebody wrote by hand names a value they
+      // went out of their way to name.
+      { name: "TICKET_ID", regex: "TICKET-\\d+", mode: "redact" },
+    ]);
+  });
+
+  it("shows the API's message when a pattern will not compile", async () => {
+    // RE2 refuses constructs JavaScript accepts — backreferences, lookaround —
+    // so validating in the browser would pass patterns the API then rejects.
+    // Its parser names the construct, which is the useful half.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "PUT") {
+          return new Response(
+            JSON.stringify({
+              error: {
+                message: "this pattern cannot be used: invalid escape sequence: \\1",
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify(status()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    renderScreen(<AdminRedaction />);
+
+    await user.click(await screen.findByRole("button", { name: "Add pattern" }));
+    await user.type(screen.getByLabelText("Pattern 1 name"), "BAD");
+    await user.type(screen.getByLabelText("Pattern 1 regex"), "(a)\\1");
+    await user.click(screen.getByRole("button", { name: "Save policy" }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/invalid escape sequence/)).toBeInTheDocument(),
+    );
+  });
+
+  it("removes a pattern", async () => {
+    const user = userEvent.setup({ delay: null });
+    const { fetch: stub, captured } = withEngineChange(status(), status());
+    vi.stubGlobal("fetch", stub);
+    renderScreen(<AdminRedaction />);
+
+    await user.click(await screen.findByRole("button", { name: "Add pattern" }));
+    await user.type(screen.getByLabelText("Pattern 1 name"), "TICKET_ID");
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.click(screen.getByRole("button", { name: "Save policy" }));
+
+    await waitFor(() => expect(captured.puts).toHaveLength(1));
+    const put = captured.puts[0] as { body: Record<string, any> };
+    expect(put.body.policy.patterns).toEqual([]);
+  });
+
+  it("shows what the provider would receive, and why each span was replaced", async () => {
+    // The only place an operator can see what the detector actually does. Until
+    // it existed, the Italian bug was findable only by reading an upstream
+    // request body.
+    const user = userEvent.setup({ delay: null });
+    const { fetch: stub, posts } = withPreview(preview());
+    vi.stubGlobal("fetch", stub);
+    renderScreen(<AdminRedaction />);
+
+    await user.type(await screen.findByLabelText("Sample"), SAMPLE);
+    await user.click(screen.getByRole("button", { name: "Run preview" }));
+
+    await waitFor(() => expect(posts).toEqual([{ text: SAMPLE }]));
+    expect(
+      screen.getByText("<PERSON> le notizie del giorno da ilpost.it"),
+    ).toBeInTheDocument();
+
+    const table = screen.getByRole("table");
+    // The matched text is sliced from the sample: the API reports offsets, and
+    // an offset tells nobody which word was replaced.
+    expect(within(table).getByText("Riassumi")).toBeInTheDocument();
+    expect(within(table).getByText("ilpost.it")).toBeInTheDocument();
+    expect(within(table).getByText("Person name")).toBeInTheDocument();
+    expect(within(table).getByText("0.85")).toBeInTheDocument();
+    expect(within(table).getByText("Redact")).toBeInTheDocument();
+    // Detected, and deliberately left alone. Without this the row reads as a
+    // detection that silently did nothing.
+    expect(within(table).getByText("Allow-listed")).toBeInTheDocument();
+  });
+
+  it("previews as a chosen subject, and waits for one", async () => {
+    const user = userEvent.setup({ delay: null });
+    const { fetch: stub, posts } = withPreview(preview({ scope: "group", rule_id: "r1" }));
+    vi.stubGlobal("fetch", stub);
+    renderScreen(<AdminRedaction />);
+
+    await user.type(await screen.findByLabelText("Sample"), SAMPLE);
+    await user.selectOptions(screen.getByLabelText("Preview as"), "group");
+    // A scope with no subject is the deployment policy wearing a label, which
+    // is a different question from the one being asked.
+    expect(screen.getByRole("button", { name: "Run preview" })).toBeDisabled();
+
+    await waitFor(() => expect(screen.getByLabelText("Group")).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText("Group"), "g1");
+    await user.click(screen.getByRole("button", { name: "Run preview" }));
+
+    await waitFor(() =>
+      expect(posts).toEqual([{ text: SAMPLE, scope: "group", scope_id: "g1" }]),
+    );
+    expect(screen.getByText(/Group rule/)).toBeInTheDocument();
+  });
+
+  it("says plainly that a sample would be blocked, and shows no rewrite", async () => {
+    // Nothing is rewritten in that case, so echoing the sample back would read
+    // as "this is what would be sent".
+    const user = userEvent.setup({ delay: null });
+    const { fetch: stub } = withPreview(
+      preview({
+        blocked: true,
+        blocked_reason: "a CREDIT_CARD was found, and the policy blocks it",
+        redacted_text: null,
+        entity_count: 0,
+      }),
+    );
+    vi.stubGlobal("fetch", stub);
+    renderScreen(<AdminRedaction />);
+
+    await user.type(await screen.findByLabelText("Sample"), SAMPLE);
+    await user.click(screen.getByRole("button", { name: "Run preview" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("This request would be blocked")).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/the policy blocks it/)).toBeInTheDocument();
+    expect(screen.queryByText("What the provider receives")).not.toBeInTheDocument();
+  });
+
+  it("renders the engine's own note when it detects nothing", async () => {
+    const user = userEvent.setup({ delay: null });
+    const { fetch: stub } = withPreview(
+      preview({
+        spans: [],
+        entity_count: 0,
+        redacted_text: SAMPLE,
+        note: "the 'noop' engine detects nothing, so this sample would reach the provider exactly as it is written",
+      }),
+    );
+    vi.stubGlobal("fetch", stub);
+    renderScreen(<AdminRedaction />);
+
+    await user.type(await screen.findByLabelText("Sample"), SAMPLE);
+    await user.click(screen.getByRole("button", { name: "Run preview" }));
+
+    await waitFor(() => expect(screen.getByText(/detects nothing/)).toBeInTheDocument());
+  });
+
+  it("offers the way through to the scoped rules", async () => {
+    // Not a nav item: this is the second question about redaction, asked by
+    // somebody already looking at the first.
+    vi.stubGlobal("fetch", respondWith(status()));
+    renderScreen(<AdminRedaction />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: "Scoped rules" })).toHaveAttribute(
+        "href",
+        "/admin/redaction/rules",
+      ),
     );
   });
 });

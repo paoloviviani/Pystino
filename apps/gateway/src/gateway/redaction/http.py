@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections import OrderedDict
+from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -35,7 +36,7 @@ from gateway.config import (
     RedactionPolicy,
     RedactionSettings,
 )
-from gateway.errors import GatewayError
+from gateway.errors import ContentBlockedError, GatewayError
 from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome, TextRewriteStage
 from gateway.sse.pipeline import StreamStage, passthrough
@@ -116,6 +117,45 @@ def _message_texts(message: dict[str, Any]) -> list[tuple[Any, str]]:
     return []
 
 
+@lru_cache(maxsize=256)
+def _compiled(pattern: str) -> Any:
+    """One compile per distinct pattern per process.
+
+    Compiling is cheap and doing it per request is still waste on the hottest
+    path there is. Bounded rather than unbounded because the key is operator
+    input: a deployment editing rules in a loop must not grow this without end.
+    """
+    import re2
+
+    return re2.compile(pattern)
+
+
+def pattern_spans(text: str, policy: RedactionPolicy) -> list[EntitySpan]:
+    """Spans for the operator's own regexes.
+
+    Produced in the gateway rather than asked of the detection service: no
+    contract change, it works for whatever engine is installed, and one
+    deployment's regexes have no business being installed into a service every
+    deployment shares. They also stay *outside* the detection cache, since a
+    regex is deterministic and cheap — caching them would fragment a key whose
+    hit rate is worth 10x on a long conversation (docs/performance.md).
+
+    Score 1.0: a pattern somebody wrote by hand is not a guess, so it outranks
+    a model's opinion when the two overlap.
+    """
+    spans: list[EntitySpan] = []
+    for pattern in policy.patterns:
+        if pattern.mode is EntityMode.OFF:
+            continue
+        for match in _compiled(pattern.regex).finditer(text):
+            start, end = match.span()
+            if end > start:
+                spans.append(
+                    EntitySpan(start=start, end=end, entity_type=pattern.name, score=1.0)
+                )
+    return spans
+
+
 def apply_spans(
     text: str,
     spans: list[EntitySpan],
@@ -124,6 +164,7 @@ def apply_spans(
     placeholders: PlaceholderMap,
     policy: RedactionPolicy | None = None,
     default_threshold: float = 0.0,
+    scope: str | None = None,
 ) -> tuple[str, int]:
     """Substitute placeholders for *spans* in *text*, according to *policy*.
 
@@ -150,10 +191,17 @@ def apply_spans(
     ``redact``              ``<PERSON>``: no token, nothing to remember, and two
                             people become the same label.
     """
+    policy = policy or DEFAULT_REDACTION_POLICY
+    # Merged before eligibility and before overlap resolution, so an operator's
+    # pattern competes with the detector's spans on the same terms — and a
+    # pattern the policy has switched off drops out with everything else.
+    #
+    # Before the empty check too, and that is not a detail: a deployment whose
+    # detector finds nothing still has its own patterns, and returning early on
+    # `not spans` would have silently skipped every one of them.
+    spans = [*spans, *pattern_spans(text, policy)]
     if not spans:
         return text, 0
-
-    policy = policy or DEFAULT_REDACTION_POLICY
     eligible = [
         span
         for span in spans
@@ -163,6 +211,20 @@ def apply_spans(
     ]
     if not eligible:
         return text, 0
+
+    # Before any rewriting: a blocked request produces no redacted text at all,
+    # and deciding this after substitution would mean building a placeholder map
+    # for a request that is about to be refused.
+    blocked = [
+        span for span in eligible if policy.mode_for(span.entity_type) is EntityMode.BLOCK
+    ]
+    if blocked:
+        kinds = sorted({span.entity_type for span in blocked})
+        where = f" by the {scope} policy" if scope else ""
+        raise ContentBlockedError(
+            f"This request was refused{where}: it contains "
+            f"{', '.join(kinds)}, which this deployment does not send to a provider."
+        )
 
     ordered = sorted(eligible, key=lambda span: (span.start, -span.score, -(span.end - span.start)))
     chosen: list[EntitySpan] = []
@@ -370,6 +432,7 @@ class HttpDetectionRedactor:
                 placeholders=placeholders,
                 policy=effective,
                 default_threshold=self._settings.score_threshold,
+                scope=scope,
             )
             total += count
             if not count:

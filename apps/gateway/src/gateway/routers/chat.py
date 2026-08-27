@@ -177,8 +177,17 @@ async def chat_completions(
     upstream = await _metered.resolve_upstream(providers, model)
 
     # -- redaction (step 2) -------------------------------------------------
-    policy = _metered.redaction_policy(request, principal=principal, model=model)
-    outcome = await redactor.redact_request(body.messages, policy=policy)
+    outcome = await _metered.redact_or_block(
+        request,
+        body.messages,
+        redactor=redactor,
+        session=session,
+        principal=principal,
+        model=model,
+        settings=settings,
+        surface=SURFACE,
+        request_id=request_id,
+    )
 
     # -- local counting and reservation estimate (steps 3-4) ----------------
     prompt_tokens = estimator.count_messages(outcome.messages)

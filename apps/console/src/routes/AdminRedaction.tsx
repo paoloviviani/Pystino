@@ -1,18 +1,24 @@
-import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner, Stat } from "@llmp/ui";
-import { useState } from "react";
+import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner, Stat, Table } from "@llmp/ui";
+import type { Column } from "@llmp/ui";
+import { useId, useState } from "react";
+import { Link } from "react-router";
 import {
+  usePreviewRedaction,
   useRedactionStatus,
   useSetRedactionEngine,
   useSetRedactionPolicy,
 } from "../lib/admin";
+import { entityLabel, modeLabel } from "../lib/entities";
 import type {
-  EntityMode,
-  EntityPolicy,
   RedactionEngineOption,
   RedactionPolicy,
+  RedactionPreviewSpan,
+  RedactionScope,
   RedactionStatus,
 } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
+import { PolicyFields } from "../components/PolicyFields";
+import { SCOPES, SubjectPicker, scopeNoun } from "../components/SubjectPicker";
 import styles from "./Admin.module.css";
 
 /**
@@ -46,6 +52,7 @@ export function AdminRedaction() {
       <PageHeader
         title="Redaction"
         subtitle="What is stripped from prompts before they reach a provider."
+        actions={<Link to="/admin/redaction/rules">Scoped rules</Link>}
       />
 
       {status.isPending && <Spinner label="Loading redaction" />}
@@ -75,6 +82,7 @@ function Detail({ status }: { status: RedactionStatus }) {
 
       <EngineList status={status} />
       <PolicyEditor status={status} />
+      <PreviewBox />
 
       <Card>
         <div className={styles.stats}>
@@ -225,83 +233,27 @@ function Detail({ status }: { status: RedactionStatus }) {
 }
 
 /**
- * What each kind of detected entity is worth doing something about (ADR 0037).
+ * The deployment's policy: what each kind of detected entity is worth doing
+ * something about (ADR 0037).
  *
- * Two questions per row, not one, and collapsing them is what made this screen
- * hard to write: *what does the model see*, and *what does the reader get back*.
- * A single "redact / do not redact" switch cannot express "the model must not
- * see this name, and the person reading the answer should" — which is the mode
- * almost every deployment wants for almost every entity.
- *
- * The rows come from the detector rather than from a list here. Entity labels
- * belong to whatever engine is installed (ADR 0026), so hard-coding them would
- * mean a console that silently omits a recogniser the engine gained last week —
- * the same failure this feature exists to fix, one level up.
+ * The form itself is `PolicyFields`, shared with a scoped rule and with a
+ * person's own policy. What lives here is the part that is only true of the
+ * deployment policy: it is the floor everything else folds onto, so a change to
+ * it is the one that can protect *less*, and that is what the reason field is
+ * for.
  */
-const MODES: { value: EntityMode; label: string; hint: string }[] = [
-  { value: "off", label: "Not redacted", hint: "left exactly as the caller wrote it" },
-  {
-    value: "anonymise_restore",
-    label: "Anonymise, restore in the answer",
-    hint: "placeholder upstream, real value back to the reader",
-  },
-  {
-    value: "anonymise",
-    label: "Anonymise",
-    hint: "placeholder upstream and in the answer",
-  },
-  { value: "redact", label: "Redact", hint: "<PERSON>, so two people look the same" },
-];
-
 function PolicyEditor({ status }: { status: RedactionStatus }) {
   const save = useSetRedactionPolicy();
   // Seeded once and then owned by the form. Deriving it from `status` on every
   // render would discard an edit the moment the status query refetched.
   const [draft, setDraft] = useState<RedactionPolicy>(() => structuredClone(status.policy));
-  const [allowList, setAllowList] = useState(() => status.policy.allow_list.join(", "));
   const [reason, setReason] = useState("");
 
-  // Every type the detector actually holds, plus anything the policy already
-  // names — a rule about a type this engine does not report is still a rule, and
-  // dropping it from the screen would silently delete it on the next save.
-  const known = [
-    ...new Set([...(status.service?.entities ?? []), ...Object.keys(draft.entities)]),
-  ].sort();
-
-  const modeOf = (entity: string): EntityMode => draft.entities[entity]?.mode ?? draft.default_mode;
-
-  const setEntity = (entity: string, patch: Partial<EntityPolicy>) =>
-    setDraft((current) => ({
-      ...current,
-      entities: {
-        ...current.entities,
-        [entity]: {
-          mode: patch.mode ?? modeOf(entity),
-          threshold: patch.threshold !== undefined ? patch.threshold : (current.entities[entity]?.threshold ?? null),
-        },
-      },
-    }));
-
   const submit = () =>
-    save.mutate(
-      {
-        policy: {
-          ...draft,
-          allow_list: allowList
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean),
-        },
-        reason: reason.trim(),
-      },
-      { onSuccess: () => setReason("") },
-    );
+    save.mutate({ policy: draft, reason: reason.trim() }, { onSuccess: () => setReason("") });
 
   return (
-    <Card
-      title="Redacted entities"
-      description="What is done with each type the detector finds."
-    >
+    <Card title="Redacted entities" description="What is done with each type the detector finds.">
       <div className={styles.form}>
         {save.error ? (
           <Notice tone="danger">
@@ -320,76 +272,11 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
           </Notice>
         )}
 
-        {/* Applies to a recogniser the engine gains in a later release, which is
-            why the safer direction is to protect by default rather than to let a
-            new type through unnoticed. */}
-        <Select
-          label="Default mode"
-          value={draft.default_mode}
-          onChange={(event) =>
-            setDraft((current) => ({
-              ...current,
-              default_mode: event.target.value as EntityMode,
-            }))
-          }
-          hint="Applies to anything not listed below, including types added later."
-        >
-          {MODES.map((mode) => (
-            <option key={mode.value} value={mode.value}>
-              {mode.label}
-            </option>
-          ))}
-        </Select>
-
-        {known.length === 0 ? (
-          <p className={styles.muted}>
-            The detection service reported no entity types. The default above still applies.
-          </p>
-        ) : (
-          <div className={styles.checkList}>
-            {known.map((entity) => (
-              <div key={entity} className={styles.formRow}>
-                <Select
-                  label={entity}
-                  value={modeOf(entity)}
-                  onChange={(event) =>
-                    setEntity(entity, { mode: event.target.value as EntityMode })
-                  }
-                >
-                  {MODES.map((mode) => (
-                    <option key={mode.value} value={mode.value}>
-                      {mode.label}
-                    </option>
-                  ))}
-                </Select>
-                <Input
-                  label={`Confidence for ${entity}`}
-                  hideLabel
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  placeholder={`${status.score_threshold} (default)`}
-                  value={draft.entities[entity]?.threshold ?? ""}
-                  onChange={(event) =>
-                    setEntity(entity, {
-                      threshold: event.target.value === "" ? null : Number(event.target.value),
-                    })
-                  }
-                />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* For values a detector is right about the shape of and wrong about the
-            meaning of: a corporate domain is a URL, and it identifies nobody. */}
-        <Input
-          label="Allowlist"
-          value={allowList}
-          onChange={(event) => setAllowList(event.target.value)}
-          placeholder="ilpost.it, example.org"
-          hint="Comma separated. Matched exactly, case-insensitively."
+        <PolicyFields
+          policy={draft}
+          onChange={setDraft}
+          entityTypes={status.service?.entities ?? []}
+          scoreThreshold={status.score_threshold}
         />
 
         <Input
@@ -405,6 +292,170 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
             Save policy
           </Button>
         </div>
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * What the provider would actually receive.
+ *
+ * The one place an operator can see what the detector does, which until now was
+ * findable only by reading an upstream request body — that is how the Italian
+ * bug was found, and it took a packet capture to find a verb read as a person.
+ *
+ * Three things are shown rather than one, because the rewritten text alone
+ * explains nothing: the spans say *why* each substitution happened, the mode
+ * says which rule decided, and a block is a state of its own — nothing is
+ * rewritten in that case, so there is no text to show and echoing the sample
+ * back would read as "this is what would be sent".
+ */
+function PreviewBox() {
+  const preview = usePreviewRedaction();
+  const sampleId = useId();
+  const [text, setText] = useState("");
+  const [scope, setScope] = useState<RedactionScope | "">("");
+  const [scopeId, setScopeId] = useState("");
+  // What was sent, kept apart from what is typed: the spans are offsets into
+  // the submitted sample, and slicing the live textarea with them would
+  // mislabel every match the moment a character is typed after a run.
+  const [sample, setSample] = useState("");
+
+  // A scope with no subject is not a narrower preview, it is the deployment
+  // policy wearing a label — so the run waits for the subject rather than
+  // quietly answering a different question.
+  const ready = text.trim().length > 0 && (scope === "" || scopeId.trim().length > 0);
+
+  const run = () => {
+    setSample(text);
+    preview.mutate(scope === "" ? { text } : { text, scope, scope_id: scopeId });
+  };
+
+  const result = preview.data;
+
+  const columns: Column<RedactionPreviewSpan>[] = [
+    {
+      key: "match",
+      header: "Match",
+      render: (span) => <code className={styles.code}>{sample.slice(span.start, span.end)}</code>,
+    },
+    {
+      key: "entity",
+      header: "Detected as",
+      render: (span) => (
+        <>
+          <div>{entityLabel(span.entity_type)}</div>
+          <div className={`${styles.muted} ${styles.code}`}>{span.entity_type}</div>
+        </>
+      ),
+    },
+    {
+      key: "score",
+      header: "Score",
+      numeric: true,
+      render: (span) => (
+        <>
+          <div>{span.score.toFixed(2)}</div>
+          <div className={`${styles.muted} ${styles.nowrap}`}>needs {span.threshold}</div>
+        </>
+      ),
+    },
+    {
+      key: "mode",
+      header: "Applied",
+      render: (span) =>
+        span.allow_listed ? <Badge tone="warn">Allow-listed</Badge> : modeLabel(span.mode),
+    },
+  ];
+
+  return (
+    <Card title="Preview" description="Run a sample through the policy in force.">
+      <div className={styles.form}>
+        {preview.error ? (
+          <Notice tone="danger">
+            {preview.error instanceof Error ? preview.error.message : "Unknown error."}
+          </Notice>
+        ) : null}
+
+        <div className={styles.field}>
+          <label className={styles.fieldLabel} htmlFor={sampleId}>
+            Sample
+          </label>
+          <textarea
+            id={sampleId}
+            className={styles.textarea}
+            rows={4}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            placeholder="Riassumi le notizie del giorno da ilpost.it"
+          />
+          <p className={styles.muted}>Not logged anywhere.</p>
+        </div>
+
+        <div className={styles.formRow}>
+          <Select
+            label="Preview as"
+            value={scope}
+            onChange={(event) => {
+              setScope(event.target.value as RedactionScope | "");
+              setScopeId("");
+            }}
+          >
+            <option value="">Nobody in particular</option>
+            {SCOPES.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+          {scope !== "" && (
+            <SubjectPicker scope={scope} value={scopeId} onChange={setScopeId} />
+          )}
+        </div>
+
+        <div>
+          <Button
+            variant="primary"
+            busy={preview.isPending}
+            disabled={!ready}
+            onClick={run}
+          >
+            Run preview
+          </Button>
+        </div>
+
+        {result && (
+          <>
+            {/* Server-computed, rendered verbatim: an engine that detects
+                nothing must say so, or an empty result reads as a clean
+                prompt. */}
+            {result.note && <Notice tone="warn">{result.note}</Notice>}
+
+            {result.blocked ? (
+              <Notice tone="danger" title="This request would be blocked">
+                {result.blocked_reason ?? "A blocked entity type was found."}
+              </Notice>
+            ) : (
+              <div className={styles.field}>
+                <span className={styles.fieldLabel}>What the provider receives</span>
+                <p className={styles.sample}>{result.redacted_text}</p>
+              </div>
+            )}
+
+            <p className={styles.muted}>
+              {result.entity_count} replaced · {result.engine} engine ·{" "}
+              {result.scope === null ? "the deployment policy" : `${scopeNoun(result.scope)} rule`}
+            </p>
+
+            <Table
+              columns={columns}
+              rows={result.spans}
+              rowKey={(span, index) => `${span.entity_type}-${span.start}-${index}`}
+              empty="Nothing was detected in this sample."
+              caption="What the detector found, and what the policy did with it."
+            />
+          </>
+        )}
       </div>
     </Card>
   );

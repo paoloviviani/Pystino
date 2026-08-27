@@ -20,6 +20,7 @@ dependencies = [
     "joserfc>=1.0",                  # JOSE/JWT. authlib.jose is deprecated. ADR 0011
     "orjson>=3.10",
     "llmp-shared",
+    "google-re2>=1.1.20251105",
 ]
 
 [project.scripts]
