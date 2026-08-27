@@ -30,6 +30,7 @@ from llmp_shared import (
 
 from gateway.config import (
     DEFAULT_REDACTION_POLICY,
+    EffectivePolicy,
     EntityMode,
     RedactionPolicy,
     RedactionSettings,
@@ -250,15 +251,18 @@ class HttpDetectionRedactor:
 
     # -- detection ---------------------------------------------------------
 
-    async def detect(self, texts: list[str]) -> list[list[EntitySpan]]:
+    async def detect(
+        self, texts: list[str], *, policy: RedactionPolicy | None = None
+    ) -> list[list[EntitySpan]]:
         """Spans for each text, cached, in one round trip for the misses."""
         settings = self._settings
+        active = policy or settings.policy
         # What the policy will actually act on, not what the engine can find.
         # Narrowing here is free detection time when an admin has enumerated the
         # set; when they have not, it is None and everything comes back to be
         # filtered locally — an engine's entity list is its own and cannot be
         # enumerated from here (ADR 0026).
-        wanted = settings.policy.detected_types()
+        wanted = active.detected_types()
         # The lowest bar any enabled type sets. Filtering to each type's own
         # threshold happens in apply_spans: asking the detector for the strictest
         # would drop spans a laxer type still wants.
@@ -266,7 +270,7 @@ class HttpDetectionRedactor:
             [settings.score_threshold]
             + [
                 entry.threshold
-                for entry in settings.policy.entities.values()
+                for entry in active.entities.values()
                 if entry.threshold is not None and entry.mode is not EntityMode.OFF
             ]
         )
@@ -323,7 +327,15 @@ class HttpDetectionRedactor:
 
     # -- Redactor ----------------------------------------------------------
 
-    async def redact_request(self, messages: list[dict[str, Any]]) -> RedactionOutcome:
+    async def redact_request(
+        self, messages: list[dict[str, Any]], *, policy: EffectivePolicy | None = None
+    ) -> RedactionOutcome:
+        # One redactor is shared by every request and owns the connection pool
+        # and the detection LRU (docs/performance.md); only the *policy* varies
+        # per request. Building one redactor per scope would hand every request
+        # a cold cache, which is the failure the resolver's own docstring names
+        # for a ten-second rebuild — arriving once per request instead.
+        effective = policy.policy if policy is not None else self._settings.policy
         locations: list[tuple[int, Any]] = []
         texts: list[str] = []
         for message_index, message in enumerate(messages):
@@ -334,10 +346,14 @@ class HttpDetectionRedactor:
                     locations.append((message_index, part_index))
                     texts.append(text)
 
+        scope = policy.scope if policy is not None else None
+        rule_id = policy.rule_id if policy is not None else None
         if not texts:
-            return RedactionOutcome(messages=messages, engine=self.name)
+            return RedactionOutcome(
+                messages=messages, engine=self.name, scope=scope, rule_id=rule_id
+            )
 
-        found = await self.detect(texts)
+        found = await self.detect(texts, policy=effective)
 
         placeholders = PlaceholderMap()
         # Copied, so a failure part-way cannot leave the caller's list half
@@ -352,7 +368,7 @@ class HttpDetectionRedactor:
                 spans,
                 key=self._key,
                 placeholders=placeholders,
-                policy=self._settings.policy,
+                policy=effective,
                 default_threshold=self._settings.score_threshold,
             )
             total += count
@@ -371,6 +387,8 @@ class HttpDetectionRedactor:
             placeholder_map=placeholders,
             entity_count=total,
             engine=self.name,
+            scope=scope,
+            rule_id=rule_id,
         )
 
     def response_stage(

@@ -39,7 +39,7 @@ from gateway.access import accessible_model_by_name
 from gateway.accounting import RequestAccounting, RequestContext, TokenCounts
 from gateway.accounting.cost import CostBreakdown, CurrencyMismatch, compute_cost, select_price
 from gateway.accounting.tokens import TokenEstimator
-from gateway.config import Settings
+from gateway.config import EffectivePolicy, Settings
 from gateway.deps import Principal
 from gateway.errors import (
     BadRequestError,
@@ -58,6 +58,7 @@ from gateway.quota import (
     Reservation,
 )
 from gateway.redaction import RedactionOutcome
+from gateway.redaction.resolver import RedactionResolver
 from gateway.upstream import OpenAICompatibleUpstream
 
 logger = logging.getLogger(__name__)
@@ -270,6 +271,8 @@ async def begin(
             estimated_prompt_tokens=worst_case.prompt,
             redaction_engine=outcome.engine if outcome else None,
             redacted_entity_count=outcome.entity_count if outcome else 0,
+            redaction_scope=outcome.scope if outcome else None,
+            redaction_rule_id=outcome.rule_id if outcome else None,
             surface=surface,
             plugin=model.provider.plugin,
             billing_mode=model.provider.billing_mode.value,
@@ -281,6 +284,34 @@ async def begin(
     )
     await accounting.begin()
     return Metered(accounting=accounting, reservation=reservation, quota=quota)
+
+
+def redaction_policy(
+    request: Request, *, principal: Principal, model: ModelDef | None = None
+) -> EffectivePolicy | None:
+    """The folded policy for this request, from state already in hand.
+
+    Zero queries, and that is the design rather than an optimisation: every
+    subject a rule can name — the model, its provider, the billing group, the
+    person, the key — is already loaded by the time redaction runs, and the
+    rules themselves arrive on the resolver's ten-second poll (ADR 0038). A
+    lookup here would have cost a sixth select and broken the budget
+    `test_query_counts.py` pins.
+
+    None when no resolver is mounted, which is what a test harness that builds
+    the app without one does; the redactor then uses its own deployment policy.
+    """
+    resolver: RedactionResolver | None = getattr(request.app.state, "redaction", None)
+    if resolver is None:
+        return None
+    effective: EffectivePolicy = resolver.policy_for(
+        provider_id=model.provider_id if model is not None else None,
+        model_id=model.id if model is not None else None,
+        group_id=principal.billing_group.id,
+        user_id=principal.user.id,
+        api_key_id=principal.api_key.id if principal.api_key is not None else None,
+    )
+    return effective
 
 
 def request_id_for(request: Request, settings: Settings) -> str:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from gateway.config import EffectivePolicy
 from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome, Redactor
 from gateway.sse.pipeline import StreamStage, passthrough
@@ -25,7 +26,9 @@ class NoOpRedactor(Redactor):
 
     name = "noop"
 
-    async def redact_request(self, messages: list[dict[str, Any]]) -> RedactionOutcome:
+    async def redact_request(
+        self, messages: list[dict[str, Any]], *, policy: EffectivePolicy | None = None
+    ) -> RedactionOutcome:
         return RedactionOutcome(messages=messages, engine=self.name)
 
     def response_stage(

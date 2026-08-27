@@ -71,7 +71,10 @@ async def create_image(
     model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
     upstream = await _metered.resolve_upstream(providers, model)
 
-    outcome = await redactor.redact_request([{"role": "user", "content": body.prompt}])
+    policy = _metered.redaction_policy(request, principal=principal, model=model)
+    outcome = await redactor.redact_request(
+        [{"role": "user", "content": body.prompt}], policy=policy
+    )
     redacted_prompt = str(outcome.messages[0].get("content") or "") if outcome.messages else ""
 
     # The reservation has to cover the pictures, not just the prompt: on a

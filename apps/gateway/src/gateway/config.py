@@ -7,12 +7,20 @@ a double underscore, e.g. ``GATEWAY_OIDC__ISSUER``.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    # Annotation-only: `from __future__ import annotations` means the dataclass
+    # field below never evaluates it at runtime.
+    import uuid
 
 
 class UpstreamSettings(BaseModel):
@@ -119,9 +127,15 @@ class EntityMode(StrEnum):
     #: re-enter text this deployment stores or displays, where the model still
     #: needs to tell one from another.
     ANONYMISE = "anonymise"
-    #: ``<PERSON>``, with no derived token. Strongest and lossiest: two people
-    #: in one prompt become the same label, so the model cannot tell them apart.
+    #: ``<PERSON>``, with no derived token. Lossiest of the substitutions: two
+    #: people in one prompt become the same label, so the model cannot tell them
+    #: apart.
     REDACT = "redact"
+    #: The request is refused before it reaches a provider. Last in the order, so
+    #: it composes with the fold in :meth:`RedactionPolicy.combine` for free.
+    #: For values whose presence is itself the incident — a pasted API key —
+    #: where silently replacing it tells nobody it happened.
+    BLOCK = "block"
 
 
 class EntityPolicy(BaseModel):
@@ -132,6 +146,37 @@ class EntityPolicy(BaseModel):
     #: ``URL`` at 0.5 are not the same judgement, and one global number forces
     #: them to be. None means the global value applies.
     threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+
+
+class CustomPattern(BaseModel):
+    """A regex an operator wrote, treated as one more entity type.
+
+    ``name`` becomes the entity label, so a match is substituted, restored and
+    counted by exactly the machinery every other type uses — and shows up in the
+    ledger's entity count without a second concept.
+
+    Evaluated in the gateway rather than sent to the detection service: no
+    contract change, works for any engine, and it keeps one deployment's regexes
+    out of a service every deployment shares. Also outside the detection cache,
+    since a regex is cheap and deterministic and would otherwise fragment the key.
+    """
+
+    name: str = Field(min_length=1, max_length=64)
+    regex: str = Field(min_length=1, max_length=512)
+    #: Defaults to the strongest substitution rather than to the gentlest: a
+    #: pattern somebody wrote by hand is a value they went out of their way to
+    #: name, and the gateway should not guess that they wanted it back.
+    mode: EntityMode = EntityMode.REDACT
+
+    @field_validator("name")
+    @classmethod
+    def _label(cls, value: str) -> str:
+        # Same alphabet the placeholder scheme coerces to, checked here so the
+        # console refuses it rather than the substitution silently renaming it.
+        cleaned = re.sub(r"[^A-Za-z0-9_]+", "_", value).strip("_").upper()
+        if not cleaned:
+            raise ValueError("a pattern name needs at least one letter or digit")
+        return cleaned
 
 
 class RedactionPolicy(BaseModel):
@@ -153,6 +198,9 @@ class RedactionPolicy(BaseModel):
 
     default_mode: EntityMode = EntityMode.ANONYMISE_RESTORE
     entities: dict[str, EntityPolicy] = Field(default_factory=dict)
+    #: Operator-written regexes, unioned across scopes when policies combine:
+    #: adding a pattern can only find more, so union is the tightening direction.
+    patterns: list[CustomPattern] = Field(default_factory=list)
     #: Values never redacted, whatever a detector says about them. Compared
     #: case-insensitively against the matched text, exactly — a substring rule
     #: would let "it" allow every Italian domain. This is the answer to a
@@ -203,7 +251,77 @@ class RedactionPolicy(BaseModel):
         """Entity types this policy does something about. Used to compare two."""
         return {name for name, entry in self.entities.items() if entry.mode is not EntityMode.OFF}
 
-    def weakens(self, previous: RedactionPolicy) -> bool:
+    @classmethod
+    def combine(cls, policies: Sequence[RedactionPolicy]) -> RedactionPolicy:
+        """Fold an applicable set into the one policy that governs a request.
+
+        The whole safety property of scoping is in the choice of combiners, and
+        it is deliberately not a validation rule: **adding a scope can only
+        tighten, by construction**. A rule saved wrong is inert rather than
+        dangerous, which is the difference between a bug and an incident.
+
+        * **mode** is ``max`` by rank **over the policies that name the type**.
+          A policy contributes where it speaks; its ``default_mode`` applies only
+          to types *nobody* names. That distinction was found by a test: with the
+          default falling through, a group rule about `IBAN_CODE` alone silently
+          switched `URL` back on, because the rule's own default outranked the
+          deployment's deliberate "off" — reintroducing the exact bug ADR 0037
+          exists to fix. An operator who writes a rule about one type has said
+          nothing about the others, and the fold now reads it that way.
+        * **threshold** is ``min`` over the policies that act on that type. A
+          lower threshold catches more spans, so ``min`` is the strict
+          direction — and it stops a group rule setting ``PERSON`` to 0.95,
+          hiding names the deployment wanted caught at 0.5 while looking like
+          it was tightening.
+        * **patterns** are the union. One more regex can only find more.
+        * **allow_list** is taken from the *first* policy alone, which is always
+          the deployment's. It is the one field that weakens, and neither
+          combiner is safe: union lets a user exempt what an admin redacts, and
+          intersection silently voids the deployment's own exemptions the moment
+          any scoped rule carries an empty list. So it is not a per-scope field
+          (ADR 0038).
+        """
+        if not policies:
+            return cls()
+        first, *rest = policies
+        if not rest:
+            return first
+
+        order = list(EntityMode)
+        named = {name for policy in policies for name in policy.entities}
+        entities: dict[str, EntityPolicy] = {}
+        for name in named:
+            # Only the policies that name it. A policy that is silent about a
+            # type is silent, not voting for its own default.
+            speaking = [p for p in policies if name in p.entities]
+            mode = max((p.entities[name].mode for p in speaking), key=order.index)
+            thresholds = [
+                entry.threshold
+                for policy in policies
+                if (entry := policy.entities.get(name)) is not None
+                and entry.threshold is not None
+                and entry.mode is not EntityMode.OFF
+            ]
+            entities[name] = EntityPolicy(
+                mode=mode, threshold=min(thresholds) if thresholds else None
+            )
+
+        patterns: list[CustomPattern] = []
+        seen: set[tuple[str, str]] = set()
+        for policy in policies:
+            for pattern in policy.patterns:
+                if (key := (pattern.name, pattern.regex)) not in seen:
+                    seen.add(key)
+                    patterns.append(pattern)
+
+        return cls(
+            default_mode=max((p.default_mode for p in policies), key=order.index),
+            entities=entities,
+            patterns=patterns,
+            allow_list=list(first.allow_list),
+        )
+
+    def weakens(self, previous: RedactionPolicy, known: Collection[str] | None = None) -> bool:
         """Whether moving from *previous* to this one protects strictly less.
 
         The direction that has to be explained. Turning protection *on* needs no
@@ -211,16 +329,41 @@ class RedactionPolicy(BaseModel):
         (ADR 0033) — but turning it off, or downgrading a mode, is a decision a
         later review asks about.
         """
-        if previous.default_mode is not EntityMode.OFF and self.default_mode is EntityMode.OFF:
-            return True
-        names = set(self.entities) | set(previous.entities)
         order = list(EntityMode)
+        if order.index(self.default_mode) < order.index(previous.default_mode):
+            return True
+        # `known` matters as much as the named ones: a default downgrade hides
+        # exactly where nobody has written a rule, so a caller passes the
+        # detector's own list and the comparison covers types neither policy
+        # mentions.
+        names = set(self.entities) | set(previous.entities) | set(known or ())
         for name in names:
             if order.index(self.mode_for(name)) < order.index(previous.mode_for(name)):
+                return True
+            # A raised threshold catches fewer spans, so it weakens even though
+            # the mode is unchanged — the failure this whole check exists for,
+            # dressed as a tightening.
+            if self.threshold_for(name, 0.0) > previous.threshold_for(name, 0.0):
                 return True
         # Exempting more values is the same decision by another route: an
         # allow-list entry means "never redact this", whatever the detector says.
         return not set(self.allow_list).issubset(previous.allow_list)
+
+
+@dataclass(frozen=True, slots=True)
+class EffectivePolicy:
+    """The policy governing one request, and the rule to record against it.
+
+    Lives here rather than beside the resolver that produces it, because the
+    redactor that consumes it must not import the resolver — and a shared type in
+    the module both already depend on is cheaper than a protocol.
+    """
+
+    policy: RedactionPolicy
+    #: The narrowest scope whose rule contributed, or None when only the
+    #: deployment policy applied.
+    scope: str | None = None
+    rule_id: uuid.UUID | None = None
 
 
 #: What a deployment redacts when nobody has said otherwise.

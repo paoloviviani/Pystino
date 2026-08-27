@@ -1,0 +1,224 @@
+"""Redaction scoped per provider, model, group, user and key (ADR 0038).
+
+The property this file exists for is one sentence: **adding a scope can only
+tighten**. It is enforced by the choice of combiners rather than by validation,
+so the tests are about the fold — a rule that tries to weaken must be inert, not
+rejected, because inert is what survives a bug in whatever wrote it.
+
+The second property is provenance: the rules table is mutable, so a request that
+does not record which rule tightened it cannot be explained afterwards, and
+"why was this redacted" is the question a data-protection review asks.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+from gateway.config import (
+    DEFAULT_REDACTION_POLICY,
+    CustomPattern,
+    EntityMode,
+    EntityPolicy,
+    RedactionPolicy,
+    RedactionSettings,
+)
+from gateway.models import RedactionRule, RedactionScope
+from gateway.redaction.resolver import RedactionResolver, _rules_of
+
+
+def policy(**kwargs: object) -> RedactionPolicy:
+    return RedactionPolicy(**kwargs)  # type: ignore[arg-type]
+
+
+class TestTheFold:
+    def test_a_scope_cannot_weaken_what_the_deployment_set(self) -> None:
+        deployment = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.REDACT)})
+        wishful = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.OFF)})
+
+        combined = RedactionPolicy.combine([deployment, wishful])
+        assert combined.mode_for("PERSON") is EntityMode.REDACT
+
+    def test_a_scope_can_strengthen(self) -> None:
+        deployment = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.ANONYMISE_RESTORE)})
+        stricter = policy(entities={"PERSON": EntityPolicy(mode=EntityMode.BLOCK)})
+
+        combined = RedactionPolicy.combine([deployment, stricter])
+        assert combined.mode_for("PERSON") is EntityMode.BLOCK
+
+    def test_a_rule_that_names_one_type_does_not_lower_the_others(self) -> None:
+        """`mode_for` falls back to each policy's own default, so a narrow rule
+        contributes its default everywhere — and `max` makes that harmless."""
+        combined = RedactionPolicy.combine(
+            [DEFAULT_REDACTION_POLICY, policy(entities={"IBAN_CODE": EntityPolicy()})]
+        )
+        assert combined.mode_for("EMAIL_ADDRESS") is EntityMode.ANONYMISE_RESTORE
+        assert combined.mode_for("URL") is EntityMode.OFF
+
+    def test_the_strictest_default_wins(self) -> None:
+        combined = RedactionPolicy.combine(
+            [policy(default_mode=EntityMode.OFF), policy(default_mode=EntityMode.REDACT)]
+        )
+        assert combined.default_mode is EntityMode.REDACT
+
+    def test_thresholds_fold_to_the_most_sensitive(self) -> None:
+        """A raised threshold catches fewer spans, so `min` is the strict
+        direction — and a group rule cannot hide names by demanding 0.95."""
+        strict = policy(entities={"PERSON": EntityPolicy(threshold=0.5)})
+        lax = policy(entities={"PERSON": EntityPolicy(threshold=0.95)})
+
+        assert RedactionPolicy.combine([strict, lax]).threshold_for("PERSON", 0.0) == 0.5
+
+    def test_patterns_are_unioned(self) -> None:
+        a = policy(patterns=[CustomPattern(name="PRJ", regex=r"PRJ-\d+")])
+        b = policy(patterns=[CustomPattern(name="TICKET", regex=r"T-\d+")])
+
+        combined = RedactionPolicy.combine([a, b])
+        assert {p.name for p in combined.patterns} == {"PRJ", "TICKET"}
+
+    def test_the_allow_list_comes_from_the_deployment_alone(self) -> None:
+        """The one field that weakens, so it is not a per-scope field at all.
+
+        Union would let a user exempt what an admin redacts. Intersection is
+        worse: the deployment's own exemptions would vanish the moment any scoped
+        rule carried an empty list, and the failure looks like over-redaction
+        with nothing on screen to explain it.
+        """
+        deployment = policy(allow_list=["acme.test"])
+        scoped = policy(allow_list=["evil.test"])
+
+        assert RedactionPolicy.combine([deployment, scoped]).allow_list == ["acme.test"]
+
+    def test_one_policy_folds_to_itself(self) -> None:
+        assert RedactionPolicy.combine([DEFAULT_REDACTION_POLICY]) is DEFAULT_REDACTION_POLICY
+
+
+class TestResolution:
+    """Which rules apply to a request, and which one gets the blame."""
+
+    def resolver(self) -> RedactionResolver:
+        """A resolver with no database behind it: these tests are about the fold
+        and the lookup, both of which happen entirely in memory."""
+        return RedactionResolver(RedactionSettings(), lambda: None)  # type: ignore[arg-type]
+
+    def test_no_rules_means_the_deployment_policy_alone(self) -> None:
+        resolver = self.resolver()
+        effective = resolver.policy_for(user_id=uuid.uuid4())
+
+        assert effective.policy is resolver.policy
+        assert effective.scope is None and effective.rule_id is None
+
+    def test_the_narrowest_rule_is_the_one_recorded(self) -> None:
+        """A request under several rules names one, and it is the one somebody
+        set deliberately for the narrowest subject — the first place an operator
+        looks. The others are on the rules screen; ADR 0038 says so rather than
+        implying the trail is complete."""
+        group_id, user_id = uuid.uuid4(), uuid.uuid4()
+        rows = [
+            RedactionRule(
+                id=uuid.uuid4(),
+                scope=RedactionScope.GROUP,
+                scope_id=group_id,
+                policy=policy(entities={"URL": EntityPolicy(mode=EntityMode.REDACT)}).model_dump(
+                    mode="json"
+                ),
+            ),
+            RedactionRule(
+                id=uuid.uuid4(),
+                scope=RedactionScope.USER,
+                scope_id=user_id,
+                policy=policy(entities={"PERSON": EntityPolicy(mode=EntityMode.BLOCK)}).model_dump(
+                    mode="json"
+                ),
+            ),
+        ]
+        resolver = self.resolver()
+        resolver._reload_rules(rows)
+
+        effective = resolver.policy_for(group_id=group_id, user_id=user_id)
+
+        assert effective.scope == RedactionScope.USER
+        assert effective.rule_id == rows[1].id
+        # Both still applied, which is the point of recording only the narrowest
+        # being a documented limitation rather than a lost rule.
+        assert effective.policy.mode_for("URL") is EntityMode.REDACT
+        assert effective.policy.mode_for("PERSON") is EntityMode.BLOCK
+
+    def test_a_rule_for_someone_else_does_not_apply(self) -> None:
+        resolver = self.resolver()
+        resolver._reload_rules(
+            [
+                RedactionRule(
+                    id=uuid.uuid4(),
+                    scope=RedactionScope.USER,
+                    scope_id=uuid.uuid4(),
+                    policy=policy(default_mode=EntityMode.BLOCK).model_dump(mode="json"),
+                )
+            ]
+        )
+
+        assert resolver.policy_for(user_id=uuid.uuid4()).scope is None
+
+    def test_an_unreadable_rule_is_dropped_not_fatal(self) -> None:
+        """One malformed row must not stop a worker resolving policy for every
+        other scope — that failure switches redaction off for everyone because
+        one group's rule has a typo."""
+        good_id = uuid.uuid4()
+        parsed = _rules_of(
+            [
+                RedactionRule(
+                    id=uuid.uuid4(),
+                    scope=RedactionScope.GROUP,
+                    scope_id=uuid.uuid4(),
+                    policy={"default_mode": "obliterate"},
+                ),
+                RedactionRule(
+                    id=uuid.uuid4(),
+                    scope=RedactionScope.USER,
+                    scope_id=good_id,
+                    policy=policy().model_dump(mode="json"),
+                ),
+            ]
+        )
+
+        assert list(parsed) == [(RedactionScope.USER.value, good_id)]
+
+    def test_reloading_rules_does_not_rebuild_the_redactor(self) -> None:
+        """The redactor owns the detection LRU, which is the difference between
+        13ms and 135ms on a 1,000-token prompt. A rule edit must not cost it."""
+        resolver = self.resolver()
+        before = resolver.redactor
+
+        changed = resolver._reload_rules(
+            [
+                RedactionRule(
+                    id=uuid.uuid4(),
+                    scope=RedactionScope.GROUP,
+                    scope_id=uuid.uuid4(),
+                    policy=policy().model_dump(mode="json"),
+                )
+            ]
+        )
+
+        assert changed is True
+        assert resolver.redactor is before
+
+    def test_the_fold_is_memoised_and_cleared_on_reload(self) -> None:
+        user_id = uuid.uuid4()
+        rows = [
+            RedactionRule(
+                id=uuid.uuid4(),
+                scope=RedactionScope.USER,
+                scope_id=user_id,
+                policy=policy(entities={"URL": EntityPolicy(mode=EntityMode.REDACT)}).model_dump(
+                    mode="json"
+                ),
+            )
+        ]
+        resolver = self.resolver()
+        resolver._reload_rules(rows)
+
+        first = resolver.policy_for(user_id=user_id).policy
+        assert resolver.policy_for(user_id=user_id).policy is first
+
+        resolver._reload_rules([])
+        assert resolver.policy_for(user_id=user_id).scope is None

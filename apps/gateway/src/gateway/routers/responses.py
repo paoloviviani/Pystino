@@ -87,7 +87,8 @@ async def create_response(
     model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
     upstream = await _metered.resolve_upstream(providers, model)
 
-    outcome = await redactor.redact_request(messages)
+    policy = _metered.redaction_policy(request, principal=principal, model=model)
+    outcome = await redactor.redact_request(messages, policy=policy)
 
     prompt_tokens = estimator.count_messages(outcome.messages)
     # `instructions` is a system prompt by another name and is charged like one.

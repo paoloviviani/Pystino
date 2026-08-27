@@ -89,6 +89,31 @@ class LimitScope(enum.StrEnum):
     API_KEY = "api_key"
 
 
+class RedactionScope(enum.StrEnum):
+    """What a redaction rule attaches to.
+
+    Not ``LimitScope``, though the table shape is copied from ``limit_rules``.
+    Quotas are about spending, so they scope to who pays; redaction is about
+    where personal data goes, so it scopes to **the endpoint text reaches** and
+    **the person who wrote it**. Hence ``provider`` and ``model``, which quotas
+    have no use for.
+
+    There is deliberately no ``global``: ``redaction_config`` already is the
+    global scope, append-only and with the reason on the record. A second home
+    for one value is how a screen ends up disagreeing with itself about which is
+    in force.
+    """
+
+    PROVIDER = "provider"
+    MODEL = "model"
+    GROUP = "group"
+    USER = "user"
+    #: The narrowest, and the one a person can set without being an admin only in
+    #: the sense that it is their own key. Useful for "this CI key handles
+    #: customer data and needs stricter treatment than I do".
+    API_KEY = "api_key"
+
+
 class LimitMetric(enum.StrEnum):
     REQUESTS = "requests"
     TOKENS = "tokens"  # total_tokens, i.e. prompt + completion
@@ -97,6 +122,11 @@ class LimitMetric(enum.StrEnum):
 
 class UsageStatus(enum.StrEnum):
     IN_PROGRESS = "in_progress"
+    #: Refused by redaction before any provider saw it. Recorded rather than
+    #: dropped: nothing was billed, but "this deployment refused 400 prompts last
+    #: month" is a number a data-protection review asks for, and a 403 that
+    #: leaves no trace cannot produce it.
+    BLOCKED = "blocked"
     COMPLETED = "completed"
     CLIENT_DISCONNECTED = "client_disconnected"
     UPSTREAM_ERROR = "upstream_error"
@@ -671,6 +701,12 @@ class UsageRecord(Base):
     assistant_text: Mapped[str | None] = mapped_column(Text, default=None)
 
     redaction_engine: Mapped[str | None] = mapped_column(String(64), default=None)
+    #: Which scope's rule tightened this request, and which row it was. Without
+    #: them, "why was this redacted" is unanswerable six weeks later — the
+    #: question a data-protection review actually asks — because the rule may
+    #: have been edited since. Null means the deployment policy alone applied.
+    redaction_scope: Mapped[str | None] = mapped_column(String(32), default=None)
+    redaction_rule_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
     redacted_entity_count: Mapped[int] = mapped_column(Integer, default=0)
 
     error_code: Mapped[str | None] = mapped_column(String(64), default=None)
@@ -831,6 +867,69 @@ class RedactionConfig(Base):
 
     def __repr__(self) -> str:
         return f"<RedactionConfig engine={self.engine} at={self.created_at.isoformat()}>"
+
+
+class RedactionRule(Base):
+    """A redaction policy attached to one provider, model, group, user or key.
+
+    See [ADR 0038](../../../../docs/adr/0038-scoped-redaction.md). The shape is
+    ``limit_rules`` deliberately — an operator already understands it and the
+    console already renders it — with three differences worth naming:
+
+    * it carries a whole ``RedactionPolicy`` as JSON rather than a boolean,
+      because since ADR 0037 "redact or not" is not a question anyone asks; the
+      question is per entity type;
+    * there is no time axis, so no metric, window or period;
+    * there is **no global scope**, because ``redaction_config`` is it.
+
+    Rules are combined by ``RedactionPolicy.combine``, which takes the strictest
+    answer for every type. That is why nothing here needs a priority column, and
+    why a rule saved wrongly is inert rather than dangerous: a scope can only
+    tighten, by construction rather than by validation.
+
+    Mutable, unlike ``redaction_config``. The history a data-protection review
+    asks about is the history of *requests*, and ``usage_records`` stamps the
+    scope and the rule id onto every one — which answers it even after the rule
+    has been edited, and without a second table to keep in step.
+    """
+
+    __tablename__ = "redaction_rules"
+    __table_args__ = (
+        # Same COALESCE trick as limit_rules, for the same reason: scope_id is
+        # nullable nowhere here, but the partial-unique-on-active shape needs an
+        # expression index anyway, and matching the neighbouring table keeps one
+        # idiom rather than two.
+        Index(
+            "uq_redaction_rules_identity",
+            text("scope"),
+            text("scope_id"),
+            unique=True,
+        ),
+        Index("ix_redaction_rules_lookup", "is_active", "scope", "scope_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(255), default="")
+    scope: Mapped[RedactionScope] = mapped_column(_enum(RedactionScope, "redaction_scope"))
+    #: Not a foreign key: it points at one of five tables, exactly as
+    #: ``limit_rules.scope_id`` does. The scope says which.
+    scope_id: Mapped[uuid.UUID] = mapped_column()
+    #: A whole ``RedactionPolicy``, in the shape ``redaction_config.policy``
+    #: uses, so one editor, one validator and one combiner serve both.
+    policy: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    #: Optional, unlike the engine switch's. Every scoped rule can only tighten,
+    #: so there is no direction here that needs explaining — and asking for a
+    #: sentence per checkbox is how a reason field fills up with "x".
+    reason: Mapped[str] = mapped_column(String(500), default="")
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    def __repr__(self) -> str:
+        return f"<RedactionRule {self.scope}:{self.scope_id} active={self.is_active}>"
 
 
 class QuotaReset(Base):
