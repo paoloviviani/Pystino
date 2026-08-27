@@ -275,7 +275,7 @@ function MintKeyDialog({
   return (
     <Dialog
       open={open}
-      title={minted ? "Your new API key" : "Mint an API key"}
+      title={minted ? "Your new API key" : "New API key"}
       onClose={close}
       footer={
         minted ? (
@@ -311,7 +311,7 @@ function MintKeyDialog({
           />
 
           <Select
-            label="Bills to"
+            label="Billing group"
             value={groupId}
             onChange={(event) => setGroupId(event.target.value)}
             hint="Which group's budget this key spends from."
@@ -417,7 +417,7 @@ function RevokeKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
   return (
     <Dialog
       open={apiKey !== null}
-      title={`Revoke ${apiKey?.name || "this key"}?`}
+      title={`Revoke ${apiKey?.name || "this key"}`}
       onClose={onClose}
       footer={
         <>
@@ -459,7 +459,7 @@ const keyColumns = (onRevoke: (key: ApiKey) => void): Column<ApiKey>[] => [
   },
   {
     key: "group",
-    header: "Bills to",
+    header: "Billing group",
     render: (key) => key.billing_group?.name ?? "default group at request time",
   },
   {

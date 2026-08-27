@@ -53,7 +53,7 @@ export function AdminUsers() {
     },
     {
       key: "billing",
-      header: "Bills to",
+      header: "Billing group",
       render: (user) => user.default_billing_group ?? <span className={styles.muted}>unset</span>,
     },
     {

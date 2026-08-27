@@ -308,7 +308,7 @@ function ProviderDialog({
   return (
     <Dialog
       open={open}
-      title={editing ? `Edit ${provider?.name}` : "Add a provider"}
+      title={editing ? `Edit ${provider?.name}` : "New provider"}
       onClose={onClose}
       footer={
         <>

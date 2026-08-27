@@ -121,7 +121,7 @@ function ModelPage({ model }: { model: AdminModel }) {
         </Notice>
       )}
 
-      <Card title="What it is">
+      <Card title="Details">
         <dl className={styles.details}>
           <Detail label="Status">
             {model.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
@@ -396,7 +396,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
   };
 
   return (
-    <Card title="Append a price">
+    <Card title="New price">
       <div className={styles.form}>
         {create.error ? (
           <Notice tone="danger">
@@ -554,7 +554,7 @@ function Access({ model }: { model: AdminModel }) {
         </div>
       )}
       <Input
-        label="Find a person"
+        label="Person search"
         hideLabel
         value={finder.search}
         onChange={(event) => finder.setSearch(event.target.value)}

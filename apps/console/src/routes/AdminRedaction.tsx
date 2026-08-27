@@ -128,7 +128,7 @@ function Detail({ status }: { status: RedactionStatus }) {
           {/* Which of the two decided. Invisible otherwise, and it is exactly
               the confusion a database override introduces: an environment
               variable that no longer takes effect looks like a broken one. */}
-          <Row label="Set by">
+          <Row label="Source">
             {status.source === "console" && status.configured ? (
               <>
                 This console
@@ -153,7 +153,7 @@ function Detail({ status }: { status: RedactionStatus }) {
               <span className={styles.muted}>none — in-process engine</span>
             )}
           </Row>
-          <Row label="On detection failure">
+          <Row label="Failure mode">
             {status.fail_open ? (
               <Badge tone="danger">Forward unredacted</Badge>
             ) : (
@@ -299,7 +299,7 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
 
   return (
     <Card
-      title="What is redacted"
+      title="Redacted entities"
       description="What is done with each type the detector finds."
     >
       <div className={styles.form}>
@@ -324,7 +324,7 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
             why the safer direction is to protect by default rather than to let a
             new type through unnoticed. */}
         <Select
-          label="Default for unlisted types"
+          label="Default mode"
           value={draft.default_mode}
           onChange={(event) =>
             setDraft((current) => ({
@@ -385,7 +385,7 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
         {/* For values a detector is right about the shape of and wrong about the
             meaning of: a corporate domain is a URL, and it identifies nobody. */}
         <Input
-          label="Never redact these values"
+          label="Allowlist"
           value={allowList}
           onChange={(event) => setAllowList(event.target.value)}
           placeholder="ilpost.it, example.org"
@@ -393,7 +393,7 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
         />
 
         <Input
-          label="Reason for this change"
+          label="Change reason"
           value={reason}
           onChange={(event) => setReason(event.target.value)}
           placeholder="why this changed"
