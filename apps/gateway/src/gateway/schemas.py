@@ -518,8 +518,8 @@ def _check_billing_mode(plugin: str | None, mode: str | None) -> None:
     if not getattr(resolved, "reports_authoritative_cost", False):
         raise ValueError(
             f"the {resolved.name!r} plugin does not assert that the cost it reads is the "
-            "counterparty's actual charge, so it cannot be billed from. Name a plugin that "
-            "does, or leave billing_mode as 'own_prices'."
+            "counterparty's actual charge. Name a plugin that does, or leave "
+            "billing_mode as 'own_prices'."
         )
 
 

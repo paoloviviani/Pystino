@@ -87,8 +87,7 @@ export function Overview({ me }: OverviewProps) {
         <div>
           <h1 className={styles.title}>Your usage</h1>
           <p className={styles.subtitle}>
-            What you have spent, and the keys you spent it with. Only your own
-            activity is shown here.
+            What you have spent, and the keys you spent it with.
           </p>
         </div>
         <Select
@@ -204,7 +203,7 @@ export function Overview({ me }: OverviewProps) {
       <Card
         title="API keys"
         flush
-        description="Keys you have minted. The secret is shown once, at creation."
+        description="The secret is shown once, at creation."
         actions={
           <Button variant="primary" onClick={() => setMinting(true)}>
             New key
@@ -218,7 +217,7 @@ export function Overview({ me }: OverviewProps) {
             columns={keyColumns(setRevoking)}
             rows={keys.data?.items ?? []}
             rowKey={(key) => key.id}
-            empty="You have not minted any API keys."
+            empty="No API keys."
           />
         )}
       </Card>
@@ -308,8 +307,7 @@ function MintKeyDialog({
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="laptop, CI, notebook"
-            hint="For your own reference. Usage is reported per key, so a name you
-              recognise later is worth the two seconds."
+            hint="For your own reference. Usage is reported per key."
           />
 
           <Select
@@ -335,8 +333,7 @@ function MintKeyDialog({
               it before the click is better than after. */}
           {groupId === "" && me.default_billing_group === null && (
             <Notice tone="warn">
-              You have no default billing group, so a key that resolves one at request
-              time cannot be billed. Choose a group above.
+              You have no default billing group. Choose a group above.
             </Notice>
           )}
 
@@ -344,8 +341,7 @@ function MintKeyDialog({
             label="Expires"
             value={expiry}
             onChange={(event) => setExpiry(event.target.value)}
-            hint="An expiring key fails closed on its own. A key that never expires is
-              one you have to remember to revoke."
+            hint="An expiring key fails closed on its own."
           >
             <option value="">Never</option>
             <option value="30">In 30 days</option>
@@ -384,8 +380,8 @@ function MintedSecret({ minted }: { minted: MintedApiKey }) {
   return (
     <>
       <Notice tone="warn" title="Copy it now">
-        This is the only time it will be shown. The gateway keeps a hash, not the key,
-        so it cannot be recovered — if you lose it, revoke this one and mint another.
+        The gateway keeps a hash, not the key, so it cannot be shown again. If you lose
+        it, revoke this one and mint another.
       </Notice>
 
       <div className={styles.secretRow}>
@@ -394,7 +390,7 @@ function MintedSecret({ minted }: { minted: MintedApiKey }) {
       </div>
       {copied === false && (
         <p className={styles.copyFallback}>
-          Could not reach the clipboard. Select the key above and copy it by hand.
+          Could not reach the clipboard. Select the key and copy it by hand.
         </p>
       )}
 
@@ -444,12 +440,11 @@ function RevokeKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
         </Notice>
       ) : null}
       <p>
-        <code className={styles.code}>{apiKey?.prefix}</code> stops working immediately, and
-        this cannot be undone. Anything still using it starts failing to authenticate.
+        <code className={styles.code}>{apiKey?.prefix}</code> stops working immediately and
+        cannot be restored. Anything still using it starts failing to authenticate.
       </p>
       <p className={styles.secretDetail}>
-        Your usage history is unaffected — the key is revoked, never deleted, so past
-        spend stays attributed to it.
+        Usage history is unaffected: the key is revoked, never deleted.
       </p>
     </Dialog>
   );

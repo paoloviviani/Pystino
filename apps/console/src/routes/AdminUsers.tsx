@@ -98,9 +98,8 @@ export function AdminUsers() {
     <div className={styles.page}>
       <PageHeader
         title="Users"
-        subtitle="Provisioned by the identity provider on first login. Group membership is not
-          editable here — the IdP owns it, and an edit the next login silently reverts is worse
-          than no edit at all."
+        subtitle="Provisioned by the identity provider on first login. Group membership is
+          not editable here."
       />
 
       {update.error ? (

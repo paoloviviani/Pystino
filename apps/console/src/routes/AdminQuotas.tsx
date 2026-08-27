@@ -138,8 +138,7 @@ export function AdminQuotas() {
     <div className={styles.page}>
       <PageHeader
         title="Quotas"
-        subtitle="All matching rules must pass, so adding one can only tighten a budget. A reset
-          zeroes what a rule counts and leaves the billing figures untouched."
+        subtitle="All matching rules must pass, so adding one can only tighten a budget."
         actions={
           <Button variant="primary" onClick={() => setCreating(true)}>
             New rule
@@ -379,9 +378,8 @@ function ResetDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () =>
       }
     >
       <Notice tone="info" title="This does not change anyone's bill">
-        Only what the quota counts moves. The usage records behind every report are
-        untouched, so the monthly total stays exactly as it is. The reset takes effect
-        immediately and cannot be scheduled.
+        Only what the quota counts moves; usage records are untouched. The reset is
+        immediate and cannot be scheduled.
       </Notice>
 
       {reset.error ? (
@@ -395,7 +393,7 @@ function ResetDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () =>
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         placeholder="grant extension approved"
-        hint="Required and kept. Zeroing a spending cap is worth a record of who and why."
+        hint="Required and kept permanently."
       />
     </Dialog>
   );

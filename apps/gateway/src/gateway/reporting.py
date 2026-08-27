@@ -360,28 +360,28 @@ def _disclosures(
     if totals.unavailable_requests:
         notes.append(
             f"{totals.unavailable_requests} of {totals.requests} requests have no usage "
-            "data at all. Their cost is recorded as zero, so this total is a floor."
+            "data: their cost is recorded as zero, so this total is a floor."
         )
     if in_flight:
         notes.append(
-            f"{in_flight} request(s) were still in flight when this report was produced "
-            "and are excluded; they will appear once complete."
+            f"{in_flight} request(s) were still in flight and are excluded; "
+            "they will appear once complete."
         )
     if totals.images:
         # Otherwise an image row reads as a bug: real money against zero
         # tokens. Most image models are priced per picture and report no token
         # usage at all (ADR 0030).
         notes.append(
-            f"{totals.images} image(s) were generated. Image models are commonly priced "
-            "per image rather than per token, so those requests contribute cost without "
-            "contributing tokens."
+            f"{totals.images} image(s) were generated: image models are commonly priced "
+            "per image, so they add cost without adding tokens."
         )
     if fell_back:
+        # Said at all because a pass-through deployment silently billing from
+        # prices nobody maintains looks identical to one that is working. The
+        # sentence itself only has to state the fact; the reason lives here.
         notes.append(
-            f"{fell_back} request(s) went to a provider configured to bill from its own "
-            "reported cost, which reported none — so they are charged from our price table "
-            "instead. Said out loud because a pass-through deployment silently billing from "
-            "prices nobody maintains looks identical to one that is working."
+            f"{fell_back} request(s) are charged from our price table: their provider "
+            "bills from its own reported cost and reported none."
         )
     for drift in reconciliation or ():
         # Rounded to milli-units, like every other figure a person reads. The
@@ -404,11 +404,15 @@ def _disclosures(
                 f"{drift.provider}: it reported {theirs} for {drift.requests} "
                 f"request(s) against {ours} charged here."
             )
+        # A persistent gap is a stale price row or an upstream rate change, and
+        # that is the only thing an operator does about it — so it stays in the
+        # sentence. What was dropped from it: that the provider's figure is
+        # never billed from, which is not even true in `provider_reported` mode
+        # and is what `cost_source` says on every row anyway.
         notes.append(
             f"{headline} Covers only the requests that provider reported a cost for, so "
             "it is not comparable to the totals above. A persistent gap means a stale "
-            "price row or an upstream rate change; the provider's figure is informational "
-            "and never billed from."
+            "price row or an upstream rate change."
         )
     if substituted:
         # A router with model fallback can serve a different model than the one
@@ -416,10 +420,9 @@ def _disclosures(
         # requested model, so this figure is not necessarily what the provider
         # will invoice. Said out loud rather than left to be discovered.
         notes.append(
-            f"{substituted} request(s) were served by a different model than the one "
-            "requested, because the provider substituted one. They are priced here "
-            "using the requested model's price, so this total may not match the "
-            "provider's invoice for them."
+            f"{substituted} request(s) were served by a substitute model and priced at "
+            "the requested model's price, so this total may not match the provider's "
+            "invoice for them."
         )
     return notes
 

@@ -99,9 +99,9 @@ class SecretBox:
         except InvalidToken as exc:
             raise SecretDecryptionError(
                 "a stored provider credential could not be decrypted with any "
-                "configured key. This usually means GATEWAY_SECRET_KEY changed. "
-                "Add the previous value to the comma-separated list to recover, "
-                "or re-enter the provider's API key."
+                "configured key, which usually means GATEWAY_SECRET_KEY changed. "
+                "Add the previous value to the comma-separated list, or re-enter "
+                "the provider's API key."
             ) from exc
 
     def rotate(self, ciphertext: str) -> str:

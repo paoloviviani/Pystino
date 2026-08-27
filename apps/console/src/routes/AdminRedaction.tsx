@@ -45,13 +45,12 @@ export function AdminRedaction() {
     <div className={styles.page}>
       <PageHeader
         title="Redaction"
-        subtitle="What the gateway strips from prompts before they reach a provider, and
-          whether the detection service is answering."
+        subtitle="What is stripped from prompts before they reach a provider."
       />
 
-      {status.isPending && <Spinner label="Reading the redaction configuration" />}
+      {status.isPending && <Spinner label="Loading redaction" />}
       {status.error ? (
-        <Notice tone="danger" title="Could not read the redaction configuration">
+        <Notice tone="danger" title="Could not load redaction settings">
           {status.error instanceof Error ? status.error.message : "Unknown error."}
         </Notice>
       ) : null}
@@ -95,7 +94,7 @@ function Detail({ status }: { status: RedactionStatus }) {
             }
             detail={
               service === null
-                ? "this engine has no service to call"
+                ? "no service to call"
                 : service.reachable
                   ? `${service.engine ?? "unknown"} ${service.engine_version ?? ""} · ${service.latency_ms}ms`
                   : service.detail
@@ -113,8 +112,8 @@ function Detail({ status }: { status: RedactionStatus }) {
         title="Configuration"
         description={
           status.source === "console"
-            ? "From the environment this gateway started with, except the engine, which was set here."
-            : "From the environment this gateway started with."
+            ? "From the gateway's environment, except the engine, which was set here."
+            : "From the gateway's environment."
         }
       >
         <dl className={styles.details}>
@@ -190,27 +189,25 @@ function Detail({ status }: { status: RedactionStatus }) {
         </dl>
       </Card>
 
-      <Card
-        title="Entity types"
-        description={
-          status.entity_types
-            ? "Only these are looked for. Anything else is left in the prompt."
-            : "Every type the engine offers is looked for; nothing is filtered out."
-        }
-      >
-        {/* Null and empty are different facts, and conflating them would be the
-            difference between "everything" and "nothing". */}
-        <div className={styles.chips}>
-          {(status.entity_types ?? service?.entities ?? []).map((entity) => (
-            <Badge key={entity}>{entity}</Badge>
-          ))}
-        </div>
-        {status.entity_types === null && service === null && (
-          <p className={styles.muted}>
-            The engine offers no list, so what it detects cannot be shown here.
-          </p>
-        )}
-      </Card>
+      {/* Only when the deprecated environment variable is set, and then only to
+          explain where the policy below came from. Two cards answering "what is
+          looked for" in different vocabularies is the confusion this screen was
+          rebuilt to remove: the policy editor lists every type the detector
+          holds, with what happens to each. Null and a list are still different
+          facts — null means every type — but the policy is where that shows now. */}
+      {status.entity_types && (
+        <Card
+          title="Entity types"
+          description="GATEWAY_REDACTION__ENTITY_TYPES limits the search to these. It sets
+            the policy below; the console overrides it."
+        >
+          <div className={styles.chips}>
+            {status.entity_types.map((entity) => (
+              <Badge key={entity}>{entity}</Badge>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {service?.reachable && service.degraded_languages.length > 0 && (
         <Card title="Degraded languages" description="Served without a named-entity model.">
@@ -303,8 +300,7 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
   return (
     <Card
       title="What is redacted"
-      description="Per entity type. The detector finds all of them; this decides which ones
-        are acted on, and how."
+      description="What is done with each type the detector finds."
     >
       <div className={styles.form}>
         {save.error ? (
@@ -319,13 +315,16 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
         )}
         {status.policy_source === "environment" && (
           <Notice tone="info">
-            This is the deployment&rsquo;s default policy. Saving here records a decision that
-            overrides it, and keeps who changed it and why.
+            The deployment&rsquo;s default policy. Saving here overrides it and records who and
+            why.
           </Notice>
         )}
 
+        {/* Applies to a recogniser the engine gains in a later release, which is
+            why the safer direction is to protect by default rather than to let a
+            new type through unnoticed. */}
         <Select
-          label="A type nobody has ruled on"
+          label="Default for unlisted types"
           value={draft.default_mode}
           onChange={(event) =>
             setDraft((current) => ({
@@ -333,8 +332,7 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
               default_mode: event.target.value as EntityMode,
             }))
           }
-          hint="Applies to anything not listed below — including a recogniser the engine
-            gains in a later release. Protecting it by default is the safer direction."
+          hint="Applies to anything not listed below, including types added later."
         >
           {MODES.map((mode) => (
             <option key={mode.value} value={mode.value}>
@@ -345,8 +343,7 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
 
         {known.length === 0 ? (
           <p className={styles.muted}>
-            The detection service has not reported which entity types it holds, so there is
-            nothing to list. The default above still applies to everything it finds.
+            The detection service reported no entity types. The default above still applies.
           </p>
         ) : (
           <div className={styles.checkList}>
@@ -385,14 +382,14 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
           </div>
         )}
 
+        {/* For values a detector is right about the shape of and wrong about the
+            meaning of: a corporate domain is a URL, and it identifies nobody. */}
         <Input
           label="Never redact these values"
           value={allowList}
           onChange={(event) => setAllowList(event.target.value)}
           placeholder="ilpost.it, example.org"
-          hint="Comma separated, matched exactly and case-insensitively. For values a
-            detector is right about the shape of and wrong about the meaning of — a
-            corporate domain is a URL, and it identifies nobody."
+          hint="Comma separated. Matched exactly, case-insensitively."
         />
 
         <Input
@@ -400,8 +397,7 @@ function PolicyEditor({ status }: { status: RedactionStatus }) {
           value={reason}
           onChange={(event) => setReason(event.target.value)}
           placeholder="why this changed"
-          hint="Required when the change protects less: a type switched off, a mode
-            downgraded, or a value exempted. Kept permanently, like an engine change."
+          hint="Required when the change protects less. Kept permanently."
         />
 
         <div>
@@ -439,8 +435,7 @@ function EngineList({ status }: { status: RedactionStatus }) {
   return (
     <Card
       title="Engine"
-      description="One is in force at a time. Installing an engine through the llmp.redactors
-        entry point adds it here."
+      description="One is in force at a time; llmp.redactors plugins appear here."
     >
       {setEngine.error ? (
         <Notice tone="danger" title="The engine was not changed">
@@ -452,8 +447,7 @@ function EngineList({ status }: { status: RedactionStatus }) {
           worse than one that says how long it takes. */}
       {setEngine.isSuccess && status.propagation_seconds > 0 && (
         <Notice tone="info">
-          Saved. This worker switched immediately; any other worker picks it up within{" "}
-          {status.propagation_seconds} seconds.
+          Saved. Other workers apply it within {status.propagation_seconds}s.
         </Notice>
       )}
 
@@ -558,16 +552,14 @@ function ConfirmOff({
       }
     >
       <Notice tone="danger">
-        Prompts will reach providers exactly as callers sent them. Nothing is stripped, and
-        nothing about a request already sent is changed.
+        Prompts will reach providers exactly as callers sent them.
       </Notice>
       <Input
         label="Reason"
         value={reason}
         onChange={(event) => setReason(event.target.value)}
-        placeholder="e.g. detection service migration, 24h window agreed with the DPO"
-        hint="Kept permanently, with who made the change and when. This is the record a
-          later review reads."
+        placeholder="detection service migration"
+        hint="Kept permanently, with who changed it and when."
       />
     </Dialog>
   );

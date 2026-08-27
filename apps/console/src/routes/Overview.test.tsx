@@ -263,7 +263,7 @@ describe("Overview", () => {
       await waitFor(() =>
         expect(screen.getByText("sk-live-THE-ONLY-COPY")).toBeInTheDocument(),
       );
-      expect(screen.getByText(/only time it will be shown/i)).toBeInTheDocument();
+      expect(screen.getByText(/cannot be shown again/i)).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: "Done" }));
       const reopened = await openMintDialog(user);

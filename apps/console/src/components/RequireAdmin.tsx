@@ -16,10 +16,11 @@ export interface RequireAdminProps {
  */
 export function RequireAdmin({ me, children }: RequireAdminProps) {
   if (!me.is_admin) {
+    // The role follows a group in the identity provider, not a setting here.
     return (
       <Notice tone="warn" title="Administrators only">
-        This section needs the administrator role, which follows a group in the
-        identity provider. Ask whoever manages that group if you need access.
+        This section needs the administrator role. Ask whoever manages it in the identity
+        provider.
       </Notice>
     );
   }

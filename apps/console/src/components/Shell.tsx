@@ -220,8 +220,7 @@ function UserMenu({
               <span>
                 Exact figures
                 <span className={styles.menuHint}>
-                  Every decimal the ledger holds, for reconciling against a provider&apos;s
-                  invoice. Otherwise amounts are rounded to milli-units.
+                  Every decimal the ledger holds. Otherwise rounded to milli-units.
                 </span>
               </span>
             </label>

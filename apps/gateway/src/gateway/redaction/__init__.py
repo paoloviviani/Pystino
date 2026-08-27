@@ -42,10 +42,10 @@ register(
     "noop",
     lambda _settings: NoOpRedactor(),
     label="Off (noop)",
+    # Still recorded on every request as the 'noop' engine, so a past request
+    # cannot later be mistaken for one that was screened.
     description=(
-        "Nothing is removed. Prompts reach the provider exactly as the caller sent them. "
-        "Recorded on every request as the 'noop' engine, so a past request cannot be "
-        "mistaken for one that was screened."
+        "Nothing is removed: prompts reach the provider exactly as the caller sent them."
     ),
     redacts=False,
 )
@@ -53,10 +53,13 @@ register(
     "http",
     HttpDetectionRedactor,
     label="Presidio (detection service)",
+    # The contract is the one in llmp_shared.redaction; the engine is swappable
+    # behind it, which is what makes this a description of a mechanism rather
+    # than of Presidio.
     description=(
-        "Calls an out-of-process detection service over the contract in "
-        "llmp_shared.redaction. Entities are replaced with deterministic placeholders "
-        "before the request leaves, and swapped back in the response."
+        "Calls an out-of-process detection service: entities are replaced with "
+        "deterministic placeholders before the request leaves, and swapped back in "
+        "the response."
     ),
     needs_endpoint=True,
 )
