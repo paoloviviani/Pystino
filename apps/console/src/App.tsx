@@ -9,6 +9,7 @@ import { AdminModels } from "./routes/AdminModels";
 import { AdminProviders } from "./routes/AdminProviders";
 import { AdminQuotas } from "./routes/AdminQuotas";
 import { AdminRedaction } from "./routes/AdminRedaction";
+import { AdminRedactionRules } from "./routes/AdminRedactionRules";
 import { AdminReports } from "./routes/AdminReports";
 import { AdminUsers } from "./routes/AdminUsers";
 import { NotFound } from "./routes/NotFound";
@@ -103,6 +104,17 @@ export function App() {
           element={
             <RequireAdmin me={me_}>
               <AdminRedaction />
+            </RequireAdmin>
+          }
+        />
+        {/* Reached from the Redaction screen, not from the navigation: the nav
+            is deliberately short, and this is the second question about
+            redaction rather than a place anyone starts. */}
+        <Route
+          path="/admin/redaction/rules"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminRedactionRules />
             </RequireAdmin>
           }
         />

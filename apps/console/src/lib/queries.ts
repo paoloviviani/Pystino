@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, request } from "./api";
 import { MAX_LIMIT, type Page, pageParams } from "./paging";
-import type { ApiKey, MintedApiKey, Me, UsageReport } from "./types";
+import type { ApiKey, MintedApiKey, Me, MyRedaction, RedactionPolicy, UsageReport } from "./types";
 
 /**
  * Query keys, in one place.
@@ -14,6 +14,7 @@ export const keys = {
   me: ["me"] as const,
   myKeys: ["me", "keys"] as const,
   myReport: (period: string, groupBy: string) => ["me", "report", period, groupBy] as const,
+  myRedaction: ["me", "redaction"] as const,
 };
 
 /**
@@ -98,5 +99,40 @@ export function useRevokeKey() {
   return useMutation({
     mutationFn: (id: string) => request<ApiKey>(`/api/me/keys/${id}`, { method: "DELETE" }),
     onSuccess: () => client.invalidateQueries({ queryKey: keys.myKeys }),
+  });
+}
+
+// -- redaction ---------------------------------------------------------------
+
+/**
+ * What is stripped from this person's prompts, and the floor under it.
+ *
+ * Three documents in one response — their own rule, what applies, and what an
+ * administrator requires — because the first alone cannot be acted on: a null
+ * rule is not "no protection", it is "nothing of mine on top of theirs".
+ */
+export function useMyRedaction() {
+  return useQuery({
+    queryKey: keys.myRedaction,
+    queryFn: () => request<MyRedaction>("/api/me/redaction"),
+    retry: retryUnlessRejected,
+  });
+}
+
+/**
+ * Tighten your own policy.
+ *
+ * The response is written straight back into the cache rather than refetched:
+ * it carries the new `effective` document, and a screen that briefly showed the
+ * previous one after a save reads as a save that did not take.
+ */
+export function useSetMyRedaction() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { policy: RedactionPolicy; reason: string }) =>
+      request<MyRedaction>("/api/me/redaction", { method: "PUT", body }),
+    onSuccess: (mine) => {
+      client.setQueryData(keys.myRedaction, mine);
+    },
   });
 }

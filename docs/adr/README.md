@@ -49,6 +49,7 @@ verified is marked as such in the ADR that depends on it.
 | [0035](0035-public-tls-exposure.md) | A TLS reverse proxy, and the four holes that made "never on a routable address" the rule |
 | [0036](0036-model-page.md) | A model's price belongs on the model's page, not on a screen of its own |
 | [0037](0037-redaction-policy.md) | One engine, and a per-entity redaction policy an admin can set |
+| [0038](0038-scoped-redaction.md) | Redaction scoped per provider, model, group, user and key, where a scope can only tighten |
 
 ## Decisions recorded now, implemented later
 

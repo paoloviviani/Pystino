@@ -285,7 +285,7 @@ export interface RedactionConfigChange {
  * Two questions, not one: what the model sees, and what the reader gets back.
  * Ordered weakest to strongest, which is the order the screen lists them.
  */
-export type EntityMode = "off" | "anonymise_restore" | "anonymise" | "redact";
+export type EntityMode = "off" | "anonymise_restore" | "anonymise" | "redact" | "block";
 
 export interface EntityPolicy {
   mode: EntityMode;
@@ -293,10 +293,25 @@ export interface EntityPolicy {
   threshold: number | null;
 }
 
+/**
+ * A regex an operator wrote, treated as one more entity type.
+ *
+ * Compiled with RE2 in the gateway, so a pattern is validated there and not
+ * here: RE2 refuses constructs JavaScript accepts — backreferences, lookaround —
+ * and a browser-side check would pass a pattern the API then rejects.
+ */
+export interface CustomPattern {
+  name: string;
+  regex: string;
+  mode: EntityMode;
+}
+
 export interface RedactionPolicy {
   /** What happens to a type nobody has ruled on. Defaults to protecting it. */
   default_mode: EntityMode;
   entities: Record<string, EntityPolicy>;
+  /** Unioned across scopes: a pattern can only find more, never less. */
+  patterns: CustomPattern[];
   /** Values never redacted, whatever the detector says. Matched exactly. */
   allow_list: string[];
 }
@@ -337,6 +352,74 @@ export interface RedactionStatus {
   activity: RedactionActivity;
   /** Computed by the API, rendered verbatim. */
   warnings: string[];
+}
+
+/** The five subjects a redaction rule can name (ADR 0038). */
+export type RedactionScope = "provider" | "model" | "group" | "user" | "api_key";
+
+export interface RedactionRule {
+  id: string;
+  name: string;
+  scope: RedactionScope;
+  scope_id: string;
+  /**
+   * The model, provider or group name, the user's email, the key's prefix.
+   * **Null means the subject no longer exists**, and a rule pointing at a
+   * deleted subject is inert while looking identical to a working one.
+   */
+  subject_label: string | null;
+  policy: RedactionPolicy;
+  is_active: boolean;
+  reason: string;
+  created_by: string | null;
+  /** Null once the account is erased; the rule outlives its author. */
+  created_by_email: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One thing the detector found in a sample, and what the policy said about it. */
+export interface RedactionPreviewSpan {
+  entity_type: string;
+  start: number;
+  end: number;
+  score: number;
+  mode: EntityMode;
+  threshold: number;
+  allow_listed: boolean;
+}
+
+export interface RedactionPreview {
+  engine: string;
+  /** The narrowest rule that contributed. Null when only the deployment policy applied. */
+  scope: RedactionScope | null;
+  rule_id: string | null;
+  policy: RedactionPolicy;
+  spans: RedactionPreviewSpan[];
+  /** What the provider would receive. Null when the request would be blocked. */
+  redacted_text: string | null;
+  entity_count: number;
+  blocked: boolean;
+  blocked_reason: string | null;
+  /** Set when the engine in force detects nothing, so an empty result is not read as "clean". */
+  note: string | null;
+}
+
+/** A person's own redaction rule, and the two policies it sits between. */
+export interface MyRedaction {
+  /** Their own rule, or null when they have never written one. */
+  policy: RedactionPolicy | null;
+  rule_id: string | null;
+  updated_at: string | null;
+  /** What governs their requests today, their own rule included. */
+  effective: RedactionPolicy;
+  /**
+   * The floor a submitted policy may not go below, and **the document to edit**:
+   * a type a submitted policy does not name falls back to that policy's own
+   * default, so starting from an empty one is refused as a weakening.
+   */
+  baseline: RedactionPolicy;
+  propagation_seconds: number;
 }
 
 /**

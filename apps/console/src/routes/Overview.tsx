@@ -14,8 +14,17 @@ import {
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import { downloadCsv } from "../lib/api";
-import { useMintKey, useMyKeys, useMyReport, useRevokeKey } from "../lib/queries";
-import type { ApiKey, Me, MintedApiKey, UsageReportRow } from "../lib/types";
+import {
+  useMintKey,
+  useMyKeys,
+  useMyRedaction,
+  useMyReport,
+  useRevokeKey,
+  useSetMyRedaction,
+} from "../lib/queries";
+import { summarisePolicy } from "../lib/entities";
+import { PolicyFields } from "../components/PolicyFields";
+import type { ApiKey, Me, MintedApiKey, MyRedaction, RedactionPolicy, UsageReportRow } from "../lib/types";
 import { recentPeriods } from "../lib/periods";
 import styles from "./Overview.module.css";
 
@@ -222,8 +231,137 @@ export function Overview({ me }: OverviewProps) {
         )}
       </Card>
 
+      <MyRedactionCard />
+
       <MintKeyDialog open={minting} me={me} onClose={() => setMinting(false)} />
       <RevokeKeyDialog apiKey={revoking} onClose={() => setRevoking(null)} />
+    </div>
+  );
+}
+
+/**
+ * What is stripped from this person's prompts, and the one direction they can
+ * change it in.
+ *
+ * On everyone's screen, not only an administrator's, because the person typing
+ * the prompt is the one who knows whether their prompt contains a patient's
+ * name. What they cannot do is protect *less*: the API refuses a policy weaker
+ * than the administrators' by naming the entity type that weakened it, and this
+ * screen renders that sentence rather than re-deriving the rule — two copies of
+ * "weaker" would disagree.
+ *
+ * The form is seeded from `baseline`, never from an empty document, and that is
+ * a property of the API rather than a nicety: a type a submitted policy does not
+ * name falls back to that policy's own default, so sending one entity would be a
+ * weakening of every other.
+ */
+function MyRedactionCard() {
+  const mine = useMyRedaction();
+  // Held here rather than in the form, which is remounted when the first save
+  // turns "no rule of mine" into one: a Saved notice that disappears at the
+  // moment it is earned is worse than none.
+  const save = useSetMyRedaction();
+
+  return (
+    <Card
+      title="Redaction"
+      description="What is removed from your prompts before a provider sees them."
+    >
+      {mine.isPending && <Spinner label="Loading your redaction settings" />}
+      {mine.error ? (
+        <Notice tone="danger" title="Could not load your redaction settings">
+          {mine.error instanceof Error ? mine.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+      {save.error ? (
+        <Notice tone="danger" title="Your policy was not saved">
+          {save.error instanceof Error ? save.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+      {save.isSuccess && !save.isPending && mine.data && (
+        <Notice tone="info">
+          Saved. It applies within {Math.round(mine.data.propagation_seconds)}s.
+        </Notice>
+      )}
+
+      {/* Keyed on the rule it was seeded from: after a save the response carries
+          a new document, and a form still holding the pre-save draft would show
+          an edit that is no longer pending. */}
+      {mine.data && (
+        <MyRedactionForm key={mine.data.rule_id ?? "none"} mine={mine.data} save={save} />
+      )}
+    </Card>
+  );
+}
+
+function MyRedactionForm({
+  mine,
+  save,
+}: {
+  mine: MyRedaction;
+  save: ReturnType<typeof useSetMyRedaction>;
+}) {
+  const [draft, setDraft] = useState<RedactionPolicy>(() =>
+    structuredClone(mine.policy ?? mine.baseline),
+  );
+  const [reason, setReason] = useState("");
+
+  // Everything either document names. A type the administrators protect and the
+  // draft omits falls back to the draft's own default, which is exactly the
+  // omission the API refuses — so it has to be on the screen.
+  const entityTypes = [
+    ...new Set([
+      ...Object.keys(mine.baseline.entities),
+      ...Object.keys(mine.effective.entities),
+    ]),
+  ];
+
+  return (
+    <div className={styles.form}>
+      <Notice tone="info">
+        You can protect more than your administrators require, never less.
+      </Notice>
+
+      <dl className={styles.details}>
+        <dt className={styles.detailLabel}>Applies now</dt>
+        <dd className={styles.detailValue}>{summarisePolicy(mine.effective)}</dd>
+        <dt className={styles.detailLabel}>Administrators require</dt>
+        <dd className={styles.detailValue}>{summarisePolicy(mine.baseline)}</dd>
+        <dt className={styles.detailLabel}>Your own policy</dt>
+        <dd className={styles.detailValue}>
+          {mine.policy === null
+            ? "None. Your administrators' settings apply."
+            : `Saved ${mine.updated_at ? formatDate(mine.updated_at) : "earlier"}.`}
+        </dd>
+      </dl>
+
+      <PolicyFields
+        policy={draft}
+        onChange={setDraft}
+        entityTypes={entityTypes}
+        floor={mine.baseline}
+        // Refused by the API: exempting a value is the one change that protects
+        // less, and it stays an administrator's decision.
+        allowList={false}
+      />
+
+      <Input
+        label="Reason"
+        value={reason}
+        onChange={(event) => setReason(event.target.value)}
+        placeholder="clinical notes in my prompts"
+        hint="Optional. Kept with your policy."
+      />
+
+      <div>
+        <Button
+          variant="primary"
+          busy={save.isPending}
+          onClick={() => save.mutate({ policy: draft, reason: reason.trim() })}
+        >
+          Save redaction
+        </Button>
+      </div>
     </div>
   );
 }

@@ -174,6 +174,10 @@ class RedactionResolver:
     def rule_count(self) -> int:
         return len(self._rules)
 
+    def rule_for(self, scope: RedactionScope | str, subject_id: uuid.UUID) -> _Rule | None:
+        """One rule by subject, for callers that need to know who wrote it."""
+        return self._rules.get((str(scope), subject_id))
+
     def policy_for(
         self,
         *,
@@ -351,6 +355,10 @@ class _Rule:
     id: uuid.UUID
     scope: str
     policy: RedactionPolicy
+    #: Who wrote it. Carried because a user-scoped rule an administrator wrote
+    #: is not the same thing as a person's own policy, and only the author tells
+    #: them apart — there is one row per subject (routers/me.py:_imposed_on).
+    created_by: uuid.UUID | None = None
 
 
 def _policy_of(row: RedactionConfig | None) -> RedactionPolicy | None:
@@ -391,7 +399,7 @@ def _rules_of(rows: Sequence[RedactionRule]) -> dict[tuple[str, uuid.UUID], _Rul
             logger.error("redaction rule %s has an unreadable policy; ignoring it", row.id)
             continue
         parsed[(str(row.scope), row.scope_id)] = _Rule(
-            id=row.id, scope=str(row.scope), policy=policy
+            id=row.id, scope=str(row.scope), policy=policy, created_by=row.created_by
         )
     return parsed
 

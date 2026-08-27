@@ -10,9 +10,12 @@ them interact: filtering happens before overlap resolution.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from gateway.config import (
     DEFAULT_REDACTION_POLICY,
+    CustomPattern,
     EntityMode,
     EntityPolicy,
     RedactionPolicy,
@@ -20,6 +23,7 @@ from gateway.config import (
 )
 from gateway.redaction.http import apply_spans
 from llmp_shared import EntitySpan, PlaceholderMap
+from pydantic import ValidationError
 
 KEY = b"test-placeholder-key"
 
@@ -244,3 +248,80 @@ class TestWeakening:
 
     def test_saying_the_same_thing_twice_does_not(self) -> None:
         assert not DEFAULT_REDACTION_POLICY.weakens(DEFAULT_REDACTION_POLICY)
+
+
+class TestCustomPatterns:
+    """Operator-written regexes, treated as one more entity type (ADR 0038)."""
+
+    def test_a_pattern_is_matched_and_placeheld_like_anything_else(self) -> None:
+        policy = RedactionPolicy(
+            patterns=[CustomPattern(name="PRJ", regex=r"PRJ-\d{4}", mode=EntityMode.REDACT)]
+        )
+        result, count, _ = redact("see PRJ-2043 for detail", [], policy)
+
+        assert result == "see <PRJ> for detail"
+        assert count == 1
+
+    def test_a_pattern_can_anonymise_and_restore(self) -> None:
+        policy = RedactionPolicy(
+            patterns=[
+                CustomPattern(name="PRJ", regex=r"PRJ-\d{4}", mode=EntityMode.ANONYMISE_RESTORE)
+            ]
+        )
+        result, _, placeholders = redact("see PRJ-2043", [], policy)
+
+        assert "<PRJ_" in result
+        assert placeholders.restore(result) == "see PRJ-2043"
+
+    def test_a_pattern_and_a_detector_span_compete_on_the_same_terms(self) -> None:
+        """Merged before overlap resolution, so the winner is decided once.
+
+        A hand-written pattern scores 1.0: somebody naming a value explicitly is
+        not guessing, and outranks the model's opinion about the same characters.
+        """
+        policy = RedactionPolicy(
+            patterns=[CustomPattern(name="PRJ", regex=r"PRJ-\d{4}", mode=EntityMode.REDACT)]
+        )
+        result, count, _ = redact(
+            "see PRJ-2043",
+            [span(4, 12, "PERSON", score=0.85)],
+            policy,
+        )
+
+        assert (result, count) == ("see <PRJ>", 1)
+
+    def test_the_allow_list_still_wins(self) -> None:
+        policy = RedactionPolicy(
+            patterns=[CustomPattern(name="PRJ", regex=r"PRJ-\d{4}")],
+            allow_list=["PRJ-0000"],
+        )
+        result, count, _ = redact("see PRJ-0000", [], policy)
+
+        assert (result, count) == ("see PRJ-0000", 0)
+
+    def test_a_pattern_that_cannot_compile_is_refused_at_save_time(self) -> None:
+        """RE2 has no backreferences, and its own message says which construct
+        it refused — which is what an author needs to fix it."""
+        with pytest.raises(ValidationError) as caught:
+            CustomPattern(name="BAD", regex=r"(a)\1")
+
+        assert "cannot be used" in str(caught.value)
+
+    def test_a_pattern_matching_the_empty_string_is_refused(self) -> None:
+        """It would match at every position and replace the whole text."""
+        with pytest.raises(ValidationError) as caught:
+            CustomPattern(name="EVERYTHING", regex=r"x*")
+
+        assert "everywhere" in str(caught.value)
+
+    def test_the_backtracking_pattern_that_hangs_python_re_is_harmless(self) -> None:
+        """`re.search(r"(a+)+$", "a"*26 + "!")` takes 10.8s and cannot be
+        interrupted. Under RE2 it is microseconds, which is why user-written
+        patterns are allowed at all."""
+        policy = RedactionPolicy(
+            patterns=[CustomPattern(name="EVIL", regex=r"(a+)+$", mode=EntityMode.REDACT)]
+        )
+        start = time.monotonic()
+        redact("a" * 26 + "!", [], policy)
+
+        assert time.monotonic() - start < 1.0

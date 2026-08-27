@@ -168,6 +168,36 @@ class CustomPattern(BaseModel):
     #: name, and the gateway should not guess that they wanted it back.
     mode: EntityMode = EntityMode.REDACT
 
+    @field_validator("regex")
+    @classmethod
+    def _compilable(cls, value: str) -> str:
+        """Refuse at save time what would otherwise fail per request.
+
+        RE2 rather than :mod:`re`, and the reason is measured:
+        ``re.search(r"(a+)+$", "a"*26 + "!")`` takes **10.8 seconds** on Python's
+        engine, which has no timeout, so one pattern of that shape written by
+        accident hangs a worker. RE2 cannot backtrack — the same call returns in
+        microseconds — so the hang is structurally impossible rather than
+        merely unlikely (ADR 0038).
+
+        What that costs, and it is worth knowing before writing a pattern:
+        RE2 has no backreferences and no lookaround. Its own parser message is
+        passed through, because "invalid escape sequence: \\1" tells an author
+        exactly which construct it refused.
+        """
+        import re2
+
+        try:
+            compiled = re2.compile(value)
+        except Exception as exc:  # re2 raises its own error type
+            raise ValueError(f"this pattern cannot be used: {exc}") from exc
+        # A pattern matching the empty string matches at every position, so it
+        # would replace the whole text with placeholders. Refused here rather
+        # than discovered on the first prompt.
+        if compiled.search("") is not None:
+            raise ValueError("this pattern matches the empty string, so it would match everywhere")
+        return value
+
     @field_validator("name")
     @classmethod
     def _label(cls, value: str) -> str:
@@ -216,8 +246,18 @@ class RedactionPolicy(BaseModel):
         return {key.upper(): policy for key, policy in value.items()}
 
     def mode_for(self, entity_type: str) -> EntityMode:
-        entry = self.entities.get(entity_type.upper())
-        return entry.mode if entry is not None else self.default_mode
+        name = entity_type.upper()
+        entry = self.entities.get(name)
+        if entry is not None:
+            return entry.mode
+        # A custom pattern is one more entity type, and its own mode is where it
+        # is written. Checked after `entities` so an admin can still override a
+        # pattern's mode by naming it there — the narrower statement wins, which
+        # is the same rule the rest of this file follows.
+        for pattern in self.patterns:
+            if pattern.name == name:
+                return pattern.mode
+        return self.default_mode
 
     def threshold_for(self, entity_type: str, default: float) -> float:
         entry = self.entities.get(entity_type.upper())

@@ -13,7 +13,10 @@ does not record which rule tightened it cannot be explained afterwards, and
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
+import httpx
+from conftest import Seeded
 from gateway.config import (
     DEFAULT_REDACTION_POLICY,
     CustomPattern,
@@ -22,8 +25,12 @@ from gateway.config import (
     RedactionPolicy,
     RedactionSettings,
 )
-from gateway.models import RedactionRule, RedactionScope
+from gateway.models import RedactionRule, RedactionScope, UsageRecord, UsageStatus
 from gateway.redaction.resolver import RedactionResolver, _rules_of
+from helpers import completion_body
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from test_redaction_http import FakeDetector
 
 
 def policy(**kwargs: object) -> RedactionPolicy:
@@ -222,3 +229,105 @@ class TestResolution:
 
         resolver._reload_rules([])
         assert resolver.policy_for(user_id=user_id).scope is None
+
+
+class TestBlocking:
+    """A refused request: 403, no provider call, and a row that says so."""
+
+    def install(self, app: object, *, mode: EntityMode, scope_id: uuid.UUID) -> RedactionRule:
+        """A detector that always finds an SSN, and a user rule about it."""
+        detector = FakeDetector({"123-45-6789": "US_SSN"})
+        app.state.redactor = detector.redactor()  # type: ignore[attr-defined]
+        rule = RedactionRule(
+            id=uuid.uuid4(),
+            scope=RedactionScope.USER,
+            scope_id=scope_id,
+            policy=policy(entities={"US_SSN": EntityPolicy(mode=mode)}).model_dump(mode="json"),
+        )
+        resolver = RedactionResolver(RedactionSettings(), lambda: None)  # type: ignore[arg-type]
+        resolver._reload_rules([rule])
+        app.state.redaction = resolver  # type: ignore[attr-defined]
+        return rule
+
+    async def test_a_blocked_request_is_refused_and_never_reaches_the_provider(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: Any,
+    ) -> None:
+        rule = self.install(app, mode=EntityMode.BLOCK, scope_id=seeded.user.id)
+        before = len(fake_upstream.bodies)
+
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": seeded.model.name,
+                "messages": [{"role": "user", "content": "my ssn is 123-45-6789"}],
+            },
+            headers=seeded.auth,
+        )
+
+        assert response.status_code == 403, response.text
+        body = response.json()["error"]
+        assert body["code"] == "content_blocked"
+        assert "US_SSN" in body["message"]
+        # The value itself is never echoed: an error body is logged, and pasted
+        # into tickets. Leaking there is what the block exists to prevent.
+        assert "123-45-6789" not in response.text
+        assert len(fake_upstream.bodies) == before
+
+        row = (await session.execute(select(UsageRecord))).scalars().one()
+        assert row.status is UsageStatus.BLOCKED
+        assert row.cost == 0 and row.total_tokens == 0
+        assert row.redaction_scope == RedactionScope.USER
+        assert row.redaction_rule_id == rule.id
+        assert row.error_code == "content_blocked"
+
+    async def test_the_same_entity_under_a_weaker_mode_is_served(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        fake_upstream: Any,
+    ) -> None:
+        """The block is the rule's doing, not the detector's — same detection,
+        different mode, and the request goes through redacted."""
+        self.install(app, mode=EntityMode.REDACT, scope_id=seeded.user.id)
+        fake_upstream.set_json(completion_body())
+
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": seeded.model.name,
+                "messages": [{"role": "user", "content": "my ssn is 123-45-6789"}],
+            },
+            headers=seeded.auth,
+        )
+
+        assert response.status_code == 200, response.text
+        sent = fake_upstream.bodies[-1]["messages"][0]["content"]
+        assert "123-45-6789" not in sent
+        assert "<US_SSN>" in sent
+
+    async def test_a_rule_for_another_user_does_not_block_this_one(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        fake_upstream: Any,
+    ) -> None:
+        self.install(app, mode=EntityMode.BLOCK, scope_id=uuid.uuid4())
+        fake_upstream.set_json(completion_body())
+
+        response = await client.post(
+            "/v1/chat/completions",
+            json={
+                "model": seeded.model.name,
+                "messages": [{"role": "user", "content": "my ssn is 123-45-6789"}],
+            },
+            headers=seeded.auth,
+        )
+
+        assert response.status_code == 200, response.text

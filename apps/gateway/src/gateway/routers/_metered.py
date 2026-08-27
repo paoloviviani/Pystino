@@ -43,12 +43,13 @@ from gateway.config import EffectivePolicy, Settings
 from gateway.deps import Principal
 from gateway.errors import (
     BadRequestError,
+    ContentBlockedError,
     ModelNotFoundError,
     ServiceUnavailableError,
     UpstreamUnavailableError,
     error_response,
 )
-from gateway.models import ApiSurface, ModelDef, ModelKind, UsageStatus
+from gateway.models import ApiSurface, ModelDef, ModelKind, UsageRecord, UsageSource, UsageStatus
 from gateway.providers import ProviderConfigurationError, ProviderRegistry
 from gateway.quota import (
     QuotaAmounts,
@@ -57,7 +58,7 @@ from gateway.quota import (
     QuotaUnavailable,
     Reservation,
 )
-from gateway.redaction import RedactionOutcome
+from gateway.redaction import RedactionOutcome, Redactor
 from gateway.redaction.resolver import RedactionResolver
 from gateway.upstream import OpenAICompatibleUpstream
 
@@ -312,6 +313,61 @@ def redaction_policy(
         api_key_id=principal.api_key.id if principal.api_key is not None else None,
     )
     return effective
+
+
+async def redact_or_block(
+    request: Request,
+    messages: list[dict[str, Any]],
+    *,
+    redactor: Redactor,
+    session: AsyncSession,
+    principal: Principal,
+    model: ModelDef,
+    settings: Settings,
+    surface: ApiSurface,
+    request_id: str,
+) -> RedactionOutcome:
+    """Redact under this request's effective policy, or refuse and record it.
+
+    One function rather than two lines in each of five routes, because the
+    recording is the part that is easy to forget: a blocked request never
+    reaches ``begin``, so without this it would leave **no trace at all** — and
+    "this deployment refused 400 prompts last month" is a number a
+    data-protection review asks for (ADR 0038).
+
+    The row is written before the error propagates, on the request's own session,
+    and it is not a billing row: zero tokens, zero cost, ``status=blocked``. What
+    it carries is who, when, which model, and which rule decided.
+    """
+    policy = redaction_policy(request, principal=principal, model=model)
+    try:
+        return await redactor.redact_request(messages, policy=policy)
+    except ContentBlockedError as exc:
+        session.add(
+            UsageRecord(
+                request_id=request_id,
+                status=UsageStatus.BLOCKED,
+                user_id=principal.user.id,
+                group_id=principal.billing_group.id,
+                api_key_id=principal.api_key.id if principal.api_key else None,
+                model_id=model.id,
+                model_name=model.name,
+                streamed=False,
+                api_surface=surface,
+                currency=settings.billing_currency,
+                usage_source=UsageSource.UNAVAILABLE,
+                cost=Decimal(0),
+                redaction_engine=getattr(redactor, "name", None),
+                redaction_scope=policy.scope if policy else None,
+                redaction_rule_id=policy.rule_id if policy else None,
+                error_code=exc.code,
+                # Safe by construction: ContentBlockedError never quotes the
+                # matched text, which is the whole point of its own docstring.
+                error_message=str(exc),
+            )
+        )
+        await session.commit()
+        raise
 
 
 def request_id_for(request: Request, settings: Settings) -> str:
