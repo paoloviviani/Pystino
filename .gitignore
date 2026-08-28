@@ -38,6 +38,8 @@ deploy/.env
 .gitlab-token
 .gitlab-tokens
 .gitlab-token*
+.gh-token
+.gh-token*
 
 # Self-signed material and Caddy state, if either is ever written outside a volume.
 deploy/tls/
