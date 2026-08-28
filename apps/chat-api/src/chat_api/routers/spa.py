@@ -5,8 +5,11 @@ reasons: hashed assets cached for a year, the entry document revalidated every
 time, and a fallback so a deep link into a client-side route returns the app
 rather than a 404.
 
-Mounted at the root here, not under a prefix — this service serves one
-application and nothing else.
+Mounted under ``MOUNT_PATH``, and the SPA is built with the matching Vite
+``base``. The two have to agree: an app built for the root and served under a
+prefix loads its entry document and then requests every script from ``/assets/…``
+— which behind the proxy is the *gateway*. The page is blank, both logs are
+clean, and the 404s name files that exist.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from fastapi.responses import FileResponse
 from starlette.staticfiles import StaticFiles
 
 from chat_api.config import Settings
+from chat_api.routers import MOUNT_PATH
 
 # Guessed wrong in a slim runtime image, which has no OS mime database — the
 # works-here/broken-there shape that only a live check finds.
@@ -78,8 +82,9 @@ def build_router(directory: Path) -> APIRouter:
     router = APIRouter()
     index = directory / "index.html"
 
-    @router.get("/{spa_path:path}", include_in_schema=False)
-    async def spa(spa_path: str, request: Request) -> Response:
+    @router.get(MOUNT_PATH, include_in_schema=False)
+    @router.get(f"{MOUNT_PATH}/{{spa_path:path}}", include_in_schema=False)
+    async def spa(request: Request, spa_path: str = "") -> Response:
         # A path with a file extension that got this far is a missing asset,
         # not a client-side route. Returning index.html for it would answer a
         # missing script with an HTML page, and the browser's error would name
@@ -97,4 +102,4 @@ def mount(app: object, directory: Path) -> None:
     from fastapi import FastAPI
 
     assert isinstance(app, FastAPI)
-    app.mount("/assets", _Assets(directory=directory / "assets"), name="assets")
+    app.mount(f"{MOUNT_PATH}/assets", _Assets(directory=directory / "assets"), name="assets")

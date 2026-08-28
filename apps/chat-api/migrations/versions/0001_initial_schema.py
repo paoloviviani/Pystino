@@ -7,7 +7,7 @@ neither can drift from the realm.
 
 Revision ID: 0001
 Revises:
-Create Date: 2026-08-28 13:50:13.225236+00:00
+Create Date: 2026-08-28 14:02:00.779769+00:00
 """
 
 from __future__ import annotations
@@ -16,6 +16,8 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import Text  # noqa: F401  (autogenerate emits it inside JSONB)
+from sqlalchemy.dialects import postgresql  # noqa: F401  (JSON().with_variant)
 
 revision: str = "0001"
 down_revision: str | None = None
@@ -32,9 +34,9 @@ def upgrade() -> None:
         sa.Column("subject", sa.String(length=255), nullable=False),
         sa.Column("title", sa.String(length=255), nullable=False),
         sa.Column("model", sa.String(length=255), nullable=False),
-        sa.Column("created_at", chat_api.types.TZDateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", chat_api.types.TZDateTime(timezone=True), nullable=False),
-        sa.Column("archived_at", chat_api.types.TZDateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
     with op.batch_alter_table("conversations", schema=None) as batch_op:
@@ -56,9 +58,9 @@ def upgrade() -> None:
         ),
         sa.Column("is_admin", sa.Boolean(), nullable=False),
         sa.Column("refresh_token_encrypted", sa.Text(), nullable=True),
-        sa.Column("created_at", chat_api.types.TZDateTime(timezone=True), nullable=False),
-        sa.Column("expires_at", chat_api.types.TZDateTime(timezone=True), nullable=False),
-        sa.Column("last_seen_at", chat_api.types.TZDateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
     with op.batch_alter_table("sessions", schema=None) as batch_op:
@@ -98,7 +100,7 @@ def upgrade() -> None:
             sa.JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql"),
             nullable=True,
         ),
-        sa.Column("created_at", chat_api.types.TZDateTime(timezone=True), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("conversation_id", "position", name="uq_message_position"),

@@ -68,9 +68,19 @@ class GatewayClient:
         ]
 
     async def stream_chat(
-        self, *, access_token: str, body: dict[str, Any]
-    ) -> AsyncIterator[tuple[str, str | None]]:
-        """Relay a streamed completion, yielding ``(raw_sse_line, request_id)``.
+        self, *, access_token: str, body: dict[str, Any], request_id: str
+    ) -> AsyncIterator[str]:
+        """Relay a streamed completion, yielding raw SSE lines.
+
+        **The request id is ours, and is sent rather than read back.** The
+        gateway adopts an inbound ``x-request-id`` and generates one otherwise,
+        but never returns it — and could not usefully return it on a stream,
+        where the headers are written before the row exists. So the caller
+        supplies it, and the transcript and the ledger share an id by
+        construction instead of by hoping for an echo. Found by
+        ``scripts/test_chat_live.py``: every stored message had a null
+        ``request_id``, which is exactly the column that makes spend
+        explainable.
 
         Streamed rather than buffered even though buffering would be simpler,
         because the gateway's own comment about `flush_interval` applies one
@@ -87,15 +97,14 @@ class GatewayClient:
             async with self._http.stream(
                 "POST",
                 f"{self._base}/v1/chat/completions",
-                headers=self._headers(access_token),
+                headers={**self._headers(access_token), "x-request-id": request_id},
                 json=payload,
             ) as response:
-                request_id = response.headers.get("x-request-id")
                 if response.status_code != 200:
                     await response.aread()
                     raise self._error_from(response)
                 async for line in response.aiter_lines():
-                    yield line, request_id
+                    yield line
         except httpx.HTTPError as exc:
             raise GatewayError(f"gateway unreachable: {exc}") from exc
 

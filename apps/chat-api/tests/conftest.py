@@ -80,7 +80,7 @@ class FakeGateway:
             return httpx.Response(
                 200,
                 stream=_Iter(stream()),
-                headers={"content-type": "text/event-stream", "x-request-id": "req-test-1"},
+                headers={"content-type": "text/event-stream"},
             )
         return httpx.Response(404, json={"error": {"message": "no such route"}})
 

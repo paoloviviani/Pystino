@@ -1,0 +1,106 @@
+# The chat application (Phase 3, M1).
+#
+#   docker compose --env-file deploy/.env \
+#     -f deploy/compose/docker-compose.yml \
+#     -f deploy/compose/docker-compose.keycloak.yml \
+#     -f deploy/compose/docker-compose.chat.yml up -d --build
+#
+# Requires the Keycloak overlay: this service authenticates people, and then
+# calls the gateway with their access token (ADR 0040). Without
+# GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE set on the gateway — the keycloak overlay
+# sets it — every call from here is refused with the message a bad API key gets.
+#
+# Its own database on the shared PostgreSQL server. Own, because the boundary
+# this service is built on is that it shares nothing with the gateway but the
+# realm and the /v1 surface; shared server, because a second container for a
+# development deployment buys nothing. `chat-createdb` creates it if it is
+# absent, which is what makes this overlay work against a volume that already
+# exists — an init script under /docker-entrypoint-initdb.d only ever runs on a
+# brand new volume, and would silently do nothing here.
+services:
+  chat-createdb:
+    image: postgres:18-alpine
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        exists=$$(psql -h postgres -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -tAc \
+          "SELECT 1 FROM pg_database WHERE datname = '$$CHAT_DB'")
+        if [ "$$exists" = "1" ]; then
+          echo "database $$CHAT_DB already exists"
+        else
+          psql -h postgres -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" \
+            -c "CREATE DATABASE \"$$CHAT_DB\""
+          echo "created database $$CHAT_DB"
+        fi
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gateway}
+      POSTGRES_DB: ${POSTGRES_DB:-gateway}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      CHAT_DB: ${CHAT_DB:-chat}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  chat-migrate:
+    build:
+      context: ../..
+      dockerfile: apps/chat-api/Dockerfile
+    command: ["alembic", "-c", "apps/chat-api/alembic.ini", "upgrade", "head"]
+    environment:
+      CHAT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-gateway}:${POSTGRES_PASSWORD}@postgres:5432/${CHAT_DB:-chat}
+    depends_on:
+      chat-createdb:
+        condition: service_completed_successfully
+    restart: "no"
+
+  chat:
+    build:
+      context: ../..
+      dockerfile: apps/chat-api/Dockerfile
+      args:
+        INCLUDE_WEB: ${INCLUDE_WEB:-true}
+    restart: unless-stopped
+    ports:
+      # Loopback only, for the same reason everything else here is: the session
+      # cookie is not Secure without the proxy overlay, and the seeded
+      # credentials are in this repository.
+      - "127.0.0.1:${CHAT_PORT:-8100}:8100"
+    environment:
+      CHAT_ENVIRONMENT: ${GATEWAY_ENVIRONMENT:-dev}
+      CHAT_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
+      CHAT_LOG_JSON: ${GATEWAY_LOG_JSON:-true}
+
+      CHAT_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-gateway}:${POSTGRES_PASSWORD}@postgres:5432/${CHAT_DB:-chat}
+
+      # Signs the session cookie. Distinct from CHAT_SECRET_KEY, which encrypts
+      # the refresh tokens the session holds: one leaked value must not yield
+      # both a forged session and the credentials inside it.
+      CHAT_SESSION_SECRET: ${CHAT_SESSION_SECRET:-${GATEWAY_SESSION_SECRET:?set GATEWAY_SESSION_SECRET in deploy/.env}}
+      CHAT_SECRET_KEY: ${CHAT_SECRET_KEY:-${GATEWAY_SECRET_KEY:?set GATEWAY_SECRET_KEY in deploy/.env}}
+      CHAT_SESSION_COOKIE_SECURE: ${CHAT_SESSION_COOKIE_SECURE:-false}
+
+      # Its own client in the realm, not the gateway's. Two services that
+      # authenticate people are two clients, each revocable on its own.
+      CHAT_OIDC__ISSUER: http://keycloak:8080/realms/llm-platform
+      CHAT_OIDC__CLIENT_ID: llm-chat
+      CHAT_OIDC__CLIENT_SECRET: ${CHAT_CLIENT_SECRET:-chat-dev-secret-not-for-production}
+      CHAT_OIDC__REDIRECT_URI: http://localhost:${CHAT_PORT:-8100}/chat/auth/callback
+
+      # Over the compose network. The browser never talks to the gateway.
+      CHAT_GATEWAY__BASE_URL: http://gateway:8000
+    depends_on:
+      chat-migrate:
+        condition: service_completed_successfully
+      gateway:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8100/health').status==200 else 1)\""
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s

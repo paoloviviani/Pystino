@@ -13,7 +13,8 @@ from typing import Any
 import httpx
 import pytest
 from chat_api.models import Conversation, Message, MessageStatus
-from conftest import FakeGateway
+from chat_api.routers import MOUNT_PATH as MOUNT
+from tests.conftest import FakeGateway
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -31,7 +32,7 @@ def delta(text: str) -> dict[str, Any]:
 
 
 async def start(client: httpx.AsyncClient, auth: dict[str, str], model: str = "test-model") -> str:
-    response = await client.post("/api/conversations", json={"model": model}, headers=auth)
+    response = await client.post(f"{MOUNT}/api/conversations", json={"model": model}, headers=auth)
     assert response.status_code == 201, response.text
     return str(response.json()["id"])
 
@@ -39,14 +40,14 @@ async def start(client: httpx.AsyncClient, auth: dict[str, str], model: str = "t
 class TestAuthentication:
     @pytest.mark.asyncio
     async def test_no_cookie_is_refused(self, client: httpx.AsyncClient) -> None:
-        assert (await client.get("/api/conversations")).status_code == 401
+        assert (await client.get(f"{MOUNT}/api/conversations")).status_code == 401
 
     @pytest.mark.asyncio
     async def test_a_signed_in_browser_is_accepted(
         self, client: httpx.AsyncClient, signed_in: Any
     ) -> None:
         auth = await signed_in()
-        response = await client.get("/api/me", headers=auth)
+        response = await client.get(f"{MOUNT}/api/me", headers=auth)
         assert response.status_code == 200
         assert response.json()["email"] == "subject-1@example.org"
 
@@ -62,8 +63,8 @@ class TestAuthentication:
         """
         auth = await signed_in()
         app.state.oidc_client.fail = True
-        assert (await client.get("/api/me", headers=auth)).status_code == 401
-        assert (await client.get("/api/me", headers=auth)).status_code == 401
+        assert (await client.get(f"{MOUNT}/api/me", headers=auth)).status_code == 401
+        assert (await client.get(f"{MOUNT}/api/me", headers=auth)).status_code == 401
 
     @pytest.mark.asyncio
     async def test_a_rotated_refresh_token_is_stored(
@@ -76,9 +77,9 @@ class TestAuthentication:
         """
         auth = await signed_in()
         app.state.oidc_client.next_refresh_token = "rotated"
-        assert (await client.get("/api/me", headers=auth)).status_code == 200
+        assert (await client.get(f"{MOUNT}/api/me", headers=auth)).status_code == 200
         app.state.oidc_client.next_refresh_token = None
-        assert (await client.get("/api/me", headers=auth)).status_code == 200
+        assert (await client.get(f"{MOUNT}/api/me", headers=auth)).status_code == 200
 
 
 class TestTheTurn:
@@ -98,7 +99,7 @@ class TestTheTurn:
 
         async with client.stream(
             "POST",
-            f"/api/conversations/{conversation_id}/messages",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
             json={"content": "hi"},
             headers=auth,
         ) as response:
@@ -116,8 +117,12 @@ class TestTheTurn:
         assistant = messages[1]
         assert assistant.content == "Hello"
         assert assistant.status is MessageStatus.COMPLETE
-        # The one string that ties this transcript to a row in the ledger.
-        assert assistant.request_id == "req-test-1"
+        # The one string that ties this transcript to a row in the ledger. It is
+        # ours and is *sent*: the gateway never returns the id it used, and could
+        # not on a stream, so reading it back was a null column and a transcript
+        # that could not be reconciled.
+        assert assistant.request_id
+        assert fake_gateway.seen_headers["x-request-id"] == assistant.request_id
         assert assistant.usage == {"total_tokens": 7}
 
     @pytest.mark.asyncio
@@ -137,7 +142,7 @@ class TestTheTurn:
         )
         async with client.stream(
             "POST",
-            f"/api/conversations/{conversation_id}/messages",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
             json={"content": "hi"},
             headers=auth,
         ) as response:
@@ -158,7 +163,7 @@ class TestTheTurn:
         fake_gateway.set_stream_error(403, {"error": {"message": "Blocked.", "code": "blocked"}})
         async with client.stream(
             "POST",
-            f"/api/conversations/{conversation_id}/messages",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
             json={"content": "hi"},
             headers=auth,
         ) as response:
@@ -189,7 +194,7 @@ class TestTheTurn:
         fake_gateway.set_stream([b"data: [DONE]\n\n"])
         async with client.stream(
             "POST",
-            f"/api/conversations/{conversation_id}/messages",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
             json={"content": "hi"},
             headers=auth,
         ) as response:
@@ -215,7 +220,7 @@ class TestTheTurn:
         fake_gateway.set_stream(sse(delta("ok")))
         async with client.stream(
             "POST",
-            f"/api/conversations/{conversation_id}/messages",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
             json={"content": "hi"},
             headers=auth,
         ) as response:
@@ -233,7 +238,7 @@ class TestTheTurn:
             fake_gateway.set_stream(sse(delta("ok")))
             async with client.stream(
                 "POST",
-                f"/api/conversations/{conversation_id}/messages",
+                f"{MOUNT}/api/conversations/{conversation_id}/messages",
                 json={"content": "hi"},
                 headers=auth,
             ) as response:
@@ -259,7 +264,7 @@ class TestOwnership:
         theirs = await signed_in(subject="bob")
         conversation_id = await start(client, mine)
         assert (
-            await client.get(f"/api/conversations/{conversation_id}", headers=theirs)
+            await client.get(f"{MOUNT}/api/conversations/{conversation_id}", headers=theirs)
         ).status_code == 404
 
     @pytest.mark.asyncio
@@ -269,7 +274,7 @@ class TestOwnership:
         mine = await signed_in(subject="alice")
         theirs = await signed_in(subject="bob")
         await start(client, mine)
-        assert (await client.get("/api/conversations", headers=theirs)).json()["data"] == []
+        assert (await client.get(f"{MOUNT}/api/conversations", headers=theirs)).json()["data"] == []
 
     @pytest.mark.asyncio
     async def test_delete_archives_and_keeps_the_rows(
@@ -282,9 +287,9 @@ class TestOwnership:
         auth = await signed_in()
         conversation_id = await start(client, auth)
         assert (
-            await client.delete(f"/api/conversations/{conversation_id}", headers=auth)
+            await client.delete(f"{MOUNT}/api/conversations/{conversation_id}", headers=auth)
         ).status_code == 204
-        assert (await client.get("/api/conversations", headers=auth)).json()["data"] == []
+        assert (await client.get(f"{MOUNT}/api/conversations", headers=auth)).json()["data"] == []
 
         async with session_factory() as db:
             row = (await db.execute(select(Conversation))).scalar_one()
@@ -299,5 +304,5 @@ class TestModels:
         """Passed through, not filtered. Access control has one owner."""
         auth = await signed_in()
         fake_gateway.set_models(["a", "b"])
-        response = await client.get("/api/models", headers=auth)
+        response = await client.get(f"{MOUNT}/api/models", headers=auth)
         assert [m["id"] for m in response.json()["data"]] == ["a", "b"]

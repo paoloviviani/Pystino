@@ -21,20 +21,30 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY apps/gateway/pyproject.toml apps/gateway/
 COPY packages/shared-py/pyproject.toml packages/shared-py/
+# Every workspace member's manifest, even ones this image does not contain: uv
+# resolves the whole workspace from one lockfile and fails on a member it cannot
+# read. Only the manifest is needed, never the source — `--package gateway`
+# below is what keeps chat-api out of this image.
+COPY apps/chat-api/pyproject.toml apps/chat-api/
 # Hatchling validates that the readme referenced by each manifest exists.
 COPY apps/gateway/README.md apps/gateway/
 COPY packages/shared-py/README.md packages/shared-py/
+COPY apps/chat-api/README.md apps/chat-api/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-workspace
+    uv sync --frozen --no-dev --no-install-workspace --package gateway
 
 COPY apps/gateway/src apps/gateway/src
 COPY packages/shared-py/src packages/shared-py/src
 COPY apps/gateway/migrations apps/gateway/migrations
 COPY apps/gateway/alembic.ini apps/gateway/
 
+# `--package gateway`, not a bare sync: since the chat service joined the
+# workspace a bare sync tries to install it too, and fails with "Distribution
+# not found at: file:///app/apps/chat-api" — a gateway build broken by a change
+# to a different service.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --frozen --no-dev --package gateway
 
 
 # ---------------------------------------------------------------------------

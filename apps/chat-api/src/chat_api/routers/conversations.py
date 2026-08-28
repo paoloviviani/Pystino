@@ -31,6 +31,7 @@ from sqlalchemy.orm import selectinload
 from chat_api.deps import Caller, CallerDep, DbDep, GatewayDep
 from chat_api.gateway_client import GatewayError
 from chat_api.models import Conversation, Message, MessageStatus, Role
+from chat_api.routers import MOUNT_PATH
 from chat_api.schemas import (
     ConversationCreate,
     ConversationDetail,
@@ -44,7 +45,7 @@ from chat_api.types import utcnow
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api", tags=["chat"])
+router = APIRouter(prefix=f"{MOUNT_PATH}/api", tags=["chat"])
 
 #: How much of the first user message becomes the conversation title until
 #: something better exists. Naming a conversation with a model call is a
@@ -212,28 +213,37 @@ async def send(
 
     assistant_id = assistant.id
     payload = {"model": conversation.model, "messages": history}
+    # Minted here and sent to the gateway, not read back from it. See
+    # GatewayClient.stream_chat.
+    request_id = uuid.uuid4().hex
 
     async def stream() -> AsyncIterator[str]:
         # A session of its own. The request-scoped one is closed when this
         # function returns the response, and everything below runs after that.
         factory = request.app.state.session_factory
         collected: list[str] = []
-        request_id: str | None = None
         usage: dict[str, Any] | None = None
         served_model: str | None = None
         failure: str | None = None
 
         yield _sse("message", {"id": str(assistant_id), "position": assistant.position})
         try:
-            async for line, rid in gateway.stream_chat(
-                access_token=caller.access_token, body=payload
+            async for line in gateway.stream_chat(
+                access_token=caller.access_token, body=payload, request_id=request_id
             ):
-                request_id = request_id or rid
                 if not line.startswith("data:"):
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
-                    break
+                    # Read on rather than break. Breaking closes the connection
+                    # the instant the terminal frame arrives, and the gateway is
+                    # at that moment inside the database write that settles the
+                    # request — uvicorn cancels its task, the write dies with
+                    # CancelledError, and the row stays `in_progress` with a
+                    # cost of zero. Measured against the live stack on
+                    # 2026-08-28: every chat turn left an unsettled row until
+                    # this loop was made to drain.
+                    continue
                 try:
                     frame = json.loads(data)
                 except ValueError:

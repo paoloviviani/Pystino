@@ -121,6 +121,20 @@ services:
       # the repository. The setup job sets the same value on the client.
       GATEWAY_OIDC__CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?set KEYCLOAK_CLIENT_SECRET in deploy/.env}
 
+  # Only present when docker-compose.chat.yml is also passed. Everything the
+  # gateway block above needs, for the same reasons, plus the mount path: behind
+  # this proxy the chat lives at /chat of the one origin, so its callback and
+  # every cookie it sets carry that prefix.
+  chat:
+    environment:
+      CHAT_OIDC__REDIRECT_URI: ${PUBLIC_ORIGIN:-https://${PUBLIC_HOST:?set PUBLIC_HOST in deploy/.env}:${HTTPS_PORT:-443}}/chat/auth/callback
+      # Plaintext over the compose network, but under /kc — the same internal URL
+      # the gateway uses, moved by KC_HTTP_RELATIVE_PATH below.
+      CHAT_OIDC__ISSUER: http://keycloak:8080/kc/realms/llm-platform
+      CHAT_OIDC__CLIENT_SECRET: ${KEYCLOAK_CHAT_CLIENT_SECRET:-${KEYCLOAK_CLIENT_SECRET:?set KEYCLOAK_CLIENT_SECRET in deploy/.env}}
+      FORWARDED_ALLOW_IPS: "172.16.0.0/12,127.0.0.1"
+      CHAT_SESSION_COOKIE_SECURE: "true"
+
   keycloak:
     environment:
       # The advertised frontend URL, and therefore the `iss` claim. Note what
@@ -192,6 +206,16 @@ services:
           -s "attributes.\"post.logout.redirect.uris\"=\"$${PUBLIC_ORIGIN}/*\""
         echo "registered $${PUBLIC_ORIGIN}/auth/callback"
 
+        # The chat client, when the realm carries one. Same treatment, same
+        # reasoning — the exact callback, no wildcard, and a secret that is not
+        # the one in this repository. Skipped silently if the client is absent,
+        # so this overlay still works without docker-compose.chat.yml.
+        chat_id=$$($$kc get clients -r llm-platform -q clientId=llm-chat           --fields id --format csv --noquotes)
+        if [ -n "$${chat_id}" ]; then
+          $$kc update "clients/$${chat_id}" -r llm-platform             -s "redirectUris=[\"$${PUBLIC_ORIGIN}/chat/auth/callback\"]"             -s "webOrigins=[\"$${PUBLIC_ORIGIN}\"]"             -s "secret=$${CHAT_CLIENT_SECRET}"             -s "attributes.\"post.logout.redirect.uris\"=\"$${PUBLIC_ORIGIN}/chat/*\""
+          echo "registered $${PUBLIC_ORIGIN}/chat/auth/callback"
+        fi
+
         # The seeded users keep their names and their groups — that is what the
         # live scripts assert on — and lose the passwords published in
         # deploy/keycloak/README.md.
@@ -207,6 +231,7 @@ services:
       KC_ADMIN_USER: ${KEYCLOAK_ADMIN_USER:-admin}
       KC_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      CHAT_CLIENT_SECRET: ${KEYCLOAK_CHAT_CLIENT_SECRET:-${KEYCLOAK_CLIENT_SECRET}}
       SEED_PASSWORD: ${KEYCLOAK_SEED_PASSWORD:?set KEYCLOAK_SEED_PASSWORD in deploy/.env}
 
   # Only present when docker-compose.redaction.yml is also passed, which is the

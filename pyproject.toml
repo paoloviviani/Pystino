@@ -97,11 +97,13 @@ asyncio_default_fixture_loop_scope = "function"
 # nowhere, so they run here rather than rotting in a corner nobody executes.
 testpaths = [
     "apps/gateway/tests",
+    "apps/chat-api/tests",
     "packages/shared-py/tests",
     "services/redaction/tests",
 ]
 pythonpath = [
     "apps/gateway/src",
+    "apps/chat-api/src",
     "packages/shared-py/src",
     "services/redaction/src",
 ]
