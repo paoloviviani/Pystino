@@ -44,7 +44,7 @@ from gateway.deps import (
 from gateway.errors import BadRequestError, error_payload
 from gateway.models import ApiSurface
 from gateway.routers import _metered
-from gateway.routers.chat import STREAM_HEADERS, spawn_finalisation
+from gateway.routers.chat import STREAM_HEADERS, settle_completed, spawn_finalisation
 from gateway.schemas import ResponsesRequest
 from gateway.sse import chain, iter_sse_events
 from gateway.sse.pipeline import tap
@@ -250,7 +250,11 @@ async def _stream(
         finally:
             await stack.aclose()
             if completed:
-                await metered.completed(upstream_status=upstream_response.status_code)
+                await settle_completed(
+                    request,
+                    metered=metered,
+                    upstream_status=upstream_response.status_code,
+                )
             else:
                 spawn_finalisation(
                     request,

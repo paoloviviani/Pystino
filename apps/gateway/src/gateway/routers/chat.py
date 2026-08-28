@@ -350,7 +350,11 @@ async def _stream_response(
         finally:
             await stack.aclose()
             if completed:
-                await metered.completed(upstream_status=upstream_response.status_code)
+                await settle_completed(
+                    request,
+                    metered=metered,
+                    upstream_status=upstream_response.status_code,
+                )
             else:
                 # The client went away (or something failed mid-stream). We are
                 # very likely inside a cancelled task, where awaiting anything
@@ -370,6 +374,51 @@ async def _stream_response(
         media_type="text/event-stream",
         headers=STREAM_HEADERS,
     )
+
+
+async def settle_completed(
+    request: Request, *, metered: _metered.Metered, upstream_status: int | None
+) -> None:
+    """Settle a stream that ran to the end, even if the client leaves mid-write.
+
+    This looks like it could be a bare ``await metered.completed(...)`` and was
+    one, and that was a bug worth spelling out because it is invisible in every
+    test and in most manual use.
+
+    A client that closes the connection the instant it reads the terminal
+    ``data: [DONE]`` frame does so while this coroutine is inside the database
+    write that settles the request. uvicorn cancels the request task; the
+    ``await`` raises ``CancelledError`` part-way through; the connection is torn
+    down mid-statement, and the row stays ``in_progress`` with zero tokens and
+    zero cost for a request the provider generated and billed us for in full.
+    Measured against the live stack on 2026-08-28, from the chat application,
+    which drains its stream and then hangs up promptly — exactly the well-behaved
+    client that triggers it most reliably.
+
+    The disconnect branch beside this one has been cancellation-proof since it
+    was written, and its comment explains why in almost these words. The
+    reasoning was simply never applied to its neighbour: a stream that *finished*
+    looked like the safe case.
+
+    The write runs as a detached task, and this awaits it through
+    ``shield``. So the ordering is unchanged when nothing goes wrong — the
+    response does not complete until the row is settled, which is what the
+    ledger tests rely on — and when the outer task is cancelled the write is
+    already running somewhere that cancellation does not reach.
+
+    ``RequestAccounting`` opens its own session for finalisation, so the
+    detached write does not depend on a request-scoped session that is being
+    torn down. That is what makes detaching sufficient rather than merely
+    hopeful.
+    """
+    task = asyncio.create_task(metered.completed(upstream_status=upstream_status))
+    # A strong reference, for the same reason spawn_finalisation keeps one: a
+    # task nothing refers to can be collected mid-flight, losing precisely the
+    # write this exists to protect.
+    tasks: set[asyncio.Task[Any]] = request.app.state.background_tasks
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+    await asyncio.shield(task)
 
 
 def spawn_finalisation(
