@@ -8,6 +8,7 @@
  */
 
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { Chat } from "./Chat";
@@ -80,9 +81,11 @@ describe("Chat", () => {
     expect(screen.getByText(/Four\./)).toBeInTheDocument();
   });
 
-  it("renders a message that carries reasoning", async () => {
-    // The part most likely to be wired wrong, because it is the only one that
-    // needs a part component of its own.
+  it("collapses a finished message's reasoning, and opens on request", async () => {
+    // Closed once it has stopped, which is assistant-ui's own behaviour and the
+    // right one: thinking is interesting as it arrives and noise afterwards,
+    // and it is usually longer than the answer it explains.
+    const user = userEvent.setup({ delay: null });
     serve(
       conversation([
         message({
@@ -95,7 +98,20 @@ describe("Chat", () => {
     );
     render(<Chat conversationId="c1" models={MODELS} onTurnComplete={() => {}} />);
     await waitFor(() => expect(screen.getByText(/Four\./)).toBeInTheDocument());
+
+    // The disclosure is there and the thinking is not in the document yet.
+    const trigger = screen.getByRole("button", { name: /Thought/ });
+    expect(screen.queryByText(/two and two/)).not.toBeInTheDocument();
+
+    await user.click(trigger);
     expect(screen.getByText(/two and two/)).toBeInTheDocument();
+  });
+
+  it("shows no disclosure for a message that did no thinking", async () => {
+    serve(conversation([message({ id: "m2", role: "assistant", content: "Four." })]));
+    render(<Chat conversationId="c1" models={MODELS} onTurnComplete={() => {}} />);
+    await waitFor(() => expect(screen.getByText(/Four\./)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /Thought/ })).not.toBeInTheDocument();
   });
 
   it("does not remount the transcript while a turn streams", async () => {

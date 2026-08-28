@@ -4,13 +4,17 @@
   display: grid;
   grid-template-columns: 17rem 1fr;
   height: 100dvh;
+  /* The sidebar is the tinted surface and the thread is white, which is the
+     way round every chat client does it and the way round the tonal system
+     wants: the reading column gets the cleanest ground. */
   background: var(--colour-surface);
 }
 
 .sidebar {
   display: flex;
   flex-direction: column;
-  border-right: var(--border-width) solid var(--colour-border);
+  background: var(--colour-bg);
+  border-right: var(--border-width) solid var(--colour-border-quiet);
   min-height: 0;
 }
 
@@ -20,14 +24,13 @@
   justify-content: space-between;
   gap: var(--space-2);
   padding: var(--space-3);
-  border-bottom: var(--border-width) solid var(--colour-border);
+  border-bottom: var(--border-width) solid var(--colour-border-quiet);
 }
 
 .brandName {
   font-family: var(--font-sans);
-  font-size: var(--text-lg);
-  text-transform: var(--label-transform);
-  letter-spacing: var(--label-tracking);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
 }
 
 .conversations {
@@ -39,15 +42,21 @@
   gap: var(--space-1);
 }
 
+/* A rounded row, and the selected one is a tonal pill — the same treatment the
+   console's navigation uses. It was a square block filled with near-black,
+   which was the Bauhaus reading of "selected" and is the loudest thing you can
+   put in a sidebar. */
 .conversation {
   display: block;
   width: 100%;
   text-align: left;
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   border: none;
+  border-radius: var(--radius-pill);
   background: none;
-  color: var(--colour-text);
+  color: var(--colour-text-muted);
   font: inherit;
+  font-size: var(--text-sm);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -56,19 +65,23 @@
 
 .conversation:hover {
   background: var(--colour-surface-sunken);
+  color: var(--colour-text);
 }
 
-.current {
-  background: var(--colour-text);
-  color: var(--colour-text-inverse);
+.conversation:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
 }
 
+.current,
 .current:hover {
-  background: var(--colour-text);
+  background: var(--colour-accent-subtle);
+  color: var(--colour-accent);
+  font-weight: var(--weight-medium);
 }
 
 .footer {
-  border-top: var(--border-width) solid var(--colour-border);
+  border-top: var(--border-width) solid var(--colour-border-quiet);
   padding: var(--space-3);
   display: flex;
   flex-direction: column;

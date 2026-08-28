@@ -1,29 +1,46 @@
 /**
- * One conversation, rendered by assistant-ui over our own state.
+ * One conversation, rendered by assistant-ui.
  *
- * What the library supplies: the thread viewport and its auto-scroll, the
- * composer, streaming-aware markdown with code blocks, and the collapsible
- * chain-of-thought section. What stays ours: the messages, the transport, the
- * persistence, and every decision about them — `useExternalStoreRuntime` is the
- * seam that makes that division real rather than a promise.
+ * **Why this looked crude before.** We used assistant-ui's headless primitives
+ * and styled them with about a hundred lines of our own CSS. The primitives are
+ * the behaviour — the thread runtime, the viewport's auto-scroll, the composer's
+ * state, the parts model — and they carry no appearance at all. Their examples
+ * ship a three-thousand-line stylesheet on top. We had their engine and none of
+ * their bodywork.
  *
- * The streaming assistant message lives in component state until the turn ends.
- * Writing each delta into the persisted list would re-render the whole
- * transcript per token.
+ * So the structure below is theirs, class names included: `@assistant-ui/styles`
+ * is their own components compiled out of Tailwind and published as plain CSS
+ * for projects that have none, and every rule in it is keyed to an `aui-*`
+ * class. Follow the names and the thread looks like their examples; invent our
+ * own and it arrives unstyled. `aui-theme.css` maps the variables that
+ * stylesheet expects onto our tokens, so it wears this platform's palette
+ * rather than shadcn's default slate.
+ *
+ * What stays ours: the store, the transport and the persistence, through
+ * `useExternalStoreRuntime`. It is a view over our data, not an architecture we
+ * adopted.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  ActionBarPrimitive,
   AssistantRuntimeProvider,
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
   useExternalStoreRuntime,
-  useMessagePartReasoning,
 } from "@assistant-ui/react";
-import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import { Notice, Spinner } from "@llmp/ui";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  CopyIcon,
+  RefreshCwIcon,
+  SquareIcon,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { MarkdownText } from "../components/aui/MarkdownText";
+import { Reasoning } from "../components/aui/Reasoning";
 import styles from "./Chat.module.css";
 import { type Message, type Model, getConversation } from "../lib/api";
 import { textOf, toThreadMessage } from "../lib/runtime";
@@ -35,79 +52,43 @@ interface ChatProps {
   onTurnComplete: () => void;
 }
 
-/** A message body: markdown, with code blocks. */
-function MarkdownText() {
-  return <MarkdownTextPrimitive className={styles.markdown} />;
-}
-
-/**
- * The model's thinking, collapsed.
- *
- * A native `<details>`, not assistant-ui's `ChainOfThoughtPrimitive`. The
- * primitive belongs to a chain-of-thought *scope* that a plain reasoning part
- * does not establish, and using it here threw "The current scope does not have
- * a chainOfThought property" during render — one of the two crashes that made
- * this screen appear and vanish.
- *
- * `<details>` is also simply the right element: the browser supplies the
- * toggling, the keyboard behaviour and the correct role, and it degrades to
- * open text with no JavaScript at all.
- *
- * Closed by default. Reasoning is usually longer than the answer, and a
- * transcript that opens with a wall of it buries the thing the reader came for.
- * The summary says how much there is, so opening it is a choice rather than a
- * gamble.
- */
-function Reasoning() {
-  const reasoning = useMessagePartReasoning();
-  const text = reasoning?.text ?? "";
-  if (!text) return null;
-  const words = text.trim().split(/\s+/).length;
-  return (
-    <details className={styles.thinking}>
-      <summary className={styles.thinkingTrigger}>
-        Thinking · {words} {words === 1 ? "word" : "words"}
-      </summary>
-      <div className={styles.thinkingBody}>{text}</div>
-    </details>
-  );
-}
-
-/**
- * The two message components, and the object that names them.
- *
- * **Module level, and this is the whole of a bug.** Defined inline in the JSX
- * they were a new component *type* on every render of `Chat` — and `Chat`
- * re-renders on every streamed token. React cannot know that `() => …` is the
- * same component as the `() => …` it saw a moment ago, so it unmounted and
- * remounted the entire transcript per delta: the text vanished and came back,
- * dozens of times a second, for the whole of an answer.
- *
- * The `components` objects are hoisted for the same reason one step down. A
- * fresh object literal each render is a changed prop, and the remount follows
- * it even when the components inside are stable.
- */
 const PART_COMPONENTS = { Text: MarkdownText, Reasoning };
 
+/* Module level, not inline in the JSX. An inline `() => …` is a new component
+   *type* on every render, and this component re-renders on every streamed
+   token — React would unmount and remount the whole transcript per delta. That
+   was a real bug here, seen as text flickering while an answer arrived. */
 function UserMessage() {
   return (
-    <article className={styles.turn}>
-      <span className={styles.who}>You</span>
-      <MessagePrimitive.Root className={`${styles.body} ${styles.userBody}`}>
-        <MessagePrimitive.Parts />
-      </MessagePrimitive.Root>
-    </article>
+    <MessagePrimitive.Root className="aui-user-message-root" data-role="user">
+      <div className="aui-user-message-content-wrapper">
+        <div className="aui-user-message-content">
+          <MessagePrimitive.Parts />
+        </div>
+      </div>
+    </MessagePrimitive.Root>
   );
 }
 
 function AssistantMessage() {
   return (
-    <article className={styles.turn}>
-      <span className={styles.who}>Assistant</span>
-      <MessagePrimitive.Root className={styles.body}>
+    <MessagePrimitive.Root className="aui-assistant-message-root" data-role="assistant">
+      <div className="aui-assistant-message-content">
         <MessagePrimitive.Parts components={PART_COMPONENTS} />
-      </MessagePrimitive.Root>
-    </article>
+      </div>
+      <ActionBarPrimitive.Root
+        className="aui-assistant-action-bar-root"
+        hideWhenRunning
+        autohide="not-last"
+      >
+        <ActionBarPrimitive.Copy className="aui-button-icon" aria-label="Copy">
+          <CopyIcon />
+        </ActionBarPrimitive.Copy>
+        <ActionBarPrimitive.Reload className="aui-button-icon" aria-label="Regenerate">
+          <RefreshCwIcon />
+        </ActionBarPrimitive.Reload>
+      </ActionBarPrimitive.Root>
+    </MessagePrimitive.Root>
   );
 }
 
@@ -198,8 +179,8 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
         controller.signal,
       );
 
-      // The stop button leaves the message mid-flight; the server has already
-      // marked its row interrupted, so match it rather than claim completion.
+      // Stop leaves the message mid-flight; the server has already marked its
+      // row interrupted, so match it rather than claim completion.
       if (controller.signal.aborted) {
         patchLast((message) => ({ ...message, status: "interrupted" }));
       }
@@ -212,9 +193,6 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
 
   const runtime = useExternalStoreRuntime({
     isRunning: running,
-    // Our rows, converted on the way in. The adapter exists so the store stays
-    // ours; handing it pre-converted messages would put a second copy of the
-    // transcript in play.
     messages,
     convertMessage: toThreadMessage,
     onNew: async (message) => {
@@ -245,9 +223,16 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
         </select>
       </header>
 
-      <ThreadPrimitive.Root className={styles.thread}>
-        <ThreadPrimitive.Viewport className={styles.transcript} autoScroll>
+      <ThreadPrimitive.Root className="aui-root aui-thread-root">
+        <ThreadPrimitive.Viewport className="aui-thread-viewport" turnAnchor="top">
+          <ThreadPrimitive.Empty>
+            <div className="aui-thread-welcome-root">
+              <h1 className="aui-thread-welcome-message-inner">How can I help you today?</h1>
+            </div>
+          </ThreadPrimitive.Empty>
+
           <ThreadPrimitive.Messages components={MESSAGE_COMPONENTS} />
+
           {error ? (
             // The gateway's own words. "You have exceeded your monthly budget"
             // is something the reader can act on; "something went wrong" is not.
@@ -255,25 +240,46 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
               {error}
             </Notice>
           ) : null}
-        </ThreadPrimitive.Viewport>
 
-        <ComposerPrimitive.Root className={styles.composer}>
-          <ComposerPrimitive.Input
-            className={styles.input}
-            placeholder="Message"
-            aria-label="Message"
-            rows={1}
-            autoFocus
-          />
-          <ThreadPrimitive.If running={false}>
-            <ComposerPrimitive.Send className={styles.send}>Send</ComposerPrimitive.Send>
-          </ThreadPrimitive.If>
-          <ThreadPrimitive.If running>
-            {/* Only while a turn is in flight, and in the same place as Send —
-                a stop button that appears elsewhere is one nobody finds. */}
-            <ComposerPrimitive.Cancel className={styles.stop}>Stop</ComposerPrimitive.Cancel>
-          </ThreadPrimitive.If>
-        </ComposerPrimitive.Root>
+          <ThreadPrimitive.ViewportFooter className="aui-thread-viewport-footer">
+            <ThreadPrimitive.ScrollToBottom
+              className="aui-thread-scroll-to-bottom"
+              aria-label="Scroll to bottom"
+            >
+              <ArrowDownIcon />
+            </ThreadPrimitive.ScrollToBottom>
+
+            <ComposerPrimitive.Root className="aui-composer-root">
+              <div className={styles.composerShell}>
+                <ComposerPrimitive.Input
+                  className="aui-composer-input"
+                  placeholder="Send a message…"
+                  rows={1}
+                  autoFocus
+                  aria-label="Message"
+                />
+                <div className="aui-composer-action-wrapper">
+                  <span />
+                  <ThreadPrimitive.If running={false}>
+                    <ComposerPrimitive.Send className="aui-composer-send" aria-label="Send">
+                      <ArrowUpIcon className="aui-composer-send-icon" />
+                    </ComposerPrimitive.Send>
+                  </ThreadPrimitive.If>
+                  <ThreadPrimitive.If running>
+                    {/* In the same place as Send, because a stop button
+                        somewhere else is one nobody finds in time. */}
+                    <ComposerPrimitive.Cancel
+                      className="aui-composer-cancel"
+                      aria-label="Stop"
+                    >
+                      <SquareIcon className="aui-composer-cancel-icon" />
+                    </ComposerPrimitive.Cancel>
+                  </ThreadPrimitive.If>
+                </div>
+              </div>
+            </ComposerPrimitive.Root>
+          </ThreadPrimitive.ViewportFooter>
+        </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
   );
