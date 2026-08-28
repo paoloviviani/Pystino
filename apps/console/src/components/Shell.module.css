@@ -94,14 +94,11 @@
 
 .navLink {
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   color: var(--colour-text-muted);
   font-weight: var(--label-weight);
   letter-spacing: 0.01em;
   text-decoration: none;
-  /* Reserves the space the active state's rule will occupy, so selecting a tab
-     does not shift the row by 3px. */
-  border-bottom: 3px solid transparent;
 }
 
 .navLink:hover {
@@ -114,14 +111,26 @@
   box-shadow: var(--focus-ring);
 }
 
-/* Underscored rather than filled. A filled tab in this palette is a block of
-   colour in the chrome, which is exactly what the "colour is a signal" rule
-   above rules out — the nav is not telling anyone anything urgent. A 3px rule
-   under the current section is the ruled-layout way to say the same thing. */
+/* Filled, not underscored.
+   
+   It was a 3px rule under the current section, which was right when the whole
+   layout was ruled and colour was reserved for signals. Two things now say
+   otherwise: a filled tonal pill is how this language marks a selected
+   navigation item, and the underline sat on the header's own bottom edge —
+   3px of accent a pixel above 1px of border, with the link's rounded corners
+   between them, read as a clipped box rather than as a marker.
+   
+   The pill also needs no reserved space, so nothing shifts when the selection
+   moves. */
 .navLinkActive {
-  color: var(--colour-text);
-  font-weight: var(--weight-bold);
-  border-bottom-color: var(--colour-accent);
+  background: var(--colour-accent-subtle);
+  color: var(--colour-accent);
+  font-weight: var(--weight-medium);
+}
+
+.navLinkActive:hover {
+  background: var(--colour-accent-subtle);
+  color: var(--colour-accent);
 }
 
 .identity {
