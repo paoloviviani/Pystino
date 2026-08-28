@@ -14,9 +14,11 @@ traps that only show up on the live stack. Read it before changing anything;
   dependency with a non-OSI licence, a CLA, or an open-core model (ADR 0001).
 - **Accounting and quota logic get tests specifically.** A wrong answer there is a
   wrong invoice, not a stack trace.
-- **`.gitlab-token` at the repo root is a credential: never read, cat or print it.**
-  To push or file MRs, source it (`set -a; . .gitlab-token; set +a`) — it defines
-  `GITLAB_TOKEN`, used against `example.invalid`.
+- **`.gitlab-token` / `.gh-token` at the repo root are credentials: never read,
+  cat or print them.** Source one (`set -a; . .gh-token; set +a`) and use a
+  throwaway credential helper — never argv, config or logs. They define
+  `GITLAB_TOKEN` (example.invalid, the original home) and `GH_TOKEN`
+  (github.com/paoloviviani/Pistin, current origin).
 - **The stack is loopback-only by default.** Nothing may be published on a routable
   address except through `docker-compose.proxy.yml` (Caddy TLS + rotated credentials);
   `scripts/test_public_tls_live.py` enforces that by requiring every other port to be
