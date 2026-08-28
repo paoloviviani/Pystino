@@ -1,24 +1,24 @@
 import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner, Stat, Table } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useId, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
+  useDeleteRedactionRule,
   usePreviewRedaction,
   useRedactionStatus,
   useRedactionRules,
   useSetRedactionEngine,
-  useSetRedactionPolicy,
+  useUpdateRedactionRule,
 } from "../lib/admin";
-import { entityLabel, modeLabel } from "../lib/entities";
+import { entityLabel, modeLabel, summarisePolicy } from "../lib/entities";
 import type {
   RedactionEngineOption,
-  RedactionPolicy,
   RedactionPreviewSpan,
   RedactionScope,
   RedactionStatus,
+  RedactionRule,
 } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
-import { PolicyFields } from "../components/PolicyFields";
 import { SCOPES, SubjectPicker, scopeNoun } from "../components/SubjectPicker";
 import styles from "./Admin.module.css";
 
@@ -86,8 +86,7 @@ function Detail({ status }: { status: RedactionStatus }) {
       ))}
 
       <EngineList status={status} />
-      <PolicyEditor status={status} />
-      <ScopedRules />
+      <RulesList />
       <PreviewBox />
 
       <Card>
@@ -249,111 +248,121 @@ function Detail({ status }: { status: RedactionStatus }) {
  * for.
  */
 /**
- * What the deployment policy is *not*: the whole answer.
+ * Every rule, in force order, with the catch-all first.
  *
- * Saving the card above sets one policy, the deployment's. Rules per provider,
- * model, group, user or key layer on top of it and can only tighten (ADR 0038).
- * Without this card the screen showed a Save button and no sign that scopes
- * existed at all, so somebody setting a policy for one group had nowhere to
- * start — reported from the live console, which is the only place it shows.
+ * This is the whole answer to "what does this deployment redact", which is why
+ * it is the first thing on the screen after the engine. The previous shape had a
+ * deployment policy edited here and rules edited elsewhere, so the screen showed
+ * half the answer and gave no sign that the other half existed — reported from
+ * the live console, twice.
+ *
+ * Configuration is a page per rule, not a dialog: a policy is thirty entity
+ * types, a set of patterns and an allow-list.
  */
-function ScopedRules() {
-  const rules = useRedactionRules();
+function RulesList() {
+  const rules = useRedactionRules({ limit: 200 });
+  const update = useUpdateRedactionRule();
+  const remove = useDeleteRedactionRule();
   const navigate = useNavigate();
-  const items = rules.data?.items ?? [];
 
-  const counts = new Map<string, number>();
-  for (const rule of items) {
-    if (rule.is_active) counts.set(rule.scope, (counts.get(rule.scope) ?? 0) + 1);
-  }
-
-  return (
-    <Card
-      title="Scoped rules"
-      description="Policies for one provider, model, group, person or key. They layer on the
-        policy above and can only tighten it."
-    >
-      {rules.isPending ? (
-        <Spinner />
-      ) : counts.size === 0 ? (
-        <p className={styles.muted}>No scoped rules. The policy above applies to everyone.</p>
-      ) : (
-        <div className={styles.chips}>
-          {[...counts].map(([scope, count]) => (
-            <Badge key={scope}>
-              {count} {scopeNoun(scope as RedactionScope).toLowerCase()}
-              {count === 1 ? "" : "s"}
-            </Badge>
-          ))}
-        </div>
-      )}
-      <div>
-        <Button onClick={() => navigate("/admin/redaction/rules")}>
-          {counts.size === 0 ? "Add a rule" : "Manage rules"}
-        </Button>
-      </div>
-    </Card>
+  // The catch-all first, then the narrower scopes in the order they are folded.
+  // Reading order is fold order, so the screen matches how a request is decided.
+  const order: RedactionScope[] = ["all", "provider", "model", "group", "user", "api_key"];
+  const items = [...(rules.data?.items ?? [])].sort(
+    (a, b) => order.indexOf(a.scope) - order.indexOf(b.scope),
   );
-}
+  const hasCatchAll = items.some((rule) => rule.scope === "all" && rule.is_active);
 
-function PolicyEditor({ status }: { status: RedactionStatus }) {
-  const save = useSetRedactionPolicy();
-  // Seeded once and then owned by the form. Deriving it from `status` on every
-  // render would discard an edit the moment the status query refetched.
-  const [draft, setDraft] = useState<RedactionPolicy>(() => structuredClone(status.policy));
-  const [reason, setReason] = useState("");
-
-  const submit = () =>
-    save.mutate({ policy: draft, reason: reason.trim() }, { onSuccess: () => setReason("") });
-
-  return (
-    <Card
-      title="Redacted entities"
-      description="What is done with each type the detector finds. Applies everywhere; scoped
-        rules below can tighten it further."
-    >
-      <div className={styles.form}>
-        {save.error ? (
-          <Notice tone="danger">
-            {save.error instanceof Error ? save.error.message : "Unknown error."}
-          </Notice>
-        ) : null}
-        {save.isSuccess && !save.isPending && (
-          <Notice tone="info">
-            Saved. Other workers apply it within {Math.round(status.propagation_seconds)}s.
-          </Notice>
-        )}
-        {status.policy_source === "environment" && (
-          <Notice tone="info">
-            The deployment&rsquo;s default policy. Saving here overrides it and records who and
-            why.
-          </Notice>
-        )}
-
-        <PolicyFields
-          policy={draft}
-          onChange={setDraft}
-          entityTypes={status.service?.entities ?? []}
-          scoreThreshold={status.score_threshold}
-        />
-
-        <Input
-          label="Change reason"
-          value={reason}
-          onChange={(event) => setReason(event.target.value)}
-          placeholder="why this changed"
-          hint="Required when the change protects less. Kept permanently."
-        />
-
-        <div>
-          <Button variant="primary" busy={save.isPending} onClick={submit}>
-            Save policy
+  const columns: Column<RedactionRule>[] = [
+    {
+      key: "subject",
+      header: "Applies to",
+      render: (rule) => (
+        <>
+          <div>
+            <Link to={`/admin/redaction/rules/${rule.id}`}>
+              {rule.scope === "all" ? "Every request" : (rule.subject_label ?? "deleted subject")}
+            </Link>
+          </div>
+          <div className={styles.muted}>
+            {scopeNoun(rule.scope)}
+            {rule.name ? ` · ${rule.name}` : ""}
+          </div>
+        </>
+      ),
+    },
+    { key: "policy", header: "Policy", render: (rule) => summarisePolicy(rule.policy) },
+    {
+      key: "state",
+      header: "State",
+      render: (rule) =>
+        rule.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>,
+    },
+    {
+      key: "actions",
+      header: "",
+      render: (rule) => (
+        <div className={styles.rowActions}>
+          <Button onClick={() => navigate(`/admin/redaction/rules/${rule.id}`)}>Edit</Button>
+          <Button
+            busy={update.isPending && update.variables?.id === rule.id}
+            onClick={() => update.mutate({ id: rule.id, is_active: !rule.is_active })}
+          >
+            {rule.is_active ? "Deactivate" : "Activate"}
+          </Button>
+          <Button
+            variant="ghost"
+            busy={remove.isPending && remove.variables === rule.id}
+            onClick={() => remove.mutate(rule.id)}
+          >
+            Delete
           </Button>
         </div>
-      </div>
-    </Card>
+      ),
+    },
+  ];
+
+  return (
+    <>
+      {/* Not a warning: a deployment that redacts nothing may be the intended
+          one. It is stated because the alternative is a screen that looks
+          configured and is not. */}
+      {!rules.isPending && !hasCatchAll && (
+        <Notice tone="info" title="Nothing is redacted by default">
+          Prompts reach providers as callers wrote them unless a rule below says
+          otherwise. Add a rule for every request to change that.
+        </Notice>
+      )}
+      <Card
+        title="Rules"
+        description="The strictest applicable rule wins, so adding one can only protect more."
+        flush
+        actions={
+          <Button variant="primary" onClick={() => navigate("/admin/redaction/rules/new")}>
+            New rule
+          </Button>
+        }
+      >
+        {rules.isPending ? (
+          <Spinner label="Loading rules" />
+        ) : rules.error ? (
+          <Notice tone="danger" title="Could not load rules">
+            {rules.error instanceof Error ? rules.error.message : "Unknown error."}
+          </Notice>
+        ) : (
+          <Table
+            columns={columns}
+            rows={items}
+            rowKey={(rule) => rule.id}
+            empty="No rules, so nothing is redacted."
+            caption="Redaction rules and the subject each one applies to."
+          />
+        )}
+      </Card>
+    </>
   );
 }
+
 
 /**
  * What the provider would actually receive.
