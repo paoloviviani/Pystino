@@ -40,21 +40,32 @@ export function toThreadMessage(message: Message): ThreadMessageLike {
     parts.push({ type: "text", text: "" });
   }
 
-  return {
+  const base = {
     id: message.id,
-    role: message.role === "system" ? "system" : message.role,
+    role: message.role === "system" ? ("system" as const) : message.role,
     content: parts,
     createdAt: new Date(message.created_at),
+  };
+
+  // **Only assistant messages carry a status.** The converter throws
+  // "status is only supported for assistant messages" otherwise — and it runs
+  // on every snapshot, so setting it on the user's turn crashed the whole
+  // thread the moment a conversation with any history loaded. That is the bug
+  // that made the app flash and vanish on sign-in.
+  if (message.role !== "assistant") return base;
+
+  return {
+    ...base,
     // `running` keeps the composer in its stop state and the message marked
     // in-flight; anything else is terminal.
     status:
       message.status === "streaming"
-        ? { type: "running" }
+        ? { type: "running" as const }
         : message.status === "failed"
-          ? { type: "incomplete", reason: "error" }
+          ? { type: "incomplete" as const, reason: "error" as const }
           : message.status === "interrupted"
-            ? { type: "incomplete", reason: "cancelled" }
-            : { type: "complete", reason: "stop" },
+            ? { type: "incomplete" as const, reason: "cancelled" as const }
+            : { type: "complete" as const, reason: "stop" as const },
   };
 }
 
