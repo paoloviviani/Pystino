@@ -15,7 +15,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AssistantRuntimeProvider,
-  ChainOfThoughtPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
@@ -44,22 +43,33 @@ function MarkdownText() {
 /**
  * The model's thinking, collapsed.
  *
- * Collapsed by default and never on by accident: reasoning is usually longer
- * than the answer, and a transcript that opens with a wall of it buries the
- * thing the reader came for. The trigger says how much there is, so choosing to
- * open it is an informed choice rather than a gamble.
+ * A native `<details>`, not assistant-ui's `ChainOfThoughtPrimitive`. The
+ * primitive belongs to a chain-of-thought *scope* that a plain reasoning part
+ * does not establish, and using it here threw "The current scope does not have
+ * a chainOfThought property" during render — one of the two crashes that made
+ * this screen appear and vanish.
+ *
+ * `<details>` is also simply the right element: the browser supplies the
+ * toggling, the keyboard behaviour and the correct role, and it degrades to
+ * open text with no JavaScript at all.
+ *
+ * Closed by default. Reasoning is usually longer than the answer, and a
+ * transcript that opens with a wall of it buries the thing the reader came for.
+ * The summary says how much there is, so opening it is a choice rather than a
+ * gamble.
  */
 function Reasoning() {
   const reasoning = useMessagePartReasoning();
   const text = reasoning?.text ?? "";
   if (!text) return null;
+  const words = text.trim().split(/\s+/).length;
   return (
-    <ChainOfThoughtPrimitive.Root className={styles.thinking}>
-      <ChainOfThoughtPrimitive.AccordionTrigger className={styles.thinkingTrigger}>
-        Thinking
-      </ChainOfThoughtPrimitive.AccordionTrigger>
+    <details className={styles.thinking}>
+      <summary className={styles.thinkingTrigger}>
+        Thinking · {words} {words === 1 ? "word" : "words"}
+      </summary>
       <div className={styles.thinkingBody}>{text}</div>
-    </ChainOfThoughtPrimitive.Root>
+    </details>
   );
 }
 
