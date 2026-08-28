@@ -270,3 +270,26 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* The administration landing page. Two columns on a laptop, one on a phone —
+   six cards in three columns read as a toolbar rather than a set of places. */
+.sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: var(--space-3);
+}
+
+.sectionLink {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+}
+
+.sectionLink:hover {
+  background: var(--colour-surface-sunken);
+}
+
+.sectionLink:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}

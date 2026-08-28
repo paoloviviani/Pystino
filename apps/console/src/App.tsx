@@ -10,6 +10,7 @@ import { AdminProviders } from "./routes/AdminProviders";
 import { AdminQuotas } from "./routes/AdminQuotas";
 import { AdminRedaction } from "./routes/AdminRedaction";
 import { AdminRedactionRule } from "./routes/AdminRedactionRule";
+import { Admin } from "./routes/Admin";
 import { AdminReports } from "./routes/AdminReports";
 import { AdminUsers } from "./routes/AdminUsers";
 import { NotFound } from "./routes/NotFound";
@@ -94,6 +95,16 @@ export function App() {
             model again. Kept as a redirect rather than deleted: the tab existed
             long enough to be bookmarked, and a 404 would read as a broken
             deployment rather than as a screen that moved. */}
+        {/* The way in. A landing page, not a redirect to the first section:
+            the six screens under here are not a sequence. */}
+        <Route
+          path="/admin"
+          element={
+            <RequireAdmin me={me_}>
+              <Admin />
+            </RequireAdmin>
+          }
+        />
         <Route path="/admin/pricing" element={<Navigate to="/admin/models" replace />} />
         <Route
           path="/admin/quotas"
