@@ -5,6 +5,10 @@ import "@llmp/ui/tokens.css";
    Their preflight is scoped to `.aui-thread-root`, so nothing here escapes
    into the rest of the app. */
 import "@assistant-ui/styles/index.css";
+/* KaTeX's own stylesheet. Self-hosted like everything else — Vite bundles the
+   fonts it references as assets, so nothing is fetched from a CDN and the CSP
+   stays as it is. */
+import "katex/dist/katex.min.css";
 import "./aui-theme.css";
 
 import { StrictMode } from "react";

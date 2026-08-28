@@ -92,7 +92,19 @@ export interface Me {
 export interface Model {
   id: string;
   owned_by: string | null;
+  /** "reasoning", "tools", "json_mode" — what the gateway says it can do. */
+  supported_features: string[];
 }
+
+/**
+ * Can this model be asked to think aloud?
+ *
+ * A capability, not a name: `deepseek-v4-flash-0731` reasons and does not say
+ * so in its id, while a model called "-thinking" might not be granted here at
+ * all. The gateway already carries the answer on the model card.
+ */
+export const canThink = (model: Model | undefined): boolean =>
+  model?.supported_features.includes("reasoning") ?? false;
 
 export interface Conversation {
   id: string;

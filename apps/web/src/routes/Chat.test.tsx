@@ -55,7 +55,7 @@ function serve(detail: ConversationDetail) {
   );
 }
 
-const MODELS = [{ id: "test-model", owned_by: "test" }];
+const MODELS = [{ id: "test-model", owned_by: "test", supported_features: ["reasoning"] }];
 
 describe("Chat", () => {
   beforeEach(() => {

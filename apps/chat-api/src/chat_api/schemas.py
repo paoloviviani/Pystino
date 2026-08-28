@@ -61,11 +61,22 @@ class SendMessage(BaseModel):
     #: Overrides the conversation's model for this turn and every turn after,
     #: because a picker that silently reverts is worse than no picker.
     model: str | None = None
+    #: Ask the model to think aloud, when it is one that can.
+    #:
+    #: An *intent*, not a provider parameter: the browser says what it wants and
+    #: this service decides how to ask for it. The same rule the gateway applies
+    #: to plugins, one layer up — the caller should not have to know that one
+    #: counterparty spells it `reasoning_effort` and another
+    #: `chat_template_kwargs.thinking`.
+    thinking: bool = False
 
 
 class ModelOut(BaseModel):
     id: str
     owned_by: str | None = None
+    #: "reasoning", "tools", "json_mode". The chat reads `reasoning` to decide
+    #: whether to ask a model to think aloud.
+    supported_features: list[str] = Field(default_factory=list)
 
 
 class Me(BaseModel):

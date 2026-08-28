@@ -92,7 +92,16 @@ async def models(caller: CallerDep, gateway: GatewayDep) -> dict[str, Any]:
         available = await gateway.models(caller.access_token)
     except GatewayError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
-    return {"data": [ModelOut(id=m.id, owned_by=m.owned_by).model_dump() for m in available]}
+    return {
+        "data": [
+            ModelOut(
+                id=m.id,
+                owned_by=m.owned_by,
+                supported_features=list(m.supported_features),
+            ).model_dump()
+            for m in available
+        ]
+    }
 
 
 @router.get("/conversations", response_model=dict)
@@ -310,7 +319,16 @@ async def send(
     history.append({"role": Role.USER.value, "content": body.content})
 
     assistant_id = assistant.id
-    payload = {"model": conversation.model, "messages": history}
+    payload: dict[str, Any] = {"model": conversation.model, "messages": history}
+    if body.thinking:
+        # `reasoning_effort`, the OpenAI-compatible spelling, and the one this
+        # deployment's models answer to. Measured on 2026-08-28 against
+        # deepseek-v4-flash-0731, which is a *hybrid*: it reasons only when
+        # asked, and with no parameter at all returns `content` and nothing
+        # else. `chat_template_kwargs: {"thinking": true}` works on it too —
+        # the vLLM-side switch — but is the vendor's spelling rather than the
+        # portable one, so it is not what we send.
+        payload["reasoning_effort"] = "medium"
     # Minted here and sent to the gateway, not read back from it. See
     # GatewayClient.stream_chat.
     request_id = uuid.uuid4().hex
