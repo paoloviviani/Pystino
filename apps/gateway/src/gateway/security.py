@@ -19,8 +19,11 @@ indexed row fetch plus one constant-time comparison.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import hmac
+import json
 import secrets
 from dataclasses import dataclass
 from typing import Final
@@ -98,3 +101,27 @@ def parse_authorization_header(value: str | None) -> str | None:
         candidate = rest.strip()
         return candidate or None
     return stripped
+
+
+def looks_like_jwt(credential: str) -> bool:
+    """Is this credential a JWT rather than one of our API keys?
+
+    Called before any database work, so that presenting an OIDC access token
+    costs no query and presenting a key costs no signature check.
+
+    Deciding on the *shape of our keys* was rejected: ``extract_prefix`` accepts
+    anything with two underscores, and a JWT's base64url body may legitimately
+    contain them — so a token would occasionally be sent down the key path and
+    fail with the wrong error. This asks the token instead: three dot-separated
+    parts whose first decodes to a JOSE header naming an algorithm. Nothing that
+    is not a JWS can pass, and every JWS does.
+    """
+    parts = credential.split(".")
+    if len(parts) != 3:
+        return False
+    try:
+        # base64url without padding, which is what JWS uses.
+        header = json.loads(base64.urlsafe_b64decode(parts[0] + "=" * (-len(parts[0]) % 4)))
+    except (ValueError, binascii.Error):
+        return False
+    return isinstance(header, dict) and isinstance(header.get("alg"), str)

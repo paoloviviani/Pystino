@@ -18,12 +18,14 @@ from gateway.accounting import TokenEstimator
 from gateway.config import Settings
 from gateway.errors import AuthenticationError, PermissionError_
 from gateway.models import ApiKey, Group, User
+from gateway.oidc import OIDCClient, OIDCError, sync_user_from_claims
 from gateway.providers import ProviderRegistry
 from gateway.quota import QuotaEngine, QuotaSubject
 from gateway.redaction import Redactor
 from gateway.secrets import SecretBox
 from gateway.security import (
     extract_prefix,
+    looks_like_jwt,
     parse_authorization_header,
     verify_api_key,
 )
@@ -158,15 +160,18 @@ async def resolve_api_key(session: AsyncSession, secret: str) -> ApiKey:
     return api_key
 
 
-def resolve_billing_group(api_key: ApiKey) -> Group:
+def resolve_billing_group(user: User, *, pinned: Group | None = None) -> Group:
     """Decide which group pays, and check the caller may still charge it.
 
     A key may pin a group; otherwise the user's current default applies. Either
     way membership is re-checked here rather than trusted from when the key was
     minted, so leaving a group immediately stops you billing it.
+
+    A bearer caller has no key and so can never pin: the user's default is the
+    only answer, and the same membership check applies to it. Nothing about
+    *how* the caller authenticated changes who pays.
     """
-    user = api_key.user
-    group = api_key.billing_group or user.default_billing_group
+    group = pinned or user.default_billing_group
 
     if group is None:
         raise PermissionError_(
@@ -214,10 +219,51 @@ async def get_principal(
             "'Authorization: Bearer <key>'."
         )
 
+    if looks_like_jwt(secret):
+        return await _bearer_principal(request, session, secret)
+
     api_key = await resolve_api_key(session, secret)
-    group = resolve_billing_group(api_key)
+    group = resolve_billing_group(api_key.user, pinned=api_key.billing_group)
     await _touch_last_used(session, api_key)
     return Principal(user=api_key.user, billing_group=group, api_key=api_key)
+
+
+async def _bearer_principal(
+    request: Request, session: AsyncSession, token: str
+) -> Principal:
+    """Authenticate a ``/v1`` caller holding an OIDC access token.
+
+    Reached only for a credential shaped like a JWT, so an API key never pays
+    for the signature work and a token never costs a database lookup on a prefix
+    it does not have.
+
+    The resulting principal is indistinguishable from a key-authenticated one
+    apart from ``api_key`` being None, which is the point: quotas, model access,
+    redaction scoping and the ledger all read the user and the group, and none of
+    them needs to know which credential arrived.
+    """
+    client: OIDCClient | None = getattr(request.app.state, "oidc_client", None)
+    settings: Settings = request.app.state.settings
+    if client is None or not settings.oidc.access_token_audience:
+        # Deliberately the same message a bad key gets. A deployment that does
+        # not accept tokens should not confirm to a prober that it has an
+        # identity provider at all.
+        raise AuthenticationError("Invalid API key provided.")
+
+    try:
+        claims = await client.validate_access_token(token)
+        user = await sync_user_from_claims(session, claims=claims, settings=settings.oidc)
+    except OIDCError as exc:
+        # Logged in full, returned as one word: the reason a token failed is a
+        # map of the validator for anyone holding a forged one.
+        logger.info("access token rejected: %s", exc)
+        raise AuthenticationError("Invalid API key provided.") from exc
+
+    if not user.is_active:
+        raise AuthenticationError("Invalid API key provided.")
+
+    await session.commit()
+    return Principal(user=user, billing_group=resolve_billing_group(user))
 
 
 async def load_user_for_management(session: AsyncSession, user_id: uuid.UUID) -> User:

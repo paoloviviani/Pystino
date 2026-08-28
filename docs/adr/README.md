@@ -50,6 +50,8 @@ verified is marked as such in the ADR that depends on it.
 | [0036](0036-model-page.md) | A model's price belongs on the model's page, not on a screen of its own |
 | [0037](0037-redaction-policy.md) | One engine, and a per-entity redaction policy an admin can set |
 | [0038](0038-scoped-redaction.md) | Redaction scoped per provider, model, group, user and key, where a scope can only tighten |
+| [0039](0039-redaction-rules-only.md) | There is no deployment policy, only rules; the catch-all is one of them, and the default protects nothing |
+| [0040](0040-bearer-tokens-on-v1.md) | OIDC access tokens as a `/v1` credential, gated by audience |
 
 ## Decisions recorded now, implemented later
 
@@ -78,6 +80,8 @@ Everything else in the brief's assumptions was validated as correct.
 ## Plans
 
 - [phase-2-plan.md](../phase-2-plan.md) — redaction and the console, sequenced.
+- [phase-3-plan.md](../phase-3-plan.md) — the chat application: what is built, what
+  the gateway makes redundant, and what was rejected.
 
 ## Writing a new one
 
