@@ -1,7 +1,9 @@
 # 0034 — Bauhaus as the design language, and a self-hosted geometric sans
 
 - Date: 2026-08-24
-- Status: **accepted, built**
+- Status: **superseded** by [0042](0042-material-design-3.md). The reasoning
+  below still holds for the style it chose; the style was the wrong one for a
+  console of figures, which is what 0042 records.
 - Requested as: "change the design language to something more bauhaus/mid-century,
   with bolder colors, and geometry" — grid systems, sans-serif, a red-blue-yellow
   palette, circles/triangles/squares, minimal text.

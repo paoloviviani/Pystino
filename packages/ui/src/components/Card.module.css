@@ -1,6 +1,9 @@
 .card {
   background: var(--colour-surface);
-  border: var(--border-width) solid var(--colour-border);
+  /* The quiet rule, not the strong one. A white card on a tinted page is
+     already separated by tone; the border is there to define the edge, not to
+     draw it. */
+  border: var(--border-width) solid var(--colour-border-quiet);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
   overflow: hidden;

@@ -96,10 +96,13 @@ export function Shell({ me, children }: ShellProps) {
       <header className={styles.header}>
         <div className={styles.headerInner}>
           <div className={styles.brand}>
-            {/* Circle, triangle, square — the movement's own signature rather
-                than a logo, which is the foundation's to supply. The circle and
-                the square are pseudo-elements; the triangle needs a real element
-                because it is drawn with borders. */}
+            {/* Circle, triangle, square — a placeholder rather than a logo,
+                which is the foundation's to supply. It outlived the Bauhaus
+                palette that chose it, and is kept because three plain shapes in
+                the accent's own hues say "this is a tool" without pretending to
+                be branding. The circle and the square are pseudo-elements; the
+                triangle needs a real element because it is drawn with
+                borders. */}
             <span className={styles.brandMark} aria-hidden="true">
               <span className={styles.brandShape} />
             </span>

@@ -53,6 +53,7 @@ verified is marked as such in the ADR that depends on it.
 | [0039](0039-redaction-rules-only.md) | There is no deployment policy, only rules; the catch-all is one of them, and the default protects nothing |
 | [0040](0040-bearer-tokens-on-v1.md) | OIDC access tokens as a `/v1` credential, gated by audience |
 | [0041](0041-chat-frontend-stack.md) | A Vite SPA on `packages/ui`, with assistant-ui for the thread (supersedes 0015's framework choice) |
+| [0042](0042-material-design-3.md) | Material Design 3, tuned for reading (supersedes 0034) |
 
 ## Decisions recorded now, implemented later
 
@@ -70,6 +71,8 @@ verified is marked as such in the ADR that depends on it.
 
 Worth knowing which of the starting assumptions changed, and why:
 
+- **Bauhaus → Material Design 3** ([0042](0042-material-design-3.md)) — an
+  authentic poster idiom, applied to pages of figures, was hard to read.
 - **Next.js → Vite** ([0041](0041-chat-frontend-stack.md)) — decided before
   `packages/ui`, the console or `chat-api` existed. **assistant-ui was kept**,
   after a first draft of 0041 rejected it on three claims that turned out to be
