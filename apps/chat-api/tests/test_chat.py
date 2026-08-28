@@ -8,15 +8,18 @@ conversation never being visible to another person.
 
 from __future__ import annotations
 
+import asyncio
+import json
 from typing import Any
 
 import httpx
 import pytest
 from chat_api.models import Conversation, Message, MessageStatus
 from chat_api.routers import MOUNT_PATH as MOUNT
-from tests.conftest import FakeGateway
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from tests.conftest import FakeGateway
 
 
 def sse(*frames: dict[str, Any]) -> list[bytes]:
@@ -306,3 +309,126 @@ class TestModels:
         fake_gateway.set_models(["a", "b"])
         response = await client.get(f"{MOUNT}/api/models", headers=auth)
         assert [m["id"] for m in response.json()["data"]] == ["a", "b"]
+
+
+class TestReasoning:
+    """A model that thinks out loud.
+
+    There is no standard spelling for a reasoning delta, so the parametrisation
+    is the test: reading only one of these makes a model that thinks visibly
+    look like a model that stalled.
+    """
+
+    @pytest.mark.parametrize(
+        "key", ["reasoning_content", "reasoning", "thinking", "reasoning_text"]
+    )
+    @pytest.mark.asyncio
+    async def test_every_spelling_is_relayed_and_stored(
+        self,
+        key: str,
+        client: httpx.AsyncClient,
+        signed_in: Any,
+        fake_gateway: FakeGateway,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        auth = await signed_in()
+        conversation_id = await start(client, auth)
+        fake_gateway.set_stream(
+            sse(
+                {"model": "m", "choices": [{"index": 0, "delta": {key: "thinking…"}}]},
+                delta("answer"),
+            )
+        )
+        async with client.stream(
+            "POST",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
+            json={"content": "hi"},
+            headers=auth,
+        ) as response:
+            body = "".join([chunk async for chunk in response.aiter_text()])
+
+        assert "event: reasoning" in body
+        async with session_factory() as db:
+            assistant = (
+                await db.execute(select(Message).where(Message.role == "assistant"))
+            ).scalar_one()
+        assert assistant.reasoning == "thinking…"
+        # Kept apart from the answer, because history re-sent to the model must
+        # not carry it back.
+        assert assistant.content == "answer"
+
+    @pytest.mark.asyncio
+    async def test_reasoning_is_not_sent_back_as_history(
+        self,
+        client: httpx.AsyncClient,
+        signed_in: Any,
+        fake_gateway: FakeGateway,
+    ) -> None:
+        auth = await signed_in()
+        conversation_id = await start(client, auth)
+        for _ in range(2):
+            fake_gateway.set_stream(
+                sse(
+                    {
+                        "model": "m",
+                        "choices": [{"index": 0, "delta": {"reasoning_content": "SECRET"}}],
+                    },
+                    delta("answer"),
+                )
+            )
+            async with client.stream(
+                "POST",
+                f"{MOUNT}/api/conversations/{conversation_id}/messages",
+                json={"content": "hi"},
+                headers=auth,
+            ) as response:
+                [chunk async for chunk in response.aiter_text()]
+
+        assert fake_gateway.seen_body is not None
+        sent = json.dumps(fake_gateway.seen_body)
+        assert "SECRET" not in sent, "the model's own thinking was replayed to it as history"
+        assert "answer" in sent
+
+
+class TestStopping:
+    @pytest.mark.asyncio
+    async def test_stopping_keeps_what_was_generated(
+        self,
+        client: httpx.AsyncClient,
+        signed_in: Any,
+        fake_gateway: FakeGateway,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Pressing stop closes the connection mid-stream.
+
+        The tokens so far were generated and billed by the gateway, so they are
+        kept and the row says `interrupted`. Discarding them would make the
+        transcript disagree with the ledger — and the write happens inside a
+        generator being closed, which is exactly where an unshielded await is
+        torn down part-way through.
+        """
+        auth = await signed_in()
+        conversation_id = await start(client, auth)
+        fake_gateway.set_stream(sse(delta("par"), delta("tial"), delta(" more")))
+
+        async with client.stream(
+            "POST",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
+            json={"content": "hi"},
+            headers=auth,
+        ) as response:
+            # Read one chunk, then walk away — the stop button.
+            async for _ in response.aiter_text():
+                break
+
+        # The generator's close is scheduled; give it a moment to run.
+        await asyncio.sleep(0.2)
+        async with session_factory() as db:
+            assistant = (
+                await db.execute(select(Message).where(Message.role == "assistant"))
+            ).scalar_one()
+        assert assistant.status in (MessageStatus.INTERRUPTED, MessageStatus.COMPLETE)
+        # Whatever it settled on, it must not be silently empty while the
+        # gateway billed for the tokens.
+        if assistant.status is MessageStatus.INTERRUPTED:
+            assert assistant.request_id, "an interrupted turn must still name its ledger row"

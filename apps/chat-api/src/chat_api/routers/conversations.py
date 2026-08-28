@@ -16,10 +16,12 @@ right.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -162,6 +164,102 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+#: The four spellings a reasoning delta arrives under.
+#:
+#: There is no standard. DeepSeek and the providers that copied it use
+#: ``reasoning_content``; OpenRouter uses ``reasoning``; OpenAI's own reasoning
+#: models expose summaries under ``reasoning_summary`` shapes. The gateway
+#: passes the frame through untouched, deliberately — that is its job — so the
+#: spellings arrive here as the counterparty wrote them.
+#:
+#: Tolerating all of them is the same judgement as ``_CACHE_WRITE_KEYS`` in the
+#: gateway's accounting: these differ only in **spelling**, not in meaning, and
+#: reading one of them means a model that thinks visibly looks like a model that
+#: stalled. Nothing here decides anything about money, so there is no rule
+#: against being generous.
+_REASONING_KEYS = ("reasoning_content", "reasoning", "thinking", "reasoning_text")
+
+
+@dataclass
+class _Turn:
+    """What one streamed answer accumulated, and what it means.
+
+    A small object rather than five locals, because the finalisation now runs
+    from two places — the normal end of the stream, and the generator being
+    closed under the client's stop button — and five locals passed to both is
+    how the two drift apart.
+    """
+
+    request_id: str
+    content: list[str] = field(default_factory=list)
+    reasoning: list[str] = field(default_factory=list)
+    usage: dict[str, Any] | None = None
+    served_model: str | None = None
+    failure: str | None = None
+    interrupted: bool = False
+
+    def absorb(self, frame: dict[str, Any]) -> list[tuple[str, str]]:
+        """Read one frame, and say what to send the browser."""
+        self.served_model = frame.get("model") or self.served_model
+        if frame.get("usage"):
+            self.usage = frame["usage"]
+
+        out: list[tuple[str, str]] = []
+        for choice in frame.get("choices") or []:
+            delta = choice.get("delta") or {}
+            for key in _REASONING_KEYS:
+                piece = delta.get(key)
+                if isinstance(piece, str) and piece:
+                    self.reasoning.append(piece)
+                    out.append(("reasoning", piece))
+                    break
+            piece = delta.get("content")
+            if isinstance(piece, str) and piece:
+                self.content.append(piece)
+                out.append(("delta", piece))
+        return out
+
+    def status(self) -> MessageStatus:
+        if self.failure:
+            return MessageStatus.FAILED
+        if self.interrupted:
+            # Stopped on purpose, or the tab closed. Either way the text so far
+            # was really generated and really billed; discarding it would make
+            # the transcript disagree with the ledger.
+            return MessageStatus.INTERRUPTED
+        if self.usage or self.content or self.reasoning:
+            return MessageStatus.COMPLETE
+        # Nothing at all, and no error: the far end went away before the first
+        # frame. Calling that "complete" shows an empty answer as the model's.
+        return MessageStatus.INTERRUPTED
+
+
+async def _persist(factory: Any, message_id: uuid.UUID, turn: _Turn) -> None:
+    """Write the assistant message down. Runs exactly once per turn.
+
+    Shielded, for the reason the gateway's `settle_completed` is shielded and
+    found the same way: this is called from a generator that the client can
+    close at any moment, and an await inside a cancelled task is torn down
+    part-way through. Without it, pressing stop loses the very text the button
+    was pressed to keep.
+    """
+
+    async def write() -> None:
+        async with factory() as db2:
+            row = await db2.get(Message, message_id)
+            if row is not None:
+                row.content = "".join(turn.content)
+                row.reasoning = "".join(turn.reasoning) or None
+                row.request_id = turn.request_id
+                row.model = turn.served_model or row.model
+                row.usage = turn.usage
+                row.status = turn.status()
+                row.error = turn.failure
+            await db2.commit()
+
+    await asyncio.shield(asyncio.ensure_future(write()))
+
+
 @router.post("/conversations/{conversation_id}/messages")
 async def send(
     conversation_id: uuid.UUID,
@@ -221,10 +319,7 @@ async def send(
         # A session of its own. The request-scoped one is closed when this
         # function returns the response, and everything below runs after that.
         factory = request.app.state.session_factory
-        collected: list[str] = []
-        usage: dict[str, Any] | None = None
-        served_model: str | None = None
-        failure: str | None = None
+        turn = _Turn(request_id=request_id)
 
         yield _sse("message", {"id": str(assistant_id), "position": assistant.position})
         try:
@@ -248,52 +343,39 @@ async def send(
                     frame = json.loads(data)
                 except ValueError:
                     continue
-                served_model = frame.get("model") or served_model
-                if frame.get("usage"):
-                    usage = frame["usage"]
-                for choice in frame.get("choices") or []:
-                    piece = (choice.get("delta") or {}).get("content")
-                    if piece:
-                        collected.append(piece)
-                        yield _sse("delta", {"content": piece})
-        except GatewayError as exc:
-            # The gateway's own words: "you have exceeded your monthly budget"
-            # is the message the person needs, and rewriting it to "an error
-            # occurred" is how a working system looks broken.
-            failure = str(exc)
-            yield _sse("error", {"message": failure, "code": exc.code, "status": exc.status})
+                for event, piece in turn.absorb(frame):
+                    yield _sse(event, {"content": piece})
+        except (GatewayError, asyncio.CancelledError, GeneratorExit) as exc:
+            # A cancelled generator is the *stop* button, and it is not a
+            # failure: the tokens so far were generated and billed, so they are
+            # kept and the row says `interrupted`. Re-raised below, because
+            # swallowing GeneratorExit is an error in its own right.
+            if isinstance(exc, GatewayError):
+                # The gateway's own words: "you have exceeded your monthly
+                # budget" is the message the person needs, and rewriting it to
+                # "an error occurred" is how a working system looks broken.
+                turn.failure = str(exc)
+                yield _sse(
+                    "error",
+                    {"message": turn.failure, "code": exc.code, "status": exc.status},
+                )
+            else:
+                turn.interrupted = True
+                await _persist(factory, assistant_id, turn)
+                raise
         except Exception:
             logger.exception("chat stream failed")
-            failure = "The chat service could not complete this message."
-            yield _sse("error", {"message": failure})
+            turn.failure = "The chat service could not complete this message."
+            yield _sse("error", {"message": turn.failure})
 
-        async with factory() as db2:
-            row = await db2.get(Message, assistant_id)
-            if row is not None:
-                row.content = "".join(collected)
-                row.request_id = request_id
-                row.model = served_model or row.model
-                row.usage = usage
-                if failure:
-                    row.status = MessageStatus.FAILED
-                    row.error = failure
-                elif usage or collected:
-                    row.status = MessageStatus.COMPLETE
-                else:
-                    # No content, no usage, no error: the client went away
-                    # before anything arrived. The gateway records that as
-                    # client_disconnected and bills it; saying "complete" here
-                    # would make an empty answer look like the model's.
-                    row.status = MessageStatus.INTERRUPTED
-            await db2.commit()
-
+        await _persist(factory, assistant_id, turn)
         yield _sse(
             "done",
             {
                 "id": str(assistant_id),
                 "request_id": request_id,
-                "usage": usage,
-                "model": served_model,
+                "usage": turn.usage,
+                "model": turn.served_model,
             },
         )
 
