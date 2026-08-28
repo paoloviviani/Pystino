@@ -1,6 +1,8 @@
 # 0015 — Frontend stack: Next.js 16, assistant-ui, AI SDK v6
 
-- Status: accepted (decision recorded; **not implemented** — Phase 2)
+- Status: **superseded** by [0041](0041-chat-frontend-stack.md) for the framework
+  and chat-library choices. What still stands: the frontend never holds provider
+  credentials, and the server is authoritative for conversations.
 - Date: 2026-08-14
 
 ## Context

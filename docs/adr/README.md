@@ -52,6 +52,7 @@ verified is marked as such in the ADR that depends on it.
 | [0038](0038-scoped-redaction.md) | Redaction scoped per provider, model, group, user and key, where a scope can only tighten |
 | [0039](0039-redaction-rules-only.md) | There is no deployment policy, only rules; the catch-all is one of them, and the default protects nothing |
 | [0040](0040-bearer-tokens-on-v1.md) | OIDC access tokens as a `/v1` credential, gated by audience |
+| [0041](0041-chat-frontend-stack.md) | The chat frontend is a Vite SPA on `packages/ui`, not Next.js (supersedes 0015) |
 
 ## Decisions recorded now, implemented later
 
@@ -69,6 +70,8 @@ verified is marked as such in the ADR that depends on it.
 
 Worth knowing which of the starting assumptions changed, and why:
 
+- **Next.js + assistant-ui → a Vite SPA on `packages/ui`** ([0041](0041-chat-frontend-stack.md))
+  — decided before `packages/ui`, the console or `chat-api` existed.
 - **Redis → Valkey** ([0006](0006-counter-store.md)) — licence history and distro default.
 - **Qdrant → pgvector first** ([0018](0018-vector-store.md)) — one less stateful service.
 - **Python 3.12 → 3.13** ([0004](0004-gateway-runtime.md)) — and *not* 3.14.
