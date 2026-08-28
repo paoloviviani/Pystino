@@ -445,6 +445,12 @@ export interface ProviderPlugin {
   kind: "provider" | "router";
   /** Only the modes this plugin can support, so the UI cannot offer a refusal. */
   billing_modes: ("own_prices" | "provider_reported")[];
+  /**
+   * The counterparty's public endpoint, when it has one worth pre-filling —
+   * choosing the Cortecs type is the act of choosing its endpoint. Null for a
+   * type whose endpoints vary (generic, self-hosted).
+   */
+  default_base_url: string | null;
   is_default: boolean;
 }
 

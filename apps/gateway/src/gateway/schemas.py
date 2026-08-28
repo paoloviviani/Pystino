@@ -471,7 +471,11 @@ PluginName = Annotated[str | None, AfterValidator(_known_plugin)]
 class ProviderCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9._-]+$")
     description: str | None = None
-    base_url: str = Field(min_length=1, max_length=500)
+    # Optional because a plugin may know it: choosing the Cortecs type is the
+    # act of choosing its endpoint, and an operator re-typing a URL the plugin
+    # already knows is a typo with extra steps. Refused at the route when the
+    # named plugin has no default to fall back to.
+    base_url: str | None = Field(default=None, min_length=1, max_length=500)
     # Write-only. Optional because a local vLLM or Ollama needs no credential.
     api_key: SecretStr | None = None
     extra_headers: dict[str, str] = Field(default_factory=dict)
@@ -563,6 +567,10 @@ class ProviderPluginResponse(BaseModel):
     #: only where the plugin asserts its reported figure is the real charge, so
     #: the UI cannot offer a configuration the API would refuse.
     billing_modes: list[str]
+    #: The counterparty's public endpoint, when its plugin knows one — the
+    #: console pre-fills it, and a create that omits the URL gets it here too.
+    #: Null for a type whose endpoints vary.
+    default_base_url: str | None
     #: What a provider row with no plugin named resolves to.
     is_default: bool
 

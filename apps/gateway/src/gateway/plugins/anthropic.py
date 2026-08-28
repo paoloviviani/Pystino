@@ -57,6 +57,10 @@ class AnthropicPlugin:
     )
     # A provider, not a router: the model determines what serves it.
     kind = ProviderKind.PROVIDER
+    # One endpoint, but not pre-filled: it is api.anthropic.com's own paths and
+    # versioning, served by a different surface than the OpenAI-shaped one this
+    # field configures. Typing it is a decision, not a recap.
+    default_base_url: str | None = None
     # It reports tokens, not a charge. Nothing to assert, so pass-through
     # billing is not selectable for it.
     reports_authoritative_cost = False

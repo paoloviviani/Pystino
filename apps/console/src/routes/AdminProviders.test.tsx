@@ -55,6 +55,7 @@ const PLUGINS = [
     description: "Forwards requests unchanged. Tokens are counted here.",
     kind: "provider",
     billing_modes: ["own_prices"],
+    default_base_url: null,
     is_default: true,
   },
   {
@@ -63,6 +64,7 @@ const PLUGINS = [
     description: "Chooses a sub-provider per request and reports its own cost.",
     kind: "router",
     billing_modes: ["own_prices", "provider_reported"],
+    default_base_url: "https://api.cortecs.ai/v1",
     is_default: false,
   },
 ];
@@ -327,6 +329,46 @@ describe("AdminProviders: choosing a type", () => {
     const body = captured.bodies.at(-1)!.body as Record<string, unknown>;
     expect(body.plugin).toBe("cortecs");
     expect(body.kind).toBe("router");
+  });
+
+  it("fills the endpoint in from the type, so Cortecs is a name and a key", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal("fetch", routes([provider()], captured));
+    renderScreen(<AdminProviders />);
+
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("Name"), "cortecs");
+    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+
+    const url = dialog.getByLabelText("Base URL") as HTMLInputElement;
+    expect(url.value).toBe("https://api.cortecs.ai/v1");
+
+    // The dialog can be submitted without typing the endpoint at all: the
+    // field was filled by the type, and the API would apply the same default
+    // if it were cleared.
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies.at(-1)!.body as Record<string, unknown>;
+    expect(body.base_url).toBe("https://api.cortecs.ai/v1");
+  });
+
+  it("does not clobber an endpoint the operator typed themselves", async () => {
+    // A URL that is not some plugin's default is the operator's own — a
+    // private gateway, a proxy — and choosing a type afterwards must leave it.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes([provider()]));
+    renderScreen(<AdminProviders />);
+
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.type(dialog.getByLabelText("Base URL"), "https://cortecs.internal.test/v1");
+    await user.selectOptions(dialog.getByLabelText("Type"), "cortecs");
+
+    expect((dialog.getByLabelText("Base URL") as HTMLInputElement).value).toBe(
+      "https://cortecs.internal.test/v1",
+    );
   });
 
   it("shows what each provider is, and flags what needs attention", async () => {

@@ -38,6 +38,9 @@ class GenericOpenAIPlugin:
     # It reports no cost at all, so there is nothing to assert. This is what
     # keeps pass-through billing unselectable for a nameless endpoint.
     reports_authoritative_cost = False
+    # Endpoints answering to this type range from a cloud API to a laptop's
+    # Ollama; there is no URL worth guessing.
+    default_base_url: str | None = None
 
     # -- shaping a request --------------------------------------------------
 
