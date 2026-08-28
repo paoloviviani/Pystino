@@ -23,3 +23,14 @@ if (!("ResizeObserver" in globalThis)) {
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function scrollIntoView() {};
 }
+
+/* jsdom implements neither, and the thread viewport's auto-scroll calls both on
+   every message. Unhandled, they fail the run while every test passes — which
+   is the confusing shape of failure worth shimming away. */
+if (!Element.prototype.scrollTo) {
+  Element.prototype.scrollTo = function scrollTo() {};
+}
+
+if (!Element.prototype.scrollBy) {
+  Element.prototype.scrollBy = function scrollBy() {};
+}

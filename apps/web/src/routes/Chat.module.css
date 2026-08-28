@@ -1,119 +1,39 @@
+/*
+ * What is left of this file after assistant-ui's stylesheet took over the
+ * thread: the header above it, and the shell around the composer.
+ *
+ * Everything else — the transcript, the message bodies, the markdown, the
+ * reasoning disclosure, the composer's own controls — is styled by
+ * `@assistant-ui/styles` through `aui-*` class names. The hand-rolled versions
+ * that used to live here were the reason the chat looked crude beside their
+ * examples.
+ */
+
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3);
-  border-bottom: var(--border-width) solid var(--colour-border);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--border-width) solid var(--colour-border-quiet);
+  background: var(--colour-surface);
 }
 
 .title {
-  font-family: var(--font-sans);
-  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.transcript {
-  flex: 1;
-  overflow-y: auto;
-  padding: var(--space-4);
-  display: flex;
-  flex-direction: column;
-  /* Turns sit closer than they did. The gap was set when a message was one
-     line of plain text; against multi-paragraph markdown it read as a gap
-     between sections rather than between speakers. */
-  gap: var(--space-3);
-  align-items: center;
-}
-
-/* The speaker's label above the message rather than in a column beside it.
-   
-   A 5rem gutter costs a tenth of the reading width on a laptop and buys one
-   short word. Stacking gives the prose the full measure, and puts the label
-   where the eye already goes when scanning for where a turn begins. */
-.turn {
-  display: grid;
-  gap: var(--space-1);
-  max-width: 46rem;
-  width: 100%;
-}
-
-.who {
-  font-family: var(--font-sans);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-medium);
-  text-transform: var(--label-transform);
-  letter-spacing: var(--label-tracking);
-  color: var(--colour-text-muted);
-}
-
-/* No `white-space: pre-wrap`.
-   
-   It was right when a message was a string and wrong the moment markdown
-   started producing real block elements: the renderer emits <p> for each
-   paragraph *and* pre-wrap kept the source newlines between them, so every
-   blank line in the model's output was spent twice and the transcript was
-   mostly air. `pre` and `code` set their own whitespace behaviour in the
-   markdown rules below, which is the only place it was ever needed. */
-.body {
-  overflow-wrap: anywhere;
-  line-height: var(--leading-normal);
-  min-width: 0;
-}
-
-.pending {
-  color: var(--colour-text-muted);
-}
-
-.composer {
-  border-top: var(--border-width) solid var(--colour-border);
-  padding: var(--space-3);
-  display: flex;
-  gap: var(--space-2);
-  align-items: flex-end;
-}
-
-.input {
-  flex: 1;
-  resize: none;
-  font: inherit;
-  color: var(--colour-text);
-  background: var(--colour-surface);
-  border: var(--border-width) solid var(--colour-border);
-  padding: var(--space-2);
-  min-height: 2.75rem;
-  max-height: 12rem;
-}
-
-.input:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.empty {
-  margin: auto;
-  text-align: center;
-  color: var(--colour-text-muted);
-  max-width: 28rem;
-}
-
-/* --- assistant-ui pieces ---------------------------------------------- */
-
-.thread {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  flex: 1;
-}
-
 .model {
   font: inherit;
+  font-size: var(--text-sm);
   color: var(--colour-text);
   background: var(--colour-surface);
   border: var(--border-width) solid var(--colour-border);
-  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
 }
 
 .model:focus-visible {
@@ -121,159 +41,22 @@
   outline-offset: 2px;
 }
 
-/* Markdown, kept close to the surrounding prose rather than given a voice of
-   its own: the design language is one token file, and a message body that
-   introduced its own scale would be the loudest thing on the screen. */
-.markdown > :first-child {
-  margin-top: 0;
+/* The rounded box the composer sits in. assistant-ui's own components put this
+   on a wrapper rather than in the stylesheet, because the radius and padding
+   are variables a host is expected to choose. */
+.composerShell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  cursor: text;
+  padding: 8px;
+  border: var(--border-width) solid var(--colour-border);
+  border-radius: 1.5rem;
+  background: var(--colour-surface);
+  transition: border-color 150ms ease;
 }
 
-.markdown > :last-child {
-  margin-bottom: 0;
-}
-
-/* One space between blocks, not two. The renderer already separates
-   paragraphs; anything larger here compounds with it. */
-.markdown p,
-.markdown ul,
-.markdown ol,
-.markdown blockquote,
-.markdown pre,
-.markdown table {
-  margin: 0 0 var(--space-2);
-}
-
-/* A single paragraph is the common case — most answers are one — and it should
-   sit tight against the label above it with nothing hanging below. */
-.markdown > p:only-child {
-  margin: 0;
-}
-
-.markdown ul,
-.markdown ol {
-  padding-left: var(--space-4);
-}
-
-.markdown h1,
-.markdown h2,
-.markdown h3 {
-  font-family: var(--font-sans);
-  font-weight: var(--weight-bold);
-  line-height: var(--leading-tight);
-  margin: var(--space-3) 0 var(--space-1);
-}
-
-.markdown h1 { font-size: var(--text-lg); }
-.markdown h2 { font-size: var(--text-md); }
-.markdown h3 { font-size: var(--text-base); }
-
-.markdown code {
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-  background: var(--colour-surface-sunken);
-  padding: 0.1em 0.3em;
-}
-
-/* `pre` sets its own whitespace, which is the only place the transcript ever
-   needed it — see the note on `.body`. */
-.markdown pre {
-  background: var(--colour-surface-sunken);
-  padding: var(--space-3);
-  white-space: pre;
-  /* Code scrolls inside its own box. Without this a long line widens the whole
-     transcript and the composer goes with it. */
-  overflow-x: auto;
-}
-
-.markdown pre code {
-  background: none;
-  padding: 0;
-}
-
-.markdown blockquote {
-  border-left: var(--border-width) solid var(--colour-border-strong);
-  padding-left: var(--space-3);
-  color: var(--colour-text-muted);
-}
-
-.markdown table {
-  border-collapse: collapse;
-  display: block;
-  overflow-x: auto;
-}
-
-.markdown th,
-.markdown td {
-  border: var(--border-width-quiet) solid var(--colour-border-quiet);
-  padding: var(--space-1) var(--space-2);
-  text-align: left;
-}
-
-/* Thinking. Quieter than the answer on purpose — it is context, not the
-   result, and it is usually longer than what the reader came for. */
-.thinking {
-  margin-bottom: var(--space-3);
-  border-left: var(--border-width) solid var(--colour-border);
-  padding-left: var(--space-3);
-}
-
-.thinkingTrigger {
-  font-family: var(--font-sans);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  text-transform: var(--label-transform);
-  letter-spacing: var(--label-tracking);
-  color: var(--colour-text-muted);
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-}
-
-.thinkingTrigger:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: 2px;
-}
-
-.thinkingBody {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: var(--text-sm);
-  color: var(--colour-text-muted);
-  margin-top: var(--space-2);
-}
-
-.send,
-.stop {
-  font: inherit;
-  font-weight: var(--weight-medium);
-  padding: var(--space-2) var(--space-3);
-  border: var(--border-width) solid var(--colour-text);
-  cursor: pointer;
-}
-
-.send {
-  background: var(--colour-text);
-  color: var(--colour-text-inverse);
-}
-
-.stop {
-  /* Cadmium yellow is the fill, never the type — see tokens.css. */
-  background: var(--colour-yellow);
-  color: var(--colour-text);
-}
-
-.send:focus-visible,
-.stop:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: 2px;
-}
-
-
-/* The person's own message is plain text — it does not go through the markdown
-   renderer — so it keeps the line breaks they typed. Its own class rather than a
-   selector reaching into assistant-ui's markup: a library's class names are its
-   own business and change without notice. */
-.userBody {
-  white-space: pre-wrap;
+.composerShell:focus-within {
+  border-color: var(--colour-accent);
 }
