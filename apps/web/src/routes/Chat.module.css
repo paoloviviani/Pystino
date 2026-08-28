@@ -21,31 +21,46 @@
   padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  /* Turns sit closer than they did. The gap was set when a message was one
+     line of plain text; against multi-paragraph markdown it read as a gap
+     between sections rather than between speakers. */
+  gap: var(--space-3);
+  align-items: center;
 }
 
+/* The speaker's label above the message rather than in a column beside it.
+   
+   A 5rem gutter costs a tenth of the reading width on a laptop and buys one
+   short word. Stacking gives the prose the full measure, and puts the label
+   where the eye already goes when scanning for where a turn begins. */
 .turn {
   display: grid;
-  grid-template-columns: 5rem 1fr;
-  gap: var(--space-3);
-  align-items: start;
-  max-width: 52rem;
+  gap: var(--space-1);
+  max-width: 46rem;
   width: 100%;
 }
 
 .who {
   font-family: var(--font-sans);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
   text-transform: var(--label-transform);
   letter-spacing: var(--label-tracking);
   color: var(--colour-text-muted);
-  padding-top: 0.15rem;
 }
 
+/* No `white-space: pre-wrap`.
+   
+   It was right when a message was a string and wrong the moment markdown
+   started producing real block elements: the renderer emits <p> for each
+   paragraph *and* pre-wrap kept the source newlines between them, so every
+   blank line in the model's output was spent twice and the transcript was
+   mostly air. `pre` and `code` set their own whitespace behaviour in the
+   markdown rules below, which is the only place it was ever needed. */
 .body {
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: var(--leading-normal);
+  min-width: 0;
 }
 
 .pending {
@@ -117,12 +132,21 @@
   margin-bottom: 0;
 }
 
+/* One space between blocks, not two. The renderer already separates
+   paragraphs; anything larger here compounds with it. */
 .markdown p,
 .markdown ul,
 .markdown ol,
 .markdown blockquote,
-.markdown pre {
-  margin: 0 0 var(--space-3);
+.markdown pre,
+.markdown table {
+  margin: 0 0 var(--space-2);
+}
+
+/* A single paragraph is the common case — most answers are one — and it should
+   sit tight against the label above it with nothing hanging below. */
+.markdown > p:only-child {
+  margin: 0;
 }
 
 .markdown ul,
@@ -136,7 +160,7 @@
   font-family: var(--font-sans);
   font-weight: var(--weight-bold);
   line-height: var(--leading-tight);
-  margin: var(--space-4) 0 var(--space-2);
+  margin: var(--space-3) 0 var(--space-1);
 }
 
 .markdown h1 { font-size: var(--text-lg); }
@@ -150,9 +174,12 @@
   padding: 0.1em 0.3em;
 }
 
+/* `pre` sets its own whitespace, which is the only place the transcript ever
+   needed it — see the note on `.body`. */
 .markdown pre {
   background: var(--colour-surface-sunken);
   padding: var(--space-3);
+  white-space: pre;
   /* Code scrolls inside its own box. Without this a long line widens the whole
      transcript and the composer goes with it. */
   overflow-x: auto;
@@ -240,4 +267,13 @@
 .stop:focus-visible {
   outline: var(--focus-ring);
   outline-offset: 2px;
+}
+
+
+/* The person's own message is plain text — it does not go through the markdown
+   renderer — so it keeps the line breaks they typed. Its own class rather than a
+   selector reaching into assistant-ui's markup: a library's class names are its
+   own business and change without notice. */
+.userBody {
+  white-space: pre-wrap;
 }

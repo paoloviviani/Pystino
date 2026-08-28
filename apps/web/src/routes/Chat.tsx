@@ -212,7 +212,7 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
               UserMessage: () => (
                 <article className={styles.turn}>
                   <span className={styles.who}>You</span>
-                  <MessagePrimitive.Root className={styles.body}>
+                  <MessagePrimitive.Root className={`${styles.body} ${styles.userBody}`}>
                     <MessagePrimitive.Parts />
                   </MessagePrimitive.Root>
                 </article>

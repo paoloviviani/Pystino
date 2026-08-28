@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RedactionRule } from "../lib/types";
+import type { RedactionPolicy, RedactionRule } from "../lib/types";
 import { AdminRedactionRule } from "./AdminRedactionRule";
 
 /**
@@ -172,6 +172,29 @@ describe("AdminRedactionRule", () => {
     const body = captured.posts[0] as Record<string, unknown>;
     expect(body.scope).toBe("all");
     expect(body.scope_id).toBeNull();
+  });
+
+  it("seeds a new rule with the credential patterns", async () => {
+    // The detector finds no credentials at all, so an empty pattern list is not
+    // a neutral starting point — it is a policy that silently does not cover
+    // them. They can be deleted, which is a decision; their absence would not
+    // have been.
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { posts: [], patches: [] };
+    vi.stubGlobal("fetch", routes([], captured));
+    renderPage("/admin/redaction/rules/new");
+
+    await screen.findByLabelText("Scope");
+    await user.click(screen.getByRole("button", { name: "Create rule" }));
+
+    await waitFor(() => expect(captured.posts).toHaveLength(1));
+    const policy = (captured.posts[0] as { policy: RedactionPolicy }).policy;
+    const names = policy.patterns.map((pattern) => pattern.name);
+    expect(names).toContain("OPENAI_KEY");
+    expect(names).toContain("PRIVATE_KEY");
+    // Block, not redact: a leaked key is not a privacy problem to paper over
+    // with a placeholder. Sending it at all is the incident.
+    expect(policy.patterns.every((pattern) => pattern.mode === "block")).toBe(true);
   });
 
   it("will not create a scoped rule without a subject", async () => {

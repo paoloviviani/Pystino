@@ -1,4 +1,4 @@
-import { Badge, Button, Input, Notice, Select } from "@llmp/ui";
+import { Badge, Button, Input, Select } from "@llmp/ui";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { MODES, entityLabel, entitySource, modeRank } from "../lib/entities";
@@ -205,40 +205,17 @@ export function PolicyFields({
         </p>
 
         {/* Measured, not assumed: eight credential shapes were put through this
-            deployment's detector and none was found — an OpenAI key, an AWS
-            pair, a GitHub token, a JWT, a private key block, a connection
-            string, a bearer header and a .env line. Two produced *wrong* hits:
+            deployment's detector and none was found. Two produced *wrong* hits —
             AWS_SECRET_ACCESS_KEY as a LOCATION, the word "token" as a PERSON.
 
-            Said here rather than buried in a document because this is the one
-            screen where somebody can act on it, and an operator who has just
-            configured thirty entity types is entitled to assume the list is the
-            whole story. It is not. */}
-        <Notice tone="warn" title="Secrets are not detected">
-          The engine finds people, places and identifiers — not API keys, tokens,
-          passwords or private keys. Nothing above will catch one. A pattern is
-          the only thing that will.
-          <div className={styles.secretActions}>
-            <Button
-              variant="secondary"
-              onClick={() =>
-                onChange({
-                  ...policy,
-                  patterns: [...policy.patterns, ...missingSecretPatterns(policy)],
-                })
-              }
-              disabled={missingSecretPatterns(policy).length === 0}
-            >
-              {missingSecretPatterns(policy).length === 0
-                ? "Starter patterns added"
-                : "Add starter patterns"}
-            </Button>
-            <span className={styles.muted}>
-              A starting point, not a guarantee: they match the common shapes and
-              will miss a bespoke one.
-            </span>
-          </div>
-        </Notice>
+            So the patterns above are seeded with the published prefixes rather
+            than offered behind a button. An operator who has just configured
+            thirty entity types would otherwise be entitled to assume the list
+            covers credentials. It does not. */}
+        <p className={styles.muted}>
+          The engine detects no credentials. The seeded patterns above cover the
+          published prefixes; a bespoke format needs its own.
+        </p>
       </fieldset>
 
       {/* For values a detector is right about the shape of and wrong about the
@@ -292,10 +269,21 @@ const SECRET_PATTERNS = [
   },
 ];
 
-/** The starter patterns this policy does not already carry, by name. */
-function missingSecretPatterns(policy: RedactionPolicy) {
-  const held = new Set(policy.patterns.map((pattern) => pattern.name));
-  return SECRET_PATTERNS.filter((pattern) => !held.has(pattern.name));
+/**
+ * A new policy, carrying the secret patterns from the start.
+ *
+ * Seeded rather than offered: the detector finds no credentials at all, so a
+ * blank pattern list is a policy that silently does not cover them. An operator
+ * can delete any of these in the rows above — that is a decision — but it should
+ * not be one taken by default and by omission.
+ */
+export function seededPolicy(): RedactionPolicy {
+  return {
+    default_mode: "off",
+    entities: {},
+    patterns: [...SECRET_PATTERNS],
+    allow_list: [],
+  };
 }
 
 /**
