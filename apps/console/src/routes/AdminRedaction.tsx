@@ -47,17 +47,12 @@ import styles from "./Admin.module.css";
  */
 export function AdminRedaction() {
   const status = useRedactionStatus();
-  const navigate = useNavigate();
 
   return (
     <div className={styles.page}>
       <PageHeader
         title="Redaction"
         subtitle="What is stripped from prompts before they reach a provider."
-        // A button, not a bare link: every other screen's header actions are
-        // buttons, and an anchor here was invisible next to them — the whole
-        // scoped-rules feature was unreachable in practice because of it.
-        actions={<Button onClick={() => navigate("/admin/redaction/rules")}>Scoped rules</Button>}
       />
 
       {status.isPending && <Spinner label="Loading redaction" />}
