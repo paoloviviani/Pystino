@@ -1,7 +1,7 @@
 import { Badge, Button, MoneyPrecisionProvider } from "@llmp/ui";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { NavLink } from "react-router";
+import { NavLink, useLocation } from "react-router";
 import { request } from "../lib/api";
 import type { Me } from "../lib/types";
 import styles from "./Shell.module.css";
@@ -16,52 +16,35 @@ interface NavItem {
   label: string;
 }
 
-interface NavGroup {
-  /** Names the group for a screen reader, and heads it on screen. */
-  title: string;
-  adminOnly?: boolean;
-  items: NavItem[];
-}
-
 /**
- * Two sections, and the split is the point.
+ * Two navigations, and which one you see is where you are.
  *
- * An administrator is also a *user*: they have their own spend, their own
- * quotas and their own keys, and those are not administration. Before this
- * split the two were one flat list, so an admin's own consumption and the
- * deployment's were the same word one above the other — "Reports" meaning
- * different things depending on where you clicked.
+ * They were one bar with two headed groups, and that could not work: two
+ * heading rows above two link rows in a horizontal header have no shared
+ * baseline, so nothing lined up with anything. The layout was arguing with the
+ * information.
  *
- * Naming the groups is what fixes it. "Your usage" and "Everyone's usage" can
- * sit in the same sidebar without ambiguity; "Reports" twice cannot.
- *
- * The admin group is hidden from a non-administrator. The API enforces the same
- * rule independently — this only keeps the navigation honest about what the
- * reader can open.
+ * The fix is not typographic. Administration is a *place*, not a section of the
+ * page a person is on — an administrator looking at their own spend is not
+ * administering anything — so it gets its own space, reached by the Admin
+ * button beside their name, and the header shows one flat row either way.
  */
-const NAV: NavGroup[] = [
-  {
-    title: "You",
-    items: [
-      { to: "/", label: "Overview" },
-      { to: "/reports", label: "Your usage" },
-    ],
-  },
-  {
-    title: "Administration",
-    adminOnly: true,
-    items: [
-      { to: "/admin/reports", label: "Everyone's usage" },
-      { to: "/admin/quotas", label: "Quotas" },
-      { to: "/admin/redaction", label: "Redaction" },
-      { to: "/admin/providers", label: "Providers" },
-      // No Pricing entry: a model's prices live on the model's own page,
-      // because "what is this model" and "what does it cost" are one question
-      // asked in one place. See routes/AdminModelDetail.tsx.
-      { to: "/admin/models", label: "Models" },
-      { to: "/admin/users", label: "Users" },
-    ],
-  },
+const NAV_YOU: NavItem[] = [
+  { to: "/", label: "Overview" },
+  { to: "/reports", label: "Your usage" },
+];
+
+const NAV_ADMIN: NavItem[] = [
+  { to: "/admin", label: "Summary" },
+  { to: "/admin/reports", label: "Usage" },
+  { to: "/admin/quotas", label: "Quotas" },
+  { to: "/admin/redaction", label: "Redaction" },
+  { to: "/admin/providers", label: "Providers" },
+  // No Pricing entry: a model's prices live on the model's own page, because
+  // "what is this model" and "what does it cost" are one question asked in one
+  // place. See routes/AdminModelDetail.tsx.
+  { to: "/admin/models", label: "Models" },
+  { to: "/admin/users", label: "Users" },
 ];
 
 /**
@@ -85,7 +68,12 @@ function readExactMoney(): boolean {
 }
 
 export function Shell({ me, children }: ShellProps) {
-  const groups = NAV.filter((group) => !group.adminOnly || me.is_admin);
+  const location = useLocation();
+  // The route decides, not a toggle. A person who follows a link into an admin
+  // screen arrives with the right navigation around it, which a stateful switch
+  // would not give them.
+  const inAdmin = location.pathname.startsWith("/admin");
+  const items = inAdmin && me.is_admin ? NAV_ADMIN : NAV_YOU;
   const name = me.display_name || me.email || "Signed in";
 
   // Administrators only. A reader looking at their own spend has no use for
@@ -118,32 +106,34 @@ export function Shell({ me, children }: ShellProps) {
             <span className={styles.brandName}>LLM platform</span>
           </div>
 
-          <nav className={styles.nav} aria-label="Sections">
-            {groups.map((group) => (
-              // A nav per group, each with its own accessible name: one <nav>
-              // holding two headed lists announces as one undifferentiated set
-              // of links, which is the thing this layout exists to stop.
-              <div key={group.title} className={styles.navGroup}>
-                <h2 className={styles.navTitle} id={`nav-${group.title}`}>
-                  {group.title}
-                </h2>
-                <div role="group" aria-labelledby={`nav-${group.title}`}>
-                  {group.items.map((item) => (
-                    <NavLink
-                      key={item.to}
-                      to={item.to}
-                      end={item.to === "/"}
-                      className={({ isActive }) =>
-                        isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
-                      }
-                    >
-                      {item.label}
-                    </NavLink>
-                  ))}
-                </div>
-              </div>
+          <nav className={styles.nav} aria-label={inAdmin ? "Administration" : "Sections"}>
+            {items.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === "/" || item.to === "/admin"}
+                className={({ isActive }) =>
+                  isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
+                }
+              >
+                {item.label}
+              </NavLink>
             ))}
           </nav>
+
+          {me.is_admin && (
+            // A link, not a menu item: it is a place to go, and burying the way
+            // into administration one click deeper than the way out of it would
+            // be the wrong way round. Labelled by where it leads, so the reader
+            // in admin sees the way back rather than a button that does nothing.
+            <NavLink
+              to={inAdmin ? "/" : "/admin"}
+              className={styles.adminLink}
+              end={inAdmin}
+            >
+              {inAdmin ? "Leave admin" : "Admin"}
+            </NavLink>
+          )}
 
           <UserMenu
             me={me}

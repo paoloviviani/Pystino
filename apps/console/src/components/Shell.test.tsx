@@ -26,9 +26,9 @@ function me(overrides: Partial<Me> = {}): Me {
   };
 }
 
-function renderShell(user: Me = me()) {
+function renderShell(user: Me = me(), path = "/") {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[path]}>
       <Shell me={user}>
         <p>content</p>
       </Shell>
@@ -190,6 +190,40 @@ describe("Shell", () => {
     renderShell(me({ is_admin: false }));
     expect(screen.queryByRole("link", { name: "Providers" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
+  });
+
+  it("does not offer the way into administration to a non-administrator", () => {
+    renderShell(me({ is_admin: false }));
+    expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();
+  });
+
+  it("keeps administration out of the header until you are in it", () => {
+    // The point of the split: an administrator reading their own spend is not
+    // administering anything, and six section links above that page said
+    // otherwise.
+    renderShell(me({ is_admin: true }));
+    expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Your usage" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Providers" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Admin" })).toBeInTheDocument();
+  });
+
+  it("swaps the header for the admin sections once inside", () => {
+    // Driven by the route, not by a toggle: somebody following a link straight
+    // to /admin/models must arrive with the right navigation around it.
+    renderShell(me({ is_admin: true }), "/admin/models");
+    expect(screen.getByRole("link", { name: "Providers" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Quotas" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Your usage" })).not.toBeInTheDocument();
+    // And the way back is where the way in was.
+    expect(screen.getByRole("link", { name: "Leave admin" })).toBeInTheDocument();
+  });
+
+  it("shows a non-administrator their own navigation even at an admin path", () => {
+    // RequireAdmin refuses the page; the header must not imply otherwise.
+    renderShell(me({ is_admin: false }), "/admin/models");
+    expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Providers" })).not.toBeInTheDocument();
   });
 });
 

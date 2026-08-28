@@ -302,22 +302,27 @@
   }
 }
 
-/* Two named sections in the sidebar. The heading is what lets "Your usage" and
-   "Everyone's usage" coexist without either being ambiguous. */
-.navGroup {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.navGroup + .navGroup {
-  margin-top: var(--space-4);
-}
-
-.navTitle {
-  margin: 0 0 var(--space-1);
-  font-size: var(--text-xs);
+/* The way in and out of administration, beside the identity. Styled as a
+   control rather than a nav link: it changes *where you are*, and reading like
+   the sections beside it would make administration look like one of them. */
+.adminLink {
+  /* No margin-left: auto — `.nav` already carries `flex: 1` and does the
+     pushing. Two things claiming the free space is how a header ends up with a
+     gap nobody can find in the CSS. */
+  padding: var(--space-1) var(--space-3);
+  border: var(--border-width) solid var(--colour-border-strong);
+  color: var(--colour-text);
+  text-decoration: none;
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium);
-  letter-spacing: var(--label-tracking);
-  text-transform: var(--label-transform);
-  color: var(--colour-text-faint);
+  white-space: nowrap;
+}
+
+.adminLink:hover {
+  background: var(--colour-surface-sunken);
+}
+
+.adminLink:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
 }
