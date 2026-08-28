@@ -10,6 +10,12 @@
 # GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE set on the gateway — the keycloak overlay
 # sets it — every call from here is refused with the message a bad API key gets.
 #
+# With OVERLAY_ADDR set (docker-compose.overlay.yml), the app is also published
+# on that mesh address and its redirect URI points there — so the
+# keycloak-chat-client one-shot below must register that callback with the
+# realm, exactly and never as a wildcard, for the same reason
+# docker-compose.overlay.yml does it for the gateway client.
+#
 # Its own database on the shared PostgreSQL server. Own, because the boundary
 # this service is built on is that it shares nothing with the gateway but the
 # realm and the /v1 surface; shared server, because a second container for a
@@ -56,6 +62,42 @@ services:
         condition: service_completed_successfully
     restart: "no"
 
+  # Teaches the realm the chat callback for the overlay address, mirroring what
+  # docker-compose.overlay.yml does for the gateway client. No-op without
+  # OVERLAY_ADDR: the fixture already registers the localhost callbacks, and a
+  # wildcard would be an open redirect on an OIDC client — the one thing not to
+  # do here. Idempotent, so it is safe on every `up`.
+  keycloak-chat-client:
+    image: quay.io/keycloak/keycloak:26.7
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        if [ -z "$${OVERLAY_ADDR:-}" ]; then
+          echo "OVERLAY_ADDR not set; the fixture's localhost callbacks stand"
+          exit 0
+        fi
+        kc=/opt/keycloak/bin/kcadm.sh
+        overlay="http://$${OVERLAY_ADDR}:$${CHAT_PORT:-8100}"
+        $$kc config credentials --server http://keycloak:8080 \
+          --realm master --user "$${KC_ADMIN_USER}" --password "$${KC_ADMIN_PASSWORD}"
+        id=$$($$kc get clients -r llm-platform -q clientId=llm-chat \
+          --fields id --format csv --noquotes)
+        $$kc update "clients/$${id}" -r llm-platform \
+          -s "redirectUris=[\"http://localhost:$${CHAT_PORT:-8100}/chat/auth/callback\",\"http://127.0.0.1:$${CHAT_PORT:-8100}/chat/auth/callback\",\"$${overlay}/chat/auth/callback\"]" \
+          -s "webOrigins=[\"http://localhost:$${CHAT_PORT:-8100}\",\"$${overlay}\"]" \
+          -s "attributes.\"post.logout.redirect.uris\"=\"http://localhost:$${CHAT_PORT:-8100}/chat/*##$${overlay}/chat/*\""
+        echo "registered $${overlay}/chat/auth/callback"
+    environment:
+      OVERLAY_ADDR: ${OVERLAY_ADDR:-}
+      CHAT_PORT: ${CHAT_PORT:-8100}
+      KC_ADMIN_USER: ${KEYCLOAK_ADMIN_USER:-admin}
+      KC_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+
   chat:
     build:
       context: ../..
@@ -66,7 +108,10 @@ services:
     ports:
       # Loopback only, for the same reason everything else here is: the session
       # cookie is not Secure without the proxy overlay, and the seeded
-      # credentials are in this repository.
+      # credentials are in this repository. Publishing on a NetBird/WireGuard
+      # mesh address is docker-compose.chat-overlay.yml's job — it appends to
+      # this list rather than replacing it, so the live scripts (which use
+      # localhost) keep working when the mesh is down.
       - "127.0.0.1:${CHAT_PORT:-8100}:8100"
     environment:
       CHAT_ENVIRONMENT: ${GATEWAY_ENVIRONMENT:-dev}

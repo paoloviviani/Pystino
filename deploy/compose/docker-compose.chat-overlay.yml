@@ -1,0 +1,35 @@
+# The chat application on a private overlay network (NetBird, Tailscale, plain
+# WireGuard). Stack this on top of docker-compose.chat.yml:
+#
+#   OVERLAY_ADDR=<address on this host> docker compose --env-file deploy/.env \
+#     -f deploy/compose/docker-compose.yml \
+#     -f deploy/compose/docker-compose.smoke.yml \
+#     -f deploy/compose/docker-compose.keycloak.yml \
+#     -f deploy/compose/docker-compose.chat.yml \
+#     -f deploy/compose/docker-compose.chat-overlay.yml up -d
+#
+# Same split as the gateway: the base chat file keeps 127.0.0.1 so the live
+# scripts and healthchecks work when the mesh is down, and this file adds the
+# mesh address alongside. Publishing is additive by design — see the header of
+# docker-compose.overlay.yml for why the stack is loopback-only by default and
+# why a mesh address is the way out that does not require pretending otherwise.
+#
+# This file is separate from docker-compose.overlay.yml because compose cannot
+# add ports to a service that may not exist: with the chat section inlined
+# there, using the overlay without the chat app would invent a `chat` service
+# with no image and refuse to start.
+#
+# The callback registration itself lives in chat.yml's keycloak-chat-client
+# one-shot, which keys off OVERLAY_ADDR alone — so it works no matter which
+# combination of files brought the chat app up.
+services:
+  chat:
+    ports:
+      # Appended to the base file's loopback entry, not replacing it.
+      - "${OVERLAY_ADDR:?set OVERLAY_ADDR to this host's overlay address}:${CHAT_PORT:-8100}:8100"
+    environment:
+      # Where the browser is sent back to after signing in. The chat overlay
+      # must be in play whenever this file is: a redirect to an address the
+      # realm does not have registered fails with "Invalid parameter:
+      # redirect_uri" before any login form.
+      CHAT_OIDC__REDIRECT_URI: http://${OVERLAY_ADDR}:${CHAT_PORT:-8100}/chat/auth/callback
