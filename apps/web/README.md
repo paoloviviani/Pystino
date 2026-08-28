@@ -3,11 +3,12 @@
 The chat UI. Built with Vite and React, styled with `packages/ui`, served as
 static files by `chat-api` at **`/chat`**.
 
-Not Next.js, and not assistant-ui, though
-[ADR 0015](../../docs/adr/0015-frontend-stack.md) chose both in August 2026 —
-before `packages/ui`, the console or `chat-api` existed.
-[ADR 0041](../../docs/adr/0041-chat-frontend-stack.md) records the reversal, what
-it costs (message rendering is plain text) and what remains worth reconsidering.
+Not Next.js — [ADR 0015](../../docs/adr/0015-frontend-stack.md) chose it in
+August 2026, before `packages/ui`, the console or `chat-api` existed. But
+**assistant-ui, which 0015 also chose, is kept**: it renders the thread over
+`useExternalStoreRuntime`, so the messages, the transport and the persistence
+stay ours. [ADR 0041](../../docs/adr/0041-chat-frontend-stack.md) records both,
+including the three claims the first draft of it got wrong.
 
 ## What it talks to
 
@@ -30,15 +31,24 @@ many, and the second is where the security bug will be.
 ## Built
 
 Conversation list, one conversation, a streamed turn, a model picker fed by
-`/v1/models` through `chat-api`, sign-in and sign-out.
+`/v1/models` through `chat-api`, sign-in and sign-out. Markdown with code blocks,
+a stop button, and the model's thinking in a collapsible section — all three from
+assistant-ui.
+
+**Installable**, with an offline shell, scoped to `/chat/`. The API and login
+paths are deliberately excluded from it: a cached `index.html` returned for
+`/chat/auth/callback` breaks sign-in in a way that survives a reload. Nothing
+about a conversation is precached — transcripts belong to the server.
+
+Reasoning is a separate field all the way down: its own SSE event, its own
+column, its own message part. That is what keeps it out of the history sent back
+to the model on the next turn.
 
 ## Not built yet
 
-- Markdown and code rendering in a message — see ADR 0041 for the shape.
-- Regenerate, edit-and-resend, stop, and search over your own history.
+- Regenerate, edit-and-resend, and search over your own history. assistant-ui's
+  adapter has `onReload` and `onEdit` waiting for the first two.
 - Titles from a model rather than the first sixty characters.
-- **The PWA.** [ADR 0016](../../docs/adr/0016-pwa.md) calls it mandatory and it
-  is not done; `vite-plugin-pwa` (MIT) is the route.
 - Assistants, knowledge bases, MCP — M2 onwards in
   [docs/phase-3-plan.md](../../docs/phase-3-plan.md).
 

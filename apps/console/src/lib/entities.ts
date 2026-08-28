@@ -99,20 +99,32 @@ export function entitySource(
  * The order is the API's own (`EntityMode`), and it is load-bearing twice: it is
  * the order these are listed in, and it is what "may only tighten" compares by.
  */
-export const MODES: { value: EntityMode; label: string; hint: string }[] = [
-  { value: "off", label: "Not redacted", hint: "left exactly as the caller wrote it" },
+export const MODES: { value: EntityMode; label: string; short: string; hint: string }[] = [
+  { value: "off", label: "Not redacted", short: "Off", hint: "left exactly as the caller wrote it" },
   {
     value: "anonymise_restore",
     label: "Anonymise, restore in the answer",
+    short: "Restore",
     hint: "placeholder upstream, real value back to the reader",
   },
   {
     value: "anonymise",
     label: "Anonymise",
+    short: "Anonymise",
     hint: "placeholder upstream and in the answer",
   },
-  { value: "redact", label: "Redact", hint: "<PERSON>, so two people look the same" },
-  { value: "block", label: "Block", hint: "the request is refused before a provider sees it" },
+  {
+    value: "redact",
+    label: "Redact",
+    short: "Redact",
+    hint: "<PERSON>, so two people look the same",
+  },
+  {
+    value: "block",
+    label: "Block",
+    short: "Block",
+    hint: "the request is refused before a provider sees it",
+  },
 ];
 
 export function modeLabel(mode: EntityMode | string): string {

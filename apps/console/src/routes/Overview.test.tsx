@@ -445,7 +445,8 @@ describe("Overview", () => {
       const user = userEvent.setup({ delay: null });
       renderScreen(<Overview me={ME} />);
 
-      await user.selectOptions(await screen.findByLabelText(/PERSON/), "block");
+      const person = await screen.findByRole("group", { name: /PERSON/ });
+      await user.click(within(person).getByRole("radio", { name: "Block" }));
       await user.type(screen.getByLabelText("Reason"), "clinical notes");
       await user.click(screen.getByRole("button", { name: "Save redaction" }));
 
@@ -460,13 +461,13 @@ describe("Overview", () => {
 
     it("does not offer a mode weaker than the administrators set", async () => {
       // Disabled rather than absent: the floor is somebody else's decision, and
-      // a select that silently omits three of five choices reads as a bug.
+      // a control that silently omits three of five choices reads as a bug.
       vi.stubGlobal("fetch", respondWith(report()));
       renderScreen(<Overview me={ME} />);
 
-      const modes = await screen.findByLabelText(/PERSON/);
-      expect(within(modes).getByRole("option", { name: "Not redacted" })).toBeDisabled();
-      expect(within(modes).getByRole("option", { name: "Redact" })).toBeEnabled();
+      const modes = await screen.findByRole("group", { name: /PERSON/ });
+      expect(within(modes).getByRole("radio", { name: "Off" })).toBeDisabled();
+      expect(within(modes).getByRole("radio", { name: "Redact" })).toBeEnabled();
     });
 
     it("shows the API's refusal, which names what weakened", async () => {
@@ -498,7 +499,9 @@ describe("Overview", () => {
       const user = userEvent.setup({ delay: null });
       renderScreen(<Overview me={ME} />);
 
-      await waitFor(() => expect(screen.getByLabelText(/PERSON/)).toBeInTheDocument());
+      await waitFor(() =>
+        expect(screen.getByRole("group", { name: /PERSON/ })).toBeInTheDocument(),
+      );
       await user.click(screen.getByRole("button", { name: "Save redaction" }));
 
       await waitFor(() =>
@@ -511,7 +514,9 @@ describe("Overview", () => {
       vi.stubGlobal("fetch", respondWith(report()));
       renderScreen(<Overview me={ME} />);
 
-      await waitFor(() => expect(screen.getByLabelText(/PERSON/)).toBeInTheDocument());
+      await waitFor(() =>
+        expect(screen.getByRole("group", { name: /PERSON/ })).toBeInTheDocument(),
+      );
       expect(screen.queryByLabelText("Allowlist")).not.toBeInTheDocument();
     });
   });

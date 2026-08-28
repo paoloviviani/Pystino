@@ -1,4 +1,4 @@
-import { Badge, Button, Input, Select } from "@llmp/ui";
+import { Badge, Button, Input, Notice, Select } from "@llmp/ui";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { MODES, entityLabel, entitySource, modeRank } from "../lib/entities";
@@ -96,6 +96,7 @@ export function PolicyFields({
         <p className={styles.muted}>No entity types to list. The default above still applies.</p>
       ) : (
         <>
+          <ModeKey />
           <div className={styles.entities}>
             {known.map((entity) => {
               const name = entityLabel(entity);
@@ -105,8 +106,9 @@ export function PolicyFields({
               const named = name !== entity;
               return (
                 <div key={entity} className={styles.entity}>
-                  <ModeSelect
-                    label={
+                  <ModeRadios
+                    name={`mode-${entity}`}
+                    legend={
                       <span className={styles.entityLabel}>
                         {named && name}
                         <code className={styles.code}>{entity}</code>
@@ -201,6 +203,42 @@ export function PolicyFields({
         <p className={styles.muted}>
           The name becomes the entity label. RE2 syntax: no backreferences, no lookaround.
         </p>
+
+        {/* Measured, not assumed: eight credential shapes were put through this
+            deployment's detector and none was found — an OpenAI key, an AWS
+            pair, a GitHub token, a JWT, a private key block, a connection
+            string, a bearer header and a .env line. Two produced *wrong* hits:
+            AWS_SECRET_ACCESS_KEY as a LOCATION, the word "token" as a PERSON.
+
+            Said here rather than buried in a document because this is the one
+            screen where somebody can act on it, and an operator who has just
+            configured thirty entity types is entitled to assume the list is the
+            whole story. It is not. */}
+        <Notice tone="warn" title="Secrets are not detected">
+          The engine finds people, places and identifiers — not API keys, tokens,
+          passwords or private keys. Nothing above will catch one. A pattern is
+          the only thing that will.
+          <div className={styles.secretActions}>
+            <Button
+              variant="secondary"
+              onClick={() =>
+                onChange({
+                  ...policy,
+                  patterns: [...policy.patterns, ...missingSecretPatterns(policy)],
+                })
+              }
+              disabled={missingSecretPatterns(policy).length === 0}
+            >
+              {missingSecretPatterns(policy).length === 0
+                ? "Starter patterns added"
+                : "Add starter patterns"}
+            </Button>
+            <span className={styles.muted}>
+              A starting point, not a guarantee: they match the common shapes and
+              will miss a bespoke one.
+            </span>
+          </div>
+        </Notice>
       </fieldset>
 
       {/* For values a detector is right about the shape of and wrong about the
@@ -213,6 +251,51 @@ export function PolicyFields({
       )}
     </div>
   );
+}
+
+/**
+ * Patterns for the credential shapes the detector cannot see.
+ *
+ * Deliberately few and deliberately boring. Each one matches a published,
+ * documented prefix rather than trying to be clever about entropy: a regex that
+ * guesses at "looks secret" fires on git hashes and base64 payloads, and a
+ * redaction rule that cries wolf is turned off within the week.
+ *
+ * `block` rather than `redact`, alone among the defaults offered anywhere in
+ * this console. A leaked key is not a privacy problem to be papered over with a
+ * placeholder — sending it at all is the incident, and the request should not
+ * reach a provider. The operator can weaken it in the row above; the default
+ * should not be the weak one.
+ *
+ * RE2, so no backreferences and no lookaround — see the note above the field.
+ */
+const SECRET_PATTERNS = [
+  { name: "OPENAI_KEY", regex: "sk-[A-Za-z0-9_-]{16,}", mode: "block" as const },
+  { name: "AWS_ACCESS_KEY_ID", regex: "A(KIA|SIA)[0-9A-Z]{16}", mode: "block" as const },
+  {
+    name: "GITHUB_TOKEN",
+    regex: "gh[pousr]_[A-Za-z0-9]{36,}",
+    mode: "block" as const,
+  },
+  { name: "SLACK_TOKEN", regex: "xox[baprs]-[A-Za-z0-9-]{10,}", mode: "block" as const },
+  {
+    name: "PRIVATE_KEY",
+    regex: "-----BEGIN [A-Z ]*PRIVATE KEY-----",
+    mode: "block" as const,
+  },
+  {
+    name: "BEARER_TOKEN",
+    // A JWT by shape: three dot-separated base64url segments, the header
+    // beginning with the encoding of `{"alg"`.
+    regex: "eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}",
+    mode: "block" as const,
+  },
+];
+
+/** The starter patterns this policy does not already carry, by name. */
+function missingSecretPatterns(policy: RedactionPolicy) {
+  const held = new Set(policy.patterns.map((pattern) => pattern.name));
+  return SECRET_PATTERNS.filter((pattern) => !held.has(pattern.name));
 }
 
 /**
@@ -251,11 +334,97 @@ function AllowList({
 }
 
 /**
+ * The five modes as radios, in the weakest-to-strongest order they are ranked in.
+ *
+ * A select was here first, and repeated across thirty entity types it was the
+ * densest thing on the screen: every row a closed control that had to be opened
+ * to read, and the answer written out in full — "Anonymise, restore in the
+ * answer" — thirty times over. Radios put the current answer and the four
+ * alternatives on one line, so a row is read rather than operated, and the whole
+ * policy can be scanned down a column.
+ *
+ * The labels are short because the meaning is given once, in `ModeKey` above the
+ * list, rather than thirty times inside it. Each still carries the long form as
+ * a `title`, so the short word is never the only thing available.
+ *
+ * Weaker options are disabled rather than dropped, for the same reason the
+ * select disabled them: the floor is an administrator's decision, and a control
+ * that silently omits three of five choices reads as a fault rather than as a
+ * constraint.
+ */
+function ModeRadios({
+  name,
+  legend,
+  value,
+  floor,
+  onChange,
+}: {
+  name: string;
+  legend: ReactNode;
+  value: EntityMode;
+  floor: EntityMode | null;
+  onChange: (mode: EntityMode) => void;
+}) {
+  const least = floor === null ? -1 : modeRank(floor);
+  return (
+    // A real fieldset, because five radios need one accessible name between
+    // them; without it a screen reader announces "Off" five times over with
+    // nothing saying which type they belong to.
+    <fieldset className={styles.modes}>
+      <legend className={styles.modesLegend}>{legend}</legend>
+      <div className={styles.modeOptions}>
+        {MODES.map((mode) => {
+          const disabled = modeRank(mode.value) < least;
+          return (
+            <label
+              key={mode.value}
+              className={styles.mode}
+              title={`${mode.label} — ${mode.hint}`}
+              data-disabled={disabled || undefined}
+            >
+              <input
+                type="radio"
+                name={name}
+                value={mode.value}
+                checked={value === mode.value}
+                disabled={disabled}
+                onChange={() => onChange(mode.value)}
+              />
+              {mode.short}
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+/**
+ * What the five words mean, said once.
+ *
+ * This is the half of the density fix that matters: the labels below can only
+ * be short because this is here. Without it the screen would be terser and less
+ * legible, which is not the same thing as less dense.
+ */
+function ModeKey() {
+  return (
+    <dl className={styles.key}>
+      {MODES.map((mode) => (
+        <div key={mode.value} className={styles.keyRow}>
+          <dt className={styles.keyTerm}>{mode.short}</dt>
+          <dd className={styles.keyHint}>{mode.hint}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/**
  * A mode picker that cannot offer a mode the API would refuse.
  *
- * Weaker options are disabled rather than dropped: the floor is an
- * administrator's decision, and a select that silently omits three of five
- * choices reads as a bug rather than as a constraint.
+ * Kept as a select for the two places that carry one control rather than a
+ * column of them — the default, and a custom pattern's row — where a
+ * five-radio group would be wider than the thing it configures.
  */
 function ModeSelect({
   label,
