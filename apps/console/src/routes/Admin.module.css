@@ -279,17 +279,40 @@
   gap: var(--space-3);
 }
 
+/* `flex` rather than `block`, so the card inside fills the link.
+   
+   The grid already stretches each link to its row's height — that is the
+   default — but the card inside it kept its own content height, so a card whose
+   description wrapped to one line came out visibly shorter than its neighbours.
+   Users was the obvious one, being the shortest sentence on the page. */
 .sectionLink {
-  display: block;
+  display: flex;
   text-decoration: none;
   color: inherit;
 }
 
-.sectionLink:hover {
-  background: var(--colour-surface-sunken);
+.sectionLink > * {
+  flex: 1;
 }
 
+/* The hover is on the card, not on the link.
+   
+   It was `background` on the link and did nothing at all: the card paints its
+   own surface on top, so the colour changed underneath something opaque. The
+   direct child is the card, whatever class name the build gave it — reaching in
+   by name would couple this page to `packages/ui`'s internals. */
+.sectionLink:hover > * {
+  border-color: var(--colour-accent);
+  box-shadow: var(--shadow-sm);
+}
+
+/* On the card too, for the same reason: an outline on a zero-height flex link
+   would be drawn somewhere other than around what the reader sees. */
 .sectionLink:focus-visible {
+  outline: none;
+}
+
+.sectionLink:focus-visible > * {
   outline: var(--focus-ring);
   outline-offset: 2px;
 }
