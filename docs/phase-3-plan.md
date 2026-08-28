@@ -100,8 +100,23 @@ attribute to a user without an API key.
   assistants, not the person who runs the gateway.
 - **Users pick models**, per conversation, from exactly what `/v1/models` returns
   for them. Assistants may pin a model; bare chat has an admin-set default.
-- **In scope beyond the core**: a web-search tool, voice (STT/TTS), and the code
-  sandbox. **Out**: an image-generation UI (surface exists, no UI this phase).
+- **In scope beyond the core**: web search and web fetch as built-in tools, voice
+  (STT/TTS), and the code sandbox. **Out**: an image-generation UI (surface
+  exists, no UI this phase).
+- **Web search is a provider API, not a self-hosted engine.** SearXNG was the
+  first thought and was dropped: another always-on service to operate, on hosts
+  where RAM is already the constraint, to avoid API costs measured in euros per
+  thousand queries. Search providers get a small provider abstraction of their
+  own in chat-api — the gateway's plugin lesson applies in miniature: the
+  provider returns results, the tool decides what enters the prompt. **Jina
+  first; Exa and Staan on the roadmap** (Staan is the European index at €2/1k
+  requests, which fits the same preference `eu_native` exists for).
+- **Web fetch is local by default** — chat-api fetches the URL itself — **with
+  Jina Reader as an opt-in** for JavaScript-rendered pages and clean markdown
+  extraction. Local-first because routing every fetched page through a third
+  party is a data-egress decision an admin must make, not a default.
+- **Code execution is Pyodide** (CPython on WebAssembly, MPL-2.0), not a
+  container sandbox. See M6 for what that decision buys and costs.
 
 ## Sequence
 
@@ -110,9 +125,9 @@ attribute to a user without an API key.
   M1  Chat                      ── proves the architecture; everything after is additive
   M2  Assistants                ── system prompt + model + params + sharing
   M3  Knowledge and RAG         ── services/ingestion, pgvector, citations
-  M4  MCP and tools             ── connector registry, approval UI, web search
+  M4  MCP and tools             ── connector registry, approval UI, search + fetch
   M5  Voice                     ── new metered /v1 audio surfaces first, UI second
-  M6  Code sandbox              ── a tool in the M4 loop, executed in isolation
+  M6  Code execution            ── Pyodide in the browser, riding the M4 suspension
 ```
 
 Each milestone ends deployed on the proxy-overlay host with a live script, per the
@@ -164,9 +179,24 @@ Admin-registered connector registry, per-user OAuth to connectors that need it,
 the tool loop in chat-api, and a **tool-approval prompt in the UI by default** —
 silent tool execution against a user's credentials is the security bug waiting to
 happen. Tool *results* enter the prompt, so they pass redaction like any other
-prompt text; the scoped-rules machinery applies unchanged. Web search ships here
-as the first tool — SearXNG self-hosted (AGPL-3.0: OSI, fine as an unmodified
-service reached over the network) rather than a paid search API.
+prompt text; the scoped-rules machinery applies unchanged.
+
+Two built-in tools ship here alongside the MCP loop, because they exercise it:
+
+- **Web search**, through the search-provider abstraction: Jina first, Exa and
+  Staan behind the same interface. Keys are admin-configured in chat-api's own
+  admin area (chat-domain, not gateway-domain), encrypted the way the gateway
+  encrypts provider credentials. Search API spend is not in the gateway's ledger
+  — it is not LLM spend — and pretending otherwise would muddy the three cost
+  figures; if per-user search accounting is ever wanted, it is a chat-api
+  feature, recorded here so nobody reaches for `usage_records`.
+- **Web fetch**, local by default with Jina Reader opt-in. The local fetcher is
+  where the security bug lives, so it is named now: a URL fetched from inside
+  the compose network can reach Valkey, PostgreSQL, Keycloak's admin port and
+  the cloud metadata address. The fetcher must resolve the name first and refuse
+  private, loopback and link-local ranges **after** resolution — checking the
+  URL string instead of the resolved address is the classic SSRF miss, and DNS
+  rebinding is why.
 
 ### M5 — voice
 
@@ -176,12 +206,31 @@ surfaces first — protocols.py readers, pricing units that are not tokens (the
 actually serve STT/TTS is a question for their live catalogues, not memory;
 this milestone is sequenced last-but-one because that answer is unverified.
 
-### M6 — code sandbox
+### M6 — code execution
 
-A tool in the M4 loop that executes model-written code in an isolated container
-with no network by default. Scoped like any tool: admin-enabled, user-approved
-per call. Design ADR required before building; the isolation boundary is the
-whole feature.
+**Pyodide, executed in the browser** — not a server-side container sandbox. The
+container design was the first plan and was dropped when Pyodide was weighed:
+the isolation boundary, which is the whole feature, comes from the browser's WASM
+sandbox instead of from container hardening we would own forever, and the
+execution cost lands on the user's machine rather than a 3 GB host. Open WebUI's
+code interpreter made the same call.
+
+The mechanism is the one M4 already builds: the tool loop is server-side, and the
+approval prompt already suspends it mid-stream to wait for the client. Code
+execution is a second client-side continuation on that same suspension — the
+model emits code, the browser runs it in Pyodide, the result posts back and the
+loop resumes. No new control flow, one new executor.
+
+What the decision costs, so it is not rediscovered as a bug: the package set is
+what Pyodide ships compiled to WASM (numpy, pandas, matplotlib are there;
+arbitrary pip installs are not — pure-Python wheels via micropip only); there is
+no filesystem beyond the ephemeral virtual one; network from executed code is
+the browser's CORS, which is to say effectively none — a correct default, stated
+rather than implied; and execution dies with the tab, acceptable for a code
+interpreter whose output feeds a chat turn. If a use case ever needs real
+packages or long runs, that is the server-side sandbox from the original plan,
+as an *addition* — Pyodide is not a stepping stone to it. Scoped like any tool:
+admin-enabled, user-approved per call.
 
 ## Still Phase 3 or later, not in these milestones
 
