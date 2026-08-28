@@ -9,20 +9,24 @@ import {
 } from "../lib/admin";
 import type { RedactionPolicy, RedactionScope } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
-import { PolicyFields } from "../components/PolicyFields";
+import { PolicyFields, seededPolicy } from "../components/PolicyFields";
 import { SubjectPicker, scopeNoun } from "../components/SubjectPicker";
 import styles from "./Admin.module.css";
 
 //: Widest first, matching the order rules are folded in and listed.
 const SCOPE_OPTIONS: RedactionScope[] = ["all", "provider", "model", "group", "user", "api_key"];
 
-/** An empty policy: off for everything, which is what a new rule starts as. */
-const EMPTY_POLICY: RedactionPolicy = {
-  default_mode: "off",
-  entities: {},
-  patterns: [],
-  allow_list: [],
-};
+/**
+ * What a new rule starts as: off for every entity type, and the credential
+ * patterns already present.
+ *
+ * Off, because since ADR 0039 a deployment filters nothing until somebody says
+ * otherwise. With the patterns, because the detector finds no credentials at
+ * all — an empty list is not a neutral starting point there, it is a policy
+ * that silently does not cover them. They can be deleted, which is a decision;
+ * their absence would not have been.
+ */
+const EMPTY_POLICY: RedactionPolicy = seededPolicy();
 
 /**
  * One rule, on its own page (ADR 0039).
