@@ -17,6 +17,8 @@ import { BASE } from "./api";
 
 export interface StreamHandlers {
   onDelta: (content: string) => void;
+  /** The model thinking aloud. Kept apart from the answer, all the way down. */
+  onReasoning: (content: string) => void;
   onDone: (info: { request_id: string | null; usage: unknown; model: string | null }) => void;
   onError: (message: string) => void;
 }
@@ -59,6 +61,9 @@ export async function streamTurn(
     signal,
   });
 
+  // An aborted fetch throws rather than returning, and that is the stop button
+  // working, not an error. Reported as such so nothing above shows a failure
+  // for something the reader asked for.
   if (!response.ok || !response.body) {
     let message = `The message could not be sent (${response.status}).`;
     try {
@@ -76,7 +81,17 @@ export async function streamTurn(
   let buffer = "";
 
   for (;;) {
-    const { done, value } = await reader.read();
+    let done: boolean;
+    let value: Uint8Array | undefined;
+    try {
+      ({ done, value } = await reader.read());
+    } catch (caught) {
+      // AbortError: the reader was cancelled because the reader pressed stop.
+      // Return quietly — the server keeps what was generated and marks the row
+      // interrupted, so there is nothing to report and nothing lost.
+      if (caught instanceof DOMException && caught.name === "AbortError") return;
+      throw caught;
+    }
     if (done) break;
     // `stream: true`, because a multi-byte character can straddle a chunk
     // boundary and decoding without it replaces the halves with U+FFFD. In
@@ -89,6 +104,9 @@ export async function streamTurn(
       if (item.event === "delta") {
         const payload = JSON.parse(item.data) as { content?: string };
         if (payload.content) handlers.onDelta(payload.content);
+      } else if (item.event === "reasoning") {
+        const payload = JSON.parse(item.data) as { content?: string };
+        if (payload.content) handlers.onReasoning(payload.content);
       } else if (item.event === "error") {
         const payload = JSON.parse(item.data) as { message?: string };
         handlers.onError(payload.message ?? "The model could not answer.");

@@ -44,6 +44,12 @@ _CSP = "; ".join(
         "img-src 'self' data: blob:",
         "font-src 'self'",
         "connect-src 'self'",
+        # The service worker, and the manifest that installs the app. Both are
+        # covered by `default-src 'self'` in browsers that fall back, and named
+        # explicitly for the ones that do not — a blocked worker fails silently,
+        # which is how a PWA ends up not being one.
+        "worker-src 'self'",
+        "manifest-src 'self'",
         "form-action 'self'",
         "frame-ancestors 'none'",
         "base-uri 'self'",
@@ -78,6 +84,32 @@ class _Assets(StaticFiles):
         return response
 
 
+#: Files the build emits at the *root* of dist rather than under `assets/`.
+#:
+#: The service worker is the reason this exists. It must be served from the
+#: directory whose pages it controls — a worker's scope cannot exceed its own
+#: path — so `vite-plugin-pwa` writes `sw.js` beside `index.html` and not into
+#: the hashed asset directory. An earlier version of this router 404'd anything
+#: with a dot that was not under `assets/`, which meant the service worker never
+#: loaded and the application was quietly not a PWA: it installs, it opens, and
+#: it has no offline shell, with nothing in any log to say so.
+#:
+#: These are **not** cached like hashed assets. Their names never change, so an
+#: immutable year-long cache would pin a browser to whichever service worker it
+#: saw first — the one bug a service worker must never have, because the thing
+#: that would normally fix it is the thing that is stuck.
+_ROOT_FILES = frozenset(
+    {
+        "sw.js",
+        "registerSW.js",
+        "manifest.webmanifest",
+        "icon.svg",
+        "favicon.ico",
+        "robots.txt",
+    }
+)
+
+
 def build_router(directory: Path) -> APIRouter:
     router = APIRouter()
     index = directory / "index.html"
@@ -85,11 +117,23 @@ def build_router(directory: Path) -> APIRouter:
     @router.get(MOUNT_PATH, include_in_schema=False)
     @router.get(f"{MOUNT_PATH}/{{spa_path:path}}", include_in_schema=False)
     async def spa(request: Request, spa_path: str = "") -> Response:
+        name = spa_path.rsplit("/", 1)[-1]
+
+        # Workbox emits its runtime as `workbox-<hash>.js` next to the worker,
+        # and the worker imports it by name — so it is matched by shape rather
+        # than listed, and it *is* content-hashed, so it caches like an asset.
+        if "/" not in spa_path and (spa_path in _ROOT_FILES or name.startswith("workbox-")):
+            candidate = directory / spa_path
+            if candidate.is_file():
+                cache = _IMMUTABLE if name.startswith("workbox-") else _ENTRY
+                return FileResponse(candidate, headers={"cache-control": cache})
+            return Response(status_code=404)
+
         # A path with a file extension that got this far is a missing asset,
         # not a client-side route. Returning index.html for it would answer a
         # missing script with an HTML page, and the browser's error would name
         # the wrong problem.
-        if spa_path.startswith("assets/") or "." in spa_path.rsplit("/", 1)[-1]:
+        if spa_path.startswith("assets/") or "." in name:
             return Response(status_code=404)
         return FileResponse(
             index, headers={"cache-control": _ENTRY, **_SECURITY_HEADERS}

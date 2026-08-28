@@ -33,6 +33,7 @@ function respondWith(chunks: string[], status = 200): void {
 
 function handlers() {
   const deltas: string[] = [];
+  const reasoning: string[] = [];
   const errors: string[] = [];
   let done: unknown = null;
   return {
@@ -41,8 +42,10 @@ function handlers() {
     get done() {
       return done;
     },
+    reasoning,
     spy: {
       onDelta: (piece: string) => deltas.push(piece),
+      onReasoning: (piece: string) => reasoning.push(piece),
       onError: (message: string) => errors.push(message),
       onDone: (info: unknown) => {
         done = info;
@@ -84,6 +87,47 @@ describe("streamTurn", () => {
     const sink = handlers();
     await streamTurn("c1", { content: "hi" }, sink.spy);
     expect(sink.deltas).toEqual(["ok"]);
+  });
+
+  it("delivers reasoning separately from the answer", async () => {
+    // Both arrive on the same stream and must not be concatenated: the whole
+    // point of the collapsible section is that thinking is not the answer.
+    respondWith([
+      'event: reasoning\ndata: {"content":"hmm"}\n\n',
+      'event: delta\ndata: {"content":"answer"}\n\n',
+    ]);
+    const sink = handlers();
+    await streamTurn("c1", { content: "hi" }, sink.spy);
+    expect(sink.reasoning).toEqual(["hmm"]);
+    expect(sink.deltas).toEqual(["answer"]);
+  });
+
+  it("returns quietly when the reader is aborted", async () => {
+    // The stop button. Not a failure — the server keeps what was generated and
+    // marks the row interrupted, so reporting an error here would show a
+    // problem where the reader made a choice.
+    const controller = new AbortController();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                c.enqueue(new TextEncoder().encode('event: delta\ndata: {"content":"a"}\n\n'));
+                controller.abort();
+                c.error(new DOMException("aborted", "AbortError"));
+              },
+            }),
+            { status: 200 },
+          ),
+      ),
+    );
+    const sink = handlers();
+    await expect(
+      streamTurn("c1", { content: "hi" }, sink.spy, controller.signal),
+    ).resolves.toBeUndefined();
+    expect(sink.errors).toEqual([]);
   });
 
   it("reports an error event as an error", async () => {
