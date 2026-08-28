@@ -30,7 +30,9 @@ shared with this app; parity is a feature checklist, not a codebase.
 ## Architecture
 
 ```
-apps/chat            React SPA on packages/ui tokens, served by apps/chat-api
+apps/web             React SPA on packages/ui tokens, served by chat-api at /chat
+                     (apps/web, not apps/chat: the directory already existed as the
+                     settled home for this, README and all)
 apps/chat-api        FastAPI: conversations, messages, assistants, knowledge bases,
                      and the orchestration loop (RAG retrieval, MCP tool calls).
                      Own database (same PostgreSQL instance), own migrations, own
@@ -40,6 +42,14 @@ services/ingestion   out-of-process worker (the redaction pattern): parse → ch
 gateway              unchanged except one addition: OIDC bearer tokens accepted
                      on /v1 (see below)
 ```
+
+**Everything the chat serves lives under `/chat`**, in every deployment shape:
+the SPA, its assets, its API (`/chat/api/…`), its login callback, and the path
+its cookies are scoped to. Behind the TLS proxy the gateway owns the root of the
+origin, so `/api` and `/auth` there are *its* management API and *its* callback.
+A chat that answered on those paths works on its own port and collides the moment
+it is proxied — and the proxy must **not** strip the prefix, or the page loads and
+then fetches every script from the gateway.
 
 ### Separate service, same monorepo — and why
 
@@ -121,8 +131,8 @@ attribute to a user without an API key.
 ## Sequence
 
 ```
-  M0  Bearer auth on /v1        ── gateway; unblocks chat-api and opencode alike
-  M1  Chat                      ── proves the architecture; everything after is additive
+  M0  Bearer auth on /v1        ── done (ADR 0040)
+  M1  Chat                      ── foundation done; the list below is what remains
   M2  Assistants                ── system prompt + model + params + sharing
   M3  Knowledge and RAG         ── services/ingestion, pgvector, citations
   M4  MCP and tools             ── connector registry, approval UI, search + fetch
@@ -134,7 +144,7 @@ Each milestone ends deployed on the proxy-overlay host with a live script, per t
 house rule: more than half the serious bugs in this project were only findable
 against the running stack.
 
-### M0 — bearer tokens on `/v1`
+### M0 — bearer tokens on `/v1` — **done**
 
 Accept `Authorization: Bearer <JWT>` from the trusted issuer alongside API keys.
 Validation against the realm's JWKS (cached, refreshed on unknown `kid`), `iss`
@@ -144,14 +154,32 @@ identity applies with force here, since a token from a re-hosted Keycloak must
 Tests: this is accounting-adjacent, so the attribution logic gets unit tests
 specifically, plus a live check that a device-flow-shaped token meters correctly.
 
-### M1 — chat
+### M1 — chat — **foundation done**
 
-Conversation list, streaming turn (SSE relayed through chat-api; Caddy's
-`flush_interval -1` already covers the proxy leg), model picker, markdown and code
-rendering, stop / regenerate / edit-and-resend, titles (a cheap-model call, itself
-metered), search over own history. Schema: `conversations`, `messages`. Also the
-scaffolding bill for the whole phase: chat-api skeleton, OIDC client, compose
-service, Caddy route, SPA hosting with the console's CSP posture.
+Delivered: the chat-api service, its schema (`conversations`, `messages`,
+`sessions`), server-side sessions holding an encrypted refresh token, the
+streaming turn, the SPA shell, conversation list, model picker fed by
+`/v1/models`, the compose overlay, the Caddy route, and
+`scripts/test_chat_live.py`, which drives a real Keycloak login through to a
+streamed turn and on to the ledger row it produced. The frontend stack diverged
+from ADR 0015 — see [ADR 0041](adr/0041-chat-frontend-stack.md).
+
+Still to do in M1: markdown and code rendering in a message, stop, regenerate,
+edit-and-resend, search over own history, titles from a cheap model call (itself
+metered) rather than the first sixty characters, and the PWA that
+[ADR 0016](adr/0016-pwa.md) calls mandatory.
+
+Three things this milestone established that the later ones inherit:
+
+- **The turn's shape.** The assistant row is written empty before the model
+  speaks, so a stream that dies leaves an `interrupted` row holding what was
+  really generated. The gateway has already billed those tokens.
+- **The request id is minted here and sent**, never read back — the gateway
+  adopts an inbound `x-request-id` and does not return the one it used. That
+  column is the only thing tying a transcript to what it cost.
+- **Drain the stream.** Breaking at `data: [DONE]` closes the connection while
+  the gateway is inside the write that settles the request, and the row stays
+  `in_progress` at zero cost for a request the provider served in full.
 
 ### M2 — assistants
 
