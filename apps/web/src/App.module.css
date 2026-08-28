@@ -73,6 +73,14 @@
   outline-offset: 2px;
 }
 
+/* Said rather than left blank: an empty list reads as a sidebar that failed
+   to load. Muted, small, no interaction. */
+.emptyHint {
+  padding: var(--space-2) var(--space-3);
+  color: var(--colour-text-muted);
+  font-size: var(--text-sm);
+}
+
 .current,
 .current:hover {
   background: var(--colour-accent-subtle);

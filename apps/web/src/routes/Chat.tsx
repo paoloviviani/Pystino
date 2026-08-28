@@ -27,6 +27,7 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useAuiState,
   useExternalStoreRuntime,
 } from "@assistant-ui/react";
 import { Notice, Spinner } from "@llmp/ui";
@@ -70,9 +71,33 @@ function UserMessage() {
   );
 }
 
+/** Is the turn running but nothing readable has arrived yet? */
+function useWaitingForFirstToken(): boolean {
+  const running = useAuiState((s) => s.message.status?.type === "running");
+  const silent = useAuiState((s) =>
+    s.message.content.every((part) => {
+      if (part.type === "text" || part.type === "reasoning") return part.text.length === 0;
+      return false;
+    }),
+  );
+  return Boolean(running && silent);
+}
+
 function AssistantMessage() {
+  const waiting = useWaitingForFirstToken();
   return (
     <MessagePrimitive.Root className="aui-assistant-message-root" data-role="assistant">
+      {/* The gap between send and first token is otherwise dead air: a blank
+          bubble for however long the model spends before it writes. Three
+          breathing dots say the turn is alive — the reasoning disclosure takes
+          over the moment thinking tokens actually arrive. */}
+      {waiting && (
+        <div className={styles.thinking} role="status" aria-label="Thinking">
+          <span />
+          <span />
+          <span />
+        </div>
+      )}
       <div className="aui-assistant-message-content">
         <MessagePrimitive.Parts components={PART_COMPONENTS} />
       </div>
@@ -93,6 +118,44 @@ function AssistantMessage() {
 }
 
 const MESSAGE_COMPONENTS = { UserMessage, AssistantMessage };
+
+/** What an empty thread offers. Clicking one starts the turn — the same path
+    as typing, so there is exactly one way a message enters the transcript. */
+const SUGGESTIONS: readonly [string, string][] = [
+  ["Explain", "how this gateway meters and bills a request"],
+  ["Draft", "a short update for my team"],
+  ["Summarise", "the trade-offs of caching prompts"],
+  ["Brainstorm", "names for a side project"],
+];
+
+function Welcome({ onSuggest }: { onSuggest: (text: string) => void }) {
+  return (
+    <div className="aui-thread-welcome-root">
+      <div className="aui-thread-welcome-center">
+        <div className="aui-thread-welcome-message">
+          <h1 className="aui-thread-welcome-message-inner">How can I help you today?</h1>
+        </div>
+        <div className="aui-thread-welcome-suggestions">
+          {SUGGESTIONS.map(([lead, rest]) => (
+            <button
+              key={lead}
+              type="button"
+              className="aui-thread-welcome-suggestion"
+              onClick={() => onSuggest(`${lead} ${rest}`)}
+            >
+              <span className="aui-thread-welcome-suggestion-display">
+                <span className="aui-thread-welcome-suggestion-text-1">{lead}</span>
+              </span>
+              <span className="aui-thread-welcome-suggestion-display">
+                <span className="aui-thread-welcome-suggestion-text-2">&ldquo;{rest}&rdquo;</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
   const [title, setTitle] = useState("");
@@ -214,7 +277,7 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <header className={styles.header}>
-        <span className={styles.title}>{title}</span>
+        <span className={styles.title}>{title || "New conversation"}</span>
         <select
           className={styles.model}
           aria-label="Model"
@@ -243,9 +306,7 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
               viewport's full width. */}
           <div className={`${styles.threadColumn} ${empty ? styles.threadColumnEmpty : ""}`}>
             <ThreadPrimitive.Empty>
-              <div className="aui-thread-welcome-root">
-                <h1 className="aui-thread-welcome-message-inner">How can I help you today?</h1>
-              </div>
+              <Welcome onSuggest={(text) => void send(text)} />
             </ThreadPrimitive.Empty>
 
             <div className={styles.messages}>

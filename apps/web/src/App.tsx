@@ -104,6 +104,9 @@ export function App() {
         </div>
 
         <nav className={styles.conversations} aria-label="Conversations">
+          {conversations.length === 0 && (
+            <span className={styles.emptyHint}>No conversations yet.</span>
+          )}
           {conversations.map((conversation) => (
             <button
               key={conversation.id}
