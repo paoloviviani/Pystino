@@ -1,8 +1,9 @@
 # AGENTS.md
 
-A self-hosted LLM platform for LINKS Foundation: an OpenAI-compatible gateway with
-accounting, quotas and redaction, plus a chat app and admin console. Licence is
-**EUPL-1.2** for all first-party code.
+A self-hosted LLM platform, built and run by its author at personal expense: an
+OpenAI-compatible gateway with accounting, quotas and redaction, and the admin
+console for it — those are the substance. The chat app exists and runs but is
+early, not the deliverable. Licence is **EUPL-1.2** for all first-party code.
 
 `CLAUDE.md` is the repo's own deep-context file — ground rules, recorded bugs, and the
 traps that only show up on the live stack. Read it before changing anything;
@@ -12,6 +13,9 @@ traps that only show up on the live stack. Read it before changing anything;
 
 - **Licence is a hard requirement, not a preference.** Ask before adopting any
   dependency with a non-OSI licence, a CLA, or an open-core model (ADR 0001).
+- **Never guess a library or version from memory.** Several decisions here turned
+  on details found only in a provider's live schema; say so and research at
+  source when unsure.
 - **Accounting and quota logic get tests specifically.** A wrong answer there is a
   wrong invoice, not a stack trace.
 - **`.gitlab-token` / `.gh-token` at the repo root are credentials: never read,
@@ -106,12 +110,22 @@ running stack.
   header names, cost units, router-vs-provider — live in `gateway/plugins/`.
 - **Redaction is ~90% of the CPU** and scales with prompt length; its detection cache
   is a per-process LRU, so adding workers lowers the hit rate (docs/performance.md).
+- **An unpriced model reserves nothing**, so it has no cost ceiling at all;
+  `unpriced_model_count` on the provider listing is the warning.
+- **A client that hangs up mid-stream gets billed from our prices**: the row reads
+  `client_disconnected`, tokens counted locally (`estimated`), cost stamped
+  `own_prices_fallback`, and `_reconciliation` correctly excludes it. Reports
+  attribute it to the provider wrongly — a known open item in CLAUDE.md.
+- **The chat lives under `/chat` in every deployment shape**, and **the request id
+  is minted by chat-api and sent to the gateway** — reading it back gives a null
+  column, and that column is the only tie between a transcript and its cost.
 
 ## Conventions that differ from defaults
 
 - Comments and commit messages carry **reasoning**, not diff summaries: say why,
   especially where the obvious approach was rejected; name the failure a decision
-  prevents; record bugs found while building.
+  prevents; record bugs found while building. Reports never hedge: a failed test
+  is reported with its output, and anything unverified is named as such.
 - Changing `KEYCLOAK_PORT` / `OVERLAY_ADDR` / `KC_HOSTNAME` needs the **gateway
   restarted too** — it reads OIDC discovery once at startup. Keycloak's advertised
   hostname must match however you reach it, and `iss` is part of user identity:

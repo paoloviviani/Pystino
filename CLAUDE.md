@@ -1,7 +1,8 @@
 # Working on this repository
 
-A self-hosted LLM platform for LINKS Foundation. Read this before changing
-anything; it is the context that is not recoverable from the code.
+A self-hosted LLM platform, built and run by its author at personal expense.
+Read this before changing anything; it is the context that is not recoverable
+from the code.
 
 ## Ground rules, in priority order
 
@@ -263,15 +264,18 @@ the proxy overlay at <https://130.192.84.103:8443/console>; note that its
 firewall permits **8443 and 22 and nothing else**, which is why that deployment
 serves one origin with Keycloak under `/kc` rather than two ports, and why the
 Let's Encrypt configuration cannot be used there until 80 and 443 are opened.
-Git remote is GitLab; the tokens are in `.gitlab.env` and `.gitlab-tokens`,
-which may be sourced but should not be read. Both are gitignored — note that
-`*.env` does not match `.gitlab-tokens`, so it is listed by name.
+Git remote is GitHub (`paoloviviani/Pistin`, since 2026-08-29; GitLab
+`viviani/ai-stack` was the original home); the tokens are in `.gitlab-token` and
+`.gh-token`, which may be sourced but should not be read. Both are gitignored by
+name and glob.
 
 ## Where the project is
 
-Phase 2 is complete: gateway, redaction, console, providers, quotas, reporting,
-five `/v1` surfaces. `docs/phase-2-plan.md` records what was planned and what
-was added afterwards, including the bugs each addition surfaced.
+The gateway and its console are the substance and are done through Phase 2:
+gateway, redaction, providers, quotas, reporting, five `/v1` surfaces, the admin
+console. `docs/phase-2-plan.md` records what was planned and what was added
+afterwards, including the bugs each addition surfaced. The chat (Phase 3) runs
+but is early — M1's foundation only — and is not the current deliverable.
 
 Two pieces of work with their reasoning written down rather than left to be
 rediscovered — one being built, one not started:

@@ -1,6 +1,7 @@
 # LLM Platform
 
-A self-hosted LLM platform for a European research foundation: an OpenAI-compatible
+A self-hosted LLM platform, built and run by its author at personal expense: an
+OpenAI-compatible
 gateway with per-user and per-group accounting, quotas and policy, plus (later) a web
 frontend, a desktop shell and RAG.
 
@@ -153,7 +154,7 @@ If you are working on a server over SSH, forward both ports rather than exposing
 them:
 
 ```bash
-# the LINKS development host, where KEYCLOAK_PORT is set to 18080
+# the development host, where KEYCLOAK_PORT is set to 18080
 ssh -L 8000:localhost:8000 -L 18080:localhost:18080 ubuntu@130.192.84.52
 ```
 
@@ -218,7 +219,7 @@ That is the one way to drop the tunnel without putting any of the above on a
 routable address.
 
 Set `OVERLAY_ADDR` in `deploy/.env` to an address that **already exists on this
-host** (`ip -brief addr` will show it; on the LINKS development host it is
+host** (`ip -brief addr` will show it; on the development host it is
 `100.124.242.79` on `wt0`), and add the overlay file:
 
 ```bash
