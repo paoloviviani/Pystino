@@ -60,3 +60,51 @@
 .composerShell:focus-within {
   border-color: var(--colour-accent);
 }
+
+
+/* -- the two boxes assistant-ui's stylesheet does not carry ----------------
+ *
+ * Their compiled CSS has no `.aui-thread-root` rule and no rule for the column
+ * inside the viewport: in their own components those two elements wear Tailwind
+ * utilities directly rather than an `aui-*` class, so nothing was compiled under
+ * a name we could reuse. Everything else in the thread is theirs.
+ *
+ * Left out, the root had no height and no direction, and the column had no
+ * width — so the messages, which centre themselves inside whatever contains
+ * them, ended up in a narrow strip against the right edge.
+ */
+.thread {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--colour-surface);
+}
+
+.threadColumn {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  width: 100%;
+  max-width: var(--thread-max-width);
+  margin-inline: auto;
+  padding-inline: var(--space-4);
+  padding-top: var(--space-4);
+}
+
+/* Centres the welcome heading in an empty thread, rather than leaving it at
+   the top of a tall empty column. */
+.threadColumnEmpty {
+  justify-content: center;
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin-bottom: var(--space-6);
+}
+
+.messages:empty {
+  display: none;
+}

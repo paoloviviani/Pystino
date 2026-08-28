@@ -203,6 +203,8 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
     },
   });
 
+  const empty = messages.length === 0;
+
   if (loading) return <Spinner label="Loading conversation" />;
 
   return (
@@ -223,15 +225,28 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
         </select>
       </header>
 
-      <ThreadPrimitive.Root className="aui-root aui-thread-root">
+      {/* `aui-thread-root` only — **not** `aui-root`, which their own JSX also
+          carries. In a Tailwind project the utilities beside it win; in the
+          compiled standalone stylesheet `.aui-root` is the *floating modal*
+          assistant: `position: fixed; right: 1rem; bottom: 1rem; width: 400px;
+          height: 500px`. Copying the class list wholesale pinned the entire
+          thread into a 400px box in the bottom-right corner. */}
+      <ThreadPrimitive.Root className={`aui-thread-root ${styles.thread}`}>
         <ThreadPrimitive.Viewport className="aui-thread-viewport" turnAnchor="top">
-          <ThreadPrimitive.Empty>
-            <div className="aui-thread-welcome-root">
-              <h1 className="aui-thread-welcome-message-inner">How can I help you today?</h1>
-            </div>
-          </ThreadPrimitive.Empty>
+          {/* Their own structure: the viewport scrolls, and a column inside it
+              holds the reading measure. Messages centre themselves within
+              whatever contains them, so without this they centre in the
+              viewport's full width. */}
+          <div className={`${styles.threadColumn} ${empty ? styles.threadColumnEmpty : ""}`}>
+            <ThreadPrimitive.Empty>
+              <div className="aui-thread-welcome-root">
+                <h1 className="aui-thread-welcome-message-inner">How can I help you today?</h1>
+              </div>
+            </ThreadPrimitive.Empty>
 
-          <ThreadPrimitive.Messages components={MESSAGE_COMPONENTS} />
+            <div className={styles.messages}>
+              <ThreadPrimitive.Messages components={MESSAGE_COMPONENTS} />
+            </div>
 
           {error ? (
             // The gateway's own words. "You have exceeded your monthly budget"
@@ -279,6 +294,7 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
               </div>
             </ComposerPrimitive.Root>
           </ThreadPrimitive.ViewportFooter>
+          </div>
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>
     </AssistantRuntimeProvider>
