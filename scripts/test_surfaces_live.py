@@ -397,11 +397,24 @@ def main() -> int:
         if status == 200:
             by_id = {card["id"]: card for card in cards.get("data", [])}
             embed = by_id.get("embed-model")
-            expect(
-                "and a caller can see the kind without taking a 400 to find out",
-                embed is not None and embed["kind"] == "embedding",
-                str(embed and embed["kind"]),
-            )
+            if embed is None:
+                # Not a failure, and this used to report one. The model comes
+                # from the discovery-and-adopt step above, which skips itself on
+                # a stack a previous run already catalogued — so on every run
+                # after the first this asserted on a model nothing had created
+                # and reported the *product* broken. A check that depends on an
+                # earlier step has to notice when that step was skipped.
+                print(
+                    "  skipped: embed-model was never adopted on this stack, so there "
+                    "is no card to read a kind from. Delete the model, or use a fresh "
+                    "database, to exercise it."
+                )
+            else:
+                expect(
+                    "and a caller can see the kind without taking a 400 to find out",
+                    embed["kind"] == "embedding",
+                    str(embed["kind"]),
+                )
 
     print()
     print("=== the report explains the image spend ===")
