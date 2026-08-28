@@ -9,7 +9,7 @@ import { AdminModels } from "./routes/AdminModels";
 import { AdminProviders } from "./routes/AdminProviders";
 import { AdminQuotas } from "./routes/AdminQuotas";
 import { AdminRedaction } from "./routes/AdminRedaction";
-import { AdminRedactionRules } from "./routes/AdminRedactionRules";
+import { AdminRedactionRule } from "./routes/AdminRedactionRule";
 import { AdminReports } from "./routes/AdminReports";
 import { AdminUsers } from "./routes/AdminUsers";
 import { NotFound } from "./routes/NotFound";
@@ -111,10 +111,10 @@ export function App() {
             is deliberately short, and this is the second question about
             redaction rather than a place anyone starts. */}
         <Route
-          path="/admin/redaction/rules"
+          path="/admin/redaction/rules/:ruleId"
           element={
             <RequireAdmin me={me_}>
-              <AdminRedactionRules />
+              <AdminRedactionRule />
             </RequireAdmin>
           }
         />

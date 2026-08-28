@@ -355,13 +355,14 @@ export interface RedactionStatus {
 }
 
 /** The five subjects a redaction rule can name (ADR 0038). */
-export type RedactionScope = "provider" | "model" | "group" | "user" | "api_key";
+export type RedactionScope = "all" | "provider" | "model" | "group" | "user" | "api_key";
 
 export interface RedactionRule {
   id: string;
   name: string;
   scope: RedactionScope;
-  scope_id: string;
+  /** Null for the catch-all scope, whose subject is every request. */
+  scope_id: string | null;
   /**
    * The model, provider or group name, the user's email, the key's prefix.
    * **Null means the subject no longer exists**, and a rule pointing at a

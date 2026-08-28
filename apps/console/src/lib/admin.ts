@@ -212,7 +212,8 @@ export function useRedactionRules(
 export interface RedactionRuleInput {
   name?: string;
   scope: RedactionScope;
-  scope_id: string;
+  /** Null for the catch-all scope, whose subject is every request. */
+  scope_id: string | null;
   policy: RedactionPolicy;
   is_active?: boolean;
   reason?: string;

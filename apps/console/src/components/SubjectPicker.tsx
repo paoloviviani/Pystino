@@ -22,6 +22,10 @@ export interface SubjectPickerProps {
  */
 export function SubjectPicker({ scope, value, onChange }: SubjectPickerProps) {
   switch (scope) {
+    case "all":
+      // The catch-all has one subject and it is every request, so there is
+      // nothing to pick. Stated rather than rendered as an empty control.
+      return <p>Applies to every request.</p>;
     case "provider":
       return <ProviderSubject value={value} onChange={onChange} />;
     case "model":
@@ -114,7 +118,12 @@ export const SCOPES: { value: RedactionScope; label: string }[] = [
 ];
 
 export function scopeNoun(scope: RedactionScope): string {
-  return { provider: "Provider", model: "Model", group: "Group", user: "User", api_key: "API key" }[
-    scope
-  ];
+  return {
+    all: "Every request",
+    provider: "Provider",
+    model: "Model",
+    group: "Group",
+    user: "User",
+    api_key: "API key",
+  }[scope];
 }
