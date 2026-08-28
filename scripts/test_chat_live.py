@@ -260,8 +260,16 @@ def main() -> int:
         print(f"  the gateway refused: {text[text.find('event: error') :][:200]}")
     deltas = re.findall(r'event: delta\ndata: (\{.*?\})\n', text)
     answer = "".join(json.loads(frame).get("content", "") for frame in deltas)
+    thoughts = re.findall(r'event: reasoning\ndata: (\{.*?\})\n', text)
+    thinking = "".join(json.loads(frame).get("content", "") for frame in thoughts)
     done = re.search(r"event: done\ndata: (\{.*?\})\n", text)
     print(f"  {len(deltas)} delta frame(s), answer: {answer[:60]!r}")
+    if thoughts:
+        print(f"  {len(thoughts)} reasoning frame(s): {thinking[:60]!r}")
+        if thinking and thinking in answer:
+            fail("the model's thinking was concatenated into the answer")
+    elif deltas:
+        print("  (no reasoning frames; this upstream does not emit any)")
     if done:
         info = json.loads(done.group(1))
         print(f"  request_id={info.get('request_id')} usage={info.get('usage')}")
@@ -279,6 +287,39 @@ def main() -> int:
     print(f"  {len(roles)} message(s): {list(zip(roles, statuses, strict=True))}")
     if roles[:1] != ["user"]:
         fail(f"the stored transcript starts with {roles[:1]}, not the person's own message")
+
+    assistant = next((m for m in detail["messages"] if m["role"] == "assistant"), None)
+    if assistant and thinking:
+        # Stored in its own column. If it ever ends up inside `content`, it also
+        # ends up in the history sent back to the model on the next turn.
+        if assistant.get("reasoning") != thinking:
+            fail(f"the stored reasoning is {assistant.get('reasoning')!r}, not what streamed")
+        elif thinking in (assistant.get("content") or ""):
+            fail("the stored answer contains the thinking")
+        else:
+            print("  reasoning stored apart from the answer")
+
+    print()
+    print("=== the app is installable ===")
+    for name, expected in (
+        ("manifest.webmanifest", "application/manifest+json"),
+        ("sw.js", "javascript"),
+    ):
+        status, body, headers = fetch(client, f"{CHAT}/{name}")
+        if status != 200:
+            fail(f"/chat/{name} returned HTTP {status}; the app is not a PWA without it")
+            continue
+        if expected not in headers.get("Content-Type", ""):
+            fail(f"/chat/{name} is {headers.get('Content-Type')}, not {expected}")
+        if "immutable" in headers.get("Cache-Control", ""):
+            # sw.js's name never changes, so this would pin a browser to
+            # whichever worker it saw first — and the update that fixes it is
+            # the thing that is stuck.
+            fail(f"/chat/{name} is cached immutably")
+    scope = json.loads(fetch(client, f"{CHAT}/manifest.webmanifest")[1]).get("scope")
+    print(f"  manifest scope: {scope}")
+    if scope != "/chat/":
+        fail(f"the manifest claims scope {scope!r}, which is not where the app lives")
 
     print()
     if failures:

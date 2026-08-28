@@ -62,6 +62,7 @@ def chunk(
     content: str | None = None,
     finish_reason: str | None = None,
     usage: dict[str, int] | None = None,
+    reasoning: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "id": "chatcmpl-smoke",
@@ -70,10 +71,16 @@ def chunk(
         "model": MODEL,
         "choices": [],
     }
-    if content is not None or finish_reason is not None:
+    if content is not None or finish_reason is not None or reasoning is not None:
         choice: dict[str, Any] = {"index": 0, "delta": {}}
         if content is not None:
             choice["delta"]["content"] = content
+        if reasoning is not None:
+            # `reasoning_content`, which is DeepSeek's spelling and the one
+            # Cortecs passes through. There are at least four in the wild and no
+            # standard, which is why the chat service reads all of them — see
+            # `_REASONING_KEYS`. One of them here is enough to exercise the path.
+            choice["delta"]["reasoning_content"] = reasoning
         if finish_reason is not None:
             choice["finish_reason"] = finish_reason
         payload["choices"] = [choice]
@@ -118,6 +125,11 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
 
     async def stream() -> AsyncIterator[bytes]:
         frames = b""
+        # Thinking first, as a real reasoning model emits it: the client has to
+        # keep it apart from the answer rather than concatenate the two, and a
+        # fixture that never sends any cannot show whether it does.
+        for thought in ["Let me ", "think about that. "]:
+            frames += b"data: " + json.dumps(chunk(reasoning=thought)).encode() + b"\n\n"
         for piece in ["streamed ", "hello ", "world", ". You said: ", echoed]:
             frames += b"data: " + json.dumps(chunk(piece)).encode() + b"\n\n"
         frames += b"data: " + json.dumps(chunk(finish_reason="stop")).encode() + b"\n\n"
