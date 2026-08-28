@@ -390,6 +390,62 @@ class TestReasoning:
         assert "answer" in sent
 
 
+class TestThinking:
+    """Asking a hybrid model to reason.
+
+    Measured on 2026-08-28: deepseek-v4-flash-0731 advertises `reasoning` and
+    yet returns only `content` — it reasons *when asked*. So the absence of a
+    parameter is the absence of thinking, which is exactly the bug this covers.
+    """
+
+    @pytest.mark.asyncio
+    async def test_it_asks_for_reasoning_when_told_to(
+        self, client: httpx.AsyncClient, signed_in: Any, fake_gateway: FakeGateway
+    ) -> None:
+        auth = await signed_in()
+        conversation_id = await start(client, auth)
+        fake_gateway.set_stream(sse(delta("ok")))
+        async with client.stream(
+            "POST",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
+            json={"content": "hi", "thinking": True},
+            headers=auth,
+        ) as response:
+            [chunk async for chunk in response.aiter_text()]
+
+        assert fake_gateway.seen_body is not None
+        assert fake_gateway.seen_body["reasoning_effort"] == "medium"
+
+    @pytest.mark.asyncio
+    async def test_it_does_not_ask_by_default(
+        self, client: httpx.AsyncClient, signed_in: Any, fake_gateway: FakeGateway
+    ) -> None:
+        """A model that cannot reason may refuse the parameter outright."""
+        auth = await signed_in()
+        conversation_id = await start(client, auth)
+        fake_gateway.set_stream(sse(delta("ok")))
+        async with client.stream(
+            "POST",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
+            json={"content": "hi"},
+            headers=auth,
+        ) as response:
+            [chunk async for chunk in response.aiter_text()]
+
+        assert fake_gateway.seen_body is not None
+        assert "reasoning_effort" not in fake_gateway.seen_body
+
+    @pytest.mark.asyncio
+    async def test_the_catalogue_carries_what_a_model_can_do(
+        self, client: httpx.AsyncClient, signed_in: Any, fake_gateway: FakeGateway
+    ) -> None:
+        """Without this the browser cannot tell which models to ask."""
+        auth = await signed_in()
+        fake_gateway.set_models(["thinker"], features=["reasoning", "tools"])
+        response = await client.get(f"{MOUNT}/api/models", headers=auth)
+        assert response.json()["data"][0]["supported_features"] == ["reasoning", "tools"]
+
+
 class TestStopping:
     @pytest.mark.asyncio
     async def test_stopping_keeps_what_was_generated(

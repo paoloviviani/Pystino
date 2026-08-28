@@ -35,6 +35,10 @@ class GatewayError(Exception):
 class Model:
     id: str
     owned_by: str | None = None
+    #: What the gateway says this model can do — "reasoning", "tools",
+    #: "json_mode". Passed through rather than interpreted: which of them mean
+    #: anything is the caller's business, and the list grows upstream.
+    supported_features: tuple[str, ...] = ()
 
 
 class GatewayClient:
@@ -62,7 +66,11 @@ class GatewayClient:
             raise self._error_from(response)
         payload = response.json()
         return [
-            Model(id=item["id"], owned_by=item.get("owned_by"))
+            Model(
+                id=item["id"],
+                owned_by=item.get("owned_by"),
+                supported_features=tuple(item.get("supported_features") or ()),
+            )
             for item in payload.get("data", [])
             if isinstance(item, dict) and isinstance(item.get("id"), str)
         ]

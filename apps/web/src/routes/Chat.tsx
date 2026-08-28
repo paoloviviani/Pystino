@@ -42,7 +42,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MarkdownText } from "../components/aui/MarkdownText";
 import { Reasoning } from "../components/aui/Reasoning";
 import styles from "./Chat.module.css";
-import { type Message, type Model, getConversation } from "../lib/api";
+import { type Message, type Model, canThink, getConversation } from "../lib/api";
 import { textOf, toThreadMessage } from "../lib/runtime";
 import { streamTurn } from "../lib/stream";
 
@@ -161,7 +161,11 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
 
       await streamTurn(
         conversationId,
-        { content: text, model },
+        // Ask for thinking whenever the model can do it. Not a toggle in the
+        // UI: a reasoning model that silently stops reasoning because a setting
+        // was off is a worse surprise than one that always shows its work, and
+        // the disclosure is collapsed by default anyway.
+        { content: text, model, thinking: canThink(models.find((m) => m.id === model)) },
         {
           onDelta: (piece) =>
             patchLast((message) => ({ ...message, content: message.content + piece })),
@@ -188,7 +192,7 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
       abort.current = null;
       onTurnComplete();
     },
-    [conversationId, model, onTurnComplete],
+    [conversationId, model, models, onTurnComplete],
   );
 
   const runtime = useExternalStoreRuntime({

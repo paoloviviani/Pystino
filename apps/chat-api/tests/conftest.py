@@ -41,10 +41,18 @@ class FakeGateway:
         self.seen_headers: dict[str, str] = {}
         self.seen_body: dict | None = None
 
-    def set_models(self, ids: list[str], *, status: int = 200) -> None:
+    def set_models(
+        self, ids: list[str], *, status: int = 200, features: list[str] | None = None
+    ) -> None:
         self.models_response = httpx.Response(
             status,
-            json={"object": "list", "data": [{"id": i, "owned_by": "test"} for i in ids]},
+            json={
+                "object": "list",
+                "data": [
+                    {"id": i, "owned_by": "test", "supported_features": features or []}
+                    for i in ids
+                ],
+            },
         )
 
     def set_stream(self, chunks: list[bytes]) -> None:
