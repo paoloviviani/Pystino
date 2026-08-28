@@ -225,28 +225,20 @@
   white-space: nowrap;
 }
 
-.main {
-  max-width: var(--layout-max-width);
-  margin: 0 auto;
-  padding: var(--space-6) var(--space-5) var(--space-7);
-}
+/* The exact-figures preference. A checkbox with its explanation under the
+   label, because "Exact figures" alone does not say what it costs a reader —
+   twelve decimal places on every amount — or what it is for.
 
-@media (max-width: 40rem) {
-  .headerInner {
-    flex-wrap: wrap;
-    gap: var(--space-3);
-    padding: var(--space-3) var(--space-4);
-  }
-
-  /* The exact-figures preference. A checkbox with its explanation under the label,
-   because "Exact figures" alone does not say what it costs a reader — twelve
-   decimal places on every amount — or what it is for. */
+   These three rules spent a while *inside* the mobile media query below, having
+   been pasted into the middle of it, so the toggle was styled on a phone and
+   unstyled on every desktop. Flush-left inside an indented block looks wrong
+   and is valid CSS, which is why nothing complained. */
 .menuToggle {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
   padding-bottom: var(--space-2);
-  border-bottom: var(--border-width) solid var(--colour-border);
+  border-bottom: var(--border-width) solid var(--colour-border-quiet);
   font-size: var(--text-xs);
   cursor: pointer;
 }
@@ -263,7 +255,21 @@
   color: var(--colour-text-faint);
 }
 
-.identityName {
+.main {
+  max-width: var(--layout-max-width);
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-5) var(--space-7);
+}
+
+@media (max-width: 40rem) {
+  .headerInner {
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  /* A phone has less room for an email address than a laptop. */
+  .identityName {
     max-width: 8rem;
   }
 
