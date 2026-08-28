@@ -121,6 +121,11 @@ function Detail({ status }: { status: RedactionStatus }) {
         </div>
       </Card>
 
+      {/* No "Response" row and no score threshold. Both were process-wide
+          settings that stopped being the answer when policy became per entity
+          (ADR 0037): restoring is `anonymise_restore` against `anonymise`, per
+          type, and a threshold is a column on each type in each rule. Reporting
+          one number here read as *the* threshold, which it is not. */}
       <Card
         title="Configuration"
         description={
@@ -173,18 +178,12 @@ function Detail({ status }: { status: RedactionStatus }) {
               <Badge tone="ok">Refuse the request</Badge>
             )}
           </Row>
-          <Row label="Response">
-            {status.restore_in_response
-              ? "Placeholders swapped back to the original values"
-              : "Placeholders left in place"}
-          </Row>
           <Row label="Language">
             {status.language}
             {service?.models?.[status.language] && (
               <span className={styles.muted}> · {service.models[status.language]}</span>
             )}
           </Row>
-          <Row label="Score threshold">{status.score_threshold}</Row>
           <Row label="Timeout">{status.timeout_seconds}s</Row>
           <Row label="Detection cache">
             {status.cache_size === 0 ? "disabled" : `${status.cache_size.toLocaleString()} texts`}
