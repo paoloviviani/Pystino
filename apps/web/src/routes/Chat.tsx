@@ -73,6 +73,46 @@ function Reasoning() {
   );
 }
 
+/**
+ * The two message components, and the object that names them.
+ *
+ * **Module level, and this is the whole of a bug.** Defined inline in the JSX
+ * they were a new component *type* on every render of `Chat` — and `Chat`
+ * re-renders on every streamed token. React cannot know that `() => …` is the
+ * same component as the `() => …` it saw a moment ago, so it unmounted and
+ * remounted the entire transcript per delta: the text vanished and came back,
+ * dozens of times a second, for the whole of an answer.
+ *
+ * The `components` objects are hoisted for the same reason one step down. A
+ * fresh object literal each render is a changed prop, and the remount follows
+ * it even when the components inside are stable.
+ */
+const PART_COMPONENTS = { Text: MarkdownText, Reasoning };
+
+function UserMessage() {
+  return (
+    <article className={styles.turn}>
+      <span className={styles.who}>You</span>
+      <MessagePrimitive.Root className={`${styles.body} ${styles.userBody}`}>
+        <MessagePrimitive.Parts />
+      </MessagePrimitive.Root>
+    </article>
+  );
+}
+
+function AssistantMessage() {
+  return (
+    <article className={styles.turn}>
+      <span className={styles.who}>Assistant</span>
+      <MessagePrimitive.Root className={styles.body}>
+        <MessagePrimitive.Parts components={PART_COMPONENTS} />
+      </MessagePrimitive.Root>
+    </article>
+  );
+}
+
+const MESSAGE_COMPONENTS = { UserMessage, AssistantMessage };
+
 export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
   const [title, setTitle] = useState("");
   const [model, setModel] = useState("");
@@ -207,28 +247,7 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
 
       <ThreadPrimitive.Root className={styles.thread}>
         <ThreadPrimitive.Viewport className={styles.transcript} autoScroll>
-          <ThreadPrimitive.Messages
-            components={{
-              UserMessage: () => (
-                <article className={styles.turn}>
-                  <span className={styles.who}>You</span>
-                  <MessagePrimitive.Root className={`${styles.body} ${styles.userBody}`}>
-                    <MessagePrimitive.Parts />
-                  </MessagePrimitive.Root>
-                </article>
-              ),
-              AssistantMessage: () => (
-                <article className={styles.turn}>
-                  <span className={styles.who}>Assistant</span>
-                  <MessagePrimitive.Root className={styles.body}>
-                    <MessagePrimitive.Parts
-                      components={{ Text: MarkdownText, Reasoning }}
-                    />
-                  </MessagePrimitive.Root>
-                </article>
-              ),
-            }}
-          />
+          <ThreadPrimitive.Messages components={MESSAGE_COMPONENTS} />
           {error ? (
             // The gateway's own words. "You have exceeded your monthly budget"
             // is something the reader can act on; "something went wrong" is not.

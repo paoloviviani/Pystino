@@ -98,6 +98,34 @@ describe("Chat", () => {
     expect(screen.getByText(/two and two/)).toBeInTheDocument();
   });
 
+  it("does not remount the transcript while a turn streams", async () => {
+    // The flicker bug, pinned by DOM node identity rather than by text.
+    //
+    // Defining the message components inline in the JSX made them a new
+    // component *type* on every render, and Chat re-renders on every streamed
+    // token — so React unmounted and remounted the whole transcript per delta.
+    // The text was always correct; it simply disappeared and came back dozens
+    // of times a second. Nothing that asserts on content can see that. A node
+    // that survives an update can.
+    serve(
+      conversation([
+        message({ id: "m1", role: "user", content: "question" }),
+        message({ id: "m2", position: 1, role: "assistant", content: "first" }),
+      ]),
+    );
+    const { rerender } = render(
+      <Chat conversationId="c1" models={MODELS} onTurnComplete={() => {}} />,
+    );
+    const before = await screen.findByText("question");
+
+    // Any re-render of the parent is enough: if the component types are
+    // unstable, this alone replaces the node.
+    rerender(<Chat conversationId="c1" models={MODELS} onTurnComplete={() => {}} />);
+    const after = screen.getByText("question");
+
+    expect(after).toBe(before);
+  });
+
   it("offers the models it was given", async () => {
     serve(conversation([]));
     render(<Chat conversationId="c1" models={MODELS} onTurnComplete={() => {}} />);
