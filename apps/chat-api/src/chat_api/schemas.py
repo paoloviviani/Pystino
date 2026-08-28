@@ -21,6 +21,7 @@ class MessageOut(BaseModel):
     position: int
     role: Role
     content: str
+    reasoning: str | None = None
     status: MessageStatus
     model: str | None = None
     request_id: str | None = None

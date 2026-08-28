@@ -144,6 +144,14 @@ class Message(Base):
         _enum(MessageStatus, "message_status"), default=MessageStatus.COMPLETE
     )
 
+    #: The model's own thinking, when it emits any, kept apart from the answer.
+    #: A separate column rather than a marked-up region of `content`, because
+    #: the two are different things to a reader and to anything that later
+    #: re-sends this message as history — reasoning is **not** sent back to the
+    #: model, and a scheme that had to parse it out of the prose would send it
+    #: back the first time the parsing was wrong.
+    reasoning: Mapped[str | None] = mapped_column(Text, default=None)
+
     #: The model that produced an assistant message, as the gateway reported it
     #: serving — which is not always the model that was asked for, and the
     #: difference is worth keeping.
