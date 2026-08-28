@@ -1,42 +1,55 @@
-# Web frontend — placeholder
+# web — the chat application
 
-**Nothing is built here yet.** Phase 2. This directory exists so the monorepo
-layout is settled and so the decisions already researched are not researched
-again.
+The chat UI. Built with Vite and React, styled with `packages/ui`, served as
+static files by `chat-api` at **`/chat`**.
 
-## What goes here
+Not Next.js, and not assistant-ui, though
+[ADR 0015](../../docs/adr/0015-frontend-stack.md) chose both in August 2026 —
+before `packages/ui`, the console or `chat-api` existed.
+[ADR 0041](../../docs/adr/0041-chat-frontend-stack.md) records the reversal, what
+it costs (message rendering is plain text) and what remains worth reconsidering.
 
-A chat UI that talks to the gateway, and the only place a human manages their own
-account:
+## What it talks to
 
-- OIDC login using the same group model as the gateway
-- shows the user their own spend (`GET /api/me/usage`)
-- lets them change their default billing group (`PUT /api/me/default-billing-group`)
-- lets them mint and revoke API keys (`/api/me/keys`)
-- **PWA is mandatory** — installable, offline shell
-- admin-configurable web search (Exa, Jina, Staan)
-- MCP connections with OIDC
-- RAG configuration surface: search mode, OCR endpoint, embedding endpoint
-- code execution sandbox, file upload, artifacts
+Only `chat-api`, on the same origin, with a session cookie. There is no token in
+JavaScript and nothing in `localStorage`: the access token that reaches the
+gateway is minted server-side, per request, from a refresh token the browser
+never sees.
 
-## Decisions already taken
+Everything lives under `/chat`, including the API calls (`/chat/api/…`) and the
+login route (`/chat/auth/login`). Behind the TLS proxy the gateway owns the root
+of the origin, so `/api` and `/auth` there belong to *it*. The Vite `base` must
+match, or the built page loads and then fetches every script from the gateway.
 
-| Choice | Decision | ADR |
-|---|---|---|
-| Framework | Next.js 16, App Router (default in 16, Turbopack stable) | [0015](../../docs/adr/0015-frontend-stack.md) |
-| Chat UI | assistant-ui (MIT) rather than hand-rolled | [0015](../../docs/adr/0015-frontend-stack.md) |
-| Streaming/transport | Vercel AI SDK v6 (Apache-2.0) as a library, not an architecture | [0015](../../docs/adr/0015-frontend-stack.md) |
-| PWA | Serwist (MIT). `next-pwa` is archived. | [0016](../../docs/adr/0016-pwa.md) |
-| Types | Generated from the gateway's OpenAPI schema, never hand-written | [0002](../../docs/adr/0002-monorepo-tooling.md) |
+## What is deliberately not here
 
-## Constraints worth knowing before starting
+Providers, models, quotas, spend and API keys. Those are the console's, and the
+identity menu links to it. Two implementations of "mint an API key" is one too
+many, and the second is where the security bug will be.
 
-- **The server is authoritative for conversations.** There is no client-side
-  conversation store to reconcile; the desktop app wraps this same frontend and
-  gets sync for free precisely because of that.
-- **Do not copy code from Open WebUI.** It is a useful reference for how
-  configurable RAG should be, and that is all it may be used for: since v0.6.6 it
-  carries a branding clause and a CLA and is not OSI open source. See
-  [0019](../../docs/adr/0019-document-conversion.md).
-- Talk to the gateway's `/v1` surface with a user-scoped API key or a session,
-  never with the upstream provider's key.
+## Built
+
+Conversation list, one conversation, a streamed turn, a model picker fed by
+`/v1/models` through `chat-api`, sign-in and sign-out.
+
+## Not built yet
+
+- Markdown and code rendering in a message — see ADR 0041 for the shape.
+- Regenerate, edit-and-resend, stop, and search over your own history.
+- Titles from a model rather than the first sixty characters.
+- **The PWA.** [ADR 0016](../../docs/adr/0016-pwa.md) calls it mandatory and it
+  is not done; `vite-plugin-pwa` (MIT) is the route.
+- Assistants, knowledge bases, MCP — M2 onwards in
+  [docs/phase-3-plan.md](../../docs/phase-3-plan.md).
+
+## Working on it
+
+```bash
+pnpm --filter @llmp/web dev        # :5174, proxying /chat/api to :8100
+pnpm --filter @llmp/web test
+pnpm --filter @llmp/web typecheck
+```
+
+**Do not copy code from Open WebUI.** Since v0.6.6 it carries a branding clause
+and a CLA and is not OSI open source. It is a reference for how configurable RAG
+should be, and that is all.
