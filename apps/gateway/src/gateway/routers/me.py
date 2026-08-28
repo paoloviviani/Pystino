@@ -332,10 +332,10 @@ async def my_group_usage(
 # -- the quota rules that apply to you ---------------------------------------
 
 
-@router.get("/me/limits", response_model=list[MyLimitResponse])
+@router.get("/me/limits", response_model=Page[MyLimitResponse])
 async def my_limits(
-    user: ManagementUserDep, session: SessionDep, quota: QuotaDep
-) -> list[MyLimitResponse]:
+    user: ManagementUserDep, session: SessionDep, quota: QuotaDep, page: PageDep
+) -> Page[MyLimitResponse]:
     """The rules that constrain this caller, and how much of each is spent.
 
     Filtered here rather than in the browser, and that is the whole point of the
@@ -381,15 +381,21 @@ async def my_limits(
     # Valkey is down is worse than one shown as unknown.
     current = await quota.current_values(rules)
 
-    return [
-        MyLimitResponse(
-            id=rule.id,
-            name=rule.name,
-            scope=rule.scope.value,
-            metric=rule.metric.value,
-            window_label=rule.window_label,
-            limit_value=rule.limit_value,
-            current_value=current.get(rule.id),
-        )
-        for rule in rules
-    ]
+    # The same envelope every other listing returns, though a person has a
+    # handful of rules at most. Consistency is the point: a client that has to
+    # remember which listings are wrapped and which are bare will get it wrong,
+    # and the failure is a screen that renders nothing with no error.
+    return page.slice(
+        [
+            MyLimitResponse(
+                id=rule.id,
+                name=rule.name,
+                scope=rule.scope.value,
+                metric=rule.metric.value,
+                window_label=rule.window_label,
+                limit_value=rule.limit_value,
+                current_value=current.get(rule.id),
+            )
+            for rule in rules
+        ]
+    )

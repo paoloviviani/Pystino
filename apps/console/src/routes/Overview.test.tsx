@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ApiKey, Me, MyRedaction, RedactionPolicy, UsageReport } from "../lib/types";
+import type { ApiKey, Me, UsageReport } from "../lib/types";
 import { jsonResponse } from "../test-helpers";
 import { Overview } from "./Overview";
 
@@ -66,35 +66,9 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
 }
 
 
-/**
- * What the redaction card reads.
- *
- * `baseline` is what the administrators require and is the document the form is
- * seeded from — a personal policy that omits a type falls back to its own
- * default, so an empty one is a weakening of everything.
- */
-function redaction(overrides: Partial<MyRedaction> = {}): MyRedaction {
-  const policy: RedactionPolicy = {
-    default_mode: "anonymise_restore",
-    entities: { PERSON: { mode: "anonymise", threshold: null } },
-    patterns: [],
-    allow_list: ["ilpost.it"],
-  };
-  return {
-    policy: null,
-    rule_id: null,
-    updated_at: null,
-    effective: policy,
-    baseline: policy,
-    propagation_seconds: 10,
-    ...overrides,
-  };
-}
-
 function respondWith(body: UsageReport, keys: unknown[] = []) {
   return vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (url.includes("/api/me/redaction")) return jsonResponse(redaction());
     const payload = url.includes("/reports/usage") ? body : keys;
     return jsonResponse(payload);
   });
@@ -132,7 +106,6 @@ function keyRoutes(existing: ApiKey[], calls: Calls = { minted: [], revoked: [] 
     const method = init?.method ?? "GET";
 
     if (url.includes("/reports/usage")) return jsonResponse(report());
-    if (url.includes("/api/me/redaction")) return jsonResponse(redaction());
 
     if (url.includes("/api/me/keys")) {
       if (method === "POST") {
@@ -220,14 +193,16 @@ describe("Overview", () => {
     expect(screen.getByText(/Europe\/Rome/)).toBeInTheDocument();
   });
 
-  it("renders the API's disclosures verbatim", async () => {
-    // Wording a caveat twice — once in the API, once here — is how the two end
-    // up disagreeing about what the number means.
+  it("does not put the report's caveats on the balance screen", async () => {
+    // They belong on Your usage, where somebody is reading the breakdown they
+    // qualify. Beside a single spend figure they were the loudest thing on a
+    // screen most people open to check one number.
     const note = "3 of 12 requests have estimated token counts: the provider did not report usage.";
     vi.stubGlobal("fetch", respondWith(report({ disclosures: [note] })));
     renderScreen(<Overview me={ME} />);
 
-    await waitFor(() => expect(screen.getByText(note)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByText(/Spend/).length).toBeGreaterThan(0));
+    expect(screen.queryByText(note)).not.toBeInTheDocument();
   });
 
   it("asks for the current month by default", async () => {
@@ -339,7 +314,6 @@ describe("Overview", () => {
         "fetch",
         vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
           if (String(input).includes("/reports/usage")) return jsonResponse(report());
-          if (String(input).includes("/api/me/redaction")) return jsonResponse(redaction());
           if ((init?.method ?? "GET") === "POST") {
             return new Response(
               JSON.stringify({ error: { message: "Set a default billing group first." } }),
@@ -398,126 +372,8 @@ describe("Overview", () => {
     );
     renderScreen(<Overview me={ME} />);
 
-    // Twice, now that the redaction card reads from the API too: every card
-    // that asked reports what it was told rather than one of them speaking for
-    // the page.
     await waitFor(() =>
       expect(screen.getAllByText("'nope' is not a period.").length).toBeGreaterThan(0),
     );
-  });
-
-  describe("your own redaction", () => {
-    it("shows what applies, and what everyone is held to", async () => {
-      vi.stubGlobal("fetch", respondWith(report()));
-      renderScreen(<Overview me={ME} />);
-
-      await waitFor(() =>
-        expect(screen.getByText("Applies now")).toBeInTheDocument(),
-      );
-      // Both documents, because they answer different questions: what happens
-      // to my prompts, and what I am not allowed to go below.
-      expect(
-        screen.getAllByText("Anonymise, restore in the answer by default · 1 type · 1 allowed")
-          .length,
-      ).toBe(2);
-      expect(
-        screen.getByText("None. Your administrators' settings apply."),
-      ).toBeInTheDocument();
-    });
-
-    it("lets a person protect more than the administrators require", async () => {
-      const puts: unknown[] = [];
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-          const url = String(input);
-          if (url.includes("/api/me/redaction")) {
-            if (init?.method === "PUT") {
-              puts.push(JSON.parse(String(init.body)));
-              return jsonResponse(redaction({ policy: redaction().baseline, rule_id: "r1" }));
-            }
-            return jsonResponse(redaction());
-          }
-          if (url.includes("/reports/usage")) return jsonResponse(report());
-          return jsonResponse([]);
-        }),
-      );
-      const user = userEvent.setup({ delay: null });
-      renderScreen(<Overview me={ME} />);
-
-      const person = await screen.findByRole("group", { name: /PERSON/ });
-      await user.click(within(person).getByRole("radio", { name: "Block" }));
-      await user.type(screen.getByLabelText("Reason"), "clinical notes");
-      await user.click(screen.getByRole("button", { name: "Save redaction" }));
-
-      await waitFor(() => expect(puts).toHaveLength(1));
-      const body = puts[0] as { policy: RedactionPolicy; reason: string };
-      expect(body.policy.entities.PERSON!.mode).toBe("block");
-      // Seeded from the baseline, not from an empty document: omitting a type
-      // the administrators named is itself a weakening, and is refused.
-      expect(body.policy.default_mode).toBe("anonymise_restore");
-      expect(body.reason).toBe("clinical notes");
-    });
-
-    it("does not offer a mode weaker than the administrators set", async () => {
-      // Disabled rather than absent: the floor is somebody else's decision, and
-      // a control that silently omits three of five choices reads as a bug.
-      vi.stubGlobal("fetch", respondWith(report()));
-      renderScreen(<Overview me={ME} />);
-
-      const modes = await screen.findByRole("group", { name: /PERSON/ });
-      expect(within(modes).getByRole("radio", { name: "Off" })).toBeDisabled();
-      expect(within(modes).getByRole("radio", { name: "Redact" })).toBeEnabled();
-    });
-
-    it("shows the API's refusal, which names what weakened", async () => {
-      // The comparison is against what the administrators set, which only the
-      // API can see. Re-deriving "weaker" here would give two answers.
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-          const url = String(input);
-          if (url.includes("/api/me/redaction")) {
-            if (init?.method === "PUT") {
-              return new Response(
-                JSON.stringify({
-                  error: {
-                    message:
-                      "This policy protects less than the one your administrators set, so it was not saved: PERSON. Your own policy may only tighten.",
-                    code: "redaction_policy_weakens",
-                  },
-                }),
-                { status: 400, headers: { "content-type": "application/json" } },
-              );
-            }
-            return jsonResponse(redaction());
-          }
-          if (url.includes("/reports/usage")) return jsonResponse(report());
-          return jsonResponse([]);
-        }),
-      );
-      const user = userEvent.setup({ delay: null });
-      renderScreen(<Overview me={ME} />);
-
-      await waitFor(() =>
-        expect(screen.getByRole("group", { name: /PERSON/ })).toBeInTheDocument(),
-      );
-      await user.click(screen.getByRole("button", { name: "Save redaction" }));
-
-      await waitFor(() =>
-        expect(screen.getByText(/may only tighten/)).toBeInTheDocument(),
-      );
-      expect(screen.getByText("Your policy was not saved")).toBeInTheDocument();
-    });
-
-    it("offers no allow-list, which is the one field that can only weaken", async () => {
-      vi.stubGlobal("fetch", respondWith(report()));
-      renderScreen(<Overview me={ME} />);
-
-      await waitFor(() =>
-        expect(screen.getByRole("group", { name: /PERSON/ })).toBeInTheDocument(),
-      );
-      expect(screen.queryByLabelText("Allowlist")).not.toBeInTheDocument();
-    });
   });
 });

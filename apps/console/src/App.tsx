@@ -14,6 +14,7 @@ import { AdminReports } from "./routes/AdminReports";
 import { AdminUsers } from "./routes/AdminUsers";
 import { NotFound } from "./routes/NotFound";
 import { Overview } from "./routes/Overview";
+import { Reports } from "./routes/Reports";
 import styles from "./App.module.css";
 
 export function App() {
@@ -55,6 +56,9 @@ export function App() {
     <Shell me={me_}>
       <Routes>
         <Route path="/" element={<Overview me={me_} />} />
+        {/* A person's own consumption. Not admin-gated: everyone has usage,
+            including administrators, whose own spend is not administration. */}
+        <Route path="/reports" element={<Reports />} />
 
         {/* Wrapped rather than conditionally registered: a non-admin who follows
             a bookmarked link should be told, not handed a blank 404 that reads

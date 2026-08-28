@@ -14,23 +14,54 @@ export interface ShellProps {
 interface NavItem {
   to: string;
   label: string;
-  adminOnly?: boolean;
 }
 
-// Admin items are filtered out for a non-administrator. The API enforces the
-// same rule independently — this only keeps the navigation honest about what
-// the reader can actually open.
-const NAV: NavItem[] = [
-  { to: "/", label: "Overview" },
-  { to: "/admin/reports", label: "Reports", adminOnly: true },
-  { to: "/admin/quotas", label: "Quotas", adminOnly: true },
-  { to: "/admin/providers", label: "Providers", adminOnly: true },
-  // No Pricing entry: a model's prices live on the model's own page, because
-  // "what is this model" and "what does it cost" are one question asked in one
-  // place. See routes/AdminModelDetail.tsx.
-  { to: "/admin/models", label: "Models", adminOnly: true },
-  { to: "/admin/users", label: "Users", adminOnly: true },
-  { to: "/admin/redaction", label: "Redaction", adminOnly: true },
+interface NavGroup {
+  /** Names the group for a screen reader, and heads it on screen. */
+  title: string;
+  adminOnly?: boolean;
+  items: NavItem[];
+}
+
+/**
+ * Two sections, and the split is the point.
+ *
+ * An administrator is also a *user*: they have their own spend, their own
+ * quotas and their own keys, and those are not administration. Before this
+ * split the two were one flat list, so an admin's own consumption and the
+ * deployment's were the same word one above the other — "Reports" meaning
+ * different things depending on where you clicked.
+ *
+ * Naming the groups is what fixes it. "Your usage" and "Everyone's usage" can
+ * sit in the same sidebar without ambiguity; "Reports" twice cannot.
+ *
+ * The admin group is hidden from a non-administrator. The API enforces the same
+ * rule independently — this only keeps the navigation honest about what the
+ * reader can open.
+ */
+const NAV: NavGroup[] = [
+  {
+    title: "You",
+    items: [
+      { to: "/", label: "Overview" },
+      { to: "/reports", label: "Your usage" },
+    ],
+  },
+  {
+    title: "Administration",
+    adminOnly: true,
+    items: [
+      { to: "/admin/reports", label: "Everyone's usage" },
+      { to: "/admin/quotas", label: "Quotas" },
+      { to: "/admin/redaction", label: "Redaction" },
+      { to: "/admin/providers", label: "Providers" },
+      // No Pricing entry: a model's prices live on the model's own page,
+      // because "what is this model" and "what does it cost" are one question
+      // asked in one place. See routes/AdminModelDetail.tsx.
+      { to: "/admin/models", label: "Models" },
+      { to: "/admin/users", label: "Users" },
+    ],
+  },
 ];
 
 /**
@@ -54,7 +85,7 @@ function readExactMoney(): boolean {
 }
 
 export function Shell({ me, children }: ShellProps) {
-  const items = NAV.filter((item) => !item.adminOnly || me.is_admin);
+  const groups = NAV.filter((group) => !group.adminOnly || me.is_admin);
   const name = me.display_name || me.email || "Signed in";
 
   // Administrators only. A reader looking at their own spend has no use for
@@ -88,17 +119,29 @@ export function Shell({ me, children }: ShellProps) {
           </div>
 
           <nav className={styles.nav} aria-label="Sections">
-            {items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === "/"}
-                className={({ isActive }) =>
-                  isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
-                }
-              >
-                {item.label}
-              </NavLink>
+            {groups.map((group) => (
+              // A nav per group, each with its own accessible name: one <nav>
+              // holding two headed lists announces as one undifferentiated set
+              // of links, which is the thing this layout exists to stop.
+              <div key={group.title} className={styles.navGroup}>
+                <h2 className={styles.navTitle} id={`nav-${group.title}`}>
+                  {group.title}
+                </h2>
+                <div role="group" aria-labelledby={`nav-${group.title}`}>
+                  {group.items.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.to === "/"}
+                      className={({ isActive }) =>
+                        isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
+                      }
+                    >
+                      {item.label}
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
             ))}
           </nav>
 

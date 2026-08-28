@@ -118,3 +118,33 @@
     margin-bottom: var(--space-3);
   }
 }
+
+/* Quotas. One per row rather than a grid: a meter is read left to right, and
+   two side by side invite a comparison between different metrics that does not
+   mean anything. */
+.quotas {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.quota {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.quotaHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.quotaName {
+  font-weight: var(--weight-medium);
+}
+
+.quotaDetail {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--colour-text-muted);
+}
