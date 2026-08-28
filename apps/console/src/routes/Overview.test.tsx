@@ -91,16 +91,18 @@ function apiKey(overrides: Partial<ApiKey> = {}): ApiKey {
 interface Calls {
   minted: unknown[];
   revoked: string[];
+  deleted: string[];
 }
 
 /**
- * A directory of keys that can be minted from and revoked, so the tests assert
- * on what the server was actually asked for rather than only on what rendered.
+ * A directory of keys that can be minted from, revoked and deleted, so the
+ * tests assert on what the server was actually asked for rather than only on
+ * what rendered.
  *
  * The secret is supplied by the fake for the same reason the real API supplies
  * it exactly once: the client must never be able to derive or re-request it.
  */
-function keyRoutes(existing: ApiKey[], calls: Calls = { minted: [], revoked: [] }) {
+function keyRoutes(existing: ApiKey[], calls: Calls = { minted: [], revoked: [], deleted: [] }) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -115,6 +117,11 @@ function keyRoutes(existing: ApiKey[], calls: Calls = { minted: [], revoked: [] 
           { ...apiKey({ id: "new", name: body.name }), secret: "sk-live-THE-ONLY-COPY" },
           201,
         );
+      }
+      if (method === "DELETE" && url.endsWith("/permanent")) {
+        // .../keys/{id}/permanent — the id is one segment up.
+        calls.deleted.push(url.split("/").at(-2) ?? "");
+        return new Response(null, { status: 204 });
       }
       if (method === "DELETE") {
         calls.revoked.push(url.split("/").pop() ?? "");
@@ -237,7 +244,7 @@ describe("Overview", () => {
 
     it("mints a key and shows the secret", async () => {
       const user = setup();
-      const calls: Calls = { minted: [], revoked: [] };
+      const calls: Calls = { minted: [], revoked: [], deleted: [] };
       vi.stubGlobal("fetch", keyRoutes([], calls));
       renderScreen(<Overview me={ME} />);
 
@@ -278,7 +285,7 @@ describe("Overview", () => {
 
     it("sends the chosen billing group and expiry", async () => {
       const user = setup();
-      const calls: Calls = { minted: [], revoked: [] };
+      const calls: Calls = { minted: [], revoked: [], deleted: [] };
       vi.stubGlobal("fetch", keyRoutes([], calls));
       renderScreen(<Overview me={ME} />);
 
@@ -335,7 +342,7 @@ describe("Overview", () => {
 
     it("asks before revoking, and says the bill is unaffected", async () => {
       const user = setup();
-      const calls: Calls = { minted: [], revoked: [] };
+      const calls: Calls = { minted: [], revoked: [], deleted: [] };
       vi.stubGlobal("fetch", keyRoutes([apiKey()], calls));
       renderScreen(<Overview me={ME} />);
 
@@ -357,6 +364,33 @@ describe("Overview", () => {
 
       await waitFor(() => expect(screen.getByText("Revoked")).toBeInTheDocument());
       expect(screen.queryByRole("button", { name: "Revoke" })).not.toBeInTheDocument();
+    });
+
+    it("asks before deleting, and says what is actually lost", async () => {
+      const user = setup();
+      const calls: Calls = { minted: [], revoked: [], deleted: [] };
+      vi.stubGlobal("fetch", keyRoutes([apiKey()], calls));
+      renderScreen(<Overview me={ME} />);
+
+      await waitFor(() => expect(screen.getByText("laptop")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: "Delete" }));
+
+      const dialog = within(await screen.findByRole("dialog"));
+      // The trade named before the click: spend survives, the label does not.
+      expect(screen.getByText(/attributed to you and your billing group/i)).toBeInTheDocument();
+      expect(calls.deleted).toEqual([]);
+
+      await user.click(dialog.getByRole("button", { name: "Delete permanently" }));
+      await waitFor(() => expect(calls.deleted).toEqual(["k1"]));
+    });
+
+    it("offers delete even on a key that is already revoked", async () => {
+      // A revoked entry is exactly the clutter delete exists to prune.
+      vi.stubGlobal("fetch", keyRoutes([apiKey({ revoked_at: "2026-08-10T10:00:00Z" })]));
+      renderScreen(<Overview me={ME} />);
+
+      await waitFor(() => expect(screen.getByText("Revoked")).toBeInTheDocument());
+      expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
     });
   });
 

@@ -23,6 +23,7 @@ import {
 } from "../components/CapabilityPicker";
 import {
   useCreateModel,
+  useDeleteModel,
   useDiscovery,
   useImportModels,
   useModels,
@@ -44,10 +45,12 @@ export function AdminModels() {
   const paged = usePaginated();
   const models = useModels(paged.page);
   const update = useUpdateModel();
+  const deleteModel = useDeleteModel();
 
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [discovering, setDiscovering] = useState(false);
+  const [deleting, setDeleting] = useState<AdminModel | null>(null);
 
   const columns: Column<AdminModel>[] = [
     {
@@ -152,6 +155,9 @@ export function AdminModels() {
           >
             {model.is_active ? "Deactivate" : "Activate"}
           </Button>
+          <Button variant="ghost" onClick={() => setDeleting(model)}>
+            Delete
+          </Button>
         </div>
       ),
     },
@@ -175,6 +181,12 @@ export function AdminModels() {
       {update.error ? (
         <Notice tone="danger" title="Could not update the model">
           {update.error instanceof Error ? update.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      {deleteModel.error ? (
+        <Notice tone="danger" title="Could not delete the model">
+          {deleteModel.error instanceof Error ? deleteModel.error.message : "Unknown error."}
         </Notice>
       ) : null}
 
@@ -230,7 +242,57 @@ export function AdminModels() {
 
       <CreateModelDialog open={creating} onClose={() => setCreating(false)} />
       <DiscoveryDialog open={discovering} onClose={() => setDiscovering(false)} />
+      <DeleteModelDialog model={deleting} onClose={() => setDeleting(null)} />
     </div>
+  );
+}
+
+/**
+ * Removing a model from the catalogue outright, as opposed to deactivating it.
+ *
+ * Deactivation takes it out of service but leaves the row, and a catalogue
+ * pruned of a hundred stale imports is the case delete exists for. The ledger
+ * does not suffer: past usage keeps the model's name and its user/group
+ * attribution, which is what the dialog says, because "delete" beside money
+ * has to answer "what happens to the records" before the click.
+ */
+function DeleteModelDialog({ model, onClose }: { model: AdminModel | null; onClose: () => void }) {
+  const del = useDeleteModel();
+
+  return (
+    <Dialog
+      open={model !== null}
+      title={`Delete ${model?.name ?? "this model"}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="danger"
+            busy={del.isPending}
+            onClick={() => model && del.mutate(model.id, { onSuccess: onClose })}
+          >
+            Delete permanently
+          </Button>
+        </>
+      }
+    >
+      {del.error ? (
+        <Notice tone="danger">
+          {del.error instanceof Error ? del.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+      <p>
+        Removed from the catalogue and from <code className={styles.code}>/v1/models</code>; its
+        prices and access grants go with it. Callers asking for{" "}
+        <code className={styles.code}>{model?.name}</code> get "model not found" from the next
+        request on. This cannot be undone.
+      </p>
+      <p className={styles.muted}>
+        Recorded spend is unaffected: past usage keeps the model's name and stays attributed to
+        the people and groups that ran it.
+      </p>
+    </Dialog>
   );
 }
 

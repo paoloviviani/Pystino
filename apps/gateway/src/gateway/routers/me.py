@@ -172,10 +172,12 @@ async def create_key(
 async def revoke_key(
     key_id: uuid.UUID, user: ManagementUserDep, session: SessionDep
 ) -> ApiKeyResponse:
-    """Revoke, never delete.
+    """Revoke: the key stops working, the row stays on the list.
 
-    The usage ledger references keys, and a deleted key would turn historical
-    spend into an unattributable row.
+    The softer of the two ways to kill a key, and the default: a revoked key
+    remains visible with its name, prefix and last-used date, which is the
+    audit trail for "what is still calling with what". Deleting is
+    :func:`delete_key`.
     """
     stmt = (
         select(ApiKey)
@@ -191,6 +193,29 @@ async def revoke_key(
         await session.commit()
         await session.refresh(key)
     return _key_response(key)
+
+
+@router.delete("/me/keys/{key_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_key(
+    key_id: uuid.UUID, user: ManagementUserDep, session: SessionDep
+) -> None:
+    """Delete a key outright, revoked or not.
+
+    Distinct from revoking because a list of dead keys grows without limit and
+    only its owner can say which entries are still worth seeing. The ledger
+    does not suffer for it: usage rows reference the key ON DELETE SET NULL,
+    and they carry user and group ids of their own, so historical spend stays
+    attributed to both — what is lost is only the per-key label in the "by API
+    key" breakdown of rows from before the deletion, which is inherent to
+    removing the key and the trade the caller is choosing.
+    """
+    stmt = select(ApiKey).where(ApiKey.id == key_id, ApiKey.user_id == user.id)
+    key = (await session.execute(stmt)).scalar_one_or_none()
+    if key is None:
+        raise PermissionError_("No such key.")
+
+    await session.delete(key)
+    await session.commit()
 
 
 @router.get("/me/usage", response_model=UsageSummaryResponse)
