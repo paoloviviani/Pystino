@@ -86,9 +86,12 @@ export function Overview({ me }: OverviewProps) {
     <div className={styles.page}>
       <div className={styles.pageHeader}>
         <div>
-          <h1 className={styles.title}>Your usage</h1>
+          {/* "Overview", not "Your usage" — that name now belongs to the
+              reports page next to it in the header, and two screens wearing it
+              is worse than either name being imperfect. */}
+          <h1 className={styles.title}>Overview</h1>
           <p className={styles.subtitle}>
-            What you have spent, and the keys you spent it with.
+            Where you stand this period, and the keys you spend with.
           </p>
         </div>
         <Select
