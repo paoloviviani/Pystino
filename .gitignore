@@ -33,7 +33,11 @@ deploy/.env
 .console-shots/
 
 # Credential files that are not *.env — the pattern above does not catch them.
+# Both spellings named explicitly because the file has gone by each; the glob
+# also covers a renamed or backup copy (`.bak`, a date), equally secret.
+.gitlab-token
 .gitlab-tokens
+.gitlab-token*
 
 # Self-signed material and Caddy state, if either is ever written outside a volume.
 deploy/tls/
