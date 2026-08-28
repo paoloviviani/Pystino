@@ -1,8 +1,9 @@
 # 0015 — Frontend stack: Next.js 16, assistant-ui, AI SDK v6
 
-- Status: **superseded** by [0041](0041-chat-frontend-stack.md) for the framework
-  and chat-library choices. What still stands: the frontend never holds provider
-  credentials, and the server is authoritative for conversations.
+- Status: **partly superseded** by [0041](0041-chat-frontend-stack.md): Next.js
+  and the AI SDK were dropped, **assistant-ui was kept**. What still stands
+  unchanged: the frontend never holds provider credentials, the server is
+  authoritative for conversations, and Assistant Cloud is never configured.
 - Date: 2026-08-14
 
 ## Context
