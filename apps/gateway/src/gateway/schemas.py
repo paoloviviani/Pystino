@@ -382,6 +382,29 @@ class LimitRuleResponse(BaseModel):
     last_reset_at: datetime | None = None
 
 
+class MyLimitResponse(BaseModel):
+    """One quota rule that constrains the caller, and how much of it is spent.
+
+    Deliberately narrower than :class:`LimitRuleResponse`. It carries no
+    ``scope_id`` — the only scopes here are global, this user, or a group they
+    are in, so an id would name either themselves or something they already know
+    — and no ``is_active``, because an inactive rule is not returned at all.
+
+    ``current_value`` is absent, not zero, when the counter store cannot be
+    reached. A budget shown as untouched because Valkey is down is worse than one
+    shown as unknown.
+    """
+
+    id: uuid.UUID
+    name: str
+    #: "global", "group" or "user" — enough to say whose ceiling this is.
+    scope: str
+    metric: str
+    window_label: str = ""
+    limit_value: Money
+    current_value: Money | None = None
+
+
 # -- administration ---------------------------------------------------------
 #
 # Deliberately explicit rather than reusing the ORM: an admin API that accepts
@@ -1078,41 +1101,6 @@ class RedactionRuleUpdateRequest(BaseModel):
     policy: RedactionPolicy | None = None
     is_active: bool | None = None
     reason: str | None = Field(default=None, max_length=500)
-
-
-class MyRedactionResponse(BaseModel):
-    """A person's own redaction rule, and the two policies it sits between."""
-
-    #: The caller's own rule, or null when they have never written one. Null is
-    #: not "no protection": ``effective`` is what actually applies.
-    policy: RedactionPolicy | None = None
-    rule_id: uuid.UUID | None = None
-    updated_at: datetime | None = None
-    #: What governs this person's requests today: the deployment policy folded
-    #: with the rules an administrator set for their groups, and with their own.
-    #: Model- and provider-scoped rules are **not** included — which one applies
-    #: is not known until a request names a model.
-    effective: RedactionPolicy
-    #: The floor a submitted policy may not go below: the deployment policy
-    #: folded with the group rules. **This is the document to edit**: a type a
-    #: submitted policy does not name falls back to that policy's own default, so
-    #: starting from an empty one and adding a single entity is refused as a
-    #: weakening of everything else.
-    baseline: RedactionPolicy
-    #: How long another worker may still be applying the previous version.
-    propagation_seconds: float = 0.0
-
-
-class MyRedactionRequest(BaseModel):
-    """Set your own policy. It may only tighten.
-
-    The whole document, like the admin policy route: a policy's meaning is the
-    combination of its entries, and a partial update invites two sessions to each
-    save half of what they meant.
-    """
-
-    policy: RedactionPolicy
-    reason: str = Field(default="", max_length=500)
 
 
 class RedactionPreviewRequest(BaseModel):
