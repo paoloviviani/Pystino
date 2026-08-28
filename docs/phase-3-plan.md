@@ -183,9 +183,20 @@ Three things this milestone established that the later ones inherit:
 - **The request id is minted here and sent**, never read back — the gateway
   adopts an inbound `x-request-id` and does not return the one it used. That
   column is the only thing tying a transcript to what it cost.
-- **Drain the stream.** Breaking at `data: [DONE]` closes the connection while
-  the gateway is inside the write that settles the request, and the row stays
-  `in_progress` at zero cost for a request the provider served in full. The
+- **Drain the stream, and shield the write.** Breaking at `data: [DONE]` closes
+  the connection while the gateway is inside the write that settles the request,
+  and the row stays `in_progress` at zero cost for a request the provider served
+  in full. Both services' finalisations are shielded now: an unshielded await
+  inside a task the client can cancel is torn down part-way through, and in
+  chat-api that meant pressing stop lost the very text the button was pressed to
+  keep.
+- **Reasoning is a separate field, everywhere.** Its own SSE event, its own
+  column, its own message part. Concatenating it into the answer would replay
+  the model's thinking to it as history on the next turn.
+- **A component with no render test is untested.** Two crashes reached the
+  deployment through a screen that had never been mounted in a test — and no
+  live script can catch that class, because they exercise the API and the crash
+  is in the browser. The
   gateway's own settle is shielded now, and so is chat-api's, which had the same
   bug: an unshielded write inside a generator the client can close is torn down
   part-way through, and pressing stop would have lost the very text the button

@@ -44,6 +44,19 @@ Reasoning is a separate field all the way down: its own SSE event, its own
 column, its own message part. That is what keeps it out of the history sent back
 to the model on the next turn.
 
+## Two things that will bite
+
+**Mount a component in a test before shipping it.** `Chat.tsx` shipped with none,
+and two crashes that fire on the first render of any real conversation reached
+the deployment — the screen appeared and vanished, with the answer only in the
+browser console. A user message must not carry a `status`, and
+`ChainOfThoughtPrimitive` needs a scope a plain reasoning part does not
+establish. Both are one render away from obvious.
+
+**jsdom has no `ResizeObserver` and no `scrollIntoView`**, and assistant-ui's
+viewport uses both. They are shimmed in `src/test-setup.ts`; a new failure
+naming either is that gap, not your code.
+
 ## Not built yet
 
 - Regenerate, edit-and-resend, and search over your own history. assistant-ui's
