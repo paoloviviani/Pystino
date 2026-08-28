@@ -28,8 +28,10 @@ What it asserts:
 * the four holes CLAUDE.md's fourth ground rule is about are closed: no
   plaintext, no admin/admin, no published seed password, a Secure cookie;
 * nothing else of this stack is on a routable interface — PostgreSQL, Valkey,
-  the gateway's own port, Keycloak's own port and the fake upstream are all
-  reachable on loopback and refused everywhere else;
+  the gateway's own port, the chat service's, Keycloak's and the fake upstream
+  are all reachable on loopback and refused everywhere else — every service that
+  joins the stack belongs in that list, because the guarantee is "nothing else is
+  published" and a list that lags behind the compose files stops checking it;
 * a streamed completion still streams through the proxy.
 """
 
@@ -169,6 +171,7 @@ def main() -> int:
             6379: "Valkey",
             8000: "the gateway, without TLS",
             8081: "the fake upstream",
+            int(os.environ.get("CHAT_PORT", "8100")): "the chat service, without TLS",
             int(os.environ.get("KEYCLOAK_PORT", "8080")): "Keycloak, without TLS",
         }
         for number, what in sorted(private.items()):
