@@ -41,6 +41,9 @@ deploy/.env
 .gh-token
 .gh-token*
 
+# Local agent-tooling state, not project config.
+paseo.json
+
 # Self-signed material and Caddy state, if either is ever written outside a volume.
 deploy/tls/
 
