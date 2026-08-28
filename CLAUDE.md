@@ -346,5 +346,8 @@ Known open items, none of them blocking:
 - Deferred by the user: per-provider default body params (`eu_native`,
   `allow_zero_data_retention`), image editing and variations, per-size image
   pricing, reranking.
-- Phase 3 is the chat frontend, RAG, MCP, the code sandbox, the desktop app and
-  the `opencode` device flow. Nothing has been started.
+- Phase 3 is the chat application: chat, assistants, RAG, MCP, voice, the code
+  sandbox, then the desktop app and the `opencode` device flow. Planned but not
+  started — `docs/phase-3-plan.md` records the design decisions (a separate
+  service coupled to the gateway only through `/v1` and OIDC, bearer tokens on
+  `/v1` as the first milestone) and, as importantly, what was rejected and why.
