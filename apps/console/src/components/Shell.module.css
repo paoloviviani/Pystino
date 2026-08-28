@@ -301,3 +301,23 @@
     padding: var(--space-5) var(--space-4) var(--space-6);
   }
 }
+
+/* Two named sections in the sidebar. The heading is what lets "Your usage" and
+   "Everyone's usage" coexist without either being ambiguous. */
+.navGroup {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.navGroup + .navGroup {
+  margin-top: var(--space-4);
+}
+
+.navTitle {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--label-tracking);
+  text-transform: var(--label-transform);
+  color: var(--colour-text-faint);
+}

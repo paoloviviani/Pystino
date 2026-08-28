@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, request } from "./api";
 import { MAX_LIMIT, type Page, pageParams } from "./paging";
-import type { ApiKey, MintedApiKey, Me, MyRedaction, RedactionPolicy, UsageReport } from "./types";
+import type { ApiKey, Me, MintedApiKey, MyLimit, UsageReport } from "./types";
 
 /**
  * Query keys, in one place.
@@ -14,7 +14,7 @@ export const keys = {
   me: ["me"] as const,
   myKeys: ["me", "keys"] as const,
   myReport: (period: string, groupBy: string) => ["me", "report", period, groupBy] as const,
-  myRedaction: ["me", "redaction"] as const,
+  myLimits: ["me", "limits"] as const,
 };
 
 /**
@@ -102,37 +102,25 @@ export function useRevokeKey() {
   });
 }
 
-// -- redaction ---------------------------------------------------------------
+
+// -- quotas ------------------------------------------------------------------
 
 /**
- * What is stripped from this person's prompts, and the floor under it.
+ * The quota rules that apply to the person signed in, with what each has used.
  *
- * Three documents in one response — their own rule, what applies, and what an
- * administrator requires — because the first alone cannot be acted on: a null
- * rule is not "no protection", it is "nothing of mine on top of theirs".
+ * Its own endpoint, not the admin listing filtered here: that would mean a
+ * non-admin's browser receiving every budget in the deployment and merely
+ * choosing not to draw them.
+ *
+ * Polled while the tab is open. A quota is the number a person checks *because*
+ * it moves, and one that refreshes only on navigation is the number they were
+ * trying not to have to trust.
  */
-export function useMyRedaction() {
+export function useMyLimits() {
   return useQuery({
-    queryKey: keys.myRedaction,
-    queryFn: () => request<MyRedaction>("/api/me/redaction"),
+    queryKey: keys.myLimits,
+    queryFn: () => request<Page<MyLimit>>(`/api/me/limits?${pageParams({ limit: MAX_LIMIT })}`),
     retry: retryUnlessRejected,
-  });
-}
-
-/**
- * Tighten your own policy.
- *
- * The response is written straight back into the cache rather than refetched:
- * it carries the new `effective` document, and a screen that briefly showed the
- * previous one after a save reads as a save that did not take.
- */
-export function useSetMyRedaction() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { policy: RedactionPolicy; reason: string }) =>
-      request<MyRedaction>("/api/me/redaction", { method: "PUT", body }),
-    onSuccess: (mine) => {
-      client.setQueryData(keys.myRedaction, mine);
-    },
+    refetchInterval: 60_000,
   });
 }

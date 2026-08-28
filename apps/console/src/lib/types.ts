@@ -406,21 +406,27 @@ export interface RedactionPreview {
   note: string | null;
 }
 
-/** A person's own redaction rule, and the two policies it sits between. */
-export interface MyRedaction {
-  /** Their own rule, or null when they have never written one. */
-  policy: RedactionPolicy | null;
-  rule_id: string | null;
-  updated_at: string | null;
-  /** What governs their requests today, their own rule included. */
-  effective: RedactionPolicy;
+/**
+ * One quota rule that constrains the person signed in.
+ *
+ * Narrower than {@link LimitRule} on purpose. No `scope_id`, because the only
+ * scopes here are global, this user, or a group they are in — an id would name
+ * either themselves or something they already know. No `is_active`, because an
+ * inactive rule is not returned at all.
+ */
+export interface MyLimit {
+  id: string;
+  name: string;
+  /** "global", "group" or "user" — enough to say whose ceiling this is. */
+  scope: string;
+  metric: string;
+  window_label: string;
+  limit_value: string;
   /**
-   * The floor a submitted policy may not go below, and **the document to edit**:
-   * a type a submitted policy does not name falls back to that policy's own
-   * default, so starting from an empty one is refused as a weakening.
+   * Absent, not zero, when the counter store cannot be reached. A budget drawn
+   * as untouched because Valkey is down is worse than one drawn as unknown.
    */
-  baseline: RedactionPolicy;
-  propagation_seconds: number;
+  current_value: string | null;
 }
 
 /**

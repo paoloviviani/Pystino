@@ -73,7 +73,7 @@ class TestMyLimits:
             "/api/me/limits", headers=session_cookie(seeded.user.id, app)
         )
         assert response.status_code == 200, response.text
-        assert {rule["name"] for rule in response.json()} == {"everyone", "my group", "me"}
+        assert {rule["name"] for rule in response.json()["items"]} == {"everyone", "my group", "me"}
 
     @pytest.mark.asyncio
     async def test_it_hides_other_peoples_budgets(
@@ -105,7 +105,7 @@ class TestMyLimits:
         response = await client.get(
             "/api/me/limits", headers=session_cookie(seeded.user.id, app)
         )
-        assert [rule["name"] for rule in response.json()] == []
+        assert [rule["name"] for rule in response.json()["items"]] == []
 
     @pytest.mark.asyncio
     async def test_an_inactive_rule_is_not_a_ceiling(
@@ -125,7 +125,7 @@ class TestMyLimits:
         response = await client.get(
             "/api/me/limits", headers=session_cookie(seeded.user.id, app)
         )
-        assert [rule["name"] for rule in response.json()] == []
+        assert [rule["name"] for rule in response.json()["items"]] == []
 
     @pytest.mark.asyncio
     async def test_a_key_rule_is_not_a_fact_about_the_person(
@@ -147,7 +147,7 @@ class TestMyLimits:
         response = await client.get(
             "/api/me/limits", headers=session_cookie(seeded.user.id, app)
         )
-        assert [rule["name"] for rule in response.json()] == []
+        assert [rule["name"] for rule in response.json()["items"]] == []
 
     @pytest.mark.asyncio
     async def test_it_carries_consumption_and_the_window(
@@ -162,7 +162,7 @@ class TestMyLimits:
         )
         rule = (
             await client.get("/api/me/limits", headers=session_cookie(seeded.user.id, app))
-        ).json()[0]
+        ).json()["items"][0]
         # Money is a string end to end, in this envelope as everywhere else.
         assert rule["limit_value"] == "50.000000000000"
         assert rule["window_label"] == "86400s"
@@ -185,7 +185,7 @@ class TestMyLimits:
         )
         rule = (
             await client.get("/api/me/limits", headers=session_cookie(seeded.user.id, app))
-        ).json()[0]
+        ).json()["items"][0]
         assert "scope_id" not in rule
         assert rule["scope"] == "group"
 

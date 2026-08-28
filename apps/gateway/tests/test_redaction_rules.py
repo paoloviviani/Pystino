@@ -35,7 +35,7 @@ from gateway.config import (
     RedactionSettings,
     Settings,
 )
-from gateway.models import RedactionRule, RedactionScope, User
+from gateway.models import RedactionRule, RedactionScope
 from gateway.redaction.resolver import RedactionResolver
 from pydantic import SecretStr
 from sqlalchemy import select

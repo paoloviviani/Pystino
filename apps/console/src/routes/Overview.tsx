@@ -4,6 +4,7 @@ import {
   Card,
   Dialog,
   Input,
+  Meter,
   Money,
   Notice,
   Select,
@@ -14,17 +15,8 @@ import {
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import { downloadCsv } from "../lib/api";
-import {
-  useMintKey,
-  useMyKeys,
-  useMyRedaction,
-  useMyReport,
-  useRevokeKey,
-  useSetMyRedaction,
-} from "../lib/queries";
-import { summarisePolicy } from "../lib/entities";
-import { PolicyFields } from "../components/PolicyFields";
-import type { ApiKey, Me, MintedApiKey, MyRedaction, RedactionPolicy, UsageReportRow } from "../lib/types";
+import { useMintKey, useMyKeys, useMyLimits, useMyReport, useRevokeKey } from "../lib/queries";
+import type { ApiKey, Me, MintedApiKey, MyLimit, UsageReportRow } from "../lib/types";
 import { recentPeriods } from "../lib/periods";
 import styles from "./Overview.module.css";
 
@@ -150,20 +142,11 @@ export function Overview({ me }: OverviewProps) {
               />
             </div>
 
-            {/* The API's own wording, rendered verbatim. Restating a caveat in
-                the UI is how the two end up disagreeing about the number. */}
-            {report.data.disclosures.length > 0 && (
-              <div className={styles.disclosures}>
-                {report.data.disclosures.map((note) => (
-                  <Notice key={note} tone="warn">
-                    {note}
-                  </Notice>
-                ))}
-              </div>
-            )}
           </>
         )}
       </Card>
+
+      <QuotaCard currency={report.data?.currency ?? "EUR"} />
 
       <Card
         title="Breakdown"
@@ -231,8 +214,6 @@ export function Overview({ me }: OverviewProps) {
         )}
       </Card>
 
-      <MyRedactionCard />
-
       <MintKeyDialog open={minting} me={me} onClose={() => setMinting(false)} />
       <RevokeKeyDialog apiKey={revoking} onClose={() => setRevoking(null)} />
     </div>
@@ -255,125 +236,103 @@ export function Overview({ me }: OverviewProps) {
  * name falls back to that policy's own default, so sending one entity would be a
  * weakening of every other.
  */
-function MyRedactionCard() {
-  const mine = useMyRedaction();
-  // Held here rather than in the form, which is remounted when the first save
-  // turns "no rule of mine" into one: a Saved notice that disappears at the
-  // moment it is earned is worse than none.
-  const save = useSetMyRedaction();
+/**
+ * Where this person stands against every ceiling that applies to them.
+ *
+ * Above the breakdown, because "how much is left" is the question someone opens
+ * this screen to answer and the breakdown is what they read afterwards to
+ * understand it.
+ *
+ * Quotas are *all rules must pass* (ADR 0009), so this is a list of ceilings
+ * and the binding one is whichever is nearest. Nothing here computes that:
+ * "nearest" across euros, tokens and requests is not a comparison that can be
+ * made honestly, and a single headline number that quietly picked one metric
+ * would be worse than three honest bars.
+ */
+function QuotaCard({ currency }: { currency: string }) {
+  const limits = useMyLimits();
+
+  if (limits.error) {
+    return (
+      <Card title="Quotas">
+        <Notice tone="danger" title="Could not load your quotas">
+          {limits.error instanceof Error ? limits.error.message : "Unknown error."}
+        </Notice>
+      </Card>
+    );
+  }
+
+  if (limits.isPending) {
+    return (
+      <Card title="Quotas">
+        <Spinner label="Loading your quotas" />
+      </Card>
+    );
+  }
+
+  const rules = limits.data?.items ?? [];
+  if (rules.length === 0) {
+    return (
+      <Card title="Quotas" description="No limit applies to you.">
+        {/* Said plainly rather than left blank: an empty card reads as a screen
+            that failed to load, and "no limit" is a fact worth stating. */}
+      </Card>
+    );
+  }
 
   return (
-    <Card
-      title="Redaction"
-      description="What is removed from your prompts before a provider sees them."
-    >
-      {mine.isPending && <Spinner label="Loading your redaction settings" />}
-      {mine.error ? (
-        <Notice tone="danger" title="Could not load your redaction settings">
-          {mine.error instanceof Error ? mine.error.message : "Unknown error."}
-        </Notice>
-      ) : null}
-      {save.error ? (
-        <Notice tone="danger" title="Your policy was not saved">
-          {save.error instanceof Error ? save.error.message : "Unknown error."}
-        </Notice>
-      ) : null}
-      {save.isSuccess && !save.isPending && mine.data && (
-        <Notice tone="info">
-          Saved. It applies within {Math.round(mine.data.propagation_seconds)}s.
-        </Notice>
-      )}
-
-      {/* Keyed on the rule it was seeded from: after a save the response carries
-          a new document, and a form still holding the pre-save draft would show
-          an edit that is no longer pending. */}
-      {mine.data && (
-        <MyRedactionForm key={mine.data.rule_id ?? "none"} mine={mine.data} save={save} />
-      )}
+    <Card title="Quotas" description="Every ceiling that applies to you. All of them must pass.">
+      <div className={styles.quotas}>
+        {rules.map((rule) => (
+          <QuotaMeter key={rule.id} rule={rule} currency={currency} />
+        ))}
+      </div>
     </Card>
   );
 }
 
-function MyRedactionForm({
-  mine,
-  save,
-}: {
-  mine: MyRedaction;
-  save: ReturnType<typeof useSetMyRedaction>;
-}) {
-  const [draft, setDraft] = useState<RedactionPolicy>(() =>
-    structuredClone(mine.policy ?? mine.baseline),
-  );
-  const [reason, setReason] = useState("");
-
-  // Everything either document names. A type the administrators protect and the
-  // draft omits falls back to the draft's own default, which is exactly the
-  // omission the API refuses — so it has to be on the screen.
-  const entityTypes = [
-    ...new Set([
-      ...Object.keys(mine.baseline.entities),
-      ...Object.keys(mine.effective.entities),
-    ]),
-  ];
+function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
+  const limit = Number(rule.limit_value);
+  // Absent is not zero. An unreachable counter store must not draw as an
+  // untouched budget, so no bar is drawn at all rather than a guessed one.
+  const used = rule.current_value === null ? null : Number(rule.current_value);
 
   return (
-    <div className={styles.form}>
-      <Notice tone="info">
-        You can protect more than your administrators require, never less.
-      </Notice>
-
-      <dl className={styles.details}>
-        <dt className={styles.detailLabel}>Applies now</dt>
-        <dd className={styles.detailValue}>{summarisePolicy(mine.effective)}</dd>
-        <dt className={styles.detailLabel}>Administrators require</dt>
-        <dd className={styles.detailValue}>{summarisePolicy(mine.baseline)}</dd>
-        <dt className={styles.detailLabel}>Your own policy</dt>
-        <dd className={styles.detailValue}>
-          {mine.policy === null
-            ? "None. Your administrators' settings apply."
-            : `Saved ${mine.updated_at ? formatDate(mine.updated_at) : "earlier"}.`}
-        </dd>
-      </dl>
-
-      <PolicyFields
-        policy={draft}
-        onChange={setDraft}
-        entityTypes={entityTypes}
-        floor={mine.baseline}
-        // Refused by the API: exempting a value is the one change that protects
-        // less, and it stays an administrator's decision.
-        allowList={false}
-      />
-
-      <Input
-        label="Reason"
-        value={reason}
-        onChange={(event) => setReason(event.target.value)}
-        placeholder="clinical notes in my prompts"
-        hint="Optional. Kept with your policy."
-      />
-
-      <div>
-        <Button
-          variant="primary"
-          busy={save.isPending}
-          onClick={() => save.mutate({ policy: draft, reason: reason.trim() })}
-        >
-          Save redaction
-        </Button>
+    <div className={styles.quota}>
+      <div className={styles.quotaHead}>
+        <span className={styles.quotaName}>{rule.name}</span>
+        <Badge>{SCOPE_LABEL[rule.scope] ?? rule.scope}</Badge>
       </div>
+      {used === null ? (
+        <p className={styles.quotaDetail}>
+          Consumption is unavailable — the counter store could not be reached.
+        </p>
+      ) : (
+        <>
+          <Meter value={used} limit={limit} label={`${rule.name}, ${rule.window_label}`} />
+          <p className={styles.quotaDetail}>
+            {rule.metric === "cost" ? (
+              <>
+                <Money amount={rule.current_value ?? "0"} currency={currency} /> of{" "}
+                <Money amount={rule.limit_value} currency={currency} />
+              </>
+            ) : (
+              `${used.toLocaleString()} of ${limit.toLocaleString()} ${rule.metric}`
+            )}{" "}
+            · {rule.window_label}
+          </p>
+        </>
+      )}
     </div>
   );
 }
 
-/**
- * Minting, and the one moment the secret exists in a form anyone can read.
- *
- * Two states in one dialog rather than two dialogs: the form, and then the
- * secret. They are the same interaction — the secret is the *result* of the
- * form, and a reader who has just clicked Create should not have to notice a
- * second window appearing somewhere to find the thing they asked for.
- */
+const SCOPE_LABEL: Record<string, string> = {
+  global: "Everyone",
+  group: "Your group",
+  user: "You",
+};
+
 function MintKeyDialog({
   open,
   me,
