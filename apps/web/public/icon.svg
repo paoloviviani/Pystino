@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="Chat">
+  <!-- Bauhaus: the three primaries and a circle, from packages/ui/tokens.css.
+       An SVG rather than a set of PNGs because one file scales to every size a
+       manifest asks for, and there is nothing here that rasterising improves. -->
+  <rect width="192" height="192" fill="#12142c"/>
+  <circle cx="96" cy="82" r="42" fill="#e4c700"/>
+  <rect x="54" y="124" width="84" height="18" fill="#c8102e"/>
+</svg>

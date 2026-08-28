@@ -109,6 +109,8 @@ export interface Message {
   position: number;
   role: "user" | "assistant" | "system";
   content: string;
+  /** The model's own thinking, kept apart from the answer end to end. */
+  reasoning: string | null;
   status: MessageStatus;
   model: string | null;
   request_id: string | null;
