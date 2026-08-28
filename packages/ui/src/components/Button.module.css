@@ -5,7 +5,10 @@
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border: var(--border-width) solid transparent;
-  border-radius: var(--radius-md);
+  /* A pill. The most recognisable thing about this language, and the useful
+     part of that: on a page otherwise made of rectangles, a pill is
+     unmistakably something you press. */
+  border-radius: var(--radius-pill);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
   line-height: var(--leading-tight);

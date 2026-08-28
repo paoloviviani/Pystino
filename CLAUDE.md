@@ -103,15 +103,19 @@ Inside the gateway, the pieces that carry the most weight:
   will `SELECT DISTINCT` over a JSON column; PostgreSQL has no equality
   operator for `json` at all. The unit suite runs on SQLite, so anything
   dialect-shaped needs a live script or a compile-against-the-dialect test.
-- **The look is Bauhaus, and it lives in one file.** `packages/ui/src/tokens.css`
-  carries the palette, the geometry and the type, and components reference tokens
-  and never literals — the whole restyle in [ADR 0034](docs/adr/0034-bauhaus-design-language.md)
-  was almost entirely that file. Two consequences that will bite: **there is no
-  green**, so `ok` is the blue and a *classification* badge is black while a
-  *state* badge is blue (they collided when green was dropped); and **cadmium
-  yellow cannot be both type and fill**, so `--colour-warn` is a dark
-  yellow-brown for text and `--colour-yellow` is the fill. Jost* is vendored
-  under the SIL OFL — the licence file sits beside it in `packages/ui/src/fonts/`.
+- **The look is Material Design 3, and it lives in one file.**
+  `packages/ui/src/tokens.css` carries the palette, the geometry and the type,
+  and components reference tokens and never literals — the restyle in
+  [ADR 0042](docs/adr/0042-material-design-3.md) was that file plus two
+  components, and the Bauhaus pass before it ([ADR 0034](docs/adr/0034-bauhaus-design-language.md),
+  superseded) was the same. Three things worth knowing: **the tonal ground is
+  inverted from MD3's own** — the page is tinted and a card is white, because
+  this console is tables of figures and figures read best on white; **green is
+  back**, so `ok` is green, `accent` is the purple, and the black-badge
+  workaround ADR 0034 needed is gone with the constraint that caused it; and
+  **the decorative half of Material You is deliberately absent** — no blur
+  shapes, no glass-morphism, no glow or scale on hover. Roboto is vendored under
+  the Apache License 2.0, licence beside it in `packages/ui/src/fonts/`.
 - **Money is a string end to end.** `Numeric(24,12)` round-trips zero as
   `Decimal("0E-12")`; the `Money` annotated type in `schemas.py` forces plain
   digits. Never parse an amount into a float, including in the browser.

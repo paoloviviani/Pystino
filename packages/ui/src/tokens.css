@@ -2,199 +2,222 @@
  * Design tokens.
  *
  * Plain CSS custom properties, deliberately. Every value the console and the
- * Phase 3 chat app must agree on lives here, and a consumer needs no build tool,
- * no plugin and no configuration to use them — importing this file is the whole
- * integration. That is what keeps `packages/ui` usable by an application whose
- * toolchain has not been chosen yet.
+ * chat app must agree on lives here, and a consumer needs no build tool, no
+ * plugin and no configuration to use them — importing this file is the whole
+ * integration.
  *
  * Components reference tokens and never literal values. A component with
- * `padding: 12px` in it is a component that cannot be restyled. That claim was
- * tested when the design language changed: the whole of the Bauhaus pass below
- * was two literals away from being a change to this file alone.
+ * `padding: 12px` in it is a component that cannot be restyled. That claim has
+ * now been tested twice: the Bauhaus pass was two literals away from being a
+ * change to this file alone, and so was the pass that replaced it.
  *
- * **The look is Bauhaus / mid-century modernist.** Requested 2026-08-24, and
- * it is a functional style rather than a decorative one, which suits a page of
- * figures better than the quiet corporate palette it replaced:
+ * **The look is Material Design 3, tuned for reading.** Requested 2026-08-28,
+ * replacing the Bauhaus language of ADR 0034, and the reason given was the one
+ * that matters: the previous style was not readable enough. It was a poster
+ * idiom applied to pages of figures. Ruled in 2px near-black, set in a
+ * geometric face with a small x-height, labels in tracked uppercase — every one
+ * of those is a deliberate, authentic choice, and together they made a table of
+ * numbers hard work.
  *
- * - **Geometry is square.** Corners are zero. Rules are 2px and near-black.
- *   Nothing is rounded except things that are genuinely circular. A radius is a
- *   softening, and this style does not soften.
- * - **Colour is a signal, never decoration.** Red, blue and yellow, used only
- *   where they carry meaning. This is authentic to the posters — they are mostly
- *   white and black, with a primary deployed where it has a job — and it is also
- *   the only version that survives a screen of dense numbers. A console where
- *   the chrome shouts is a console where a red warning does not.
- * - **Flat.** No shadows at all. Depth is carried by the border, which is the
- *   Bauhaus answer and also the honest one: a drop shadow on a page of cards
- *   makes it look like a slide deck.
+ * What is taken from MD3, and why each earns its place here:
  *
- * There is **no dark theme and no automatic dark mode** — a dark console was not
- * wanted. Adding one later means adding one block of token overrides here and
- * changing nothing else, which is most of the argument for tokens in the first
- * place.
+ * - **Tonal surfaces instead of rules.** Depth comes from a slightly different
+ *   background, not from a black line around everything. A page of cards stops
+ *   reading as a grid of boxes. Borders drop to 1px and to a grey that
+ *   separates without shouting.
+ * - **Softer ink.** `#1C1B1F` on `#FFFBFE` rather than near-black on grey.
+ *   Still well past the 4.5:1 contrast floor, without the glare that makes a
+ *   long column of figures tiring.
+ * - **Roboto.** Designed for screen UI at small sizes, with a large x-height —
+ *   the direct answer to the note the previous version of this file made about
+ *   its own typeface running small.
+ * - **Generous radii.** 12–16px on containers, pills on buttons. Not decoration:
+ *   a rounded container reads as a single object, where a square one reads as a
+ *   region of a grid.
+ * - **Sentence case for labels.** Tracked uppercase is measurably slower to
+ *   read, and the layout no longer needs it to tell a label from a value —
+ *   weight and colour do that.
+ * - **Green comes back.** The previous file named its absence as a real loss:
+ *   green/red is the most universally read pair in any interface, and it was
+ *   given up because Bauhaus has three primaries and green is not one. That
+ *   constraint is gone, so `ok` is green again and `accent` is free to be the
+ *   accent.
+ *
+ * What is **not** taken, from a specification that asks for it: the blurred
+ * organic shapes, the glass-morphism, the glow-on-hover, the scale-on-hover.
+ * The brief was "more readable and less fancy", and those are the fancy half.
+ * A console is read, not admired. Shadows here are two small steps used to lift
+ * a menu off the page, not an effect.
+ *
+ * There is **no dark theme** — one was not wanted. Adding it later means one
+ * block of token overrides here and nothing else, which is most of the argument
+ * for tokens in the first place.
  */
 
 /*
- * Jost*, a Futura revival by Owen Earl / indestructible-type, under the SIL Open
- * Font License 1.1 — see `fonts/OFL.txt`, fetched from the upstream repository
- * and checked rather than assumed (ground rules 1 and 2). Futura came out of
- * this movement, which is why a geometric sans carries most of the period signal
- * on its own.
+ * Roboto, under the Apache License 2.0 — see `fonts/roboto-LICENSE.txt`,
+ * fetched from the upstream repository and checked rather than assumed (ground
+ * rules 1 and 2).
  *
- * **Self-hosted, and one file.** Google Fonts ships Jost as a variable font, so
- * a single 36 KB woff2 covers every weight from 100 to 900 — lighter than the
- * two static faces it replaces would have been, and no external request, which
- * keeps the console's CSP and the no-CDN rule untouched. Subset to Latin and
- * Latin Extended-A: Italian needs the accents, and the rest of Unicode is 100 KB
- * this deployment has no reader for.
+ * **Self-hosted, and variable.** One file per subset covers every weight from
+ * 100 to 900, and no external request, which keeps the console's CSP and the
+ * no-CDN rule untouched. Two subsets rather than one: Latin carries Italian's
+ * accented vowels, and Latin Extended-A carries the names that Latin does not.
  *
- * `swap` rather than `block`: the font is an asset on the same origin and will
- * almost always be cached, and on the one cold load a readable page in the
- * fallback beats an invisible one. The fallback stack is metric-*similar* rather
- * than metric-compatible, so a cold load reflows slightly. That is the accepted
- * cost of not blocking the first paint.
+ * `swap` rather than `block`: the font is on the same origin and will almost
+ * always be cached, and on the one cold load a readable page in the fallback
+ * beats an invisible one.
  */
 @font-face {
-  font-family: "Jost";
-  /* `format("woff2")`, not `format("woff2-variations")`.
-   *
-   * The latter is the legacy syntax from before variable fonts were finalised.
-   * Chromium accepts it, Safari rejects the whole rule — and a rejected @font-face
-   * is silent: the page renders in the fallback stack and nothing reports an
-   * error. Since the fallbacks here are Futura and Century Gothic, which are
-   * wider than Jost and installed on most machines, the symptom is not "the font
-   * is missing" but "the layout is subtly wider", which is far harder to
-   * attribute. The variable range is declared by `font-weight` below; the file
-   * being variable needs no announcing. */
-  src: url("./fonts/jost-variable-latin.woff2") format("woff2");
+  font-family: "Roboto";
+  /* `format("woff2")`, not `format("woff2-variations")`: the latter is the
+   * older syntax and Safari refuses it. The `font-weight` range below is what
+   * tells the browser this face is variable. */
+  src: url("./fonts/roboto-latin.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Roboto";
+  src: url("./fonts/roboto-latin-ext.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
 :root {
-  /* -- colour ---------------------------------------------------------------
-   * The Bauhaus primaries, on an achromatic ground.
+  /* -- surfaces -------------------------------------------------------------
+   * A tonal system, and the one rule that makes it work: **nothing is pure
+   * white**. The page is a barely-tinted off-white, a card is a step darker,
+   * and a recessed area is a step darker again. That difference — three or four
+   * percent of luminance — is what separates regions, in place of the black
+   * rule the previous style drew around each one.
    *
-   * The ground is **neutral grey, not paper-warm**. Period stock was warm and a
-   * warm ground was tried here once before, on the theory that figures read
-   * calmer on paper; in use it read as beige, which is a different thing, and it
-   * was rejected. Grey keeps the primaries at full strength — a saturated red
-   * against beige goes muddy — and it is the right call twice over.
-   *
-   * The primaries are the poster values rather than sRGB corners: pure #FF0000
-   * and #0000FF are screen artefacts, not pigments, and they vibrate against
-   * each other. These are a vermilion red, an ultramarine blue and a cadmium
-   * yellow, which is what the printers of the period actually had.
+   * The tint is the accent's hue at very low saturation, which is what stops
+   * the greys reading as dirty. It is the same trick as the warm paper stock
+   * the Bauhaus palette rejected, done with the accent instead of with brown.
    */
-  --colour-bg: #ececed;
+  /* The page is the tinted one and a card is white, which is the inverse of
+   * MD3's own default and is deliberate. This console is mostly tables of
+   * figures, and figures are most readable on white; a tinted card on a white
+   * page would put the tint under the numbers. Inverting it keeps the tonal
+   * separation and gives the data the cleanest ground. */
+  --colour-bg: #f6f2f8;
   --colour-surface: #ffffff;
   --colour-surface-raised: #ffffff;
-  --colour-surface-sunken: #e2e2e4;
-  /* Structural rules are near-black and 2px. This is the single biggest carrier
-   * of the style after the typeface: Bauhaus layout is ruled, not shaded. */
-  --colour-border: #1a1a1a;
-  --colour-border-strong: #1a1a1a;
-  /* For the rules that would be noise at full strength — a table's inner row
-   * lines, where 2px of black on every row turns a listing into a grid of
-   * boxes. */
-  --colour-border-quiet: #c9c9cc;
+  --colour-surface-sunken: #f0eaf4;
 
-  /* Near-black, not #000: pure black on white is harsher than anything printed,
-   * and this is a page of figures someone reads for a while. */
-  --colour-text: #141414;
-  --colour-text-muted: #55555a;
-  --colour-text-faint: #7c7c83;
+  /* Borders separate; they do not draw. 1px and mid-grey rather than 2px and
+   * near-black: on a page of tables the old rule meant every row sat in its own
+   * box, and the boxes competed with the numbers. */
+  --colour-border: #cac4d0;
+  --colour-border-strong: #79747e;
+  --colour-border-quiet: #e7e0ec;
+
+  /* Ink with a little warmth in it, never #000. Pure black on white is harsher
+   * than anything printed and this is a page someone reads for a while.
+   * #1C1B1F on #FFFBFE is about 16:1 — far past the 4.5:1 floor, with the glare
+   * taken off. */
+  --colour-text: #1c1b1f;
+  --colour-text-muted: #49454f;
+  --colour-text-faint: #79747e;
   --colour-text-inverse: #ffffff;
 
-  /* -- the three primaries, named as themselves ---------------------------
-   * Named as colours as well as as roles, because in this palette the colour is
-   * a fact about the design and not only about a state: the brand mark uses all
-   * three, and a component that wants "the yellow" should not have to ask for
-   * "the warning" to get it.
-   *
-   * Poster values rather than sRGB corners. Pure #ff0000 and #0000ff are screen
-   * artefacts, not pigments, and they vibrate against each other. These are a
-   * vermilion red, an ultramarine blue and a cadmium yellow — what the printers
-   * of the period actually had.
+  /* -- accent ---------------------------------------------------------------
+   * MD3's canonical seed. One hue, used where something is interactive or
+   * selected, and nowhere else — an accent that appears decoratively is an
+   * accent that no longer means "you can press this".
    */
-  --colour-red: #c8241c;
+  --colour-accent: #6750a4;
+  --colour-accent-hover: #55408f;
+  --colour-accent-subtle: #e8def8;
+
+  /* Kept because components ask for them by name, and because a brand mark
+   * wants a colour rather than a state. The red is the semantic red; blue and
+   * yellow are here for the mark and for anything that needs a third and fourth
+   * hue that is not carrying a meaning. */
+  --colour-red: #b3261e;
   --colour-blue: #1a3d99;
   --colour-yellow: #f7d64b;
 
-  /* The one accent. */
-  --colour-accent: var(--colour-blue);
-  --colour-accent-hover: #122c6e;
-  --colour-accent-subtle: #dde3f5;
-
-  /* Semantic.
+  /* -- semantic -------------------------------------------------------------
+   * **Green is back**, and it is the whole reason this block reads differently
+   * from the file it replaces. The previous palette had no green — Bauhaus has
+   * three primaries and green is not among them — so "ok" was the blue, and it
+   * said so plainly that this was a real loss. It was: green/red is the pair
+   * every reader already knows, and blue/red is a weaker signal that has to be
+   * learned.
    *
-   * **There is no green.** Bauhaus has three primaries and green is not one of
-   * them, so "ok" is the blue. That is a real loss and worth naming: green/red is
-   * the most universally read pair in any interface, and blue/red is weaker. What
-   * is gained is that one hue means "fine" everywhere — Active, a healthy
-   * service, a budget in hand — and red and yellow keep all of their force for
-   * the two states an operator scanning a quota page is looking for: `warn` is a
-   * budget nearing its limit, `danger` one past it.
-   *
-   * Dropping green also made `ok` and `accent` collide, since both are now the
-   * blue. Resolved in the Badge, not here: a classification badge is filled black
-   * and a state badge is filled blue. See Badge.module.css.
-   *
-   * `warn` is a *dark* yellow-brown for text and the cadmium for fills, because
-   * cadmium yellow is unreadable as type on white and unreadable under white
-   * type. It is the one primary that has to invert, and the period printers had
-   * the same problem.
+   * `warn` is a dark amber for text and a light one for fills. The previous
+   * file had to keep two unrelated yellows because cadmium is unreadable as
+   * type; these are two tones of one hue, which is the tonal system doing the
+   * work.
    */
-  --colour-ok: var(--colour-blue);
-  --colour-ok-subtle: #dde3f5;
+  --colour-ok: #2e6b46;
+  --colour-ok-subtle: #d8ece0;
   --colour-warn: #7a5500;
   --colour-warn-subtle: #fdf3d4;
-  --colour-danger: var(--colour-red);
-  --colour-danger-subtle: #fae4e2;
+  --colour-danger: #b3261e;
+  --colour-danger-subtle: #f9dedc;
 
   /* -- typography -----------------------------------------------------------
-   * Jost first, with a geometric-ish fallback stack for the cold load and for a
-   * reader who blocks fonts. Money and identifiers stay on the mono stack: digits
-   * that line up down a column is a functional requirement, and "form follows
-   * function" is the whole argument of this style rather than a slogan against it.
+   * Roboto, then the platform's own UI face. The fallbacks are the faces each
+   * system already uses for its own interface, so a reader who blocks webfonts
+   * gets the thing their OS considers most readable rather than Times.
+   *
+   * Money and identifiers stay on the mono stack: digits that line up down a
+   * column is a functional requirement, not a style.
    */
-  --font-sans: "Jost", "Century Gothic", "Futura", system-ui, -apple-system, sans-serif;
+  --font-sans:
+    "Roboto", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --font-mono:
     ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace;
 
-  /* Jost runs small for its point size — a geometric face with a modest x-height
-   * usually does — so the scale is nudged up a step from the one it replaces.
-   * The display size is up much further: a Bauhaus page has a clear typographic
-   * hierarchy rather than an even grey, and the page title is meant to be a
-   * shape on the page. */
+  /* Bigger, across the board. The previous scale started at 0.9375rem because
+   * its typeface ran small; Roboto has a large x-height and does not need the
+   * compensation, so 1rem is the base — which is also what a browser's default
+   * assumes a reader wants.
+   *
+   * The top of the scale comes *down*. A page title is a heading, not a shape
+   * on a poster, and 2rem above a table was doing more shouting than
+   * signposting. */
   --text-xs: 0.75rem;
-  --text-sm: 0.8125rem;
-  --text-base: 0.9375rem;
-  --text-md: 1.0625rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.125rem;
   --text-lg: 1.375rem;
-  --text-xl: 2rem;
+  --text-xl: 1.75rem;
 
-  /* A variable font, so the weights are real instances rather than the browser
-   * faking a bold. `bold` is 700 rather than 600 because at 600 a geometric sans
-   * reads as an accident; the style wants the contrast to be deliberate. */
+  /* A variable font, so these are real instances rather than a synthetic bold.
+   * Medium is the workhorse: MD3 headings and labels sit at 500, which reads as
+   * emphasis without the weight jump that 700 makes on a screen of small text. */
   --weight-normal: 400;
   --weight-medium: 500;
   --weight-bold: 700;
 
-  --leading-tight: 1.2;
-  --leading-normal: 1.5;
+  /* Looser than before. 1.5 was the body value and is now the floor; long
+   * prose gets more air, and the tight value is for headings only. */
+  --leading-tight: 1.25;
+  --leading-normal: 1.55;
 
-  /* Uppercase, tracked labels: the column headings, the stat captions, the field
-   * labels. Not a flourish — it is how a ruled Bauhaus layout distinguishes a
-   * label from a value without a second typeface or a second colour. Tracking is
-   * required at uppercase; without it the letterforms crowd. */
-  --label-transform: uppercase;
-  --label-tracking: 0.08em;
+  /* **Labels are sentence case now.** Tracked uppercase was how the ruled
+   * layout told a label from a value without a second colour; weight and the
+   * muted ink do that instead, and uppercase is measurably slower to read.
+   * The tokens stay so components need not change to find out. */
+  --label-transform: none;
+  --label-tracking: 0.01em;
   --label-weight: 500;
 
   /* -- space ----------------------------------------------------------------
-   * A 4px scale. Named by step rather than by size, so "space-3" stays correct
+   * A 4px scale, named by step rather than by size so "space-3" stays correct
    * if the scale is ever retuned.
    */
   --space-0: 0;
@@ -207,36 +230,37 @@
   --space-7: 3rem;
 
   /* -- geometry -------------------------------------------------------------
-   * Square. All three radii are zero rather than removed, because every
-   * component references one of them and a component that hardcoded `0` would be
-   * a component that could not be softened again if this style is ever revisited.
+   * Rounded, and the sizes are the MD3 ones. A radius is not decoration here:
+   * a rounded container reads as one object, where a square one reads as a
+   * region of a grid — which is exactly what the previous style wanted and this
+   * one does not.
    *
-   * `--radius-pill` stays a real radius for the things that are genuinely
-   * circular — a status dot, the spinner. A circle is one of the three Bauhaus
-   * shapes; a rounded rectangle is not.
+   * Buttons are pills. It is the most recognisable thing about this language
+   * and, more usefully, it makes a button unmistakably a button on a page
+   * otherwise made of rectangles.
    */
-  --radius-sm: 0;
-  --radius-md: 0;
-  --radius-lg: 0;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
   --radius-pill: 999px;
 
-  /* Flat. Kept as tokens set to `none` for the same reason the radii are kept:
-   * components reference them, and `box-shadow: none` in a component is a
-   * decision made in the wrong file. */
-  --shadow-sm: none;
-  --shadow-md: none;
+  /* Two small steps, used to lift something *off* the page — a menu, a dialog —
+   * and not to decorate what is on it. MD3 carries depth in the surface tones;
+   * these are for the cases where an element genuinely floats. */
+  --shadow-sm: 0 1px 2px rgb(28 27 31 / 0.08), 0 1px 3px rgb(28 27 31 / 0.06);
+  --shadow-md: 0 2px 6px rgb(28 27 31 / 0.10), 0 4px 12px rgb(28 27 31 / 0.08);
 
-  /* 2px, and this is load-bearing. A 1px grey rule is the quiet corporate idiom
-   * this style replaces; a 2px near-black rule is the Bauhaus one, and it is what
-   * makes the layout read as constructed rather than as floated. */
-  --border-width: 2px;
+  /* 1px. The 2px near-black rule was the single biggest carrier of the previous
+   * style and the single biggest cost to reading a table. */
+  --border-width: 1px;
   --border-width-quiet: 1px;
 
-  /* One focus token, used by every interactive element, because a focus
-   * indicator that varies by component is one that will be missing somewhere.
-   * Square, like everything else, and it uses the *yellow* rather than the
-   * accent: focus has to be visible on a blue button, and blue-on-blue is not. */
-  --focus-ring: 0 0 0 2px var(--colour-surface), 0 0 0 5px var(--colour-yellow);
+  /* One focus token, used by every interactive element, because an indicator
+   * that varies by component is one that will be missing somewhere. The accent
+   * rather than the yellow: with a tonal palette there is no accent-coloured
+   * fill dark enough to hide a purple ring, which is the problem the yellow was
+   * solving before. */
+  --focus-ring: 0 0 0 2px var(--colour-surface), 0 0 0 4px var(--colour-accent);
 
   --layout-max-width: 76rem;
   --layout-sidebar-width: 14rem;

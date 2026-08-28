@@ -59,7 +59,7 @@
 
 /* The square. */
 .brandMark::after {
-  background: var(--colour-danger);
+  background: var(--colour-ok);
 }
 
 /* The triangle, between them: a zero-width box with a coloured bottom border,
@@ -69,7 +69,7 @@
   height: 0;
   border-left: 0.33rem solid transparent;
   border-right: 0.33rem solid transparent;
-  border-bottom: 0.55rem solid var(--colour-yellow);
+  border-bottom: 0.55rem solid var(--colour-warn);
 }
 
 .brandName {
