@@ -73,6 +73,9 @@ class CortecsRouterPlugin:
     # Reconciled against their listed prices on three sub-providers,
     # agreeing to within their own rounding. It is what they charge.
     reports_authoritative_cost = True
+    #: The counterparty's public endpoint. Where a provider row starts when this
+    #: type is chosen, so configuring Cortecs is typing a name and a key.
+    default_base_url: str | None = "https://api.cortecs.ai/v1"
 
     # -- shaping a request --------------------------------------------------
 

@@ -137,6 +137,12 @@ class ProviderPlugin(Protocol):
     #: choosing between types, not being addressed.
     description: str
     kind: ProviderKind
+    #: The counterparty's public endpoint, when it has one worth pre-filling.
+    #: Optional — a plugin for self-hosted endpoints (vLLM, Ollama) has no
+    #: meaningful default, and ``None`` reads as that. Read with ``getattr`` at
+    #: the call sites, so an installed plugin omitting the attribute entirely
+    #: behaves the same as one declaring ``None``.
+    default_base_url: str | None
     #: Whether this plugin's ``read_reported_cost`` asserts the counterparty's
     #: *actual charge* rather than an indicative number. Declared rather than
     #: probed, so a deployment can be stopped from selecting pass-through

@@ -422,11 +422,25 @@ async def create_provider(
 
     No model points at it yet, so creating one changes nothing observable until
     a model is created against it or repointed.
+
+    The endpoint may be omitted when the chosen plugin knows it (Cortecs does);
+    an operator re-typing a URL the plugin already knows is a typo with extra
+    steps. A type with no default — the generic OpenAI-compatible one, whose
+    endpoints range from a cloud API to a laptop's Ollama — still requires one.
     """
+    base_url = payload.base_url
+    if base_url is None:
+        plugin = plugin_registry.resolve(payload.plugin)
+        base_url = getattr(plugin, "default_base_url", None)
+        if base_url is None:
+            raise BadRequestError(
+                f"The {plugin.label!r} type has no default endpoint — give the base URL."
+            )
+
     provider = Provider(
         name=payload.name,
         description=payload.description,
-        base_url=payload.base_url.rstrip("/"),
+        base_url=base_url.rstrip("/"),
         extra_headers=payload.extra_headers,
         is_active=payload.is_active,
         plugin=payload.plugin,

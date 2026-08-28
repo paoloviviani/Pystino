@@ -316,7 +316,9 @@ function ProviderDialog({
           <Button
             variant="primary"
             busy={pending}
-            disabled={!baseUrl.trim() || !name.trim()}
+            // An empty endpoint is fine when the type supplies one — the API
+            // applies the plugin's default — and refused otherwise.
+            disabled={!name.trim() || (!baseUrl.trim() && !chosen?.default_base_url)}
             onClick={submit}
           >
             {editing ? "Save" : "Add"}
@@ -346,7 +348,26 @@ function ProviderDialog({
       <Select
         label="Type"
         value={plugin}
-        onChange={(event) => setPlugin(event.target.value)}
+        onChange={(event) => {
+          const next = event.target.value;
+          // Choosing a type is choosing its endpoint, when the type has one
+          // worth knowing: pre-fill it, so creating a Cortecs provider is
+          // typing a name and a key. A URL that is not some plugin's default
+          // is the operator's own — a private gateway, a proxy — and is never
+          // clobbered; one that is was put there by this same rule and follows
+          // the type.
+          const byName = (name: string) =>
+            (plugins.data ?? []).find((entry) => entry.name === name || (name === "" && entry.is_default));
+          const previous = byName(plugin || defaultPluginName(plugins.data));
+          const upcoming = byName(next || defaultPluginName(plugins.data));
+          if (
+            upcoming?.default_base_url &&
+            (baseUrl.trim() === "" || baseUrl.trim() === (previous?.default_base_url ?? ""))
+          ) {
+            setBaseUrl(upcoming.default_base_url);
+          }
+          setPlugin(next);
+        }}
         hint={
           chosen
             ? chosen.description

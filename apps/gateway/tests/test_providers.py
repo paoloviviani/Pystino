@@ -267,6 +267,47 @@ class TestProviderApi:
         assert response.status_code == 201
         assert response.json()["has_api_key"] is False
 
+    async def test_the_cortecs_type_brings_its_own_endpoint(
+        self, admin_client: httpx.AsyncClient
+    ) -> None:
+        """Choosing the type is choosing the endpoint.
+
+        The URL is vendor knowledge and lives in the plugin (ADR 0032), so an
+        operator configures Cortecs by typing a name and a key rather than
+        re-typing a URL the gateway already knows — and cannot mistype it into
+        a provider that looks right and bills nobody.
+        """
+        response = await admin_client.post(
+            "/api/admin/providers",
+            json={"name": "cortecs", "plugin": "cortecs", "api_key": "sk-cortecs-123456"},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["base_url"] == "https://api.cortecs.ai/v1"
+
+    async def test_an_explicit_url_wins_over_the_plugin_default(
+        self, admin_client: httpx.AsyncClient
+    ) -> None:
+        """A same-type proxy or gateway replica is a legitimate configuration."""
+        response = await admin_client.post(
+            "/api/admin/providers",
+            json={
+                "name": "cortecs-proxy",
+                "plugin": "cortecs",
+                "base_url": "https://cortecs.internal.test/v1",
+            },
+        )
+        assert response.status_code == 201
+        assert response.json()["base_url"] == "https://cortecs.internal.test/v1"
+
+    async def test_a_type_without_a_default_still_requires_the_url(
+        self, admin_client: httpx.AsyncClient
+    ) -> None:
+        """The generic type's endpoints range from a cloud API to a laptop's
+        Ollama; there is nothing to default to, so the field stays required."""
+        response = await admin_client.post("/api/admin/providers", json={"name": "acme"})
+        assert response.status_code == 400
+        assert "base URL" in response.json()["error"]["message"]
+
     async def test_a_duplicate_name_is_409(self, admin_client: httpx.AsyncClient) -> None:
         payload = {"name": "acme", "base_url": "https://acme.test/v1"}
         assert (await admin_client.post("/api/admin/providers", json=payload)).status_code == 201

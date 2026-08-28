@@ -103,6 +103,10 @@ def describe() -> list[dict[str, object]]:
                 "description": getattr(plugin, "description", ""),
                 "kind": plugin.kind.value,
                 "billing_modes": modes,
+                # The counterparty's public endpoint, where one exists, so the
+                # console pre-fills it and creating a Cortecs provider is typing
+                # a name and a key. Null for a type whose endpoints vary.
+                "default_base_url": getattr(plugin, "default_base_url", None),
                 "is_default": plugin.name == DEFAULT_PLUGIN,
             }
         )
