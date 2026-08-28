@@ -192,6 +192,14 @@ describe("Shell", () => {
     expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
   });
 
+  it("makes the wordmark the way home", () => {
+    // What a wordmark does everywhere else on the web, and the shortest route
+    // back to your own overview from six levels into administration.
+    renderShell(me({ is_admin: true }), "/admin/models");
+    const brand = screen.getByRole("link", { name: /LLM platform/ });
+    expect(brand).toHaveAttribute("href", "/");
+  });
+
   it("does not offer the way into administration to a non-administrator", () => {
     renderShell(me({ is_admin: false }));
     expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();

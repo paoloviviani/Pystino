@@ -13,10 +13,19 @@ export interface CardProps {
 }
 
 export function Card({ title, actions, description, flush = false, children }: CardProps) {
+  // A card with a heading and nothing under it drew its header rule anyway, and
+  // then an empty padded body below the rule — a line across the lower half of
+  // the card separating the content from nothing. Visible on the administration
+  // landing page, where every card is a title and a sentence.
+  //
+  // So the rule belongs to the *pair*, not to the header: it exists to separate
+  // two things, and with one thing there is nothing to separate.
+  const hasBody = children !== undefined && children !== null && children !== false;
+
   return (
     <section className={styles.card}>
       {(title || actions) && (
-        <header className={styles.header}>
+        <header className={hasBody ? styles.header : styles.headerOnly}>
           <div>
             {title && <h2 className={styles.title}>{title}</h2>}
             {description && <p className={styles.description}>{description}</p>}
@@ -24,7 +33,7 @@ export function Card({ title, actions, description, flush = false, children }: C
           {actions && <div className={styles.actions}>{actions}</div>}
         </header>
       )}
-      <div className={flush ? styles.bodyFlush : styles.body}>{children}</div>
+      {hasBody && <div className={flush ? styles.bodyFlush : styles.body}>{children}</div>}
     </section>
   );
 }

@@ -9,18 +9,26 @@
   overflow: hidden;
 }
 
-.header {
+/* The header box, with and without the rule under it — see the note in
+   Card.tsx. `.headerOnly` is a card whose whole content is its heading. */
+.header,
+.headerOnly {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
-  border-bottom: var(--border-width) solid var(--colour-border);
   /* On a phone the Breakdown card's title plus its picker and Export button
      do not fit on one line, and `flex-shrink: 0` on the actions meant the last
      button was simply cut off by the card's `overflow: hidden` — not scrolled
      to, not wrapped, gone. */
   flex-wrap: wrap;
+}
+
+/* Quiet, like the card's own edge. It separates two regions of one object; the
+   strong rule was drawing a division across the middle of it. */
+.header {
+  border-bottom: var(--border-width) solid var(--colour-border-quiet);
 }
 
 .title {

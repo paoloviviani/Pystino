@@ -95,7 +95,10 @@ export function Shell({ me, children }: ShellProps) {
     <div className={styles.shell}>
       <header className={styles.header}>
         <div className={styles.headerInner}>
-          <div className={styles.brand}>
+          {/* The wordmark is the way home, which is what a wordmark is for
+              everywhere else on the web. `end`, so it is only "current" on the
+              overview itself rather than on every route beneath it. */}
+          <NavLink to="/" end className={styles.brand}>
             {/* Circle, triangle, square — a placeholder rather than a logo,
                 which is the foundation's to supply. It outlived the Bauhaus
                 palette that chose it, and is kept because three plain shapes in
@@ -107,7 +110,7 @@ export function Shell({ me, children }: ShellProps) {
               <span className={styles.brandShape} />
             </span>
             <span className={styles.brandName}>LLM platform</span>
-          </div>
+          </NavLink>
 
           <nav className={styles.nav} aria-label={inAdmin ? "Administration" : "Sections"}>
             {items.map((item) => (
