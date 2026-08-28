@@ -61,6 +61,28 @@
 		reverse_proxy keycloak:8080
 	}
 
+	# The chat application, when the chat overlay is up. Both paths, because
+	# `/chat/*` does not match `/chat` itself, and that bare path is what a human
+	# types.
+	#
+	# The prefix is **not** stripped, and that is the same lesson as the Keycloak
+	# block above arriving by a different route. chat-api serves every one of its
+	# own paths under /chat and its SPA is built with that base, so there is
+	# nothing to rewrite. Stripping instead is the trap: the proxy would be
+	# correct, the page would load, and every script it asked for would be
+	# fetched from the *gateway* at /assets/… — a blank page with 404s for files
+	# that exist, and nothing wrong in either service's log.
+	#
+	# It also keeps /api and /auth unambiguous: those belong to the gateway at
+	# the root of this origin, and the chat's equivalents are /chat/api and
+	# /chat/auth.
+	@chat path /chat /chat/*
+	handle @chat {
+		reverse_proxy chat:8100 {
+			flush_interval -1
+		}
+	}
+
 	handle {
 		# `-1` means flush every write straight through instead of buffering.
 		# Caddy already does this when it recognises text/event-stream, but every

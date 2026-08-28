@@ -108,15 +108,15 @@
       "serviceAccountsEnabled": false,
       "fullScopeAllowed": true,
       "redirectUris": [
-        "http://localhost:8100/auth/callback",
-        "http://127.0.0.1:8100/auth/callback"
+        "http://localhost:8100/chat/auth/callback",
+        "http://127.0.0.1:8100/chat/auth/callback"
       ],
       "webOrigins": [
         "http://localhost:8100"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://localhost:8100/*"
+        "post.logout.redirect.uris": "http://localhost:8100/chat/*"
       },
       "protocolMappers": [
         {

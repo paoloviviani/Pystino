@@ -32,13 +32,14 @@ from chat_api.deps import (
 )
 from chat_api.models import Session
 from chat_api.oidc import OIDCClient, OIDCError, generate_pkce_pair, issue_session_cookie
+from chat_api.routers import MOUNT_PATH
 from chat_api.schemas import Me
 from chat_api.secrets import SecretBox
 from chat_api.types import utcnow
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["auth"])
+router = APIRouter(prefix=MOUNT_PATH, tags=["auth"])
 
 #: Holds the state, nonce and PKCE verifier between the redirect out and the
 #: redirect back. Short-lived and per-browser, so a cookie is the right home —
@@ -49,9 +50,14 @@ _LOGIN_TTL_SECONDS = 600
 
 
 def _safe_next(raw: str | None) -> str:
-    """Only same-site paths. An absolute URL here is an open redirect."""
-    if not raw or not raw.startswith("/") or raw.startswith("//"):
-        return "/"
+    """Only paths inside this application.
+
+    An absolute URL here is an open redirect. Requiring the mount path as well
+    is what stops a login on this service ending on the gateway's console with
+    a session it did not issue.
+    """
+    if not raw or not raw.startswith(f"{MOUNT_PATH}/") or raw.startswith("//"):
+        return f"{MOUNT_PATH}/"
     return raw
 
 
@@ -82,7 +88,7 @@ async def login(
         # and Strict would drop the cookie on exactly that navigation — a login
         # that works everywhere except at the end.
         samesite="lax",
-        path="/",
+        path=MOUNT_PATH,
     )
     return response
 
@@ -135,7 +141,7 @@ async def callback(
     response = RedirectResponse(
         _safe_next(stored.get("next")), status_code=status.HTTP_303_SEE_OTHER
     )
-    response.delete_cookie(LOGIN_COOKIE, path="/")
+    response.delete_cookie(LOGIN_COOKIE, path=MOUNT_PATH)
     response.set_cookie(
         SESSION_COOKIE,
         issue_session_cookie(
@@ -147,7 +153,10 @@ async def callback(
         httponly=True,
         secure=settings.session_cookie_secure,
         samesite="lax",
-        path="/",
+        # Scoped to this application, not the origin. Behind the TLS proxy the
+        # gateway shares the origin and has no business receiving a session
+        # cookie it did not issue and cannot read.
+        path=MOUNT_PATH,
     )
     return response
 
@@ -162,7 +171,7 @@ async def logout(caller: CallerDep, db: DbDep) -> Response:
     await db.delete(caller.session)
     await db.commit()
     response = Response(status_code=status.HTTP_204_NO_CONTENT)
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    response.delete_cookie(SESSION_COOKIE, path=MOUNT_PATH)
     return response
 
 

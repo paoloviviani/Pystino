@@ -11,6 +11,15 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import Text  # noqa: F401  (autogenerate emits it inside JSONB)
+from sqlalchemy.dialects import postgresql  # noqa: F401  (JSON().with_variant)
+
+# The two imports above are unused in most migrations and are here anyway.
+# Autogenerate renders a `JSON().with_variant(JSONB(), "postgresql")` column as
+# `sa.JSON().with_variant(postgresql.JSONB(astext_type=Text()), "postgresql")`
+# and imports neither name, so the migration fails at runtime with a NameError
+# rather than at generation time — in the container, on a fresh database, after
+# a clean build.
 
 revision: str = ${repr(up_revision)}
 down_revision: str | None = ${repr(down_revision)}

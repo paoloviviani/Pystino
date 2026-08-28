@@ -49,12 +49,15 @@ the diff. The house style, worth matching:
 ## Where things are
 
 ```
-apps/gateway     the whole backend: /v1 proxy surfaces, /api management, console hosting
+apps/gateway     the gateway: /v1 proxy surfaces, /api management, console hosting
 apps/console     React admin SPA, served by the gateway at /console
+apps/chat-api    the chat backend: conversations, and the loop that produces them.
+                 Imports nothing from gateway — it is a /v1 client (ADR 0040)
+apps/web         the chat SPA, served by chat-api at /chat
 packages/ui      design tokens and primitives, shared with the Phase 3 chat app
 packages/shared-py  detection contract and the deterministic placeholder scheme
 services/redaction  Presidio behind a swappable contract, out of process
-deploy/compose   the stack: base + smoke + keycloak + redaction + proxy overlays
+deploy/compose   the stack: base + smoke + keycloak + redaction + chat + proxy overlays
 deploy/caddy     the TLS reverse proxy's one config file, for both configurations
 scripts/         live checks against a running stack (see below)
 docs/adr/        37 ADRs. Read the index; they are the design record.
@@ -192,8 +195,8 @@ Inside the gateway, the pieces that carry the most weight:
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services
-uv run pytest -q                       # 876 gateway tests, SQLite
-pnpm -r test                           # 26 packages/ui + 130 console
+uv run pytest -q                       # 952 gateway + chat-api tests, SQLite
+pnpm -r test                           # packages/ui + console + web
 ```
 
 Then, for anything touching the request path, money, or SQL, against the real
@@ -215,6 +218,8 @@ docker compose --env-file deploy/.env \
 ./scripts/test_quota_race_live.py   # admission under concurrency, real Valkey
 ./scripts/test_cache_accounting_live.py  # a real cache hit, and the ledger
 ./scripts/benchmark_live.py         # per-layer cost; see docs/performance.md
+./scripts/test_bearer_tokens_live.py # OIDC access tokens on /v1, real Keycloak
+./scripts/test_chat_live.py         # login, a streamed turn, and the ledger row
 ./scripts/test_public_tls_live.py   # only with the proxy overlay: TLS, the
                                     # rotated credentials, and that nothing else
                                     # is on a routable address
@@ -328,6 +333,26 @@ rediscovered — one being built, one not started:
 
 Known open items, none of them blocking:
 
+- **A stream settled at the moment the client disconnects loses the write.**
+  Found on 2026-08-28 building the chat app, on the live stack. `body_iterator`
+  in `routers/chat.py` sets `completed = True` and then, in its `finally`,
+  awaits `metered.completed(...)` — a database write — *inside the request
+  task*. A client that closes the connection the instant it reads the terminal
+  `data: [DONE]` frame causes uvicorn to cancel that task mid-write: the
+  connection is torn down with `CancelledError`, and the row stays
+  `status=in_progress`, zero tokens, zero cost, for a request the provider
+  served in full. Two rows in this deployment's ledger are exactly that.
+  The disconnect branch of the same `finally` was already made
+  cancellation-proof, with a comment explaining why — `spawn_finalisation`
+  detaches the write into a task precisely because "we are very likely inside a
+  cancelled task". The reasoning was never applied to the branch beside it.
+  The chat service now drains the stream rather than breaking at `[DONE]`, which
+  removes the common case, but any browser closing a tab at the wrong
+  millisecond still reaches it. The fix is to route the `completed` branch
+  through the same detached mechanism — and it needs a session that does not
+  belong to the request scope, which is why it is not a two-line change and gets
+  its own work with tests, per ground rule 3.
+
 - **The estimated-usage disclosure attributes every case to the provider.**
   `_disclosures` in `reporting.py` cannot tell "the provider reported no usage"
   from "the client disconnected mid-stream", and says the former for both. The
@@ -346,8 +371,23 @@ Known open items, none of them blocking:
 - Deferred by the user: per-provider default body params (`eu_native`,
   `allow_zero_data_retention`), image editing and variations, per-size image
   pricing, reranking.
-- Phase 3 is the chat application: chat, assistants, RAG, MCP, voice, the code
-  sandbox, then the desktop app and the `opencode` device flow. Planned but not
-  started — `docs/phase-3-plan.md` records the design decisions (a separate
-  service coupled to the gateway only through `/v1` and OIDC, bearer tokens on
-  `/v1` as the first milestone) and, as importantly, what was rejected and why.
+- **Phase 3 is under way.** `docs/phase-3-plan.md` records the design decisions —
+  a separate service coupled to the gateway only through `/v1` and OIDC — and,
+  as importantly, what was rejected and why. **M0 is done**: the gateway accepts
+  OIDC access tokens on `/v1` when `GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE` names
+  an audience ([ADR 0040](docs/adr/0040-bearer-tokens-on-v1.md)), which is also
+  what the `opencode` device flow needs. **M1's foundation is done**: `chat-api`
+  and the chat SPA, signing in against the same realm, streaming a turn through
+  `/v1` as the person typing it. Still to come in M1: regenerate, edit-and-
+  resend, stop, search, and titles from a model. Then assistants, RAG, MCP,
+  voice, the code sandbox, the desktop app.
+
+  Two things about the chat that are easy to get wrong. **It lives under
+  `/chat`, in every deployment shape** — behind the proxy the gateway owns the
+  root of the origin, so `/api` and `/auth` there are *its* management API and
+  *its* callback; a chat that answered on those paths works alone and collides
+  the moment it is proxied. And **the request id is minted by chat-api and sent
+  to the gateway**, not read back: the gateway adopts an inbound
+  `x-request-id` and never returns the one it used, so reading it back gives a
+  null column — and that column is the only thing tying a transcript to what it
+  cost.

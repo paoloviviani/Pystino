@@ -1,0 +1,89 @@
+/* The shell: a sidebar of conversations and a column for the current one. */
+
+.shell {
+  display: grid;
+  grid-template-columns: 17rem 1fr;
+  height: 100dvh;
+  background: var(--colour-surface);
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  border-right: var(--border-width) solid var(--colour-border);
+  min-height: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: var(--border-width) solid var(--colour-border);
+}
+
+.brandName {
+  font-family: var(--font-sans);
+  font-size: var(--text-lg);
+  text-transform: var(--label-transform);
+  letter-spacing: var(--label-tracking);
+}
+
+.conversations {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.conversation {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--space-2);
+  border: none;
+  background: none;
+  color: var(--colour-text);
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation:hover {
+  background: var(--colour-surface-sunken);
+}
+
+.current {
+  background: var(--colour-text);
+  color: var(--colour-text-inverse);
+}
+
+.current:hover {
+  background: var(--colour-text);
+}
+
+.footer {
+  border-top: var(--border-width) solid var(--colour-border);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.identity {
+  color: var(--colour-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}

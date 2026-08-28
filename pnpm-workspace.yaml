@@ -1,7 +1,7 @@
 # JS/TS half of the monorepo. See docs/adr/0002-monorepo-tooling.md
 #
-# packages/ui and apps/console are built (Phase 2, stages 3 and 4). apps/web and
-# apps/desktop are still placeholder directories.
+# packages/ui, apps/console and apps/web are built. apps/desktop is still a
+# placeholder directory.
 packages:
   - "packages/ui"
   - "apps/console"
