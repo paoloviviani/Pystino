@@ -1,0 +1,36 @@
+[project]
+name = "chat-api"
+version = "0.1.0"
+description = "The chat application's backend: conversations, assistants, and the orchestration loop"
+readme = "README.md"
+requires-python = ">=3.13"
+license = "EUPL-1.2"
+authors = [{ name = "Paolo Viviani" }]
+
+# Deliberately does not depend on `gateway`. The whole point of this being a
+# separate service is that it touches the gateway only over HTTP, through /v1
+# and OIDC — see docs/phase-3-plan.md. A shared import would make the boundary
+# a convention rather than a fact, and conventions erode.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.28",
+    "sqlalchemy[asyncio]>=2.0.36,<2.1",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "joserfc>=1.0",
+    "orjson>=3.10",
+    "cryptography>=43",
+]
+
+[project.scripts]
+chat-api = "chat_api.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/chat_api"]

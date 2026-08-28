@@ -2,7 +2,7 @@
 # package, it only ties the Python members together and holds shared tool config.
 # See docs/adr/0002-monorepo-tooling.md
 [tool.uv.workspace]
-members = ["apps/gateway", "packages/shared-py"]
+members = ["apps/gateway", "apps/chat-api", "packages/shared-py"]
 
 [dependency-groups]
 dev = [
