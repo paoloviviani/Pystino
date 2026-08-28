@@ -73,10 +73,16 @@ if GATEWAY.startswith("https://") and Path(CA_BUNDLE).exists():
         )
     )
 
+# The fallback chain has to match docker-compose.proxy.yml exactly. That overlay
+# rotates the chat client's secret to KEYCLOAK_CHAT_CLIENT_SECRET *or, failing
+# that, KEYCLOAK_CLIENT_SECRET* — so a script that fell back to the value in the
+# repository instead would get `unauthorized_client` against a correctly
+# configured deployment and report the feature broken.
 CLIENT_SECRETS = {
     "llm-gateway": os.environ.get("KEYCLOAK_CLIENT_SECRET")
     or "gateway-dev-secret-not-for-production",
     "llm-chat": os.environ.get("KEYCLOAK_CHAT_CLIENT_SECRET")
+    or os.environ.get("KEYCLOAK_CLIENT_SECRET")
     or "chat-dev-secret-not-for-production",
 }
 SEED_PASSWORD = os.environ.get("KEYCLOAK_SEED_PASSWORD") or "alice-password"
