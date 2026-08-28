@@ -4,21 +4,110 @@
   gap: var(--space-4);
 }
 
-/* One row per entity type: the mode, and the confidence that mode needs. Wide
-   enough for the friendly name and the raw label to sit on one line on a
-   laptop, stacking on a phone rather than truncating either — the raw label is
-   what the policy stores, so it must never be the half that is cut. */
+/* Two columns, not three.
+   
+   `auto-fill` at 20rem gave three or four columns on a wide screen, and with a
+   five-option control in each cell that is where the screen stopped being
+   readable: the eye has no column to run down, and every row is a different
+   width. Two fixed columns at a wider minimum keep each row on one line and
+   give the radios room to sit beside their label rather than under it. One
+   column below 64rem, because five radios and a number field do not fit in half
+   a laptop. */
 .entities {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
-  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-5);
+}
+
+@media (max-width: 64rem) {
+  .entities {
+    grid-template-columns: 1fr;
+  }
 }
 
 .entity {
   display: grid;
-  grid-template-columns: 1fr minmax(6rem, 8rem);
+  grid-template-columns: 1fr minmax(5rem, 6rem);
   gap: var(--space-2);
   align-items: end;
+  padding-bottom: var(--space-2);
+  /* A hairline per row. With two columns the rows no longer line up by
+     accident, and a reader following one across needs to be told where it
+     ends. */
+  border-bottom: var(--border-width-quiet) solid var(--colour-border-quiet);
+}
+
+/* The five modes. A fieldset for the accessible name; no border or padding,
+   because it is a row of controls and not a section. */
+.modes {
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-inline-size: 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.modesLegend {
+  padding: 0;
+  font-size: var(--text-sm);
+}
+
+.modeOptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Disabled because a stricter policy above sets a floor. Dimmed rather than
+   hidden: the reader is meant to see that the option exists and is not theirs
+   to choose. */
+.mode[data-disabled] {
+  color: var(--colour-text-faint);
+  cursor: not-allowed;
+}
+
+.mode input {
+  accent-color: var(--colour-accent);
+  margin: 0;
+}
+
+/* The five words, explained once. This is what lets every label below be one
+   word — terser without it would be less legible, which is not the same as
+   less dense. */
+.key {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--colour-surface-sunken);
+  font-size: var(--text-sm);
+}
+
+.keyRow {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.keyTerm {
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+
+.keyHint {
+  margin: 0;
+  color: var(--colour-text-muted);
 }
 
 .entityLabel {
@@ -73,4 +162,12 @@
   .patternRow {
     grid-template-columns: 1fr;
   }
+}
+
+.secretActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-2);
 }

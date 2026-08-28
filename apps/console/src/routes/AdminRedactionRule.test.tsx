@@ -159,12 +159,13 @@ describe("AdminRedactionRule", () => {
     // to create the deployment-wide rule without touching a subject control.
     expect(screen.getByText("Applies to every request.")).toBeInTheDocument();
 
-    // One entity turned on, so the rule says something. Each type is a mode
-    // select, not a checkbox: "redact or not" has not been the question since
-    // ADR 0037.
+    // One entity turned on, so the rule says something. Each type offers all
+    // five modes as radios, not a checkbox: "redact or not" has not been the
+    // question since ADR 0037.
     // Awaited: the entity list comes from the detector's own report, which is a
     // second request and may not have landed when the scope control has.
-    await user.selectOptions(await screen.findByLabelText(/PERSON/), "anonymise_restore");
+    const person = await screen.findByRole("group", { name: /PERSON/ });
+    await user.click(within(person).getByRole("radio", { name: "Restore" }));
     await user.click(screen.getByRole("button", { name: "Create rule" }));
 
     await waitFor(() => expect(captured.posts).toHaveLength(1));
@@ -190,7 +191,11 @@ describe("AdminRedactionRule", () => {
     renderPage("/admin/redaction/rules/r1");
 
     await waitFor(() =>
-      expect(screen.getByLabelText(/PERSON/)).toHaveValue("anonymise_restore"),
+      expect(
+        within(screen.getByRole("group", { name: /PERSON/ })).getByRole("radio", {
+          name: "Restore",
+        }),
+      ).toBeChecked(),
     );
     // No scope control at all on an existing rule, which is stronger than a
     // disabled one: there is nothing to attempt.
@@ -204,7 +209,11 @@ describe("AdminRedactionRule", () => {
     renderPage("/admin/redaction/rules/r1");
 
     await waitFor(() =>
-      expect(screen.getByLabelText(/PERSON/)).toHaveValue("anonymise_restore"),
+      expect(
+        within(screen.getByRole("group", { name: /PERSON/ })).getByRole("radio", {
+          name: "Restore",
+        }),
+      ).toBeChecked(),
     );
     await user.click(screen.getByRole("button", { name: "Save rule" }));
 

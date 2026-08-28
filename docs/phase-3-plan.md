@@ -164,10 +164,16 @@ streaming turn, the SPA shell, conversation list, model picker fed by
 streamed turn and on to the ledger row it produced. The frontend stack diverged
 from ADR 0015 — see [ADR 0041](adr/0041-chat-frontend-stack.md).
 
-Still to do in M1: markdown and code rendering in a message, stop, regenerate,
-edit-and-resend, search over own history, titles from a cheap model call (itself
-metered) rather than the first sixty characters, and the PWA that
-[ADR 0016](adr/0016-pwa.md) calls mandatory.
+Then added: **assistant-ui** for the thread — markdown with code blocks, a stop
+button, and reasoning in a collapsible section — over `useExternalStoreRuntime`,
+so the store and the transport stay ours ([ADR 0041](adr/0041-chat-frontend-stack.md)).
+And the **PWA** that [ADR 0016](adr/0016-pwa.md) calls mandatory: installable,
+offline shell, scoped to `/chat/`. It is the mobile story for this platform until
+a native app exists, not a polish item.
+
+Still to do in M1: regenerate, edit-and-resend, search over own history, and
+titles from a cheap model call (itself metered) rather than the first sixty
+characters.
 
 Three things this milestone established that the later ones inherit:
 
@@ -179,7 +185,14 @@ Three things this milestone established that the later ones inherit:
   column is the only thing tying a transcript to what it cost.
 - **Drain the stream.** Breaking at `data: [DONE]` closes the connection while
   the gateway is inside the write that settles the request, and the row stays
-  `in_progress` at zero cost for a request the provider served in full.
+  `in_progress` at zero cost for a request the provider served in full. The
+  gateway's own settle is shielded now, and so is chat-api's, which had the same
+  bug: an unshielded write inside a generator the client can close is torn down
+  part-way through, and pressing stop would have lost the very text the button
+  was pressed to keep.
+- **Reasoning is a separate field, everywhere.** Its own SSE event, its own
+  column, its own message part. Concatenating it into the answer would replay
+  the model's thinking to it as history on the next turn.
 
 ### M2 — assistants
 
