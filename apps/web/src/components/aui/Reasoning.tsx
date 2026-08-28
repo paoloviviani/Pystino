@@ -2,8 +2,14 @@
  * The model thinking out loud, collapsed.
  *
  * assistant-ui's own arrangement, kept faithfully because the class names are
- * what `@assistant-ui/styles` styles: a Radix collapsible, a brain icon, a
- * label that shimmers while tokens are still arriving, and a chevron that turns.
+ * what `@assistant-ui/styles` styles — and it is *faithfulness* that was the
+ * bug: that stylesheet is compiled from Tailwind, and several of its rules only
+ * fire through Tailwind's group selectors. `group/trigger` rotates the chevron,
+ * `group/collapsible-content` runs the enter/exit animation on the body, and
+ * the shimmer is an absolutely-positioned **duplicate** of the label inside the
+ * wrapper, filled with a moving gradient via background-clip. Omit any of those
+ * and the part renders — static label, dead chevron, no shimmer — which is
+ * exactly how this looked before the group classes were added.
  *
  * Two behaviours that are theirs and worth not losing:
  *
@@ -49,26 +55,29 @@ export function Reasoning() {
 
   return (
     <Collapsible.Root
-      className="aui-reasoning-root"
-      data-variant="outline"
+      className="aui-reasoning-root group/reasoning-root"
       open={open}
       onOpenChange={setUserOpen}
       style={{ ["--animation-duration" as string]: "200ms" }}
     >
-      <Collapsible.Trigger className="aui-reasoning-trigger">
+      <Collapsible.Trigger className="aui-reasoning-trigger group/trigger">
         <BrainIcon className="aui-reasoning-trigger-icon" aria-hidden="true" />
-        <span
-          className={
-            isStreaming
-              ? "aui-reasoning-trigger-label-wrapper shimmer"
-              : "aui-reasoning-trigger-label-wrapper"
-          }
-        >
+        <span className="aui-reasoning-trigger-label-wrapper">
           {isStreaming ? "Thinking" : "Thought"}
+          {/* The shimmer overlay: the same word, absolutely positioned on top,
+              clipped to the glyphs and filled with a gradient that moves. It is
+              a separate element because background-clip needs text to clip —
+              the plain label below it stays readable if the gradient stalls. */}
+          {isStreaming && (
+            <span className="aui-reasoning-trigger-shimmer" aria-hidden="true">
+              Thinking
+            </span>
+          )}
         </span>
         <ChevronDownIcon className="aui-reasoning-trigger-chevron" aria-hidden="true" />
       </Collapsible.Trigger>
-      <Collapsible.Content className="aui-reasoning-content" aria-busy={isStreaming}>
+      <Collapsible.Content className="aui-reasoning-content group/collapsible-content" aria-busy={isStreaming}>
+        <div className="aui-reasoning-fade" />
         <div ref={bodyRef} className="aui-reasoning-text">
           {/* Plain text, not markdown. Reasoning is a stream of thought and
               rendering it as a document gives half-written headings and lists
