@@ -434,6 +434,26 @@ export function useImportModels() {
   });
 }
 
+/**
+ * Remove a model from the catalogue outright, as opposed to deactivating it.
+ *
+ * The ledger is built for this: usage rows keep the denormalised model name and
+ * their user/group attribution, so past spend stays explainable — what goes is
+ * the row, its prices and its grants, which is the decluttering that is the
+ * point.
+ */
+export function useDeleteModel() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request<void>(`/api/admin/models/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      // The provider listing shows model_count, which just changed.
+      client.invalidateQueries({ queryKey: adminKeys.models });
+      client.invalidateQueries({ queryKey: adminKeys.providers });
+    },
+  });
+}
+
 // -- access ------------------------------------------------------------------
 
 export function useModelAccess() {

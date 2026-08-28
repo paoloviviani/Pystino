@@ -718,6 +718,31 @@ async def update_model(
 # -- discovery ---------------------------------------------------------------
 
 
+@router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_model(
+    model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> None:
+    """Remove a model from the catalogue outright, not merely deactivate it.
+
+    Deactivation is the tool for "out of service"; it still shows the row, which
+    is exactly what an operator pruning a long catalogue import wants gone.
+    Delete is safe against the ledger by construction, not by caution:
+    ``usage_records.model_id`` is ON DELETE SET NULL and every row carries the
+    denormalised ``model_name``, so historical spend stays readable and its
+    attribution to users and groups is untouched. Prices and access grants die
+    with the model — they are meaningless without it.
+    """
+    await _load_model(session, model_id)
+    # Explicit child deletes rather than ORM cascade: the same outcome either
+    # way, but these name what goes, and the usage rows are conspicuously not
+    # among them.
+    await session.execute(delete(ModelPrice).where(ModelPrice.model_id == model_id))
+    await session.execute(delete(GroupModelAccess).where(GroupModelAccess.model_id == model_id))
+    await session.execute(delete(UserModelAccess).where(UserModelAccess.model_id == model_id))
+    await session.execute(delete(ModelDef).where(ModelDef.id == model_id))
+    await session.commit()
+
+
 def _suggested_name(upstream_model: str) -> str:
     """Strip a provider prefix: ``openai/gpt-4o-mini`` -> ``gpt-4o-mini``.
 

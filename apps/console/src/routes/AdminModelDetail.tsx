@@ -2,6 +2,7 @@ import {
   Badge,
   Button,
   Card,
+  Dialog,
   Input,
   Money,
   Notice,
@@ -12,7 +13,7 @@ import {
 import type { Column } from "@llmp/ui";
 import type { ReactNode } from "react";
 import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import {
   CapabilityPicker,
   KNOWN_FEATURES,
@@ -22,6 +23,7 @@ import {
 import { PageHeader } from "../components/PageHeader";
 import {
   useCreatePrice,
+  useDeleteModel,
   useGroups,
   useModel,
   useModelAccess,
@@ -77,6 +79,9 @@ export function AdminModelDetail() {
 
 function ModelPage({ model }: { model: AdminModel }) {
   const update = useUpdateModel();
+  const del = useDeleteModel();
+  const navigate = useNavigate();
+  const [confirming, setConfirming] = useState(false);
 
   return (
     <div className={styles.page}>
@@ -89,12 +94,17 @@ function ModelPage({ model }: { model: AdminModel }) {
           </>
         }
         actions={
-          <Button
-            busy={update.isPending}
-            onClick={() => update.mutate({ id: model.id, is_active: !model.is_active })}
-          >
-            {model.is_active ? "Deactivate" : "Activate"}
-          </Button>
+          <>
+            <Button
+              busy={update.isPending}
+              onClick={() => update.mutate({ id: model.id, is_active: !model.is_active })}
+            >
+              {model.is_active ? "Deactivate" : "Activate"}
+            </Button>
+            <Button variant="ghost" onClick={() => setConfirming(true)}>
+              Delete
+            </Button>
+          </>
         }
       />
 
@@ -103,6 +113,43 @@ function ModelPage({ model }: { model: AdminModel }) {
           {update.error instanceof Error ? update.error.message : "Unknown error."}
         </Notice>
       ) : null}
+
+      <Dialog
+        open={confirming}
+        title={`Delete ${model.name}`}
+        onClose={() => setConfirming(false)}
+        footer={
+          <>
+            <Button onClick={() => setConfirming(false)}>Cancel</Button>
+            <Button
+              variant="danger"
+              busy={del.isPending}
+              onClick={() =>
+                del.mutate(model.id, {
+                  onSuccess: () => navigate("/admin/models"),
+                })
+              }
+            >
+              Delete permanently
+            </Button>
+          </>
+        }
+      >
+        {del.error ? (
+          <Notice tone="danger">
+            {del.error instanceof Error ? del.error.message : "Unknown error."}
+          </Notice>
+        ) : null}
+        <p>
+          Removed from the catalogue and from{" "}
+          <code className={styles.code}>/v1/models</code>; its prices and access grants go with it.
+          This cannot be undone.
+        </p>
+        <p className={styles.muted}>
+          Recorded spend is unaffected: past usage keeps the model's name and stays attributed to
+          the people and groups that ran it.
+        </p>
+      </Dialog>
 
       {/* The two states worth interrupting someone about, and they are not
           symmetrical: an inactive model serves nobody and is obvious the moment

@@ -15,7 +15,7 @@ import {
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import { downloadCsv } from "../lib/api";
-import { useMintKey, useMyKeys, useMyLimits, useMyReport, useRevokeKey } from "../lib/queries";
+import { useDeleteKey, useMintKey, useMyKeys, useMyLimits, useMyReport, useRevokeKey } from "../lib/queries";
 import type { ApiKey, Me, MintedApiKey, MyLimit, UsageReportRow } from "../lib/types";
 import { recentPeriods } from "../lib/periods";
 import styles from "./Overview.module.css";
@@ -53,6 +53,7 @@ export function Overview({ me }: OverviewProps) {
   const keys = useMyKeys();
   const [minting, setMinting] = useState(false);
   const [revoking, setRevoking] = useState<ApiKey | null>(null);
+  const [deleting, setDeleting] = useState<ApiKey | null>(null);
 
   const columns: Column<UsageReportRow>[] = [
     { key: "label", header: breakdownNoun(groupBy), render: (row) => row.label },
@@ -209,7 +210,7 @@ export function Overview({ me }: OverviewProps) {
           <Spinner />
         ) : (
           <Table
-            columns={keyColumns(setRevoking)}
+            columns={keyColumns(setRevoking, setDeleting)}
             rows={keys.data?.items ?? []}
             rowKey={(key) => key.id}
             empty="No API keys."
@@ -219,6 +220,7 @@ export function Overview({ me }: OverviewProps) {
 
       <MintKeyDialog open={minting} me={me} onClose={() => setMinting(false)} />
       <RevokeKeyDialog apiKey={revoking} onClose={() => setRevoking(null)} />
+      <DeleteKeyDialog apiKey={deleting} onClose={() => setDeleting(null)} />
     </div>
   );
 }
@@ -550,7 +552,58 @@ function RevokeKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
   );
 }
 
-const keyColumns = (onRevoke: (key: ApiKey) => void): Column<ApiKey>[] => [
+/**
+ * Deleting is permanent, so it asks first, and it says what is actually lost.
+ *
+ * Not the spend: usage rows carry the person and group they were billed to and
+ * keep them. What is lost is this key's label on those rows in the per-key
+ * breakdown, and any last-used date — the audit trail is the part a delete
+ * trades away for a shorter list, and the dialog is where that trade is named
+ * rather than discovered afterwards.
+ */
+function DeleteKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: () => void }) {
+  const del = useDeleteKey();
+
+  return (
+    <Dialog
+      open={apiKey !== null}
+      title={`Delete ${apiKey?.name || "this key"}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="danger"
+            busy={del.isPending}
+            onClick={() => apiKey && del.mutate(apiKey.id, { onSuccess: onClose })}
+          >
+            Delete permanently
+          </Button>
+        </>
+      }
+    >
+      {del.error ? (
+        <Notice tone="danger">
+          {del.error instanceof Error ? del.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+      <p>
+        <code className={styles.code}>{apiKey?.prefix}</code> is removed from this list and stops
+        working immediately. This cannot be undone — revoking is the reversible-looking cousin,
+        and even it cannot be restored.
+      </p>
+      <p className={styles.secretDetail}>
+        Past usage stays in the ledger, still attributed to you and your billing group. Those rows
+        simply stop carrying this key's name in the by-key breakdown.
+      </p>
+    </Dialog>
+  );
+}
+
+const keyColumns = (
+  onRevoke: (key: ApiKey) => void,
+  onDelete: (key: ApiKey) => void,
+): Column<ApiKey>[] => [
   { key: "name", header: "Name", render: (key) => key.name || <em>unnamed</em> },
   {
     key: "prefix",
@@ -582,15 +635,21 @@ const keyColumns = (onRevoke: (key: ApiKey) => void): Column<ApiKey>[] => [
   {
     key: "actions",
     header: "",
-    // Nothing to offer for a key that is already dead: revoking a revoked key
-    // is a no-op the API accepts, and a button that does nothing is worse than
-    // no button.
-    render: (key) =>
-      key.revoked_at ? null : (
-        <Button variant="ghost" onClick={() => onRevoke(key)}>
-          Revoke
+    // Revoke is offered only while it means something; delete is offered
+    // always, because pruning dead keys out of the list is the point of
+    // having it — a revoked entry is exactly the clutter in question.
+    render: (key) => (
+      <div className={styles.keyActions}>
+        {key.revoked_at ? null : (
+          <Button variant="ghost" onClick={() => onRevoke(key)}>
+            Revoke
+          </Button>
+        )}
+        <Button variant="ghost" onClick={() => onDelete(key)}>
+          Delete
         </Button>
-      ),
+      </div>
+    ),
   },
 ];
 

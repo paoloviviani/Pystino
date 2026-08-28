@@ -91,13 +91,31 @@ export function useMintKey() {
 }
 
 /**
- * Revoke one. The API revokes rather than deletes — the usage ledger references
- * keys, and removing one would turn historical spend into an unattributable row.
+ * Revoke one. The softer of the two ways to kill a key: it stops working but
+ * stays on the list with its name and last-used date, which is the audit trail.
+ * Deleting is useDeleteKey.
  */
 export function useRevokeKey() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => request<ApiKey>(`/api/me/keys/${id}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.myKeys }),
+  });
+}
+
+/**
+ * Delete one outright, revoked or not — the pruning a list of dead keys needs.
+ *
+ * The ledger does not suffer: usage rows carry the user and group ids of their
+ * own and keep them, so historical spend stays attributed. What is lost is the
+ * per-key label in the "by API key" breakdown for rows from before the
+ * deletion, which is inherent to removing the key and what the person
+ * confirming is choosing.
+ */
+export function useDeleteKey() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request<void>(`/api/me/keys/${id}/permanent`, { method: "DELETE" }),
     onSuccess: () => client.invalidateQueries({ queryKey: keys.myKeys }),
   });
 }

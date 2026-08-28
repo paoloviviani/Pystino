@@ -2,7 +2,8 @@
 
 Two things get most of the attention here, because they are the ones that would
 quietly corrupt the ledger if they were wrong: prices must stay append-only, and
-models must never be deletable while usage rows point at them.
+deleting a model must leave every usage row in place — readable by its
+denormalised name, still attributed to its user and group.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from gateway.models import (
     User,
 )
 from gateway.types import utcnow
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
@@ -126,17 +127,78 @@ class TestModels:
         assert response.status_code == 409
         assert "already exists" in response.json()["error"]["message"]
 
-    async def test_there_is_no_delete_route(
+    async def test_delete_removes_the_model_but_not_the_ledger(
         self,
         app: object,
         client: httpx.AsyncClient,
         seeded: Seeded,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """Usage rows reference models; deleting one orphans historical spend."""
+        """The row goes; every usage record stays, attributed and readable.
+
+        The ledger keeps the request's own ``model_name`` precisely so the
+        model behind it can one day be deleted. Prices and access grants are
+        meaningless without the model and go with it.
+        """
         as_user(app, await make_admin(session_factory, seeded))
+        async with session_factory() as db:
+            db.add(
+                UsageRecord(
+                    request_id="req-delete-1",
+                    status=UsageStatus.COMPLETED,
+                    user_id=seeded.user.id,
+                    group_id=seeded.group.id,
+                    api_key_id=seeded.api_key.id,
+                    model_id=seeded.model.id,
+                    model_name=seeded.model.name,
+                    currency="EUR",
+                )
+            )
+            db.add(
+                ModelPrice(
+                    model_id=seeded.model.id,
+                    input_per_mtok=Decimal("1"),
+                    output_per_mtok=Decimal("2"),
+                    currency="EUR",
+                )
+            )
+            # The seeded grant is already in place; a second row for the same
+            # pair would violate the composite primary key.
+            await db.commit()
+
         response = await client.delete(f"/api/admin/models/{seeded.model.id}")
-        assert response.status_code == 405
+        assert response.status_code == 204
+
+        assert (await client.get(f"/api/admin/models/{seeded.model.id}")).status_code == 404
+        listing = (await client.get("/api/admin/models")).json()["items"]
+        assert all(m["id"] != str(seeded.model.id) for m in listing)
+
+        async with session_factory() as db:
+            usage = (
+                await db.execute(
+                    select(UsageRecord).where(UsageRecord.request_id == "req-delete-1")
+                )
+            ).scalar_one()
+            assert usage.model_id is None
+            assert usage.model_name == seeded.model.name
+            assert usage.user_id == seeded.user.id
+            assert usage.group_id == seeded.group.id
+            assert (await db.execute(select(func.count(ModelPrice.id)))).scalar_one() == 0
+            # The seeded grant dies with the model.
+            assert (
+                await db.execute(select(func.count(GroupModelAccess.group_id)))
+            ).scalar_one() == 0
+
+    async def test_delete_unknown_model_is_404(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.delete(f"/api/admin/models/{uuid.uuid4()}")
+        assert response.status_code == 404
 
     async def test_unknown_model_is_404(
         self,
