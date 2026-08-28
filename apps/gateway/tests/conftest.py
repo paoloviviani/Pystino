@@ -25,6 +25,7 @@ import pytest_asyncio
 from fastapi import FastAPI
 from gateway.accounting.cost import TokenCounts
 from gateway.config import (
+    OIDCSettings,
     QuotaSettings,
     RedactionSettings,
     Settings,
@@ -43,10 +44,14 @@ from gateway.models import (
     Provider,
     User,
 )
+from gateway.oidc import OIDCClient, OIDCMetadata
 from gateway.plugins import registry as plugin_registry
 from gateway.plugins.base import ProviderKind, ReportedCost
 from gateway.secrets import SecretBox, hint_for
 from gateway.security import generate_api_key
+from gateway.types import utcnow
+from joserfc import jwt
+from joserfc.jwk import KeySet, RSAKey
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 UPSTREAM_BASE = "http://fake-upstream/v1"
@@ -407,3 +412,100 @@ def test_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setitem(plugin_registry._BUILTIN, DollarShopPlugin.name, DollarShopPlugin)
     monkeypatch.setitem(plugin_registry._BUILTIN, IndicativeCostPlugin.name, IndicativeCostPlugin)
+
+
+# --------------------------------------------------------------------------
+# OIDC access tokens on /v1 (ADR 0040)
+#
+# Here rather than in test_bearer_auth.py because the query-count suite pins the
+# bearer path's round trips and needs the same fixtures.
+# --------------------------------------------------------------------------
+
+BEARER_ISSUER = "https://idp.test"
+BEARER_AUDIENCE = "llm-gateway"
+
+
+class _Absent:
+    """Sentinel for `make_token(aud=ABSENT)` — a claim that is not merely empty.
+
+    A live Keycloak access token has no `aud` key at all unless a mapper adds
+    one, and "missing" and "empty list" are different tests.
+    """
+
+
+ABSENT = _Absent()
+
+
+class StubOIDCClient(OIDCClient):
+    """An OIDCClient whose discovery and JWKS are local.
+
+    Subclassed rather than mocked so every line of ``validate_access_token`` —
+    including the unknown-``kid`` retry — runs as it does in production.
+    """
+
+    def __init__(self, oidc_settings: OIDCSettings, key: RSAKey) -> None:
+        super().__init__(oidc_settings, http=None)  # type: ignore[arg-type]
+        self._key = key
+
+    async def metadata(self) -> OIDCMetadata:
+        return OIDCMetadata(
+            issuer=BEARER_ISSUER,
+            authorization_endpoint=f"{BEARER_ISSUER}/auth",
+            token_endpoint=f"{BEARER_ISSUER}/token",
+            jwks_uri=f"{BEARER_ISSUER}/jwks",
+        )
+
+    async def jwks(self, *, force: bool = False) -> KeySet:
+        return KeySet([self._key])
+
+
+@pytest.fixture(scope="module")
+def signing_key() -> RSAKey:
+    return RSAKey.generate_key(2048, parameters={"kid": "test-key-1"})
+
+
+def make_token(key: RSAKey, **overrides: object) -> str:
+    """A token shaped like the ones this deployment's Keycloak issues.
+
+    The claim set was copied from a live token on 2026-08-28 rather than written
+    from the specification, which matters: `azp` names the *chat* client while
+    `aud` names the gateway, and that is only true because of an audience mapper.
+    """
+    now = int(utcnow().timestamp())
+    claims: dict[str, object] = {
+        "iss": BEARER_ISSUER,
+        "sub": "subject-1",
+        "aud": [BEARER_AUDIENCE],
+        "typ": "Bearer",
+        "azp": "llm-chat",
+        "exp": now + 300,
+        "iat": now,
+        "email": "member@example.org",
+        "name": "Test Member",
+        "groups": ["research"],
+    }
+    claims.update(overrides)
+    return jwt.encode(
+        {"alg": "RS256", "kid": key.kid},
+        {k: v for k, v in claims.items() if not isinstance(v, _Absent)},
+        key,
+    )
+
+
+def bearer_auth(token: str) -> dict[str, str]:
+    return {"authorization": f"Bearer {token}"}
+
+
+@pytest_asyncio.fixture
+async def bearer_app(app: FastAPI, signing_key: RSAKey) -> FastAPI:
+    """The real app, configured to accept tokens for BEARER_AUDIENCE."""
+    app_settings: Settings = app.state.settings
+    app_settings.oidc = OIDCSettings(
+        enabled=True,
+        issuer=BEARER_ISSUER,
+        client_id="llm-gateway",
+        groups_claim="groups",
+        access_token_audience=BEARER_AUDIENCE,
+    )
+    app.state.oidc_client = StubOIDCClient(app_settings.oidc, signing_key)
+    return app

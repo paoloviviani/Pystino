@@ -82,6 +82,12 @@ services:
       # Where the *browser* is sent back to, so this is the gateway's public URL.
       GATEWAY_OIDC__REDIRECT_URI: http://localhost:8000/auth/callback
       GATEWAY_OIDC__GROUPS_CLAIM: groups
+      # Accepts OIDC access tokens on /v1 for this audience, which is what the
+      # chat application and the opencode device flow use instead of an API key
+      # (ADR 0040). Naming an audience is what enables the feature: a token is
+      # accepted only if the realm put this value in its `aud`, which the
+      # `gateway-api` client scope does for the clients allowed to call /v1.
+      GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE: llm-gateway
       # Membership of this realm group grants is_admin, in both directions:
       # leaving it removes admin at the next login.
       GATEWAY_OIDC__ADMIN_GROUPS: '["platform-admins"]'

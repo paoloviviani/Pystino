@@ -1,8 +1,17 @@
-"""OIDC authorization-code login for the management API.
+"""OIDC: authorization-code login for the management API, and bearer access
+tokens for ``/v1`` when an audience is configured.
 
-Scope: this authenticates *humans* to the management surface. Programmatic
-``/v1`` traffic uses API keys, because a key is revocable server-side and carries
-a billing group, and because no chat client knows how to refresh an OIDC token.
+Two flows, deliberately separate. The **authorization-code** flow authenticates a
+human to the management surface and ends in a session cookie. The **access
+token** path authenticates a first-party application calling ``/v1`` on behalf of
+the human using it — the chat app, and the ``opencode`` device flow — and is what
+[ADR 0040](docs/adr/0040-bearer-tokens-on-v1.md) exists for. The alternative was
+minting an API key per user inside each application, which is credential storage
+invented to work around a missing token path.
+
+API keys remain the credential for programs acting as themselves: a key is
+revocable server-side, carries a billing group, and does not expire in five
+minutes.
 
 Three things here are configurable because every identity provider differs:
 
@@ -14,8 +23,9 @@ Three things here are configurable because every identity provider differs:
 * **Whether unknown groups are created.** Auto-creation is convenient; turning it
   off makes group membership an explicit administrative act.
 
-The device authorization flow that the ``opencode`` bootstrap needs is Phase 4 and
-is deliberately not started here.
+The device authorization flow itself — the endpoint dance that gets ``opencode`` a
+token in the first place — is still to come; what is here is the half that
+matters to the gateway, which is what to do with the token once it exists.
 """
 
 from __future__ import annotations
@@ -47,6 +57,13 @@ logger = logging.getLogger(__name__)
 # would let an attacker who learns the (non-secret) client_id forge tokens.
 _ID_TOKEN_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384", "PS256"]
 _SESSION_ALGORITHM = "HS256"
+
+# Keycloak marks an ID token `typ: ID` and an access token `typ: Bearer`. The
+# claim is not standard, so its *absence* proves nothing and is allowed; its
+# presence saying "ID" is refused. Without this, a deployment whose configured
+# audience equals its own client_id would accept a console ID token as an API
+# credential — and that token is handed to the browser.
+_ID_TYP = "ID"
 
 
 class OIDCError(Exception):
@@ -300,6 +317,68 @@ class OIDCClient:
 
         return dict(token.claims)
 
+    async def validate_access_token(self, access_token: str) -> dict[str, Any]:
+        """Verify an OIDC access token presented as a ``/v1`` credential.
+
+        Four checks, and the reason each is here rather than inherited from
+        :meth:`validate_id_token`, which validates a *different* kind of token:
+
+        * **Signature**, against the realm's JWKS, refetched once on an unknown
+          ``kid`` — key rotation happens without warning.
+        * **Issuer**, which must equal the discovery document's exactly.
+          ``iss`` is part of a user's identity here (users are keyed on
+          ``(issuer, subject)``), so a token from a re-hosted Keycloak must fail
+          rather than quietly provision a second set of everybody.
+        * **Audience**, which must *contain* the configured value. An ID token
+          names one audience; an access token may legitimately name several, so
+          this is a membership test rather than equality.
+        * **Not an ID token.** See ``_ID_TYP``.
+
+        No userinfo request is made, unlike the login flow: this runs on every
+        request, and an HTTP round trip to the identity provider per API call is
+        not a thing a gateway may do. Whatever the token does not carry, the
+        token does not carry.
+        """
+        audience = self._settings.access_token_audience
+        if not audience:
+            raise OIDCError("access tokens are not accepted: no audience is configured")
+
+        metadata = await self.metadata()
+        keys = await self.jwks()
+        try:
+            token = jwt.decode(access_token, keys, algorithms=_ID_TOKEN_ALGORITHMS)
+        except JoseError:
+            keys = await self.jwks(force=True)
+            try:
+                token = jwt.decode(access_token, keys, algorithms=_ID_TOKEN_ALGORITHMS)
+            except JoseError as exc:
+                raise OIDCError(f"access token signature is not valid: {exc}") from exc
+
+        registry = JWTClaimsRegistry(
+            iss={"essential": True, "value": metadata.issuer},
+            exp={"essential": True},
+            sub={"essential": True},
+            leeway=self._settings.leeway_seconds,
+        )
+        try:
+            registry.validate(token.claims)
+        except JoseError as exc:
+            raise OIDCError(f"access token claims are not valid: {exc}") from exc
+
+        if token.claims.get("typ") == _ID_TYP:
+            raise OIDCError("an ID token is not an API credential")
+
+        # `aud` is a string or a list of strings, per RFC 7519.
+        raw_audience = token.claims.get("aud")
+        held = [raw_audience] if isinstance(raw_audience, str) else raw_audience or []
+        if audience not in held:
+            raise OIDCError(
+                f"access token audience {held!r} does not include {audience!r}; "
+                "the client needs an audience mapper naming this gateway"
+            )
+
+        return dict(token.claims)
+
     async def fetch_userinfo(self, access_token: str) -> dict[str, Any]:
         metadata = await self.metadata()
         if not metadata.userinfo_endpoint:
@@ -327,6 +406,7 @@ async def provision_user(
     display_name: str | None,
     group_names: list[str],
     settings: OIDCSettings,
+    touch_login: bool = True,
 ) -> User:
     """Create or update a user and reconcile their group memberships.
 
@@ -356,7 +436,10 @@ async def provision_user(
         if display_name is not None:
             user.display_name = display_name
 
-    user.last_login_at = utcnow()
+    # A `/v1` call made with an access token is not a login, and recording it as
+    # one would make "last seen" mean two different things on the same column.
+    if touch_login:
+        user.last_login_at = utcnow()
 
     groups = await _resolve_groups(session, group_names, settings)
     await _reconcile_memberships(session, user, groups)
@@ -387,6 +470,79 @@ async def provision_user(
     # than whatever was loaded before it changed.
     await session.refresh(user, attribute_names=["memberships"])
     return user
+
+
+async def sync_user_from_claims(
+    session: AsyncSession,
+    *,
+    claims: dict[str, Any],
+    settings: OIDCSettings,
+) -> User:
+    """Resolve an access token's claims to the user row it names.
+
+    The same ``(issuer, subject)`` key the browser login uses, so a person who
+    signs into the console and a person whose chat message arrives over ``/v1``
+    are one row, one spend total, one set of quotas.
+
+    **Memberships are reconciled only when the token disagrees with them**, and
+    that condition is the whole design of this function. Reconciling on every
+    request would put writes on the hot path; reconciling never would mean that
+    removing someone from a group in the directory stops them signing into the
+    console while leaving them able to bill that group through the API, which is
+    the worse half of the access being revoked. Comparing against the token
+    costs nothing — the claims are already parsed and the memberships already
+    loaded — and a token is short-lived, so the window in which a stale group
+    can be used is one token lifetime, not forever.
+    """
+    issuer = claims.get("iss")
+    subject = claims.get("sub")
+    if not isinstance(issuer, str) or not isinstance(subject, str):
+        raise OIDCError("access token has no usable issuer or subject")
+
+    stmt = (
+        select(User)
+        .where(User.issuer == issuer, User.subject == subject)
+        # `Membership.group` and `User.default_billing_group` are both
+        # `lazy="joined"` on the model, so this is two round trips and everything
+        # the caller needs is loaded. A lazy attribute touched later would raise
+        # MissingGreenlet under asyncio rather than quietly costing a query.
+        .options(selectinload(User.memberships))
+    )
+    user = (await session.execute(stmt)).scalar_one_or_none()
+
+    group_names = extract_groups(claims, settings)
+    email = claims.get("email")
+    display_name = claims.get("name") or claims.get("preferred_username")
+
+    if user is not None and not _claims_diverge(user, group_names, settings):
+        return user
+
+    return await provision_user(
+        session,
+        issuer=issuer,
+        subject=subject,
+        email=email if isinstance(email, str) else None,
+        display_name=display_name if isinstance(display_name, str) else None,
+        group_names=group_names,
+        settings=settings,
+        touch_login=False,
+    )
+
+
+def _claims_diverge(user: User, group_names: list[str], settings: OIDCSettings) -> bool:
+    """Does the token say something the stored row does not already reflect?
+
+    Group *names* are compared rather than ids because that is what the token
+    carries, and a name the gateway has never seen is a divergence whether or
+    not it will end up creating a group: with ``auto_create_groups`` off it
+    resolves to nothing, and the comparison correctly settles on the next call.
+    """
+    held = {membership.group.name for membership in user.memberships}
+    if held != set(group_names):
+        return True
+    if settings.admin_groups:
+        return user.is_admin != bool(held & set(settings.admin_groups))
+    return False
 
 
 async def _resolve_groups(

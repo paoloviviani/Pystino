@@ -56,11 +56,13 @@ class UpstreamSettings(BaseModel):
 
 
 class OIDCSettings(BaseModel):
-    """OIDC for the *management* API only.
+    """OIDC for the management API, and — when an audience is named — for ``/v1``.
 
-    Programmatic ``/v1`` traffic authenticates with API keys, never with OIDC
-    tokens: an API key is revocable server-side and carries a billing group,
-    which a bearer ID token does not.
+    ``/v1`` authenticates with API keys by default. Setting
+    ``access_token_audience`` additionally accepts OIDC **access** tokens there,
+    which is what lets a first-party application (the chat app, the ``opencode``
+    device flow) call the gateway as the human using it without minting and
+    storing a key per user. See [ADR 0040](docs/adr/0040-bearer-tokens-on-v1.md).
     """
 
     enabled: bool = False
@@ -91,6 +93,22 @@ class OIDCSettings(BaseModel):
     # leaving the group removes admin, exactly as leaving a group removes the
     # ability to bill it.
     admin_groups: list[str] = Field(default_factory=list)
+
+    # Naming an audience is what enables OIDC access tokens on `/v1`; empty means
+    # API keys only, which is the behaviour every deployment had before this
+    # existed. One knob rather than two, because an `enabled` flag without an
+    # audience would accept any token the realm ever issued to anybody — the
+    # audience *is* the security property, so it is also the switch.
+    #
+    # Verified against this deployment's Keycloak on 2026-08-28 and not guessed:
+    # a Keycloak access token carries **no `aud` claim at all** unless an
+    # audience mapper puts one there, only `azp` naming the client that asked
+    # for it. So the value here must match a mapper configured on every client
+    # permitted to call `/v1` — see deploy/keycloak/realm-llm-platform.json.
+    # Matching `azp` instead was rejected: `azp` says who requested the token,
+    # not who it is *for*, so a token minted for any other purpose by a
+    # permitted client would be accepted at the API.
+    access_token_audience: str = ""
 
     # Clock skew tolerance when validating ID token exp/iat/nbf.
     leeway_seconds: int = 60

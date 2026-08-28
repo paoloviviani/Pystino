@@ -119,3 +119,39 @@ class TestTheMeteredPath:
         # catalogue. Was five before the loaders were changed from
         # `selectinload` to `joinedload` for the many-to-one relations.
         assert len(selects) <= 3, f"{len(selects)} selects:\n{summarise(selects)}"
+
+    async def test_bearer_authentication_costs_no_more_than_a_key(
+        self,
+        bearer_app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        signing_key: object,
+    ) -> None:
+        """An access token must not be the expensive way in.
+
+        The budget is the same three selects the API key path gets, and it holds
+        only because memberships are reconciled *when the token disagrees with
+        them* rather than on every request. Writing them every time would put
+        two writes on the hot path of every chat message; the second request
+        below is the one measured precisely because the first has already
+        settled any divergence.
+        """
+        from test_bearer_auth import auth, make_token
+
+        engine = bearer_app.state.engine  # type: ignore[attr-defined]
+        token = make_token(signing_key)  # type: ignore[arg-type]
+        await client.get("/v1/models", headers=auth(token))
+
+        with counted(engine) as statements:
+            assert (await client.get("/v1/models", headers=auth(token))).status_code == 200
+
+        selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+        writes = [
+            s for s in statements if s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+        ]
+        print(f"\n  /v1/models (bearer): {len(selects)} selects, {len(writes)} writes")
+        print(summarise(selects))
+        assert not writes, f"a steady-state token request wrote:\n{summarise(writes)}"
+        # Three: the user (joined to its default billing group), memberships
+        # (joined to their groups), the catalogue.
+        assert len(selects) <= 3, f"{len(selects)} selects:\n{summarise(selects)}"
