@@ -107,9 +107,9 @@ export function App() {
             </RequireAdmin>
           }
         />
-        {/* Reached from the Redaction screen, not from the navigation: the nav
-            is deliberately short, and this is the second question about
-            redaction rather than a place anyone starts. */}
+        {/* One rule, reached by clicking it in the list on the Redaction
+            screen. `new` shares the route: it cannot collide with a uuid, and a
+            second route would duplicate every line of the form. */}
         <Route
           path="/admin/redaction/rules/:ruleId"
           element={
