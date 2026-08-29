@@ -386,9 +386,14 @@ Known open items, none of them blocking:
   an audience ([ADR 0040](docs/adr/0040-bearer-tokens-on-v1.md)), which is also
   what the `opencode` device flow needs. **M1's foundation is done**: `chat-api`
   and the chat SPA, signing in against the same realm, streaming a turn through
-  `/v1` as the person typing it. Still to come in M1: regenerate, edit-and-
-  resend, stop, search, and titles from a model. Then assistants, RAG, MCP,
-  voice, the code sandbox, the desktop app.
+  `/v1` as the person typing it. Regenerate and edit-and-resend are built: a
+  regenerate is a contentless turn (`content: null` writes no user row) after
+  the caller truncated from the reply, and an edit is truncate-from-the-prompt
+  plus a fresh send — both because the transcript is one causal sequence, so
+  `DELETE /chat/api/conversations/{id}/messages/{mid}` deletes a message and
+  everything after it. No branch picker: forks would need server-side branch
+  storage first. Still to come in M1: search, and titles from a model. Then
+  assistants, RAG, MCP, voice, the code sandbox, the desktop app.
 
   Two things about the chat that are easy to get wrong. **It lives under
   `/chat`, in every deployment shape** — behind the proxy the gateway owns the
