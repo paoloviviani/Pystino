@@ -37,6 +37,8 @@ import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
+import { AuiCodeHeader, AuiSyntaxHighlighter } from "./CodeBlock";
+
 const components = memoizeMarkdownComponents({
   h1: (props) => <h1 className="aui-md-h1" {...props} />,
   h2: (props) => <h2 className="aui-md-h2" {...props} />,
@@ -59,6 +61,11 @@ const components = memoizeMarkdownComponents({
   tr: (props) => <tr className="aui-md-tr" {...props} />,
   sup: (props) => <sup className="aui-md-sup" {...props} />,
   pre: (props) => <pre className="aui-md-pre" {...props} />,
+  // Inline spans only. Fenced blocks never reach this mapping — they are
+  // intercepted by the code-fence override and rendered as CodeHeader +
+  // SyntaxHighlighter below — which is exactly why this mapping must not carry
+  // the inline-code class into them: `aui-md-inline-code` is a pill, and a
+  // pill on every line of a fenced block was half of why code looked crude.
   code: (props) => <code className="aui-md-inline-code" {...props} />,
 });
 
@@ -122,7 +129,11 @@ export const MarkdownText = memo(function MarkdownText() {
       preprocess={preprocess}
       remarkPlugins={[remarkGfm, remarkMath]}
       rehypePlugins={[rehypeKatex]}
-      components={components}
+      components={{
+        ...components,
+        SyntaxHighlighter: AuiSyntaxHighlighter,
+        CodeHeader: AuiCodeHeader,
+      }}
       defer
     />
   );

@@ -155,3 +155,15 @@
     opacity: 0.6;
   }
 }
+
+/* The shiki code block: the stylesheet styles its `pre` (rounded bottom, muted
+   ground, overflow-x) but not its typography — shiki's markup inherits, so the
+   mono face and the size are set here. `pre`'s browser margin is reset too:
+   the header bar above it owns the vertical rhythm, and a default `1em 0`
+   would open a gap between the two halves of one block. */
+.thread :global(.aui-shiki-base) pre {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
