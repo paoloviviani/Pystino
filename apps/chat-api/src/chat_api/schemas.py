@@ -57,7 +57,10 @@ class ConversationUpdate(BaseModel):
 
 
 class SendMessage(BaseModel):
-    content: str
+    #: None regenerates: no user row is written and the next assistant turn is
+    #: streamed from the history as it stands — what "try that answer again"
+    #: means on a transcript that is one causal sequence rather than a tree.
+    content: str | None
     #: Overrides the conversation's model for this turn and every turn after,
     #: because a picker that silently reverts is worse than no picker.
     model: str | None = None

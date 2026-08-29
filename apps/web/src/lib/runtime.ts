@@ -56,6 +56,10 @@ export function toThreadMessage(message: Message): ThreadMessageLike {
 
   return {
     ...base,
+    // The footer under an answer reads these back out of the runtime state:
+    // which model actually served it and what it cost in tokens. Passed as
+    // `custom` because that is the one field the converter preserves verbatim.
+    metadata: { custom: { model: message.model, usage: message.usage } },
     // `running` keeps the composer in its stop state and the message marked
     // in-flight; anything else is terminal.
     status:

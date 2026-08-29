@@ -49,7 +49,7 @@ function events(buffer: string): { events: ParsedEvent[]; rest: string } {
 
 export async function streamTurn(
   conversationId: string,
-  body: { content: string; model?: string; thinking?: boolean },
+  body: { content: string | null; model?: string; thinking?: boolean },
   handlers: StreamHandlers,
   signal?: AbortSignal,
 ): Promise<void> {

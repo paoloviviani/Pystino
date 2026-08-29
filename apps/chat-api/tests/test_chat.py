@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from typing import Any
 
 import httpx
@@ -488,3 +489,146 @@ class TestStopping:
         # gateway billed for the tokens.
         if assistant.status is MessageStatus.INTERRUPTED:
             assert assistant.request_id, "an interrupted turn must still name its ledger row"
+
+
+class TestRegenerateAndEdit:
+    """Regenerate streams a fresh reply from the history; edit truncates.
+
+    Both exist because a transcript is one causal sequence: a regenerate
+    replaces the last reply, an edited prompt invalidates everything that
+    answered it. The endpoints are the server side of those two moves.
+    """
+
+    @pytest.mark.asyncio
+    async def test_regenerate_adds_no_user_row(
+        self,
+        client: httpx.AsyncClient,
+        signed_in: Any,
+        fake_gateway: FakeGateway,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        auth = await signed_in()
+        conversation_id = await start(client, auth)
+        fake_gateway.set_stream(sse(delta("first")))
+        async with client.stream(
+            "POST",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
+            json={"content": "hi"},
+            headers=auth,
+        ) as response:
+            [chunk async for chunk in response.aiter_text()]
+
+        fake_gateway.set_stream(sse(delta("second")))
+        async with client.stream(
+            "POST",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
+            json={"content": None},
+            headers=auth,
+        ) as response:
+            body = "".join([chunk async for chunk in response.aiter_text()])
+
+        assert "second" in body
+        async with session_factory() as db:
+            messages = (
+                (
+                    await db.execute(
+                        select(Message)
+                        .where(Message.conversation_id == uuid.UUID(conversation_id))
+                        .order_by(Message.position)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        # The regenerate wrote exactly one row: a fresh assistant reply. No
+        # phantom user turn, no duplicated prompt in the history.
+        assert [m.role.value for m in messages] == ["user", "assistant", "assistant"]
+        assert [m.content for m in messages] == ["hi", "first", "second"]
+        # And the history the gateway saw on the regenerate was the
+        # conversation as it stood — prompt, first answer — with nothing added.
+        assert fake_gateway.seen_body["messages"] == [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "first"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_regenerate_on_an_empty_conversation_is_refused(
+        self, client: httpx.AsyncClient, signed_in: Any, fake_gateway: FakeGateway
+    ) -> None:
+        auth = await signed_in()
+        conversation_id = await start(client, auth)
+        response = await client.post(
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
+            json={"content": None},
+            headers=auth,
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_delete_from_truncates_the_cause_and_its_effects(
+        self,
+        client: httpx.AsyncClient,
+        signed_in: Any,
+        fake_gateway: FakeGateway,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Editing message one must not leave message two's answers behind."""
+        auth = await signed_in()
+        conversation_id = await start(client, auth)
+        fake_gateway.set_stream(sse(delta("a")))
+        async with client.stream(
+            "POST",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
+            json={"content": "one"},
+            headers=auth,
+        ) as response:
+            [chunk async for chunk in response.aiter_text()]
+        fake_gateway.set_stream(sse(delta("b")))
+        async with client.stream(
+            "POST",
+            f"{MOUNT}/api/conversations/{conversation_id}/messages",
+            json={"content": "two"},
+            headers=auth,
+        ) as response:
+            [chunk async for chunk in response.aiter_text()]
+
+        async with session_factory() as db:
+            first_user = (
+                await db.execute(
+                    select(Message)
+                    .where(Message.conversation_id == uuid.UUID(conversation_id))
+                    .order_by(Message.position)
+                )
+            ).scalars().first()
+            first_user_id = first_user.id
+
+        response = await client.delete(
+            f"{MOUNT}/api/conversations/{conversation_id}/messages/{first_user_id}",
+            headers=auth,
+        )
+        assert response.status_code == 204
+
+        async with session_factory() as db:
+            left = (
+                (
+                    await db.execute(
+                        select(Message)
+                        .where(Message.conversation_id == uuid.UUID(conversation_id))
+                        .order_by(Message.position)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert left == []
+
+    @pytest.mark.asyncio
+    async def test_delete_on_another_conversations_message_is_404(
+        self, client: httpx.AsyncClient, signed_in: Any
+    ) -> None:
+        auth = await signed_in()
+        other = await start(client, auth)
+        response = await client.delete(
+            f"{MOUNT}/api/conversations/{other}/messages/{uuid.uuid4()}", headers=auth
+        )
+        assert response.status_code == 404

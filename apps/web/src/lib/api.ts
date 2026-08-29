@@ -155,4 +155,17 @@ export const renameConversation = (id: string, title: string) =>
 export const archiveConversation = (id: string) =>
   api<void>(`${BASE}/api/conversations/${id}`, { method: "DELETE" });
 
+/**
+ * Delete a message and every message after it.
+ *
+ * A transcript is a causal sequence — the replies after a message exist
+ * because of it — so this is the only honest cut, and it is what editing an
+ * earlier message is: truncate from the prompt, send the new text as a fresh
+ * turn.
+ */
+export const deleteFromMessage = (conversationId: string, messageId: string) =>
+  api<void>(`${BASE}/api/conversations/${conversationId}/messages/${messageId}`, {
+    method: "DELETE",
+  });
+
 export const signOut = () => api<void>(`${BASE}/api/auth/logout`, { method: "POST" });
