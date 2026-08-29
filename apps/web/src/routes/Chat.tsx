@@ -34,16 +34,25 @@ import { Notice, Spinner } from "@llmp/ui";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  CheckIcon,
   CopyIcon,
+  PencilIcon,
   RefreshCwIcon,
   SquareIcon,
+  XIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { MarkdownText } from "../components/aui/MarkdownText";
 import { Reasoning } from "../components/aui/Reasoning";
 import styles from "./Chat.module.css";
-import { type Message, type Model, canThink, getConversation } from "../lib/api";
+import {
+  type Message,
+  type Model,
+  canThink,
+  deleteFromMessage,
+  getConversation,
+} from "../lib/api";
 import { textOf, toThreadMessage } from "../lib/runtime";
 import { streamTurn } from "../lib/stream";
 
@@ -63,11 +72,57 @@ function UserMessage() {
   return (
     <MessagePrimitive.Root className="aui-user-message-root" data-role="user">
       <div className="aui-user-message-content-wrapper">
-        <div className="aui-user-message-content">
-          <MessagePrimitive.Parts />
-        </div>
+        <ComposerPrimitive.If editing={false}>
+          <div className="aui-user-message-content">
+            <MessagePrimitive.Parts />
+          </div>
+        </ComposerPrimitive.If>
+        {/* Hovering the bubble reveals copy and edit, floated into the
+            gutter: the actions live beside what they act on, where a reader
+            is already pointing, and they stay out of the transcript itself. */}
+        <ComposerPrimitive.If editing={false}>
+          <div className="aui-user-action-bar-wrapper">
+            <ActionBarPrimitive.Root hideWhenRunning autohide="not-last" className="aui-user-action-bar-root">
+              <UserCopyButton />
+              <ActionBarPrimitive.Edit className="aui-button-icon" aria-label="Edit">
+                <PencilIcon />
+              </ActionBarPrimitive.Edit>
+            </ActionBarPrimitive.Root>
+          </div>
+        </ComposerPrimitive.If>
+        <ComposerPrimitive.If editing>
+          <ComposerPrimitive.Root className="aui-edit-composer-root">
+            <ComposerPrimitive.Input className="aui-edit-composer-input" autoFocus aria-label="Edit message" />
+            <div className="aui-edit-composer-footer">
+              <ComposerPrimitive.Cancel className="aui-button-icon" aria-label="Cancel edit">
+                <XIcon />
+              </ComposerPrimitive.Cancel>
+              <ComposerPrimitive.Send className="aui-button-icon" aria-label="Resend">
+                <ArrowUpIcon />
+              </ComposerPrimitive.Send>
+            </div>
+          </ComposerPrimitive.Root>
+        </ComposerPrimitive.If>
       </div>
     </MessagePrimitive.Root>
+  );
+}
+
+/** Copy with an acknowledgement, because a button that flashes nothing leaves
+    the reader guessing whether the press landed. */
+function UserCopyButton() {
+  const [copied, setCopied] = useState(false);
+  return (
+    <ActionBarPrimitive.Copy
+      className="aui-button-icon"
+      aria-label="Copy"
+      onClick={() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </ActionBarPrimitive.Copy>
   );
 }
 
@@ -81,6 +136,33 @@ function useWaitingForFirstToken(): boolean {
     }),
   );
   return Boolean(running && silent);
+}
+
+/** Which model served this, and what it cost in tokens.
+ *
+ * We already record both per message; the footer is where they become
+ * visible to the person the bill names. Read back out of the runtime state
+ * through `metadata.custom`, which is the one field the message converter
+ * preserves verbatim.
+ */
+function AssistantFooter() {
+  const status = useAuiState((s) => s.message.status?.type);
+  const custom = useAuiState((s) => s.message.metadata?.custom) as
+    | { model?: string | null; usage?: { total_tokens?: number } | null }
+    | undefined;
+  if (status !== "complete" || !custom) return null;
+  const tokens = custom.usage?.total_tokens;
+  const parts = [custom.model ?? null, tokens != null ? `${tokens.toLocaleString()} tokens` : null];
+  const shown = parts.filter(Boolean);
+  return shown.length > 0 ? (
+    <div className="aui-assistant-message-footer">
+      {shown.map((part) => (
+        <span key={part} className={styles.footerItem}>
+          {part}
+        </span>
+      ))}
+    </div>
+  ) : null;
 }
 
 function AssistantMessage() {
@@ -101,6 +183,7 @@ function AssistantMessage() {
       <div className="aui-assistant-message-content">
         <MessagePrimitive.Parts components={PART_COMPONENTS} />
       </div>
+      <AssistantFooter />
       <ActionBarPrimitive.Root
         className="aui-assistant-action-bar-root"
         hideWhenRunning
@@ -118,6 +201,33 @@ function AssistantMessage() {
 }
 
 const MESSAGE_COMPONENTS = { UserMessage, AssistantMessage };
+
+/** Where the answer just ended, the obvious next questions, one click each.
+ *
+ * Deliberately *transforms of the previous answer* rather than a model's guess
+ * at what to ask next: generating suggestions would cost a billed request per
+ * turn and arrive late, and these three are always applicable to whatever the
+ * model just said. Hidden while a turn runs, and in an empty thread — the
+ * welcome suggestions speak there instead.
+ */
+const FOLLOWUPS = ["Go deeper on that.", "Show an example.", "Summarise in three bullets."];
+
+function Followups({ onPick }: { onPick: (text: string) => void }) {
+  return (
+    <div className="aui-thread-followup-suggestions">
+      {FOLLOWUPS.map((prompt) => (
+        <button
+          key={prompt}
+          type="button"
+          className="aui-thread-followup-suggestion"
+          onClick={() => onPick(prompt)}
+        >
+          {prompt}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /** What an empty thread offers. Clicking one starts the turn — the same path
     as typing, so there is exactly one way a message enters the transcript. */
@@ -165,6 +275,11 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const abort = useRef<AbortController | null>(null);
+  // The edit and reload adapters need the transcript as of the click, not as
+  // of the render they were defined in; event handlers read between renders,
+  // so assigning during render keeps this always current.
+  const messagesRef = useRef<Message[]>([]);
+  messagesRef.current = messages;
 
   useEffect(() => {
     let cancelled = false;
@@ -190,9 +305,14 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
     };
   }, [conversationId]);
 
-  const send = useCallback(
-    async (text: string) => {
-      if (!text) return;
+  /** Stream one assistant reply, optionally behind a new user message.
+   *
+   * `userText === null` is a regeneration: no user row locally either — the
+   * caller has already removed the attempt being replaced, and the server
+   * writes no user row for a contentless turn.
+   */
+  const runTurn = useCallback(
+    async (userText: string | null, replaceFrom: number | null) => {
       setError(null);
       setRunning(true);
 
@@ -213,7 +333,17 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
         created_at: now,
       });
 
-      setMessages((current) => [...current, blank("user", text), blank("assistant", "")]);
+      if (replaceFrom !== null) {
+        // The attempt being replaced disappears from the view at the same
+        // moment the server row does — the transcript never shows a reply
+        // that is already gone upstream.
+        setMessages((current) => current.slice(0, replaceFrom));
+      }
+      setMessages((current) => [
+        ...current,
+        ...(userText !== null ? [blank("user", userText)] : []),
+        blank("assistant", ""),
+      ]);
 
       const patchLast = (change: (message: Message) => Message) =>
         setMessages((current) =>
@@ -228,7 +358,7 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
         // UI: a reasoning model that silently stops reasoning because a setting
         // was off is a worse surprise than one that always shows its work, and
         // the disclosure is collapsed by default anyway.
-        { content: text, model, thinking: canThink(models.find((m) => m.id === model)) },
+        { content: userText, model, thinking: canThink(models.find((m) => m.id === model)) },
         {
           onDelta: (piece) =>
             patchLast((message) => ({ ...message, content: message.content + piece })),
@@ -258,12 +388,66 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
     [conversationId, model, models, onTurnComplete],
   );
 
+  const send = useCallback(
+    async (text: string) => {
+      if (!text) return;
+      await runTurn(text, null);
+    },
+    [runTurn],
+  );
+
+  /** The index of the message with this id, or -1 when it is not ours to find.
+   * Local (in-flight) ids are never truncated: the server does not know them. */
+  const indexOf = useCallback(
+    (id: string | null | undefined, current: Message[]): number =>
+      id == null ? -1 : current.findIndex((message) => message.id === id),
+    [],
+  );
+
+  /** Cut the transcript from `from` onward, server first.
+   * If the server refuses, the local view keeps what the server kept: the two
+   * must not diverge over a failure the reader can see and retry. */
+  const truncateFrom = useCallback(
+    async (from: number): Promise<boolean> => {
+      const target = messagesRef.current[from];
+      if (!target) return false;
+      // A message still being written has no server row; the stop button is
+      // the tool for that case, not the edit one.
+      if (target.id.startsWith("local-")) return true;
+      try {
+        await deleteFromMessage(conversationId, target.id);
+        return true;
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "Could not delete.");
+        return false;
+      }
+    },
+    [conversationId],
+  );
+
   const runtime = useExternalStoreRuntime({
     isRunning: running,
     messages,
     convertMessage: toThreadMessage,
     onNew: async (message) => {
       await send(textOf(message));
+    },
+    onEdit: async (message) => {
+      // `parentId` is the message *before* the one being edited (null when it
+      // is the first), so the edited message is one past it — and everything
+      // from there answered a prompt that no longer exists.
+      const parent = indexOf(message.parentId, messagesRef.current);
+      const editedAt = parent + 1;
+      if (!(await truncateFrom(editedAt))) return;
+      await send(textOf(message));
+    },
+    onReload: async (parentId) => {
+      // Reload sits on an assistant message; `parentId` is the prompt before
+      // it, and the reply after that prompt is what gets replaced.
+      const parent = indexOf(parentId, messagesRef.current);
+      const replyAt = parent + 1;
+      if (!(await truncateFrom(replyAt))) return;
+      await runTurn(null, replyAt);
     },
     onCancel: async () => {
       abort.current?.abort();
@@ -328,6 +512,10 @@ export function Chat({ conversationId, models, onTurnComplete }: ChatProps) {
             >
               <ArrowDownIcon />
             </ThreadPrimitive.ScrollToBottom>
+
+            {running || error || messages.at(-1)?.role !== "assistant" ? null : (
+              <Followups onPick={(text) => void send(text)} />
+            )}
 
             <ComposerPrimitive.Root className="aui-composer-root">
               <div className={styles.composerShell}>

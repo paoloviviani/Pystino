@@ -167,3 +167,15 @@
   font-size: var(--text-sm);
   line-height: 1.6;
 }
+
+/* The per-answer footer: which model served it, what it cost in tokens. A
+   middot between the parts, muted type — a caption, not a sentence. */
+.footerItem {
+  color: var(--colour-text-muted);
+  font-size: var(--text-xs);
+}
+
+.footerItem + .footerItem::before {
+  content: "·";
+  margin: 0 var(--space-2);
+}

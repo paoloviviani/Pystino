@@ -278,6 +278,14 @@ async def send(
     db: DbDep,
     gateway: GatewayDep,
 ) -> StreamingResponse:
+    """Stream one turn: a user message and the assistant reply answering it.
+
+    With ``content: null`` the turn has no user message — a regeneration. The
+    assistant reply is streamed from the history as it stands, which is what
+    "try that answer again" means on a transcript that is one causal sequence
+    rather than a tree: the previous attempt is deleted by the caller first,
+    and this endpoint adds nothing before the model runs.
+    """
     conversation = await _owned(db, caller, conversation_id)
     if body.model:
         conversation.model = body.model
@@ -290,23 +298,36 @@ async def send(
         )
     ).scalar_one()
 
-    user_message = Message(
-        conversation_id=conversation.id,
-        position=next_position,
-        role=Role.USER,
-        content=body.content,
-        status=MessageStatus.COMPLETE,
+    if body.content is None and not [
+        m for m in conversation.messages if m.role is Role.USER and m.content
+    ]:
+        raise HTTPException(
+            status_code=422, detail="Nothing to regenerate from — the conversation has no turns."
+        )
+
+    user_message = (
+        Message(
+            conversation_id=conversation.id,
+            position=next_position,
+            role=Role.USER,
+            content=body.content,
+            status=MessageStatus.COMPLETE,
+        )
+        if body.content is not None
+        else None
     )
     assistant = Message(
         conversation_id=conversation.id,
-        position=next_position + 1,
+        position=next_position if user_message is None else next_position + 1,
         role=Role.ASSISTANT,
         content="",
         status=MessageStatus.STREAMING,
         model=conversation.model,
     )
-    db.add_all([user_message, assistant])
-    if conversation.title == "New chat":
+    if user_message is not None:
+        db.add(user_message)
+    db.add(assistant)
+    if body.content is not None and conversation.title == "New chat":
         conversation.title = body.content.strip()[:_TITLE_CHARS] or "New chat"
     conversation.updated_at = utcnow()
     await db.commit()
@@ -316,7 +337,8 @@ async def send(
         for message in sorted(conversation.messages, key=lambda m: m.position)
         if message.status is MessageStatus.COMPLETE and message.content
     ]
-    history.append({"role": Role.USER.value, "content": body.content})
+    if body.content is not None:
+        history.append({"role": Role.USER.value, "content": body.content})
 
     assistant_id = assistant.id
     payload: dict[str, Any] = {"model": conversation.model, "messages": history}
@@ -420,3 +442,35 @@ async def list_messages(
             for message in sorted(conversation.messages, key=lambda m: m.position)
         ]
     }
+
+
+@router.delete(
+    "/conversations/{conversation_id}/messages/{message_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_message_from(
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    caller: CallerDep,
+    db: DbDep,
+) -> None:
+    """Delete a message and every message after it.
+
+    A transcript is a causal sequence: the replies after a message exist
+    *because* of it, so removing the prompt while keeping its answers records a
+    conversation that never happened. "Delete from here" is the only honest
+    cut, and it is exactly what editing an earlier message needs — the client
+    truncates from the message being edited and sends the new text as a fresh
+    turn. The one message where nothing follows it (regenerating the last
+    reply) degenerates to deleting just that message, which is the intent.
+    """
+    conversation = await _owned(db, caller, conversation_id)
+    target = next((m for m in conversation.messages if m.id == message_id), None)
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such message in this conversation.")
+
+    for message in list(conversation.messages):
+        if message.position >= target.position:
+            await db.delete(message)
+    conversation.updated_at = utcnow()
+    await db.commit()
