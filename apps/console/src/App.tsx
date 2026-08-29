@@ -2,7 +2,7 @@ import { Notice, Spinner } from "@llmp/ui";
 import { Navigate, Route, Routes } from "react-router";
 import { RequireAdmin } from "./components/RequireAdmin";
 import { Shell } from "./components/Shell";
-import { NotAuthenticatedError, login } from "./lib/api";
+import { NotAuthenticatedError } from "./lib/api";
 import { useMe } from "./lib/queries";
 import { AdminModelDetail } from "./routes/AdminModelDetail";
 import { AdminModels } from "./routes/AdminModels";
@@ -13,6 +13,7 @@ import { AdminRedactionRule } from "./routes/AdminRedactionRule";
 import { Admin } from "./routes/Admin";
 import { AdminReports } from "./routes/AdminReports";
 import { AdminUsers } from "./routes/AdminUsers";
+import { Login } from "./routes/Login";
 import { NotFound } from "./routes/NotFound";
 import { Overview } from "./routes/Overview";
 import { Reports } from "./routes/Reports";
@@ -30,15 +31,11 @@ export function App() {
   }
 
   if (me.error instanceof NotAuthenticatedError) {
-    // No session, or it expired. Sent straight to the identity provider rather
-    // than shown a login button: there is only one way in, so a page whose only
-    // content is a button that does the inevitable is a wasted step.
-    login();
-    return (
-      <div className={styles.centre}>
-        <Spinner label="Redirecting to sign in" />
-      </div>
-    );
+    // No session, or it expired. What to show is the login page's decision,
+    // not this one: it asks which sign-in methods the deployment offers and
+    // adapts — auto-redirect when OIDC is the only way in, a form when a
+    // local password works, both when they are both enabled (ADR 0043).
+    return <Login />;
   }
 
   if (me.error || !me.data) {

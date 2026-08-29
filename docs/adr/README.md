@@ -54,6 +54,7 @@ verified is marked as such in the ADR that depends on it.
 | [0040](0040-bearer-tokens-on-v1.md) | OIDC access tokens as a `/v1` credential, gated by audience |
 | [0041](0041-chat-frontend-stack.md) | A Vite SPA on `packages/ui`, with assistant-ui for the thread (supersedes 0015's framework choice) |
 | [0042](0042-material-design-3.md) | Material Design 3, tuned for reading (supersedes 0034) |
+| [0043](0043-local-authentication.md) | Optional local email + password sign-in beside OIDC; one session, two doors |
 
 ## Decisions recorded now, implemented later
 

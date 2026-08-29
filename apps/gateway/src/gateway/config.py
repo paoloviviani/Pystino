@@ -121,6 +121,36 @@ class OIDCSettings(BaseModel):
         return value.rstrip("/")
 
 
+class LocalAuthSettings(BaseModel):
+    """Local email + password sign-in for the management surface (ADR 0043).
+
+    Off by default: a deployment with an identity provider should not grow a
+    second way in just because the feature shipped. Enabling it adds
+    ``POST /auth/login``; disabling it makes that endpoint answer 503 and the
+    console hides the form. Nothing else changes — the session cookie, its
+    lifetime, and everything downstream of it are shared with the OIDC flow.
+
+    There is no self-service registration and no password reset by email: an
+    account exists because an operator created it, via ``gateway passwd`` or
+    the admin API. Email-based reset would put account recovery in the hands
+    of whatever mail server this deployment has, which is a bigger surface
+    than the feature is worth here.
+    """
+
+    enabled: bool = False
+
+    # Argon2id is what protects a weak password from a GPU; no KDF protects it
+    # from a dictionary. The floor is low enough to accept generated secrets and
+    # long passphrases without friction, and exists so "password1" is refused at
+    # every entry point rather than hashed and stored.
+    min_password_length: int = Field(default=10, ge=1)
+
+    # Brute-force throttle, per worker process (see gateway/login_throttle.py
+    # for why it is not shared across workers).
+    max_failed_attempts: int = Field(default=10, ge=1)
+    throttle_window_seconds: float = Field(default=900, gt=0)
+
+
 class EntityMode(StrEnum):
     """What happens to one kind of detected entity.
 
@@ -627,6 +657,7 @@ class Settings(BaseSettings):
 
     upstream: UpstreamSettings = Field(default_factory=UpstreamSettings)
     oidc: OIDCSettings = Field(default_factory=OIDCSettings)
+    local_auth: LocalAuthSettings = Field(default_factory=LocalAuthSettings)
     redaction: RedactionSettings = Field(default_factory=RedactionSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
 

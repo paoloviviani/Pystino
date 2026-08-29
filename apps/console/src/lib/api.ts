@@ -97,9 +97,42 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
  * rule. The gateway validates the path and ignores anything that is not one on
  * its own origin, so this cannot become an open redirect.
  */
-export function login(): void {
-  const here = window.location.pathname + window.location.search;
+export function login(next?: string): void {
+  const here = next ?? window.location.pathname + window.location.search;
   window.location.assign(`/auth/login?next=${encodeURIComponent(here)}`);
+}
+
+/** Which sign-in methods the deployment offers (GET /auth/methods). */
+export interface AuthMethods {
+  local: boolean;
+  oidc: boolean;
+}
+
+/**
+ * Asked before any login page is rendered.
+ *
+ * Unauthenticated by design: the console needs the answer to decide *how* to
+ * ask for credentials, which is exactly the moment it has no session. What it
+ * returns — which methods are on — is already public to anyone who visits
+ * /auth/login.
+ */
+export async function fetchAuthMethods(): Promise<AuthMethods> {
+  return request<AuthMethods>("/auth/methods");
+}
+
+/**
+ * Local email + password sign-in (ADR 0043).
+ *
+ * A `fetch`, not a navigation: the gateway sets the session cookie on the
+ * response, so no page load is needed between success and a working session.
+ * 401 means wrong credentials, 429 means throttled — the caller renders the
+ * gateway's own message either way.
+ */
+export async function localLogin(email: string, password: string): Promise<void> {
+  await request<{ status: string }>("/auth/login", {
+    method: "POST",
+    body: { email, password },
+  });
 }
 
 /**

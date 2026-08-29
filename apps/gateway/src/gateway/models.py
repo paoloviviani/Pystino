@@ -284,6 +284,38 @@ class User(Base):
         return f"<User {self.issuer}/{self.subject}>"
 
 
+class LocalCredential(Base):
+    """The email + password credential that lets a user sign in without an IdP.
+
+    A separate table rather than a column on ``users`` on purpose: the users
+    table is identity-agnostic — one row per ``(issuer, subject)`` — and most
+    rows will never carry a password. Making "can sign in locally" a row here
+    means it is enumerable (``SELECT`` over the table is the list of everyone
+    with local access, which the audit question an operator actually asks),
+    and deleting the row revokes local login without touching the identity.
+
+    The user it points at is keyed ``(issuer="local", subject=email)``, the same
+    convention ``gateway seed`` has always used, so an OIDC user and a local
+    user with the same address are deliberately different accounts. Linking one
+    person's local credential to their directory identity would let a leaked
+    password ride an issuer's trust — it is refused, not merely unimplemented.
+    """
+
+    __tablename__ = "local_credentials"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    # Argon2id via pwdlib (ADR 0043). The column is wider than any current hash
+    # so a parameter upgrade never needs a migration.
+    password_hash: Mapped[str] = mapped_column(String(512))
+
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    user: Mapped[User] = relationship(foreign_keys=[user_id])
+
+
 class Membership(Base):
     __tablename__ = "memberships"
 

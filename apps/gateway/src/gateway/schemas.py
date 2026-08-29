@@ -708,10 +708,18 @@ class UserAdminResponse(BaseModel):
     subject: str
     is_active: bool
     is_admin: bool
+    # True when the account can sign in with a password (ADR 0043). The hash
+    # itself never leaves the database; the fact of its existence is what the
+    # console's user screen needs.
+    has_password: bool = False
     groups: list[str]
     default_billing_group: str | None
     active_key_count: int
     last_login_at: datetime | None
+
+
+class UserPasswordRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
 
 
 class UserUpdateRequest(BaseModel):

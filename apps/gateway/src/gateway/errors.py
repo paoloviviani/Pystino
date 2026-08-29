@@ -86,6 +86,12 @@ class ServiceUnavailableError(GatewayError):
     code = "service_unavailable"
 
 
+class TooManyRequestsError(GatewayError):
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+    error_type = "rate_limit_error"
+    code = "rate_limited"
+
+
 def error_payload(
     message: str,
     *,
