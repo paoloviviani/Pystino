@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import logging
 import sys
 from decimal import Decimal
@@ -26,6 +27,7 @@ from gateway.models import (
     LimitMetric,
     LimitRule,
     LimitScope,
+    LocalCredential,
     Membership,
     MembershipRole,
     ModelDef,
@@ -34,9 +36,14 @@ from gateway.models import (
     Provider,
     User,
 )
+from gateway.passwords import hash_password, validate_password
 from gateway.security import generate_api_key
 
 logger = logging.getLogger(__name__)
+
+# `--password` with this value (or bare) prompts instead: an actual password on
+# argv lands in shell history, which is a leak with a long memory.
+_PROMPT_SENTINEL = "-"
 
 
 async def _seed(
@@ -47,6 +54,7 @@ async def _seed(
     input_price: Decimal,
     output_price: Decimal,
     email: str,
+    password: str = "",
 ) -> str:
     settings = get_settings()
     engine = create_engine(settings)
@@ -130,6 +138,19 @@ async def _seed(
                 )
                 session.add(user)
                 await session.flush()
+
+            if password:
+                # Opt-in: a seeded credential nobody asked for would put a
+                # guessable account on the management surface. Given, it is
+                # validated against the same policy `passwd` enforces.
+                validate_password(password, settings.local_auth)
+                credential = await session.get(LocalCredential, user.id)
+                if credential is None:
+                    session.add(
+                        LocalCredential(user_id=user.id, password_hash=hash_password(password))
+                    )
+                else:
+                    credential.password_hash = hash_password(password)
 
             membership = (
                 await session.execute(
@@ -215,6 +236,42 @@ def main(argv: list[str] | None = None) -> int:
     seed.add_argument("--input-price", type=Decimal, default=Decimal("0.15"))
     seed.add_argument("--output-price", type=Decimal, default=Decimal("0.60"))
     seed.add_argument("--email", default="seed@example.org")
+    seed.add_argument(
+        "--password",
+        default="",
+        help="also give the seeded user a local email+password login (prompted "
+        "for if the flag is given without a value)",
+        nargs="?",
+        const=_PROMPT_SENTINEL,
+    )
+
+    passwd = subparsers.add_parser(
+        "passwd",
+        help="create or reset a local email+password login (ADR 0043)",
+        description=(
+            "Creates the local user if needed and sets the password supplied "
+            "interactively. This is the bootstrap for the first administrator: "
+            "it needs no running gateway and no existing session."
+        ),
+    )
+    passwd.add_argument("email", help="the address to sign in with (subject of the local user)")
+    passwd.add_argument(
+        "--group",
+        default="",
+        help="a billing group to add the user to (created if missing; "
+        "existing memberships are untouched)",
+    )
+    passwd.add_argument(
+        "--admin/--no-admin",
+        dest="admin",
+        default=True,
+        help="whether the account is an administrator (default: yes)",
+    )
+    passwd.add_argument(
+        "--display-name",
+        default="",
+        help="shown in the console; defaults to none",
+    )
 
     args = parser.parse_args(argv)
     settings = get_settings()
@@ -235,6 +292,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "seed":
+        # `--password` with no value prompts rather than taking the next
+        # argument: a password on argv lands in shell history, which is a leak
+        # with a long memory.
+        password: str = args.password
+        if password == _PROMPT_SENTINEL:
+            password = getpass.getpass(f"Password for {args.email}: ")
         secret = asyncio.run(
             _seed(
                 group_name=args.group,
@@ -243,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
                 input_price=args.input_price,
                 output_price=args.output_price,
                 email=args.email,
+                password=password,
             )
         )
         print("Seeded. API key (shown once):\n")
@@ -257,7 +321,116 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
+    if args.command == "passwd":
+        return asyncio.run(
+            _passwd(
+                email=args.email,
+                group=args.group,
+                is_admin=args.admin,
+                display_name=args.display_name,
+            )
+        )
+
     return 1
+
+
+async def _passwd(
+    *, email: str, group: str = "", is_admin: bool = False, display_name: str = ""
+) -> int:
+    """Create or update a local login (ADR 0043).
+
+    Exists because the first local administrator has to come from somewhere
+    that is not itself authenticated: the admin API that would otherwise
+    create accounts requires an admin, which on a fresh database nobody is.
+    The same chicken-and-egg is why this does not require the gateway to be
+    running — it opens its own database session.
+
+    Idempotent by design: running it again for an address resets that
+    account's password. That is the point — "the admin lost the password" is
+    the recovery story — and it is also why the command asks nothing else:
+    anyone with shell access to the host can already read the database.
+    """
+    settings = get_settings()
+    first = getpass.getpass(f"Password for {email}: ")
+    second = getpass.getpass("Again: ")
+    if first != second:
+        print("The two passwords do not match.", file=sys.stderr)
+        return 1
+    try:
+        validate_password(first, settings.local_auth)
+    except ValueError as exc:
+        print(f"Refused: {exc}", file=sys.stderr)
+        return 1
+
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            user = (
+                await session.execute(
+                    select(User).where(User.issuer == "local", User.subject == email.casefold())
+                )
+            ).scalar_one_or_none()
+            if user is None:
+                user = User(
+                    issuer="local",
+                    subject=email.casefold(),
+                    email=email.casefold(),
+                    display_name=display_name or None,
+                    is_admin=is_admin,
+                )
+                session.add(user)
+                await session.flush()
+            else:
+                # A reset must not silently re-empower a demoted account: only
+                # the flag explicitly passed on the command line touches it.
+                user.is_admin = is_admin
+
+            # Memberships are additive here, unlike the OIDC path: there is no
+            # directory to be authoritative, so `gateway passwd` adds the group
+            # named and says nothing about the others.
+            if group:
+                grp = (
+                    await session.execute(select(Group).where(Group.name == group))
+                ).scalar_one_or_none()
+                if grp is None:
+                    grp = Group(
+                        name=group,
+                        description="Created by `gateway passwd`",
+                        source=GroupSource.MANUAL,
+                    )
+                    session.add(grp)
+                    await session.flush()
+                membership = (
+                    await session.execute(
+                        select(Membership).where(
+                            Membership.user_id == user.id, Membership.group_id == grp.id
+                        )
+                    )
+                ).scalar_one_or_none()
+                if membership is None:
+                    session.add(
+                        Membership(user_id=user.id, group_id=grp.id, role=MembershipRole.MEMBER)
+                    )
+                if user.default_billing_group_id is None:
+                    user.default_billing_group_id = grp.id
+
+            credential = await session.get(LocalCredential, user.id)
+            if credential is None:
+                session.add(LocalCredential(user_id=user.id, password_hash=hash_password(first)))
+            else:
+                credential.password_hash = hash_password(first)
+            await session.commit()
+
+        print(f"Local sign-in ready for {email} (issuer 'local').")
+        if not settings.local_auth.enabled:
+            print(
+                "Note: GATEWAY_LOCAL_AUTH__ENABLED is false, so the gateway will refuse "
+                "password logins until it is set to true and the gateway restarted."
+            )
+        return 0
+    finally:
+        await engine.dispose()
 
 
 if __name__ == "__main__":

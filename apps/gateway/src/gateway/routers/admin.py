@@ -60,6 +60,7 @@ from gateway.models import (
     LimitMetric,
     LimitRule,
     LimitScope,
+    LocalCredential,
     Membership,
     ModelDef,
     ModelKind,
@@ -78,6 +79,7 @@ from gateway.models import (
     UserModelAccess,
 )
 from gateway.pagination import Page, PageDep, count_of
+from gateway.passwords import hash_password, validate_password
 from gateway.periods import PeriodKind
 from gateway.plugins import registry as plugin_registry
 from gateway.pricing import CatalogueUnavailable, fetch_catalogue, parse_catalogue
@@ -133,6 +135,7 @@ from gateway.schemas import (
     RedactionStatusResponse,
     UsageReport,
     UserAdminResponse,
+    UserPasswordRequest,
     UserUpdateRequest,
 )
 from gateway.secrets import SecretBox, SecretsUnavailableError, hint_for
@@ -1513,6 +1516,17 @@ async def _user_responses(session: SessionDep, users: Sequence[User]) -> list[Us
     group_names: dict[uuid.UUID, str] = _pairs(
         (await session.execute(select(Group.id, Group.name).where(Group.id.in_(billing_ids)))).all()
     )
+    # One lookup for the whole page. "Can this person sign in without the IdP"
+    # is asked on every row render, and a query per row is exactly the shape
+    # test_query_counts.py exists to prevent.
+    with_password: set[uuid.UUID] = {
+        user_id
+        for user_id, in (
+            await session.execute(
+                select(LocalCredential.user_id).where(LocalCredential.user_id.in_(ids))
+            )
+        ).all()
+    }
 
     return [
         UserAdminResponse(
@@ -1523,6 +1537,7 @@ async def _user_responses(session: SessionDep, users: Sequence[User]) -> list[Us
             subject=user.subject,
             is_active=user.is_active,
             is_admin=user.is_admin,
+            has_password=user.id in with_password,
             groups=sorted(m.group.name for m in user.memberships),
             default_billing_group=(
                 group_names.get(user.default_billing_group_id)
@@ -1605,6 +1620,78 @@ async def update_user(
 
     # Not by re-reading the listing and picking a row out of it: the listing is
     # a page now, and the user just edited may not be on the page.
+    return (await _user_responses(session, [user]))[0]
+
+
+async def _load_local_user(user_id: uuid.UUID, session: SessionDep) -> User:
+    """The user a password route was aimed at, or the error that stops it.
+
+    Only ``issuer="local"`` accounts may carry a password. Attaching one to a
+    directory user would create a second credential for an identity the IdP
+    is supposed to be authoritative about — a leaked local password would
+    then ride the issuer's group memberships without anything in the
+    directory having granted it.
+    """
+    user = (
+        await session.execute(
+            select(User)
+            .where(User.id == user_id)
+            .options(selectinload(User.memberships).selectinload(Membership.group))
+        )
+    ).scalar_one_or_none()
+    if user is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+    if user.issuer != "local":
+        raise BadRequestError(
+            "Only local accounts (issuer 'local') can have a password. This user "
+            "signs in through the identity provider, which is authoritative for them."
+        )
+    return user
+
+
+@router.put("/users/{user_id}/password", response_model=UserAdminResponse)
+async def set_user_password(
+    user_id: uuid.UUID,
+    payload: UserPasswordRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> UserAdminResponse:
+    """Set or reset a local account's password.
+
+    A reset needs no knowledge of the old password: the caller is already an
+    authenticated administrator, and requiring the old value would make
+    "operator resets a locked-out account" impossible. Same trust level as
+    minting a key on someone's behalf.
+    """
+    user = await _load_local_user(user_id, session)
+    try:
+        validate_password(payload.password, settings.local_auth)
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+
+    credential = await session.get(LocalCredential, user.id)
+    if credential is None:
+        session.add(LocalCredential(user_id=user.id, password_hash=hash_password(payload.password)))
+    else:
+        credential.password_hash = hash_password(payload.password)
+    await session.commit()
+    return (await _user_responses(session, [user]))[0]
+
+
+@router.delete("/users/{user_id}/password", response_model=UserAdminResponse)
+async def clear_user_password(
+    user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> UserAdminResponse:
+    """Revoke an account's ability to sign in locally.
+
+    Row deletion, not an empty hash: "no credential" and "credential that
+    matches nothing" are different states, and only the first is honest about
+    what login will do.
+    """
+    user = await _load_local_user(user_id, session)
+    await session.execute(delete(LocalCredential).where(LocalCredential.user_id == user.id))
+    await session.commit()
     return (await _user_responses(session, [user]))[0]
 
 

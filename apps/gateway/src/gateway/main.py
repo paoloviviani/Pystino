@@ -18,6 +18,7 @@ from gateway.config import Settings, get_settings
 from gateway.db import create_engine, create_session_factory
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.logging_config import configure_logging
+from gateway.login_throttle import LoginThrottle
 from gateway.oidc import OIDCClient
 from gateway.providers import ProviderRegistry
 from gateway.quota import (
@@ -153,6 +154,17 @@ async def init_app_state(
     app.state.background_tasks = set()
     app.state.oidc_client = (
         OIDCClient(settings.oidc, control_http) if settings.oidc.enabled else None
+    )
+    # The local-login throttle. Its presence *is* the feature switch: an
+    # absent throttle means POST /auth/login answers 503, and /auth/methods
+    # reports no local way in.
+    app.state.login_throttle = (
+        LoginThrottle(
+            max_failed_attempts=settings.local_auth.max_failed_attempts,
+            window_seconds=settings.local_auth.throttle_window_seconds,
+        )
+        if settings.local_auth.enabled
+        else None
     )
 
     # An empty counter cache is not a failed read — it answers confidently with

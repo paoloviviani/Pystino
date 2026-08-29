@@ -18,9 +18,18 @@ from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import OctKey
 from joserfc.jwt import JWTClaimsRegistry
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
 
 from gateway.deps import ManagementUserDep, SessionDep, SettingsDep
-from gateway.errors import BadRequestError, ServiceUnavailableError
+from gateway.errors import AuthenticationError as _AuthnError
+from gateway.errors import (
+    BadRequestError,
+    ServiceUnavailableError,
+    TooManyRequestsError,
+)
+from gateway.login_throttle import LoginThrottle
+from gateway.models import LocalCredential, User
 from gateway.oidc import (
     OIDCClient,
     OIDCError,
@@ -29,6 +38,7 @@ from gateway.oidc import (
     issue_session_token,
     provision_user,
 )
+from gateway.passwords import verify_and_rehash, verify_dummy
 from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
@@ -119,6 +129,60 @@ def _oidc_client(request: Request) -> OIDCClient:
     return client
 
 
+class LocalLoginRequest(BaseModel):
+    # Not `EmailStr`: that would drag in the email-validator dependency to
+    # police the syntax of a string whose only real test is whether it names
+    # an account. An unknown or malformed address costs one dummy Argon2
+    # verification and one "incorrect" answer, same as any wrong guess. The
+    # check here exists so the obvious garbage is refused before that.
+    email: str = Field(min_length=3, max_length=320)
+
+    @field_validator("email")
+    @classmethod
+    def _looks_like_an_address(cls, value: str) -> str:
+        if value.count("@") != 1 or not value.partition("@")[0]:
+            raise ValueError("a sign-in name must be an email address")
+        return value
+
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class AuthMethods(BaseModel):
+    """Which ways in this deployment offers. Drives the console's login page."""
+
+    local: bool
+    oidc: bool
+
+
+def _set_session_cookie(response: Response, request: Request, user_id: Any) -> None:
+    """Issue the management session, shared by the OIDC callback and local login.
+
+    Both flows end in exactly the same credential — a signed ``gw-session``
+    cookie — so nothing downstream of authentication needs to know which way in
+    the person came.
+    """
+    settings: Any = request.app.state.settings
+    response.set_cookie(
+        settings.session_cookie_name,
+        issue_session_token(
+            user_id,
+            secret=settings.session_secret.get_secret_value(),
+            ttl_seconds=settings.session_ttl_seconds,
+        ),
+        max_age=settings.session_ttl_seconds,
+        httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="lax",
+    )
+
+
+def _login_throttle(request: Request) -> LoginThrottle:
+    throttle: LoginThrottle | None = getattr(request.app.state, "login_throttle", None)
+    if throttle is None:
+        raise ServiceUnavailableError("Local sign-in is not enabled.")
+    return throttle
+
+
 @router.get("/login")
 async def login(
     request: Request, settings: SettingsDep, next: str | None = None
@@ -157,6 +221,103 @@ async def login(
         secure=settings.session_cookie_secure,
         samesite="lax",
     )
+    return response
+
+
+@router.get("/methods")
+async def methods(request: Request) -> AuthMethods:
+    """Which sign-in methods this deployment offers.
+
+    Unauthenticated by design: the console must ask *before* it can show a
+    login page, and a 401 there would loop it back to redirecting. What this
+    reveals — whether local login or OIDC is on — is already public the moment
+    anyone visits ``/auth/login``, so hiding it would protect nothing.
+    """
+    return AuthMethods(
+        local=bool(getattr(request.app.state, "login_throttle", None)),
+        oidc=getattr(request.app.state, "oidc_client", None) is not None,
+    )
+
+
+@router.post("/login")
+async def local_login(
+    payload: LocalLoginRequest,
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> JSONResponse:
+    """Sign in with email and password, when local auth is enabled (ADR 0043).
+
+    Three properties worth keeping in mind while reading the failure paths:
+
+    * **One answer for every failure.** Unknown address, wrong password and a
+      disabled account all return the same message and status. Distinguishing
+      them would turn this endpoint into an account enumerator.
+    * **Every failure costs the same work.** An unknown address runs a real
+      Argon2 verification against a dummy hash, so timing does not reveal
+      whether the address exists before a single password is guessed.
+    * **Failures are counted.** See `login_throttle.py` for why the counter is
+      per process rather than shared.
+    """
+    throttle = _login_throttle(request)
+    email = payload.email.casefold()
+
+    if not throttle.allowed(email):
+        # 429, and deliberately no Retry-After: naming the window tells an
+        # attacker exactly how long to wait between guesses.
+        raise TooManyRequestsError("Too many failed sign-in attempts. Try again later.")
+
+    # The query is by the credential, not the identity: `users.email` is not
+    # unique, and a local account is exactly the row whose issuer is "local".
+    row = (
+        await session.execute(
+            select(LocalCredential, User)
+            .join(User, User.id == LocalCredential.user_id)
+            .where(User.issuer == "local", User.subject == email)
+        )
+    ).first()
+
+    if row is not None:
+        credential, user = row
+        valid, replacement = verify_and_rehash(payload.password, credential.password_hash)
+    else:
+        valid = False
+        # Not free, on purpose — see the docstring.
+        verify_dummy(payload.password)
+        replacement = None
+
+    if not valid or row is None:
+        throttle.record_failure(email)
+        raise _AuthnError("Incorrect email or password.", code="invalid_credentials")
+
+    if not user.is_active:
+        # The disabled case burns no Argon2 work beyond the verification above,
+        # which already ran; that is acceptable, since a disabled account's
+        # existence was admin action, not an attacker's discovery.
+        raise _AuthnError("Incorrect email or password.", code="invalid_credentials")
+
+    if replacement is not None:
+        # Parameters moved on since this hash was made. The login holding the
+        # plaintext is the one moment an upgrade is free.
+        credential.password_hash = replacement
+
+    user.last_login_at = utcnow()
+    await session.commit()
+    throttle.record_success(email)
+
+    logger.info("local login: user=%s email=%s", user.id, email)
+    response = JSONResponse(
+        {
+            "status": "ok",
+            "user_id": str(user.id),
+            "default_billing_group_id": (
+                str(user.default_billing_group_id) if user.default_billing_group_id else None
+            ),
+        }
+    )
+    # The same session the OIDC callback issues — that equivalence is the
+    # whole point; nothing downstream knows which way in the person came.
+    _set_session_cookie(response, request, user.id)
     return response
 
 
@@ -243,18 +404,7 @@ async def callback(
                 ),
             }
         )
-    response.set_cookie(
-        settings.session_cookie_name,
-        issue_session_token(
-            user.id,
-            secret=settings.session_secret.get_secret_value(),
-            ttl_seconds=settings.session_ttl_seconds,
-        ),
-        max_age=settings.session_ttl_seconds,
-        httponly=True,
-        secure=settings.session_cookie_secure,
-        samesite="lax",
-    )
+    _set_session_cookie(response, request, user.id)
     # Kept solely to pass as `id_token_hint` when signing out. Without it
     # Keycloak cannot tell which session is being ended, so it interrupts with
     # a "Logging out?" confirmation page — safe, but an unfamiliar screen in
