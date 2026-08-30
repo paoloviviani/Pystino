@@ -312,7 +312,19 @@ class OIDCClient:
 
         # The nonce binds this token to the browser session that started the
         # flow, defeating token replay into someone else's login.
-        if nonce and token.claims.get("nonce") != nonce:
+        #
+        # Tolerated *absent*, deliberately (ADR 0044's GitLab finding):
+        # gitlab.com's discovery document names no nonce claim in
+        # `claims_supported`, so a provider we want to support demonstrably
+        # does not put one in its tokens. Requiring it would lock every such
+        # provider out. What is still refused, and this is the part that does
+        # the work, is a token carrying a nonce that does not match this
+        # browser's flow — an attacker replaying a token must present one
+        # minted for a *different* nonce, and any nonce at all is caught.
+        # What is lost is protection against a nonce-less stolen token, which
+        # is exactly the protection such a provider never offered.
+        presented = token.claims.get("nonce")
+        if presented is not None and presented != nonce:
             raise OIDCError("ID token nonce does not match the login attempt")
 
         return dict(token.claims)

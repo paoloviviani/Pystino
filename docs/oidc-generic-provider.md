@@ -122,12 +122,13 @@ the end for the one part that still needs a live test.
 
 ### GitLab caveats, verified at source
 
-- **`nonce`: unverified.** The gateway always sends `nonce` and requires the
-  ID token to echo it (replay protection, ADR 0011). GitLab's documentation
-  does not mention the nonce claim, and gitlab.com's discovery document does
-  not advertise it. If sign-in fails with "ID token nonce does not match the
-  login attempt", that is this — resolve it by testing with your GitLab
-  version before relying on the integration, not by weakening the check.
+- **`nonce`: tolerant of absence.** gitlab.com's discovery document
+  (`claims_supported`, checked 2026-08-30) names no `nonce` claim, so GitLab's
+  ID tokens do not carry one. The gateway sends a nonce on every login and
+  accepts a token without the claim, but refuses any token whose nonce does
+  not match this browser's flow — replay protection survives to the extent
+  the provider ever offered it. Self-managed GitLab versions may differ; if
+  yours does emit a nonce, the strict check simply engages.
 - **No RP-initiated logout.** gitlab.com's discovery advertises no
   `end_session_endpoint`, so "Sign out" can only drop the gateway's own
   session; the console falls back to that gracefully. GitLab's own login
