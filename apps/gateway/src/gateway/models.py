@@ -494,6 +494,15 @@ class ModelDef(Base):
     context_window: Mapped[int | None] = mapped_column(Integer, default=None)
     max_output_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
 
+    # Public access (ADR 0045): any authenticated caller may use this model,
+    # billed to the caller's own default billing group. Access is granted;
+    # billing is not changed — a caller with no billing group is refused
+    # exactly as before, because a public model is not a free model. A flag
+    # rather than a synthetic "public" group: the group would appear on every
+    # membership, make "which models can everyone use" a join instead of a
+    # read, and need guarding against deletion and renaming.
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+
     # What the model can be given, what it can produce, and what it can do
     # (ADR 0031). Free-form string lists rather than a column of booleans:
     # the reference provider documents `supported_features` as an open set —

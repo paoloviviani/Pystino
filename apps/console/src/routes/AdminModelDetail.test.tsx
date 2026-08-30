@@ -47,6 +47,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
     display_name: null,
     description: null,
     is_active: true,
+    is_public: false,
     context_window: 8192,
     max_output_tokens: null,
     created_at: "2026-08-01T10:00:00Z",
@@ -153,6 +154,31 @@ async function save(user: ReturnType<typeof userEvent.setup>) {
 
 
 describe("AdminModelDetail", () => {
+  it("toggling visibility sends is_public and flips the badge", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { bodies: [], prices: [] };
+    vi.stubGlobal("fetch", routes(model({ is_public: false }), [price()], captured));
+    renderScreen();
+    await ready();
+
+    expect(screen.getByText("Private")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Make public" }));
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies[0] as Record<string, unknown>;
+    expect(body.is_public).toBe(true);
+  });
+
+  it("a public model offers to be restricted again", async () => {
+    vi.stubGlobal("fetch", routes(model({ is_public: true })));
+    renderScreen();
+    await ready();
+    expect(screen.getByText("Public")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Restrict to grants" }),
+    ).toBeInTheDocument();
+  });
+
   it("sends an edited capability set to the API", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [], prices: [] };

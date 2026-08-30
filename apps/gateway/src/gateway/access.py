@@ -4,14 +4,15 @@ One place, because the rule is now a union and it is asked in three: ``GET
 /v1/models``, ``GET /v1/models/{name}``, and the chat path. The same predicate
 written out three times is the same predicate until someone edits two of them.
 
-The rule ([0027](../../../docs/adr/0027-inference-providers.md)):
+The rule ([0027](../../../docs/adr/0027-inference-providers.md), extended by
+[0045](../../../docs/adr/0045-public-models.md)):
 
     a caller may use a model if **their billing group has been granted it, or
-    they have been granted it personally**
+    they have been granted it personally, or the model is public**
 
-Absence of any grant means no access. There is no global allow-all, and there
-are no denials — an explicit deny overriding a group grant would turn "why can
-this person not use that model" into a question requiring a search.
+Absence of any grant means no access. There are no denials — an explicit deny
+overriding a group grant would turn "why can this person not use that model"
+into a question requiring a search.
 
 A model whose *provider* is inactive is also excluded. Deactivating a provider
 is how an operator takes an endpoint out of service, and leaving its models
@@ -80,12 +81,18 @@ def accessible_models(
     )
 
     if not reachable:
-        # No groups and no personal grants. `where(false)` rather than an early
-        # return of an empty list, so the caller still gets a statement and this
-        # function has one shape.
-        return statement.where(ModelDef.id.is_(None))
+        # No groups and no personal grants — but a public model needs no grant
+        # at all, so the empty case still has to admit one. `where(false)`
+        # rather than an early return of an empty list, so the caller still
+        # gets a statement and this function has one shape.
+        return statement.where(
+            or_(ModelDef.is_public.is_(True), ModelDef.id.is_(None))
+        )
 
-    return statement.where(or_(*reachable))
+    # The public flag is a column predicate alongside the grant EXISTS clauses,
+    # not a third EXISTS: it reads off the row already being fetched, and
+    # "public" is a property of the model rather than a relationship to it.
+    return statement.where(or_(*reachable, ModelDef.is_public.is_(True)))
 
 
 def accessible_model_by_name(

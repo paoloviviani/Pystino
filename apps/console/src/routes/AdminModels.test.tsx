@@ -27,6 +27,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
     display_name: null,
     description: null,
     is_active: true,
+    is_public: false,
     context_window: 8192,
     max_output_tokens: null,
     created_at: "2026-08-01T10:00:00Z",

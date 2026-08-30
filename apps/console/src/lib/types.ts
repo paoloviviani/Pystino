@@ -117,6 +117,8 @@ export interface AdminModel {
   display_name: string | null;
   description: string | null;
   is_active: boolean;
+  /** Public access (ADR 0045): any authenticated caller, billed to their own group. */
+  is_public: boolean;
   context_window: number | null;
   max_output_tokens: number | null;
   /** What it accepts, produces and can do. Empty means "nobody has said". */
