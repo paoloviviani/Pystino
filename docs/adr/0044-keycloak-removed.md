@@ -90,14 +90,20 @@ repeat before going live with any provider.
 - The stack is two fewer containers, and `deploy/.env` loses three required
   variables (`KEYCLOAK_ADMIN_PASSWORD`, `KEYCLOAK_SEED_PASSWORD`,
   `KEYCLOAK_CLIENT_SECRET`).
-- **The one GitLab unknown is named, not hidden**: GitLab's docs do not
-  document the `nonce` claim, and its discovery does not advertise it. The
-  gateway requires the ID token to echo the nonce it sent. If a real GitLab
-  does not, sign-in fails with a message naming exactly that — the doc says
-  to test against your instance rather than weaken the check. Everything else
-  (issuer, endpoints, RS256, PKCE S256, the `groups_direct` claim in the ID
-  token) is verified against gitlab.com's live discovery document as of
-  2026-08-29.
+- **The GitLab nonce question was checked and answered**: gitlab.com's
+  discovery document (`claims_supported`, read 2026-08-30) names no `nonce`
+  claim, so its ID tokens do not carry one. The gateway's nonce check is
+  therefore **tolerant of absence** — a token with no nonce is accepted (the
+  spec makes the claim optional; a provider that never mints one cannot be
+  required to), while a token carrying a *mismatched* nonce is still refused,
+  which catches every replayed token that names a nonce at all. What is lost
+  is protection against a stolen nonce-less token, which is protection that
+  provider never offered. The same tolerance is applied in chat-api's own
+  validator, which is a deliberate copy — the chat-api does not import
+  gateway code (ADR 0040).
+- Everything else was verified against gitlab.com's live discovery document:
+  issuer `https://gitlab.com`, RS256-only signing, PKCE S256, and the
+  `groups_direct` claim in the ID token.
 - Existing deployments that were mid-upgrade from the Keycloak shape will
   re-provision users on their next OIDC login if the issuer string changed —
   the `(issuer, subject)` trap, unchanged and documented.

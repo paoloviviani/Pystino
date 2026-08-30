@@ -230,7 +230,13 @@ class OIDCClient:
             registry.validate(token.claims)
         except JoseError as exc:
             raise OIDCError(f"ID token claims are not valid: {exc}") from exc
-        if nonce and token.claims.get("nonce") != nonce:
+        # Same tolerance as the gateway's login (ADR 0044): a provider may omit
+        # the nonce claim entirely — gitlab.com's discovery does — but a nonce
+        # that is present and does not match this browser's flow is refused.
+        # The chat-api stays a /v1 client and does not import the gateway's
+        # code, so the rule is written twice on purpose.
+        presented = token.claims.get("nonce")
+        if presented is not None and presented != nonce:
             raise OIDCError("ID token nonce does not match the login attempt")
         return dict(token.claims)
 
