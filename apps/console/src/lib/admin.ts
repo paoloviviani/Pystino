@@ -396,6 +396,8 @@ export function useCreateModel() {
 /** Every field optional; only what is sent is changed, matching the API. */
 export interface ModelUpdateInput {
   is_active?: boolean;
+  /** Public access (ADR 0045): any authenticated caller, billed to their own group. */
+  is_public?: boolean;
   provider_id?: string;
   kind?: ModelKind;
   display_name?: string | null;

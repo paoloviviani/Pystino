@@ -255,6 +255,7 @@ def _model_response(
         display_name=model.display_name,
         description=model.description,
         is_active=model.is_active,
+        is_public=model.is_public,
         context_window=model.context_window,
         max_output_tokens=model.max_output_tokens,
         input_modalities=list(model.input_modalities or []),
@@ -674,8 +675,9 @@ async def create_model(
 ) -> ModelAdminResponse:
     """Add a model to the catalogue.
 
-    It is invisible to callers until a group is granted access: absence of a
-    ``group_model_access`` row means no access, with no global allow-all.
+    It is invisible to callers until a group is granted access or the model is
+    marked public (ADR 0045): absence of a ``group_model_access`` row and a
+    ``false`` ``is_public`` mean no access, with no other allow-all.
     """
     # Checked before insert so the failure is "no such provider" rather than a
     # foreign-key violation.
@@ -694,6 +696,7 @@ async def create_model(
         output_modalities=list(payload.output_modalities),
         supported_features=list(payload.supported_features),
         is_active=payload.is_active,
+        is_public=payload.is_public,
     )
     session.add(model)
     try:

@@ -606,6 +606,10 @@ class ModelCreateRequest(BaseModel):
     output_modalities: Capabilities = Field(default_factory=list)
     supported_features: Capabilities = Field(default_factory=list)
     is_active: bool = True
+    # Public access (ADR 0045): any authenticated caller, billed to their own
+    # default billing group. Defaults closed — widening access is a decision,
+    # not a default.
+    is_public: bool = False
 
 
 class ModelUpdateRequest(BaseModel):
@@ -635,6 +639,7 @@ class ModelUpdateRequest(BaseModel):
     output_modalities: Capabilities | None = None
     supported_features: Capabilities | None = None
     is_active: bool | None = None
+    is_public: bool | None = None
 
 
 class PriceResponse(BaseModel):
@@ -678,6 +683,7 @@ class ModelAdminResponse(BaseModel):
     display_name: str | None
     description: str | None
     is_active: bool
+    is_public: bool
     context_window: int | None
     max_output_tokens: int | None
     input_modalities: list[str]

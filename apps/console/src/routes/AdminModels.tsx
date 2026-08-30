@@ -136,8 +136,12 @@ export function AdminModels() {
     {
       key: "status",
       header: "Status",
-      render: (model) =>
-        model.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>,
+      render: (model) => (
+        <div className={styles.chips}>
+          {model.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
+          {model.is_public && <Badge tone="accent">Public</Badge>}
+        </div>
+      ),
     },
     {
       key: "actions",

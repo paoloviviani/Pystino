@@ -173,6 +173,17 @@ function ModelPage({ model }: { model: AdminModel }) {
           <Detail label="Status">
             {model.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
           </Detail>
+          <Detail label="Visibility">
+            <div className={styles.chips}>
+              {model.is_public ? <Badge tone="accent">Public</Badge> : <Badge>Private</Badge>}
+              <Button
+                busy={update.isPending && update.variables?.is_public !== undefined}
+                onClick={() => update.mutate({ id: model.id, is_public: !model.is_public })}
+              >
+                {model.is_public ? "Restrict to grants" : "Make public"}
+              </Button>
+            </div>
+          </Detail>
           <Detail label="Name callers send">
             <code className={styles.code}>{model.name}</code>
           </Detail>
