@@ -55,6 +55,7 @@ verified is marked as such in the ADR that depends on it.
 | [0041](0041-chat-frontend-stack.md) | A Vite SPA on `packages/ui`, with assistant-ui for the thread (supersedes 0015's framework choice) |
 | [0042](0042-material-design-3.md) | Material Design 3, tuned for reading (supersedes 0034) |
 | [0043](0043-local-authentication.md) | Optional local email + password sign-in beside OIDC; one session, two doors |
+| [0044](0044-keycloak-removed.md) | Keycloak leaves the stack; OIDC against any provider, local login as the default way in |
 
 ## Decisions recorded now, implemented later
 

@@ -262,8 +262,13 @@ def main(argv: list[str] | None = None) -> int:
         "existing memberships are untouched)",
     )
     passwd.add_argument(
-        "--admin/--no-admin",
-        dest="admin",
+        "--admin",
+        # Not a `--admin/--no-admin` string pair: argparse treats that slash
+        # form as one literal option name that matches nothing — found when the
+        # first `gateway passwd --no-admin` on the live stack failed with
+        # "unrecognized arguments". BooleanOptionalAction is what actually
+        # registers both spellings.
+        action=argparse.BooleanOptionalAction,
         default=True,
         help="whether the account is an administrator (default: yes)",
     )

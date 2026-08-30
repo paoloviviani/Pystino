@@ -14,9 +14,8 @@ it, which is exactly the seam those tests cannot see.
 Usage:
     docker compose --env-file deploy/.env \\
       -f deploy/compose/docker-compose.yml \\
-      -f deploy/compose/docker-compose.smoke.yml \\
-      -f deploy/compose/docker-compose.keycloak.yml up -d --build
-    python3 scripts/test_console_live.py
+      -f deploy/compose/docker-compose.smoke.yml up -d --build
+    set -a; . deploy/.env; set +a; python3 scripts/test_console_live.py
 """
 
 from __future__ import annotations
@@ -29,7 +28,16 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from test_oidc_flow import GATEWAY, check, login, new_session, request
+from live_session import (
+    GATEWAY,
+    admin_credentials,
+    check,
+    login,
+    new_session,
+    request,
+    skip,
+    user_credentials,
+)
 
 FAILURES: list[str] = []
 
@@ -97,19 +105,31 @@ def main() -> int:
 
     print()
     print("=== the API calls the page makes, with a real session ===")
-    alice = login("alice")
-    if alice is None:
+    credentials = admin_credentials()
+    if credentials is None:
+        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
         return 1
-    dave = login("dave")
-    if dave is None:
+    admin_session = login(*credentials)
+    if admin_session is None:
         return 1
+    user_opener: Any = None
+    if user := user_credentials():
+        user_opener = login(*user)
+        if user_opener is None:
+            return 1
+    else:
+        skip(
+            "a non-admin is refused the admin report",
+            "GATEWAY_LOCAL_USER_EMAIL/PASSWORD are not set — create one with "
+            "`gateway passwd --no-admin <email>`",
+        )
 
-    status, _, body = fetch(alice, "/api/me")
+    status, _, body = fetch(admin_session, "/api/me")
     expect("/api/me answers", status == 200, f"HTTP {status}")
     profile = json.loads(body) if status == 200 else {}
     expect("it names the signed-in user", bool(profile.get("email")), str(profile)[:120])
 
-    status, _, body = fetch(alice, "/api/me/reports/usage?group_by=model")
+    status, _, body = fetch(admin_session, "/api/me/reports/usage?group_by=model")
     expect("/api/me/reports/usage answers", status == 200, f"HTTP {status}")
     if status == 200:
         report = json.loads(body)
@@ -125,27 +145,28 @@ def main() -> int:
             isinstance(report["totals"]["cost"], str),
             type(report["totals"]["cost"]).__name__,
         )
-        print(f"  alice this month: {report['totals']['cost']} {report['currency']}")
+        print(f"  this month: {report['totals']['cost']} {report['currency']}")
 
-    status, _, _ = fetch(alice, "/api/me/keys")
+    status, _, _ = fetch(admin_session, "/api/me/keys")
     expect("/api/me/keys answers", status == 200, f"HTTP {status}")
 
-    status, _, _ = fetch(alice, "/api/me/reports/usage.csv")
+    status, _, _ = fetch(admin_session, "/api/me/reports/usage.csv")
     expect("the CSV export answers", status == 200, f"HTTP {status}")
 
-    print()
-    print("=== a non-admin cannot reach the admin data behind /admin/* ===")
-    status, _, _ = fetch(alice, "/api/admin/reports/usage")
-    expect(
-        "alice is refused the admin report",
-        status == 403,
-        f"HTTP {status} — the console hides admin routes, but the API is what enforces it",
-    )
-    # The console renders the /admin/* shell for anyone, then shows "administrators
-    # only" and calls nothing. The HTML being public is fine — it is an empty div
-    # and a script tag; the data behind it is what needs a session.
-    status, _, _ = fetch(alice, "/console/admin/quotas")
-    expect("but the page itself still loads", status == 200, f"HTTP {status}")
+    if user_opener is not None:
+        print()
+        print("=== a non-admin cannot reach the admin data behind /admin/* ===")
+        status, _, _ = fetch(user_opener, "/api/admin/reports/usage")
+        expect(
+            "the non-admin is refused the admin report",
+            status == 403,
+            f"HTTP {status} — the console hides admin routes, but the API is what enforces it",
+        )
+        # The console renders the /admin/* shell for anyone, then shows "administrators
+        # only" and calls nothing. The HTML being public is fine — it is an empty div
+        # and a script tag; the data behind it is what needs a session.
+        status, _, _ = fetch(user_opener, "/console/admin/quotas")
+        expect("but the page itself still loads", status == 200, f"HTTP {status}")
 
     print()
     print("=== every endpoint the admin screens call ===")
@@ -157,21 +178,21 @@ def main() -> int:
         ("reports", "/api/admin/reports/usage?group_by=group"),
         ("reports CSV", "/api/admin/reports/usage.csv"),
     ]:
-        status, _, _ = fetch(dave, path)
+        status, _, _ = fetch(admin_session, path)
         expect(f"{label} answers for an admin", status == 200, f"HTTP {status}")
 
     # Price history and reset history are per-id, so they need something to point
     # at. Skipped rather than faked when the deployment has none.
     # Every listing answers with a pagination envelope now (ADR 0029), so the
     # rows are under `items`.
-    models = json.loads(fetch(dave, "/api/admin/models")[2])["items"]
+    models = json.loads(fetch(admin_session, "/api/admin/models")[2])["items"]
     if models:
-        status, _, _ = fetch(dave, f"/api/admin/models/{models[0]['id']}/prices")
+        status, _, _ = fetch(admin_session, f"/api/admin/models/{models[0]['id']}/prices")
         expect("price history answers", status == 200, f"HTTP {status}")
 
-    limits = json.loads(fetch(dave, "/api/admin/limits")[2])["items"]
+    limits = json.loads(fetch(admin_session, "/api/admin/limits")[2])["items"]
     if limits:
-        status, _, _ = fetch(dave, f"/api/admin/limits/{limits[0]['id']}/resets")
+        status, _, _ = fetch(admin_session, f"/api/admin/limits/{limits[0]['id']}/resets")
         expect("reset history answers", status == 200, f"HTTP {status}")
         expect(
             "a rule reports its consumption or says it cannot",
@@ -181,7 +202,7 @@ def main() -> int:
 
     print()
     print("=== pagination ===")
-    _, _, body = fetch(dave, "/api/admin/models?limit=1")
+    _, _, body = fetch(admin_session, "/api/admin/models?limit=1")
     page = json.loads(body)
     expect(
         "a listing answers with an envelope",
@@ -200,12 +221,12 @@ def main() -> int:
     walked: list[str] = []
     offset = 0
     while True:
-        step = json.loads(fetch(dave, f"/api/admin/models?limit=1&offset={offset}")[2])
+        step = json.loads(fetch(admin_session, f"/api/admin/models?limit=1&offset={offset}")[2])
         walked += [entry["name"] for entry in step["items"]]
         offset += 1
         if offset >= step["total"]:
             break
-    whole = json.loads(fetch(dave, "/api/admin/models?limit=200")[2])
+    whole = json.loads(fetch(admin_session, "/api/admin/models?limit=200")[2])
     expect(
         "paging one row at a time yields the whole catalogue",
         sorted(walked) == sorted(entry["name"] for entry in whole["items"]),
@@ -213,22 +234,22 @@ def main() -> int:
     )
     expect("and no row twice", len(walked) == len(set(walked)), str(walked))
 
-    hit = json.loads(fetch(dave, "/api/admin/models?q=model")[2])
+    hit = json.loads(fetch(admin_session, "/api/admin/models?q=model")[2])
     expect(
         "a search narrows the total, not only the page",
         hit["total"] <= whole["total"],
         f"{hit['total']} of {whole['total']}",
     )
-    literal = json.loads(fetch(dave, "/api/admin/models?q=%25")[2])
+    literal = json.loads(fetch(admin_session, "/api/admin/models?q=%25")[2])
     expect("a percent sign is searched for literally", literal["total"] == 0, str(literal["total"]))
 
     for bad in ("limit=0", "limit=201", "offset=-1"):
-        status, _, _ = fetch(dave, f"/api/admin/models?{bad}")
+        status, _, _ = fetch(admin_session, f"/api/admin/models?{bad}")
         # Refused rather than clamped: silently returning a different window is
         # how a client treats a truncated list as complete.
         expect(f"{bad} is refused", status == 400, f"HTTP {status}")
 
-    status, _, body = fetch(dave, "/api/admin/reports/usage?limit=1")
+    status, _, body = fetch(admin_session, "/api/admin/reports/usage?limit=1")
     expect(
         "a report is an aggregation and does not truncate",
         status == 200 and "items" not in json.loads(body),

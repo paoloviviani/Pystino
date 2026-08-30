@@ -47,7 +47,7 @@ from typing import Any
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import httpx
-from test_oidc_flow import GATEWAY, login, request
+from live_session import GATEWAY, admin_credentials, login, request
 
 BENCH_MODEL = "benchmark-live"
 BENCH_KEY_NAME = "benchmark-live"
@@ -123,7 +123,11 @@ def sql(query: str) -> str:
 
 def setup() -> str | None:
     """An unpriced model on the fake upstream, and a key. Returns the secret."""
-    admin = login("dave")
+    credentials = admin_credentials()
+    if credentials is None:
+        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
+        return None
+    admin = login(*credentials)
     if admin is None:
         return None
 

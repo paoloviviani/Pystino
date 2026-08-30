@@ -97,17 +97,17 @@ class OIDCSettings(BaseModel):
     # Naming an audience is what enables OIDC access tokens on `/v1`; empty means
     # API keys only, which is the behaviour every deployment had before this
     # existed. One knob rather than two, because an `enabled` flag without an
-    # audience would accept any token the realm ever issued to anybody — the
+    # audience would accept any token the issuer ever issued to anybody — the
     # audience *is* the security property, so it is also the switch.
     #
-    # Verified against this deployment's Keycloak on 2026-08-28 and not guessed:
+    # Verified against a Keycloak deployment on 2026-08-28 and not guessed:
     # a Keycloak access token carries **no `aud` claim at all** unless an
     # audience mapper puts one there, only `azp` naming the client that asked
     # for it. So the value here must match a mapper configured on every client
-    # permitted to call `/v1` — see deploy/keycloak/realm-llm-platform.json.
-    # Matching `azp` instead was rejected: `azp` says who requested the token,
-    # not who it is *for*, so a token minted for any other purpose by a
-    # permitted client would be accepted at the API.
+    # permitted to call `/v1` — see docs/oidc-generic-provider.md for the
+    # per-provider notes. Matching `azp` instead was rejected: `azp` says who
+    # requested the token, not who it is *for*, so a token minted for any other
+    # purpose by a permitted client would be accepted at the API.
     access_token_audience: str = ""
 
     # Clock skew tolerance when validating ID token exp/iat/nbf.

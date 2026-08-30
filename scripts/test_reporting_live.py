@@ -21,7 +21,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from test_oidc_flow import GATEWAY, check, login, request
+from live_session import GATEWAY, admin_credentials, check, login, request, skip, user_credentials
 
 FAILURES: list[str] = []
 
@@ -40,12 +40,16 @@ def expect(label: str, condition: bool, detail: str = "") -> None:
 
 
 def main() -> int:
-    print("=== logging in as dave (platform-admins -> is_admin) ===")
-    dave = login("dave")
+    print("=== signing in as the local admin ===")
+    credentials = admin_credentials()
+    if credentials is None:
+        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
+        return 1
+    dave = login(*credentials)
     if dave is None:
         return 1
     status, profile = api(dave, "/api/me")
-    expect("dave is an admin", bool(profile.get("is_admin")), str(profile.get("is_admin")))
+    expect("the admin is an admin", bool(profile.get("is_admin")), str(profile.get("is_admin")))
 
     this_month = datetime.now(UTC).strftime("%Y-%m")
 
@@ -210,7 +214,7 @@ def main() -> int:
     expect("the rule can be reset", status == 200, f"HTTP {status}: {reset}")
     expect(
         "the reset records who did it",
-        reset.get("created_by_email") == "dave@example.org",
+        reset.get("created_by_email") == credentials[0],
         str(reset.get("created_by_email")),
     )
 
@@ -247,12 +251,19 @@ def main() -> int:
 
     print()
     print("=== a non-admin sees only their own spend ===")
-    alice = login("alice")
-    if alice is not None:
-        status, _mine = api(alice, "/api/me/reports/usage")
-        expect("alice can read her own report", status == 200, f"HTTP {status}")
-        status, _ = api(alice, "/api/admin/reports/usage")
-        expect("alice cannot read everyone's", status == 403, f"HTTP {status}")
+    if user := user_credentials():
+        alice = login(*user)
+        if alice is not None:
+            status, _mine = api(alice, "/api/me/reports/usage")
+            expect("the member can read their own report", status == 200, f"HTTP {status}")
+            status, _ = api(alice, "/api/admin/reports/usage")
+            expect("the member cannot read everyone's", status == 403, f"HTTP {status}")
+    else:
+        skip(
+            "a non-admin sees only their own spend",
+            "GATEWAY_LOCAL_USER_EMAIL/PASSWORD are not set — create one with "
+            "`gateway passwd --no-admin <email>`",
+        )
 
     print()
     if FAILURES:

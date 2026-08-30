@@ -17,8 +17,8 @@ Usage:
     docker compose --env-file deploy/.env \\
       -f deploy/compose/docker-compose.yml \\
       -f deploy/compose/docker-compose.smoke.yml \\
-      -f deploy/compose/docker-compose.keycloak.yml up -d --build
-    python3 scripts/test_surfaces_live.py
+      -f deploy/compose/docker-compose.redaction.yml up -d --build
+    set -a; . deploy/.env; set +a; python3 scripts/test_surfaces_live.py
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from test_oidc_flow import GATEWAY, check, login
+from live_session import GATEWAY, admin_credentials, check, login, request, user_credentials
 from test_providers_live import api, sql
 
 FAILURES: list[str] = []
@@ -64,7 +64,7 @@ def call(
 ) -> tuple[int, Any]:
     """A `/v1` request with an API key, straight over HTTP.
 
-    Not `test_oidc_flow.request`: that one carries a browser session, and the
+    Not `live_session.request`: that one carries a browser session, and the
     whole point of `/v1` is that it authenticates with a revocable key instead.
     """
     headers = {"content-type": "application/json", "authorization": f"Bearer {secret}"}
@@ -149,23 +149,46 @@ def ensure_image_model(dave: Any) -> bool:
         )
         expect("priced it per image", status == 201, f"HTTP {status}: {price}")
 
-    groups = api(dave, "/api/admin/groups?limit=200")[1]["items"]
-    research = next((g for g in groups if g["name"] == "research"), None)
-    if research is not None:
-        api(
-            dave,
-            f"/api/admin/groups/{research['id']}/models/{existing['id']}",
-            method="PUT",
-        )
+    # The key is minted against the signing-in account's default billing group,
+    # so *that* group needs the grant — not a hard-coded group name. A live
+    # deployment's admin has its own group; a dev stack's happens to be called
+    # research. Falling back to a group named research covers the seeded shape.
+    _, _, me_raw = request(dave, f"{GATEWAY}/api/me")
+    me = json.loads(me_raw)
+    target = (me.get("default_billing_group") or {}).get("id")
+    if target is None:
+        groups = api(dave, "/api/admin/groups?limit=200")[1]["items"]
+        target = next((g["id"] for g in groups if g["name"] == "research"), None)
+    if target is not None:
+        api(dave, f"/api/admin/groups/{target}/models/{existing['id']}", method="PUT")
     return True
 
 
 def main() -> int:
-    print("=== logging in ===")
-    dave = login("dave")
-    alice = login("alice")
-    if dave is None or alice is None:
+    print("=== signing in ===")
+    credentials = admin_credentials()
+    if credentials is None:
+        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
         return 1
+    dave = login(*credentials)
+    if dave is None:
+        return 1
+    if user := user_credentials():
+        alice = login(*user)
+        if alice is None:
+            return 1
+    else:
+        # /v1 is authenticated by API key, not by session, so the *surfaces*
+        # themselves can be checked with a key minted by the admin. The key is
+        # minted against the admin's own default billing group; the group-based
+        # access checks live in test_providers_live.py.
+        from live_session import skip
+
+        skip(
+            "a non-admin session for minting the key",
+            "GATEWAY_LOCAL_USER_EMAIL/PASSWORD are not set — using the admin's",
+        )
+        alice = dave
 
     if not ensure_image_model(dave):
         return 1

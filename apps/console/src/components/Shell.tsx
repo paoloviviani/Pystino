@@ -206,10 +206,10 @@ function UserMenu({
     setBusy(true);
     // Where to send the browser once our own session is gone. The gateway
     // answers with the identity provider's end-session URL, and going there is
-    // what actually signs the person out: dropping our cookie alone leaves
-    // Keycloak's SSO session standing, so /auth/login is answered without a
+    // what actually signs the person out: dropping our cookie alone leaves the
+    // provider's SSO session standing, so /auth/login is answered without a
     // password prompt and they arrive back as themselves. That is what "logout
-    // does nothing" looked like.
+    // does nothing" looked like (found with Keycloak; any SSO provider does it).
     let target = "/auth/login";
     try {
       const result = await request<{ redirect_to: string | null }>("/auth/logout", {

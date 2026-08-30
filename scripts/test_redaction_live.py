@@ -31,7 +31,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from test_oidc_flow import GATEWAY, check
+from live_session import GATEWAY, check, user_credentials
 
 UPSTREAM = "http://localhost:8081"
 # Seeded by `gateway seed` in the smoke stack; overridable for another deployment.
@@ -72,14 +72,20 @@ def get(url: str, headers: dict[str, str] | None = None) -> Any:
 
 
 def mint_key() -> str | None:
-    """An API key for the seeded user, via the OIDC login the other script uses."""
-    from test_oidc_flow import login
-    from test_oidc_flow import request as oidc_request
+    """An API key for a member, via local password sign-in like the other scripts."""
+    from live_session import login, request
 
-    alice = login("alice")
+    credentials = user_credentials()
+    if credentials is None:
+        print(
+            "  skipped: GATEWAY_LOCAL_USER_EMAIL/PASSWORD are not set — a redacted "
+            "request needs a member of a billing group, which the admin is not"
+        )
+        return None
+    alice = login(*credentials)
     if alice is None:
         return None
-    status, _, body = oidc_request(
+    status, _, body = request(
         alice, f"{GATEWAY}/api/me/keys", json_body={"name": "redaction-check"}, method="POST"
     )
     if status != 201:
