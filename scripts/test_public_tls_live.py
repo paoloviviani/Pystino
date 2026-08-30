@@ -5,12 +5,11 @@ The other live scripts ask whether the platform works. This one asks whether it
 is *only* what it is supposed to be, which is the question that matters once the
 stack has an address the world can reach — and the one no unit test can answer,
 because every assertion here is about sockets, certificates and the credentials
-a real Keycloak will accept.
+a browser really sends.
 
     docker compose --env-file deploy/.env \\
       -f deploy/compose/docker-compose.yml \\
       -f deploy/compose/docker-compose.smoke.yml \\
-      -f deploy/compose/docker-compose.keycloak.yml \\
       -f deploy/compose/docker-compose.redaction.yml \\
       -f deploy/compose/docker-compose.proxy.yml up -d --build
 
@@ -25,11 +24,12 @@ What it asserts:
 * the public origin serves TLS, and the certificate verifies — against the CA
   file, never against an unverified context, because a check that skips
   verification passes against anything that answers on the address;
-* the four holes CLAUDE.md's fourth ground rule is about are closed: no
-  plaintext, no admin/admin, no published seed password, a Secure cookie;
+* the three holes CLAUDE.md's fourth ground rule is about are closed: no
+  plaintext, a Secure cookie, and no management credential that anyone could
+  have read in the repository — a wrong password is refused over TLS;
 * nothing else of this stack is on a routable interface — PostgreSQL, Valkey,
-  the gateway's own port, the chat service's, Keycloak's and the fake upstream
-  are all reachable on loopback and refused everywhere else — every service that
+  the gateway's own port, the chat service's and the fake upstream are all
+  reachable on loopback and refused everywhere else — every service that
   joins the stack belongs in that list, because the guarantee is "nothing else is
   published" and a list that lags behind the compose files stops checking it;
 * a streamed completion still streams through the proxy.
@@ -49,14 +49,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from test_oidc_flow import (
+from live_session import (
     CA_BUNDLE,
     GATEWAY,
-    KEYCLOAK_BASE,
-    PASSWORDS,
+    admin_credentials,
     login,
     new_session,
     request,
+    user_credentials,
 )
 
 FAILURES: list[str] = []
@@ -172,7 +172,6 @@ def main() -> int:
             8000: "the gateway, without TLS",
             8081: "the fake upstream",
             int(os.environ.get("CHAT_PORT", "8100")): "the chat service, without TLS",
-            int(os.environ.get("KEYCLOAK_PORT", "8080")): "Keycloak, without TLS",
         }
         for number, what in sorted(private.items()):
             if not port_open("127.0.0.1", number):
@@ -191,109 +190,50 @@ def main() -> int:
         check(f"the proxy does answer on {address}:{port}", port_open(address, port))
 
     print()
-    print("=== the credentials in the repository do not work ===")
-
-    # Keycloak's master realm, which is the admin console's own login. The
-    # fixture and every README say admin/admin; a deployment on a public address
-    # that still accepts it has one hole, not four.
-    def token(realm: str, data: dict[str, str]) -> tuple[int, dict[str, object]]:
-        url = f"{KEYCLOAK_BASE}/realms/{realm}/protocol/openid-connect/token"
-        opener = new_session()
-        status, _, body = request(opener, url, data=data)
-        try:
-            return status, json.loads(body)
-        except ValueError:
-            return status, {}
-
-    status, _ = token(
-        "master",
-        {
-            "grant_type": "password",
-            "client_id": "admin-cli",
-            "username": "admin",
-            "password": "admin",
-        },
-    )
-    # Not `== 401`: Keycloak answers a bad password with 400 invalid_grant and a
-    # disabled or missing user with 401, and both are refusals. Asserting on the
-    # exact code would make this fail for the right reason and read like a hole.
-    check("admin/admin is refused on the admin console", status != 200, f"HTTP {status}")
-
-    admin_password = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "")
-    if admin_password:
-        status, _ = token(
-            "master",
-            {
-                "grant_type": "password",
-                "client_id": "admin-cli",
-                "username": os.environ.get("KEYCLOAK_ADMIN_USER", "admin"),
-                "password": admin_password,
-            },
-        )
-        check("and the configured admin password is", status == 200, f"HTTP {status}")
-    else:
-        skip("the configured admin password works", "KEYCLOAK_ADMIN_PASSWORD is not set")
-
-    secret = os.environ.get("KEYCLOAK_CLIENT_SECRET", "")
-    if secret:
-        grant = {
-            "grant_type": "password",
-            "client_id": "llm-gateway",
-            "client_secret": secret,
-            "username": "dave",
-            "password": "dave-password",
-        }
-        status, payload = token("llm-platform", grant)
-        check(
-            "the published seed password no longer signs anyone in",
-            status != 200,
-            f"HTTP {status}: {payload.get('error_description', payload.get('error', ''))}",
-        )
-        grant["password"] = PASSWORDS["dave"]
-        status, _ = token("llm-platform", grant)
-        check("and the rotated one does", status == 200, f"HTTP {status}")
-
-        # The value in docker-compose.keycloak.yml. Hardcoded on purpose: what
-        # is being asserted is that it no longer works.
-        grant["client_secret"] = "gateway-dev-secret-not-for-production"  # noqa: S105
-        status, _ = token("llm-platform", grant)
-        check("the published client secret is refused", status != 200, f"HTTP {status}")
-    else:
-        skip("the seed and client secrets were rotated", "KEYCLOAK_CLIENT_SECRET is not set")
-
-    print()
     print("=== what a browser is given ===")
-    opener = new_session()
-    status, headers, _ = request(opener, f"{GATEWAY}/auth/login")
-    cookie = headers.get("set-cookie", "")
-    check("signing in sets a cookie", bool(cookie), cookie[:60])
-    # Without Secure the login-state cookie travels on any downgrade to http,
-    # which is the whole reason GATEWAY_SESSION_COOKIE_SECURE exists — and it is
-    # only correct to set because something is terminating TLS in front.
-    check("and marks it Secure", "secure" in cookie.lower(), cookie[:80])
-    check("and HttpOnly", "httponly" in cookie.lower(), cookie[:80])
-    check(
-        "the browser is sent to the provider over https",
-        headers.get("location", "").startswith("https://"),
-        headers.get("location", "")[:70],
+    # A wrong password must be refused, over TLS, with the same answer any wrong
+    # credential gets. This replaced Keycloak's admin/admin check when the IdP
+    # left the stack: the management credential that must not be guessable is
+    # now the local admin's, and its real password lives in deploy/.env — which
+    # is not in the repository, and whose workingness the sign-in below proves.
+    status, _, _ = request(
+        new_session(),
+        f"{GATEWAY}/auth/login",
+        json_body={"email": "admin@local", "password": "not-the-password-1"},
     )
+    check("a wrong password is refused over TLS", status in {401, 429}, f"HTTP {status}")
 
-    status, _, body = request(
-        opener, f"{KEYCLOAK_BASE}/realms/llm-platform/.well-known/openid-configuration"
+    credentials = admin_credentials()
+    if credentials is None:
+        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
+        return 1
+    status, headers, _ = request(
+        new_session(),
+        f"{GATEWAY}/auth/login",
+        json_body={"email": credentials[0], "password": credentials[1]},
     )
-    discovery = json.loads(body) if status == 200 else {}
-    check(
-        "the provider advertises itself over https",
-        str(discovery.get("issuer", "")).startswith("https://"),
-        str(discovery.get("issuer", "")),
-    )
+    cookie = headers.get("set-cookie", "")
+    if not check("signing in succeeds over the public origin", status == 200, f"HTTP {status}"):
+        return 1
+    # Without Secure the session cookie travels on any downgrade to http, which
+    # is the whole reason GATEWAY_SESSION_COOKIE_SECURE exists — and it is only
+    # correct to set because something is terminating TLS in front.
+    check("and the session cookie is Secure", "secure" in cookie.lower(), cookie[:80])
+    check("and HttpOnly", "httponly" in cookie.lower(), cookie[:80])
 
     print()
     print("=== a billed request, over TLS ===")
-    session = login("alice")
-    if session is None:
-        check("alice can sign in", False, "the login flow failed; run test_oidc_flow.py")
-        return 1
+    if user := user_credentials():
+        session = login(*user)
+        if session is None:
+            return 1
+    else:
+        skip(
+            "a streamed completion is not buffered",
+            "GATEWAY_LOCAL_USER_EMAIL/PASSWORD are not set — minting a usable key "
+            "needs a member of a billing group, and the admin is in none",
+        )
+        return report()
     status, _, body = request(
         session, f"{GATEWAY}/api/me/keys", json_body={"name": "public-tls-check"}, method="POST"
     )

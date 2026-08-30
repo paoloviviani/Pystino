@@ -11,6 +11,12 @@
   [0027](0027-inference-providers.md) (the credentials a session holder can
   spend), `deploy/compose/docker-compose.overlay.yml` (the private-mesh answer
   this supersedes for public use, and does not replace for private use).
+- **Note (2026-08-29):** [ADR 0044](0044-keycloak-removed.md) removed Keycloak
+  from the stack, so the Keycloak-specific holes and mechanisms this ADR closes
+  (the dev-mode admin console, the seeded users, the `/kc` origin, the
+  credential-rotation job) no longer exist. The TLS, forwarded-headers and
+  SNI reasoning here is unaffected and remains in force; the overlay compose
+  files it mentions are gone too.
 
 ## The rule this overrides, stated first
 

@@ -6,32 +6,27 @@
 #   docker compose --env-file deploy/.env \
 #     -f deploy/compose/docker-compose.yml \
 #     -f deploy/compose/docker-compose.smoke.yml \
-#     -f deploy/compose/docker-compose.keycloak.yml \
 #     -f deploy/compose/docker-compose.redaction.yml \
 #     -f deploy/compose/docker-compose.proxy.yml up -d --build
 #
 #   ./scripts/test_public_tls_live.py     # checks what this file claims
 #
-# Requires docker-compose.keycloak.yml: it configures that service rather than
-# defining it, and compose refuses a file that overrides a service nobody
-# declared.
-#
 # ## Against the fourth ground rule
 #
 # CLAUDE.md says the dev stack never goes on a routable address. That rule is not
-# a superstition about routable addresses; it is a list of four specific holes —
-# plaintext HTTP, a Keycloak admin console on admin/admin, a session cookie
-# without `Secure`, and five seeded users whose passwords are in the repository.
-# This file closes all four rather than arguing with it, and ADR 0035 records the
-# decision and what is still true afterwards.
+# a superstition about routable addresses; it is a list of three specific holes —
+# plaintext HTTP, a session cookie without `Secure`, and a management password
+# that is either in the repository or guessed. This file closes all three rather
+# than arguing with it, and ADR 0035 records the decision and what is still true
+# afterwards.
 #
 #   plaintext            → Caddy terminates TLS. The plaintext hop is inside the
 #                          compose network; nothing published is http.
-#   admin/admin          → KEYCLOAK_ADMIN_PASSWORD, required, no default.
 #   non-Secure cookie    → GATEWAY_SESSION_COOKIE_SECURE=true, which is only
 #                          safe to set *because* of the first line.
-#   published passwords  → keycloak-proxy-setup resets every seeded user, and
-#                          the client secret, from the environment on every `up`.
+#   published passwords  → the only management credential this shape seeds is
+#                          the local admin's (ADR 0043), and its password comes
+#                          from deploy/.env, which is not in the repository.
 #
 # ## PUBLIC_BIND is not the public address
 #
@@ -43,6 +38,16 @@
 # which the certificate, the Caddyfile and every OIDC URL are built from) are
 # separate variables. This is exactly where docker-compose.overlay.yml's rule —
 # "must be an address that already exists on this host" — stops applying.
+#
+# ## OIDC is whatever deploy/.env says (docs/oidc-generic-provider.md)
+#
+# There is no bundled identity provider. When GATEWAY_OIDC__ENABLED is true the
+# gateway talks to whichever issuer deploy/.env names — GitLab, Entra ID,
+# Keycloak elsewhere, anything speaking OpenID Connect discovery — and every
+# setting passes through unchanged, because the differences between providers
+# live in those settings (issuer, claim names, an audience) rather than in
+# anything this file could know. Leave it unset and the console's password form
+# is the only way in.
 
 services:
   proxy:
@@ -80,8 +85,6 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
-      keycloak:
-        condition: service_healthy
     healthcheck:
       # Proves the process is up and holding a config. Caddy's admin API is on
       # loopback inside the container and is not published.
@@ -93,33 +96,38 @@ services:
 
   gateway:
     environment:
-      # Where the browser is sent back to. It must match, byte for byte, the URI
-      # registered on the realm by keycloak-proxy-setup below: the gateway sends
-      # exactly one and Keycloak compares it as a string.
-      GATEWAY_OIDC__REDIRECT_URI: ${PUBLIC_ORIGIN:-https://${PUBLIC_HOST:?set PUBLIC_HOST in deploy/.env}:${HTTPS_PORT:-443}}/auth/callback
-      # The gateway still reaches Keycloak over the compose network in plaintext,
-      # and so needs no trust in the proxy's certificate — but the path moved
-      # with KC_HTTP_RELATIVE_PATH below, and this is that same internal URL.
-      GATEWAY_OIDC__ISSUER: http://keycloak:8080/kc/realms/llm-platform
       # Which peers may be believed about X-Forwarded-Proto. uvicorn trusts
       # 127.0.0.1 only, and the proxy reaches the gateway from the compose
       # network, so out of the box every forwarded header from it is discarded
       # and the app believes the request arrived over http. Nothing 500s: the
-      # /v1 surfaces never build a URL, the OIDC redirect URI is configured
-      # literally, and the *one* place that reads request.base_url is the
-      # post-logout landing URL — which then goes to Keycloak as http://, does
-      # not match the https URI registered on the client, and comes back 400
-      # after a login that worked perfectly. Docker's own bridge range, so it
-      # covers whichever subnet compose allocated, plus the published loopback
-      # port the live scripts use.
+      # /v1 surfaces never build a URL, and the one place that reads
+      # request.base_url — the post-logout landing URL, when an identity
+      # provider is configured — then goes to the IdP as http://, does not match
+      # the https URI registered there, and comes back 400 after a login that
+      # worked perfectly. Docker's own bridge range, so it covers whichever
+      # subnet compose allocated, plus the published loopback port the live
+      # scripts use.
       FORWARDED_ALLOW_IPS: "172.16.0.0/12,127.0.0.1"
       # Only safe to turn on because TLS is terminated in front. On plain http a
       # `Secure` cookie is set by the server and never sent back, and the symptom
       # is a login that appears to succeed and lands on a signed-out console.
       GATEWAY_SESSION_COOKIE_SECURE: "true"
-      # Rotated away from the value in docker-compose.keycloak.yml, which is in
-      # the repository. The setup job sets the same value on the client.
-      GATEWAY_OIDC__CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?set KEYCLOAK_CLIENT_SECRET in deploy/.env}
+      # Local email + password sign-in (ADR 0043). Behind this proxy the origin
+      # is TLS and the password comes from deploy/.env, which is the shape the
+      # feature assumes; on the loopback-only dev shape it stays off. The
+      # account itself is created out-of-band: `docker compose ... exec gateway
+      # gateway passwd <email>` — the bootstrap needs no running session.
+      GATEWAY_LOCAL_AUTH__ENABLED: ${GATEWAY_LOCAL_AUTH__ENABLED:-true}
+      # OIDC against any provider, configured entirely from deploy/.env — see
+      # docs/oidc-generic-provider.md. Off until an issuer is named and enabled.
+      GATEWAY_OIDC__ENABLED: ${GATEWAY_OIDC__ENABLED:-false}
+      GATEWAY_OIDC__ISSUER: ${GATEWAY_OIDC__ISSUER:-}
+      GATEWAY_OIDC__CLIENT_ID: ${GATEWAY_OIDC__CLIENT_ID:-}
+      GATEWAY_OIDC__CLIENT_SECRET: ${GATEWAY_OIDC__CLIENT_SECRET:-}
+      GATEWAY_OIDC__REDIRECT_URI: ${GATEWAY_OIDC__REDIRECT_URI:-${PUBLIC_ORIGIN:-https://${PUBLIC_HOST:?set PUBLIC_HOST in deploy/.env}:${HTTPS_PORT:-443}}/auth/callback}
+      GATEWAY_OIDC__GROUPS_CLAIM: ${GATEWAY_OIDC__GROUPS_CLAIM:-groups}
+      GATEWAY_OIDC__ADMIN_GROUPS: ${GATEWAY_OIDC__ADMIN_GROUPS:-[]}
+      GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE: ${GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE:-}
 
   # Only present when docker-compose.chat.yml is also passed. Everything the
   # gateway block above needs, for the same reasons, plus the mount path: behind
@@ -127,112 +135,16 @@ services:
   # every cookie it sets carry that prefix.
   chat:
     environment:
-      CHAT_OIDC__REDIRECT_URI: ${PUBLIC_ORIGIN:-https://${PUBLIC_HOST:?set PUBLIC_HOST in deploy/.env}:${HTTPS_PORT:-443}}/chat/auth/callback
-      # Plaintext over the compose network, but under /kc — the same internal URL
-      # the gateway uses, moved by KC_HTTP_RELATIVE_PATH below.
-      CHAT_OIDC__ISSUER: http://keycloak:8080/kc/realms/llm-platform
-      CHAT_OIDC__CLIENT_SECRET: ${KEYCLOAK_CHAT_CLIENT_SECRET:-${KEYCLOAK_CLIENT_SECRET:?set KEYCLOAK_CLIENT_SECRET in deploy/.env}}
+      CHAT_OIDC__ENABLED: ${CHAT_OIDC__ENABLED:-${GATEWAY_OIDC__ENABLED:-false}}
+      CHAT_OIDC__ISSUER: ${CHAT_OIDC__ISSUER:-${GATEWAY_OIDC__ISSUER:-}}
+      CHAT_OIDC__CLIENT_ID: ${CHAT_OIDC__CLIENT_ID:-}
+      CHAT_OIDC__CLIENT_SECRET: ${CHAT_OIDC__CLIENT_SECRET:-${GATEWAY_OIDC__CLIENT_SECRET:-}}
+      # Its own client on the IdP, not the gateway's — two services that
+      # authenticate people are two clients, each revocable on its own. The
+      # callback must be registered there exactly (docs/oidc-generic-provider.md).
+      CHAT_OIDC__REDIRECT_URI: ${CHAT_OIDC__REDIRECT_URI:-${PUBLIC_ORIGIN:-https://${PUBLIC_HOST:?set PUBLIC_HOST in deploy/.env}:${HTTPS_PORT:-443}}/chat/auth/callback}
       FORWARDED_ALLOW_IPS: "172.16.0.0/12,127.0.0.1"
       CHAT_SESSION_COOKIE_SECURE: "true"
-
-  keycloak:
-    environment:
-      # The advertised frontend URL, and therefore the `iss` claim. Note what
-      # changing it costs: users are keyed on (issuer, subject), so moving from
-      # http://localhost:8080 to this makes every existing user a *new* row at
-      # their next login — same person, no memberships, no default billing group.
-      # Free on a fresh deployment; on one with history it is a migration nobody
-      # has written.
-      KC_HOSTNAME: ${PUBLIC_ORIGIN:-https://${PUBLIC_HOST:?set PUBLIC_HOST in deploy/.env}:${HTTPS_PORT:-443}}/kc
-      # Everything Keycloak serves moves under this prefix, including the URLs
-      # its own login page generates for its stylesheets. That is what lets one
-      # origin carry both applications — see the Caddyfile.
-      KC_HTTP_RELATIVE_PATH: /kc
-      # The management interface — which is where /health/ready lives, and what
-      # the base file's healthcheck probes — inherits the relative path unless it
-      # is told otherwise. Without this line Keycloak comes up perfectly and
-      # compose declares it unhealthy, so the gateway and the proxy never start:
-      # "dependency failed to start: container llm-platform-keycloak-1 is
-      # unhealthy", with nothing wrong in Keycloak's own log. Pinning it to the
-      # root keeps that healthcheck true wherever the public path moves to.
-      KC_HTTP_MANAGEMENT_RELATIVE_PATH: /
-      # Keycloak 26 ignores X-Forwarded-* unless told which family to trust, and
-      # then builds http:// URLs behind an https proxy. `xforwarded`, not
-      # `forwarded`: those are the headers Caddy sends.
-      KC_PROXY_HEADERS: xforwarded
-      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in deploy/.env}
-    ports:
-      # Replaces the keycloak overlay's entry rather than adding to it: compose
-      # merges `ports` by appending, and the point of putting Keycloak behind the
-      # proxy is that its own port is published nowhere else. 127.0.0.1 stays,
-      # because kcadm and the live scripts use it.
-      !override
-      - "127.0.0.1:${KEYCLOAK_PORT:-8080}:8080"
-
-  # Everything about the realm that must not sit in a tracked file.
-  #
-  # Runs on every `up`, idempotently, and has to: `start-dev` keeps the realm in
-  # an in-memory H2 database, so recreating the container re-imports
-  # realm-llm-platform.json and restores the published passwords with it. This
-  # job is what lets that fixture stay honest about being a fixture while the
-  # deployment stops using its values. Note the window it does not close:
-  # between Keycloak reporting healthy and this finishing, `dave-password` works.
-  keycloak-proxy-setup:
-    image: quay.io/keycloak/keycloak:26.7
-    depends_on:
-      keycloak:
-        condition: service_healthy
-    restart: "no"
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        set -euo pipefail
-        kc=/opt/keycloak/bin/kcadm.sh
-        $$kc config credentials --server http://keycloak:8080/kc \
-          --realm master --user "$${KC_ADMIN_USER}" --password "$${KC_ADMIN_PASSWORD}"
-
-        # The exact callback and nothing else. A wildcard is the one thing not to
-        # do here: an open redirect on an OIDC client hands the authorization
-        # code to whoever asks for it. The localhost callbacks the fixture ships
-        # are dropped rather than kept alongside — the gateway now sends the
-        # public one, so they authorise nothing and only widen the list.
-        id=$$($$kc get clients -r llm-platform -q clientId=llm-gateway \
-          --fields id --format csv --noquotes)
-        $$kc update "clients/$${id}" -r llm-platform \
-          -s "redirectUris=[\"$${PUBLIC_ORIGIN}/auth/callback\"]" \
-          -s "webOrigins=[\"$${PUBLIC_ORIGIN}\"]" \
-          -s "secret=$${CLIENT_SECRET}" \
-          -s "attributes.\"post.logout.redirect.uris\"=\"$${PUBLIC_ORIGIN}/*\""
-        echo "registered $${PUBLIC_ORIGIN}/auth/callback"
-
-        # The chat client, when the realm carries one. Same treatment, same
-        # reasoning — the exact callback, no wildcard, and a secret that is not
-        # the one in this repository. Skipped silently if the client is absent,
-        # so this overlay still works without docker-compose.chat.yml.
-        chat_id=$$($$kc get clients -r llm-platform -q clientId=llm-chat           --fields id --format csv --noquotes)
-        if [ -n "$${chat_id}" ]; then
-          $$kc update "clients/$${chat_id}" -r llm-platform             -s "redirectUris=[\"$${PUBLIC_ORIGIN}/chat/auth/callback\"]"             -s "webOrigins=[\"$${PUBLIC_ORIGIN}\"]"             -s "secret=$${CHAT_CLIENT_SECRET}"             -s "attributes.\"post.logout.redirect.uris\"=\"$${PUBLIC_ORIGIN}/chat/*\""
-          echo "registered $${PUBLIC_ORIGIN}/chat/auth/callback"
-        fi
-
-        # The seeded users keep their names and their groups — that is what the
-        # live scripts assert on — and lose the passwords published in
-        # deploy/keycloak/README.md.
-        for user in alice bob carol dave erin; do
-          uid=$$($$kc get users -r llm-platform -q "username=$${user}" --fields id --format csv --noquotes)
-          if [ -n "$${uid}" ]; then
-            $$kc set-password -r llm-platform --userid "$${uid}" --new-password "$${SEED_PASSWORD}"
-            echo "reset password: $${user}"
-          fi
-        done
-    environment:
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-https://${PUBLIC_HOST}:${HTTPS_PORT:-443}}
-      KC_ADMIN_USER: ${KEYCLOAK_ADMIN_USER:-admin}
-      KC_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
-      CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
-      CHAT_CLIENT_SECRET: ${KEYCLOAK_CHAT_CLIENT_SECRET:-${KEYCLOAK_CLIENT_SECRET}}
-      SEED_PASSWORD: ${KEYCLOAK_SEED_PASSWORD:?set KEYCLOAK_SEED_PASSWORD in deploy/.env}
 
   # Only present when docker-compose.redaction.yml is also passed, which is the
   # usual combination. That file publishes the fake upstream so the redaction

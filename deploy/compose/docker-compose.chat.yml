@@ -2,27 +2,22 @@
 #
 #   docker compose --env-file deploy/.env \
 #     -f deploy/compose/docker-compose.yml \
-#     -f deploy/compose/docker-compose.keycloak.yml \
 #     -f deploy/compose/docker-compose.chat.yml up -d --build
 #
-# Requires the Keycloak overlay: this service authenticates people, and then
-# calls the gateway with their access token (ADR 0040). Without
-# GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE set on the gateway — the keycloak overlay
-# sets it — every call from here is refused with the message a bad API key gets.
-#
-# With OVERLAY_ADDR set (docker-compose.overlay.yml), the app is also published
-# on that mesh address and its redirect URI points there — so the
-# keycloak-chat-client one-shot below must register that callback with the
-# realm, exactly and never as a wildcard, for the same reason
-# docker-compose.overlay.yml does it for the gateway client.
+# This service authenticates people through OIDC (whatever issuer deploy/.env
+# names — docs/oidc-generic-provider.md) and then calls the gateway with their
+# access token (ADR 0040). With no issuer configured its pages come up but sign-in
+# cannot work: there is nowhere to redirect a login to. Set CHAT_OIDC__* (or the
+# GATEWAY_OIDC__* defaults the proxy overlay passes through) and register
+# <origin>/chat/auth/callback as the client's redirect URI on the provider.
 #
 # Its own database on the shared PostgreSQL server. Own, because the boundary
 # this service is built on is that it shares nothing with the gateway but the
-# realm and the /v1 surface; shared server, because a second container for a
-# development deployment buys nothing. `chat-createdb` creates it if it is
-# absent, which is what makes this overlay work against a volume that already
-# exists — an init script under /docker-entrypoint-initdb.d only ever runs on a
-# brand new volume, and would silently do nothing here.
+# identity provider and the /v1 surface; shared server, because a second
+# container for a development deployment buys nothing. `chat-createdb` creates
+# it if it is absent, which is what makes this overlay work against a volume
+# that already exists — an init script under /docker-entrypoint-initdb.d only
+# ever runs on a brand new volume, and would silently do nothing here.
 services:
   chat-createdb:
     image: postgres:18-alpine
@@ -67,37 +62,6 @@ services:
   # OVERLAY_ADDR: the fixture already registers the localhost callbacks, and a
   # wildcard would be an open redirect on an OIDC client — the one thing not to
   # do here. Idempotent, so it is safe on every `up`.
-  keycloak-chat-client:
-    image: quay.io/keycloak/keycloak:26.7
-    depends_on:
-      keycloak:
-        condition: service_healthy
-    restart: "no"
-    entrypoint: ["/bin/bash", "-c"]
-    command:
-      - |
-        set -euo pipefail
-        if [ -z "$${OVERLAY_ADDR:-}" ]; then
-          echo "OVERLAY_ADDR not set; the fixture's localhost callbacks stand"
-          exit 0
-        fi
-        kc=/opt/keycloak/bin/kcadm.sh
-        overlay="http://$${OVERLAY_ADDR}:$${CHAT_PORT:-8100}"
-        $$kc config credentials --server http://keycloak:8080 \
-          --realm master --user "$${KC_ADMIN_USER}" --password "$${KC_ADMIN_PASSWORD}"
-        id=$$($$kc get clients -r llm-platform -q clientId=llm-chat \
-          --fields id --format csv --noquotes)
-        $$kc update "clients/$${id}" -r llm-platform \
-          -s "redirectUris=[\"http://localhost:$${CHAT_PORT:-8100}/chat/auth/callback\",\"http://127.0.0.1:$${CHAT_PORT:-8100}/chat/auth/callback\",\"$${overlay}/chat/auth/callback\"]" \
-          -s "webOrigins=[\"http://localhost:$${CHAT_PORT:-8100}\",\"$${overlay}\"]" \
-          -s "attributes.\"post.logout.redirect.uris\"=\"http://localhost:$${CHAT_PORT:-8100}/chat/*##$${overlay}/chat/*\""
-        echo "registered $${overlay}/chat/auth/callback"
-    environment:
-      OVERLAY_ADDR: ${OVERLAY_ADDR:-}
-      CHAT_PORT: ${CHAT_PORT:-8100}
-      KC_ADMIN_USER: ${KEYCLOAK_ADMIN_USER:-admin}
-      KC_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
-
   chat:
     build:
       context: ../..
@@ -107,11 +71,8 @@ services:
     restart: unless-stopped
     ports:
       # Loopback only, for the same reason everything else here is: the session
-      # cookie is not Secure without the proxy overlay, and the seeded
-      # credentials are in this repository. Publishing on a NetBird/WireGuard
-      # mesh address is docker-compose.chat-overlay.yml's job — it appends to
-      # this list rather than replacing it, so the live scripts (which use
-      # localhost) keep working when the mesh is down.
+      # cookie is not Secure without the proxy overlay. Publishing on a
+      # NetBird/WireGuard mesh address is docker-compose.chat-overlay.yml's job.
       - "127.0.0.1:${CHAT_PORT:-8100}:8100"
     environment:
       CHAT_ENVIRONMENT: ${GATEWAY_ENVIRONMENT:-dev}
@@ -127,12 +88,16 @@ services:
       CHAT_SECRET_KEY: ${CHAT_SECRET_KEY:-${GATEWAY_SECRET_KEY:?set GATEWAY_SECRET_KEY in deploy/.env}}
       CHAT_SESSION_COOKIE_SECURE: ${CHAT_SESSION_COOKIE_SECURE:-false}
 
-      # Its own client in the realm, not the gateway's. Two services that
-      # authenticate people are two clients, each revocable on its own.
-      CHAT_OIDC__ISSUER: http://keycloak:8080/realms/llm-platform
-      CHAT_OIDC__CLIENT_ID: llm-chat
-      CHAT_OIDC__CLIENT_SECRET: ${CHAT_CLIENT_SECRET:-chat-dev-secret-not-for-production}
-      CHAT_OIDC__REDIRECT_URI: http://localhost:${CHAT_PORT:-8100}/chat/auth/callback
+      # OIDC against whatever provider deploy/.env names, or nothing — in which
+      # case the app serves but nobody can sign in. Passthrough defaults: set
+      # the GATEWAY_OIDC__* values once and the chat follows, with per-service
+      # overrides available for the settings that legitimately differ (its own
+      # client id, secret and callback — see the proxy overlay).
+      CHAT_OIDC__ENABLED: ${CHAT_OIDC__ENABLED:-false}
+      CHAT_OIDC__ISSUER: ${CHAT_OIDC__ISSUER:-}
+      CHAT_OIDC__CLIENT_ID: ${CHAT_OIDC__CLIENT_ID:-}
+      CHAT_OIDC__CLIENT_SECRET: ${CHAT_OIDC__CLIENT_SECRET:-}
+      CHAT_OIDC__REDIRECT_URI: ${CHAT_OIDC__REDIRECT_URI:-http://localhost:${CHAT_PORT:-8100}/chat/auth/callback}
 
       # Over the compose network. The browser never talks to the gateway.
       CHAT_GATEWAY__BASE_URL: http://gateway:8000

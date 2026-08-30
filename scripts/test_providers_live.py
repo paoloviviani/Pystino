@@ -14,8 +14,8 @@ Usage:
     docker compose --env-file deploy/.env \\
       -f deploy/compose/docker-compose.yml \\
       -f deploy/compose/docker-compose.smoke.yml \\
-      -f deploy/compose/docker-compose.keycloak.yml up -d --build
-    python3 scripts/test_providers_live.py
+      -f deploy/compose/docker-compose.redaction.yml up -d --build
+    set -a; . deploy/.env; set +a; python3 scripts/test_providers_live.py
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from test_oidc_flow import GATEWAY, check, login, request
+from live_session import GATEWAY, admin_credentials, check, login, request, skip, user_credentials
 
 FAILURES: list[str] = []
 
@@ -41,8 +41,6 @@ COMPOSE = [
     "deploy/compose/docker-compose.yml",
     "-f",
     "deploy/compose/docker-compose.smoke.yml",
-    "-f",
-    "deploy/compose/docker-compose.keycloak.yml",
     "-f",
     "deploy/compose/docker-compose.redaction.yml",
 ]
@@ -86,8 +84,12 @@ def sql(query: str) -> str:
 
 
 def main() -> int:
-    print("=== logging in as dave ===")
-    dave = login("dave")
+    print("=== signing in as the local admin ===")
+    credentials = admin_credentials()
+    if credentials is None:
+        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
+        return 1
+    dave = login(*credentials)
     if dave is None:
         return 1
 
@@ -189,137 +191,151 @@ def main() -> int:
 
     print()
     print("=== routing: a completion reaches the model's provider ===")
-    alice = login("alice")
-    if alice is None:
-        return 1
-    status, _, body = request(
-        alice, f"{GATEWAY}/api/me/keys", json_body={"name": "provider-check"}, method="POST"
-    )
-    if status != 201:
-        expect("minted an API key", False, f"HTTP {status}")
-        return 1
-    secret = json.loads(body)["secret"]
-
-    import urllib.error
-    import urllib.request
-
-    completion = urllib.request.Request(
-        f"{GATEWAY}/v1/chat/completions",
-        data=json.dumps(
-            {"model": "smoke-model", "messages": [{"role": "user", "content": "ping"}]}
-        ).encode(),
-        headers={"content-type": "application/json", "authorization": f"Bearer {secret}"},
-        method="POST",
-    )
-    routed = False
-    try:
-        with urllib.request.urlopen(completion, timeout=60) as response:
-            expect("a completion succeeds", response.status == 200, str(response.status))
-            routed = True
-    except urllib.error.HTTPError as error:
-        if error.code == 429:
-            # The demo stack bills a million tokens per fake completion, so a
-            # seeded quota can legitimately be spent. Distinguished from a
-            # routing failure, which is what this section is about.
-            print("  skipped: a quota is exhausted in this deployment, not a routing failure")
-        else:
-            expect("a completion succeeds", False, f"HTTP {error.code}")
-    except Exception as exc:
-        expect("a completion succeeds", False, str(exc))
-
-    if routed:
-        seen = json.loads(
-            urllib.request.urlopen("http://localhost:8081/_last_request", timeout=30).read()
-        )
-        expect("the upstream was actually called", bool(seen), str(seen)[:80])
-
-    print()
-    print("=== what actually served the request is recorded ===")
-    ledger = sql(
-        "select model_name, upstream_model, upstream_provider, model_substituted "
-        "from usage_records where upstream_model is not null "
-        "order by created_at desc limit 1;"
-    )
-    expect("the provider's own model name is stored", bool(ledger), ledger or "no rows")
-    if ledger:
-        name, served, by, substituted = [*ledger.split("|"), "", "", ""][:4]
-        print(f"  {name} -> served by {served} at {by or 'unreported'}")
-        expect(
-            "our client-facing name is not mistaken for a substitution",
-            substituted == "f",
-            f"model_substituted={substituted} — the two names differ by design",
-        )
-
-    print()
-    print("=== embeddings ===")
-    models = api(dave, "/api/admin/models")[1]["items"]
-    embedding = next((m for m in models if m["kind"] == "embedding"), None)
-    if embedding is None:
-        print("  no embedding model catalogued here; skipping")
+    if user := user_credentials():
+        alice = login(*user)
+        if alice is None:
+            return 1
     else:
+        skip(
+            "a completion is routed and billed to a member",
+            "GATEWAY_LOCAL_USER_EMAIL/PASSWORD are not set — create one with "
+            "`gateway passwd --no-admin <email>`, add them to a group, and grant "
+            "the group the smoke model",
+        )
+        alice = None
+        secret = None
+    if alice is not None:
+        status, _, body = request(
+            alice, f"{GATEWAY}/api/me/keys", json_body={"name": "provider-check"}, method="POST"
+        )
+        if status != 201:
+            expect("minted an API key", False, f"HTTP {status}")
+            return 1
+        secret = json.loads(body)["secret"]
+
+    if secret is not None:
         import urllib.error
         import urllib.request
 
-        req = urllib.request.Request(
-            f"{GATEWAY}/v1/embeddings",
-            data=json.dumps({"model": embedding["name"], "input": ["one", "two"]}).encode(),
+        completion = urllib.request.Request(
+            f"{GATEWAY}/v1/chat/completions",
+            data=json.dumps(
+                {"model": "smoke-model", "messages": [{"role": "user", "content": "ping"}]}
+            ).encode(),
             headers={"content-type": "application/json", "authorization": f"Bearer {secret}"},
             method="POST",
         )
+        routed = False
         try:
-            with urllib.request.urlopen(req, timeout=60) as response:
-                payload = json.loads(response.read())
-            expect("a batch is embedded", len(payload.get("data", [])) >= 1, str(payload)[:120])
-            expect(
-                "and the usage has no completion tokens",
-                payload.get("usage", {}).get("completion_tokens") == 0,
-                str(payload.get("usage")),
-            )
-            # The model name comes from our own API, not from user input; psql
-            # is being handed a literal either way in this development script.
-            # The name comes from our own API and psql is handed a literal;
-            # this is a development script, not a query builder.
-            name = embedding["name"]
-            query = f"select completion_tokens, cost from usage_records where model_name = '{name}' order by created_at desc limit 1;"  # noqa: E501,S608
-            row = sql(query)
-            expect("the ledger charges input only", row.startswith("0|"), row or "no row")
-            print(f"  ledger: completion_tokens|cost = {row}")
+            with urllib.request.urlopen(completion, timeout=60) as response:
+                expect("a completion succeeds", response.status == 200, str(response.status))
+                routed = True
         except urllib.error.HTTPError as error:
             if error.code == 429:
-                print("  skipped: a quota is exhausted in this deployment")
+                # The demo stack bills a million tokens per fake completion, so a
+                # seeded quota can legitimately be spent. Distinguished from a
+                # routing failure, which is what this section is about.
+                print("  skipped: a quota is exhausted in this deployment, not a routing failure")
             else:
-                expect("a batch is embedded", False, f"HTTP {error.code}")
+                expect("a completion succeeds", False, f"HTTP {error.code}")
+        except Exception as exc:
+            expect("a completion succeeds", False, str(exc))
 
-        # A chat model on the embeddings route is refused here, not upstream.
-        #
-        # Chosen from `/v1/models`, which is filtered to what this key may
-        # reach, rather than from the admin listing of everything catalogued.
-        # A model the caller cannot access answers 404 — correctly, since which
-        # models another group can use is not their business — and that 404 is
-        # indistinguishable here from the routing check never having run.
-        reachable = urllib.request.Request(
-            f"{GATEWAY}/v1/models", headers={"authorization": f"Bearer {secret}"}
+        if routed:
+            seen = json.loads(
+                urllib.request.urlopen("http://localhost:8081/_last_request", timeout=30).read()
+            )
+            expect("the upstream was actually called", bool(seen), str(seen)[:80])
+
+        print()
+        print("=== what actually served the request is recorded ===")
+        ledger = sql(
+            "select model_name, upstream_model, upstream_provider, model_substituted "
+            "from usage_records where upstream_model is not null "
+            "order by created_at desc limit 1;"
         )
-        with urllib.request.urlopen(reachable, timeout=30) as response:
-            mine = json.loads(response.read()).get("data", [])
-        wrong = next((m | {"name": m["id"]} for m in mine if m.get("kind") == "chat"), None)
-        if wrong:
+        expect("the provider's own model name is stored", bool(ledger), ledger or "no rows")
+        if ledger:
+            name, served, by, substituted = [*ledger.split("|"), "", "", ""][:4]
+            print(f"  {name} -> served by {served} at {by or 'unreported'}")
+            expect(
+                "our client-facing name is not mistaken for a substitution",
+                substituted == "f",
+                f"model_substituted={substituted} — the two names differ by design",
+            )
+
+        print()
+        print("=== embeddings ===")
+        models = api(dave, "/api/admin/models")[1]["items"]
+        embedding = next((m for m in models if m["kind"] == "embedding"), None)
+        if embedding is None:
+            print("  no embedding model catalogued here; skipping")
+        else:
+            import urllib.error
+            import urllib.request
+
             req = urllib.request.Request(
                 f"{GATEWAY}/v1/embeddings",
-                data=json.dumps({"model": wrong["name"], "input": "x"}).encode(),
+                data=json.dumps({"model": embedding["name"], "input": ["one", "two"]}).encode(),
                 headers={"content-type": "application/json", "authorization": f"Bearer {secret}"},
                 method="POST",
             )
             try:
-                urllib.request.urlopen(req, timeout=30)
-                expect("a chat model is refused by /v1/embeddings", False, "it was accepted")
-            except urllib.error.HTTPError as error:
+                with urllib.request.urlopen(req, timeout=60) as response:
+                    payload = json.loads(response.read())
+                expect("a batch is embedded", len(payload.get("data", [])) >= 1, str(payload)[:120])
                 expect(
-                    "a chat model is refused by /v1/embeddings",
-                    error.code == 400,
-                    f"HTTP {error.code}",
+                    "and the usage has no completion tokens",
+                    payload.get("usage", {}).get("completion_tokens") == 0,
+                    str(payload.get("usage")),
                 )
+                # The model name comes from our own API, not from user input; psql
+                # is being handed a literal either way in this development script.
+                # The name comes from our own API and psql is handed a literal;
+                # this is a development script, not a query builder.
+                name = embedding["name"]
+                query = f"select completion_tokens, cost from usage_records where model_name = '{name}' order by created_at desc limit 1;"  # noqa: E501,S608
+                row = sql(query)
+                expect("the ledger charges input only", row.startswith("0|"), row or "no row")
+                print(f"  ledger: completion_tokens|cost = {row}")
+            except urllib.error.HTTPError as error:
+                if error.code == 429:
+                    print("  skipped: a quota is exhausted in this deployment")
+                else:
+                    expect("a batch is embedded", False, f"HTTP {error.code}")
 
+            # A chat model on the embeddings route is refused here, not upstream.
+            #
+            # Chosen from `/v1/models`, which is filtered to what this key may
+            # reach, rather than from the admin listing of everything catalogued.
+            # A model the caller cannot access answers 404 — correctly, since which
+            # models another group can use is not their business — and that 404 is
+            # indistinguishable here from the routing check never having run.
+            reachable = urllib.request.Request(
+                f"{GATEWAY}/v1/models", headers={"authorization": f"Bearer {secret}"}
+            )
+            with urllib.request.urlopen(reachable, timeout=30) as response:
+                mine = json.loads(response.read()).get("data", [])
+            wrong = next((m | {"name": m["id"]} for m in mine if m.get("kind") == "chat"), None)
+            if wrong:
+                req = urllib.request.Request(
+                    f"{GATEWAY}/v1/embeddings",
+                    data=json.dumps({"model": wrong["name"], "input": "x"}).encode(),
+                    headers={
+                        "content-type": "application/json",
+                        "authorization": f"Bearer {secret}",
+                    },
+                    method="POST",
+                )
+                try:
+                    urllib.request.urlopen(req, timeout=30)
+                    expect("a chat model is refused by /v1/embeddings", False, "it was accepted")
+                except urllib.error.HTTPError as error:
+                    expect(
+                        "a chat model is refused by /v1/embeddings",
+                        error.code == 400,
+                        f"HTTP {error.code}",
+                    )
     print()
     print("=== per-user model access ===")
     models = api(dave, "/api/admin/models")[1]["items"]

@@ -72,18 +72,20 @@ pnpm -r test && pnpm -r typecheck                              # packages/ui + c
 ```bash
 docker compose --env-file deploy/.env \
   -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.smoke.yml \
-  -f deploy/compose/docker-compose.keycloak.yml \
   -f deploy/compose/docker-compose.redaction.yml up -d --build
 ```
 
-Then the matching `./scripts/test_*.py` (oidc, reporting, redaction, console,
-providers, surfaces, quota_race, cache_accounting, bearer_tokens, chat). More than
+Then the matching `./scripts/test_*.py` (reporting, redaction, console,
+providers, surfaces, quota_race, cache_accounting, public_tls). The live scripts
+sign in with local password auth (ADR 0043) — set `GATEWAY_LOCAL_ADMIN_PASSWORD`
+in `deploy/.env` and create the account with `docker compose ... exec gateway
+gateway passwd admin@local` first. More than
 half the serious bugs in this project's history were only findable against the
 running stack.
 
 - Compose is overlay-based; the base file binds `127.0.0.1` on purpose.
 - **Source `deploy/.env` before the live scripts** — they follow
-  `PUBLIC_HOST`/`OVERLAY_ADDR` when set (needed under the TLS proxy, where
+  `PUBLIC_HOST` when set (needed under the TLS proxy, where
   certificates are verified, not skipped).
 - The demo user's cap is EUR 1/hour and the fake upstream bills ~1M tokens per
   request: several live scripts back to back legitimately exhaust it, reported as
@@ -126,10 +128,10 @@ running stack.
   especially where the obvious approach was rejected; name the failure a decision
   prevents; record bugs found while building. Reports never hedge: a failed test
   is reported with its output, and anything unverified is named as such.
-- Changing `KEYCLOAK_PORT` / `OVERLAY_ADDR` / `KC_HOSTNAME` needs the **gateway
-  restarted too** — it reads OIDC discovery once at startup. Keycloak's advertised
-  hostname must match however you reach it, and `iss` is part of user identity:
-  a hostname change re-provisions every user as a new row with no memberships.
+- Changing any `GATEWAY_OIDC__*` value needs the **gateway restarted too** — it
+  reads OIDC discovery once at startup. And `iss` is part of user identity:
+  users are keyed on `(issuer, subject)`, so changing the issuer re-provisions
+  every user as a new row with no memberships.
 - The look is Material Design 3 and lives in one file: `packages/ui/src/tokens.css`.
   Components reference tokens, never literals — and the decorative half of MD3 is
   deliberately absent (no blur, glass, glow, or scale-on-hover).

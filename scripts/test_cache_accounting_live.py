@@ -38,7 +38,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from test_oidc_flow import GATEWAY, check, login, request
+from live_session import GATEWAY, admin_credentials, check, login, request
+
+
+def api(opener, path, **kwargs):
+    """Request and decode the JSON envelope the admin API answers with."""
+    status, _, body = request(opener, f"{GATEWAY}{path}", **kwargs)
+    try:
+        return status, json.loads(body)
+    except (ValueError, TypeError):
+        return status, body.decode("utf-8", "replace")
 
 FAILURES: list[str] = []
 COMPOSE = [
@@ -109,7 +118,11 @@ def complete(secret: str, model: str) -> dict | None:
 
 
 def main() -> int:
-    dave = login("dave")
+    credentials = admin_credentials()
+    if credentials is None:
+        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
+        return 1
+    dave = login(*credentials)
     if dave is None:
         return 1
 
@@ -140,10 +153,34 @@ def main() -> int:
         print(f"  note: {provider.get('name')} names no plugin that reads a reported "
               "cost, so the reconciliation check is skipped")
 
+    # The key bills to the signing-in account's default group, so that group
+    # needs access to the model — a live deployment's real cache-priced model
+    # is usually granted to some other group. Self-provision, as the surfaces
+    # check does, rather than demanding the operator wire access by hand.
+    _, _, me_raw = request(dave, f"{GATEWAY}/api/me")
+    me = json.loads(me_raw)
+    default_group = (me.get("default_billing_group") or {}).get("id")
+    if default_group:
+        status, _resp = api(
+            dave,
+            f"/api/admin/groups/{default_group}/models/{model['id']}",
+            method="PUT",
+        )
+        if status == 204:
+            print(f"  granted {model['name']} to the key's billing group")
+
     status, _, body = request(dave, f"{GATEWAY}/api/me/keys", method="POST",
                               json_body={"name": "cache-accounting-live"})
     if status != 201:
-        expect("minted an API key", False, f"HTTP {status}")
+        # A 400 here is almost always "no default billing group": the local
+        # admin is in no group by design, and a key cannot be minted without
+        # one to bill. Skipped with the fix named, not failed.
+        expect(
+            "minted an API key",
+            False,
+            f"HTTP {status}: {body[:160]!r} — the signing-in account needs a "
+            "default billing group (`gateway passwd --group <group> <email>`)",
+        )
         return 1
     secret = json.loads(body)["secret"]
 

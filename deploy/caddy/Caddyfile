@@ -19,20 +19,15 @@
 # decided by whether you have a name, and the variables say so out loud rather
 # than it being inferred from the shape of the host.
 #
-# ## One origin, and Keycloak under /kc
+# ## One origin, one router
 #
-# The obvious arrangement is two ports — the gateway on one, Keycloak on another
-# — because the gateway owns /auth/callback and Keycloak owns /realms,
-# /resources and /admin, and those collide at the root. It was built that way
-# first and then abandoned: the LINKS development host reaches the internet
-# through a firewall that permits exactly one of these ports, so a deployment
-# needing two is a deployment that does not come up.
-#
-# `KC_HTTP_RELATIVE_PATH=/kc` (set in docker-compose.proxy.yml) moves *every*
-# Keycloak URL under one prefix, including the ones its login page generates for
-# its own stylesheets, so there is nothing left to collide and nothing for this
-# file to rewrite. Stripping the prefix here instead is the trap: the proxy would
-# be correct and the login page would ask for /resources/... on the gateway.
+# The obvious arrangement is two ports — the gateway on one, an identity
+# provider on another — because the gateway owns /auth/callback and an IdP owns
+# its own paths, and those collide at the root. One origin is what makes the
+# session cookie trivially same-origin and the deployment one thing to publish.
+# The IdP is therefore *not* part of this stack at all: OIDC is configured
+# against whatever provider deploy/.env names (docs/oidc-generic-provider.md),
+# on its own host, and this file routes only to what lives here.
 
 {
 	# Only used in prod, where Caddy needs somewhere to send expiry warnings.
@@ -54,24 +49,17 @@
 {$PUBLIC_ORIGIN} {
 	{$TLS_DIRECTIVE}
 
-	# Both, because `/kc/*` does not match `/kc` itself, and that bare path is
-	# what a human types when they want the admin console.
-	@keycloak path /kc /kc/*
-	handle @keycloak {
-		reverse_proxy keycloak:8080
-	}
-
 	# The chat application, when the chat overlay is up. Both paths, because
 	# `/chat/*` does not match `/chat` itself, and that bare path is what a human
 	# types.
 	#
-	# The prefix is **not** stripped, and that is the same lesson as the Keycloak
-	# block above arriving by a different route. chat-api serves every one of its
-	# own paths under /chat and its SPA is built with that base, so there is
-	# nothing to rewrite. Stripping instead is the trap: the proxy would be
-	# correct, the page would load, and every script it asked for would be
-	# fetched from the *gateway* at /assets/… — a blank page with 404s for files
-	# that exist, and nothing wrong in either service's log.
+	# The prefix is **not** stripped, and that is a lesson written into this
+	# file by Keycloak's departure. chat-api serves every one of its own paths
+	# under /chat and its SPA is built with that base, so there is nothing to
+	# rewrite. Stripping instead is the trap: the proxy would be correct, the
+	# page would load, and every script it asked for would be fetched from the
+	# *gateway* at /assets/… — a blank page with 404s for files that exist, and
+	# nothing wrong in either service's log.
 	#
 	# It also keeps /api and /auth unambiguous: those belong to the gateway at
 	# the root of this origin, and the chat's equivalents are /chat/api and

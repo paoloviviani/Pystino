@@ -23,8 +23,11 @@ it implies.
 
 844 tests pass; `ruff` and `mypy --strict` are clean. `./scripts/smoke_test.sh`
 exercises the whole slice over real HTTP, and the full `docker compose` stack has been
-built and run against PostgreSQL 18, Valkey and Keycloak — including the complete OIDC
-login flow and the reporting API (`./scripts/test_reporting_live.py`, which covers the
+built and run against PostgreSQL 18 and Valkey — console sign-in is by local
+email + password ([ADR 0043](docs/adr/0043-local-authentication.md)), with OIDC
+available against any provider you point it at
+([docs/oidc-generic-provider.md](docs/oidc-generic-provider.md)) and the reporting
+API covered live (`./scripts/test_reporting_live.py`, which covers the
 dialect-specific SQL the SQLite test suite cannot reach).
 
 ## Architecture
@@ -117,18 +120,32 @@ docker compose --env-file deploy/.env \
 It is a separate overlay on purpose — a fake upstream in the base file would be one
 careless `-f` away from production.
 
-### Trying the OIDC login
+### Signing in to the console
 
-`docker-compose.keycloak.yml` adds Keycloak with a seeded realm, so the login flow can be
-exercised without wiring up a real identity provider:
+Enable local sign-in and create the first administrator (it prompts, so nothing
+lands in shell history):
 
 ```bash
 docker compose --env-file deploy/.env \
   -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml \
-  -f deploy/compose/docker-compose.keycloak.yml up -d --build
+  -f deploy/compose/docker-compose.smoke.yml up -d --build
 
-./scripts/test_oidc_flow.py
+docker compose --env-file deploy/.env \
+  -f deploy/compose/docker-compose.yml \
+  -f deploy/compose/docker-compose.smoke.yml exec gateway \
+  gateway passwd admin@local
+```
+
+The console is at <http://localhost:8000/console>; sign in as the account you
+just created. OIDC against GitLab, Entra ID or any other provider is a
+`.env` change, not a new component — see
+[docs/oidc-generic-provider.md](docs/oidc-generic-provider.md).
+
+The live checks sign in the same way; set `GATEWAY_LOCAL_ADMIN_PASSWORD` in
+`deploy/.env` to the password you chose, then:
+
+```bash
+set -a; . deploy/.env; set +a
 ./scripts/test_reporting_live.py
 ./scripts/test_redaction_live.py   # needs the redaction overlay too
 ./scripts/test_console_live.py     # the console, served by the gateway
@@ -137,121 +154,30 @@ docker compose --env-file deploy/.env \
 ./scripts/test_quota_race_live.py  # quota admission under concurrency, against real Valkey
 ```
 
-Each of those bills the demo user, whose cap is EUR 1 an hour, and the fake
+Each of those bills its user, whose cap is EUR 1 an hour, and the fake
 upstream reports a million tokens per request. Running several back to back will
 legitimately exhaust it; the scripts report that as skipped rather than failed.
-
-That drives the whole authorization-code flow and checks the result: PKCE, ID token
-validation, group mapping, the provisioning rules, and a session minting an API key that
-then serves a billed completion. Keycloak admin console on <http://localhost:8080> —
-or whatever `KEYCLOAK_PORT` is set to — (`admin`/`admin`);
-seeded users are described in [deploy/keycloak/README.md](deploy/keycloak/README.md).
 
 ### Reaching the console from another machine
 
 The console is at **<http://localhost:8000/console>** on the host running the stack.
-If you are working on a server over SSH, forward both ports rather than exposing
-them:
+If you are working on a server over SSH, forward that one port rather than exposing
+it:
 
 ```bash
-# the development host, where KEYCLOAK_PORT is set to 18080
-ssh -L 8000:localhost:8000 -L 18080:localhost:18080 ubuntu@130.192.84.52
+ssh -L 8000:localhost:8000 ubuntu@130.192.84.52
 ```
 
-Then open <http://localhost:8000/console> in your own browser and sign in as one
-of the [seeded users](deploy/keycloak/README.md) — `dave` / `dave-password` is the
-administrator.
+Then open <http://localhost:8000/console> in your own browser and sign in with
+the local administrator you created above. **The local port must match the
+remote one**, not just be any free port: the session cookie is scoped to the
+origin the login happened on, so `localhost:8000` on both ends is what keeps
+it.
 
-**Both ports matter.** 8000 is the gateway; 18080 is Keycloak, and the browser
-is redirected there to log in. Forwarding only 8000 gets you a page that loads
-and a login that goes nowhere.
-
-**And the local port must match the remote one**, not just be any free port. The
-browser goes wherever Keycloak advertises, so `-L 9000:localhost:18080` would
-serve the console and break the login.
-
-Keycloak is on **18080 rather than 8080** on that host because 8080 is taken on
-the machine we tunnel from — when that happens `ssh` prints
-`bind: Address already in use`, carries on with the other forward, and you get
-exactly that symptom: a console that loads and a login that cannot connect.
-`KEYCLOAK_PORT` in `deploy/.env` moves the published port *and* the hostname
-Keycloak advertises, so the browser, the tunnel and the `iss` claim keep
-agreeing:
-
-```bash
-KEYCLOAK_PORT=18080 docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml \
-  -f deploy/compose/docker-compose.keycloak.yml up -d
-```
-
-Changing it needs the **gateway restarted too** — it reads OIDC discovery once
-at startup, so a gateway that was already running keeps sending browsers to the
-old port. To check a forward is actually up before blaming the stack:
-
-```bash
-curl -s http://localhost:18080/realms/llm-platform | head -c 200  # realm JSON
-lsof -nP -iTCP:18080 -sTCP:LISTEN                                 # who has the port
-```
-
-**Why a tunnel and not just the server's address.** The OIDC configuration is
-pinned to `localhost` in three places — Keycloak's `KC_HOSTNAME`, the gateway's
-`GATEWAY_OIDC__REDIRECT_URI`, and the realm's `redirectUris`. Over a tunnel
-`localhost` is true at both ends and everything works unchanged. To serve the
-console at a real hostname instead, all three have to change together; the
-frontend/backchannel split in
-[docker-compose.keycloak.yml](deploy/compose/docker-compose.keycloak.yml)
-explains why.
-
-And do not put this stack on a routable address *as it stands*: Keycloak runs
-`start-dev` with `admin`/`admin` and an in-memory database, there is no TLS, the
-session cookie is not `Secure`, and the seeded users have published passwords.
-Those four things are the whole reason for the rule — "On a public address,
-behind TLS" below closes all four, and
-[ADR 0035](docs/adr/0035-public-tls-exposure.md) says what is still true
-afterwards.
-
-### Without a tunnel, over a private overlay network
-
-A WireGuard mesh — NetBird, Tailscale, plain WireGuard — gives the host an
-address only enrolled peers can reach, authenticated and encrypted below HTTP.
-That is the one way to drop the tunnel without putting any of the above on a
-routable address.
-
-Set `OVERLAY_ADDR` in `deploy/.env` to an address that **already exists on this
-host** (`ip -brief addr` will show it; on the development host it is
-`100.124.242.79` on `wt0`), and add the overlay file:
-
-```bash
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml \
-  -f deploy/compose/docker-compose.keycloak.yml \
-  -f deploy/compose/docker-compose.redaction.yml \
-  -f deploy/compose/docker-compose.overlay.yml up -d
-```
-
-Then open `http://<OVERLAY_ADDR>:8000/console` from any enrolled peer. The
-overlay moves all three pinned URLs together, and registers the extra callback
-on the realm with a one-shot `kcadm` container — the exact URI, never a
-wildcard, because an open redirect on an OIDC client hands the authorization
-code to whoever asks.
-
-Three things worth knowing before you use it:
-
-- **Publishing is additive.** `127.0.0.1` is still bound, so the live scripts
-  and healthchecks keep working when the mesh is down. Without the overlay file
-  the stack is loopback-only, which is the default the base files now set —
-  Docker's own default is `0.0.0.0`, meaning every interface the host has.
-- **Signing in works on the overlay address only.** The gateway sends exactly
-  one `redirect_uri`, and the login-state cookie is scoped to the origin the
-  flow began on, so starting at `localhost:8000` and being sent back to the
-  overlay address loses it. The symptom is a callback answered with *"No login
-  is in progress in this browser"*, which reads like a broken flow rather than
-  a mismatched hostname. `/v1` is unaffected: it uses API keys, not sessions.
-- **It narrows where the stack is reachable from, and nothing else.** Keycloak
-  still has `admin`/`admin`, there is still no TLS, and the gateway still holds
-  real provider credentials that anyone with a session can spend.
+**Why a tunnel and not just the server's address.** The stack is loopback-only
+by default — nothing is published on any interface the host has. Serving it on
+a real address is a deliberate act covered by
+["On a public address, behind TLS"](#on-a-public-address-behind-tls) below.
 
 ## On a public address, behind TLS
 
@@ -274,32 +200,23 @@ the challenge arrives.
 PUBLIC_HOST=130.192.84.103
 HTTPS_PORT=8443
 TLS_DIRECTIVE="tls internal"
-KEYCLOAK_ADMIN_PASSWORD=...    # required, no default
-KEYCLOAK_SEED_PASSWORD=...     # required, no default
-KEYCLOAK_CLIENT_SECRET=...     # required, no default
 
 docker compose --env-file deploy/.env \
   -f deploy/compose/docker-compose.yml \
   -f deploy/compose/docker-compose.smoke.yml \
-  -f deploy/compose/docker-compose.keycloak.yml \
   -f deploy/compose/docker-compose.redaction.yml \
   -f deploy/compose/docker-compose.proxy.yml up -d --build
 ```
 
-The console is then at **<https://130.192.84.103:8443/console>** and Keycloak at
-`/kc` of the same origin — one origin and one port, because the gateway owns
-`/auth/callback` and Keycloak owns `/realms`, and `KC_HTTP_RELATIVE_PATH` is what
-separates them.
+The console is then at **<https://130.192.84.103:8443/console>** — one origin,
+one port, everything behind TLS.
 
-**The three required passwords are the point.** This stack's fourth ground rule
-is that it never goes on a routable address, and that rule is a list of four
-specific holes: plaintext, `admin`/`admin`, a session cookie without `Secure`,
-and seeded users whose passwords are in this repository. The proxy overlay closes
-all four — the last by resetting the admin password, every seeded user's password
-and the OIDC client secret from the environment on **every** `up`, because
-Keycloak's in-memory database re-imports the fixture, published passwords and all,
-whenever the container is recreated. Set them and the fixture stops being a
-credential; leave them unset and compose refuses to start.
+**Behind the proxy, local sign-in is on by default.** The only management
+credential this shape seeds is the local admin's (ADR 0043), and its password
+comes from `deploy/.env` — which is gitignored and never committed. Create the
+account the same way as above (`docker compose ... exec gateway gateway passwd
+admin@local`). OIDC, when configured, rides the same TLS origin with the
+provider hosted wherever you run it.
 
 To check it is only what it claims to be:
 
@@ -313,17 +230,16 @@ set -a; . deploy/.env; set +a     # the live scripts follow PUBLIC_HOST
 ./scripts/test_public_tls_live.py
 ```
 
-It asserts the certificate verifies, that `admin`/`admin` and `dave-password` and
-the published client secret are refused, that the session cookie is `Secure`,
-that a completion still streams through the proxy, and that PostgreSQL, Valkey,
-the fake upstream and both plaintext application ports are reachable on loopback
-and **refused on this host's routable address**.
+It asserts the certificate verifies, that a wrong password is refused over TLS,
+that the session cookie is `Secure`, that a completion still streams through the
+proxy, and that PostgreSQL, Valkey, the fake upstream and the plaintext
+application ports are reachable on loopback and **refused on this host's
+routable address**.
 
 Read [ADR 0035](docs/adr/0035-public-tls-exposure.md) before calling this a
-production deployment. It is not one: Keycloak is still `start-dev` on an
-in-memory database, the self-signed configuration still trains people to click
-through a warning, and a session holder can still spend real provider
-credentials.
+production deployment. It is not one: the self-signed configuration still
+trains people to click through a warning, and a session holder can still spend
+real provider credentials.
 
 ## Local development without Docker
 
@@ -374,9 +290,8 @@ services/rag/        indexing + retrieval        (Phase 3, placeholder)
 services/redaction/  Presidio detection service, behind a swappable contract
 packages/shared/     shared TypeScript types     (Phase 2, placeholder)
 packages/shared-py/  shared Python contracts
-scripts/             Cortecs pricing importer, smoke test; opencode bootstrap (Phase 4)
-deploy/compose/      docker compose: base, dev override, smoke + keycloak overlays
-deploy/keycloak/     seeded dev realm for the OIDC flow
+scripts/             live checks, fake upstream, pricing importer
+deploy/compose/      docker compose: base, dev override, smoke + redaction + proxy overlays
 docs/adr/            architecture decision records
 ```
 
@@ -387,6 +302,8 @@ engine, and the `opencode` device-flow bootstrap. Each has a README saying what 
 and an ADR recording the decision already taken, so none of that research needs repeating.
 
 The gateway's own known gaps are listed at the end of
-[apps/gateway/README.md](apps/gateway/README.md) and in the ADRs — most notably: the full
-OIDC browser flow is untested without a real identity provider, and there is no GDPR
+[apps/gateway/README.md](apps/gateway/README.md) and in the ADRs — most notably: the
+OIDC flow is untested against a real identity provider (the bundled Keycloak rig was
+removed in [ADR 0044](docs/adr/0044-keycloak-removed.md); test any new provider against
+your instance before relying on it), and there is no GDPR
 erasure procedure for `assistant_text` yet.

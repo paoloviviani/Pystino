@@ -18,18 +18,16 @@ from the code.
    correctness actually matters, and where a wrong answer is a wrong invoice
    rather than a stack trace.
 4. **The dev stack goes on a routable address only with the proxy overlay.**
-   The rule used to be "never", and the reason was a list of four things, not a
-   principle: Keycloak runs `start-dev` with `admin`/`admin`, there is no TLS,
-   the session cookie is not `Secure`, and the seeded passwords are in the repo.
-   The base compose files bind `127.0.0.1` because all four are true of them.
-   `docker-compose.proxy.yml` closes all four — Caddy terminates TLS, and three
-   required, defaultless variables replace the admin password, every seeded
-   user's password and the OIDC client secret on every `up`
+   The rule used to be "never", and the reason was a list of specific things,
+   not a principle: there is no TLS, and the session cookie is not `Secure`.
+   The base compose files bind `127.0.0.1` because both are true of them.
+   `docker-compose.proxy.yml` closes both — Caddy terminates TLS, and the only
+   management credential that shape seeds (the local admin's, ADR 0043) comes
+   from `deploy/.env`, which is not in the repository
    ([ADR 0035](docs/adr/0035-public-tls-exposure.md)); it is still not a
    production deployment, and that ADR says exactly why. Without it, reach the
-   stack over the SSH tunnel or `docker-compose.overlay.yml`, which publishes on
-   a private WireGuard-mesh address — see the README. **Nothing else may be
-   published.** `scripts/test_public_tls_live.py` is what checks that, by
+   stack over the SSH tunnel. **Nothing else may be published.**
+   `scripts/test_public_tls_live.py` is what checks that, by
    requiring every other port to be refused on this host's routable address.
 
 ## Explaining the work
@@ -58,7 +56,7 @@ apps/web         the chat SPA, served by chat-api at /chat
 packages/ui      design tokens and primitives, shared with the Phase 3 chat app
 packages/shared-py  detection contract and the deterministic placeholder scheme
 services/redaction  Presidio behind a swappable contract, out of process
-deploy/compose   the stack: base + smoke + keycloak + redaction + chat + proxy overlays
+deploy/compose   the stack: base + smoke + redaction + chat + proxy overlays
 deploy/caddy     the TLS reverse proxy's one config file, for both configurations
 scripts/         live checks against a running stack (see below)
 docs/adr/        37 ADRs. Read the index; they are the design record.
@@ -149,16 +147,16 @@ Inside the gateway, the pieces that carry the most weight:
 - **`InMemoryCounterStore` is atomic for an uninteresting reason** — it never
   awaits. It cannot prove anything about `MULTI`/`EXEC`, which is why
   `scripts/test_quota_race_live.py` exists.
-- **Keycloak's advertised hostname must match however you reached it.**
-  `KEYCLOAK_PORT` moves the published port *and* `KC_HOSTNAME` together;
-  `OVERLAY_ADDR` moves the host part of both, plus the gateway's redirect URI
-  and the realm's registered callback. Changing either needs the gateway
-  restarted — it reads OIDC discovery once at startup. And the login-state
-  cookie is per-origin, so with the overlay active you can only *sign in* on
-  the overlay address; `localhost` still serves `/v1` and the API, which is
-  what the live scripts need. They follow `OVERLAY_ADDR` when it is set, so
-  source `deploy/.env` before running them.
-- **Four things bite anything served behind the TLS proxy** (all of them found
+- **There is no bundled identity provider** ([ADR 0044](docs/adr/0044-keycloak-removed.md)).
+  The console's default way in is local email + password (ADR 0043); OIDC is
+  configured against whatever provider `deploy/.env` names
+  ([docs/oidc-generic-provider.md](docs/oidc-generic-provider.md)). Consequences
+  of the shape that remain true: the gateway reads OIDC discovery **once at
+  startup**, so changing any `GATEWAY_OIDC__*` value needs a restart; and
+  **`iss` is part of a user's identity** — users are keyed on
+  `(issuer, subject)`, so changing the issuer re-provisions everyone as new
+  rows with no memberships at their next login.
+- **Three things bite anything served behind the TLS proxy** (all found
   building it, all recorded in [ADR 0035](docs/adr/0035-public-tls-exposure.md)).
   **SNI may not carry an IP address**, so an address-only deployment offers no
   certificate at all until `default_sni` names one — every handshake fails with a
@@ -166,13 +164,12 @@ Inside the gateway, the pieces that carry the most weight:
   forwarded headers from `127.0.0.1` only**, and the proxy arrives from the
   compose network, so without `FORWARDED_ALLOW_IPS` the app believes every
   request is http; the only place that shows is the post-logout URL built from
-  `request.base_url`, which Keycloak then refuses with a 400 after a login that
-  worked. **Keycloak's management interface inherits `KC_HTTP_RELATIVE_PATH`**,
-  so moving Keycloak under `/kc` moves `/health/ready` with it and the healthcheck
-  fails against a perfectly healthy container — `KC_HTTP_MANAGEMENT_RELATIVE_PATH`
-  pins it. And **`iss` is part of a user's identity**: users are keyed on
-  `(issuer, subject)`, so changing `KC_HOSTNAME` re-provisions everyone as new
-  rows with no memberships at their next login.
+  `request.base_url`, which an https-registered provider then refuses with a
+  400 after a login that worked. And **the session cookie is scoped to the
+  origin the login happened on**, so the address you *sign in* on must be the
+  address you keep using — `localhost` still serves `/v1` and the API either
+  way, which is what the live scripts need. They follow `PUBLIC_HOST` when it
+  is set, so source `deploy/.env` before running them.
 - **An abandoned stream is billed from our price table, and the report blames
   the provider for it.** Found reconciling this deployment against Cortecs'
   dashboard on 2026-08-25. Their console said 34 requests / 244.3K tokens /
@@ -211,10 +208,14 @@ stack:
 docker compose --env-file deploy/.env \
   -f deploy/compose/docker-compose.yml \
   -f deploy/compose/docker-compose.smoke.yml \
-  -f deploy/compose/docker-compose.keycloak.yml \
   -f deploy/compose/docker-compose.redaction.yml up -d --build
 
-./scripts/test_oidc_flow.py         # the whole authorization-code flow
+# The live scripts sign in with local password auth (ADR 0043); set
+# GATEWAY_LOCAL_ADMIN_PASSWORD (and GATEWAY_LOCAL_USER_* for the 403 checks)
+# in deploy/.env, and create the accounts:
+#   docker compose ... exec gateway gateway passwd admin@local
+#   docker compose ... exec gateway gateway passwd --no-admin user@local
+
 ./scripts/test_reporting_live.py    # dialect-specific SQL the suite cannot reach
 ./scripts/test_redaction_live.py
 ./scripts/test_console_live.py      # console, CSP, pagination
@@ -223,8 +224,6 @@ docker compose --env-file deploy/.env \
 ./scripts/test_quota_race_live.py   # admission under concurrency, real Valkey
 ./scripts/test_cache_accounting_live.py  # a real cache hit, and the ledger
 ./scripts/benchmark_live.py         # per-layer cost; see docs/performance.md
-./scripts/test_bearer_tokens_live.py # OIDC access tokens on /v1, real Keycloak
-./scripts/test_chat_live.py         # login, a streamed turn, and the ledger row
 ./scripts/test_public_tls_live.py   # only with the proxy overlay: TLS, the
                                     # rotated credentials, and that nothing else
                                     # is on a routable address
@@ -237,13 +236,13 @@ verification:
 ```bash
 docker compose ... exec proxy cat \
   /data/caddy/pki/authorities/local/root.crt > deploy/tls/caddy-root.crt
-set -a; . deploy/.env; set +a       # PUBLIC_HOST, HTTPS_PORT, the seed password
-./scripts/test_oidc_flow.py
+set -a; . deploy/.env; set +a       # PUBLIC_HOST, HTTPS_PORT, the admin password
+./scripts/test_console_live.py
 ```
 
-Sourcing `deploy/.env` is also what points them at the https origin: signing in
-only works there, because the gateway sends exactly one `redirect_uri` and the
-realm has exactly that one registered.
+Sourcing `deploy/.env` is also what points them at the https origin: the
+session cookie is scoped to the origin the login happened on, so sign in and
+check on the same address.
 
 **Run the live scripts.** More than half the serious bugs in this project's
 history were only findable against the running stack: a counter seeded at zero,
@@ -262,7 +261,7 @@ Development host `130.192.84.52`, console over an SSH tunnel — the README's
 both ports must match. A second VM, `130.192.84.103`, runs the same stack behind
 the proxy overlay at <https://130.192.84.103:8443/console>; note that its
 firewall permits **8443 and 22 and nothing else**, which is why that deployment
-serves one origin with Keycloak under `/kc` rather than two ports, and why the
+serves one origin with a single TLS port rather than two, and why the
 Let's Encrypt configuration cannot be used there until 80 and 443 are opened.
 Git remote is GitHub (`paoloviviani/Pistin`, since 2026-08-29; GitLab
 `viviani/ai-stack` was the original home); the tokens are in `.gitlab-token` and
