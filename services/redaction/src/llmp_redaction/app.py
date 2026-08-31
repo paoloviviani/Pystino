@@ -29,6 +29,30 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODELS = {"en": "en_core_web_lg"}
 
+# Which NLP engine Presidio runs behind the pattern recognisers.
+#
+# ``spacy`` (default) loads the language models baked into the image and is what
+# makes PERSON / LOCATION / ORGANIZATION / NRP detectable. ``disabled`` loads no
+# model at all: Presidio's own NoOpNlpEngine, which leaves every pattern and
+# checksum recogniser (cards, IBANs, phones, fiscal codes, ...) working and the
+# model-backed entities undetectable. A no-NER deployment uses roughly 150 MB
+# instead of ~900, which is the entire point — but it must then say so, and
+# ``capabilities()`` does: ``models`` comes back empty, every language is
+# reported degraded, and the entity list the gateway shows the console shrinks
+# to what can actually be found.
+DEFAULT_NLP_ENGINE = "spacy"
+DISABLED_NLP_ENGINE = "disabled"
+
+
+def _nlp_engine_name() -> str:
+    value = os.getenv("REDACTION_NLP_ENGINE", DEFAULT_NLP_ENGINE).strip().lower()
+    if value not in {DEFAULT_NLP_ENGINE, DISABLED_NLP_ENGINE}:
+        raise ValueError(
+            f"REDACTION_NLP_ENGINE must be '{DEFAULT_NLP_ENGINE}' or '{DISABLED_NLP_ENGINE}', "
+            f"not {value!r}"
+        )
+    return value
+
 
 def _configured_models() -> dict[str, str]:
     """Language-to-spaCy-model map from ``REDACTION_SPACY_MODELS``.
@@ -36,18 +60,37 @@ def _configured_models() -> dict[str, str]:
     Format: ``en=en_core_web_lg,it=it_core_news_lg``. Set by the Dockerfile from
     the models it actually installed, so the service cannot claim a language whose
     weights are absent.
+
+    An **empty or absent value means no models installed** — the no-NER build
+    writes exactly that. Callers that need the historical "nothing configured,
+    load the default" behaviour get it from :func:`build_detector`, which knows
+    which NLP engine is running; this function reports the environment as it is.
     """
     raw = os.getenv("REDACTION_SPACY_MODELS", "").strip()
-    if not raw:
-        return dict(DEFAULT_MODELS)
-
     models: dict[str, str] = {}
     for pair in raw.split(","):
         if "=" not in pair:
             continue
         language, _, model = pair.partition("=")
         models[language.strip()] = model.strip()
-    return models or dict(DEFAULT_MODELS)
+    return models
+
+
+def _configured_languages() -> list[str]:
+    """Languages to serve, with or without models.
+
+    With NER the languages are the keys of ``REDACTION_SPACY_MODELS``. Without
+    NER there are no models to key on, so ``REDACTION_LANGUAGES`` names them
+    directly (``en,it``); a no-model build whose operator never set it still
+    serves its patterns under ``en`` rather than nothing.
+    """
+    from_models = list(_configured_models())
+    if from_models:
+        return from_models
+    raw = os.getenv("REDACTION_LANGUAGES", "").strip()
+    if not raw:
+        return ["en"]
+    return [part.strip() for part in raw.split(",") if part.strip()]
 
 
 # Locale-specific recognisers to register for *every* loaded language.
@@ -99,21 +142,50 @@ def build_detector() -> Detector:
     from presidio_analyzer import predefined_recognizers as recognizers
     from presidio_analyzer.nlp_engine import NlpEngineProvider
 
-    models = _configured_models()
+    nlp_engine_name = _nlp_engine_name()
     started = time.monotonic()
 
-    provider = NlpEngineProvider(
-        nlp_configuration={
-            "nlp_engine_name": "spacy",
-            "models": [
-                {"lang_code": language, "model_name": model} for language, model in models.items()
-            ],
-        }
-    )
-    nlp_engine = provider.create_engine()
+    if nlp_engine_name == DISABLED_NLP_ENGINE:
+        # No model is loaded or needed: the languages stand alone, and every
+        # entity the engine then reports is one a pattern can actually find.
+        languages = _configured_languages()
+        from presidio_analyzer.nlp_engine import NoOpNlpEngine
+
+        # Presidio's no-op engine validates a model_name per language even
+        # though it never loads one; the language code is an honest placeholder.
+        nlp_engine = NoOpNlpEngine(
+            models=[{"lang_code": lang, "model_name": lang} for lang in languages]
+        )
+        nlp_engine.load()
+        models: dict[str, str] = {}
+    else:
+        models = _configured_models() or dict(DEFAULT_MODELS)
+        languages = list(models)
+        provider = NlpEngineProvider(
+            nlp_configuration={
+                "nlp_engine_name": "spacy",
+                "models": [
+                    {"lang_code": language, "model_name": model}
+                    for language, model in models.items()
+                ],
+            }
+        )
+        nlp_engine = provider.create_engine()
 
     registry = RecognizerRegistry()
-    registry.load_predefined_recognizers(languages=list(models), nlp_engine=nlp_engine)
+    # The NLP recogniser (SpacyRecognizer) is added by this call whenever it can
+    # resolve one — Presidio raises outright if handed the no-op engine here —
+    # so in no-NER mode it is loaded *without* an engine and the SpacyRecognizer
+    # it appends anyway is removed below. Leaving it registered would put
+    # PERSON/LOCATION/... in `get_supported_entities` while nothing could ever
+    # find them: exactly the lie the capabilities report exists to prevent.
+    registry.load_predefined_recognizers(languages=languages, nlp_engine=nlp_engine)
+    if nlp_engine_name == DISABLED_NLP_ENGINE:
+        from presidio_analyzer.predefined_recognizers import SpacyRecognizer
+
+        for existing in list(registry.recognizers):
+            if isinstance(existing, SpacyRecognizer):
+                registry.remove_recognizer(type(existing).__name__)
     for name in EXTRA_PATTERN_RECOGNIZERS:
         recognizer_class = getattr(recognizers, name, None)
         if recognizer_class is None:
@@ -122,24 +194,41 @@ def build_detector() -> Detector:
             # is strictly worse than one missing a national identifier.
             logger.warning("recogniser %s is not in this Presidio version; skipping", name)
             continue
-        for language in models:
+        for language in languages:
             registry.add_recognizer(recognizer_class(supported_language=language))
 
     # Replaces the default phone recogniser rather than adding a second one, so a
     # number is not reported twice by two recognisers with different regions.
     regions = _phone_regions()
-    for language in models:
+    # In no-NER mode Presidio cannot lemmatise, so its context enhancer never
+    # fires and every phone match reports the bare class score 0.4 — below the
+    # gateway's default threshold of 0.5. NER mode can lift the same match to
+    # 0.75 (0.4 + the enhancer's 0.35 context factor) when a context word like
+    # "phone" sits next to it; without the lemma table that lift is simply not
+    # attainable. Restoring the attainable score keeps PHONE_NUMBER findable on
+    # the terms NER mode would offer; whether a phone is redacted stays the
+    # gateway policy's decision alone — spans are re-filtered per type there
+    # (gateway/redaction/http.py), so a policy that wants phones kept still
+    # keeps them.
+    phone_recognizer_class = recognizers.PhoneRecognizer
+    if nlp_engine_name == DISABLED_NLP_ENGINE:
+
+        class NoNerPhoneRecognizer(phone_recognizer_class):  # type: ignore[misc, valid-type]
+            SCORE = 0.4 + 0.35  # Presidio's base + context_similarity_factor
+
+        phone_recognizer_class = NoNerPhoneRecognizer
+    for language in languages:
         for existing in list(registry.recognizers):
             if type(existing).__name__ == "PhoneRecognizer" and (
                 existing.supported_language == language
             ):
                 registry.remove_recognizer(type(existing).__name__)
         registry.add_recognizer(
-            recognizers.PhoneRecognizer(supported_language=language, supported_regions=regions)
+            phone_recognizer_class(supported_language=language, supported_regions=regions)
         )
 
     analyzer = AnalyzerEngine(
-        nlp_engine=nlp_engine, registry=registry, supported_languages=list(models)
+        nlp_engine=nlp_engine, registry=registry, supported_languages=languages
     )
 
     try:
@@ -153,15 +242,19 @@ def build_detector() -> Detector:
         version = "unknown"
 
     logger.info(
-        "presidio %s ready in %.1fs with models: %s; phone regions: %s",
+        "presidio %s ready in %.1fs with NLP engine: %s; languages: %s; phone regions: %s",
         version,
         time.monotonic() - started,
-        ", ".join(f"{lang}={model}" for lang, model in models.items()) or "none",
+        nlp_engine_name,
+        ", ".join(languages) or "none",
         ", ".join(regions),
     )
     detector = Detector(
         analyzer,
-        languages=list(models),
+        languages=languages,
+        # Empty in no-NER mode, and *empty is the report*: `Detector.capabilities`
+        # derives "degraded" from a language having no model, which is what
+        # healthz surfaces and what keeps the gateway's entity list honest.
         models=models,
         engine="presidio",
         engine_version=version,
