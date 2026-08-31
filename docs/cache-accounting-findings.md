@@ -6,7 +6,9 @@
   interesting part — the spelling table below is what the reader now consults,
   and a provider adding a fifth name is caught by
   `scripts/test_cache_accounting_live.py`. Ground rule 3 in
-  [CLAUDE.md](../CLAUDE.md) applies: this was a money bug.
+  the ground rules
+  [in the repository's working notes](https://github.com/paoloviviani/Pistin/blob/main/CLAUDE.md)
+  apply: this was a money bug.
 - Related: [ADR 0028](adr/0028-embeddings-and-served-model.md) (the two prompt
   conventions), [ADR 0031](adr/0031-model-capabilities.md) (`context_size`, the
   same class of mistake).

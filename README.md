@@ -275,8 +275,16 @@ uv run gateway serve --reload
 
 ## Documentation
 
+The full documentation is a Material for MkDocs site, built from `docs/`:
+
+```bash
+uv run mkdocs build --strict   # output in site/; `mkdocs serve` to browse
+```
+
+- **[docs/index.md](docs/index.md)** — start here: status, the four ideas, and
+  a map of the rest.
 - **[docs/adr/](docs/adr/README.md)** — every significant decision, with the licence,
-  version and CVE evidence behind it and the date it was checked. Start here.
+  version and CVE evidence behind it and the date it was checked.
 - **[apps/gateway/README.md](apps/gateway/README.md)** — the gateway's surfaces, layout,
   and a table of the streaming traps with the file that handles each.
 

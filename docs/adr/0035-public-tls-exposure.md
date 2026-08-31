@@ -7,7 +7,7 @@
   (caddy?) with two supported configurations (dev, exposing on an IP with self
   signed certs) and prod, requiring an fqdn and 80/443 ports open for
   let'sencrypt".
-- Related: [0023](0023-console.md) (the console the proxy fronts),
+- Related: [0023](0023-admin-console.md) (the console the proxy fronts),
   [0027](0027-inference-providers.md) (the credentials a session holder can
   spend), `deploy/compose/docker-compose.overlay.yml` (the private-mesh answer
   this supersedes for public use, and does not replace for private use).
