@@ -348,6 +348,46 @@ class TestHttpSurface:
         response = await client.post("/detect", json={"texts": ["x"], "score_threshold": 2})
         assert response.status_code == 422
 
+    async def test_types_the_engine_cannot_serve_are_filtered_and_named(
+        self, client: Any
+    ) -> None:
+        """A policy naming an entity the engine has no recogniser for must not
+        500 — Presidio raises on such a request — and must not pass silently
+        either. The servable types are still detected; the rest are named back.
+        """
+        response = await client.post(
+            "/detect",
+            json={
+                "texts": ["Ask Mario Rossi."],
+                "language": "en",
+                "entity_types": ["PERSON", "IT_FISCAL_CODE"],
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        # The fake detector finds PERSON; IT_FISCAL_CODE has no recogniser.
+        assert body["findings"][0]["spans"][0]["entity_type"] == "PERSON"
+        assert body["unsupported_types"] == ["IT_FISCAL_CODE"]
+
+    async def test_an_all_unservable_enumeration_skips_the_engine(
+        self, client: Any
+    ) -> None:
+        """Handing Presidio an empty `entities` list raises the same way an
+        unknown type does, so the all-filtered case must not reach it at all —
+        and still answers 200 with nothing found."""
+        response = await client.post(
+            "/detect",
+            json={
+                "texts": ["Ask Mario Rossi."],
+                "language": "en",
+                "entity_types": ["IT_FISCAL_CODE"],
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["findings"][0]["spans"] == []
+        assert body["unsupported_types"] == ["IT_FISCAL_CODE"]
+
     async def test_healthz_reports_what_is_loaded(self, client: Any) -> None:
         body = (await client.get("/healthz")).json()
         assert body["status"] == "ok"

@@ -182,6 +182,13 @@ class DetectionResponse(BaseModel):
     # you will want to know which engine version produced a given redaction.
     engine: str | None = None
     engine_version: str | None = None
+    # Requested entity types this engine cannot serve, named so the caller can
+    # say so rather than infer it from missing detections. A rule that names
+    # PERSON against an engine with no NER model is otherwise indistinguishable
+    # from clean text — and Presidio's own answer to such a request is a
+    # ValueError, which as a 500 reads as "service down" when the service is
+    # up and the *policy* is what does not fit it.
+    unsupported_types: list[str] = Field(default_factory=list)
 
 
 class PlaceholderMap:
