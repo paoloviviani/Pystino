@@ -13,6 +13,7 @@ import { Button, Spinner } from "@llmp/ui";
 
 import styles from "./App.module.css";
 import { Chat } from "./routes/Chat";
+import { SignIn } from "./routes/SignIn";
 import {
   BASE,
   type Conversation,
@@ -33,6 +34,15 @@ export function App() {
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Bumped to re-run the load below — after a sign-in, and after the action
+  // that created the first conversation ever. A load that runs once on mount
+  // cannot learn that the world changed underneath it.
+  const [reloadKey, setReloadKey] = useState(0);
+  // A 401 no longer bounces to the identity provider: this deployment may
+  // offer a password form instead, or nothing at all, and the old redirect
+  // answered "Sign-in is unavailable." exactly when sign-in was available.
+  // The SignIn component asks what exists and renders that.
+  const [needsSignIn, setNeedsSignIn] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,11 +61,7 @@ export function App() {
       } catch (caught) {
         if (cancelled) return;
         if (caught instanceof NotAuthenticatedError) {
-          // Straight to the identity provider. An "you are signed out" screen
-          // with a button on it is one click nobody wants to make.
-          window.location.href = `${BASE}/auth/login?next=${encodeURIComponent(
-            window.location.pathname,
-          )}`;
+          setNeedsSignIn(true);
           return;
         }
         setError(caught instanceof Error ? caught.message : "Could not load.");
@@ -66,7 +72,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   const refreshList = useCallback(async () => {
     const list = await getConversations();
@@ -85,6 +91,20 @@ export function App() {
     return (
       <div className={styles.shell}>
         <Spinner label="Loading" />
+      </div>
+    );
+  }
+
+  if (needsSignIn) {
+    return (
+      <div className={styles.shell}>
+        <SignIn
+          onSignedIn={() => {
+            setNeedsSignIn(false);
+            setLoading(true);
+            setReloadKey((key) => key + 1);
+          }}
+        />
       </div>
     );
   }

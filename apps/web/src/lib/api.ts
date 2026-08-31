@@ -71,7 +71,17 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     credentials: "same-origin",
   });
 
-  if (response.status === 401) throw new NotAuthenticatedError();
+  // A 401 means "no session" everywhere except the sign-in call itself, where
+  // it means "wrong credentials". The body is parsed either way so the
+  // gateway's own words survive — "Incorrect email or password." from the
+  // login form, "Sign in to continue." from an expired session — rather than
+  // both collapsing into one canned sentence that mislabels one of them.
+  if (response.status === 401) {
+    const body = await parse(response);
+    throw new NotAuthenticatedError(
+      messageOf(body, "Your session has expired.").message,
+    );
+  }
   const body = await parse(response);
   if (!response.ok) {
     const { message, code } = messageOf(body, `Request failed (${response.status}).`);
@@ -134,6 +144,28 @@ export interface Message {
 export interface ConversationDetail extends Conversation {
   messages: Message[];
 }
+
+export interface AuthMethods {
+  /** Password sign-in at the gateway (ADR 0043/0046). */
+  local: boolean;
+  /** Redirect to the identity provider. */
+  oidc: boolean;
+}
+
+export const getAuthMethods = () => api<AuthMethods>(`${BASE}/api/auth/methods`);
+
+/**
+ * Sign in at the gateway's local door (ADR 0046).
+ *
+ * The password goes to chat-api, which forwards it to the gateway server-side;
+ * the browser never sees a credential beyond this POST. Success is a 204 with
+ * the session cookie set — nothing to parse.
+ */
+export const signInLocal = (email: string, password: string) =>
+  api<void>(`${BASE}/api/auth/local`, {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
 
 export const getMe = () => api<Me>(`${BASE}/api/me`);
 export const getModels = () => api<{ data: Model[] }>(`${BASE}/api/models`);
