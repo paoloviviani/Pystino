@@ -2,8 +2,8 @@
 
 A self-hosted LLM platform, built and run by its author at personal expense: an
 OpenAI-compatible gateway with accounting, quotas and redaction, and the admin
-console for it — those are the substance. The chat app exists and runs but is
-early, not the deliverable. Licence is **EUPL-1.2** for all first-party code.
+console for it. The chat application lives on the `chat` branch, not here.
+Licence is **EUPL-1.2** for all first-party code.
 
 `CLAUDE.md` is the repo's own deep-context file — ground rules, recorded bugs, and the
 traps that only show up on the live stack. Read it before changing anything;
@@ -30,14 +30,15 @@ traps that only show up on the live stack. Read it before changing anything;
 
 ## Layout: two workspaces, one deliberate exception
 
-- Python: `uv` workspace — `apps/gateway`, `apps/chat-api`, `packages/shared-py`.
+- Python: `uv` workspace — `apps/gateway`, `packages/shared-py`.
   `services/redaction` is **not** a member on purpose (spaCy must never enter the
   gateway's lockfile) — but its tests still run via the root `pyproject.toml` pytest
   config, from the repo root.
 - JS/TS: `pnpm` workspace — `packages/ui` (design tokens + primitives),
-  `apps/console`, `apps/web` (Vite + React, vitest).
-- `apps/chat-api` is a `/v1` client of the gateway (ADR 0040) and imports nothing
-  from it.
+  `apps/console`.
+- The gateway accepts a caller-supplied `x-request-id` and never returns the one
+  it uses — a caller who wants a transcript tied to cost mints it and sends it
+  (the convention the chat branch lives by; ADR 0040).
 - Gateway internals that carry the weight: `routers/_metered.py`
   (resolve → reserve → record → settle), `accounting/cost.py` (the only code that
   multiplies a count by a rate), `quota/engine.py`, `access.py`, `plugins/`
@@ -119,9 +120,6 @@ running stack.
   `client_disconnected`, tokens counted locally (`estimated`), cost stamped
   `own_prices_fallback`, and `_reconciliation` correctly excludes it. Reports
   attribute it to the provider wrongly — a known open item in CLAUDE.md.
-- **The chat lives under `/chat` in every deployment shape**, and **the request id
-  is minted by chat-api and sent to the gateway** — reading it back gives a null
-  column, and that column is the only tie between a transcript and its cost.
 
 ## Conventions that differ from defaults
 

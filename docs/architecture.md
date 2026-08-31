@@ -36,11 +36,11 @@
                 (Presidio)           enter the gateway's event loop
 ```
 
-Everything a browser sees comes from two FastAPI services: the gateway (console,
-management API, `/v1`) and chat-api (the chat backend and the chat SPA at
-`/chat`). They are separate processes on separate ports, coupled only through
-`/v1` and OIDC — which is what makes each of them replaceable and, behind the
-proxy overlay, routable under one origin.
+Everything a browser sees comes from one FastAPI service on this branch: the
+gateway (console, management API, `/v1`). The chat application — its own
+FastAPI service and SPA at `/chat`, coupled to the gateway only through `/v1`
+and OIDC — lives on the `chat` branch, and is what the topology diagram above
+still shows.
 
 ## Components
 

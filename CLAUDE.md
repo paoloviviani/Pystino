@@ -50,16 +50,13 @@ the diff. The house style, worth matching:
 ```
 apps/gateway     the gateway: /v1 proxy surfaces, /api management, console hosting
 apps/console     React admin SPA, served by the gateway at /console
-apps/chat-api    the chat backend: conversations, and the loop that produces them.
-                 Imports nothing from gateway — it is a /v1 client (ADR 0040)
-apps/web         the chat SPA, served by chat-api at /chat
-packages/ui      design tokens and primitives, shared with the Phase 3 chat app
+packages/ui      design tokens and primitives, shared with the console
 packages/shared-py  detection contract and the deterministic placeholder scheme
 services/redaction  Presidio behind a swappable contract, out of process
-deploy/compose   the stack: base + smoke + redaction + chat + proxy overlays
+deploy/compose   the stack: base + smoke + redaction + proxy overlays
 deploy/caddy     the TLS reverse proxy's one config file, for both configurations
 scripts/         live checks against a running stack (see below)
-docs/adr/        37 ADRs. Read the index; they are the design record.
+docs/adr/        the ADRs. Read the index; they are the design record.
 ```
 
 Inside the gateway, the pieces that carry the most weight:
@@ -197,8 +194,8 @@ Inside the gateway, the pieces that carry the most weight:
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services
-uv run pytest -q                       # 952 gateway + chat-api tests, SQLite
-pnpm -r test                           # packages/ui + console + web
+uv run pytest -q                       # gateway tests, SQLite
+pnpm -r test                           # packages/ui + console
 ```
 
 Then, for anything touching the request path, money, or SQL, against the real
@@ -273,8 +270,15 @@ name and glob.
 The gateway and its console are the substance and are done through Phase 2:
 gateway, redaction, providers, quotas, reporting, five `/v1` surfaces, the admin
 console. `docs/phase-2-plan.md` records what was planned and what was added
-afterwards, including the bugs each addition surfaced. The chat (Phase 3) runs
-but is early — M1's foundation only — and is not the current deliverable.
+afterwards, including the bugs each addition surfaced.
+
+**The chat application lives on the `chat` branch**, not here: `apps/chat-api`
+and `apps/web` were moved off main so this branch is the gateway only. The
+branch carries its own plan (Phase 3, M1-foundation state), its ADRs (0015,
+0016, 0041) and its compose overlay; ADR 0046 — the local door issuing `/v1`
+credentials — is a *gateway* feature and stays here, as does ADR 0043.
+Merge order when the chat resumes: gateway features land here first, the
+`chat` branch rebases on them.
 
 Two pieces of work with their reasoning written down rather than left to be
 rediscovered — one being built, one not started:
@@ -378,28 +382,3 @@ Known open items, none of them blocking:
 - Deferred by the user: per-provider default body params (`eu_native`,
   `allow_zero_data_retention`), image editing and variations, per-size image
   pricing, reranking.
-- **Phase 3 is under way.** `docs/phase-3-plan.md` records the design decisions —
-  a separate service coupled to the gateway only through `/v1` and OIDC — and,
-  as importantly, what was rejected and why. **M0 is done**: the gateway accepts
-  OIDC access tokens on `/v1` when `GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE` names
-  an audience ([ADR 0040](docs/adr/0040-bearer-tokens-on-v1.md)), which is also
-  what the `opencode` device flow needs. **M1's foundation is done**: `chat-api`
-  and the chat SPA, signing in against the same realm, streaming a turn through
-  `/v1` as the person typing it. Regenerate and edit-and-resend are built: a
-  regenerate is a contentless turn (`content: null` writes no user row) after
-  the caller truncated from the reply, and an edit is truncate-from-the-prompt
-  plus a fresh send — both because the transcript is one causal sequence, so
-  `DELETE /chat/api/conversations/{id}/messages/{mid}` deletes a message and
-  everything after it. No branch picker: forks would need server-side branch
-  storage first. Still to come in M1: search, and titles from a model. Then
-  assistants, RAG, MCP, voice, the code sandbox, the desktop app.
-
-  Two things about the chat that are easy to get wrong. **It lives under
-  `/chat`, in every deployment shape** — behind the proxy the gateway owns the
-  root of the origin, so `/api` and `/auth` there are *its* management API and
-  *its* callback; a chat that answered on those paths works alone and collides
-  the moment it is proxied. And **the request id is minted by chat-api and sent
-  to the gateway**, not read back: the gateway adopts an inbound
-  `x-request-id` and never returns the one it used, so reading it back gives a
-  null column — and that column is the only thing tying a transcript to what it
-  cost.

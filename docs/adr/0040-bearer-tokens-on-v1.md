@@ -5,7 +5,7 @@
 - Requested as: the first milestone of the Phase 3 chat application — "go with
   M0 and lay down the foundation of M1".
 - Related: [0022](0022-administration-surface.md) (the API-key invariants this
-  does not change), [phase-3-plan.md](../phase-3-plan.md) (why the chat app is a
+  does not change), the Phase 3 plan on the `chat` branch (why the chat app is a
   separate service, which is what makes this necessary).
 
 ## Context

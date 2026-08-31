@@ -12,7 +12,7 @@ capability:
 | `docker-compose.override.yml` | development conveniences (mounted sources) |
 | `docker-compose.smoke.yml` | a fake OpenAI-compatible upstream — exercise the whole topology with no provider account |
 | `docker-compose.redaction.yml` | the Presidio detection service |
-| `docker-compose.chat.yml` | chat-api and the chat SPA at `/chat` |
+| `docker-compose.chat.yml` | *(on the `chat` branch)* chat-api and the chat SPA at `/chat` |
 | `docker-compose.proxy.yml` | Caddy terminating TLS — the only route to a routable address ([ADR 0035](adr/0035-public-tls-exposure.md)) |
 
 ```bash

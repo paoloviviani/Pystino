@@ -16,7 +16,7 @@ it implies.
 | `apps/gateway` | **Built and tested.** Chat completions (streaming and not), models, API keys, OIDC, accounting, quotas, redaction interface. |
 | `packages/shared-py` | **Built.** Detection contract and the deterministic placeholder scheme. |
 | `services/redaction` | **Built and tested.** Presidio behind a swappable detection contract; PII never reaches the upstream. |
-| `packages/ui` | **Built.** Design tokens and primitives, shared with the Phase 3 chat app. |
+| `packages/ui` | **Built.** Design tokens and primitives, shared with the admin console. |
 | `apps/console` | **Built.** Self-service spend plus reports, quotas, providers, models (with their prices and access), and users at `/console`. |
 | `CLAUDE.md` | The context needed to pick this up elsewhere: ground rules, the traps, and how to verify a change. |
 | `apps/web`, `apps/desktop`, `services/rag`, `packages/shared` | Placeholders. Each README says what goes there and which decisions are already recorded. |

@@ -57,9 +57,9 @@ requests. The React console at `/console` is the human surface
   keyed on `(issuer, subject)`: changing the issuer re-provisions every user as
   a new row with no memberships at their next login.
 - **OIDC access tokens on `/v1`** are accepted when
-  `GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE` names an audience — this is what lets
-  chat-api stream as the person typing, and what a device-flow bootstrap needs
-  ([ADR 0040](adr/0040-bearer-tokens-on-v1.md)).
+  `GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE` names an audience — what lets a
+  first-party client stream as the person typing, and what a device-flow
+  bootstrap needs ([ADR 0040](adr/0040-bearer-tokens-on-v1.md)).
 
 ## Providers and plugins
 
