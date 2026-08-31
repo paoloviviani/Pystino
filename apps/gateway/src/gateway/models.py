@@ -367,6 +367,12 @@ class ApiKey(Base):
     # Written opportunistically; not part of the auth decision.
     last_used_at: Mapped[datetime | None] = mapped_column(default=None)
 
+    # Set when the gateway minted this key as a short-lived access credential
+    # for a named client (ADR 0046). NULL is a key a person created, which is
+    # the only kind the listings show; a minted key is never manually creatable
+    # and carries no pinned billing group, both enforced in the routes.
+    minted_by: Mapped[str | None] = mapped_column(String(64), default=None, index=True)
+
     user: Mapped[User] = relationship(back_populates="api_keys", lazy="joined")
     billing_group: Mapped[Group | None] = relationship(
         foreign_keys=[billing_group_id], lazy="joined"
@@ -377,6 +383,44 @@ class ApiKey(Base):
         if self.revoked_at is not None:
             return False
         return not (self.expires_at is not None and self.expires_at <= moment)
+
+
+class RefreshCredential(Base):
+    """A long-lived credential a *named client* exchanges for access keys.
+
+    ADR 0046. The gateway is the issuer for its own local accounts: a login
+    that names a client mints one row here, and ``POST /auth/token`` trades it
+    for a short-lived ``ApiKey`` with ``minted_by`` naming the client. One row
+    per ``(user, client)``, so a re-login rotates it — the old credential dies
+    with the row, which is the correct behaviour for a credential whose only
+    holder just authenticated with a password.
+
+    Hashed like an ``ApiKey`` and for the same reason (ADR 0010): a
+    2^256-entropy secret has nothing for a slow KDF to defend, and the hash
+    means a database dump yields nothing that works.
+    """
+
+    __tablename__ = "refresh_credentials"
+    __table_args__ = (
+        UniqueConstraint("user_id", "client", name="uq_refresh_user_client"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    client: Mapped[str] = mapped_column(String(64))
+
+    prefix: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    secret_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    # The client's session lifetime; set at mint. An expired credential is
+    # refused at exchange, which ends the client's session honestly.
+    expires_at: Mapped[datetime] = mapped_column(default=utcnow)
+    last_used_at: Mapped[datetime | None] = mapped_column(default=None)
+
+    user: Mapped[User] = relationship(foreign_keys=[user_id])
 
 
 class ModelKind(enum.StrEnum):

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from datetime import timedelta
 from typing import Any
 from urllib.parse import urlencode
 
@@ -19,7 +20,7 @@ from joserfc.errors import JoseError
 from joserfc.jwk import OctKey
 from joserfc.jwt import JWTClaimsRegistry
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from gateway.deps import ManagementUserDep, SessionDep, SettingsDep
 from gateway.errors import AuthenticationError as _AuthnError
@@ -29,7 +30,7 @@ from gateway.errors import (
     TooManyRequestsError,
 )
 from gateway.login_throttle import LoginThrottle
-from gateway.models import LocalCredential, User
+from gateway.models import LocalCredential, RefreshCredential, User
 from gateway.oidc import (
     OIDCClient,
     OIDCError,
@@ -39,6 +40,7 @@ from gateway.oidc import (
     provision_user,
 )
 from gateway.passwords import verify_and_rehash, verify_dummy
+from gateway.security import generate_api_key
 from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
@@ -146,6 +148,14 @@ class LocalLoginRequest(BaseModel):
 
     password: str = Field(min_length=1, max_length=1024)
 
+    # Naming a client asks for a *machine credential* (ADR 0046) alongside the
+    # browser session: the response gains a refresh credential that client can
+    # exchange for short-lived `/v1` access keys. A login that names none is
+    # the console's login, bit for bit. The pattern is a slug because the
+    # client name ends up in key rows, audit lines and another service's
+    # configuration; anything outside [a-z0-9-] is a naming accident.
+    client: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+
 
 class AuthMethods(BaseModel):
     """Which ways in this deployment offers. Drives the console's login page."""
@@ -181,6 +191,45 @@ def _login_throttle(request: Request) -> LoginThrottle:
     if throttle is None:
         raise ServiceUnavailableError("Local sign-in is not enabled.")
     return throttle
+
+
+async def _rotate_refresh_credential(
+    session: Any, user: Any, client: str, settings: Any
+) -> dict[str, Any]:
+    """Mint the (user, client) refresh credential, replacing any previous one.
+
+    ADR 0046. One row per ``(user, client)``, rotated at every login: the old
+    credential dies with the row, which is right for a credential whose only
+    holder *just authenticated with the password* — there is no concurrent
+    legitimate holder to break, and a re-login that left the old value working
+    would make "sign in again" a no-op for anyone who copied it.
+
+    The lifetime is the session TTL, because the credential exists to back a
+    client session and nothing longer. Returns the response payload: the
+    secret, shown once, and the identity the client stores beside it.
+    """
+    await session.execute(
+        delete(RefreshCredential).where(
+            RefreshCredential.user_id == user.id, RefreshCredential.client == client
+        )
+    )
+    generated = generate_api_key(environment_prefix="gwr")
+    row = RefreshCredential(
+        user_id=user.id,
+        client=client,
+        prefix=generated.prefix,
+        secret_hash=generated.key_hash,
+        expires_at=utcnow() + timedelta(seconds=settings.session_ttl_seconds),
+    )
+    session.add(row)
+    await session.commit()
+    return {
+        "refresh_token": generated.secret,
+        "email": user.email,
+        "display_name": user.display_name,
+        "groups": [membership.group.name for membership in user.memberships],
+        "is_admin": user.is_admin,
+    }
 
 
 @router.get("/login")
@@ -306,15 +355,24 @@ async def local_login(
     throttle.record_success(email)
 
     logger.info("local login: user=%s email=%s", user.id, email)
-    response = JSONResponse(
-        {
-            "status": "ok",
-            "user_id": str(user.id),
-            "default_billing_group_id": (
-                str(user.default_billing_group_id) if user.default_billing_group_id else None
-            ),
-        }
-    )
+    body: dict[str, Any] = {
+        "status": "ok",
+        "user_id": str(user.id),
+        "default_billing_group_id": (
+            str(user.default_billing_group_id) if user.default_billing_group_id else None
+        ),
+    }
+    if payload.client is not None:
+        # ADR 0046: this login is also a machine credential mint. The browser
+        # session below is unchanged — chat-api calls this endpoint
+        # server-side, and a caller that named a client gets the refresh
+        # credential in the body, shown once, plus the identity a client
+        # session needs so it never has to parse the session cookie.
+        body.update(await _rotate_refresh_credential(session, user, payload.client, settings))
+        logger.info(
+            "local login minted refresh credential: user=%s client=%s", user.id, payload.client
+        )
+    response = JSONResponse(body)
     # The same session the OIDC callback issues — that equivalence is the
     # whole point; nothing downstream knows which way in the person came.
     _set_session_cookie(response, request, user.id)

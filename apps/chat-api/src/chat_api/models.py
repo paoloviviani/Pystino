@@ -30,6 +30,13 @@ from sqlalchemy.types import JSON
 
 from chat_api.types import TZDateTime, utcnow
 
+#: The issuer the gateway signs its own accounts under (ADR 0043), and the one
+#: whose sessions exchange credentials at the gateway rather than refreshing
+#: at an identity provider (ADR 0046). A module constant rather than a literal
+#: repeated at each branch, because a typo in one branch silently routes a
+#: local session to the IdP, which refuses it and deletes the row.
+LOCAL_ISSUER = "local"
+
 
 class Base(DeclarativeBase):
     pass

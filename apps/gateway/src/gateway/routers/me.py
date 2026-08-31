@@ -118,10 +118,16 @@ async def list_keys(
     Paginated like the admin listings even though one person's keys are few:
     revoked keys are never deleted, so this grows with time, and having one
     response shape for every listing is worth more than the exception.
+
+    Keys the gateway minted itself (ADR 0046) are not here: they are internal
+    plumbing per named client, short-lived by construction, and a row in this
+    list would read as something the person owns and could revoke — the
+    revocation that matters for them is the client session's, not one key of
+    the dozens this endpoint would otherwise show churning through.
     """
     stmt = (
         select(ApiKey)
-        .where(ApiKey.user_id == user.id)
+        .where(ApiKey.user_id == user.id, ApiKey.minted_by.is_(None))
         .options(selectinload(ApiKey.billing_group))
         .order_by(ApiKey.created_at.desc())
     )
