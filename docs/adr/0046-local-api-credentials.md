@@ -1,7 +1,9 @@
 # 0046 — The local door issues `/v1` credentials: the gateway as issuer for its own accounts
 
 - Date: 2026-08-31
-- Status: **accepted, not built**
+- Status: **accepted, built** (gateway and chat-api unit-tested; the SPA renders
+  its door from `/api/auth/methods`, showing the password form, the OIDC
+  redirect, or both)
 - Related: [0043](0043-local-authentication.md) (local sign-in, whose credential
   this extends), [0040](0040-bearer-tokens-on-v1.md) (the `/v1` token path this
   rides), [0044](0044-keycloak-removed.md) (why there may be no issuer at all),
