@@ -11,8 +11,8 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chat_api.config import Settings
-from chat_api.gateway_client import GatewayClient
-from chat_api.models import Session
+from chat_api.gateway_client import GatewayClient, GatewayError
+from chat_api.models import LOCAL_ISSUER, Session
 from chat_api.oidc import OIDCClient, OIDCError, read_session_cookie
 from chat_api.secrets import SecretBox, SecretDecryptionError
 from chat_api.types import utcnow
@@ -73,15 +73,23 @@ async def get_caller(
     settings: Annotated[Settings, Depends(get_settings)],
     oidc: Annotated[OIDCClient, Depends(get_oidc)],
     box: Annotated[SecretBox, Depends(get_secrets)],
+    gateway: Annotated[GatewayClient, Depends(get_gateway)],
 ) -> Caller:
     """Resolve the cookie to a session, and mint a fresh access token from it.
 
     A token is fetched per request rather than cached because caching it means
     holding a bearer credential in memory keyed by session, and the refresh call
-    is one round trip to Keycloak on a path that is already making a round trip
-    to the gateway. When that measurement stops holding — it will, once tool
-    loops make several gateway calls per turn — the cache belongs here, keyed by
-    session id with the token's own expiry, and nowhere else.
+    is one round trip to the issuer on a path that is already making a round
+    trip to the gateway. When that measurement stops holding — it will, once
+    tool loops make several gateway calls per turn — the cache belongs here,
+    keyed by session id with the token's own expiry, and nowhere else.
+
+    **The one seam every credential goes through**: the session row's issuer
+    decides who renews it. An IdP issuer refreshes at the provider's token
+    endpoint; ``issuer="local"`` (ADR 0046) exchanges at the gateway's
+    ``/auth/token`` for an opaque access credential. Both return the same
+    shape — a token that works on ``/v1`` and the refresh value to keep —
+    which is why nothing downstream knows the difference.
     """
     cookie = request.cookies.get(SESSION_COOKIE)
     if not cookie:
@@ -97,9 +105,17 @@ async def get_caller(
     if not session.refresh_token_encrypted:
         raise _unauthenticated()
 
+    # Annotated because the two branches disagree: the IdP may rotate (so its
+    # refresh can be None), the gateway's exchange does not — mypy reads the
+    # declared type from the first branch it sees, and guessing is how a real
+    # difference gets flattened into an error.
+    next_refresh: str | None
     try:
         refresh_token = box.decrypt(session.refresh_token_encrypted)
-        access_token, next_refresh = await oidc.refresh(refresh_token)
+        if session.issuer == LOCAL_ISSUER:
+            access_token, next_refresh = await gateway.exchange_local(refresh_token)
+        else:
+            access_token, next_refresh = await oidc.refresh(refresh_token)
     except (OIDCError, SecretDecryptionError) as exc:
         # The session is over: the provider retired the refresh token, or the
         # key that encrypted it is gone. Deleting the row is the honest
@@ -109,6 +125,22 @@ async def get_caller(
         await db.delete(session)
         await db.commit()
         raise _unauthenticated() from exc
+    except GatewayError as exc:
+        if exc.status == 401:
+            # The gateway judged the credential and refused it — revoked,
+            # expired, or the user disabled. Same honesty as above.
+            logger.info("session %s ended: gateway refused its credential", session_id)
+            await db.delete(session)
+            await db.commit()
+            raise _unauthenticated() from exc
+        # Anything else is *this* service's view of the gateway failing to be
+        # there. The session stays: deleting it on a transient outage would
+        # log people out for a network blip, and the OIDC branch above cannot
+        # see the difference only because its provider does not return a
+        # status we trust — the gateway's do.
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, detail="The gateway is unreachable."
+        ) from exc
 
     if next_refresh and next_refresh != refresh_token:
         session.refresh_token_encrypted = box.encrypt(next_refresh)

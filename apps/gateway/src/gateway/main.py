@@ -40,6 +40,7 @@ from gateway.routers import (
     me,
     messages,
     models,
+    tokens,
 )
 from gateway.routers import responses as responses_router
 from gateway.secrets import SecretBox
@@ -270,6 +271,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(images.router)
     app.include_router(models.router)
     app.include_router(auth.router)
+    app.include_router(tokens.router)
     app.include_router(me.router)
     app.include_router(admin.router)
 
