@@ -179,3 +179,9 @@
   content: "·";
   margin: 0 var(--space-2);
 }
+
+.welcomeLogo {
+  display: block;
+  margin: 0 auto var(--space-4);
+  border-radius: var(--radius-md);
+}

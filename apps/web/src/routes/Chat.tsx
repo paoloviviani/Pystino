@@ -45,6 +45,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { MarkdownText } from "../components/aui/MarkdownText";
 import { Reasoning } from "../components/aui/Reasoning";
+import logo from "../assets/logo.png";
 import styles from "./Chat.module.css";
 import {
   type Message,
@@ -242,6 +243,7 @@ function Welcome({ onSuggest }: { onSuggest: (text: string) => void }) {
   return (
     <div className="aui-thread-welcome-root">
       <div className="aui-thread-welcome-center">
+        <img src={logo} alt="" width={56} height={54} className={styles.welcomeLogo} />
         <div className="aui-thread-welcome-message">
           <h1 className="aui-thread-welcome-message-inner">How can I help you today?</h1>
         </div>

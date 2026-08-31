@@ -17,6 +17,7 @@
 import { Button, Input, Notice } from "@llmp/ui";
 import { useEffect, useState, type FormEvent } from "react";
 
+import logo from "../assets/logo.png";
 import { BASE, type AuthMethods, getAuthMethods, signInLocal } from "../lib/api";
 import styles from "./SignIn.module.css";
 
@@ -77,6 +78,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
   return (
     <div className={styles.wrap}>
       <form className={styles.card} onSubmit={(event) => void submit(event)}>
+        <img className={styles.logo} src={logo} alt="" width={64} height={64} />
         <h1 className={styles.heading}>Sign in</h1>
         {error ? (
           <Notice tone="danger" title="Sign-in failed">
