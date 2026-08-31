@@ -315,16 +315,40 @@ def create_app(detector: Detector | None = None) -> FastAPI:
     @app.post("/detect", response_model=DetectionResponse)
     async def detect(request: DetectionRequest) -> DetectionResponse:
         engine: Detector = app.state.detector
-        found = await engine.analyse(
-            request.texts,
-            language=request.language,
-            score_threshold=request.score_threshold,
-            entity_types=request.entity_types,
+        # Filter the request to what this engine can actually serve, and name
+        # what was dropped. Presidio raises — "No matching recognizers were
+        # found to serve the request" — when asked for an entity type no
+        # recognizer supports, so a policy naming PERSON against a no-NER
+        # build answered 500 and the gateway's fail-closed answered 502: the
+        # whole redaction layer down because *one rule* does not fit the
+        # engine. Detecting what it can and reporting the rest is the
+        # fact-returning behaviour the contract asks for; the caller decides
+        # whether a partial detection is acceptable (it is, and the gateway
+        # logs it loudly every time the set changes).
+        supported = set(engine.capabilities().entities)
+        requested = request.entity_types
+        unsupported = sorted({t.upper() for t in (requested or [])} - supported)
+        servable = (
+            None
+            if requested is None
+            else [t for t in requested if t.upper() in supported]
         )
+        # An entirely unservable enumeration skips the engine: handing Presidio
+        # an empty `entities` list raises the same way an unknown type does.
+        if requested is not None and not servable:
+            found: list[list[Any]] = [[] for _ in request.texts]
+        else:
+            found = await engine.analyse(
+                request.texts,
+                language=request.language,
+                score_threshold=request.score_threshold,
+                entity_types=servable,
+            )
         return DetectionResponse(
             findings=[TextFindings(index=index, spans=spans) for index, spans in enumerate(found)],
             engine=engine.engine,
             engine_version=engine.engine_version,
+            unsupported_types=unsupported,
         )
 
     return app

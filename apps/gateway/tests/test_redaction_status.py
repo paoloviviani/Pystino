@@ -83,6 +83,33 @@ class TestWarnings:
         # And it says what the service *does* offer, so the fix is obvious.
         assert "en" in notes[0]
 
+    def test_an_env_type_the_service_lacks_is_named(self) -> None:
+        notes = _redaction_warnings(
+            settings(entity_types=["PERSON", "IT_FISCAL_CODE"]),
+            "http",
+            healthy(),  # detects PERSON, not IT_FISCAL_CODE
+        )
+        assert any("IT_FISCAL_CODE" in note and "inert" in note for note in notes)
+        # PERSON is served; only the missing one is named.
+        assert not any("PERSON" in note for note in notes)
+
+    def test_an_admin_rule_type_the_service_lacks_is_named_too(self) -> None:
+        """ADR 0037 moved the policy off the env var: a rule set on the console
+        must be checked as hard as one set in the environment. The failure this
+        guards is the screen blessing a policy the screen itself made inert."""
+        notes = _redaction_warnings(
+            settings(),
+            "http",
+            healthy(),  # PERSON and EMAIL_ADDRESS only
+            policy_types=["PERSON", "IBAN_CODE"],
+        )
+        assert any("IBAN_CODE" in note and "inert" in note for note in notes)
+
+    def test_admin_rules_the_service_serves_warn_nothing(self) -> None:
+        assert (
+            _redaction_warnings(settings(), "http", healthy(), policy_types=["PERSON"]) == []
+        )
+
     def test_a_degraded_language_is_distinguished_from_an_absent_one(self) -> None:
         notes = _redaction_warnings(
             settings(language="it"),
@@ -92,11 +119,11 @@ class TestWarnings:
         assert any("without a named-entity model" in note for note in notes)
 
     def test_entity_types_the_service_cannot_detect(self) -> None:
-        """Asked for and silently ignored, which is the worst of both."""
+        """Asked for and inert, which is the worst of both."""
         notes = _redaction_warnings(
             settings(entity_types=["PERSON", "IBAN_CODE"]), "http", healthy()
         )
-        assert any("IBAN_CODE" in note and "silently ignored" in note for note in notes)
+        assert any("IBAN_CODE" in note and "inert" in note for note in notes)
 
     def test_no_entity_filter_is_not_a_warning(self) -> None:
         """Null means everything the engine offers, not nothing."""

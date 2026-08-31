@@ -1977,7 +1977,11 @@ async def _redaction_activity(session: SessionDep, window_seconds: int) -> Redac
 
 
 def _redaction_warnings(
-    config: RedactionSettings, engine: str, service: RedactionServiceHealth | None
+    config: RedactionSettings,
+    engine: str,
+    service: RedactionServiceHealth | None,
+    *,
+    policy_types: list[str] | None = None,
 ) -> list[str]:
     """What is wrong with this configuration, in words.
 
@@ -1985,6 +1989,11 @@ def _redaction_warnings(
     settings say; these tell them the settings are not achieving what they look
     like they achieve — which is the failure mode of a redaction layer, because
     detecting nothing looks exactly like finding nothing to detect.
+
+    ``policy_types`` is the effective policy's enumeration (None when the
+    default mode is on and the set is not enumerable): merged with the env
+    var's types, because a rule set on the screen must be checked as hard as
+    one set in the environment.
     """
     notes: list[str] = []
 
@@ -2026,12 +2035,21 @@ def _redaction_warnings(
                 "entities are found than for a fully supported language."
             )
 
-        if config.entity_types and service.entities:
-            unknown = sorted(set(config.entity_types) - set(service.entities))
+        if (config.entity_types or policy_types) and service.entities:
+            # Both sources of truth: the env enumeration and the effective
+            # policy's. Patterns are excluded by construction — detected_types
+            # carries only entity types, patterns run in the gateway itself.
+            # Upper-cased for the same reason the policy stores them that way:
+            # entity labels are case-free.
+            unknown = sorted(
+                {name.upper() for name in (config.entity_types or []) + (policy_types or [])}
+                - set(service.entities)
+            )
             if unknown:
                 notes.append(
-                    "Configured entity types the service does not detect, so they are "
-                    f"silently ignored: {', '.join(unknown)}."
+                    "Entity types the policy protects but the service does not detect — "
+                    f"those rules are inert and the values reach providers unprotected: "
+                    f"{', '.join(unknown)}."
                 )
 
     if not config.restore_in_response:
@@ -2162,7 +2180,16 @@ async def _redaction_response(
         placeholder_key_set=bool(config.placeholder_key.get_secret_value()),
         service=service,
         activity=await _redaction_activity(session, window_seconds),
-        warnings=_redaction_warnings(config, engine, service),
+        # The effective policy, not the env var: since ADR 0037 the rules an
+        # admin sets on this very screen are the policy in force, and a
+        # mismatch check that read only `entity_types` would bless a policy
+        # the screen itself made unusable.
+        warnings=_redaction_warnings(
+            config,
+            engine,
+            service,
+            policy_types=resolver.policy.detected_types() if resolver else None,
+        ),
     )
 
 

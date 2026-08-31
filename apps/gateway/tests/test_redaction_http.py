@@ -91,12 +91,34 @@ class FakeDetector:
     def redactor(self, **overrides: Any) -> HttpDetectionRedactor:
         return HttpDetectionRedactor(
             settings(**overrides),
-            client=httpx.AsyncClient(transport=httpx.MockTransport(self._handle)),
+            # A lambda, not the bound method: respond_unsupported rebinds
+            # _handle, and a transport holding the original binding would
+            # never see it.
+            client=httpx.AsyncClient(
+                transport=httpx.MockTransport(lambda request: self._handle(request))
+            ),
         )
 
     @property
     def call_count(self) -> int:
         return len(self.requests)
+
+    def respond_unsupported(self, types: list[str]) -> None:
+        """The engine answers 200 but names types it cannot serve."""
+        import json as _json
+
+        original = self._handle
+
+        def with_unsupported(request: httpx.Request) -> httpx.Response:
+            response = original(request)
+            body = _json.loads(response.content)
+            body["unsupported_types"] = types
+            return httpx.Response(
+                response.status_code, content=_json.dumps(body).encode(),
+                headers={"content-type": "application/json"},
+            )
+
+        self._handle = with_unsupported  # type: ignore[method-assign]
 
 
 class TestRegistry:
@@ -206,6 +228,44 @@ class TestRequestRedaction:
         assert "<PERSON_" in outcome.messages[0]["content"]
         assert outcome.entity_count == 1
         assert outcome.changed
+
+    async def test_unsupported_types_are_logged_once_per_change(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The detector cannot protect what it is not asked for, so a rule
+        naming an entity this engine lacks is *inert* — silent under-protection
+        unless something names it. The log is that something, and it fires on
+        the change, not per request, or it buries itself."""
+        import logging
+
+        detector = FakeDetector({"a@b.test": "EMAIL_ADDRESS"})
+        detector.respond_unsupported(["PERSON"])
+        redactor = detector.redactor()
+        messages = [{"role": "user", "content": "Ask a@b.test"}]
+
+        with caplog.at_level(logging.WARNING):
+            await redactor.redact_request(messages)
+            await redactor.redact_request(messages)  # same set: no repeat
+            assert "PERSON" in caplog.text
+            assert caplog.text.count("PERSON") == 1
+
+            detector.respond_unsupported(["PERSON", "IBAN_CODE"])
+            # Different text, or the detection cache serves the last result and
+            # the engine — with its new answer — is never asked.
+            await redactor.redact_request([{"role": "user", "content": "Ask a@b.test now"}])
+            assert "IBAN_CODE" in caplog.text  # the change is named
+
+    async def test_no_unsupported_types_logs_nothing(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import logging
+
+        detector = FakeDetector({"Mario Rossi": "PERSON"})
+        with caplog.at_level(logging.WARNING):
+            await detector.redactor().redact_request(
+                [{"role": "user", "content": "Ask Mario Rossi."}]
+            )
+        assert "cannot serve" not in caplog.text
 
     async def test_the_callers_messages_are_not_mutated(self) -> None:
         """The transcript of what the user actually sent must survive redaction."""

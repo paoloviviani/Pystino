@@ -306,6 +306,12 @@ class HttpDetectionRedactor:
         # must not hang the request behind it.
         self._client = client or httpx.AsyncClient(timeout=httpx.Timeout(settings.timeout_seconds))
         self._cache = _Cache(settings.cache_size)
+        # The engine-entity mismatch report, deduplicated: the detector names
+        # requested types it cannot serve in every response, and logging that
+        # per request would bury the first occurrence under the ten-thousandth.
+        # Logged when the set changes, which is exactly the event an operator
+        # needs to see — the deploy or the rule edit that made a rule inert.
+        self._last_unsupported: frozenset[str] | None = None
 
     async def aclose(self) -> None:
         if self._owns_client:
@@ -385,7 +391,29 @@ class HttpDetectionRedactor:
                 "screened. It is refused rather than forwarded unredacted."
             ) from exc
 
-        return {finding.index: finding.spans for finding in parsed.findings}
+        found = {finding.index: finding.spans for finding in parsed.findings}
+        self._report_unsupported(parsed.unsupported_types)
+        return found
+
+    def _report_unsupported(self, unsupported: list[str]) -> None:
+        """Name the policy types this engine cannot serve, when it changes.
+
+        The detector filters an unservable enumeration rather than raising, so
+        this log is the only thing standing between "PERSON is protected" and
+        "PERSON never reaches the detector" — the silent kind of under-
+        protection, which no 502 and no failed request will ever reveal.
+        """
+        if not unsupported:
+            return
+        named = frozenset(unsupported)
+        if named == self._last_unsupported:
+            return
+        self._last_unsupported = named
+        logger.warning(
+            "the detection engine cannot serve entity type(s) %s — rules protecting "
+            "them are inert against this engine until the engine or the policy changes",
+            ", ".join(sorted(named)),
+        )
 
     # -- Redactor ----------------------------------------------------------
 
