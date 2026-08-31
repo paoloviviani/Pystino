@@ -88,6 +88,87 @@
   font-weight: var(--weight-medium);
 }
 
+/* The row is a flex pair: the title button fills, the actions hide until the
+   row is hovered or selected. Always-visible per-row chrome in a sidebar is
+   eighteen buttons before the reader has chosen anything. */
+.row {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+}
+
+.row:hover,
+.row.current {
+  background: var(--colour-accent-subtle);
+}
+
+.row.current {
+  color: var(--colour-accent);
+}
+
+.rowActions {
+  display: none;
+  flex: none;
+}
+
+.row:hover .rowActions,
+.row.current .rowActions {
+  display: inline-flex;
+}
+
+.rowAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--colour-text-muted);
+  cursor: pointer;
+}
+
+.rowAction:hover {
+  color: var(--colour-text);
+  background: var(--colour-surface-sunken);
+}
+
+.rowAction:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.rowAction svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.renameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid var(--colour-border);
+  border-radius: var(--radius-md);
+  background: var(--colour-surface);
+}
+
+.renameInput {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--text-sm);
+  border: none;
+  background: none;
+  color: var(--colour-text);
+}
+
+.renameInput:focus-visible {
+  outline: none;
+}
+
 .footer {
   border-top: var(--border-width) solid var(--colour-border-quiet);
   padding: var(--space-3);
@@ -107,4 +188,68 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+
+/* -- small screens ---------------------------------------------------------
+ * The PWA (ADR 0016) is this platform's mobile story, and a fixed 17rem
+ * sidebar ate more than half a phone. Below this width the sidebar becomes a
+ * top bar: brand and new-chat in one row, the conversations scrolling
+ * horizontally beneath them. The footer's identity and console link move
+ * into the bar's right side; sign-out stays reachable, which is the only
+ * hard requirement — a phone user who cannot sign out is stuck as whoever
+ * opened the tab last.
+ */
+@media (max-width: 48rem) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .sidebar {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-3);
+    border-right: none;
+    border-bottom: var(--border-width) solid var(--colour-border-quiet);
+    padding: var(--space-2) var(--space-3);
+    overflow-x: auto;
+  }
+
+  .brand {
+    border-bottom: none;
+    padding: 0;
+    flex: none;
+  }
+
+  .conversations {
+    flex-direction: row;
+    gap: var(--space-1);
+    padding: 0;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .conversation {
+    width: auto;
+    white-space: nowrap;
+    flex: none;
+    max-width: 12rem;
+  }
+
+  .emptyHint {
+    padding: 0;
+    white-space: nowrap;
+  }
+
+  .footer {
+    border-top: none;
+    padding: 0;
+    flex-direction: row;
+    align-items: center;
+    flex: none;
+  }
+
+  .identity {
+    max-width: 8rem;
+  }
 }

@@ -27,6 +27,11 @@
   font-weight: var(--weight-medium);
 }
 
+.logo {
+  align-self: center;
+  border-radius: var(--radius-md);
+}
+
 .sso {
   text-align: center;
   font-size: var(--text-sm);
