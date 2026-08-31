@@ -18,7 +18,12 @@ from typing import Any
 
 import httpx
 import pytest
-from llmp_redaction.app import _configured_models, create_app
+from llmp_redaction.app import (
+    _configured_languages,
+    _configured_models,
+    _nlp_engine_name,
+    create_app,
+)
 from llmp_redaction.detector import MODEL_BACKED_ENTITIES, PATTERN_ONLY_ENTITIES, Detector
 
 
@@ -360,9 +365,12 @@ class TestHttpSurface:
 
 
 class TestModelConfiguration:
-    def test_the_default_is_english_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("REDACTION_SPACY_MODELS", raising=False)
-        assert _configured_models() == {"en": "en_core_web_lg"}
+    def test_an_empty_value_means_no_models(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Written by the Dockerfile: empty means the no-NER build, and reading
+        it as "use the default" would send a model-less container off to load
+        weights that are not on disk."""
+        monkeypatch.setenv("REDACTION_SPACY_MODELS", "")
+        assert _configured_models() == {}
 
     def test_models_are_read_from_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Written by the Dockerfile from the models it actually installed, so
@@ -370,8 +378,111 @@ class TestModelConfiguration:
         monkeypatch.setenv("REDACTION_SPACY_MODELS", "en=en_core_web_lg,it=it_core_news_lg")
         assert _configured_models() == {"en": "en_core_web_lg", "it": "it_core_news_lg"}
 
-    def test_a_malformed_value_falls_back_to_the_default(
+    def test_a_malformed_entry_is_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("REDACTION_SPACY_MODELS", "nonsense,en=en_core_web_lg")
+        assert _configured_models() == {"en": "en_core_web_lg"}
+
+
+class TestNlpEngineConfiguration:
+    def test_the_default_nlp_engine_is_spacy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("REDACTION_NLP_ENGINE", raising=False)
+        assert _nlp_engine_name() == "spacy"
+
+    def test_disabled_is_selected_by_the_environment(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("REDACTION_SPACY_MODELS", "nonsense")
-        assert _configured_models() == {"en": "en_core_web_lg"}
+        monkeypatch.setenv("REDACTION_NLP_ENGINE", "disabled")
+        assert _nlp_engine_name() == "disabled"
+
+    def test_an_unknown_nlp_engine_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Refused rather than fallen back: a service that silently loads the
+        model its operator asked it not to load defeats the whole setting."""
+        monkeypatch.setenv("REDACTION_NLP_ENGINE", "stanza")
+        with pytest.raises(ValueError, match="REDACTION_NLP_ENGINE"):
+            _nlp_engine_name()
+
+    def test_disabled_languages_come_from_the_language_list(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("REDACTION_NLP_ENGINE", "disabled")
+        monkeypatch.setenv("REDACTION_SPACY_MODELS", "")
+        monkeypatch.setenv("REDACTION_LANGUAGES", "en,it")
+        assert _configured_languages() == ["en", "it"]
+
+    def test_disabled_languages_default_to_english(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("REDACTION_NLP_ENGINE", "disabled")
+        monkeypatch.setenv("REDACTION_SPACY_MODELS", "")
+        monkeypatch.delenv("REDACTION_LANGUAGES", raising=False)
+        assert _configured_languages() == ["en"]
+
+    def test_spacy_languages_come_from_the_model_map(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("REDACTION_SPACY_MODELS", "en=en_core_web_lg,it=it_core_news_lg")
+        assert _configured_languages() == ["en", "it"]
+
+
+class TestBuildWithoutNer:
+    def test_disabled_mode_loads_no_model_and_hides_model_backed_entities(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The real builder, with the NLP engine off.
+
+        Everything worth asserting is here: no spaCy model is loaded (that is
+        the memory saving), the entity list carries no model-backed type (that
+        is what keeps the console's selector honest), and the capabilities
+        report every language degraded (that is how the screen says so).
+        """
+        from llmp_redaction.app import build_detector
+
+        # The one test that runs the real builder, so it needs real Presidio.
+        # Deliberately absent from the root workspace lockfile (services/redaction/
+        # pyproject.toml), so from the root venv this skips rather than fails; in
+        # the service's own environment it runs and is the test that matters.
+        pytest.importorskip("presidio_analyzer", reason="presidio not installed")
+
+        monkeypatch.setenv("REDACTION_NLP_ENGINE", "disabled")
+        monkeypatch.setenv("REDACTION_SPACY_MODELS", "")
+        monkeypatch.delenv("REDACTION_LANGUAGES", raising=False)
+
+        detector = build_detector()
+
+        assert detector.capabilities().models == {}
+        assert detector.capabilities().degraded == ["en"]
+        entities = set(detector.capabilities().entities)
+        assert "CREDIT_CARD" in entities  # pattern recognisers survive
+        assert not entities & {"PERSON", "LOCATION", "NRP", "ORGANIZATION"}
+
+    def test_disabled_mode_still_finds_phones_at_the_default_threshold(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without a lemma table Presidio's context enhancer never fires, and a
+        phone match reports the bare 0.4 — under the gateway's default
+        threshold, and the 0.75 that a context word earns in NER mode is a lift
+        no-NER mode can never attain. Left alone, the entity list would
+        advertise PHONE_NUMBER while nothing under 0.5 ever came back: the
+        exact lie this service's capability reporting exists to prevent. The
+        score is compensated to what NER mode could produce; the gateway policy
+        still decides per type whether phones are redacted.
+        """
+        from llmp_redaction.app import build_detector
+
+        pytest.importorskip("presidio_analyzer", reason="presidio not installed")
+
+        monkeypatch.setenv("REDACTION_NLP_ENGINE", "disabled")
+        monkeypatch.setenv("REDACTION_SPACY_MODELS", "")
+        monkeypatch.delenv("REDACTION_LANGUAGES", raising=False)
+
+        detector = build_detector()
+
+        spans = detector.analyse_one(
+            "call +39 011 227 6543 today",
+            language="en",
+            score_threshold=0.5,
+            entity_types=None,
+        )
+        phones = [span for span in spans if span.entity_type == "PHONE_NUMBER"]
+        assert phones, f"no phone found above 0.5: {spans}"
+        assert phones[0].score >= 0.5

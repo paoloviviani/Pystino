@@ -15,6 +15,19 @@
 #
 #   SPACY_MODELS="en_core_web_lg it_core_news_lg" docker compose ... build redaction
 #
+# Three deployment shapes, and how to get each:
+#
+#   Presidio + NER (default)   SPACY_MODELS="en_core_web_lg" — the model loads at
+#                              startup and PERSON/LOCATION/NRP/ORGANIZATION are
+#                              detectable. ~900 MB of RAM.
+#   Presidio, no NER           SPACY_MODELS= (empty build) AND
+#                              REDACTION_NLP_ENGINE=disabled — no model loads, the
+#                              pattern and checksum recognisers work, and
+#                              /healthz reports the model-backed entities as
+#                              absent so the console hides them. ~150 MB.
+#   Redaction off              drop this overlay and set
+#                              GATEWAY_REDACTION__ENGINE=noop on the gateway.
+#
 # See docs/adr/0026-pluggable-detection.md and services/redaction/README.md.
 services:
   redaction:
@@ -23,6 +36,13 @@ services:
       dockerfile: services/redaction/Dockerfile
       args:
         SPACY_MODELS: ${SPACY_MODELS:-en_core_web_lg}
+    environment:
+      # With models installed this stays "spacy" (the default) and they load.
+      # Set "disabled" to run pattern-only; it must match the build — a no-NER
+      # service in a model-carrying image simply wastes the 425 MB of weights,
+      # and a spacy service in a model-less image fails visibly at startup
+      # rather than detecting nothing.
+      REDACTION_NLP_ENGINE: ${REDACTION_NLP_ENGINE:-spacy}
     # Deliberately no `ports:`. The service has no authentication of its own
     # because it is not reachable from outside the compose network; publishing it
     # would make that assumption false.

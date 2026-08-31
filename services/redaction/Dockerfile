@@ -32,12 +32,17 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && VIRTUAL_ENV=/opt/venv uv pip install --no-cache .
 
 # Space-separated spaCy models. Default is English only, which keeps the image
-# MIT-licensed end to end.
+# MIT-licensed end to end. Building with SPACY_MODELS= (empty) installs no
+# weights at all: pair that with REDACTION_NLP_ENGINE=disabled at runtime for a
+# pattern-only deployment (cards, IBANs, phones, fiscal codes) that uses a
+# fraction of the memory and reports the model-backed entities as unavailable
+# rather than pretending to find them.
 ARG SPACY_MODELS="en_core_web_lg"
 
 # Downloaded from the pinned GitHub release URLs rather than `spacy download`,
 # which resolves a "compatible" version at build time and therefore produces a
-# different image tomorrow.
+# different image tomorrow. The loop over an empty SPACY_MODELS downloads
+# nothing, which is the whole no-NER build.
 RUN set -eux; \
     for model in ${SPACY_MODELS}; do \
         case "${model}" in \
