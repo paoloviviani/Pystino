@@ -129,23 +129,6 @@ services:
       GATEWAY_OIDC__ADMIN_GROUPS: ${GATEWAY_OIDC__ADMIN_GROUPS:-[]}
       GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE: ${GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE:-}
 
-  # Only present when docker-compose.chat.yml is also passed. Everything the
-  # gateway block above needs, for the same reasons, plus the mount path: behind
-  # this proxy the chat lives at /chat of the one origin, so its callback and
-  # every cookie it sets carry that prefix.
-  chat:
-    environment:
-      CHAT_OIDC__ENABLED: ${CHAT_OIDC__ENABLED:-${GATEWAY_OIDC__ENABLED:-false}}
-      CHAT_OIDC__ISSUER: ${CHAT_OIDC__ISSUER:-${GATEWAY_OIDC__ISSUER:-}}
-      CHAT_OIDC__CLIENT_ID: ${CHAT_OIDC__CLIENT_ID:-}
-      CHAT_OIDC__CLIENT_SECRET: ${CHAT_OIDC__CLIENT_SECRET:-${GATEWAY_OIDC__CLIENT_SECRET:-}}
-      # Its own client on the IdP, not the gateway's — two services that
-      # authenticate people are two clients, each revocable on its own. The
-      # callback must be registered there exactly (docs/oidc-generic-provider.md).
-      CHAT_OIDC__REDIRECT_URI: ${CHAT_OIDC__REDIRECT_URI:-${PUBLIC_ORIGIN:-https://${PUBLIC_HOST:?set PUBLIC_HOST in deploy/.env}:${HTTPS_PORT:-443}}/chat/auth/callback}
-      FORWARDED_ALLOW_IPS: "172.16.0.0/12,127.0.0.1"
-      CHAT_SESSION_COOKIE_SECURE: "true"
-
   # Only present when docker-compose.redaction.yml is also passed, which is the
   # usual combination. That file publishes the fake upstream so the redaction
   # check can read what the gateway sent — on 0.0.0.0, which is harmless behind a

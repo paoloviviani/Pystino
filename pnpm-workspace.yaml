@@ -1,19 +1,9 @@
 # JS/TS half of the monorepo. See docs/adr/0002-monorepo-tooling.md
 #
-# packages/ui, apps/console and apps/web are built. apps/desktop is still a
-# placeholder directory.
+# packages/ui and apps/console are built. apps/desktop is still a placeholder
+# directory.
 packages:
   - "packages/ui"
   - "apps/console"
-  - "apps/web"
   - "apps/desktop"
   - "packages/shared"
-minimumReleaseAgeExclude:
-  - '@assistant-ui/core@0.3.16'
-  - '@assistant-ui/react-markdown@0.14.13'
-  - '@assistant-ui/react@0.15.17'
-  - '@assistant-ui/store@0.3.11'
-  - '@assistant-ui/tap@0.9.15'
-  - assistant-cloud@0.1.42
-  - assistant-stream@0.3.40
-  - safe-content-frame@0.0.28

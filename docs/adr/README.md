@@ -52,19 +52,21 @@ verified is marked as such in the ADR that depends on it.
 | [0038](0038-scoped-redaction.md) | Redaction scoped per provider, model, group, user and key, where a scope can only tighten |
 | [0039](0039-redaction-rules-only.md) | There is no deployment policy, only rules; the catch-all is one of them, and the default protects nothing |
 | [0040](0040-bearer-tokens-on-v1.md) | OIDC access tokens as a `/v1` credential, gated by audience |
-| [0041](0041-chat-frontend-stack.md) | A Vite SPA on `packages/ui`, with assistant-ui for the thread (supersedes 0015's framework choice) |
 | [0042](0042-material-design-3.md) | Material Design 3, tuned for reading (supersedes 0034) |
 | [0043](0043-local-authentication.md) | Optional local email + password sign-in beside OIDC; one session, two doors |
 | [0044](0044-keycloak-removed.md) | Keycloak leaves the stack; OIDC against any provider, local login as the default way in |
 | [0045](0045-public-models.md) | Public models: any authenticated caller may use one, billed to their own group |
 | [0046](0046-local-api-credentials.md) | The local door issues `/v1` credentials: the gateway as issuer for its own accounts |
 
+**0015, 0016 and 0041 — the chat frontend decisions — moved to the `chat`
+branch with the chat application itself** (A Vite SPA on `packages/ui` with
+assistant-ui; Next.js 16 + AI SDK superseded by 0041; the PWA). They are
+recorded there, with that branch's copy of this index.
+
 ## Decisions recorded now, implemented later
 
 | # | Decision | Phase |
 |---|---|---|
-| [0015](0015-frontend-stack.md) | Next.js 16 + assistant-ui + AI SDK v6 | 2 |
-| [0016](0016-pwa.md) | Serwist (next-pwa is archived) | 2 |
 | [0017](0017-desktop-shell.md) | Tauri v2 (v3 is alpha only) | 4 |
 | [0018](0018-vector-store.md) | pgvector first, Qdrant behind an interface | 3 |
 | [0019](0019-document-conversion.md) | Document conversion behind an HTTP endpoint; Docling as reference | 3 |
@@ -77,10 +79,6 @@ Worth knowing which of the starting assumptions changed, and why:
 
 - **Bauhaus → Material Design 3** ([0042](0042-material-design-3.md)) — an
   authentic poster idiom, applied to pages of figures, was hard to read.
-- **Next.js → Vite** ([0041](0041-chat-frontend-stack.md)) — decided before
-  `packages/ui`, the console or `chat-api` existed. **assistant-ui was kept**,
-  after a first draft of 0041 rejected it on three claims that turned out to be
-  false; the ADR records them.
 - **Redis → Valkey** ([0006](0006-counter-store.md)) — licence history and distro default.
 - **Qdrant → pgvector first** ([0018](0018-vector-store.md)) — one less stateful service.
 - **Python 3.12 → 3.13** ([0004](0004-gateway-runtime.md)) — and *not* 3.14.
@@ -92,8 +90,7 @@ Everything else in the brief's assumptions was validated as correct.
 ## Plans
 
 - [phase-2-plan.md](../phase-2-plan.md) — redaction and the console, sequenced.
-- [phase-3-plan.md](../phase-3-plan.md) — the chat application: what is built, what
-  the gateway makes redundant, and what was rejected.
+- The chat application's plan (`phase-3-plan.md`) lives on the `chat` branch.
 
 ## Writing a new one
 

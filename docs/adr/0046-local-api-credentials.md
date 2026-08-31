@@ -1,14 +1,15 @@
 # 0046 — The local door issues `/v1` credentials: the gateway as issuer for its own accounts
 
 - Date: 2026-08-31
-- Status: **accepted, built** (gateway and chat-api unit-tested; the SPA renders
-  its door from `/api/auth/methods`, showing the password form, the OIDC
-  redirect, or both)
+- Status: **accepted, built** — the gateway half is on main; the consuming
+  chat service moved to the `chat` branch after this was built, so its half
+  (unit tests, the SPA door) lives there. This ADR stays: the feature is the
+  gateway issuing credentials, whatever client holds them.
 - Related: [0043](0043-local-authentication.md) (local sign-in, whose credential
   this extends), [0040](0040-bearer-tokens-on-v1.md) (the `/v1` token path this
   rides), [0044](0044-keycloak-removed.md) (why there may be no issuer at all),
   [0010](0010-api-keys.md) (the key machinery this reuses),
-  [phase-3-plan.md](../phase-3-plan.md) (the chat as a `/v1` client).
+  the Phase 3 plan on the `chat` branch (the chat as a `/v1` client).
 - All code references verified against the working tree on 2026-08-31.
 
 ## Context
