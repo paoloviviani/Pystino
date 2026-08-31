@@ -52,6 +52,7 @@ traps that only show up on the live stack. Read it before changing anything;
 uv run ruff check . && uv run mypy apps/gateway/src services   # mypy is --strict
 uv run pytest -q                                               # ~950 tests, SQLite, no services
 pnpm -r test && pnpm -r typecheck                              # packages/ui + console + web
+uv run mkdocs build --strict                                   # docs site (mkdocs.yml); touches docs/ or ADRs
 ```
 
 - Tests need no PostgreSQL, Valkey or network (SQLite + fake upstream transport).

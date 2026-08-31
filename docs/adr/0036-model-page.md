@@ -7,7 +7,7 @@
   button in the 'models' tab should open a richer interface (maybe in a
   different page?) that includes also pricing. maybe accesible clicking also on
   the model name?"
-- Related: [0023](0023-console.md) (the console), [0008](0008-accounting-model.md)
+- Related: [0023](0023-admin-console.md) (the console), [0008](0008-accounting-model.md)
   (why a price is append-only and effective-dated),
   [0031](0031-model-capabilities.md) (the capability vocabulary this page edits),
   [0014](0014-model-catalogue-and-pricing.md) (the catalogue and the importer).

@@ -1,0 +1,139 @@
+# Documentation site. Built with `uv run mkdocs build --strict`; served locally
+# with `uv run mkdocs serve`. Strict because a link that silently 404s is a
+# document that lies — the same reason no test is allowed to skip silently.
+#
+# mkdocs-material is MIT, mkdocs BSD-2-Clause, pymdown-extensions MIT and
+# pygments BSD-2-Clause — all OSI-approved, checked in the installed package
+# metadata on 2026-08-31 (ADR 0001's inbound licence policy).
+
+site_name: LLM Platform
+site_description: >
+  A self-hosted LLM platform: an OpenAI-compatible gateway with per-user and
+  per-group accounting, quotas and redaction, and the console that operates it.
+repo_url: https://github.com/paoloviviani/Pistin
+repo_name: paoloviviani/Pistin
+copyright: Copyright &copy; Paolo Viviani — <a href="https://github.com/paoloviviani/Pistin/blob/main/LICENCE">EUPL-1.2</a>
+
+strict: true
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+
+# Warnings fail the build (strict). "not_found" is the one that matters: it
+# catches every internal link whose target does not exist. Anchor checking is
+# on too — a link to a heading that was renamed is the same lie, quieter.
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  links:
+    not_found: warn
+    anchors: warn
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Architecture: architecture.md
+  - Gateway: gateway.md
+  - Accounting and quotas: accounting-and-quotas.md
+  - Redaction: redaction.md
+  - Deployment: deployment.md
+  - Operations:
+      - operations.md
+      - "Measured performance": performance.md
+  - Guides:
+      - "OIDC against any provider": oidc-generic-provider.md
+      - "Cache accounting findings": cache-accounting-findings.md
+  - Plans:
+      - "Phase 2 — redaction and the console": phase-2-plan.md
+      - "Phase 3 — the chat application": phase-3-plan.md
+      - "Redaction scoping — design": redaction-scoping-design.md
+      - "Redaction scoping — plan": redaction-scoping-plan.md
+  - Design decisions:
+      - adr/README.md
+      - Foundational:
+          - "0001 — Licensing": adr/0001-licensing.md
+          - "0002 — Monorepo tooling": adr/0002-monorepo-tooling.md
+          - "0003 — Build, don't adopt, the gateway": adr/0003-build-vs-adopt-gateway.md
+      - "Gateway, built in Phase 1":
+          - "0004 — Runtime: Python 3.13 + FastAPI": adr/0004-gateway-runtime.md
+          - "0005 — Persistence: PostgreSQL": adr/0005-persistence.md
+          - "0006 — Counter store: Valkey": adr/0006-counter-store.md
+          - "0007 — SSE streaming": adr/0007-sse-streaming.md
+          - "0008 — Accounting model": adr/0008-accounting-model.md
+          - "0009 — Quota model": adr/0009-quota-model.md
+          - "0010 — API keys": adr/0010-api-keys.md
+          - "0011 — OIDC integration": adr/0011-oidc-integration.md
+          - "0012 — Redaction interface": adr/0012-redaction-interface.md
+          - "0013 — Upstream HTTP client: httpx": adr/0013-upstream-http-client.md
+          - "0014 — Model catalogue and pricing": adr/0014-model-catalogue-and-pricing.md
+          - "0022 — Administration as an API": adr/0022-administration-surface.md
+          - "0023 — The admin console": adr/0023-admin-console.md
+          - "0024 — Billing periods": adr/0024-billing-periods.md
+          - "0025 — Quota model v2": adr/0025-quota-model-v2.md
+          - "0026 — Pluggable detection": adr/0026-pluggable-detection.md
+          - "0027 — Inference providers": adr/0027-inference-providers.md
+          - "0028 — Embeddings and the served model": adr/0028-embeddings-and-served-model.md
+          - "0029 — Pagination": adr/0029-pagination.md
+          - "0030 — More surfaces": adr/0030-more-surfaces.md
+          - "0031 — Model capabilities": adr/0031-model-capabilities.md
+          - "0032 — Provider plugins": adr/0032-provider-plugins.md
+          - "0033 — Redaction engine selection": adr/0033-redaction-engine-selection.md
+          - "0034 — Bauhaus design language (superseded)": adr/0034-bauhaus-design-language.md
+          - "0035 — Public TLS exposure": adr/0035-public-tls-exposure.md
+          - "0036 — The model page": adr/0036-model-page.md
+          - "0037 — Redaction policy": adr/0037-redaction-policy.md
+          - "0038 — Scoped redaction": adr/0038-scoped-redaction.md
+          - "0039 — Redaction rules only": adr/0039-redaction-rules-only.md
+          - "0040 — Bearer tokens on /v1": adr/0040-bearer-tokens-on-v1.md
+          - "0041 — Chat frontend stack": adr/0041-chat-frontend-stack.md
+          - "0042 — Material Design 3": adr/0042-material-design-3.md
+          - "0043 — Local authentication": adr/0043-local-authentication.md
+          - "0044 — Keycloak removed": adr/0044-keycloak-removed.md
+          - "0045 — Public models": adr/0045-public-models.md
+          - "0046 — Local `/v1` credentials": adr/0046-local-api-credentials.md
+      - "Recorded now, built later":
+          - "0015 — Frontend stack (Phase 2)": adr/0015-frontend-stack.md
+          - "0016 — PWA (Phase 2)": adr/0016-pwa.md
+          - "0017 — Desktop shell (Phase 4)": adr/0017-desktop-shell.md
+          - "0018 — Vector store (Phase 3)": adr/0018-vector-store.md
+          - "0019 — Document conversion (Phase 3)": adr/0019-document-conversion.md
+          - "0020 — Embeddings and reranking (Phase 3)": adr/0020-embeddings-and-reranking.md
+          - "0021 — Code sandbox (Phase 4+)": adr/0021-code-sandbox.md

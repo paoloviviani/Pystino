@@ -12,6 +12,14 @@ dev = [
     "aiosqlite>=0.20",
     "ruff>=0.7",
     "mypy>=1.13",
+    # The documentation site (mkdocs.yml at the root; `uv run mkdocs build
+    # --strict`). Lives in dev rather than its own group on purpose: the
+    # gateway image syncs with --no-dev, which already excludes this group,
+    # and a separate group would need its own exclusion there — plus it would
+    # vanish from a plain `uv sync`, breaking the next `uv run mkdocs`.
+    # mkdocs-material is MIT, mkdocs is BSD-2-Clause — checked against the
+    # installed metadata on 2026-08-31 (ADR 0001's inbound licence policy).
+    "mkdocs-material>=9.7",
 ]
 
 # --------------------------------------------------------------------------
