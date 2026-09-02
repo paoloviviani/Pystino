@@ -24,7 +24,7 @@ had a release cycle in the wild.
 The app is a *shell*. Conversations sync because the server is authoritative, so there is
 no second data model and no reconciliation logic — which is the single biggest reason this
 is cheap to build and the reason not to let the frontend start owning conversation state
-([0015](https://github.com/paoloviviani/Pistin/blob/chat/docs/adr/0015-frontend-stack.md) —
+([0015](https://github.com/paoloviviani/Pistin-Gateway/blob/chat/docs/adr/0015-frontend-stack.md) —
 on the `chat` branch).
 
 ## Consequences

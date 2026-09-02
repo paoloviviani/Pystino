@@ -144,14 +144,14 @@ export function Shell({ me, children }: ShellProps) {
             end
             className="flex shrink-0 items-center gap-2 rounded-sm text-ink no-underline focus-visible:outline-none focus-visible:shadow-focus"
           >
-            {/* The Pistin mark, from the simplified_logo.png the operator
+            {/* The Pystino mark, from the simplified_logo.png the operator
                 pushed to GitHub (564px original), resized to a 72px 2x asset
                 (8-bit, 2.4 KB) and displayed at 36px — a step up from the
                 28px the detailed original sat at. Decorative in the strict
                 sense — `alt=""`, with the wordmark beside it carrying the
                 name — so it costs a screen reader nothing. */}
             <img src={logoUrl} alt="" className="h-9 w-auto" />
-            <span className="font-bold">Pistin Gateway</span>
+            <span className="font-bold">Pystino</span>
           </NavLink>
 
           {/* One navigation, two shapes: inline pills on a wide screen, and on

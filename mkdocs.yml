@@ -6,13 +6,13 @@
 # pygments BSD-2-Clause — all OSI-approved, checked in the installed package
 # metadata on 2026-08-31 (ADR 0001's inbound licence policy).
 
-site_name: LLM Platform
+site_name: Pystino
 site_description: >
   A self-hosted LLM platform: an OpenAI-compatible gateway with per-user and
   per-group accounting, quotas and redaction, and the console that operates it.
-repo_url: https://github.com/paoloviviani/Pistin
-repo_name: paoloviviani/Pistin
-copyright: Copyright &copy; Paolo Viviani — <a href="https://github.com/paoloviviani/Pistin/blob/main/LICENCE">EUPL-1.2</a>
+repo_url: https://github.com/paoloviviani/Pistin-Gateway
+repo_name: paoloviviani/Pistin-Gateway
+copyright: Copyright &copy; Paolo Viviani — <a href="https://github.com/paoloviviani/Pistin-Gateway/blob/main/LICENCE">EUPL-1.2</a>
 
 strict: true
 

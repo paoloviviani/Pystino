@@ -38,7 +38,7 @@ async def reset_app(
     reset = settings.local_auth.password_reset
     reset.enabled = True
     reset.smtp_host = "smtp.test"
-    reset.smtp_from = "Pistin Gateway <no-reply@pistin.test>"
+    reset.smtp_from = "Pystino <no-reply@pystino.test>"
     from gateway.routers.auth import ResetRequestThrottle
 
     app.state.reset_throttle = ResetRequestThrottle(

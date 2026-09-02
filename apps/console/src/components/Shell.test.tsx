@@ -217,7 +217,7 @@ describe("Shell", () => {
     // What a wordmark does everywhere else on the web, and the shortest route
     // back to your own overview from six levels into administration.
     renderShell(me({ is_admin: true }), "/admin/models");
-    const brand = screen.getByRole("link", { name: /Pistin Gateway/ });
+    const brand = screen.getByRole("link", { name: /Pystino/ });
     expect(brand).toHaveAttribute("href", "/");
   });
 

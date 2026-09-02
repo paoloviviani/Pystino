@@ -151,7 +151,7 @@ class PasswordResetSettings(BaseModel):
     smtp_port: int = Field(default=587, gt=0)
     smtp_username: str = ""
     smtp_password: SecretStr = SecretStr("")
-    # RFC 5322 From, address required: "Pistin Gateway <no-reply@example.org>".
+    # RFC 5322 From, address required: "Pystino <no-reply@example.org>".
     smtp_from: str = ""
 
 

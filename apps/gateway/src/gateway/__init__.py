@@ -1,4 +1,4 @@
-"""Pistin Gateway.
+"""Pystino gateway.
 
 An OpenAI-compatible API gateway with per-user and per-group accounting, quotas,
 per-group model availability and a pluggable redaction layer.
