@@ -9,8 +9,11 @@
  * nothing arrives until a real screen needs it.
  *
  * Consumers import `@llmp/ui/tokens.css` once, then components as needed. There
- * is no build step and no configuration: each component brings its own scoped
- * CSS, so the package works in any bundler that understands CSS Modules.
+ * is no build step: each component is compiled by the consumer's bundler. Since
+ * ADR 0047 the components are styled with Tailwind utilities against the tokens
+ * file's `@theme inline` mapping, so a consumer of the *components* runs
+ * Tailwind (one Vite plugin, one CSS import); a consumer of only the *tokens*
+ * needs nothing beyond the CSS import.
  */
 
 export { Badge } from "./components/Badge";
@@ -31,6 +34,18 @@ export type { SelectProps } from "./components/Field";
 export { Input } from "./components/Input";
 export type { InputProps } from "./components/Input";
 
+export {
+  MenuCheckboxItem,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuRoot,
+  MenuSection,
+  MenuSeparator,
+  MenuTrigger,
+} from "./components/Menu";
+export type { MenuContentProps, MenuSectionProps } from "./components/Menu";
+
 export { Meter } from "./components/Meter";
 export type { MeterProps } from "./components/Meter";
 
@@ -50,6 +65,9 @@ export type { NoticeProps } from "./components/Notice";
 export { Pagination } from "./components/Pagination";
 export type { PaginationProps } from "./components/Pagination";
 
+export { Skeleton } from "./components/Skeleton";
+export type { SkeletonProps } from "./components/Skeleton";
+
 export { Spinner } from "./components/Spinner";
 export type { SpinnerProps } from "./components/Spinner";
 
@@ -58,3 +76,8 @@ export type { StatProps } from "./components/Stat";
 
 export { Table } from "./components/Table";
 export type { Column, TableProps } from "./components/Table";
+
+export { ToastProvider, useToast } from "./components/Toast";
+
+export { Tooltip } from "./components/Tooltip";
+export type { TooltipProps } from "./components/Tooltip";

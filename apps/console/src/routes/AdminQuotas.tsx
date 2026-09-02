@@ -10,6 +10,7 @@ import {
   Select,
   Spinner,
   Table,
+  
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney, useExactMoney } from "@llmp/ui";
@@ -26,7 +27,9 @@ import {
 import { usePaginated } from "../lib/paging";
 import type { LimitRule } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
-import styles from "./Admin.module.css";
+import { CHIPS, FORM_ROW, MUTED, NOWRAP, PAGE, ROW_ACTIONS } from "../lib/layout";
+import { useOptionalToast } from "../lib/toast";
+
 
 const PERIODS = ["day", "week", "month", "quarter", "year"];
 
@@ -35,6 +38,7 @@ export function AdminQuotas() {
   const groups = useGroups();
   const users = useUsers();
   const remove = useDeleteLimit();
+  const toast = useOptionalToast();
 
   const [creating, setCreating] = useState(false);
   const [resetting, setResetting] = useState<LimitRule | null>(null);
@@ -66,8 +70,8 @@ export function AdminQuotas() {
       header: "Rule",
       render: (rule) => (
         <>
-          <div>{rule.name || <em className={styles.muted}>unnamed</em>}</div>
-          <div className={styles.muted}>
+          <div>{rule.name || <em className={MUTED}>unnamed</em>}</div>
+          <div className={MUTED}>
             {rule.scope} · {nameFor(rule)}
           </div>
         </>
@@ -83,7 +87,7 @@ export function AdminQuotas() {
               ? formatMoney(rule.limit_value, "EUR", { exact })
               : `${Number(rule.limit_value).toLocaleString()} ${rule.metric}`}
           </div>
-          <div className={`${styles.muted} ${styles.nowrap}`}>per {describeWindow(rule)}</div>
+          <div className={`${MUTED} ${NOWRAP}`}>per {describeWindow(rule)}</div>
         </>
       ),
     },
@@ -96,7 +100,7 @@ export function AdminQuotas() {
       key: "status",
       header: "Status",
       render: (rule) => (
-        <div className={styles.chips}>
+        <div className={CHIPS}>
           {!rule.is_active && <Badge>Inactive</Badge>}
           {/* The state someone scanning this page is looking for. Without it a
               rule at 200% of its cap still showed a green "Active", which is
@@ -119,13 +123,19 @@ export function AdminQuotas() {
       key: "actions",
       header: "",
       render: (rule) => (
-        <div className={styles.rowActions}>
+        <div className={ROW_ACTIONS}>
           <Button onClick={() => setHistory(rule)}>History</Button>
           <Button onClick={() => setResetting(rule)}>Reset</Button>
           <Button
             variant="ghost"
             busy={remove.isPending && remove.variables === rule.id}
-            onClick={() => remove.mutate(rule.id)}
+            onClick={() =>
+              remove.mutate(rule.id, {
+                onSuccess: () => toast?.add({ title: "Quota rule deleted", type: "success" }),
+                onError: () =>
+                  toast?.add({ title: "Could not delete the rule", type: "error" }),
+              })
+            }
           >
             Delete
           </Button>
@@ -135,7 +145,7 @@ export function AdminQuotas() {
   ];
 
   return (
-    <div className={styles.page}>
+    <div className={PAGE}>
       <PageHeader
         title="Quotas"
         subtitle="All matching rules must pass, so adding one can only tighten a budget."
@@ -187,7 +197,7 @@ export function AdminQuotas() {
 function Consumption({ rule }: { rule: LimitRule }) {
   const exact = useExactMoney();
   if (rule.current_value === null) {
-    return <span className={styles.muted}>counter unavailable</span>;
+    return <span className={MUTED}>counter unavailable</span>;
   }
 
   const used = Number(rule.current_value);
@@ -215,6 +225,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const create = useCreateLimit();
   const groups = useGroups();
   const users = useUsers();
+  const toast = useOptionalToast();
 
   const [name, setName] = useState("");
   const [scope, setScope] = useState("group");
@@ -238,7 +249,13 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
         period: kind === "period" ? period : null,
         limit_value: limitValue,
       },
-      { onSuccess: onClose },
+      {
+        onSuccess: () => {
+          toast?.add({ title: "Quota rule created", type: "success" });
+          onClose();
+        },
+        onError: () => toast?.add({ title: "Could not create the rule", type: "error" }),
+      },
     );
   };
 
@@ -264,7 +281,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
 
       <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="research monthly budget" />
 
-      <div className={styles.formRow}>
+      <div className={FORM_ROW}>
         <Select label="Scope" value={scope} onChange={(e) => { setScope(e.target.value); setScopeId(""); }}>
           <option value="global">Everyone</option>
           <option value="group">A group</option>
@@ -294,7 +311,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
         )}
       </div>
 
-      <div className={styles.formRow}>
+      <div className={FORM_ROW}>
         <Select label="Metric" value={metric} onChange={(e) => setMetric(e.target.value)}>
           <option value="cost">Cost</option>
           <option value="tokens">Tokens</option>
@@ -351,11 +368,22 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
 /** Resetting requires a reason, and says plainly what a reset does not do. */
 function ResetDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () => void }) {
   const reset = useResetLimit();
+  const toast = useOptionalToast();
   const [reason, setReason] = useState("");
 
   const submit = () => {
     if (!rule) return;
-    reset.mutate({ id: rule.id, reason }, { onSuccess: () => { setReason(""); onClose(); } });
+    reset.mutate(
+      { id: rule.id, reason },
+      {
+        onSuccess: () => {
+          toast?.add({ title: "Consumption reset", type: "success" });
+          setReason("");
+          onClose();
+        },
+        onError: () => toast?.add({ title: "Could not reset consumption", type: "error" }),
+      },
+    );
   };
 
   return (
@@ -410,7 +438,7 @@ function HistoryDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () 
       {resets.isPending ? (
         <Spinner />
       ) : (resets.data?.total ?? 0) === 0 ? (
-        <p className={styles.muted}>This rule has never been reset.</p>
+        <p className={MUTED}>This rule has never been reset.</p>
       ) : (
         <>
         <Table

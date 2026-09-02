@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import styles from "./Stat.module.css";
+import { cx } from "../cx";
 
 export interface StatProps {
   label: ReactNode;
@@ -9,13 +9,22 @@ export interface StatProps {
   tone?: "neutral" | "ok" | "warn" | "danger";
 }
 
+const TONES: Record<NonNullable<StatProps["tone"]>, string> = {
+  neutral: "text-ink",
+  ok: "text-ok",
+  warn: "text-warn",
+  danger: "text-danger",
+};
+
 /** One headline figure. Money and counts render with tabular figures. */
 export function Stat({ label, value, detail, tone = "neutral" }: StatProps) {
   return (
-    <div className={styles.stat}>
-      <div className={styles.label}>{label}</div>
-      <div className={[styles.value, styles[tone]].join(" ")}>{value}</div>
-      {detail && <div className={styles.detail}>{detail}</div>}
+    <div className="flex flex-col gap-1">
+      <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">{label}</div>
+      <div className={cx("text-xl font-semibold leading-tight tabular-nums", TONES[tone])}>
+        {value}
+      </div>
+      {detail && <div className="text-sm text-ink-muted">{detail}</div>}
     </div>
   );
 }

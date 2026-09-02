@@ -882,13 +882,89 @@ class LimitRule(Base):
 
     @property
     def window_label(self) -> str:
-        return f"{self.window_seconds}s" if self.window_seconds else str(self.period)
+        # Rolling windows were rendered as raw seconds — "86400s" — which is a
+        # value where a reader wanted a duration. Named units, one unit only:
+        # the largest that divides the window exactly, so 86400 is "1 day" and
+        # not "24 hours", and 5400 is "90 minutes" rather than a fractional
+        # "1.5 hours" that invites a decimal nobody set. Calendar periods
+        # ("month") already had their name.
+        seconds = self.window_seconds
+        if not seconds:
+            return str(self.period)
+        for unit, size, name in (
+            (86400, 86400, "day"),
+            (3600, 3600, "hour"),
+            (60, 60, "minute"),
+        ):
+            if seconds % unit == 0 and seconds // unit >= 1:
+                value = seconds // size
+                return f"{value} {name}" if value == 1 else f"{value} {name}s"
+        return f"{seconds}s"
 
     def __repr__(self) -> str:
         return (
             f"<LimitRule {self.scope}:{self.scope_id} {self.metric}"
             f" <= {self.limit_value}/{self.window_label}>"
         )
+
+
+class OIDCPolicyConfig(Base):
+    """The identity policy, as an administrator set it from the console.
+
+    See [ADR 0048](../../../../docs/adr/0048-oidc-policy-configuration.md).
+
+    **Append-only, newest row wins**, modelled on ``redaction_config`` (ADR
+    0033) and for the same reason: whether a stranger can become a user by
+    signing in is a governance decision, and "who opened that door, when, and
+    why" is a question that outlives the row that changed it.
+
+    **Every policy column is nullable, and null means "this row does not
+    decide".** The environment's value stands per field, so a row can turn one
+    knob without restating the deployment's other answers, and a deployment
+    that never touches the console behaves exactly as it did before this table
+    existed.
+
+    What is deliberately *not* here: the issuer, the client secret, the
+    redirect URI. Those are connection plumbing read once at startup
+    (discovery is fetched once by design); making them hot would put the
+    identity provider's reachability on the request path. The policy is what
+    an operator actually changes.
+    """
+
+    __tablename__ = "oidc_config"
+    __table_args__ = (Index("ix_oidc_config_created", "created_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    #: Whether a first-time sign-in may create a user row. Null = env decides.
+    auto_provision: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    #: What a first-time sign-in does when provisioning is off: "refuse" the
+    #: stranger, or create the account inactive for an administrator to enable.
+    #: Only meaningful while ``auto_provision`` is false in force.
+    unknown_user_policy: Mapped[str | None] = mapped_column(String(16), default=None)
+    #: Which claim names the person's groups — every IdP puts them somewhere
+    #: different (Keycloak "realm_access.roles", Entra "groups", dot-paths
+    #: resolved like the env setting's). Null = env decides.
+    groups_claim: Mapped[str | None] = mapped_column(String(255), default=None)
+    #: Which local group names confer ``is_admin``. Compared against *mapped*
+    #: names — what a group is called here, not what the IdP calls it.
+    admin_groups: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    #: [[idp_name, local_name], ...]: what an IdP group means here. Unmapped
+    #: groups keep their own name. Many IdP groups may map to one local group.
+    group_mappings: Mapped[list[list[str]] | None] = mapped_column(JSON, default=None)
+    #: Why. Optional: unlike the redaction engine, no single change here is the
+    #: "protects less" case that demands a sentence — refusing strangers is the
+    #: cautious direction, and opening the door is at least a deliberate act
+    #: this table records.
+    reason: Mapped[str] = mapped_column(String(500), default="")
+    # Nullable for the same reason as on `redaction_config`: erasing a user
+    # must not delete the record of what they changed.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    def __repr__(self) -> str:
+        return f"<OIDCPolicyConfig at={self.created_at.isoformat()}>"
 
 
 class RedactionConfig(Base):

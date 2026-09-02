@@ -165,7 +165,9 @@ class TestMyLimits:
         ).json()["items"][0]
         # Money is a string end to end, in this envelope as everywhere else.
         assert rule["limit_value"] == "50.000000000000"
-        assert rule["window_label"] == "86400s"
+        # A duration, not a raw second count: the label is for a person
+        # reading a budget, and "86400s" is a value where they wanted a unit.
+        assert rule["window_label"] == "1 day"
         assert rule["metric"] == "cost"
         # Present and zero here; absent would mean the counter store was
         # unreachable, which is a different fact and must not read as untouched.

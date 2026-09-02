@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { MODES, entityLabel, entitySource, modeRank } from "../lib/entities";
 import type { EntityMode, EntityPolicy, RedactionPolicy } from "../lib/types";
-import styles from "./PolicyFields.module.css";
+import { CODE, FIELD_LABEL, FORM, MUTED } from "../lib/layout";
 
 export interface PolicyFieldsProps {
   policy: RedactionPolicy;
@@ -80,7 +80,7 @@ export function PolicyFields({
     });
 
   return (
-    <div className={styles.fields}>
+    <div className={FORM}>
       {/* Applies to a recogniser the engine gains in a later release, which is
           why the safer direction is to protect by default rather than to let a
           new type through unnoticed. */}
@@ -93,11 +93,23 @@ export function PolicyFields({
       />
 
       {known.length === 0 ? (
-        <p className={styles.muted}>No entity types to list. The default above still applies.</p>
+        <p className="text-sm text-ink-muted">
+          No entity types to list. The default above still applies.
+        </p>
       ) : (
         <>
           <ModeKey />
-          <div className={styles.entities}>
+          {/* Two columns, not three.
+
+              `auto-fill` at 20rem gave three or four columns on a wide screen,
+              and with a five-option control in each cell that is where the
+              screen stopped being readable: the eye has no column to run down,
+              and every row is a different width. Two fixed columns at a wider
+              minimum keep each row on one line and give the radios room to sit
+              beside their label rather than under it. One column below 64rem,
+              because five radios and a number field do not fit in half a
+              laptop. */}
+          <div className="grid gap-x-6 gap-y-3 [grid-template-columns:repeat(2,minmax(0,1fr))] max-[64rem]:grid-cols-1">
             {known.map((entity) => {
               const name = entityLabel(entity);
               const source = entitySource(entity, patternNames);
@@ -105,13 +117,19 @@ export function PolicyFields({
               // unchanged. Printing it twice would read as a rendering fault.
               const named = name !== entity;
               return (
-                <div key={entity} className={styles.entity}>
+                <div
+                  key={entity}
+                  className="grid grid-cols-[1fr_minmax(5rem,6rem)] items-end gap-2 border-b border-line-quiet pb-2"
+                >
+                  {/* A hairline per row. With two columns the rows no longer
+                      line up by accident, and a reader following one across
+                      needs to be told where it ends. */}
                   <ModeRadios
                     name={`mode-${entity}`}
                     legend={
-                      <span className={styles.entityLabel}>
+                      <span className="flex flex-wrap items-center gap-2">
                         {named && name}
-                        <code className={styles.code}>{entity}</code>
+                        <code className={CODE}>{entity}</code>
                         {source && <Badge>{source === "pattern" ? "Pattern" : "Model"}</Badge>}
                       </span>
                     }
@@ -141,19 +159,29 @@ export function PolicyFields({
           {/* Measured, and the opposite of what a list of switches implies: the
               model pass runs over the whole prompt whichever types are asked
               for. See docs/performance.md. */}
-          <p className={styles.muted}>
+          <p className="text-sm text-ink-muted">
             Turning a type off changes what is replaced, not how long detection takes.
           </p>
         </>
       )}
 
-      <fieldset className={styles.patterns}>
-        <legend className={styles.legend}>Custom patterns</legend>
+      {/* A fieldset because the legend is what names the group for a screen
+          reader: three inputs called Name, Regex and Mode mean nothing without
+          "Custom patterns" attached to them. `min-w-0` because a fieldset
+          defaults to min-content, which breaks the grid. */}
+      <fieldset className="m-0 grid min-w-0 gap-3 border-0 p-0">
+        {/* Deliberately identical to the field labels in `@llmp/ui` — a legend
+            that styled itself differently would read as a section heading
+            rather than as the label of the controls under it. */}
+        <legend className={`p-0 ${FIELD_LABEL}`}>Custom patterns</legend>
         {policy.patterns.map((pattern, index) => (
           // Keyed by position: a name is edited character by character, so
           // keying on it would remount the field being typed into and lose
           // focus on every keystroke.
-          <div key={index} className={styles.patternRow}>
+          <div
+            key={index}
+            className="grid grid-cols-[minmax(8rem,1fr)_minmax(12rem,2fr)_minmax(10rem,1fr)_auto] items-end gap-3 max-[48rem]:grid-cols-1"
+          >
             <Input
               label={`Pattern ${index + 1} name`}
               value={pattern.name}
@@ -162,7 +190,7 @@ export function PolicyFields({
             />
             <Input
               label={`Pattern ${index + 1} regex`}
-              className={styles.code}
+              className={CODE}
               value={pattern.regex}
               placeholder="LINKS-[0-9]{4,}"
               onChange={(event) => setPattern(index, { regex: event.target.value })}
@@ -200,7 +228,7 @@ export function PolicyFields({
             Add pattern
           </Button>
         </div>
-        <p className={styles.muted}>
+        <p className="text-sm text-ink-muted">
           The name becomes the entity label. RE2 syntax: no backreferences, no lookaround.
         </p>
 
@@ -212,7 +240,7 @@ export function PolicyFields({
             than offered behind a button. An operator who has just configured
             thirty entity types would otherwise be entitled to assume the list
             covers credentials. It does not. */}
-        <p className={styles.muted}>
+        <p className="text-sm text-ink-muted">
           The engine detects no credentials. The seeded patterns above cover the
           published prefixes; a bespoke format needs its own.
         </p>
@@ -357,16 +385,20 @@ function ModeRadios({
   return (
     // A real fieldset, because five radios need one accessible name between
     // them; without it a screen reader announces "Off" five times over with
-    // nothing saying which type they belong to.
-    <fieldset className={styles.modes}>
-      <legend className={styles.modesLegend}>{legend}</legend>
-      <div className={styles.modeOptions}>
+    // nothing saying which type they belong to. No border or padding: it is a
+    // row of controls and not a section.
+    <fieldset className="m-0 grid min-w-0 gap-1 border-0 p-0">
+      <legend className="p-0 text-sm">{legend}</legend>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
         {MODES.map((mode) => {
           const disabled = modeRank(mode.value) < least;
           return (
+            // Disabled because a stricter policy above sets a floor. Dimmed
+            // rather than hidden: the reader is meant to see that the option
+            // exists and is not theirs to choose.
             <label
               key={mode.value}
-              className={styles.mode}
+              className="inline-flex cursor-pointer items-center gap-[0.35em] text-sm whitespace-nowrap data-disabled:cursor-not-allowed data-disabled:text-ink-faint"
               title={`${mode.label} — ${mode.hint}`}
               data-disabled={disabled || undefined}
             >
@@ -377,6 +409,7 @@ function ModeRadios({
                 checked={value === mode.value}
                 disabled={disabled}
                 onChange={() => onChange(mode.value)}
+                className="m-0 accent-accent"
               />
               {mode.short}
             </label>
@@ -396,11 +429,11 @@ function ModeRadios({
  */
 function ModeKey() {
   return (
-    <dl className={styles.key}>
+    <dl className="m-0 grid gap-x-4 gap-y-1 bg-sunken p-3 text-sm [grid-template-columns:repeat(auto-fit,minmax(14rem,1fr))]">
       {MODES.map((mode) => (
-        <div key={mode.value} className={styles.keyRow}>
-          <dt className={styles.keyTerm}>{mode.short}</dt>
-          <dd className={styles.keyHint}>{mode.hint}</dd>
+        <div key={mode.value} className="flex items-baseline gap-2">
+          <dt className="font-medium whitespace-nowrap">{mode.short}</dt>
+          <dd className={`m-0 ${MUTED}`}>{mode.hint}</dd>
         </div>
       ))}
     </dl>

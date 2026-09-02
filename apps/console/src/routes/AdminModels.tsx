@@ -9,6 +9,7 @@ import {
   Select,
   Spinner,
   Table,
+  
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney, useExactMoney } from "@llmp/ui";
@@ -21,6 +22,7 @@ import {
   KNOWN_INPUTS,
   KNOWN_OUTPUTS,
 } from "../components/CapabilityPicker";
+import { PageHeader } from "../components/PageHeader";
 import {
   useCreateModel,
   useDeleteModel,
@@ -30,10 +32,11 @@ import {
   useProviders,
   useUpdateModel,
 } from "../lib/admin";
+import { CHIPS, CODE, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
 import type { AdminModel, DiscoveredModel, ModelKind } from "../lib/types";
-import { PageHeader } from "../components/PageHeader";
-import styles from "./Admin.module.css";
+import { useOptionalToast } from "../lib/toast";
+
 
 export function AdminModels() {
   // A rate is money too, so it follows the reader's precision preference. Read
@@ -46,6 +49,7 @@ export function AdminModels() {
   const models = useModels(paged.page);
   const update = useUpdateModel();
   const deleteModel = useDeleteModel();
+  const toast = useOptionalToast();
 
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
@@ -65,7 +69,7 @@ export function AdminModels() {
             <Link to={`/admin/models/${model.id}`}>{model.name}</Link>{" "}
             {model.kind !== "chat" && <Badge tone="accent">{model.kind}</Badge>}
           </div>
-          <div className={`${styles.muted} ${styles.code}`}>{model.upstream_model}</div>
+          <div className={`${MUTED} ${CODE}`}>{model.upstream_model}</div>
         </>
       ),
     },
@@ -99,7 +103,7 @@ export function AdminModels() {
               })}{" "}
               in
             </div>
-            <div className={styles.muted}>
+            <div className={MUTED}>
               {formatMoney(model.current_price.output_per_mtok, model.current_price.currency, {
                 exact,
               })}{" "}
@@ -117,9 +121,9 @@ export function AdminModels() {
       header: "Access",
       render: (model) =>
         model.granted_to.length === 0 && model.granted_to_users.length === 0 ? (
-          <span className={styles.muted}>nobody</span>
+          <span className={MUTED}>nobody</span>
         ) : (
-          <div className={styles.chips}>
+          <div className={CHIPS}>
             {model.granted_to.map((group) => (
               <Badge key={group}>{group}</Badge>
             ))}
@@ -137,7 +141,7 @@ export function AdminModels() {
       key: "status",
       header: "Status",
       render: (model) => (
-        <div className={styles.chips}>
+        <div className={CHIPS}>
           {model.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
           {model.is_public && <Badge tone="accent">Public</Badge>}
         </div>
@@ -147,7 +151,7 @@ export function AdminModels() {
       key: "actions",
       header: "",
       render: (model) => (
-        <div className={styles.rowActions}>
+        <div className={ROW_ACTIONS}>
           {/* Everything that configures one model — capabilities, price, who may
               reach it — is on its page now. Access used to be a dialog here and
               pricing a whole separate screen, which meant three places to change
@@ -155,7 +159,16 @@ export function AdminModels() {
           <Button onClick={() => navigate(`/admin/models/${model.id}`)}>Edit</Button>
           <Button
             busy={update.isPending && update.variables?.id === model.id}
-            onClick={() => update.mutate({ id: model.id, is_active: !model.is_active })}
+            onClick={() =>
+              update.mutate(
+                { id: model.id, is_active: !model.is_active },
+                {
+                  onSuccess: () => toast?.add({ title: "Model updated", type: "success" }),
+                  onError: () =>
+                    toast?.add({ title: "Could not update the model", type: "error" }),
+                },
+              )
+            }
           >
             {model.is_active ? "Deactivate" : "Activate"}
           </Button>
@@ -168,7 +181,7 @@ export function AdminModels() {
   ];
 
   return (
-    <div className={styles.page}>
+    <div className={PAGE}>
       <PageHeader
         title="Models"
         subtitle="An allowlist: a model is invisible to callers until a group is granted it."
@@ -195,8 +208,11 @@ export function AdminModels() {
       ) : null}
 
       <Card>
-        <div className={styles.searchRow}>
-          <div className={styles.grow}>
+        {/* The search row and its growing field are a one-off shape (a lone
+            input that must shrink before the row wraps), so they are inline
+            here rather than constants in lib/layout. */}
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-56 flex-1">
             <Input
               label="Search"
               value={paged.search}
@@ -262,6 +278,7 @@ export function AdminModels() {
  */
 function DeleteModelDialog({ model, onClose }: { model: AdminModel | null; onClose: () => void }) {
   const del = useDeleteModel();
+  const toast = useOptionalToast();
 
   return (
     <Dialog
@@ -274,7 +291,17 @@ function DeleteModelDialog({ model, onClose }: { model: AdminModel | null; onClo
           <Button
             variant="danger"
             busy={del.isPending}
-            onClick={() => model && del.mutate(model.id, { onSuccess: onClose })}
+            onClick={() =>
+              model &&
+              del.mutate(model.id, {
+                onSuccess: () => {
+                  toast?.add({ title: "Model deleted", type: "success" });
+                  onClose();
+                },
+                onError: () =>
+                  toast?.add({ title: "Could not delete the model", type: "error" }),
+              })
+            }
           >
             Delete permanently
           </Button>
@@ -287,12 +314,12 @@ function DeleteModelDialog({ model, onClose }: { model: AdminModel | null; onClo
         </Notice>
       ) : null}
       <p>
-        Removed from the catalogue and from <code className={styles.code}>/v1/models</code>; its
+        Removed from the catalogue and from <code className={CODE}>/v1/models</code>; its
         prices and access grants go with it. Callers asking for{" "}
-        <code className={styles.code}>{model?.name}</code> get "model not found" from the next
+        <code className={CODE}>{model?.name}</code> get "model not found" from the next
         request on. This cannot be undone.
       </p>
-      <p className={styles.muted}>
+      <p className={MUTED}>
         Recorded spend is unaffected: past usage keeps the model's name and stays attributed to
         the people and groups that ran it.
       </p>
@@ -303,6 +330,7 @@ function DeleteModelDialog({ model, onClose }: { model: AdminModel | null; onClo
 function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const create = useCreateModel();
   const providers = useProviders();
+  const toast = useOptionalToast();
   const [name, setName] = useState("");
   const [upstream, setUpstream] = useState("");
   const [providerId, setProviderId] = useState("");
@@ -345,6 +373,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 },
                 {
                   onSuccess: () => {
+                    toast?.add({ title: "Model created", type: "success" });
                     setName("");
                     setUpstream("");
                     setInputs([]);
@@ -353,6 +382,8 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
                     setGeneration((current) => current + 1);
                     onClose();
                   },
+                  onError: () =>
+                    toast?.add({ title: "Could not create the model", type: "error" }),
                 },
               )
             }
@@ -473,6 +504,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   // nothing is fetched until one is chosen.
   const discovery = useDiscovery(open && providerId ? providerId : null);
   const importModels = useImportModels();
+  const toast = useOptionalToast();
   const [selected, setSelected] = useState<string[]>([]);
 
   const choices = (providers.data?.items ?? []).filter((provider) => provider.is_active);
@@ -502,9 +534,9 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
       render: (row) => (
         <>
           <div>{row.suggested_name}</div>
-          <div className={`${styles.muted} ${styles.code}`}>{row.upstream_model}</div>
+          <div className={`${MUTED} ${CODE}`}>{row.upstream_model}</div>
           {row.blocked_reason && (
-            <div className={styles.muted}>
+            <div className={MUTED}>
               <Badge tone="warn">Cannot import</Badge> {row.blocked_reason}
             </div>
           )}
@@ -523,9 +555,9 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           ...row.supported_features,
         ];
         return shown.length === 0 ? (
-          <span className={styles.muted}>not stated</span>
+          <span className={MUTED}>not stated</span>
         ) : (
-          <div className={styles.chips}>
+          <div className={CHIPS}>
             {shown.map((item) => (
               <Badge key={item}>{item.replace(/_/g, " ")}</Badge>
             ))}
@@ -541,7 +573,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
         row.context_window ? (
           row.context_window.toLocaleString()
         ) : (
-          <span className={styles.muted}>—</span>
+          <span className={MUTED}>—</span>
         ),
     },
     {
@@ -574,7 +606,14 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             onClick={() =>
               importModels.mutate(
                 { providerId, upstreamModels: selected },
-                { onSuccess: () => setSelected([]) },
+                {
+                  onSuccess: () => {
+                    toast?.add({ title: "Models imported", type: "success" });
+                    setSelected([]);
+                  },
+                  onError: () =>
+                    toast?.add({ title: "Could not import models", type: "error" }),
+                },
               )
             }
           >

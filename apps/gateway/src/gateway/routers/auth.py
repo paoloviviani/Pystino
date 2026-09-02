@@ -34,6 +34,7 @@ from gateway.models import LocalCredential, RefreshCredential, User
 from gateway.oidc import (
     OIDCClient,
     OIDCError,
+    ProvisioningRefused,
     extract_groups,
     generate_pkce_pair,
     issue_session_token,
@@ -421,17 +422,43 @@ async def callback(
         logger.warning("OIDC login failed: %s", exc)
         raise BadRequestError("Sign-in failed. Please try again.") from exc
 
-    groups = extract_groups(merged, settings.oidc)
-    user = await provision_user(
-        session,
-        issuer=str(claims["iss"]),
-        subject=str(claims["sub"]),
-        email=merged.get("email"),
-        display_name=merged.get("name") or merged.get("preferred_username"),
-        group_names=groups,
-        settings=settings.oidc,
-    )
+    # The identity policy in force on this worker (ADR 0048). Optional read:
+    # tests build the app without the resolver, and absence means the
+    # environment's policy — the behaviour every deployment had before.
+    policy = getattr(request.app.state, "oidc_policy", None)
+    policy = policy.policy if policy is not None else None
+    # Mapping first: from here on, the flow speaks local group names.
+    groups = extract_groups(merged, settings.oidc, policy)
+    if policy is not None:
+        groups = policy.map_group_names(groups)
+    try:
+        user = await provision_user(
+            session,
+            issuer=str(claims["iss"]),
+            subject=str(claims["sub"]),
+            email=merged.get("email"),
+            display_name=merged.get("name") or merged.get("preferred_username"),
+            group_names=groups,
+            settings=settings.oidc,
+            policy=policy,
+        )
+    except ProvisioningRefused as exc:
+        # The policy's message is written for the person at the keyboard
+        # ("ask an administrator"); the generic sign-in failure would bury it.
+        await session.commit()
+        raise BadRequestError(str(exc)) from exc
     await session.commit()
+
+    # No session for a disabled account. An administrator turned this person
+    # off (or provisioning created them disabled, ADR 0048, awaiting approval):
+    # a login that lands on a console where every request answers 401 is not a
+    # login, it is a maze. The commit above already landed — an account created
+    # here exists as a disabled row an administrator can see and enable.
+    if not user.is_active:
+        raise BadRequestError(
+            "This account is not enabled. Ask an administrator to enable it, "
+            "then sign in again."
+        )
 
     logger.info("oidc login: user=%s subject=%s groups=%s", user.id, user.subject, groups)
 

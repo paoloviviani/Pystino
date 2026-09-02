@@ -3,10 +3,10 @@ import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import { downloadCsv } from "../lib/api";
 import { reportQueryString, useAdminReport, useGroups, useModels } from "../lib/admin";
+import { DISCLOSURES, FILTERS, MUTED, PAGE, STATS } from "../lib/layout";
 import { recentPeriods } from "../lib/periods";
 import type { UsageReportRow } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
-import styles from "./Admin.module.css";
 
 const BREAKDOWNS = [
   { value: "group", label: "By group" },
@@ -51,7 +51,7 @@ export function AdminReports() {
       // A dash, not a zero: most rows are not image rows, and a column of
       // zeroes reads as "we generated no images" rather than "not applicable".
       render: (row) =>
-        row.images ? row.images.toLocaleString() : <span className={styles.muted}>—</span>,
+        row.images ? row.images.toLocaleString() : <span className={MUTED}>—</span>,
     },
     {
       key: "cost",
@@ -62,14 +62,14 @@ export function AdminReports() {
   ];
 
   return (
-    <div className={styles.page}>
+    <div className={PAGE}>
       <PageHeader
         title="Reports"
         subtitle="Spend over a calendar period, for chargeback."
       />
 
       <Card title="Filters">
-        <div className={styles.filters}>
+        <div className={FILTERS}>
           <Select label="Period" value={period} onChange={(e) => setPeriod(e.target.value)}>
             {periods.map((option) => (
               <option key={option.value} value={option.value}>
@@ -115,7 +115,7 @@ export function AdminReports() {
         ) : null}
         {report.data && (
           <>
-            <div className={styles.stats}>
+            <div className={STATS}>
               <Stat
                 label={`Spend · ${report.data.period.label}`}
                 value={<Money amount={report.data.totals.cost} currency={currency} />}
@@ -147,7 +147,7 @@ export function AdminReports() {
             {/* The API's own words. Restating a caveat here is how the two end
                 up disagreeing about what the number means. */}
             {report.data.disclosures.length > 0 && (
-              <div className={styles.disclosures}>
+              <div className={DISCLOSURES}>
                 {report.data.disclosures.map((note) => (
                   <Notice key={note} tone="warn">
                     {note}

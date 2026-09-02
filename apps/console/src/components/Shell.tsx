@@ -1,10 +1,21 @@
-import { Badge, Button, MoneyPrecisionProvider } from "@llmp/ui";
-import { useEffect, useRef, useState } from "react";
+import {
+  Badge,
+  MenuCheckboxItem,
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuSection,
+  MenuSeparator,
+  MenuTrigger,
+} from "@llmp/ui";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
+import logoUrl from "../assets/logo.png";
 import { request } from "../lib/api";
+import { applyTheme, rememberTheme, storedTheme } from "../lib/theme";
+import type { Theme } from "../lib/theme";
 import type { Me } from "../lib/types";
-import styles from "./Shell.module.css";
 
 export interface ShellProps {
   me: Me;
@@ -38,6 +49,7 @@ const NAV_ADMIN: NavItem[] = [
   { to: "/admin", label: "Summary" },
   { to: "/admin/reports", label: "Usage" },
   { to: "/admin/quotas", label: "Quotas" },
+  { to: "/admin/identity", label: "Identity" },
   { to: "/admin/redaction", label: "Redaction" },
   { to: "/admin/providers", label: "Providers" },
   // No Pricing entry: a model's prices live on the model's own page, because
@@ -67,6 +79,17 @@ function readExactMoney(): boolean {
   }
 }
 
+/*
+ * Header chrome, in one place: the sticky bar, the nav pills, and the identity
+ * button all share it. Breakpoints are `max-[40rem]`, matching the width the
+ * CSS Modules this replaces used to break at.
+ */
+const NAV_LINK =
+  "rounded-full px-3 py-2 text-sm font-medium tracking-[0.01em] whitespace-nowrap no-underline " +
+  "text-ink-muted transition-colors hover:bg-sunken hover:text-ink " +
+  "focus-visible:outline-none focus-visible:shadow-focus";
+const NAV_LINK_ACTIVE = "bg-accent-subtle text-accent hover:bg-accent-subtle hover:text-accent";
+
 export function Shell({ me, children }: ShellProps) {
   const location = useLocation();
   // The route decides, not a toggle. A person who follows a link into an admin
@@ -80,8 +103,7 @@ export function Shell({ me, children }: ShellProps) {
   // twelve decimal places, and the figures that need reconciling against a
   // provider's invoice are all on screens they cannot open.
   const [exactMoney, setExactMoney] = useState(() => me.is_admin && readExactMoney());
-  const toggleExactMoney = () => {
-    const next = !exactMoney;
+  const setExactMoneyPersisted = (next: boolean) => {
     setExactMoney(next);
     try {
       window.localStorage.setItem(EXACT_MONEY_KEY, String(next));
@@ -90,36 +112,48 @@ export function Shell({ me, children }: ShellProps) {
     }
   };
 
+  // Light and dark: the OS's answer until the reader picks, then theirs. See
+  // lib/theme.ts for why this is a class and a localStorage key and nothing else.
+  const [theme, setTheme] = useState<Theme>(() => storedTheme());
+  const setTheme_ = (next: Theme) => {
+    setTheme(next);
+    applyTheme(next);
+    rememberTheme(next);
+  };
+
   return (
-    <MoneyPrecisionProvider exact={exactMoney}>
-    <div className={styles.shell}>
-      <header className={styles.header}>
-        <div className={styles.headerInner}>
+    <div className="min-h-dvh">
+      <header className="sticky top-0 z-10 border-b border-line bg-surface">
+        <div className="mx-auto flex max-w-[var(--layout-max-width)] items-center gap-6 px-5 py-3 max-[40rem]:flex-wrap max-[40rem]:gap-3 max-[40rem]:px-4">
           {/* The wordmark is the way home, which is what a wordmark is for
               everywhere else on the web. `end`, so it is only "current" on the
               overview itself rather than on every route beneath it. */}
-          <NavLink to="/" end className={styles.brand}>
-            {/* Circle, triangle, square — a placeholder rather than a logo,
-                which is the foundation's to supply. It outlived the Bauhaus
-                palette that chose it, and is kept because three plain shapes in
-                the accent's own hues say "this is a tool" without pretending to
-                be branding. The circle and the square are pseudo-elements; the
-                triangle needs a real element because it is drawn with
-                borders. */}
-            <span className={styles.brandMark} aria-hidden="true">
-              <span className={styles.brandShape} />
-            </span>
-            <span className={styles.brandName}>LLM platform</span>
+          <NavLink
+            to="/"
+            end
+            className="flex shrink-0 items-center gap-2 rounded-sm text-ink no-underline focus-visible:outline-none focus-visible:shadow-focus"
+          >
+            {/* The Pistin mark, from the simplified_logo.png the operator
+                pushed to GitHub (564px original), resized to a 72px 2x asset
+                (8-bit, 2.4 KB) and displayed at 36px — a step up from the
+                28px the detailed original sat at. Decorative in the strict
+                sense — `alt=""`, with the wordmark beside it carrying the
+                name — so it costs a screen reader nothing. */}
+            <img src={logoUrl} alt="" className="h-9 w-auto" />
+            <span className="font-bold">Pistin Gateway</span>
           </NavLink>
 
-          <nav className={styles.nav} aria-label={inAdmin ? "Administration" : "Sections"}>
+          <nav
+            className="flex flex-1 items-center gap-1 max-[40rem]:order-3 max-[40rem]:w-full max-[40rem]:flex-nowrap max-[40rem]:overflow-x-auto max-[40rem]:[scrollbar-width:none] max-[40rem]:[-ms-overflow-style:none] max-[40rem]:[&::-webkit-scrollbar]:hidden"
+            aria-label={inAdmin ? "Administration" : "Sections"}
+          >
             {items.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
                 end={item.to === "/" || item.to === "/admin"}
                 className={({ isActive }) =>
-                  isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
+                  isActive ? `${NAV_LINK} ${NAV_LINK_ACTIVE}` : NAV_LINK
                 }
               >
                 {item.label}
@@ -132,10 +166,13 @@ export function Shell({ me, children }: ShellProps) {
             // into administration one click deeper than the way out of it would
             // be the wrong way round. Labelled by where it leads, so the reader
             // in admin sees the way back rather than a button that does nothing.
+            // Styled as a control rather than a nav link: it changes *where you
+            // are*, and reading like the sections beside it would make
+            // administration look like one of them.
             <NavLink
               to={inAdmin ? "/" : "/admin"}
-              className={styles.adminLink}
               end={inAdmin}
+              className="rounded-full border border-line-strong px-3 py-1.5 text-sm font-medium whitespace-nowrap text-ink no-underline transition-colors hover:bg-sunken focus-visible:outline-none focus-visible:shadow-focus"
             >
               {inAdmin ? "Leave admin" : "Admin"}
             </NavLink>
@@ -145,14 +182,17 @@ export function Shell({ me, children }: ShellProps) {
             me={me}
             name={name}
             exactMoney={exactMoney}
-            onToggleExactMoney={toggleExactMoney}
+            onSetExactMoney={setExactMoneyPersisted}
+            theme={theme}
+            onSetTheme={setTheme_}
           />
         </div>
       </header>
 
-      <main className={styles.main}>{children}</main>
+      <main className="mx-auto max-w-[var(--layout-max-width)] px-5 pt-6 pb-7 max-[40rem]:px-4 max-[40rem]:pt-5 max-[40rem]:pb-6">
+        {children}
+      </main>
     </div>
-    </MoneyPrecisionProvider>
   );
 }
 
@@ -163,44 +203,28 @@ export function Shell({ me, children }: ShellProps) {
  * already carries the name and the admin badge and a fourth item in that row
  * crowds it on a laptop.
  *
- * Deliberately *not* `role="menu"`. That role is a promise of the full ARIA
- * menu pattern — arrow-key navigation, roving tabindex, typeahead — and a
- * popover that claims it without implementing it is worse for a screen-reader
- * user than one that claims nothing. This is a disclosure containing ordinary
- * buttons: `aria-expanded` on the trigger, and Tab works.
+ * Deliberately *not* `role="menu"` by hand — that role is a promise of the full
+ * ARIA menu pattern, and the Base UI menu beneath these items is what delivers
+ * it now (arrow keys, roving focus, typeahead, outside-press dismissal). What
+ * the CSS Modules version implemented itself with document-level listeners is
+ * the library's job here (ADR 0047).
  */
 function UserMenu({
   me,
   name,
   exactMoney,
-  onToggleExactMoney,
+  onSetExactMoney,
+  theme,
+  onSetTheme,
 }: {
   me: Me;
   name: string;
   exactMoney: boolean;
-  onToggleExactMoney: () => void;
+  onSetExactMoney: (next: boolean) => void;
+  theme: Theme;
+  onSetTheme: (theme: Theme) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const container = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (event: MouseEvent) => {
-      if (!container.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      // Escape closes it, which a `<dialog>` would give for free and a plain
-      // popover does not.
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
 
   const signOut = async () => {
     setBusy(true);
@@ -228,47 +252,70 @@ function UserMenu({
   };
 
   return (
-    <div className={styles.identity} ref={container}>
-      <button
-        type="button"
-        className={styles.identityButton}
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
+    // `ml-auto` pushes the identity to the right edge on desktop; once the nav
+    // drops to its own row on a phone, it is the only thing left to do that job.
+    <MenuRoot>
+      <MenuTrigger
+        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-ink-muted transition-colors hover:bg-sunken focus-visible:outline-none focus-visible:shadow-focus data-popup-open:bg-sunken"
       >
-        <span className={styles.identityName}>{name}</span>
+        {/* A long email should not push the badge off the header on a narrow
+            window; a phone has less room for it than a laptop. */}
+        <span className="max-w-64 truncate max-[40rem]:max-w-32">{name}</span>
         {me.is_admin && <Badge tone="accent">Administrator</Badge>}
-        <span className={styles.chevron} aria-hidden="true" />
-      </button>
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 16 16"
+          className="size-2.5 shrink-0 transition-transform duration-150 data-popup-open:rotate-180"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="m4 6 4 4 4-4" />
+        </svg>
+      </MenuTrigger>
 
-      {open && (
-        <div className={styles.menu}>
-          <div className={styles.menuMeta}>
-            {me.email && <div className={styles.menuEmail}>{me.email}</div>}
-            <div className={styles.menuGroups}>
-              {me.default_billing_group
-                ? `Billing to ${me.default_billing_group.name}`
-                : "No default billing group"}
-            </div>
+      <MenuContent align="end">
+        <div className="mb-1.5 flex flex-col gap-1 border-b border-line-quiet px-2 pb-2 text-xs">
+          {me.email && <div className="break-all text-ink">{me.email}</div>}
+          <div className="text-ink-faint">
+            {me.default_billing_group
+              ? `Billing to ${me.default_billing_group.name}`
+              : "No default billing group"}
           </div>
-          {/* A reader preference, so it lives with the other one — who you are
-              — rather than as a control on every screen that shows a figure.
-              Administrators only: see the Shell. */}
+        </div>
+
+        {/* Reader preferences live with who you are, not as controls on every
+            screen that shows a figure. Both are checkboxes for the same reason:
+            a *state*, not an action, so the menu item says what is on. */}
+        <MenuSection label="Preferences">
           {me.is_admin && (
-            <label className={styles.menuToggle}>
-              <input type="checkbox" checked={exactMoney} onChange={onToggleExactMoney} />
+            <MenuCheckboxItem
+              checked={exactMoney}
+              onCheckedChange={(checked) => onSetExactMoney(checked === true)}
+            >
               <span>
                 Exact figures
-                <span className={styles.menuHint}>
+                <span className="mt-0.5 block text-xs text-ink-faint">
                   Every decimal the ledger holds. Otherwise rounded to milli-units.
                 </span>
               </span>
-            </label>
+            </MenuCheckboxItem>
           )}
-          <Button variant="ghost" busy={busy} onClick={signOut}>
-            Sign out
-          </Button>
-        </div>
-      )}
-    </div>
+          <MenuCheckboxItem
+            checked={theme === "dark"}
+            onCheckedChange={(checked) => onSetTheme(checked ? "dark" : "light")}
+          >
+            Dark theme
+          </MenuCheckboxItem>
+        </MenuSection>
+
+        <MenuSeparator />
+        <MenuItem onClick={signOut} className={busy ? "cursor-progress opacity-60" : undefined}>
+          Sign out
+        </MenuItem>
+      </MenuContent>
+    </MenuRoot>
   );
 }

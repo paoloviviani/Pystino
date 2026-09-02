@@ -57,6 +57,8 @@ verified is marked as such in the ADR that depends on it.
 | [0044](0044-keycloak-removed.md) | Keycloak leaves the stack; OIDC against any provider, local login as the default way in |
 | [0045](0045-public-models.md) | Public models: any authenticated caller may use one, billed to their own group |
 | [0046](0046-local-api-credentials.md) | The local door issues `/v1` credentials: the gateway as issuer for its own accounts |
+| [0047](0047-tailwind-base-ui-modern-refresh.md) | The UI restyles on Tailwind v4 + Base UI, with a dark theme (supersedes the no-Tailwind stance of 0023/0042) |
+| [0048](0048-oidc-policy-configuration.md) | Users are created and deleted in the console; the OIDC identity policy is a runtime decision (amends 0011, 0022, 0043) |
 
 **0015, 0016 and 0041 — the chat frontend decisions — moved to the `chat`
 branch with the chat application itself** (A Vite SPA on `packages/ui` with

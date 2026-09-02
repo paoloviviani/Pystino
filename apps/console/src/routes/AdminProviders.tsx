@@ -1,4 +1,15 @@
-import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner, Table } from "@llmp/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  Input,
+  Notice,
+  Select,
+  Spinner,
+  Table,
+  
+} from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import {
@@ -11,7 +22,9 @@ import {
 } from "../lib/admin";
 import type { AdminProvider, ProviderPlugin, ProviderTestResult } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
-import styles from "./Admin.module.css";
+import { CHIPS, CHECK_ITEM, CODE, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
+import { useOptionalToast } from "../lib/toast";
+
 
 export function AdminProviders() {
   const providers = useProviders();
@@ -19,6 +32,7 @@ export function AdminProviders() {
   const update = useUpdateProvider();
   const remove = useDeleteProvider();
   const test = useTestProvider();
+  const toast = useOptionalToast();
 
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<AdminProvider | null>(null);
@@ -26,7 +40,16 @@ export function AdminProviders() {
 
   const runTest = (provider: AdminProvider) => {
     test.mutate(provider.id, {
-      onSuccess: (result) => setResults((current) => ({ ...current, [provider.id]: result })),
+      onSuccess: (result) => {
+        setResults((current) => ({ ...current, [provider.id]: result }));
+        // The row's badge keeps the result on the record; the toast only marks
+        // the round trip itself, the same acknowledgment the other writes give.
+        toast?.add({
+          title: result.ok ? "Provider reachable" : "Provider is not reachable",
+          type: result.ok ? "success" : "error",
+        });
+      },
+      onError: () => toast?.add({ title: "Could not test the provider", type: "error" }),
     });
   };
 
@@ -37,8 +60,8 @@ export function AdminProviders() {
       render: (provider) => (
         <>
           <div>{provider.name}</div>
-          <div className={`${styles.muted} ${styles.code}`}>{provider.base_url}</div>
-          {provider.description && <div className={styles.muted}>{provider.description}</div>}
+          <div className={`${MUTED} ${CODE}`}>{provider.base_url}</div>
+          {provider.description && <div className={MUTED}>{provider.description}</div>}
         </>
       ),
     },
@@ -50,7 +73,7 @@ export function AdminProviders() {
           {/* The label, not the internal name: the operator chose "Cortecs
               (router)" and should see that back. */}
           <div>{pluginLabel(plugins.data, provider.plugin)}</div>
-          <div className={styles.chips}>
+          <div className={CHIPS}>
             {provider.kind === "router" && <Badge tone="accent">router</Badge>}
             {provider.billing_mode === "provider_reported" && (
               <Badge tone="warn">bills from provider</Badge>
@@ -75,9 +98,9 @@ export function AdminProviders() {
         provider.has_api_key ? (
           // Only ever a hint: the key itself is write-only and never leaves the
           // gateway (ADR 0027).
-          <span className={styles.code}>{provider.api_key_hint}</span>
+          <span className={CODE}>{provider.api_key_hint}</span>
         ) : (
-          <span className={styles.muted}>none</span>
+          <span className={MUTED}>none</span>
         ),
     },
     {
@@ -90,7 +113,7 @@ export function AdminProviders() {
       key: "status",
       header: "Status",
       render: (provider) => (
-        <div className={styles.chips}>
+        <div className={CHIPS}>
           {provider.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
           <TestBadge result={results[provider.id]} />
         </div>
@@ -100,7 +123,7 @@ export function AdminProviders() {
       key: "actions",
       header: "",
       render: (provider) => (
-        <div className={styles.rowActions}>
+        <div className={ROW_ACTIONS}>
           <Button
             busy={test.isPending && test.variables === provider.id}
             onClick={() => runTest(provider)}
@@ -110,14 +133,29 @@ export function AdminProviders() {
           <Button onClick={() => setEditing(provider)}>Edit</Button>
           <Button
             busy={update.isPending && update.variables?.id === provider.id}
-            onClick={() => update.mutate({ id: provider.id, is_active: !provider.is_active })}
+            onClick={() =>
+              update.mutate(
+                { id: provider.id, is_active: !provider.is_active },
+                {
+                  onSuccess: () => toast?.add({ title: "Provider updated", type: "success" }),
+                  onError: () =>
+                    toast?.add({ title: "Could not update the provider", type: "error" }),
+                },
+              )
+            }
           >
             {provider.is_active ? "Deactivate" : "Activate"}
           </Button>
           <Button
             variant="ghost"
             busy={remove.isPending && remove.variables === provider.id}
-            onClick={() => remove.mutate(provider.id)}
+            onClick={() =>
+              remove.mutate(provider.id, {
+                onSuccess: () => toast?.add({ title: "Provider deleted", type: "success" }),
+                onError: () =>
+                  toast?.add({ title: "Could not delete the provider", type: "error" }),
+              })
+            }
           >
             Delete
           </Button>
@@ -129,7 +167,7 @@ export function AdminProviders() {
   const failures = Object.entries(results).filter(([, result]) => !result.ok);
 
   return (
-    <div className={styles.page}>
+    <div className={PAGE}>
       <PageHeader
         title="Providers"
         subtitle="The endpoints models are served from. API keys are encrypted and never
@@ -230,6 +268,7 @@ function ProviderDialog({
 }) {
   const create = useCreateProvider();
   const update = useUpdateProvider();
+  const toast = useOptionalToast();
   const editing = provider !== null;
 
   const [name, setName] = useState("");
@@ -269,7 +308,6 @@ function ProviderDialog({
   const error = create.error ?? update.error;
 
   const submit = () => {
-    const done = { onSuccess: onClose };
     if (editing && provider) {
       update.mutate(
         {
@@ -287,7 +325,14 @@ function ProviderDialog({
           // removes, and neither leaves the stored credential untouched.
           ...(apiKey ? { api_key: apiKey } : clearKey ? { api_key: "" } : {}),
         },
-        done,
+        {
+          onSuccess: () => {
+            toast?.add({ title: "Provider updated", type: "success" });
+            onClose();
+          },
+          onError: () =>
+            toast?.add({ title: "Could not update the provider", type: "error" }),
+        },
       );
     } else {
       create.mutate(
@@ -300,7 +345,14 @@ function ProviderDialog({
           billing_mode: effectiveMode,
           ...(apiKey ? { api_key: apiKey } : {}),
         },
-        done,
+        {
+          onSuccess: () => {
+            toast?.add({ title: "Provider created", type: "success" });
+            onClose();
+          },
+          onError: () =>
+            toast?.add({ title: "Could not create the provider", type: "error" }),
+        },
       );
     }
   };
@@ -439,7 +491,7 @@ function ProviderDialog({
       />
 
       {editing && provider?.has_api_key && (
-        <label className={styles.checkItem}>
+        <label className={CHECK_ITEM}>
           <input
             type="checkbox"
             checked={clearKey}

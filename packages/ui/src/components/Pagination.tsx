@@ -1,5 +1,4 @@
 import { Button } from "./Button";
-import styles from "./Pagination.module.css";
 
 export interface PaginationProps {
   /** Rows the filter matched, not rows on this page. */
@@ -44,20 +43,27 @@ export function Pagination({
   const hasNext = offset + limit < total;
 
   return (
-    <nav className={styles.bar} aria-label="Pagination">
-      <span className={styles.range} aria-live="polite" data-busy={busy || undefined}>
+    <nav
+      className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-sunken px-5 py-3"
+      aria-label="Pagination"
+    >
+      <span
+        className="text-sm text-ink-muted transition-opacity duration-120 data-busy:opacity-50"
+        aria-live="polite"
+        data-busy={busy || undefined}
+      >
         {total === 0 ? (
           `No ${noun}`
         ) : (
           <>
-            <strong>
+            <strong className="font-medium text-ink">
               {first.toLocaleString()}–{last.toLocaleString()}
             </strong>{" "}
             of {total.toLocaleString()} {noun}
           </>
         )}
       </span>
-      <div className={styles.buttons}>
+      <div className="flex gap-2">
         <Button
           disabled={!hasPrevious}
           onClick={() => onOffsetChange(Math.max(0, offset - limit))}

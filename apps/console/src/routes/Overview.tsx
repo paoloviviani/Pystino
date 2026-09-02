@@ -11,14 +11,29 @@ import {
   Spinner,
   Stat,
   Table,
-} from "@llmp/ui";
+  } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
+import { PageHeader } from "../components/PageHeader";
 import { downloadCsv } from "../lib/api";
+import {
+  CODE,
+  PAGE,
+  QUOTA,
+  QUOTA_DETAIL,
+  QUOTA_HEAD,
+  QUOTA_LIST,
+  QUOTA_NAME,
+  ROW_ACTIONS,
+  SECRET,
+  SECRET_DETAIL,
+  SECRET_ROW,
+  STATS,
+} from "../lib/layout";
+import { recentPeriods } from "../lib/periods";
 import { useDeleteKey, useMintKey, useMyKeys, useMyLimits, useMyReport, useRevokeKey } from "../lib/queries";
 import type { ApiKey, Me, MintedApiKey, MyLimit, UsageReportRow } from "../lib/types";
-import { recentPeriods } from "../lib/periods";
-import styles from "./Overview.module.css";
+import { useOptionalToast } from "../lib/toast";
 
 export interface OverviewProps {
   me: Me;
@@ -84,30 +99,28 @@ export function Overview({ me }: OverviewProps) {
   ];
 
   return (
-    <div className={styles.page}>
-      <div className={styles.pageHeader}>
-        <div>
-          {/* "Overview", not "Your usage" — that name now belongs to the
-              reports page next to it in the header, and two screens wearing it
-              is worse than either name being imperfect. */}
-          <h1 className={styles.title}>Overview</h1>
-          <p className={styles.subtitle}>
-            Where you stand this period, and the keys you spend with.
-          </p>
-        </div>
-        <Select
-          label="Period"
-          hideLabel
-          value={period}
-          onChange={(event) => setPeriod(event.target.value)}
-        >
-          {periods.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </Select>
-      </div>
+    <div className={PAGE}>
+      <PageHeader
+        title="Overview"
+        subtitle="Where you stand this period, and the keys you spend with."
+        /* "Overview", not "Your usage" — that name now belongs to the reports
+            page next to it in the header, and two screens wearing it is worse
+            than either name being imperfect. */
+        actions={
+          <Select
+            label="Period"
+            hideLabel
+            value={period}
+            onChange={(event) => setPeriod(event.target.value)}
+          >
+            {periods.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
+        }
+      />
 
       <Card>
         {report.isPending && <Spinner label="Loading your usage" />}
@@ -118,7 +131,7 @@ export function Overview({ me }: OverviewProps) {
         ) : null}
         {report.data && (
           <>
-            <div className={styles.stats}>
+            <div className={STATS}>
               <Stat
                 label={`Spend · ${report.data.period.label}`}
                 value={
@@ -226,22 +239,6 @@ export function Overview({ me }: OverviewProps) {
 }
 
 /**
- * What is stripped from this person's prompts, and the one direction they can
- * change it in.
- *
- * On everyone's screen, not only an administrator's, because the person typing
- * the prompt is the one who knows whether their prompt contains a patient's
- * name. What they cannot do is protect *less*: the API refuses a policy weaker
- * than the administrators' by naming the entity type that weakened it, and this
- * screen renders that sentence rather than re-deriving the rule — two copies of
- * "weaker" would disagree.
- *
- * The form is seeded from `baseline`, never from an empty document, and that is
- * a property of the API rather than a nicety: a type a submitted policy does not
- * name falls back to that policy's own default, so sending one entity would be a
- * weakening of every other.
- */
-/**
  * Where this person stands against every ceiling that applies to them.
  *
  * Above the breakdown, because "how much is left" is the question someone opens
@@ -287,7 +284,7 @@ function QuotaCard({ currency }: { currency: string }) {
 
   return (
     <Card title="Quotas" description="Every ceiling that applies to you. All of them must pass.">
-      <div className={styles.quotas}>
+      <div className={QUOTA_LIST}>
         {rules.map((rule) => (
           <QuotaMeter key={rule.id} rule={rule} currency={currency} />
         ))}
@@ -303,19 +300,19 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
   const used = rule.current_value === null ? null : Number(rule.current_value);
 
   return (
-    <div className={styles.quota}>
-      <div className={styles.quotaHead}>
-        <span className={styles.quotaName}>{rule.name}</span>
+    <div className={QUOTA}>
+      <div className={QUOTA_HEAD}>
+        <span className={QUOTA_NAME}>{rule.name}</span>
         <Badge>{SCOPE_LABEL[rule.scope] ?? rule.scope}</Badge>
       </div>
       {used === null ? (
-        <p className={styles.quotaDetail}>
+        <p className={QUOTA_DETAIL}>
           Consumption is unavailable — the counter store could not be reached.
         </p>
       ) : (
         <>
           <Meter value={used} limit={limit} label={`${rule.name}, ${rule.window_label}`} />
-          <p className={styles.quotaDetail}>
+          <p className={QUOTA_DETAIL}>
             {rule.metric === "cost" ? (
               <>
                 <Money amount={rule.current_value ?? "0"} currency={currency} /> of{" "}
@@ -338,6 +335,7 @@ const SCOPE_LABEL: Record<string, string> = {
   user: "You",
 };
 
+
 function MintKeyDialog({
   open,
   me,
@@ -348,6 +346,7 @@ function MintKeyDialog({
   onClose: () => void;
 }) {
   const mint = useMintKey();
+  const toast = useOptionalToast();
   const [name, setName] = useState("");
   const [groupId, setGroupId] = useState("");
   const [expiry, setExpiry] = useState("");
@@ -371,7 +370,15 @@ function MintKeyDialog({
         billing_group_id: groupId === "" ? null : groupId,
         expires_in_days: expiry === "" ? null : Number(expiry),
       },
-      { onSuccess: setMinted },
+      {
+        onSuccess: (created) => {
+          setMinted(created);
+          // The dialog shows the secret itself; the toast is for after "Done",
+          // when the dialog is gone and the list has quietly grown.
+          toast?.add({ title: "API key created", type: "success" });
+        },
+        onError: () => toast?.add({ title: "Could not create the key", type: "error" }),
+      },
     );
 
   return (
@@ -486,18 +493,19 @@ function MintedSecret({ minted }: { minted: MintedApiKey }) {
         it, revoke this one and mint another.
       </Notice>
 
-      <div className={styles.secretRow}>
-        <code className={styles.secret}>{minted.secret}</code>
+      <div className={SECRET_ROW}>
+        <code className={SECRET}>{minted.secret}</code>
         <Button onClick={copy}>{copied ? "Copied" : "Copy"}</Button>
       </div>
       {copied === false && (
-        <p className={styles.copyFallback}>
+        // Warn ink, small — a caveat about the fallback, not the failure itself.
+        <p className="text-sm text-warn">
           Could not reach the clipboard. Select the key and copy it by hand.
         </p>
       )}
 
-      <p className={styles.secretDetail}>
-        Send it as <code className={styles.code}>Authorization: Bearer …</code>. Billed to{" "}
+      <p className={SECRET_DETAIL}>
+        Send it as <code className={CODE}>Authorization: Bearer …</code>. Billed to{" "}
         {minted.billing_group?.name ?? "your default group at request time"}
         {minted.expires_at ? `, expires ${formatDate(minted.expires_at)}` : ", never expires"}.
       </p>
@@ -515,6 +523,7 @@ function MintedSecret({ minted }: { minted: MintedApiKey }) {
  */
 function RevokeKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: () => void }) {
   const revoke = useRevokeKey();
+  const toast = useOptionalToast();
 
   return (
     <Dialog
@@ -528,7 +537,15 @@ function RevokeKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
             variant="danger"
             busy={revoke.isPending}
             onClick={() =>
-              apiKey && revoke.mutate(apiKey.id, { onSuccess: onClose })
+              apiKey &&
+              revoke.mutate(apiKey.id, {
+                onSuccess: () => {
+                  toast?.add({ title: "Key revoked", type: "success" });
+                  onClose();
+                },
+                onError: () =>
+                  toast?.add({ title: "Could not revoke the key", type: "error" }),
+              })
             }
           >
             Revoke key
@@ -542,10 +559,10 @@ function RevokeKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
         </Notice>
       ) : null}
       <p>
-        <code className={styles.code}>{apiKey?.prefix}</code> stops working immediately and
+        <code className={CODE}>{apiKey?.prefix}</code> stops working immediately and
         cannot be restored. Anything still using it starts failing to authenticate.
       </p>
-      <p className={styles.secretDetail}>
+      <p className={SECRET_DETAIL}>
         Usage history is unaffected: the key is revoked, never deleted.
       </p>
     </Dialog>
@@ -563,6 +580,7 @@ function RevokeKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
  */
 function DeleteKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: () => void }) {
   const del = useDeleteKey();
+  const toast = useOptionalToast();
 
   return (
     <Dialog
@@ -575,7 +593,17 @@ function DeleteKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
           <Button
             variant="danger"
             busy={del.isPending}
-            onClick={() => apiKey && del.mutate(apiKey.id, { onSuccess: onClose })}
+            onClick={() =>
+              apiKey &&
+              del.mutate(apiKey.id, {
+                onSuccess: () => {
+                  toast?.add({ title: "Key deleted", type: "success" });
+                  onClose();
+                },
+                onError: () =>
+                  toast?.add({ title: "Could not delete the key", type: "error" }),
+              })
+            }
           >
             Delete permanently
           </Button>
@@ -588,11 +616,11 @@ function DeleteKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
         </Notice>
       ) : null}
       <p>
-        <code className={styles.code}>{apiKey?.prefix}</code> is removed from this list and stops
+        <code className={CODE}>{apiKey?.prefix}</code> is removed from this list and stops
         working immediately. This cannot be undone — revoking is the reversible-looking cousin,
         and even it cannot be restored.
       </p>
-      <p className={styles.secretDetail}>
+      <p className={SECRET_DETAIL}>
         Past usage stays in the ledger, still attributed to you and your billing group. Those rows
         simply stop carrying this key's name in the by-key breakdown.
       </p>
@@ -608,7 +636,7 @@ const keyColumns = (
   {
     key: "prefix",
     header: "Prefix",
-    render: (key) => <code className={styles.code}>{key.prefix}</code>,
+    render: (key) => <code className={CODE}>{key.prefix}</code>,
   },
   {
     key: "group",
@@ -639,7 +667,7 @@ const keyColumns = (
     // always, because pruning dead keys out of the list is the point of
     // having it — a revoked entry is exactly the clutter in question.
     render: (key) => (
-      <div className={styles.keyActions}>
+      <div className={ROW_ACTIONS}>
         {key.revoked_at ? null : (
           <Button variant="ghost" onClick={() => onRevoke(key)}>
             Revoke

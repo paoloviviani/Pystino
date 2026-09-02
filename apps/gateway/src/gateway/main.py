@@ -20,6 +20,7 @@ from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.logging_config import configure_logging
 from gateway.login_throttle import LoginThrottle
 from gateway.oidc import OIDCClient
+from gateway.oidc_policy import OIDCPolicyResolver
 from gateway.providers import ProviderRegistry
 from gateway.quota import (
     DatabaseCounterStore,
@@ -150,6 +151,20 @@ async def init_app_state(
     # logs, rather than refusing to boot over a database blip.
     await resolver.refresh()
     resolver.start()
+    # The identity policy (ADR 0048): console-decided, environment-baselined,
+    # polled the same way redaction is. Read once before serving, so a worker
+    # never answers a login with the environment's policy when the console has
+    # already overridden it. Failure is non-fatal by construction: under the
+    # test fixtures the schema does not exist yet at this point, and in
+    # production a database blip must not refuse to boot — the poll catches up,
+    # and until then the environment's policy stands.
+    oidc_policy_resolver = OIDCPolicyResolver(settings.oidc, session_factory)
+    app.state.oidc_policy = oidc_policy_resolver
+    try:
+        await oidc_policy_resolver.refresh_once()
+    except Exception:
+        logger.warning("could not read the oidc policy at startup", exc_info=True)
+    oidc_policy_resolver.start()
     app.state.token_estimator = DEFAULT_ESTIMATOR
     # Strong references to detached finalisation tasks; see chat.py.
     app.state.background_tasks = set()
@@ -211,6 +226,8 @@ async def shutdown_app_state(app: FastAPI) -> None:
     # after a console change.
     if (resolver := getattr(app.state, "redaction", None)) is not None:
         await resolver.aclose()
+    if (policy := getattr(app.state, "oidc_policy", None)) is not None:
+        await policy.stop()
     if (valkey := getattr(app.state, "valkey", None)) is not None:
         await valkey.aclose()
     await app.state.engine.dispose()

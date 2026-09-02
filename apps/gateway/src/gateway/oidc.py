@@ -49,6 +49,7 @@ from sqlalchemy.orm import selectinload
 
 from gateway.config import OIDCSettings
 from gateway.models import Group, GroupSource, Membership, User
+from gateway.oidc_policy import OIDCPolicy
 from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,15 @@ _ID_TYP = "ID"
 
 class OIDCError(Exception):
     """Any failure in the login flow. Never surfaced verbatim to the browser."""
+
+
+class ProvisioningRefused(OIDCError):
+    """A login the identity *policy* refused, not a technical failure.
+
+    Distinct from its parent because the message is meant for the person
+    typing their password: "ask an administrator" is actionable, while
+    OIDCError's callers replace the text with a generic sign-in failure.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,9 +174,18 @@ def normalise_groups(value: Any) -> list[str]:
     return []
 
 
-def extract_groups(claims: dict[str, Any], settings: OIDCSettings) -> list[str]:
-    """Group names for a login, after the configured allowlist is applied."""
-    names = normalise_groups(resolve_claim(claims, settings.groups_claim))
+def extract_groups(
+    claims: dict[str, Any], settings: OIDCSettings, policy: OIDCPolicy | None = None
+) -> list[str]:
+    """Group names for a login, after the configured allowlist is applied.
+
+    The claim path is the policy's when one is in force (ADR 0048) — which
+    claim names the groups is an operator decision now, and every IdP puts
+    them somewhere different. The allowlist stays environmental: it filters
+    what the IdP *reports*, which is plumbing, not meaning.
+    """
+    claim_path = policy.groups_claim if policy is not None else settings.groups_claim
+    names = normalise_groups(resolve_claim(claims, claim_path))
     if settings.group_allowlist:
         allowed = set(settings.group_allowlist)
         names = [name for name in names if name in allowed]
@@ -419,8 +438,15 @@ async def provision_user(
     group_names: list[str],
     settings: OIDCSettings,
     touch_login: bool = True,
+    policy: OIDCPolicy | None = None,
 ) -> User:
     """Create or update a user and reconcile their group memberships.
+
+    ``policy`` carries the console's decisions (ADR 0048); without one, the
+    environment's stands and behaviour is exactly as it always was. The gate
+    lives here rather than in the callers because both doors in — the browser
+    callback and a bearer token on ``/v1`` — must be governed by the same
+    answer, and this is the one place that sees a *first* login as such.
 
     Group membership is **replaced**, not merged: the identity provider is
     authoritative, so a group removed there must disappear here, or revoking
@@ -436,6 +462,28 @@ async def provision_user(
         .options(selectinload(User.memberships))
     )
     user = (await session.execute(stmt)).scalar_one_or_none()
+
+    if user is None and policy is not None and not policy.auto_provision:
+        # Automatic provisioning is off (ADR 0048). Two answers, the operator's
+        # choice: refuse the stranger outright, or create the account *inactive*
+        # so an administrator can enable it — nobody signs in as a user nobody
+        # has looked at, but the request is a name on a list rather than a
+        # refusal to re-type next week.
+        if policy.unknown_user_policy == "create_inactive":
+            user = User(
+                issuer=issuer,
+                subject=subject,
+                email=email,
+                display_name=display_name,
+                is_active=False,
+            )
+            session.add(user)
+            await session.flush()
+        else:
+            raise ProvisioningRefused(
+                "Automatic account creation is turned off. Ask an administrator "
+                "to create your account, then sign in again."
+            )
 
     if user is None:
         user = User(issuer=issuer, subject=subject, email=email, display_name=display_name)
@@ -464,9 +512,12 @@ async def provision_user(
     # Admin follows group membership when configured, in both directions. Left
     # unconfigured, the flag is never touched here and stays a manual decision —
     # which is what keeps `gateway seed`'s local admin usable.
-    if settings.admin_groups:
+    # The group names arriving here are already *mapped* (IdP name to local
+    # name, ADR 0048), so admin compares against what a group is called here.
+    admin_groups = policy.admin_groups if policy is not None else settings.admin_groups
+    if admin_groups:
         held = {group.name for group in groups}
-        user.is_admin = bool(held & set(settings.admin_groups))
+        user.is_admin = bool(held & set(admin_groups))
 
     valid_group_ids = {group.id for group in groups}
     if (
@@ -489,6 +540,7 @@ async def sync_user_from_claims(
     *,
     claims: dict[str, Any],
     settings: OIDCSettings,
+    policy: OIDCPolicy | None = None,
 ) -> User:
     """Resolve an access token's claims to the user row it names.
 
@@ -522,11 +574,17 @@ async def sync_user_from_claims(
     )
     user = (await session.execute(stmt)).scalar_one_or_none()
 
-    group_names = extract_groups(claims, settings)
+    # Mapping first (ADR 0048): the rest of the flow — reconciliation,
+    # divergence, admin — speaks local names only.
+    group_names = (
+        policy.map_group_names(extract_groups(claims, settings, policy))
+        if policy is not None
+        else extract_groups(claims, settings)
+    )
     email = claims.get("email")
     display_name = claims.get("name") or claims.get("preferred_username")
 
-    if user is not None and not _claims_diverge(user, group_names, settings):
+    if user is not None and not _claims_diverge(user, group_names, settings, policy):
         return user
 
     return await provision_user(
@@ -538,10 +596,13 @@ async def sync_user_from_claims(
         group_names=group_names,
         settings=settings,
         touch_login=False,
+        policy=policy,
     )
 
 
-def _claims_diverge(user: User, group_names: list[str], settings: OIDCSettings) -> bool:
+def _claims_diverge(
+    user: User, group_names: list[str], settings: OIDCSettings, policy: OIDCPolicy | None = None
+) -> bool:
     """Does the token say something the stored row does not already reflect?
 
     Group *names* are compared rather than ids because that is what the token
@@ -552,8 +613,9 @@ def _claims_diverge(user: User, group_names: list[str], settings: OIDCSettings) 
     held = {membership.group.name for membership in user.memberships}
     if held != set(group_names):
         return True
-    if settings.admin_groups:
-        return user.is_admin != bool(held & set(settings.admin_groups))
+    admin_groups = policy.admin_groups if policy is not None else settings.admin_groups
+    if admin_groups:
+        return user.is_admin != bool(held & set(admin_groups))
     return False
 
 

@@ -11,10 +11,26 @@ import type { RedactionPolicy, RedactionScope } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import { PolicyFields, seededPolicy } from "../components/PolicyFields";
 import { SubjectPicker, scopeNoun } from "../components/SubjectPicker";
-import styles from "./Admin.module.css";
+import { FORM, MUTED, PAGE } from "../lib/layout";
+import { useOptionalToast } from "../lib/toast";
 
 //: Widest first, matching the order rules are folded in and listed.
 const SCOPE_OPTIONS: RedactionScope[] = ["all", "provider", "model", "group", "user", "api_key"];
+
+
+/**
+ * The name and reason fields are native inputs labelled with `aria-label`
+ * rather than a visible label, so they sit outside `@llmp/ui`'s `Input` (which
+ * is built around a visible label) — but they wear the same control chrome,
+ * written out from the package's `controlClass`. `Admin.module.css` never
+ * defined the `.input` they used to cite, so until this conversion they were
+ * rendering with no styling at all; writing the chrome here turns that
+ * accident into a decision.
+ */
+const INPUT =
+  "w-full rounded-md border border-line bg-surface px-3 py-2 text-base text-ink " +
+  "placeholder:text-ink-faint transition-shadow hover:border-line-strong " +
+  "focus-visible:outline-none focus-visible:shadow-focus";
 
 /**
  * What a new rule starts as: off for every entity type, and the credential
@@ -55,6 +71,7 @@ export function AdminRedactionRule() {
 
   const create = useCreateRedactionRule();
   const update = useUpdateRedactionRule();
+  const toast = useOptionalToast();
 
   const [name, setName] = useState("");
   const [scope, setScope] = useState<RedactionScope>("all");
@@ -79,7 +96,21 @@ export function AdminRedactionRule() {
   const entityTypes = status.data?.service?.entities ?? [];
 
   const submit = () => {
-    const done = { onSuccess: () => navigate("/admin/redaction") };
+    const done = {
+      // The toast, not the redirect, is what says the write landed: the rule
+      // screen is gone the moment the navigation below runs, so a Notice there
+      // could never be read.
+      onSuccess: () => {
+        toast?.add({ title: existing ? "Rule saved." : "Rule created.", type: "success" });
+        navigate("/admin/redaction");
+      },
+      onError: (error: Error) =>
+        toast?.add({
+          title: "Could not save the rule",
+          description: error instanceof Error ? error.message : "Unknown error.",
+          type: "error",
+        }),
+    };
     if (existing) {
       update.mutate({ id: existing.id, name, policy, reason }, done);
     } else {
@@ -100,14 +131,14 @@ export function AdminRedactionRule() {
 
   if (ruleId && rules.isPending) {
     return (
-      <div className={styles.page}>
+      <div className={PAGE}>
         <Spinner label="Loading the rule" />
       </div>
     );
   }
   if (ruleId && !existing) {
     return (
-      <div className={styles.page}>
+      <div className={PAGE}>
         <Notice tone="danger" title="No such rule">
           It may have been deleted. <a href="/admin/redaction">Back to redaction</a>
         </Notice>
@@ -116,7 +147,7 @@ export function AdminRedactionRule() {
   }
 
   return (
-    <div className={styles.page}>
+    <div className={PAGE}>
       <PageHeader
         title={existing ? `Rule · ${existing.subject_label ?? scopeNoun(existing.scope)}` : "New rule"}
         subtitle="The strictest applicable rule wins, so adding one can only protect more."
@@ -131,7 +162,7 @@ export function AdminRedactionRule() {
 
       <Card title="Subject">
         {existing ? (
-          <p className={styles.muted}>
+          <p className={MUTED}>
             {scopeNoun(existing.scope)} · {existing.subject_label ?? "deleted"}
           </p>
         ) : (
@@ -163,17 +194,17 @@ export function AdminRedactionRule() {
       />
 
       <Card title="Name and reason">
-        <div className={styles.form}>
+        <div className={FORM}>
           <input
             aria-label="Rule name"
-            className={styles.input}
+            className={INPUT}
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="what this rule is for"
           />
           <input
             aria-label="Reason"
-            className={styles.input}
+            className={INPUT}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
             placeholder="why it exists"

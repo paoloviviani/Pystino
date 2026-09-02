@@ -99,19 +99,24 @@ Inside the gateway, the pieces that carry the most weight:
   will `SELECT DISTINCT` over a JSON column; PostgreSQL has no equality
   operator for `json` at all. The unit suite runs on SQLite, so anything
   dialect-shaped needs a live script or a compile-against-the-dialect test.
-- **The look is Material Design 3, and it lives in one file.**
-  `packages/ui/src/tokens.css` carries the palette, the geometry and the type,
-  and components reference tokens and never literals — the restyle in
-  [ADR 0042](docs/adr/0042-material-design-3.md) was that file plus two
-  components, and the Bauhaus pass before it ([ADR 0034](docs/adr/0034-bauhaus-design-language.md),
-  superseded) was the same. Three things worth knowing: **the tonal ground is
-  inverted from MD3's own** — the page is tinted and a card is white, because
-  this console is tables of figures and figures read best on white; **green is
-  back**, so `ok` is green, `accent` is the purple, and the black-badge
-  workaround ADR 0034 needed is gone with the constraint that caused it; and
-  **the decorative half of Material You is deliberately absent** — no blur
-  shapes, no glass-morphism, no glow or scale on hover. Roboto is vendored under
-  the Apache License 2.0, licence beside it in `packages/ui/src/fonts/`.
+- **The look is a neutral greyscale with one indigo accent, and it lives in one
+  file.** `packages/ui/src/tokens.css` carries the palette (light **and dark**),
+  the type and the geometry, and components reference tokens and never literals
+  — restyles have landed three times now as a change to that file alone
+  ([ADR 0042](docs/adr/0042-material-design-3.md) twice, and
+  [ADR 0047](docs/adr/0047-tailwind-base-ui-modern-refresh.md)). Since 0047 the
+  components are styled with **Tailwind utilities** and the interaction layer
+  (Dialog, Menu, Toast, Tooltip) is **Base UI**, both verified MIT at source;
+  the tokens stay plain custom properties, so a consumer that runs no Tailwind
+  can still import the file. Three things worth knowing: **dark mode is one
+  `.dark` block in that file plus a class on `<html>`** — nothing else knows it
+  exists, and utilities follow it because they read the custom properties
+  (`@theme inline`); **the decorative half is still deliberately absent** — no
+  blur, glass, glow, or scale-on-hover; and **Tailwind's content detection is
+  rooted at the Vite project root**, so `apps/console/src/index.css` declares
+  `@source` for `packages/ui/src` — if a class "does nothing", that line not
+  naming its file is the first thing to check. Roboto is vendored under the
+  Apache License 2.0, licence beside it in `packages/ui/src/fonts/`.
 - **Money is a string end to end.** `Numeric(24,12)` round-trips zero as
   `Decimal("0E-12")`; the `Money` annotated type in `schemas.py` forces plain
   digits. Never parse an amount into a float, including in the browser.

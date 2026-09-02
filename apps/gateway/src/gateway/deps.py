@@ -19,6 +19,7 @@ from gateway.config import Settings
 from gateway.errors import AuthenticationError, PermissionError_
 from gateway.models import ApiKey, Group, User
 from gateway.oidc import OIDCClient, OIDCError, sync_user_from_claims
+from gateway.oidc_policy import OIDCPolicy
 from gateway.providers import ProviderRegistry
 from gateway.quota import QuotaEngine, QuotaSubject
 from gateway.redaction import Redactor
@@ -54,6 +55,20 @@ class Principal:
 def get_settings_dep(request: Request) -> Settings:
     settings: Settings = request.app.state.settings
     return settings
+
+
+def get_oidc_policy(request: Request) -> OIDCPolicy:
+    """The identity policy in force on this worker (ADR 0048).
+
+    Read off ``app.state`` rather than re-derived: the resolver owns the poll,
+    and the login path must agree with what the admin screen reports.
+    """
+    policy = request.app.state.oidc_policy.policy
+    assert isinstance(policy, OIDCPolicy)
+    return policy
+
+
+OidcPolicyDep = Annotated[OIDCPolicy, Depends(get_oidc_policy)]
 
 
 def get_session_factory(request: Request) -> object:
@@ -252,7 +267,15 @@ async def _bearer_principal(
 
     try:
         claims = await client.validate_access_token(token)
-        user = await sync_user_from_claims(session, claims=claims, settings=settings.oidc)
+        # The same policy gate the browser login answers to (ADR 0048): with
+        # provisioning off, a bearer token for a stranger is refused here too —
+        # the console's front door and the API's must not disagree about who
+        # may come to exist.
+        resolver = getattr(request.app.state, "oidc_policy", None)
+        policy = resolver.policy if resolver is not None else None
+        user = await sync_user_from_claims(
+            session, claims=claims, settings=settings.oidc, policy=policy
+        )
     except OIDCError as exc:
         # Logged in full, returned as one word: the reason a token failed is a
         # map of the validator for anyone holding a forged one.
