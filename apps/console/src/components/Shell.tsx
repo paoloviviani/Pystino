@@ -112,6 +112,10 @@ export function Shell({ me, children }: ShellProps) {
     }
   };
 
+  // The phone's navigation panel. Desktop never hides the pills, so this is
+  // only read through the mobile-only classes; a route change closes it.
+  const [navOpen, setNavOpen] = useState(false);
+
   // Light and dark: the OS's answer until the reader picks, then theirs. See
   // lib/theme.ts for why this is a class and a localStorage key and nothing else.
   const [theme, setTheme] = useState<Theme>(() => storedTheme());
@@ -124,7 +128,7 @@ export function Shell({ me, children }: ShellProps) {
   return (
     <div className="min-h-dvh">
       <header className="sticky top-0 z-10 border-b border-line bg-surface">
-        <div className="mx-auto flex max-w-[var(--layout-max-width)] items-center gap-6 px-5 py-3 max-[40rem]:flex-wrap max-[40rem]:gap-3 max-[40rem]:px-4">
+        <div className="relative mx-auto flex max-w-[var(--layout-max-width)] items-center gap-6 px-5 py-3 max-[40rem]:gap-3 max-[40rem]:px-4">
           {/* The wordmark is the way home, which is what a wordmark is for
               everywhere else on the web. `end`, so it is only "current" on the
               overview itself rather than on every route beneath it. */}
@@ -143,8 +147,20 @@ export function Shell({ me, children }: ShellProps) {
             <span className="font-bold">Pistin Gateway</span>
           </NavLink>
 
+          {/* One navigation, two shapes: inline pills on a wide screen, and on
+              a phone the same element re-dressed as a panel the hamburger
+              drops under the bar. Rendered once and always in the DOM — a
+              CSS-hidden element stays in the accessibility tree, and there is
+              exactly one "Providers" link for a test to find, whichever shape
+              the reader is looking at. */}
           <nav
-            className="flex flex-1 items-center gap-1 max-[40rem]:order-3 max-[40rem]:w-full max-[40rem]:flex-nowrap max-[40rem]:overflow-x-auto max-[40rem]:[scrollbar-width:none] max-[40rem]:[-ms-overflow-style:none] max-[40rem]:[&::-webkit-scrollbar]:hidden"
+            className={[
+              "flex flex-1 items-center gap-1",
+              "max-[40rem]:absolute max-[40rem]:inset-x-0 max-[40rem]:top-full max-[40rem]:z-20",
+              "max-[40rem]:flex-col max-[40rem]:items-stretch max-[40rem]:border-b max-[40rem]:border-line",
+              "max-[40rem]:bg-surface max-[40rem]:p-3 max-[40rem]:shadow-md",
+              !navOpen && "max-[40rem]:hidden",
+            ].join(" ")}
             aria-label={inAdmin ? "Administration" : "Sections"}
           >
             {items.map((item) => (
@@ -152,40 +168,76 @@ export function Shell({ me, children }: ShellProps) {
                 key={item.to}
                 to={item.to}
                 end={item.to === "/" || item.to === "/admin"}
+                onClick={() => setNavOpen(false)}
                 className={({ isActive }) =>
-                  isActive ? `${NAV_LINK} ${NAV_LINK_ACTIVE}` : NAV_LINK
+                  [
+                    isActive ? `${NAV_LINK} ${NAV_LINK_ACTIVE}` : NAV_LINK,
+                    "max-[40rem]:w-full",
+                  ].join(" ")
                 }
               >
                 {item.label}
               </NavLink>
             ))}
+            {me.is_admin && (
+              // Administration is a place, not a section — but it rides in the
+              // one navigation rather than getting a second element for each
+              // screen size. On a desktop it is dressed as a control (it
+              // changes where you are; reading like the sections beside it
+              // would make administration look like one of them); on a phone
+              // it is the last row of the hamburger panel, still one click.
+              <NavLink
+                to={inAdmin ? "/" : "/admin"}
+                end={inAdmin}
+                onClick={() => setNavOpen(false)}
+                className={({ isActive }) =>
+                  [
+                    isActive ? `${NAV_LINK} ${NAV_LINK_ACTIVE}` : NAV_LINK,
+                    "max-[40rem]:w-full",
+                    "min-[40rem]:ml-2 min-[40rem]:rounded-full min-[40rem]:border",
+                    "min-[40rem]:border-line-strong min-[40rem]:px-3 min-[40rem]:py-1.5",
+                    "min-[40rem]:font-medium min-[40rem]:whitespace-nowrap min-[40rem]:text-ink",
+                    "min-[40rem]:no-underline min-[40rem]:hover:bg-sunken",
+                  ].join(" ")
+                }
+              >
+                {inAdmin ? "Leave admin" : "Admin"}
+              </NavLink>
+            )}
           </nav>
 
-          {me.is_admin && (
-            // A link, not a menu item: it is a place to go, and burying the way
-            // into administration one click deeper than the way out of it would
-            // be the wrong way round. Labelled by where it leads, so the reader
-            // in admin sees the way back rather than a button that does nothing.
-            // Styled as a control rather than a nav link: it changes *where you
-            // are*, and reading like the sections beside it would make
-            // administration look like one of them.
-            <NavLink
-              to={inAdmin ? "/" : "/admin"}
-              end={inAdmin}
-              className="rounded-full border border-line-strong px-3 py-1.5 text-sm font-medium whitespace-nowrap text-ink no-underline transition-colors hover:bg-sunken focus-visible:outline-none focus-visible:shadow-focus"
+          {/* The right cluster: on a phone, the hamburger that opens the
+              navigation above. */}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              aria-label="Menu"
+              aria-expanded={navOpen}
+              onClick={() => setNavOpen((open) => !open)}
+              className="hidden size-10 cursor-pointer items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:shadow-focus max-[40rem]:inline-flex"
             >
-              {inAdmin ? "Leave admin" : "Admin"}
-            </NavLink>
-          )}
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 16 16"
+                className="size-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              >
+                <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" />
+              </svg>
+            </button>
 
-          <UserMenu
-            me={me}
-            name={name}
-            exactMoney={exactMoney}
-            onSetExactMoney={setExactMoneyPersisted}
-            theme={theme}
-            onSetTheme={setTheme_}
-          />
+            <UserMenu
+              me={me}
+              name={name}
+              exactMoney={exactMoney}
+              onSetExactMoney={setExactMoneyPersisted}
+              theme={theme}
+              onSetTheme={setTheme_}
+            />
+          </div>
         </div>
       </header>
 
@@ -193,6 +245,21 @@ export function Shell({ me, children }: ShellProps) {
         {children}
       </main>
     </div>
+  );
+}
+
+/**
+ * Up to two leading letters of the display name, for the avatar badge. An
+ * email yields one letter; that is correct, not a bug to be cleverer about.
+ */
+function initialsOf(name: string): string {
+  return (
+    name
+      .split(/\s+|@|\./)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "")
+      .join("") || "?"
   );
 }
 
@@ -252,28 +319,25 @@ function UserMenu({
   };
 
   return (
-    // `ml-auto` pushes the identity to the right edge on desktop; once the nav
-    // drops to its own row on a phone, it is the only thing left to do that job.
     <MenuRoot>
+      {/* A round badge, not a name-and-chevron row: the email address in a
+          header was the single widest thing on a phone, and it said nothing
+          the menu itself does not say. The accessible name keeps the person's
+          name so a screen reader hears who is signed in, and the initials are
+          decoration (aria-hidden) — an initial pair like "DA" is a guess about
+          a name, not a statement of one. The dot is the admin marker the
+          header row used to carry as a full badge. */}
       <MenuTrigger
-        className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-ink-muted transition-colors hover:bg-sunken focus-visible:outline-none focus-visible:shadow-focus data-popup-open:bg-sunken"
+        aria-label={`Account — ${name}`}
+        className="relative flex size-9 cursor-pointer items-center justify-center rounded-full bg-accent-subtle text-sm font-medium text-accent transition-colors hover:bg-accent hover:text-ink-inverse focus-visible:outline-none focus-visible:shadow-focus data-popup-open:bg-accent data-popup-open:text-ink-inverse"
       >
-        {/* A long email should not push the badge off the header on a narrow
-            window; a phone has less room for it than a laptop. */}
-        <span className="max-w-64 truncate max-[40rem]:max-w-32">{name}</span>
-        {me.is_admin && <Badge tone="accent">Administrator</Badge>}
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 16 16"
-          className="size-2.5 shrink-0 transition-transform duration-150 data-popup-open:rotate-180"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="m4 6 4 4 4-4" />
-        </svg>
+        <span aria-hidden="true">{initialsOf(name)}</span>
+        {me.is_admin && (
+          <span
+            aria-hidden="true"
+            className="absolute right-0 bottom-0 size-2.5 rounded-full border-2 border-surface bg-accent"
+          />
+        )}
       </MenuTrigger>
 
       <MenuContent align="end">
@@ -284,6 +348,7 @@ function UserMenu({
               ? `Billing to ${me.default_billing_group.name}`
               : "No default billing group"}
           </div>
+          {me.is_admin && <Badge tone="accent">Administrator</Badge>}
         </div>
 
         {/* Reader preferences live with who you are, not as controls on every
