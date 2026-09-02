@@ -57,7 +57,12 @@ const ADMIN_SECTIONS: Section[] = [
   {
     to: "/admin/users",
     title: "Users",
-    description: "People, their groups, and the keys they hold.",
+    description: "People, their accounts, and the keys they hold.",
+  },
+  {
+    to: "/admin/groups",
+    title: "Groups",
+    description: "Who belongs together, and what each group may use.",
   },
 ];
 

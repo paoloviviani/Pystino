@@ -12,6 +12,7 @@ import { AdminRedaction } from "./routes/AdminRedaction";
 import { AdminRedactionRule } from "./routes/AdminRedactionRule";
 import { Admin } from "./routes/Admin";
 import { AdminReports } from "./routes/AdminReports";
+import { AdminGroups } from "./routes/AdminGroups";
 import { AdminIdentity } from "./routes/AdminIdentity";
 import { AdminUsers } from "./routes/AdminUsers";
 import { Login } from "./routes/Login";
@@ -109,6 +110,14 @@ export function App() {
           element={
             <RequireAdmin me={me_}>
               <AdminIdentity />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/groups"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminGroups />
             </RequireAdmin>
           }
         />
