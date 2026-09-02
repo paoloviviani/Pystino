@@ -18,10 +18,11 @@ export interface MeterProps {
  * whereas converting an amount to a float to display it would. The caller
  * formats the exact figure into `caption` and passes the approximation here.
  *
- * The track keeps its **fixed width** (the CSS Modules this replaces explain
- * why at length): it was flexible once, captions differ in width, and two bars
- * both at 40% that are not the same length cannot be compared — which is the
- * only thing a column of these is for.
+ * The track keeps its **fixed width** - 10rem, widened from the 7rem the CSS
+ * Modules used at the operator's asking, and still one width everywhere: it
+ * was flexible once, captions differ in width, and two bars both at 40% that
+ * are not the same length cannot be compared - which is the only thing a
+ * column of these is for.
  */
 export function Meter({ value, limit, label, caption }: MeterProps) {
   const ratio = limit > 0 ? Math.min(value / limit, 1) : value > 0 ? 1 : 0;
@@ -31,7 +32,7 @@ export function Meter({ value, limit, label, caption }: MeterProps) {
   return (
     <div className="flex flex-col items-start gap-1">
       <div
-        className="h-2.5 w-28 overflow-hidden rounded-sm border border-line bg-surface"
+        className="h-2.5 w-40 overflow-hidden rounded-sm border border-line bg-surface"
         role="meter"
         aria-valuenow={percent}
         aria-valuemin={0}
