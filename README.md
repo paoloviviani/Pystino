@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo-512.png" alt="The Pystino logo" width="256" />
+</p>
+
 # Pystino
 
 A self-hosted LLM platform, built and run by its author at personal expense: an
