@@ -11,7 +11,15 @@ import {
   } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
-import { useCreateUser, useDeleteUser, useGroups, useUpdateUser, useUsers } from "../lib/admin";
+import {
+  useClearUserPassword,
+  useCreateUser,
+  useDeleteUser,
+  useGroups,
+  useSetUserPassword,
+  useUpdateUser,
+  useUsers,
+} from "../lib/admin";
 import {
   CHECK_ITEM,
   CHECK_LIST,
@@ -40,9 +48,9 @@ export function AdminUsers() {
   const groups = useGroups({ limit: 200 });
   const update = useUpdateUser();
   const remove = useDeleteUser();
-  const toast = useOptionalToast();
 
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<AdminUser | null>(null);
   const [deleting, setDeleting] = useState<AdminUser | null>(null);
 
   const page = users.data;
@@ -111,20 +119,8 @@ export function AdminUsers() {
       header: "",
       render: (user) => (
         <div className={ROW_ACTIONS}>
-          <Button
-            busy={update.isPending && update.variables?.id === user.id}
-            onClick={() =>
-              update.mutate(
-                { id: user.id, is_active: !user.is_active },
-                {
-                  onSuccess: () => toast?.add({ title: "User updated", type: "success" }),
-                  onError: () =>
-                    toast?.add({ title: "Could not update the user", type: "error" }),
-                },
-              )
-            }
-          >
-            {user.is_active ? "Disable" : "Enable"}
+          <Button variant="primary" onClick={() => setEditing(user)}>
+            Edit
           </Button>
           <Button
             variant="danger"
@@ -211,6 +207,8 @@ export function AdminUsers() {
         groups={groups.data?.items ?? []}
         onClose={() => setCreating(false)}
       />
+
+      <EditUserDialog user={editing} onClose={() => setEditing(null)} />
 
       <DeleteUserDialog user={deleting} onClose={() => setDeleting(null)} />
 
@@ -411,4 +409,216 @@ function formatDate(iso: string): string {
     month: "short",
     day: "numeric",
   });
+}
+
+/**
+ * Everything an administrator may change about one account, in one place
+ * instead of a scattered Enable button and a password endpoint with no door.
+ *
+ * Three facts shape it:
+ *
+ * - **The issuer decides the offers.** A local account can have its password
+ *   set, cleared, and re-set here; a directory account's credentials belong
+ *   to its IdP (ADR 0049), so the password section is simply absent — not
+ *   disabled, absent. The issuer is shown either way, because "why is there
+ *   no password box" is a question the answer should preempt.
+ * - **Admin can follow the IdP.** When the deployment maps admin groups, the
+ *   flag on a directory account is rewritten at the next login (the API
+ *   refuses the change); the note says so beside the checkbox rather than
+ *   letting a 400 be the explanation.
+ * - **Password changes take effect immediately** and separately from the
+ *   status toggle: an administrator resetting a locked-out account should
+ *   not have to also review flags to do it.
+ */
+function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
+  const update = useUpdateUser();
+  const setPassword = useSetUserPassword();
+  const clearPassword = useClearUserPassword();
+  const toast = useOptionalToast();
+
+  const [isActive, setIsActive] = useState(user?.is_active ?? true);
+  const [isAdmin, setIsAdmin] = useState(user?.is_admin ?? false);
+  const [newPassword, setNewPassword] = useState("");
+
+  // Re-seed the toggles when a different user opens: the dialog is keyed by
+  // remount at the call site in spirit, but state here must follow the row.
+  const userKey = user?.id ?? "none";
+  const [seededFor, setSeededFor] = useState(userKey);
+  if (seededFor !== userKey) {
+    setSeededFor(userKey);
+    setIsActive(user?.is_active ?? true);
+    setIsAdmin(user?.is_admin ?? false);
+    setNewPassword("");
+  }
+
+  const close = () => {
+    setNewPassword("");
+    update.reset();
+    setPassword.reset();
+    clearPassword.reset();
+    onClose();
+  };
+
+  const dirty = user !== null && (isActive !== user.is_active || isAdmin !== user.is_admin);
+
+  const saveFlags = () =>
+    user &&
+    update.mutate(
+      { id: user.id, is_active: isActive, is_admin: isAdmin },
+      {
+        onSuccess: () => toast?.add({ title: "User updated", type: "success" }),
+        onError: (caught: unknown) =>
+          toast?.add({
+            title: caught instanceof Error ? caught.message : "Could not update the user",
+            type: "error",
+          }),
+      },
+    );
+
+  const setNewPasswordForUser = () =>
+    user &&
+    setPassword.mutate(
+      { id: user.id, password: newPassword },
+      {
+        onSuccess: () => {
+          toast?.add({
+            title: "Password set — hand it to the person over a channel you trust",
+            type: "success",
+          });
+          setNewPassword("");
+        },
+        onError: (caught: unknown) =>
+          toast?.add({
+            title: caught instanceof Error ? caught.message : "Could not set the password",
+            type: "error",
+          }),
+      },
+    );
+
+  const isLocal = user?.issuer === "local";
+
+  return (
+    <Dialog
+      open={user !== null}
+      title={user ? `Edit — ${user.display_name || user.email || user.subject}` : "Edit"}
+      onClose={close}
+      footer={
+        <>
+          <Button onClick={close}>Close</Button>
+          <Button variant="primary" disabled={!dirty} busy={update.isPending} onClick={saveFlags}>
+            Save changes
+          </Button>
+        </>
+      }
+    >
+      {update.error ? (
+        <Notice tone="danger" title="Could not update the user">
+          {update.error instanceof Error ? update.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      <div className={FORM}>
+        <div>
+          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">Identity</div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            {user?.is_admin && <Badge tone="accent">Administrator</Badge>}
+            {user?.is_active ? (
+              <Badge tone="ok">Active</Badge>
+            ) : (
+              <Badge tone="danger">Disabled</Badge>
+            )}
+            <Badge tone={isLocal ? "neutral" : "warn"}>{isLocal ? "local" : "IdP"}</Badge>
+            {!isLocal && user && <span className={CODE}>{user.issuer}</span>}
+          </div>
+        </div>
+
+        <label className={CHECK_ITEM}>
+          <input
+            type="checkbox"
+            checked={isActive}
+            disabled={!user}
+            onChange={(event) => setIsActive(event.target.checked)}
+          />
+          <span>
+            Account active
+            <span className="mt-0.5 block text-xs text-ink-faint">
+              A disabled account cannot sign in, and its keys stop admitting
+              requests.
+            </span>
+          </span>
+        </label>
+
+        <label className={CHECK_ITEM}>
+          <input
+            type="checkbox"
+            checked={isAdmin}
+            disabled={!user}
+            onChange={(event) => setIsAdmin(event.target.checked)}
+          />
+          <span>
+            Administrator
+            {!isLocal && (
+              <span className="mt-0.5 block text-xs text-ink-faint">
+                For an identity-provider account this follows group membership at
+                the next login, if admin groups are mapped.
+              </span>
+            )}
+          </span>
+        </label>
+
+        {isLocal ? (
+          <div>
+            <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">Password</div>
+            <div className="mt-1 flex flex-wrap items-end gap-2">
+              <div className="min-w-56 flex-1">
+                <Input
+                  label="Set a new password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  placeholder="typed once, by you, for them"
+                />
+              </div>
+              <Button
+                busy={setPassword.isPending}
+                disabled={newPassword.length === 0}
+                onClick={setNewPasswordForUser}
+              >
+                Set password
+              </Button>
+              {user?.has_password && (
+                <Button
+                  variant="ghost"
+                  busy={clearPassword.isPending}
+                  onClick={() =>
+                    user &&
+                    clearPassword.mutate(user.id, {
+                      onSuccess: () => toast?.add({ title: "Password removed", type: "success" }),
+                      onError: (caught: unknown) =>
+                        toast?.add({
+                          title:
+                            caught instanceof Error
+                              ? caught.message
+                              : "Could not remove the password",
+                          type: "error",
+                        }),
+                    })
+                  }
+                >
+                  Remove password
+                </Button>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-ink-faint">
+              The person can change it themselves from their account menu.
+            </p>
+          </div>
+        ) : (
+          <p className="m-0 text-sm text-ink-muted">
+            Password, if any, is managed by the identity provider above.
+          </p>
+        )}
+      </div>
+    </Dialog>
+  );
 }

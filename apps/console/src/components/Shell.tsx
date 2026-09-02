@@ -1,5 +1,8 @@
 import {
   Badge,
+  Button,
+  Dialog,
+  Input,
   MenuCheckboxItem,
   MenuContent,
   MenuItem,
@@ -7,12 +10,15 @@ import {
   MenuSection,
   MenuSeparator,
   MenuTrigger,
+  Notice,
 } from "@llmp/ui";
 import { useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
 import logoUrl from "../assets/logo.png";
 import { request } from "../lib/api";
+import { useChangeMyPassword } from "../lib/queries";
+import { useOptionalToast } from "../lib/toast";
 import { applyTheme, rememberTheme, storedTheme } from "../lib/theme";
 import type { Theme } from "../lib/theme";
 import type { Me } from "../lib/types";
@@ -293,6 +299,7 @@ function UserMenu({
   onSetTheme: (theme: Theme) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
 
   const signOut = async () => {
     setBusy(true);
@@ -355,6 +362,13 @@ function UserMenu({
         {/* Reader preferences live with who you are, not as controls on every
             screen that shows a figure. Both are checkboxes for the same reason:
             a *state*, not an action, so the menu item says what is on. */}
+        {/* A local account's password is the account: changing it here,
+            with the current one as proof, is the self-service half of ADR
+            0049. A directory user's password is the IdP's, so the item simply
+            does not exist for them. */}
+        {me.issuer === "local" && (
+          <MenuItem onClick={() => setChangingPassword(true)}>Change password…</MenuItem>
+        )}
         <MenuSection label="Preferences">
           {me.is_admin && (
             <MenuCheckboxItem
@@ -382,6 +396,96 @@ function UserMenu({
           Sign out
         </MenuItem>
       </MenuContent>
+
+      <ChangePasswordDialog open={changingPassword} onClose={() => setChangingPassword(false)} />
     </MenuRoot>
+  );
+}
+
+/**
+ * Changing the account's own password.
+ *
+ * The current password is the proof of personhood (ADR 0049): a stolen
+ * session must not be all it takes to lock the real owner out. Success is
+ * stated in place, and the menu stays open behind the dialog — the reader is
+ * still signed in, still themselves.
+ */
+function ChangePasswordDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const change = useChangeMyPassword();
+  const toast = useOptionalToast();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const close = () => {
+    setCurrent("");
+    setNext("");
+    setError(null);
+    change.reset();
+    onClose();
+  };
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setError(null);
+    change.mutate(
+      { current_password: current, new_password: next },
+      {
+        onSuccess: () => {
+          toast?.add({ title: "Password changed", type: "success" });
+          close();
+        },
+        onError: (caught: unknown) =>
+          setError(caught instanceof Error ? caught.message : "Unknown error."),
+      },
+    );
+  };
+
+  return (
+    <Dialog
+      open={open}
+      title="Change your password"
+      onClose={close}
+      footer={
+        <>
+          <Button onClick={close}>Cancel</Button>
+          <Button
+            variant="primary"
+            busy={change.isPending}
+            disabled={!current || !next}
+            onClick={() => submit({ preventDefault() {} } as FormEvent)}
+          >
+            Change password
+          </Button>
+        </>
+      }
+    >
+      {error ? (
+        <Notice tone="danger" title="Could not change the password">
+          {error}
+        </Notice>
+      ) : null}
+      <form className="flex flex-col gap-4" onSubmit={submit}>
+        <Input
+          label="Current password"
+          type="password"
+          autoComplete="current-password"
+          value={current}
+          onChange={(event) => setCurrent(event.target.value)}
+          required
+        />
+        <Input
+          label="New password"
+          type="password"
+          autoComplete="new-password"
+          value={next}
+          onChange={(event) => setNext(event.target.value)}
+          required
+        />
+        {/* Keep the form honest for the Enter key: the footer button above
+            calls the same submit. */}
+        <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
+      </form>
+    </Dialog>
   );
 }

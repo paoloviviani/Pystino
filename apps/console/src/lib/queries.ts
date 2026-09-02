@@ -1,7 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, request } from "./api";
 import { MAX_LIMIT, type Page, pageParams } from "./paging";
-import type { ApiKey, Me, MintedApiKey, MyLimit, UsageReport } from "./types";
+import type {
+  ApiKey,
+  Me,
+  MintedApiKey,
+  MyLimit,
+  MyPasswordChangeInput,
+  UsageReport,
+} from "./types";
 
 /**
  * Query keys, in one place.
@@ -134,6 +141,21 @@ export function useDeleteKey() {
  * it moves, and one that refreshes only on navigation is the number they were
  * trying not to have to trust.
  */
+/**
+ * Change the account's own password (ADR 0049). Local accounts only — the
+ * response's 400 carries the reason for everyone else, and the console offers
+ * the item on `me.issuer === "local"` so the button is simply absent for a
+ * directory user.
+ */
+export function useChangeMyPassword() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: MyPasswordChangeInput) =>
+      request<void>("/api/me/password", { method: "PUT", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.me }),
+  });
+}
+
 export function useMyLimits() {
   return useQuery({
     queryKey: keys.myLimits,

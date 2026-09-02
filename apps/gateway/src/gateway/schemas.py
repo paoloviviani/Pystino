@@ -321,6 +321,18 @@ class MeResponse(BaseModel):
     is_admin: bool
     groups: list[GroupSummary]
     default_billing_group: GroupSummary | None
+    # Who owns this identity: "local" means a password here is the way in, and
+    # the console can offer password management; anything else is the IdP's
+    # (ADR 0049). `has_password` distinguishes a local account with a password
+    # from one without — the set of states ADR 0043 made three.
+    issuer: str
+    has_password: bool = False
+
+
+class MyPasswordChangeRequest(BaseModel):
+    """A self-service password change: the current one proves the person."""
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=1, max_length=1024)
 
 
 class SetDefaultBillingGroupRequest(BaseModel):

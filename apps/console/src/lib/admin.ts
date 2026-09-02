@@ -688,6 +688,24 @@ export function useUpdateUser() {
   });
 }
 
+export function useSetUserPassword() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, password }: { id: string; password: string }) =>
+      request<AdminUser>(`/api/admin/users/${id}/password`, { method: "PUT", body: { password } }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
+
+export function useClearUserPassword() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<AdminUser>(`/api/admin/users/${id}/password`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
+
 export function useCreateUser() {
   const client = useQueryClient();
   return useMutation({

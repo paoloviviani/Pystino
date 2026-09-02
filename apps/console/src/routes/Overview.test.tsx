@@ -21,6 +21,8 @@ const ME: Me = {
   is_admin: false,
   groups: [{ id: "g1", name: "research", description: null }],
   default_billing_group: { id: "g1", name: "research", description: null },
+  issuer: "local",
+  has_password: true,
 };
 
 function report(overrides: Partial<UsageReport> = {}): UsageReport {

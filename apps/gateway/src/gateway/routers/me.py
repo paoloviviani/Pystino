@@ -28,11 +28,13 @@ from gateway.models import (
     Group,
     LimitRule,
     LimitScope,
+    LocalCredential,
     UsageRecord,
     UsageSource,
     UsageStatus,
 )
 from gateway.pagination import Page, PageDep, count_of
+from gateway.passwords import hash_password, validate_password, verify_password
 from gateway.reporting import (
     GroupBy,
     ReportFilter,
@@ -47,6 +49,7 @@ from gateway.schemas import (
     GroupSummary,
     MeResponse,
     MyLimitResponse,
+    MyPasswordChangeRequest,
     SetDefaultBillingGroupRequest,
     UsageReport,
     UsageSummaryResponse,
@@ -90,7 +93,54 @@ async def me(user: ManagementUserDep, session: SessionDep) -> MeResponse:
         is_admin=user.is_admin,
         groups=[summary for group in groups if (summary := _group_summary(group))],
         default_billing_group=_group_summary(default),
+        issuer=user.issuer,
+        has_password=(
+            await session.scalar(
+                select(LocalCredential.user_id).where(LocalCredential.user_id == user.id)
+            )
+            is not None
+        ),
     )
+
+
+@router.put("/me/password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_my_password(
+    payload: MyPasswordChangeRequest,
+    user: ManagementUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> None:
+    """Change the account's own password.
+
+    Local accounts only, and the current password proves the person: a stolen
+    session must not be all it takes to lock the real owner out (ADR 0049's
+    reset needs the email instead — two doors, neither opened by a cookie
+    alone). A directory user's password is the IdP's, full stop.
+    """
+    if user.issuer != "local":
+        raise BadRequestError(
+            "This account signs in through the identity provider, which is "
+            "authoritative for its password. Change it there."
+        )
+    credential = await session.get(LocalCredential, user.id)
+    if credential is None:
+        # A local account with no password cannot prove the current one, and
+        # minting a credential without that proof would hand a hijacked
+        # session the account outright.
+        raise BadRequestError(
+            "This account has no password set. An administrator can set one, "
+            "then you can change it here."
+        )
+    if not verify_password(payload.current_password, credential.password_hash):
+        raise BadRequestError("The current password is not correct.")
+
+    try:
+        validate_password(payload.new_password, settings.local_auth)
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+
+    credential.password_hash = hash_password(payload.new_password)
+    await session.commit()
 
 
 @router.put("/me/default-billing-group", response_model=MeResponse)
