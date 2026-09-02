@@ -1,4 +1,16 @@
-import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner, Stat, Table } from "@llmp/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  Input,
+  Notice,
+  Select,
+  Spinner,
+  Stat,
+  Table,
+  
+} from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useId, useState } from "react";
 import { Link, useNavigate } from "react-router";
@@ -11,6 +23,7 @@ import {
   useUpdateRedactionRule,
 } from "../lib/admin";
 import { entityLabel, modeLabel, summarisePolicy } from "../lib/entities";
+import { useOptionalToast } from "../lib/toast";
 import type {
   RedactionEngineOption,
   RedactionPreviewSpan,
@@ -20,7 +33,30 @@ import type {
 } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import { SCOPES, SubjectPicker, scopeNoun } from "../components/SubjectPicker";
-import styles from "./Admin.module.css";
+import {
+  CHIPS,
+  CODE,
+  DETAILS,
+  DETAIL_LABEL,
+  DETAIL_VALUE,
+  ENGINE,
+  ENGINE_ACTION,
+  ENGINE_ACTIVE,
+  ENGINE_BODY,
+  ENGINE_NAME,
+  FIELD,
+  FIELD_LABEL,
+  FORM,
+  FORM_ROW,
+  MUTED,
+  NOWRAP,
+  PAGE,
+  ROW_ACTIONS,
+  SAMPLE,
+  STATS,
+  TEXTAREA,
+} from "../lib/layout";
+
 
 /**
  * What the redaction layer is doing, and which engine it is doing it with.
@@ -49,7 +85,7 @@ export function AdminRedaction() {
   const status = useRedactionStatus();
 
   return (
-    <div className={styles.page}>
+    <div className={PAGE}>
       <PageHeader
         title="Redaction"
         subtitle="What is stripped from prompts before they reach a provider."
@@ -85,7 +121,7 @@ function Detail({ status }: { status: RedactionStatus }) {
       <PreviewBox />
 
       <Card>
-        <div className={styles.stats}>
+        <div className={STATS}>
           <Stat
             label="Redaction"
             value={status.enabled ? "On" : "Off"}
@@ -129,12 +165,12 @@ function Detail({ status }: { status: RedactionStatus }) {
             : "From the gateway's environment."
         }
       >
-        <dl className={styles.details}>
+        <dl className={DETAILS}>
           <Row label="Engine">
-            <code className={styles.code}>{status.engine}</code>{" "}
+            <code className={CODE}>{status.engine}</code>{" "}
             {/* Worth showing even with one entry: it is how an operator sees
                 that installing a plugin worked (ADR 0026). */}
-            <span className={styles.muted}>
+            <span className={MUTED}>
               · installed: {status.installed_engines.join(", ") || "none"}
             </span>
           </Row>
@@ -149,21 +185,21 @@ function Detail({ status }: { status: RedactionStatus }) {
                 {" · "}
                 {new Date(status.configured.changed_at).toLocaleString()}
                 {status.configured.reason && (
-                  <div className={styles.muted}>{status.configured.reason}</div>
+                  <div className={MUTED}>{status.configured.reason}</div>
                 )}
               </>
             ) : (
               <>
                 The deployment&apos;s environment
-                <span className={styles.muted}> · GATEWAY_REDACTION__ENGINE</span>
+                <span className={MUTED}> · GATEWAY_REDACTION__ENGINE</span>
               </>
             )}
           </Row>
           <Row label="Detection endpoint">
             {status.endpoint ? (
-              <code className={styles.code}>{status.endpoint}</code>
+              <code className={CODE}>{status.endpoint}</code>
             ) : (
-              <span className={styles.muted}>none — in-process engine</span>
+              <span className={MUTED}>none — in-process engine</span>
             )}
           </Row>
           <Row label="Failure mode">
@@ -176,7 +212,7 @@ function Detail({ status }: { status: RedactionStatus }) {
           <Row label="Language">
             {status.language}
             {service?.models?.[status.language] && (
-              <span className={styles.muted}> · {service.models[status.language]}</span>
+              <span className={MUTED}> · {service.models[status.language]}</span>
             )}
           </Row>
           <Row label="Timeout">{status.timeout_seconds}s</Row>
@@ -189,7 +225,7 @@ function Detail({ status }: { status: RedactionStatus }) {
             ) : (
               <Badge tone="warn">Not set</Badge>
             )}{" "}
-            <span className={styles.muted}>
+            <span className={MUTED}>
               placeholders derive from it, so it must stay stable
             </span>
           </Row>
@@ -208,7 +244,7 @@ function Detail({ status }: { status: RedactionStatus }) {
           description="GATEWAY_REDACTION__ENTITY_TYPES limits the search to these. It sets
             the policy below; the console overrides it."
         >
-          <div className={styles.chips}>
+          <div className={CHIPS}>
             {status.entity_types.map((entity) => (
               <Badge key={entity}>{entity}</Badge>
             ))}
@@ -218,7 +254,7 @@ function Detail({ status }: { status: RedactionStatus }) {
 
       {service?.reachable && service.degraded_languages.length > 0 && (
         <Card title="Degraded languages" description="Served without a named-entity model.">
-          <div className={styles.chips}>
+          <div className={CHIPS}>
             {service.degraded_languages.map((language) => (
               <Badge key={language} tone="warn">
                 {language}
@@ -278,7 +314,7 @@ function RulesList() {
               {rule.scope === "all" ? "Every request" : (rule.subject_label ?? "deleted subject")}
             </Link>
           </div>
-          <div className={styles.muted}>
+          <div className={MUTED}>
             {scopeNoun(rule.scope)}
             {rule.name ? ` · ${rule.name}` : ""}
           </div>
@@ -296,7 +332,7 @@ function RulesList() {
       key: "actions",
       header: "",
       render: (rule) => (
-        <div className={styles.rowActions}>
+        <div className={ROW_ACTIONS}>
           <Button onClick={() => navigate(`/admin/redaction/rules/${rule.id}`)}>Edit</Button>
           <Button
             busy={update.isPending && update.variables?.id === rule.id}
@@ -373,6 +409,7 @@ function RulesList() {
  */
 function PreviewBox() {
   const preview = usePreviewRedaction();
+  const toast = useOptionalToast();
   const sampleId = useId();
   const [text, setText] = useState("");
   const [scope, setScope] = useState<RedactionScope | "">("");
@@ -389,7 +426,18 @@ function PreviewBox() {
 
   const run = () => {
     setSample(text);
-    preview.mutate(scope === "" ? { text } : { text, scope, scope_id: scopeId });
+    preview.mutate(
+      scope === "" ? { text } : { text, scope, scope_id: scopeId },
+      {
+        onSuccess: () => toast?.add({ title: "Preview ran.", type: "success" }),
+        onError: (error) =>
+          toast?.add({
+            title: "The preview did not run",
+            description: error instanceof Error ? error.message : "Unknown error.",
+            type: "error",
+          }),
+      },
+    );
   };
 
   const result = preview.data;
@@ -398,7 +446,7 @@ function PreviewBox() {
     {
       key: "match",
       header: "Match",
-      render: (span) => <code className={styles.code}>{sample.slice(span.start, span.end)}</code>,
+      render: (span) => <code className={CODE}>{sample.slice(span.start, span.end)}</code>,
     },
     {
       key: "entity",
@@ -406,7 +454,7 @@ function PreviewBox() {
       render: (span) => (
         <>
           <div>{entityLabel(span.entity_type)}</div>
-          <div className={`${styles.muted} ${styles.code}`}>{span.entity_type}</div>
+          <div className={`${MUTED} ${CODE}`}>{span.entity_type}</div>
         </>
       ),
     },
@@ -417,7 +465,7 @@ function PreviewBox() {
       render: (span) => (
         <>
           <div>{span.score.toFixed(2)}</div>
-          <div className={`${styles.muted} ${styles.nowrap}`}>needs {span.threshold}</div>
+          <div className={`${MUTED} ${NOWRAP}`}>needs {span.threshold}</div>
         </>
       ),
     },
@@ -431,29 +479,29 @@ function PreviewBox() {
 
   return (
     <Card title="Preview" description="Run a sample through the policy in force.">
-      <div className={styles.form}>
+      <div className={FORM}>
         {preview.error ? (
           <Notice tone="danger">
             {preview.error instanceof Error ? preview.error.message : "Unknown error."}
           </Notice>
         ) : null}
 
-        <div className={styles.field}>
-          <label className={styles.fieldLabel} htmlFor={sampleId}>
+        <div className={FIELD}>
+          <label className={FIELD_LABEL} htmlFor={sampleId}>
             Sample
           </label>
           <textarea
             id={sampleId}
-            className={styles.textarea}
+            className={TEXTAREA}
             rows={4}
             value={text}
             onChange={(event) => setText(event.target.value)}
             placeholder="Riassumi le notizie del giorno da ilpost.it"
           />
-          <p className={styles.muted}>Not logged anywhere.</p>
+          <p className={MUTED}>Not logged anywhere.</p>
         </div>
 
-        <div className={styles.formRow}>
+        <div className={FORM_ROW}>
           <Select
             label="Preview as"
             value={scope}
@@ -497,13 +545,13 @@ function PreviewBox() {
                 {result.blocked_reason ?? "A blocked entity type was found."}
               </Notice>
             ) : (
-              <div className={styles.field}>
-                <span className={styles.fieldLabel}>What the provider receives</span>
-                <p className={styles.sample}>{result.redacted_text}</p>
+              <div className={FIELD}>
+                <span className={FIELD_LABEL}>What the provider receives</span>
+                <p className={SAMPLE}>{result.redacted_text}</p>
               </div>
             )}
 
-            <p className={styles.muted}>
+            <p className={MUTED}>
               {result.entity_count} replaced · {result.engine} engine ·{" "}
               {result.scope === null ? "the deployment policy" : `${scopeNoun(result.scope)} rule`}
             </p>
@@ -534,6 +582,7 @@ function PreviewBox() {
  */
 function EngineList({ status }: { status: RedactionStatus }) {
   const setEngine = useSetRedactionEngine();
+  const toast = useOptionalToast();
   const [confirming, setConfirming] = useState<RedactionEngineOption | null>(null);
 
   const choose = (engine: RedactionEngineOption) => {
@@ -541,7 +590,18 @@ function EngineList({ status }: { status: RedactionStatus }) {
       setConfirming(engine);
       return;
     }
-    setEngine.mutate({ engine: engine.name, reason: "" });
+    setEngine.mutate(
+      { engine: engine.name, reason: "" },
+      {
+        onSuccess: () => toast?.add({ title: `${engine.label} is in force.`, type: "success" }),
+        onError: (error) =>
+          toast?.add({
+            title: "The engine was not changed",
+            description: error instanceof Error ? error.message : "Unknown error.",
+            type: "error",
+          }),
+      },
+    );
   };
 
   return (
@@ -563,32 +623,32 @@ function EngineList({ status }: { status: RedactionStatus }) {
         </Notice>
       )}
 
-      <div className={styles.engineList}>
+      <div className="flex flex-col gap-3">
         {status.engines.map((engine) => (
           <div
             key={engine.name}
-            className={`${styles.engine} ${engine.is_active ? styles.engineActive : ""}`}
+            className={engine.is_active ? `${ENGINE} ${ENGINE_ACTIVE}` : ENGINE}
           >
-            <div className={styles.engineBody}>
-              <div className={styles.engineName}>
+            <div className={ENGINE_BODY}>
+              <div className={ENGINE_NAME}>
                 {engine.label}
-                <code className={styles.code}>{engine.name}</code>
+                <code className={CODE}>{engine.name}</code>
                 {engine.is_active && <Badge tone="accent">In force</Badge>}
                 {/* The one property that decides whether this screen means
                     anything, said on every row rather than only on the
                     active one. */}
                 {!engine.redacts && <Badge tone="danger">Redacts nothing</Badge>}
               </div>
-              <div className={styles.muted}>{engine.description}</div>
+              <div className={MUTED}>{engine.description}</div>
               {/* Server-computed, rendered verbatim: the wording lives with the
                   rule, the same convention as the warnings above. */}
               {engine.blocked_reason && (
-                <div className={styles.muted}>
+                <div className={MUTED}>
                   <strong>Cannot be enabled.</strong> {engine.blocked_reason}
                 </div>
               )}
             </div>
-            <div className={styles.engineAction}>
+            <div className={ENGINE_ACTION}>
               {engine.is_active ? (
                 <Button variant="secondary" disabled>
                   Enabled
@@ -615,7 +675,18 @@ function EngineList({ status }: { status: RedactionStatus }) {
           confirming &&
           setEngine.mutate(
             { engine: confirming.name, reason },
-            { onSuccess: () => setConfirming(null) },
+            {
+              onSuccess: () => {
+                setConfirming(null);
+                toast?.add({ title: "Redaction is off.", type: "success" });
+              },
+              onError: (error) =>
+                toast?.add({
+                  title: "The engine was not changed",
+                  description: error instanceof Error ? error.message : "Unknown error.",
+                  type: "error",
+                }),
+            },
           )
         }
       />
@@ -680,8 +751,8 @@ function ConfirmOff({
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <>
-      <dt className={styles.detailLabel}>{label}</dt>
-      <dd className={styles.detailValue}>{children}</dd>
+      <dt className={DETAIL_LABEL}>{label}</dt>
+      <dd className={DETAIL_VALUE}>{children}</dd>
     </>
   );
 }

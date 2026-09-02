@@ -12,19 +12,19 @@ import { AdminRedaction } from "./routes/AdminRedaction";
 import { AdminRedactionRule } from "./routes/AdminRedactionRule";
 import { Admin } from "./routes/Admin";
 import { AdminReports } from "./routes/AdminReports";
+import { AdminIdentity } from "./routes/AdminIdentity";
 import { AdminUsers } from "./routes/AdminUsers";
 import { Login } from "./routes/Login";
 import { NotFound } from "./routes/NotFound";
 import { Overview } from "./routes/Overview";
 import { Reports } from "./routes/Reports";
-import styles from "./App.module.css";
 
 export function App() {
   const me = useMe();
 
   if (me.isPending) {
     return (
-      <div className={styles.centre}>
+      <div className="flex min-h-[60vh] items-center justify-center p-6">
         <Spinner label="Signing you in" />
       </div>
     );
@@ -40,7 +40,7 @@ export function App() {
 
   if (me.error || !me.data) {
     return (
-      <div className={styles.centre}>
+      <div className="flex min-h-[60vh] items-center justify-center p-6">
         <Notice tone="danger" title="The console could not start">
           {me.error instanceof Error ? me.error.message : "The gateway did not respond."}
         </Notice>
@@ -103,6 +103,14 @@ export function App() {
           }
         />
         <Route path="/admin/pricing" element={<Navigate to="/admin/models" replace />} />
+        <Route
+          path="/admin/identity"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminIdentity />
+            </RequireAdmin>
+          }
+        />
         <Route
           path="/admin/quotas"
           element={

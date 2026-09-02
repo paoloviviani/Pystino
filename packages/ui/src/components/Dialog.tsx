@@ -1,6 +1,6 @@
+import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import type { ReactNode } from "react";
-import { useEffect, useRef } from "react";
-import styles from "./Dialog.module.css";
+import { cx } from "../cx";
 
 export interface DialogProps {
   open: boolean;
@@ -13,48 +13,67 @@ export interface DialogProps {
 }
 
 /**
- * A modal dialog, built on the native `<dialog>` element.
+ * A modal dialog.
  *
- * Native rather than a div with a high z-index, because the browser then
- * provides the things a hand-rolled modal usually gets wrong: the focus trap,
- * Escape to close, inertness of the page behind it, and correct semantics for a
- * screen reader. All of that is otherwise a few hundred lines and a bug.
+ * Base UI supplies what the native `<dialog>` gave this component's previous
+ * version — the focus trap, Escape, inertness behind the popup, correct
+ * semantics — plus the portal, which a native element cannot do while staying
+ * styled from tokens (the dialog element's backdrop pseudo-element cannot read
+ * a utility class). Same trade every other primitive here makes: behaviour from
+ * the library, pixels from the tokens (ADR 0047).
+ *
+ * The popup is positioned by utility classes rather than a Viewport wrapper:
+ * a plain centered dialog needs no scroll containment, and the simple version
+ * is the one that survives review.
  */
 export function Dialog({ open, title, onClose, footer, children }: DialogProps) {
-  const ref = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    // showModal() is what makes it modal; setting the `open` attribute directly
-    // renders it inline with no backdrop and no focus trap.
-    if (open && !dialog.open) dialog.showModal();
-    if (!open && dialog.open) dialog.close();
-  }, [open]);
-
   return (
-    <dialog
-      ref={ref}
-      className={styles.dialog}
-      // Fired by Escape as well as by close(); routing both through onClose
-      // keeps React's state and the DOM's from disagreeing about what is open.
-      onClose={onClose}
-      onClick={(event) => {
-        // The backdrop is part of the dialog element, so a click landing on the
-        // element itself rather than on its content came from outside the panel.
-        if (event.target === ref.current) onClose();
+    <BaseDialog.Root
+      open={open}
+      // Routed through onClose rather than held in Root's state: the caller
+      // owns `open`, and Escape/backdrop/close-button all agree with it.
+      onOpenChange={(next) => {
+        if (!next) onClose();
       }}
     >
-      <div className={styles.panel}>
-        <header className={styles.header}>
-          <h2 className={styles.title}>{title}</h2>
-          <button type="button" className={styles.close} onClick={onClose} aria-label="Close">
-            ×
-          </button>
-        </header>
-        <div className={styles.body}>{children}</div>
-        {footer && <footer className={styles.footer}>{footer}</footer>}
-      </div>
-    </dialog>
+      <BaseDialog.Portal>
+        <BaseDialog.Backdrop
+          className={cx(
+            "fixed inset-0 bg-black/40 transition-opacity duration-150",
+            "data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+          )}
+        />
+        <BaseDialog.Popup
+          className={cx(
+            "fixed top-1/2 left-1/2 z-50 w-[min(32rem,calc(100vw-2rem))]",
+            "max-h-[85dvh] -translate-x-1/2 -translate-y-1/2 overflow-y-auto",
+            "rounded-lg bg-surface shadow-md outline-none transition-opacity duration-150",
+            "data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",
+          )}
+        >
+          <header className="flex items-center justify-between gap-4 border-b border-line-quiet px-5 py-4">
+            <BaseDialog.Title className="text-md font-semibold leading-tight">
+              {title}
+            </BaseDialog.Title>
+            <BaseDialog.Close
+              aria-label="Close"
+              className={cx(
+                "flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-lg text-ink-faint",
+                "transition-colors hover:bg-sunken hover:text-ink",
+                "focus-visible:outline-none focus-visible:shadow-focus",
+              )}
+            >
+              ×
+            </BaseDialog.Close>
+          </header>
+          <div className="px-5 py-4">{children}</div>
+          {footer && (
+            <footer className="flex flex-wrap justify-end gap-2 border-t border-line-quiet px-5 py-4">
+              {footer}
+            </footer>
+          )}
+        </BaseDialog.Popup>
+      </BaseDialog.Portal>
+    </BaseDialog.Root>
   );
 }

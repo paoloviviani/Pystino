@@ -1,58 +1,37 @@
 /*
- * Design tokens.
+ * Design tokens — the single file that owns the look (ADR 0047).
  *
- * Plain CSS custom properties, deliberately. Every value the console and the
- * chat app must agree on lives here, and a consumer needs no build tool, no
- * plugin and no configuration to use them — importing this file is the whole
- * integration.
+ * Two facts about this file, and both are load-bearing:
  *
- * Components reference tokens and never literal values. A component with
- * `padding: 12px` in it is a component that cannot be restyled. That claim has
- * now been tested twice: the Bauhaus pass was two literals away from being a
- * change to this file alone, and so was the pass that replaced it.
+ * 1. **Every value is a plain CSS custom property.** `:root` and `.dark` are
+ *    ordinary CSS. A consumer that runs no Tailwind can import this file and
+ *    get the whole palette, type scale and geometry — the property 0023/0042
+ *    paid for with CSS Modules and which ADR 0047 deliberately preserves even
+ *    though the components themselves now ship Tailwind classes.
  *
- * **The look is Material Design 3, tuned for reading.** Requested 2026-08-28,
- * replacing the Bauhaus language of ADR 0034, and the reason given was the one
- * that matters: the previous style was not readable enough. It was a poster
- * idiom applied to pages of figures. Ruled in 2px near-black, set in a
- * geometric face with a small x-height, labels in tracked uppercase — every one
- * of those is a deliberate, authentic choice, and together they made a table of
- * numbers hard work.
+ * 2. **The Tailwind mapping is derived, not separate.** The `@theme inline`
+ *    block near the bottom points Tailwind's namespaces at these custom
+ *    properties, so a utility like `bg-surface` resolves to
+ *    `var(--colour-surface)` at runtime. That `inline` is the whole dark-mode
+ *    trick: the utility does not bake in a light value, it reads the property,
+ *    and the property changes under `.dark`. Nothing but the `.dark` block
+ *    below is needed to theme the entire console.
  *
- * What is taken from MD3, and why each earns its place here:
- *
- * - **Tonal surfaces instead of rules.** Depth comes from a slightly different
- *   background, not from a black line around everything. A page of cards stops
- *   reading as a grid of boxes. Borders drop to 1px and to a grey that
- *   separates without shouting.
- * - **Softer ink.** `#1C1B1F` on `#FFFBFE` rather than near-black on grey.
- *   Still well past the 4.5:1 contrast floor, without the glare that makes a
- *   long column of figures tiring.
- * - **Roboto.** Designed for screen UI at small sizes, with a large x-height —
- *   the direct answer to the note the previous version of this file made about
- *   its own typeface running small.
- * - **Generous radii.** 12–16px on containers, pills on buttons. Not decoration:
- *   a rounded container reads as a single object, where a square one reads as a
- *   region of a grid.
- * - **Sentence case for labels.** Tracked uppercase is measurably slower to
- *   read, and the layout no longer needs it to tell a label from a value —
- *   weight and colour do that.
- * - **Green comes back.** The previous file named its absence as a real loss:
- *   green/red is the most universally read pair in any interface, and it was
- *   given up because Bauhaus has three primaries and green is not one. That
- *   constraint is gone, so `ok` is green again and `accent` is free to be the
- *   accent.
- *
- * What is **not** taken, from a specification that asks for it: the blurred
- * organic shapes, the glass-morphism, the glow-on-hover, the scale-on-hover.
- * The brief was "more readable and less fancy", and those are the fancy half.
- * A console is read, not admired. Shadows here are two small steps used to lift
- * a menu off the page, not an effect.
- *
- * There is **no dark theme** — one was not wanted. Adding it later means one
- * block of token overrides here and nothing else, which is most of the argument
- * for tokens in the first place.
+ * **The design language is a neutral greyscale with one indigo accent**, in
+ * the contemporary product-console idiom (requested 2026-09-01, ADR 0047,
+ * replacing the Material Design 3 pass of 0042). What carried over from 0042
+ * are the *requirements*, not the palette: sentence-case labels, tabular
+ * figures under numbers, soft ink past the 4.5:1 floor, green/red as the
+ * ok/danger pair, and — still, deliberately — no blur, no glass, no glow, no
+ * scale-on-hover. A console is read, not admired.
  */
+
+/* Tailwind v4: `dark:` means "inside .dark", not "the OS said so". The reader's
+ * choice is a class on <html>, set by the console and remembered; an OS
+ * preference is only the default. Declared here rather than beside the
+ * components because it is part of how the look works, not how a component is
+ * built. Without Tailwind this line is an unknown at-rule and does nothing. */
+@custom-variant dark (&:where(.dark, .dark *));
 
 /*
  * Roboto, under the Apache License 2.0 — see `fonts/roboto-LICENSE.txt`,
@@ -95,78 +74,61 @@
 
 :root {
   /* -- surfaces -------------------------------------------------------------
-   * A tonal system, and the one rule that makes it work: **nothing is pure
-   * white**. The page is a barely-tinted off-white, a card is a step darker,
-   * and a recessed area is a step darker again. That difference — three or four
-   * percent of luminance — is what separates regions, in place of the black
-   * rule the previous style drew around each one.
+   * A tonal system: the page is a step away from the card, a recessed area a
+   * step further. That few percent of luminance is what separates regions, in
+   * place of rules around everything.
    *
-   * The tint is the accent's hue at very low saturation, which is what stops
-   * the greys reading as dirty. It is the same trick as the warm paper stock
-   * the Bauhaus palette rejected, done with the accent instead of with brown.
+   * The inversion 0042 chose — tinted page, white card — is kept in the light
+   * theme, for the reason it gave: this console is mostly tables of figures,
+   * and figures read best on the cleanest ground on the page.
    */
-  /* The page is the tinted one and a card is white, which is the inverse of
-   * MD3's own default and is deliberate. This console is mostly tables of
-   * figures, and figures are most readable on white; a tinted card on a white
-   * page would put the tint under the numbers. Inverting it keeps the tonal
-   * separation and gives the data the cleanest ground. */
-  --colour-bg: #f6f2f8;
+  --colour-bg: #fafafa;
   --colour-surface: #ffffff;
   --colour-surface-raised: #ffffff;
-  --colour-surface-sunken: #f0eaf4;
+  --colour-surface-sunken: #f4f4f5;
 
-  /* Borders separate; they do not draw. 1px and mid-grey rather than 2px and
-   * near-black: on a page of tables the old rule meant every row sat in its own
-   * box, and the boxes competed with the numbers. */
-  --colour-border: #cac4d0;
-  --colour-border-strong: #79747e;
-  --colour-border-quiet: #e7e0ec;
+  /* Borders separate; they do not draw. 1px and a light grey, with a `strong`
+   * step for the rare border that must be found (a focused control's edge, a
+   * dragged handle). */
+  --colour-border: #e4e4e7;
+  --colour-border-strong: #a1a1aa;
+  --colour-border-quiet: #ececee;
 
-  /* Ink with a little warmth in it, never #000. Pure black on white is harsher
-   * than anything printed and this is a page someone reads for a while.
-   * #1C1B1F on #FFFBFE is about 16:1 — far past the 4.5:1 floor, with the glare
-   * taken off. */
-  --colour-text: #1c1b1f;
-  --colour-text-muted: #49454f;
-  --colour-text-faint: #79747e;
+  /* Ink, never #000. Zinc-900 on white is ~16:1 — far past the 4.5:1 floor,
+   * without the glare pure black brings to a long column of figures. */
+  --colour-text: #18181b;
+  --colour-text-muted: #52525b;
+  --colour-text-faint: #71717a;
   --colour-text-inverse: #ffffff;
 
   /* -- accent ---------------------------------------------------------------
-   * MD3's canonical seed. One hue, used where something is interactive or
-   * selected, and nowhere else — an accent that appears decoratively is an
-   * accent that no longer means "you can press this".
+   * One hue, indigo, used where something is interactive or selected and
+   * nowhere else — an accent that appears decoratively is an accent that no
+   * longer means "you can press this". Held at 500 rather than 600: the deeper
+   * step read almost navy on a pill, and the operator asked for a lighter blue.
+   * White on it is ~4.6:1, still past the floor.
    */
-  --colour-accent: #6750a4;
-  --colour-accent-hover: #55408f;
-  --colour-accent-subtle: #e8def8;
+  --colour-accent: #6366f1;
+  --colour-accent-hover: #4f46e5;
+  --colour-accent-subtle: #eef2ff;
 
   /* Kept because components ask for them by name, and because a brand mark
-   * wants a colour rather than a state. The red is the semantic red; blue and
-   * yellow are here for the mark and for anything that needs a third and fourth
-   * hue that is not carrying a meaning. */
-  --colour-red: #b3261e;
-  --colour-blue: #1a3d99;
-  --colour-yellow: #f7d64b;
+   * wants a colour rather than a state. */
+  --colour-red: #dc2626;
+  --colour-blue: #2563eb;
+  --colour-yellow: #facc15;
 
   /* -- semantic -------------------------------------------------------------
-   * **Green is back**, and it is the whole reason this block reads differently
-   * from the file it replaces. The previous palette had no green — Bauhaus has
-   * three primaries and green is not among them — so "ok" was the blue, and it
-   * said so plainly that this was a real loss. It was: green/red is the pair
-   * every reader already knows, and blue/red is a weaker signal that has to be
-   * learned.
-   *
-   * `warn` is a dark amber for text and a light one for fills. The previous
-   * file had to keep two unrelated yellows because cadmium is unreadable as
-   * type; these are two tones of one hue, which is the tonal system doing the
-   * work.
+   * Green/red is the pair every reader already knows, and 0042 was right to
+   * bring green back. Text tones are dark enough to read as type on their
+   * subtle fills; both halves are re-derived for the dark theme below.
    */
-  --colour-ok: #2e6b46;
-  --colour-ok-subtle: #d8ece0;
-  --colour-warn: #7a5500;
-  --colour-warn-subtle: #fdf3d4;
-  --colour-danger: #b3261e;
-  --colour-danger-subtle: #f9dedc;
+  --colour-ok: #047857;
+  --colour-ok-subtle: #d1fae5;
+  --colour-warn: #b45309;
+  --colour-warn-subtle: #fef3c7;
+  --colour-danger: #b91c1c;
+  --colour-danger-subtle: #fee2e2;
 
   /* -- typography -----------------------------------------------------------
    * Roboto, then the platform's own UI face. The fallbacks are the faces each
@@ -181,14 +143,8 @@
   --font-mono:
     ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace;
 
-  /* Bigger, across the board. The previous scale started at 0.9375rem because
-   * its typeface ran small; Roboto has a large x-height and does not need the
-   * compensation, so 1rem is the base — which is also what a browser's default
-   * assumes a reader wants.
-   *
-   * The top of the scale comes *down*. A page title is a heading, not a shape
-   * on a poster, and 2rem above a table was doing more shouting than
-   * signposting. */
+  /* 1rem base — what a browser's default assumes a reader wants. The top of
+   * the scale stays down: a page title is a heading, not a shape on a poster. */
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;
   --text-base: 1rem;
@@ -197,21 +153,17 @@
   --text-xl: 1.75rem;
 
   /* A variable font, so these are real instances rather than a synthetic bold.
-   * Medium is the workhorse: MD3 headings and labels sit at 500, which reads as
+   * Medium is the workhorse: headings and labels sit at 500, which reads as
    * emphasis without the weight jump that 700 makes on a screen of small text. */
   --weight-normal: 400;
   --weight-medium: 500;
   --weight-bold: 700;
 
-  /* Looser than before. 1.5 was the body value and is now the floor; long
-   * prose gets more air, and the tight value is for headings only. */
   --leading-tight: 1.25;
   --leading-normal: 1.55;
 
-  /* **Labels are sentence case now.** Tracked uppercase was how the ruled
-   * layout told a label from a value without a second colour; weight and the
-   * muted ink do that instead, and uppercase is measurably slower to read.
-   * The tokens stay so components need not change to find out. */
+  /* Labels are sentence case. Tracked uppercase is measurably slower to read,
+   * and weight and the muted ink tell a label from a value without it. */
   --label-transform: none;
   --label-tracking: 0.01em;
   --label-weight: 500;
@@ -230,14 +182,9 @@
   --space-7: 3rem;
 
   /* -- geometry -------------------------------------------------------------
-   * Rounded, and the sizes are the MD3 ones. A radius is not decoration here:
-   * a rounded container reads as one object, where a square one reads as a
-   * region of a grid — which is exactly what the previous style wanted and this
-   * one does not.
-   *
-   * Buttons are pills. It is the most recognisable thing about this language
-   * and, more usefully, it makes a button unmistakably a button on a page
-   * otherwise made of rectangles.
+   * Rounded: a rounded container reads as one object, where a square one reads
+   * as a region of a grid. Buttons are pills — it makes a button unmistakably
+   * a button on a page otherwise made of rectangles.
    */
   --radius-sm: 8px;
   --radius-md: 12px;
@@ -245,58 +192,156 @@
   --radius-pill: 999px;
 
   /* Two small steps, used to lift something *off* the page — a menu, a dialog —
-   * and not to decorate what is on it. MD3 carries depth in the surface tones;
-   * these are for the cases where an element genuinely floats. */
-  --shadow-sm: 0 1px 2px rgb(28 27 31 / 0.08), 0 1px 3px rgb(28 27 31 / 0.06);
-  --shadow-md: 0 2px 6px rgb(28 27 31 / 0.10), 0 4px 12px rgb(28 27 31 / 0.08);
+   * and not to decorate what is on it. In the light theme a hairline border
+   * carries most separation; the shadow keeps floating things from looking
+   * glued on. */
+  --shadow-sm: 0 1px 2px rgb(24 24 27 / 0.05), 0 1px 3px rgb(24 24 27 / 0.06);
+  --shadow-md: 0 2px 6px rgb(24 24 27 / 0.08), 0 4px 16px rgb(24 24 27 / 0.10);
 
-  /* 1px. The 2px near-black rule was the single biggest carrier of the previous
-   * style and the single biggest cost to reading a table. */
   --border-width: 1px;
   --border-width-quiet: 1px;
 
   /* One focus token, used by every interactive element, because an indicator
-   * that varies by component is one that will be missing somewhere. The accent
-   * rather than the yellow: with a tonal palette there is no accent-coloured
-   * fill dark enough to hide a purple ring, which is the problem the yellow was
-   * solving before. */
+   * that varies by component is one that will be missing somewhere. The ring
+   * sits outside a surface-coloured halo so it survives on any ground. */
   --focus-ring: 0 0 0 2px var(--colour-surface), 0 0 0 4px var(--colour-accent);
 
   --layout-max-width: 76rem;
   --layout-sidebar-width: 14rem;
+
+  color-scheme: light;
 }
 
 /*
- * Reset, kept to the handful of rules that actually matter rather than a
- * wholesale normalise: border-box everywhere, no surprise margins, media that
- * cannot overflow its container, and form controls that inherit the page font
- * instead of the browser's default.
+ * The dark theme is exactly one block of overrides — the promise tokens.css
+ * made when it declined a dark theme, now kept (ADR 0047). Nothing outside
+ * this block knows a dark theme exists.
+ *
+ * The tonal inversion flips on its own logic: a dark page is *darkest* and a
+ * card is raised toward the reader, which is the same rule as the light
+ * theme's "figures on the cleanest ground" read from the other side.
+ *
+ * Contrast floors re-derived, not assumed: the accent moves from indigo-600 to
+ * indigo-400 because 600 sinks under 4.5:1 on zinc-900, and every semantic
+ * pair moves to its 400-weight text over a near-black subtle fill.
  */
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
+.dark {
+  --colour-bg: #09090b;
+  --colour-surface: #18181b;
+  --colour-surface-raised: #1e1e21;
+  --colour-surface-sunken: #101013;
+
+  --colour-border: #2a2a2e;
+  --colour-border-strong: #52525b;
+  --colour-border-quiet: #222225;
+
+  --colour-text: #fafafa;
+  --colour-text-muted: #a1a1aa;
+  --colour-text-faint: #71717a;
+  --colour-text-inverse: #18181b;
+
+  --colour-accent: #818cf8;
+  --colour-accent-hover: #a5b4fc;
+  --colour-accent-subtle: #232355;
+
+  --colour-red: #f87171;
+  --colour-blue: #60a5fa;
+  --colour-yellow: #fde047;
+
+  --colour-ok: #34d399;
+  --colour-ok-subtle: #0a2e22;
+  --colour-warn: #fbbf24;
+  --colour-warn-subtle: #3a2503;
+  --colour-danger: #f87171;
+  --colour-danger-subtle: #3f0a0a;
+
+  /* Shadows barely read on a dark ground; the border above and the raised
+   * surface do the work shadows do in the light theme. Slightly deepened so a
+   * floating menu still separates from a card of the same tone. */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 2px 6px rgb(0 0 0 / 0.5), 0 4px 16px rgb(0 0 0 / 0.45);
+
+  --focus-ring: 0 0 0 2px var(--colour-bg), 0 0 0 4px var(--colour-accent);
+
+  color-scheme: dark;
 }
 
-body,
-h1,
-h2,
-h3,
-h4,
-p,
-figure,
-blockquote,
-dl,
-dd {
-  margin: 0;
+/*
+ * -- Tailwind theme mapping -------------------------------------------------
+ *
+ * `@theme inline` generates utilities (`bg-surface`, `text-ink-muted`,
+ * `rounded-md`, …) that reference the custom properties instead of copying
+ * their values — which is why the `.dark` block alone re-themes every utility.
+ * Namespace names are chosen for how they read in markup: `bg-page`,
+ * `border-line`, `text-ink-faint`.
+ *
+ * A consumer running no Tailwind never sees this block do anything: these are
+ * unknown at-rules to a plain parser, and the `:root`/`.dark` definitions
+ * above still apply in full.
+ */
+@theme inline {
+  --color-page: var(--colour-bg);
+  --color-surface: var(--colour-surface);
+  --color-raised: var(--colour-surface-raised);
+  --color-sunken: var(--colour-surface-sunken);
+
+  --color-line: var(--colour-border);
+  --color-line-strong: var(--colour-border-strong);
+  --color-line-quiet: var(--colour-border-quiet);
+
+  --color-ink: var(--colour-text);
+  --color-ink-muted: var(--colour-text-muted);
+  --color-ink-faint: var(--colour-text-faint);
+  --color-ink-inverse: var(--colour-text-inverse);
+
+  --color-accent: var(--colour-accent);
+  --color-accent-hover: var(--colour-accent-hover);
+  --color-accent-subtle: var(--colour-accent-subtle);
+
+  --color-ok: var(--colour-ok);
+  --color-ok-subtle: var(--colour-ok-subtle);
+  --color-warn: var(--colour-warn);
+  --color-warn-subtle: var(--colour-warn-subtle);
+  --color-danger: var(--colour-danger);
+  --color-danger-subtle: var(--colour-danger-subtle);
+
+  --color-red: var(--colour-red);
+  --color-blue: var(--colour-blue);
+  --color-yellow: var(--colour-yellow);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --text-xs: var(--text-xs);
+  --text-sm: var(--text-sm);
+  --text-base: var(--text-base);
+  --text-md: var(--text-md);
+  --text-lg: var(--text-lg);
+  --text-xl: var(--text-xl);
+  --text-sm--line-height: var(--leading-normal);
+  --text-base--line-height: var(--leading-normal);
+  --text-md--line-height: var(--leading-tight);
+  --text-lg--line-height: var(--leading-tight);
+  --text-xl--line-height: var(--leading-tight);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-focus: var(--focus-ring);
 }
 
+/*
+ * Reset, kept to the handful of rules that matter beyond Tailwind's preflight:
+ * form controls inherit the page font (preflight does most of this; these keep
+ * the file honest when imported alone), and the html element carries the
+ * family so the fallback path needs no other file.
+ */
 html {
+  font-family: var(--font-sans);
   -webkit-text-size-adjust: 100%;
-  /* Tells the browser this page is light, so form controls and scrollbars are
-   * rendered light even for a reader whose system is set to dark. Without it
-   * they get dark widgets on a warm-white page. */
-  color-scheme: light;
 }
 
 body {

@@ -9,6 +9,9 @@ import type {
   CatalogueDiscovery,
   LimitRule,
   ModelImportResponse,
+  OidcPolicy,
+  OidcPolicyInput,
+  UserCreateInput,
   ModelKind,
   Price,
   ProviderPlugin,
@@ -44,6 +47,7 @@ export const adminKeys = {
   limits: ["admin", "limits"] as const,
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
   users: ["admin", "users"] as const,
+  oidcPolicy: ["admin", "oidc-policy"] as const,
   redaction: ["admin", "redaction"] as const,
   redactionRules: ["admin", "redaction", "rules"] as const,
   providerPlugins: ["admin", "provider-plugins"] as const,
@@ -619,6 +623,47 @@ export function useUpdateUser() {
     mutationFn: ({ id, ...body }: { id: string; is_active?: boolean; is_admin?: boolean }) =>
       request<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
+
+export function useCreateUser() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UserCreateInput) =>
+      request<AdminUser>("/api/admin/users", { method: "POST", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
+
+export function useDeleteUser() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request<void>(`/api/admin/users/${id}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
+
+// -- identity policy (ADR 0048) ----------------------------------------------
+
+/**
+ * The policy in force on the answering worker, plus the newest decision
+ * behind it. Re-read after every save: the PUT refreshes its own worker, so a
+ * save-then-read sees the change without waiting a poll.
+ */
+export function useOidcPolicy() {
+  return useQuery({
+    queryKey: adminKeys.oidcPolicy,
+    queryFn: () => request<OidcPolicy>("/api/admin/oidc/policy"),
+    retry: retryUnlessRejected,
+  });
+}
+
+export function useUpdateOidcPolicy() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: OidcPolicyInput) =>
+      request<OidcPolicy>("/api/admin/oidc/policy", { method: "PUT", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.oidcPolicy }),
   });
 }
 

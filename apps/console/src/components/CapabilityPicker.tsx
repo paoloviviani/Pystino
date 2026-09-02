@@ -2,7 +2,7 @@ import { Badge, Input } from "@llmp/ui";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import type { AdminModel } from "../lib/types";
-import styles from "../routes/Admin.module.css";
+import { CHIPS, CHECK_ITEM, CHECK_LIST, FIELD_LABEL, MUTED } from "../lib/layout";
 
 /**
  * Everything about *describing* a model's capabilities, shared by the three
@@ -32,10 +32,10 @@ export function Capabilities({ model }: { model: AdminModel }) {
   const shown = [...inputs, ...model.supported_features];
 
   if (shown.length === 0) {
-    return <span className={styles.muted}>not stated</span>;
+    return <span className={MUTED}>not stated</span>;
   }
   return (
-    <div className={styles.chips}>
+    <div className={CHIPS}>
       {shown.map((item) => (
         <Badge key={item}>{item.replace(/_/g, " ")}</Badge>
       ))}
@@ -103,6 +103,24 @@ export const KNOWN_FEATURES: readonly Vocabulary[] = [
  * with nowhere to render would be dropped by the first save, and the operator
  * would have destroyed information by opening a dialog and clicking Save.
  */
+/**
+ * The picker's fieldset, as Tailwind classes.
+ *
+ * A fieldset at all because the legend is what names the group for a screen
+ * reader — the boxes are "image" and "audio", which mean nothing without
+ * "Accepts" attached to them. Two rules travelled over from the CSS module
+ * they used to live in:
+ *
+ * - `[min-inline-size:0]`: fieldsets default to `min-width: min-content`,
+ *   which stops the grid inside from shrinking — a wide Other box would widen
+ *   the whole card instead of wrapping. Arbitrary-property syntax because
+ *   Tailwind ships `min-w-*` but no logical-property equivalent.
+ * - The legend deliberately matches the field labels in `@llmp/ui` exactly:
+ *   a legend that styled itself differently would read as a section heading
+ *   rather than as the label of the control under it.
+ */
+const PICKER_FIELDSET = "grid [min-inline-size:0] gap-2 border-0 p-0 m-0";
+
 export function CapabilityPicker({
   label,
   otherLabel,
@@ -134,11 +152,11 @@ export function CapabilityPicker({
     onChange([...new Set([...ticked, ...asList(extras)])]);
 
   return (
-    <fieldset className={styles.capabilities}>
-      <legend className={styles.capabilitiesLegend}>{label}</legend>
-      <div className={styles.checkList}>
+    <fieldset className={PICKER_FIELDSET}>
+      <legend className={FIELD_LABEL}>{label}</legend>
+      <div className={CHECK_LIST}>
         {known.map((entry) => (
-          <label key={entry.value} className={styles.checkItem}>
+          <label key={entry.value} className={CHECK_ITEM}>
             <input
               type="checkbox"
               checked={value.includes(entry.value)}
@@ -153,7 +171,7 @@ export function CapabilityPicker({
             />
             <span>
               {entry.value}
-              {entry.gloss && <span className={styles.muted}> ({entry.gloss})</span>}
+              {entry.gloss && <span className={MUTED}> ({entry.gloss})</span>}
             </span>
           </label>
         ))}

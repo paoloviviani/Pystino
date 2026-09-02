@@ -15,7 +15,7 @@ import { Card } from "@llmp/ui";
 import { Link } from "react-router";
 
 import { PageHeader } from "../components/PageHeader";
-import styles from "./Admin.module.css";
+import { PAGE, SECTION_LINK, SECTIONS } from "../lib/layout";
 
 interface Section {
   to: string;
@@ -23,7 +23,12 @@ interface Section {
   description: string;
 }
 
-const SECTIONS: Section[] = [
+const ADMIN_SECTIONS: Section[] = [
+  {
+    to: "/admin/identity",
+    title: "Identity",
+    description: "Automatic provisioning, the group claim, and what each IdP group means here.",
+  },
   {
     to: "/admin/reports",
     title: "Usage",
@@ -58,17 +63,17 @@ const SECTIONS: Section[] = [
 
 export function Admin() {
   return (
-    <div className={styles.page}>
+    <div className={PAGE}>
       <PageHeader
         title="Administration"
         subtitle="Everything that applies to other people. Your own account is under Overview."
       />
 
-      <div className={styles.sections}>
-        {SECTIONS.map((section) => (
+      <div className={SECTIONS}>
+        {ADMIN_SECTIONS.map((section) => (
           // The whole card is the target. A title-only link in a card of text
           // gives a mouse a strip to hit and everything else to miss.
-          <Link key={section.to} to={section.to} className={styles.sectionLink}>
+          <Link key={section.to} to={section.to} className={SECTION_LINK}>
             <Card title={section.title} description={section.description} />
           </Link>
         ))}

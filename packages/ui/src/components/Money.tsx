@@ -1,5 +1,4 @@
 import { useExactMoney } from "./MoneyPrecision";
-import styles from "./Money.module.css";
 
 export interface MoneyProps {
   /** The API sends money as a decimal *string*, and it must stay one. */
@@ -27,7 +26,7 @@ export function Money({ amount, currency, maxDecimals }: MoneyProps) {
     // so a single amount can be checked on hover without turning exact mode on
     // for the whole console. Not a substitute for the toggle — a tooltip is
     // invisible on a touch screen and does not print — which is why both exist.
-    <span className={styles.money} title={shown === full ? undefined : full}>
+    <span className="whitespace-nowrap tabular-nums" title={shown === full ? undefined : full}>
       {shown}
     </span>
   );

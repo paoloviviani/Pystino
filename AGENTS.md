@@ -127,10 +127,13 @@ running stack.
   especially where the obvious approach was rejected; name the failure a decision
   prevents; record bugs found while building. Reports never hedge: a failed test
   is reported with its output, and anything unverified is named as such.
-- Changing any `GATEWAY_OIDC__*` value needs the **gateway restarted too** — it
-  reads OIDC discovery once at startup. And `iss` is part of user identity:
+- Changing a `GATEWAY_OIDC__*` *connection* value needs the **gateway restarted**
+  — it reads OIDC discovery once at startup. The identity policy (provisioning,
+  group mappings, admin groups) is console-editable with no restart (ADR 0048). And `iss` is part of user identity:
   users are keyed on `(issuer, subject)`, so changing the issuer re-provisions
   every user as a new row with no memberships.
-- The look is Material Design 3 and lives in one file: `packages/ui/src/tokens.css`.
-  Components reference tokens, never literals — and the decorative half of MD3 is
-  deliberately absent (no blur, glass, glow, or scale-on-hover).
+- The look is a neutral greyscale with one indigo accent and lives in one file:
+  `packages/ui/src/tokens.css` (light + dark; ADR 0047). Components are styled
+  with Tailwind utilities against that file's `@theme inline` mapping and never
+  literals — and the decorative half is deliberately absent (no blur, glass,
+  glow, or scale-on-hover).

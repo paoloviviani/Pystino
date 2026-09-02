@@ -1,6 +1,7 @@
 import type { InputHTMLAttributes, ReactNode } from "react";
 import { useId } from "react";
-import styles from "./Input.module.css";
+import { cx } from "../cx";
+import { controlClass, errorClass, hintClass, labelClass } from "./controls";
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label: ReactNode;
@@ -24,13 +25,16 @@ export function Input({ label, hideLabel = false, hint, error, className, ...res
   const errorId = `${id}-error`;
 
   return (
-    <div className={styles.field}>
-      <label className={hideLabel ? styles.labelHidden : styles.label} htmlFor={id}>
+    <div className="flex flex-col gap-1">
+      <label className={cx(labelClass, hideLabel && "sr-only")} htmlFor={id}>
         {label}
       </label>
       <input
         id={id}
-        className={[styles.input, error ? styles.invalid : "", className].filter(Boolean).join(" ")}
+        // Not `error && …`: a `ReactNode` may legitimately be `0`, and a
+        // falsy-prop guard that passes numbers through is how a class list
+        // ends up containing the string "0".
+        className={controlClass(cx(error ? "border-danger" : undefined, className))}
         aria-invalid={error ? true : undefined}
         // Points assistive technology at whichever explanation is showing, so
         // the reason a field is rejected is announced with the field itself.
@@ -38,11 +42,11 @@ export function Input({ label, hideLabel = false, hint, error, className, ...res
         {...rest}
       />
       {error ? (
-        <p id={errorId} className={styles.error}>
+        <p id={errorId} className={errorClass}>
           {error}
         </p>
       ) : hint ? (
-        <p id={hintId} className={styles.hint}>
+        <p id={hintId} className={hintClass}>
           {hint}
         </p>
       ) : null}

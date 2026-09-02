@@ -9,6 +9,7 @@ import {
   Select,
   Spinner,
   Table,
+  
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import type { ReactNode } from "react";
@@ -32,9 +33,23 @@ import {
   useUserModelAccess,
   useUsers,
 } from "../lib/admin";
+import {
+  CHIPS,
+  CHECK_ITEM,
+  CHECK_LIST,
+  CODE,
+  DETAIL_LABEL,
+  DETAIL_VALUE,
+  DETAILS,
+  FORM,
+  FORM_ROW,
+  MUTED,
+  PAGE,
+} from "../lib/layout";
 import { usePaginated } from "../lib/paging";
 import type { AdminModel, ModelKind, Price } from "../lib/types";
-import styles from "./Admin.module.css";
+import { useOptionalToast } from "../lib/toast";
+
 
 /**
  * One model, and everything that is true of it.
@@ -57,7 +72,7 @@ export function AdminModelDetail() {
 
   if (model.isPending) {
     return (
-      <div className={styles.page}>
+      <div className={PAGE}>
         <Spinner label="Loading the model" />
       </div>
     );
@@ -65,7 +80,7 @@ export function AdminModelDetail() {
 
   if (model.error || !model.data) {
     return (
-      <div className={styles.page}>
+      <div className={PAGE}>
         <Notice tone="danger" title="Could not load this model">
           {model.error instanceof Error ? model.error.message : "Unknown error."}{" "}
           <Link to="/admin/models">Back to the catalogue</Link>
@@ -81,23 +96,33 @@ function ModelPage({ model }: { model: AdminModel }) {
   const update = useUpdateModel();
   const del = useDeleteModel();
   const navigate = useNavigate();
+  const toast = useOptionalToast();
   const [confirming, setConfirming] = useState(false);
 
   return (
-    <div className={styles.page}>
+    <div className={PAGE}>
       <PageHeader
         title={model.name}
         subtitle={
           <>
             <Link to="/admin/models">Models</Link> · served as{" "}
-            <code className={styles.code}>{model.upstream_model}</code> by {model.provider_name}
+            <code className={CODE}>{model.upstream_model}</code> by {model.provider_name}
           </>
         }
         actions={
           <>
             <Button
               busy={update.isPending}
-              onClick={() => update.mutate({ id: model.id, is_active: !model.is_active })}
+              onClick={() =>
+                update.mutate(
+                  { id: model.id, is_active: !model.is_active },
+                  {
+                    onSuccess: () => toast?.add({ title: "Model updated", type: "success" }),
+                    onError: () =>
+                      toast?.add({ title: "Could not update the model", type: "error" }),
+                  },
+                )
+              }
             >
               {model.is_active ? "Deactivate" : "Activate"}
             </Button>
@@ -126,7 +151,12 @@ function ModelPage({ model }: { model: AdminModel }) {
               busy={del.isPending}
               onClick={() =>
                 del.mutate(model.id, {
-                  onSuccess: () => navigate("/admin/models"),
+                  onSuccess: () => {
+                    toast?.add({ title: "Model deleted", type: "success" });
+                    navigate("/admin/models");
+                  },
+                  onError: () =>
+                    toast?.add({ title: "Could not delete the model", type: "error" }),
                 })
               }
             >
@@ -142,10 +172,10 @@ function ModelPage({ model }: { model: AdminModel }) {
         ) : null}
         <p>
           Removed from the catalogue and from{" "}
-          <code className={styles.code}>/v1/models</code>; its prices and access grants go with it.
+          <code className={CODE}>/v1/models</code>; its prices and access grants go with it.
           This cannot be undone.
         </p>
-        <p className={styles.muted}>
+        <p className={MUTED}>
           Recorded spend is unaffected: past usage keeps the model's name and stays attributed to
           the people and groups that ran it.
         </p>
@@ -169,26 +199,36 @@ function ModelPage({ model }: { model: AdminModel }) {
       )}
 
       <Card title="Details">
-        <dl className={styles.details}>
+        <dl className={DETAILS}>
           <Detail label="Status">
             {model.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
           </Detail>
           <Detail label="Visibility">
-            <div className={styles.chips}>
+            <div className={CHIPS}>
               {model.is_public ? <Badge tone="accent">Public</Badge> : <Badge>Private</Badge>}
               <Button
                 busy={update.isPending && update.variables?.is_public !== undefined}
-                onClick={() => update.mutate({ id: model.id, is_public: !model.is_public })}
+                onClick={() =>
+                  update.mutate(
+                    { id: model.id, is_public: !model.is_public },
+                    {
+                      onSuccess: () =>
+                        toast?.add({ title: "Model updated", type: "success" }),
+                      onError: () =>
+                        toast?.add({ title: "Could not update the model", type: "error" }),
+                    },
+                  )
+                }
               >
                 {model.is_public ? "Restrict to grants" : "Make public"}
               </Button>
             </div>
           </Detail>
           <Detail label="Name callers send">
-            <code className={styles.code}>{model.name}</code>
+            <code className={CODE}>{model.name}</code>
           </Detail>
           <Detail label="Upstream model">
-            <code className={styles.code}>{model.upstream_model}</code>
+            <code className={CODE}>{model.upstream_model}</code>
           </Detail>
           <Detail label="Provider">
             <Link to="/admin/providers">{model.provider_name}</Link>
@@ -206,8 +246,8 @@ function ModelPage({ model }: { model: AdminModel }) {
 function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
     <>
-      <dt className={styles.detailLabel}>{label}</dt>
-      <dd className={styles.detailValue}>{children}</dd>
+      <dt className={DETAIL_LABEL}>{label}</dt>
+      <dd className={DETAIL_VALUE}>{children}</dd>
     </>
   );
 }
@@ -226,6 +266,7 @@ function Detail({ label, children }: { label: string; children: ReactNode }) {
  */
 function Describe({ model }: { model: AdminModel }) {
   const update = useUpdateModel();
+  const toast = useOptionalToast();
   const [kind, setKind] = useState<ModelKind>(model.kind);
   const [inputs, setInputs] = useState<string[]>(model.input_modalities);
   const [outputs, setOutputs] = useState<string[]>(model.output_modalities);
@@ -239,7 +280,7 @@ function Describe({ model }: { model: AdminModel }) {
       title="Capabilities"
       description="What callers are told on /v1/models. Discover never overwrites an edit."
     >
-      <div className={styles.form}>
+      <div className={FORM}>
         {update.error ? (
           <Notice tone="danger">
             {update.error instanceof Error ? update.error.message : "Unknown error."}
@@ -296,14 +337,22 @@ function Describe({ model }: { model: AdminModel }) {
             variant="primary"
             busy={update.isPending}
             onClick={() =>
-              update.mutate({
-                id: model.id,
-                kind,
-                input_modalities: inputs,
-                output_modalities: outputs,
-                supported_features: features,
-                context_window: context === "" ? null : Number(context),
-              })
+              update.mutate(
+                {
+                  id: model.id,
+                  kind,
+                  input_modalities: inputs,
+                  output_modalities: outputs,
+                  supported_features: features,
+                  context_window: context === "" ? null : Number(context),
+                },
+                {
+                  onSuccess: () =>
+                    toast?.add({ title: "Capabilities saved", type: "success" }),
+                  onError: () =>
+                    toast?.add({ title: "Could not save the capabilities", type: "error" }),
+                },
+              )
             }
           >
             Save capabilities
@@ -361,12 +410,12 @@ function Pricing({ model }: { model: AdminModel }) {
             <div>
               <Rate amount={price.cache_read_per_mtok} currency={price.currency} />
             </div>
-            <div className={styles.muted}>
+            <div className={MUTED}>
               <Rate amount={price.cache_write_per_mtok} currency={price.currency} />
             </div>
           </>
         ) : (
-          <span className={styles.muted}>—</span>
+          <span className={MUTED}>—</span>
         ),
     },
     {
@@ -411,12 +460,13 @@ function Pricing({ model }: { model: AdminModel }) {
 }
 
 function Rate({ amount, currency }: { amount: string | null; currency: string }) {
-  if (!amount) return <span className={styles.muted}>—</span>;
+  if (!amount) return <span className={MUTED}>—</span>;
   return <Money amount={amount} currency={currency} />;
 }
 
 function AppendPrice({ model }: { model: AdminModel }) {
   const create = useCreatePrice();
+  const toast = useOptionalToast();
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
   const [cacheRead, setCacheRead] = useState("");
@@ -442,6 +492,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
       },
       {
         onSuccess: () => {
+          toast?.add({ title: "Price appended", type: "success" });
           setInput("");
           setOutput("");
           setCacheRead("");
@@ -449,13 +500,14 @@ function AppendPrice({ model }: { model: AdminModel }) {
           setPerImage("");
           setEffective("");
         },
+        onError: () => toast?.add({ title: "Could not append the price", type: "error" }),
       },
     );
   };
 
   return (
     <Card title="New price">
-      <div className={styles.form}>
+      <div className={FORM}>
         {create.error ? (
           <Notice tone="danger">
             {create.error instanceof Error ? create.error.message : "Unknown error."}
@@ -465,7 +517,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
           <Notice tone="info">Price appended. It applies from its effective date.</Notice>
         )}
 
-        <div className={styles.formRow}>
+        <div className={FORM_ROW}>
           <Input
             label="Input per Mtok"
             type="number"
@@ -561,15 +613,15 @@ function Access({ model }: { model: AdminModel }) {
         </Notice>
       ) : null}
 
-      <p className={styles.muted}>Groups</p>
+      <p className={MUTED}>Groups</p>
       {groups.isPending ? (
         <Spinner />
       ) : (
-        <div className={styles.checkList}>
+        <div className={CHECK_LIST}>
           {(groups.data?.items ?? []).map((group) => {
             const has = group.models.includes(model.name);
             return (
-              <label key={group.id} className={styles.checkItem}>
+              <label key={group.id} className={CHECK_ITEM}>
                 <input
                   type="checkbox"
                   checked={has}
@@ -585,11 +637,11 @@ function Access({ model }: { model: AdminModel }) {
         </div>
       )}
 
-      <p className={styles.muted}>Individuals, in addition to their groups.</p>
+      <p className={MUTED}>Individuals, in addition to their groups.</p>
       {granted.length > 0 && (
-        <div className={styles.checkList}>
+        <div className={CHECK_LIST}>
           {granted.map((email) => (
-            <label key={email} className={styles.checkItem}>
+            <label key={email} className={CHECK_ITEM}>
               <input
                 type="checkbox"
                 checked
@@ -623,11 +675,11 @@ function Access({ model }: { model: AdminModel }) {
           {userAccess.error instanceof Error ? userAccess.error.message : "Unknown error."}
         </Notice>
       ) : null}
-      <div className={styles.checkList}>
+      <div className={CHECK_LIST}>
         {matching.map((user) => {
           const has = granted.includes(user.email ?? "");
           return (
-            <label key={user.id} className={styles.checkItem}>
+            <label key={user.id} className={CHECK_ITEM}>
               <input
                 type="checkbox"
                 checked={has}
@@ -641,7 +693,7 @@ function Access({ model }: { model: AdminModel }) {
           );
         })}
         {matching.length === 0 && (
-          <span className={styles.muted}>
+          <span className={MUTED}>
             {!finder.query.trim()
               ? granted.length === 0
                 ? "No individual grants."
@@ -652,7 +704,7 @@ function Access({ model }: { model: AdminModel }) {
           </span>
         )}
         {users.data && users.data.total > matching.length && (
-          <span className={styles.muted}>
+          <span className={MUTED}>
             Showing {matching.length} of {users.data.total.toLocaleString()} matches. Narrow
             the search to see the rest.
           </span>

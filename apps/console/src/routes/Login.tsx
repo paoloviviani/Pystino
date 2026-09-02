@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { fetchAuthMethods, localLogin, login, NotAuthenticatedError } from "../lib/api";
-import styles from "./Login.module.css";
+import { FORM_STACK, LOGIN_CARD, LOGIN_CENTRE } from "../lib/layout";
 
 /**
  * The adaptive sign-in page (ADR 0043).
@@ -44,7 +44,7 @@ export function Login() {
 
   if (methods.isPending) {
     return (
-      <div className={styles.centre}>
+      <div className={LOGIN_CENTRE}>
         <Spinner label="Loading the sign-in page" />
       </div>
     );
@@ -52,7 +52,7 @@ export function Login() {
 
   if (methods.error) {
     return (
-      <div className={styles.centre}>
+      <div className={LOGIN_CENTRE}>
         <Notice tone="danger" title="The console could not reach the gateway">
           {methods.error instanceof Error ? methods.error.message : "Unknown error."}
         </Notice>
@@ -64,7 +64,7 @@ export function Login() {
   // can fix, only report.
   if (!methods.data.local && !methods.data.oidc) {
     return (
-      <div className={styles.centre}>
+      <div className={LOGIN_CENTRE}>
         <Notice tone="danger" title="No sign-in method is enabled">
           This deployment has neither local authentication nor OIDC configured.
         </Notice>
@@ -74,7 +74,7 @@ export function Login() {
 
   if (!methods.data.local && methods.data.oidc) {
     return (
-      <div className={styles.centre}>
+      <div className={LOGIN_CENTRE}>
         <Spinner label="Redirecting to sign in" />
       </div>
     );
@@ -113,15 +113,15 @@ function LocalLoginForm({ next, ssoAvailable }: { next: string; ssoAvailable: bo
   }
 
   return (
-    <div className={styles.centre}>
-      <section className={styles.card}>
-        <h1 className={styles.title}>Sign in</h1>
+    <div className={LOGIN_CENTRE}>
+      <section className={LOGIN_CARD}>
+        <h1 className="m-0 text-lg font-medium">Sign in</h1>
         {error ? (
           <Notice tone="danger" title="Sign-in failed">
             {error}
           </Notice>
         ) : null}
-        <form onSubmit={handleSubmit}>
+        <form className={FORM_STACK} onSubmit={handleSubmit}>
           {/* autoComplete values are the browser's cue to offer or save the
               credential; without them a password manager offers the wrong
               thing on the wrong field. */}

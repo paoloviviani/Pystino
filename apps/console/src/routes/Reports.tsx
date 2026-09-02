@@ -22,7 +22,13 @@ import { downloadCsv } from "../lib/api";
 import { recentPeriods } from "../lib/periods";
 import { useMyReport } from "../lib/queries";
 import type { UsageReportRow } from "../lib/types";
-import styles from "./Admin.module.css";
+import {
+  DISCLOSURES,
+  FILTERS,
+  MUTED,
+  PAGE,
+  STATS,
+} from "../lib/layout";
 
 /**
  * No "by user" and no "by group".
@@ -66,7 +72,7 @@ export function Reports() {
       // A dash, not a zero: most rows are not image rows, and a column of
       // zeroes reads as "none were generated" rather than "not applicable".
       render: (row) =>
-        row.images ? row.images.toLocaleString() : <span className={styles.muted}>—</span>,
+        row.images ? row.images.toLocaleString() : <span className={MUTED}>—</span>,
     },
     {
       key: "cost",
@@ -77,11 +83,11 @@ export function Reports() {
   ];
 
   return (
-    <div className={styles.page}>
+    <div className={PAGE}>
       <PageHeader title="Your usage" subtitle="What you spent, and what the figures rest on." />
 
       <Card>
-        <div className={styles.filters}>
+        <div className={FILTERS}>
           <Select
             label="Period"
             value={period}
@@ -116,7 +122,7 @@ export function Reports() {
         ) : null}
         {report.data && (
           <>
-            <div className={styles.stats}>
+            <div className={STATS}>
               <Stat
                 label={`Spend · ${report.data.period.label}`}
                 value={<Money amount={report.data.totals.cost} currency={currency} />}
@@ -142,7 +148,7 @@ export function Reports() {
             {/* The API's own wording, verbatim. Restating a caveat in the UI is
                 how the two end up disagreeing about what the number means. */}
             {report.data.disclosures.length > 0 && (
-              <div className={styles.disclosures}>
+              <div className={DISCLOSURES}>
                 {report.data.disclosures.map((note) => (
                   <Notice key={note} tone="warn">
                     {note}

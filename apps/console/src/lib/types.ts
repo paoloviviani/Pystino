@@ -500,3 +500,53 @@ export interface ProviderTestResult {
   sample: string[];
   latency_ms: number | null;
 }
+
+/**
+ * Minting a local account from the console (ADR 0048). Local only: an
+ * identity-provider account is the IdP's to create, and one made here would
+ * be overwritten or orphaned at the next login.
+ */
+export interface UserCreateInput {
+  email: string;
+  password: string;
+  display_name?: string;
+  is_admin?: boolean;
+  /** Group *names*; a name that does not exist yet is created (source "manual"). */
+  groups?: string[];
+}
+
+/**
+ * The identity policy in force (ADR 0048), as `GET /api/admin/oidc/policy`
+ * reports it: the effective values, where each came from, and the newest
+ * decision behind them.
+ */
+export interface OidcPolicy {
+  auto_provision: boolean;
+  unknown_user_policy: "refuse" | "create_inactive";
+  groups_claim: string;
+  admin_groups: string[];
+  group_mappings: { idp: string; local: string }[];
+  source: "console" | "environment";
+  /** Which fields a stored row decides; the rest are the environment's. */
+  sources: Record<string, string>;
+  configured: {
+    reason: string;
+    changed_at: string;
+    changed_by: string | null;
+  } | null;
+  propagation_seconds: number;
+}
+
+/**
+ * A policy change. Unset fields store as null — "the environment decides this
+ * one" — so a change to one knob never restates the deployment's other
+ * answers.
+ */
+export interface OidcPolicyInput {
+  auto_provision?: boolean;
+  unknown_user_policy?: "refuse" | "create_inactive";
+  groups_claim?: string;
+  admin_groups?: string[];
+  group_mappings?: { idp: string; local: string }[];
+  reason?: string;
+}

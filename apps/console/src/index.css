@@ -1,0 +1,32 @@
+/*
+ * The Tailwind entry.
+ *
+ * This file is deliberately almost empty. It does two things, in this order:
+ *
+ * 1. `@import "tailwindcss"` — Tailwind's preflight, theme and utility layers.
+ * 2. `@import "@llmp/ui/tokens.css"` — the tokens file, pulled through the
+ *    *CSS* import graph rather than a JS import, because that is what makes
+ *    its `@theme inline` mapping and `@custom-variant` visible to the Tailwind
+ *    compiler. Imported from JS alone (as it once was), Vite hands the file
+ *    straight to lightningcss, the at-rules come out the other end
+ *    "unknown", and no utility is ever generated against the tokens — the
+ *    build warns about it, and the console renders unstyled.
+ *
+ * Order matters: the tokens file's body rules and font faces must come after
+ * preflight in the cascade, which this order gives them.
+ *
+ * ADR 0047 keeps `packages/ui` source-only and its `tokens.css` importable by
+ * a consumer with no Tailwind; the coupling lives at the consumer, in this one
+ * file.
+ */
+@import "tailwindcss";
+@import "@llmp/ui/tokens.css";
+
+/*
+ * Tailwind's automatic content detection is rooted at the Vite project root,
+ * which is this app — the primitives live one level up in the workspace, in
+ * `packages/ui/src`, and their classes would be silently missing from the
+ * output. Declared rather than relied upon; if a class "does nothing", this
+ * line not naming its file is the first thing to check.
+ */
+@source "../../../packages/ui/src";

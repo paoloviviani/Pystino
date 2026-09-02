@@ -733,6 +733,77 @@ class UserUpdateRequest(BaseModel):
     is_admin: bool | None = None
 
 
+class UserCreateRequest(BaseModel):
+    """Mint a local account from the console.
+
+    Local only, deliberately: an identity-provider account is the IdP's to
+    create (that is what provisioning means), and a console-created directory
+    user would be overwritten or orphaned at the next login. A local account
+    is keyed by its email — the same convention ``gateway passwd`` and the
+    login query follow — so the email is the subject, not merely a label.
+    """
+
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=1024)
+    display_name: str | None = Field(default=None, max_length=255)
+    is_admin: bool = False
+    # Group *names*, not ids — the caller thinks in names, and a name that does
+    # not exist yet is created (source "manual"), which is what an operator
+    # naming a group in a form means.
+    groups: list[str] = Field(default_factory=list)
+
+
+class OidcMappingRule(BaseModel):
+    """One IdP group → local group mapping (ADR 0048)."""
+
+    idp: str = Field(min_length=1, max_length=255)
+    local: str = Field(min_length=1, max_length=255)
+
+
+class OidcPolicyUpdateRequest(BaseModel):
+    """A new identity-policy decision.
+
+    Unset fields are ``null`` on the stored row, which means "the environment
+    decides this one" — a row can turn one knob without restating the
+    deployment's other answers.
+    """
+
+    auto_provision: bool | None = None
+    # Only meaningful while auto-provisioning is off; the API refuses it
+    # alongside `auto_provision: true`, where it would silently never apply.
+    unknown_user_policy: Literal["refuse", "create_inactive"] | None = None
+    groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
+    admin_groups: list[str] | None = None
+    group_mappings: list[OidcMappingRule] | None = None
+    reason: str = Field(default="", max_length=500)
+
+
+class OidcPolicyChange(BaseModel):
+    reason: str
+    changed_at: datetime
+    changed_by: str | None = None
+
+
+class OidcPolicyResponse(BaseModel):
+    """The policy in force on this worker, and where each part came from."""
+
+    auto_provision: bool
+    unknown_user_policy: Literal["refuse", "create_inactive"]
+    groups_claim: str
+    admin_groups: list[str]
+    group_mappings: list[OidcMappingRule]
+    # "console" when any field is a stored decision, "environment" otherwise;
+    # `sources` says which, per field — "the console says X and the
+    # environment says Y" is otherwise invisible.
+    source: str
+    sources: dict[str, str] = {}
+    configured: OidcPolicyChange | None = None
+    # How long a saved change may take to reach every worker (the poll
+    # interval). Reported rather than implied: a change that looks instant and
+    # is not is worse than one that says how long it takes.
+    propagation_seconds: float = 0.0
+
+
 class LimitRuleCreateRequest(BaseModel):
     name: str = Field(default="", max_length=255)
     scope: Literal["global", "group", "user", "api_key"]

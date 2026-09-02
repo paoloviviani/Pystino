@@ -57,6 +57,7 @@ from gateway.models import (
     BillingMode,
     Group,
     GroupModelAccess,
+    GroupSource,
     LimitMetric,
     LimitRule,
     LimitScope,
@@ -65,6 +66,7 @@ from gateway.models import (
     ModelDef,
     ModelKind,
     ModelPrice,
+    OIDCPolicyConfig,
     PriceSource,
     Provider,
     ProviderKind,
@@ -78,6 +80,7 @@ from gateway.models import (
     User,
     UserModelAccess,
 )
+from gateway.oidc_policy import environment_policy
 from gateway.pagination import Page, PageDep, count_of
 from gateway.passwords import hash_password, validate_password
 from gateway.periods import PeriodKind
@@ -112,6 +115,10 @@ from gateway.schemas import (
     ModelImportResponse,
     ModelImportResult,
     ModelUpdateRequest,
+    OidcMappingRule,
+    OidcPolicyChange,
+    OidcPolicyResponse,
+    OidcPolicyUpdateRequest,
     PriceCreateRequest,
     PriceResponse,
     ProviderCreateRequest,
@@ -135,6 +142,7 @@ from gateway.schemas import (
     RedactionStatusResponse,
     UsageReport,
     UserAdminResponse,
+    UserCreateRequest,
     UserPasswordRequest,
     UserUpdateRequest,
 )
@@ -1696,6 +1704,262 @@ async def clear_user_password(
     await session.execute(delete(LocalCredential).where(LocalCredential.user_id == user.id))
     await session.commit()
     return (await _user_responses(session, [user]))[0]
+
+
+@router.post("/users", response_model=UserAdminResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    payload: UserCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+) -> UserAdminResponse:
+    """Mint a local account (ADR 0048).
+
+    The console-shaped version of ``gateway passwd``: email, initial password,
+    optional groups and admin. Local only — an identity-provider account is
+    the IdP's to create, and a console-created directory user would be
+    overwritten or orphaned at the next login.
+    """
+    email = payload.email.strip().casefold()
+    if "@" not in email or email.startswith("@") or email.endswith("@"):
+        raise BadRequestError("A valid email address is required.")
+
+    existing = await session.execute(
+        select(User).where(User.issuer == "local", User.subject == email)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise BadRequestError(f"An account for {email} already exists.", code="account_exists")
+
+    try:
+        validate_password(payload.password, settings.local_auth)
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+
+    user = User(
+        issuer="local",
+        subject=email,
+        email=email,
+        display_name=payload.display_name or None,
+        is_admin=payload.is_admin,
+    )
+    session.add(user)
+    await session.flush()
+    # The credential at creation, not left for a second step: an account
+    # handed over with "your password is X" and no hash would answer every
+    # sign-in attempt with "incorrect email or password" — found by the
+    # end-to-end assertion in test_oidc_policy.py, not by the type checker.
+    # It needs the flush above: user.id does not exist before it.
+    session.add(
+        LocalCredential(user_id=user.id, password_hash=hash_password(payload.password))
+    )
+
+    # Group *names*, resolved or created. Created groups are "manual", not
+    # "oidc": an OIDC-sourced group that the IdP stops reporting is pruned from
+    # memberships at the next login, and a group an administrator typed into a
+    # form must not be subject to that reconciliation.
+    names: list[str] = []
+    for name in payload.groups:
+        cleaned = name.strip()
+        if cleaned and cleaned not in names:
+            names.append(cleaned)
+    groups: list[Group] = []
+    for name in names:
+        group = (
+            await session.execute(select(Group).where(Group.name == name))
+        ).scalar_one_or_none()
+        if group is None:
+            group = Group(name=name, source=GroupSource.MANUAL)
+            session.add(group)
+            await session.flush()
+        groups.append(group)
+    for group in groups:
+        session.add(Membership(user_id=user.id, group_id=group.id))
+    # The same sole-group rule the login path applies: one group means it is
+    # the default, and the account can bill without a settings detour.
+    if len(groups) == 1:
+        user.default_billing_group_id = groups[0].id
+
+    await session.commit()
+    # _user_responses reads user.memberships, and nothing above has loaded it:
+    # a lazy load from async code is a MissingGreenlet on the *first* account
+    # created — the same trap provision_user documents and dodges. Explicit
+    # refresh rather than a hope.
+    await session.refresh(user, attribute_names=["memberships"])
+    return (await _user_responses(session, [user]))[0]
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> None:
+    """Delete an account, keeping the ledger and leaving their rules inert.
+
+    What dies with the row: keys, memberships, refresh credentials and the
+    local password — all ``CASCADE``. What survives on purpose:
+
+    * **The ledger.** ``usage_records.user_id`` is ``ON DELETE SET NULL``, so
+      historical spend is never lost — the rows keep their amounts and groups,
+      losing only this account's name in the per-user breakdown. The same
+      trade deleting an API key makes, at account scale.
+    * **Their rules.** Quota rules and redaction rules scoped to this user
+      keep their ``scope_id`` and simply stop matching anyone. They render as
+      inert in their listings, and deleting them is the administrator's next
+      decision, not a side effect of this one.
+    """
+    if user_id == admin.id:
+        raise BadRequestError(
+            "You cannot delete the account you are signed in with. Sign in as "
+            "another administrator first."
+        )
+
+    user = await session.get(User, user_id)
+    if user is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+
+    # No last-admin guard is needed beyond the self-delete rule above: the
+    # caller is themselves an active administrator and never the target, so
+    # deleting one admin always leaves at least one — the account making the
+    # request. A guard counting "admins other than the target" could never
+    # fire, and a check that cannot fire is a lie in the code.
+    await session.delete(user)
+    await session.commit()
+
+
+# -- identity policy (ADR 0048) ------------------------------------------------
+
+
+async def _oidc_policy_response(request: Request, session: SessionDep) -> OidcPolicyResponse:
+    """The policy in force, plus the record of the newest decision."""
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    policy = (
+        resolver.policy
+        if resolver is not None
+        else environment_policy(request.app.state.settings.oidc)
+    )
+    stored = await _latest_oidc_config(session)
+    changed_by: str | None = None
+    if stored is not None and stored.created_by is not None:
+        changed_by = await session.scalar(
+            select(User.email).where(User.id == stored.created_by)
+        )
+    return OidcPolicyResponse(
+        auto_provision=policy.auto_provision,
+        unknown_user_policy=policy.unknown_user_policy,
+        groups_claim=policy.groups_claim,
+        admin_groups=policy.admin_groups,
+        group_mappings=[
+            OidcMappingRule(idp=idp, local=local)
+            for idp, local in policy.group_mappings.items()
+        ],
+        source=policy.source,
+        sources=policy.sources,
+        configured=(
+            OidcPolicyChange(
+                reason=stored.reason,
+                changed_at=stored.created_at,
+                changed_by=changed_by,
+            )
+            if stored is not None
+            else None
+        ),
+        propagation_seconds=(resolver.refresh_seconds if resolver is not None else 0.0),
+    )
+
+
+async def _latest_oidc_config(session: SessionDep) -> OIDCPolicyConfig | None:
+    return (
+        await session.execute(
+            select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+@router.get("/oidc/policy", response_model=OidcPolicyResponse)
+async def get_oidc_policy_view(
+    admin: AdminUserDep, session: SessionDep, request: Request
+) -> OidcPolicyResponse:
+    """The identity policy in force, and the newest decision behind it."""
+    return await _oidc_policy_response(request, session)
+
+
+@router.put("/oidc/policy", response_model=OidcPolicyResponse)
+async def set_oidc_policy(
+    payload: OidcPolicyUpdateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+    settings: SettingsDep,
+) -> OidcPolicyResponse:
+    """Record a new identity-policy decision.
+
+    Append-only, newest row wins, and every unset field stores ``null`` —
+    "the environment decides this one" — so a change to one knob never has to
+    know the deployment's other answers. The change reaches every worker
+    within the poll interval; the answering worker refreshes immediately so a
+    console that saves and re-reads sees its own decision.
+    """
+    fields = payload.model_dump(exclude_unset=True)
+
+    unknown = fields.get("unknown_user_policy")
+    if unknown is not None and unknown not in ("refuse", "create_inactive"):
+        raise BadRequestError("unknown_user_policy must be 'refuse' or 'create_inactive'.")
+    if unknown is not None and fields.get("auto_provision") is not False:
+        # Refused rather than stored-never-applied: a knob that does nothing
+        # because of another knob's value reads as a bug, not as a policy.
+        raise BadRequestError(
+            "unknown_user_policy only applies when automatic provisioning is "
+            "off. Set auto_provision to false, or drop the unknown-user policy."
+        )
+
+    groups_claim = fields.get("groups_claim")
+    if groups_claim is not None and not str(groups_claim).strip():
+        raise BadRequestError("groups_claim must name a claim (e.g. 'groups').")
+
+    admin_groups = fields.get("admin_groups")
+    if admin_groups is not None:
+        cleaned = [name.strip() for name in admin_groups if name.strip()]
+        if len(cleaned) != len(set(cleaned)):
+            raise BadRequestError("admin_groups contains a duplicate name.")
+        admin_groups = cleaned
+
+    mappings: list[list[str]] | None = None
+    if payload.group_mappings is not None:
+        mappings = []
+        seen_idp: set[str] = set()
+        for rule in payload.group_mappings:
+            idp, local = rule.idp.strip(), rule.local.strip()
+            if not idp or not local:
+                raise BadRequestError("Mapping rules need both an IdP name and a local name.")
+            if idp in seen_idp:
+                # Two rows naming the same IdP group cannot both apply; storing
+                # one silently would make the form disagree with the policy.
+                raise BadRequestError(f"Group '{idp}' is mapped more than once.")
+            seen_idp.add(idp)
+            mappings.append([idp, local])
+
+    row = OIDCPolicyConfig(
+        auto_provision=fields.get("auto_provision"),
+        unknown_user_policy=unknown,
+        groups_claim=groups_claim,
+        admin_groups=admin_groups,
+        group_mappings=mappings,
+        reason=payload.reason,
+        created_by=admin.id,
+    )
+    session.add(row)
+    await session.commit()
+
+    # This worker picks the decision up now; the others within the poll
+    # interval. Best effort: a failed refresh leaves the poll to catch up.
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    if resolver is not None:
+        try:
+            await resolver.refresh_once()
+        except Exception:
+            # The ten-second poll catches up; a failed refresh here must not
+            # turn a saved decision into an error the console reports.
+            logger.warning("oidc policy refresh after save failed", exc_info=True)
+    return await _oidc_policy_response(request, session)
 
 
 # -- reports ------------------------------------------------------------------

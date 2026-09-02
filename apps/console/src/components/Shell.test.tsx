@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,11 @@ import { Shell } from "./Shell";
  * failure is a security problem rather than an inconvenience: a button that
  * appears to work and leaves the session cookie in place is worse than no
  * button.
+ *
+ * The menu's entries are Base UI menu items (ADR 0047), so their accessible
+ * roles are the ARIA menu pattern's — `menuitem`, `menuitemcheckbox` — not
+ * `button`/`checkbox`. Querying the pattern's roles is the point: if a refactor
+ * ever drops them, the screen reader contract broke, and these tests say so.
  */
 
 function me(overrides: Partial<Me> = {}): Me {
@@ -38,6 +43,20 @@ function renderShell(user: Me = me(), path = "/") {
 
 const assign = vi.fn();
 
+/**
+ * Menu interaction goes through `fireEvent.click`, not `userEvent`.
+ *
+ * Base UI's menu reads the pointer *sequence* — pointerdown/up timings and
+ * coordinates — to tell an opening press from an outside press that should
+ * dismiss. jsdom synthesises that sequence with zero deltas and no layout, so
+ * `userEvent.click` races it and the menu intermittently never opens; a plain
+ * click event is the behaviour the component is asked to deliver, and it is
+ * deterministic. Found while migrating the menu to Base UI (ADR 0047).
+ */
+function clickMenuTrigger() {
+  fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   assign.mockClear();
@@ -59,29 +78,27 @@ describe("Shell", () => {
     // Not hidden for its own sake: the header already carries the name and the
     // admin badge, and a fourth item in that row crowds it on a laptop.
     renderShell();
-    expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Sign out" })).not.toBeInTheDocument();
   });
 
   it("opens the menu and offers to sign out", async () => {
-    const user = userEvent.setup({ delay: null });
     renderShell();
 
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
-    expect(screen.getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    clickMenuTrigger();
+    expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeInTheDocument();
     expect(screen.getByText("dave@example.org")).toBeInTheDocument();
   });
 
   it("posts to the logout endpoint, and only on the button", async () => {
-    const user = userEvent.setup({ delay: null });
     const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     stubNavigation();
     renderShell();
 
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
     expect(fetchMock).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -93,7 +110,6 @@ describe("Shell", () => {
     // The cookie may already be gone, or the network may be down. Staying put
     // on an authenticated-looking page is the one outcome that is not
     // acceptable.
-    const user = userEvent.setup({ delay: null });
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("nope", { status: 500 })),
@@ -101,8 +117,8 @@ describe("Shell", () => {
     stubNavigation();
     renderShell();
 
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
-    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/auth/login"));
   });
@@ -110,7 +126,6 @@ describe("Shell", () => {
   it("reloads the page rather than routing, so no stale data survives", async () => {
     // Every cached query in this tab was fetched as the previous user. A
     // client-side route change would leave that data in memory.
-    const user = userEvent.setup({ delay: null });
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("{}", { status: 200 })),
@@ -118,8 +133,8 @@ describe("Shell", () => {
     stubNavigation();
     renderShell();
 
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
-    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/auth/login"));
   });
@@ -129,7 +144,6 @@ describe("Shell", () => {
     // SSO session standing, so /auth/login is answered without a password
     // prompt and the reader lands back on the console as the same person.
     // Signing out looked like it did nothing.
-    const user = userEvent.setup({ delay: null });
     const endSession =
       "http://idp.test/realms/llm-platform/protocol/openid-connect/logout?client_id=llm-gateway";
     vi.stubGlobal(
@@ -145,8 +159,8 @@ describe("Shell", () => {
     stubNavigation();
     renderShell();
 
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
-    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith(endSession));
   });
@@ -154,7 +168,6 @@ describe("Shell", () => {
   it("falls back to our login page when the provider publishes no end-session URL", async () => {
     // Optional in the spec. Our session is gone either way, which is as much
     // as the gateway can promise on its own.
-    const user = userEvent.setup({ delay: null });
     vi.stubGlobal(
       "fetch",
       vi.fn(
@@ -168,8 +181,8 @@ describe("Shell", () => {
     stubNavigation();
     renderShell();
 
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
-    await user.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/auth/login"));
   });
@@ -178,11 +191,11 @@ describe("Shell", () => {
     const user = userEvent.setup({ delay: null });
     renderShell();
 
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
     await user.keyboard("{Escape}");
 
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("menuitem", { name: "Sign out" })).not.toBeInTheDocument(),
     );
   });
 
@@ -196,7 +209,7 @@ describe("Shell", () => {
     // What a wordmark does everywhere else on the web, and the shortest route
     // back to your own overview from six levels into administration.
     renderShell(me({ is_admin: true }), "/admin/models");
-    const brand = screen.getByRole("link", { name: /LLM platform/ });
+    const brand = screen.getByRole("link", { name: /Pistin Gateway/ });
     expect(brand).toHaveAttribute("href", "/");
   });
 
@@ -254,11 +267,10 @@ describe("Shell: exact figures", () => {
   });
 
   it("offers the toggle to an administrator", async () => {
-    const user = userEvent.setup({ delay: null });
     renderShell();
 
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
-    const toggle = screen.getByRole("checkbox", { name: /Exact figures/ });
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
+    const toggle = screen.getByRole("menuitemcheckbox", { name: /Exact figures/ });
     // Off by default: the safe default is the readable one, and exactness is a
     // deliberate act.
     expect(toggle).not.toBeChecked();
@@ -267,40 +279,37 @@ describe("Shell: exact figures", () => {
   it("does not offer it to a reader who has no use for it", async () => {
     // Every figure that needs reconciling against an invoice is on a screen a
     // non-administrator cannot open.
-    const user = userEvent.setup({ delay: null });
     renderShell(me({ is_admin: false }));
 
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
-    expect(screen.queryByRole("checkbox", { name: /Exact figures/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
+    expect(screen.queryByRole("menuitemcheckbox", { name: /Exact figures/ })).not.toBeInTheDocument();
   });
 
   it("remembers the choice across a reload", async () => {
-    const user = userEvent.setup({ delay: null });
     const first = renderShell();
 
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
-    await user.click(screen.getByRole("checkbox", { name: /Exact figures/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /Exact figures/ }));
     await waitFor(() =>
-      expect(screen.getByRole("checkbox", { name: /Exact figures/ })).toBeChecked(),
+      expect(screen.getByRole("menuitemcheckbox", { name: /Exact figures/ })).toBeChecked(),
     );
 
     first.unmount();
     renderShell();
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
-    expect(screen.getByRole("checkbox", { name: /Exact figures/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
+    expect(screen.getByRole("menuitemcheckbox", { name: /Exact figures/ })).toBeChecked();
   });
 
   it("does not restore an administrator's choice for a non-administrator", async () => {
     // Same browser, different person: the preference is stored per browser, so
     // the admin check has to be applied on read as well as on render.
-    const user = userEvent.setup({ delay: null });
     const first = renderShell();
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
-    await user.click(screen.getByRole("checkbox", { name: /Exact figures/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
+    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /Exact figures/ }));
     first.unmount();
 
     renderShell(me({ is_admin: false }));
-    await user.click(screen.getByRole("button", { name: /Dave/ }));
-    expect(screen.queryByRole("checkbox", { name: /Exact figures/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
+    expect(screen.queryByRole("menuitemcheckbox", { name: /Exact figures/ })).not.toBeInTheDocument();
   });
 });
