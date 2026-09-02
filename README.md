@@ -1,4 +1,4 @@
-# LLM Platform
+# Pystino
 
 A self-hosted LLM platform, built and run by its author at personal expense: an
 OpenAI-compatible
