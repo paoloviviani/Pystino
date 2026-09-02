@@ -16,6 +16,7 @@ import { AdminIdentity } from "./routes/AdminIdentity";
 import { AdminUsers } from "./routes/AdminUsers";
 import { Login } from "./routes/Login";
 import { NotFound } from "./routes/NotFound";
+import { PasswordReset } from "./routes/PasswordReset";
 import { Overview } from "./routes/Overview";
 import { Reports } from "./routes/Reports";
 
@@ -155,6 +156,10 @@ export function App() {
           }
         />
 
+        {/* Password reset is public by design: the person who needs it has
+            no session (ADR 0049). Two entries, one file — the token decides
+            which half of the journey this is. */}
+        <Route path="/password-reset" element={<PasswordReset />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Shell>

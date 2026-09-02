@@ -696,6 +696,15 @@ class ModelAdminResponse(BaseModel):
     granted_to_users: list[str] = Field(default_factory=list)
 
 
+class GroupCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class GroupMemberAddRequest(BaseModel):
+    user_id: uuid.UUID
+
+
 class GroupAdminResponse(BaseModel):
     id: uuid.UUID
     name: str

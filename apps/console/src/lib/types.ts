@@ -550,3 +550,17 @@ export interface OidcPolicyInput {
   group_mappings?: { idp: string; local: string }[];
   reason?: string;
 }
+
+/** Creating a group (ADR 0050). Manual is the point: it is the one kind whose
+ * membership the console may edit. */
+export interface GroupCreateInput {
+  name: string;
+  description?: string;
+}
+
+/** The policy in force (ADR 0049): a reset link is only minted when the
+ * deployment enabled the feature. */
+export interface PasswordResetEnabled {
+  local: boolean;
+  reset_available: boolean;
+}

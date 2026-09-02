@@ -121,6 +121,40 @@ class OIDCSettings(BaseModel):
         return value.rstrip("/")
 
 
+
+class PasswordResetSettings(BaseModel):
+    """Self-service password reset by email (ADR 0049).
+
+    Amends the part of ADR 0043 that declined email reset as "a bigger surface
+    than the feature is worth". The surface is bounded three ways, all here in
+    the environment rather than in the database: the feature is off until this
+    section names a mail server (`enabled` plus `smtp_host`), only ``local``
+    accounts may reset (a directory user's password belongs to the IdP), and
+    the link is a single-use, high-entropy, short-lived token stored only as a
+    SHA-256 hash — the same shape as an API key (ADR 0010), for the same
+    reason.
+
+    Delivery is plain ``smtplib`` run in a worker thread: the dependency that
+    would be adopted for one email is not worth its supply chain. STARTTLS is
+    always attempted; a server that refuses TLS refuses the mail.
+    """
+
+    enabled: bool = False
+
+    # Short on purpose: the token's only job is to survive "check my mail".
+    token_ttl_seconds: int = Field(default=3600, gt=0)
+    # Per email address, per worker process — the same sharing trade the login
+    # throttle makes (see gateway/login_throttle.py).
+    request_cooldown_seconds: float = Field(default=60, gt=0)
+
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, gt=0)
+    smtp_username: str = ""
+    smtp_password: SecretStr = SecretStr("")
+    # RFC 5322 From, address required: "Pistin Gateway <no-reply@example.org>".
+    smtp_from: str = ""
+
+
 class LocalAuthSettings(BaseModel):
     """Local email + password sign-in for the management surface (ADR 0043).
 
@@ -130,11 +164,11 @@ class LocalAuthSettings(BaseModel):
     console hides the form. Nothing else changes — the session cookie, its
     lifetime, and everything downstream of it are shared with the OIDC flow.
 
-    There is no self-service registration and no password reset by email: an
-    account exists because an operator created it, via ``gateway passwd`` or
-    the admin API. Email-based reset would put account recovery in the hands
-    of whatever mail server this deployment has, which is a bigger surface
-    than the feature is worth here.
+    There is no self-service registration: an account exists because an
+    operator created it, via ``gateway passwd`` or the admin API. Password
+    reset by email arrived later, opt-in and environment-configured — see
+    ``PasswordResetSettings`` and ADR 0049, which amend the refusal recorded
+    here originally.
     """
 
     enabled: bool = False
@@ -149,6 +183,13 @@ class LocalAuthSettings(BaseModel):
     # for why it is not shared across workers).
     max_failed_attempts: int = Field(default=10, ge=1)
     throttle_window_seconds: float = Field(default=900, gt=0)
+
+    # Self-service password reset (ADR 0049): disabled until the deployment
+    # names a mail server and says so. Nested because a reset is a local-auth
+    # concern — it exists to recover exactly the credential local auth mints.
+    password_reset: PasswordResetSettings = Field(
+        default_factory=PasswordResetSettings
+    )
 
 
 class EntityMode(StrEnum):

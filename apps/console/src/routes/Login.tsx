@@ -1,7 +1,7 @@
 import { Button, Input, Notice, Spinner } from "@llmp/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { fetchAuthMethods, localLogin, login, NotAuthenticatedError } from "../lib/api";
 import { FORM_STACK, LOGIN_CARD, LOGIN_CENTRE } from "../lib/layout";
 
@@ -147,6 +147,9 @@ function LocalLoginForm({ next, ssoAvailable }: { next: string; ssoAvailable: bo
           <Button type="submit" variant="primary" busy={submitting} disabled={submitting}>
             Sign in
           </Button>
+          <Link to={`/password-reset`} className="text-sm text-accent no-underline">
+            Forgot your password?
+          </Link>
         </form>
         {ssoAvailable ? (
           <Button onClick={() => login(next)} disabled={submitting}>

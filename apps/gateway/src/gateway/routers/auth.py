@@ -7,8 +7,10 @@ identically across several gateway workers without a shared session store.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import secrets
+from contextlib import suppress
 from datetime import timedelta
 from typing import Any
 from urllib.parse import urlencode
@@ -30,7 +32,8 @@ from gateway.errors import (
     TooManyRequestsError,
 )
 from gateway.login_throttle import LoginThrottle
-from gateway.models import LocalCredential, RefreshCredential, User
+from gateway.mail import MailDeliveryError, send_mail_async
+from gateway.models import LocalCredential, PasswordResetToken, RefreshCredential, User
 from gateway.oidc import (
     OIDCClient,
     OIDCError,
@@ -40,7 +43,7 @@ from gateway.oidc import (
     issue_session_token,
     provision_user,
 )
-from gateway.passwords import verify_and_rehash, verify_dummy
+from gateway.passwords import hash_password, validate_password, verify_and_rehash, verify_dummy
 from gateway.security import generate_api_key
 from gateway.types import utcnow
 
@@ -165,6 +168,15 @@ class AuthMethods(BaseModel):
     oidc: bool
 
 
+class PasswordResetRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
+class PasswordResetConfirm(BaseModel):
+    token: str = Field(min_length=16, max_length=255)
+    password: str = Field(min_length=1, max_length=1024)
+
+
 def _set_session_cookie(response: Response, request: Request, user_id: Any) -> None:
     """Issue the management session, shared by the OIDC callback and local login.
 
@@ -274,6 +286,33 @@ async def login(
     return response
 
 
+
+class ResetRequestThrottle:
+    """A per-address cooldown on reset emails, per worker process.
+
+    Not the login throttle's failure-counting shape: here every request is the
+    thing being limited, because a stream of password-reset mails to a victim's
+    address is its own small abuse regardless of whether the address exists
+    here. The cooldown answers "allowed" and records in one call; the endpoint
+    treats a refusal as a silent success, so throttling cannot be told apart
+    from delivery.
+    """
+
+    def __init__(self, cooldown_seconds: float) -> None:
+        self._cooldown = cooldown_seconds
+        self._last: dict[str, float] = {}
+
+    def allowed(self, email: str) -> bool:
+        import time
+
+        now = time.monotonic()
+        last = self._last.get(email)
+        if last is not None and now - last < self._cooldown:
+            return False
+        self._last[email] = now
+        return True
+
+
 @router.get("/methods")
 async def methods(request: Request) -> AuthMethods:
     """Which sign-in methods this deployment offers.
@@ -378,6 +417,135 @@ async def local_login(
     # whole point; nothing downstream knows which way in the person came.
     _set_session_cookie(response, request, user.id)
     return response
+
+
+# -- self-service password reset (ADR 0049) -----------------------------------
+
+_RESET_NOT_VALID = "This reset link is not valid or has expired. Request a new one."
+
+
+def _hash_reset_token(token: str) -> str:
+    # SHA-256, not a slow KDF (ADR 0010): the token is high-entropy, so the
+    # lookup is the whole defence and the hash only keeps a database read from
+    # being a working reset link.
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+@router.post("/password-reset")
+async def request_password_reset(
+    payload: PasswordResetRequest, request: Request, session: SessionDep
+) -> JSONResponse:
+    """Email a single-use reset link — or answer as if one was sent.
+
+    **One answer for every input**, the local login rule again: an unknown
+    address, a directory (non-local) account, a disabled account and a
+    throttled request all get the same 200, so this endpoint cannot be used to
+    learn who has an account here. The mail itself is delivered off the
+    request path; delivery failure is logged and the answer is unchanged.
+    """
+    settings = request.app.state.settings
+    reset = settings.local_auth.password_reset
+    if not reset.enabled or not reset.smtp_host:
+        raise ServiceUnavailableError(
+            "Password reset is not available on this deployment. Ask an "
+            "administrator to reset your password."
+        )
+
+    email = payload.email.strip().casefold()
+    throttle: ResetRequestThrottle | None = getattr(
+        request.app.state, "reset_throttle", None
+    )
+    if throttle is None or not throttle.allowed(email):
+        # Same shape, same answer: throttling must not be distinguishable
+        # from success, or it leaks that the address exists.
+        return JSONResponse({"status": "ok"})
+
+    row = (
+        await session.execute(
+            select(LocalCredential, User)
+            .join(User, User.id == LocalCredential.user_id)
+            .where(User.issuer == "local", User.subject == email, User.is_active.is_(True))
+        )
+    ).first()
+
+    if row is not None:
+        _, user = row
+        # A newer request deletes the older link: a forgotten "did I already
+        # ask?" must not leave a live door standing.
+        await session.execute(
+            delete(PasswordResetToken).where(PasswordResetToken.user_id == user.id)
+        )
+        token = secrets.token_urlsafe(32)
+        session.add(
+            PasswordResetToken(
+                user_id=user.id,
+                token_hash=_hash_reset_token(token),
+                expires_at=utcnow() + timedelta(seconds=reset.token_ttl_seconds),
+            )
+        )
+        await session.commit()
+
+        # The link points at this origin's console, resolved from the request —
+        # the same rule the post-login redirect follows: the address the person
+        # is already using is the address the link must work on.
+        origin = str(request.base_url).rstrip("/")
+        link = f"{origin}/console/password-reset?token={token}"
+        # Delivery failure is logged in the sender; the answer below does
+        # not change, because the answer never confirms the address exists.
+        with suppress(MailDeliveryError):
+            await send_mail_async(
+                reset,
+                email,
+                "Reset your Pistin Gateway password",
+                "A password reset was requested for this address.\n\n"
+                f"Open this link to choose a new password (valid one hour):\n\n{link}\n\n"
+                "If you did not ask for this, ignore the mail — your password "
+                "is unchanged.",
+            )
+
+    return JSONResponse({"status": "ok"})
+
+
+@router.post("/password-reset/confirm")
+async def confirm_password_reset(
+    payload: PasswordResetConfirm, session: SessionDep, settings: SettingsDep
+) -> JSONResponse:
+    """Spend the token, set the password.
+
+    The whole lookup is by hash: a token that was never issued, one already
+    used, and one past its hour are the same message — which token failed is
+    exactly what a person holding a stolen link should not learn.
+    """
+    row = (
+        await session.execute(
+            select(PasswordResetToken, User)
+            .join(User, User.id == PasswordResetToken.user_id)
+            .where(PasswordResetToken.token_hash == _hash_reset_token(payload.token))
+        )
+    ).first()
+
+    now = utcnow()
+    if row is None:
+        raise BadRequestError(_RESET_NOT_VALID)
+    reset_row, user = row
+    if reset_row.used_at is not None or reset_row.expires_at < now or not user.is_active:
+        raise BadRequestError(_RESET_NOT_VALID)
+
+    try:
+        validate_password(payload.password, settings.local_auth)
+    except ValueError as exc:
+        raise BadRequestError(str(exc)) from exc
+
+    credential = await session.get(LocalCredential, user.id)
+    if credential is None:
+        # The password row was deleted between request and confirm. A new one
+        # here would hand a directory-shaped hole a local credential; refuse.
+        raise BadRequestError(_RESET_NOT_VALID)
+
+    credential.password_hash = hash_password(payload.password)
+    reset_row.used_at = now
+    await session.commit()
+    return JSONResponse({"status": "ok"})
 
 
 @router.get("/callback")
