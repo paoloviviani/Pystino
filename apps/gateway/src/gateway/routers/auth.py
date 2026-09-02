@@ -496,7 +496,7 @@ async def request_password_reset(
             await send_mail_async(
                 reset,
                 email,
-                "Reset your Pistin Gateway password",
+                "Reset your Pystino password",
                 "A password reset was requested for this address.\n\n"
                 f"Open this link to choose a new password (valid one hour):\n\n{link}\n\n"
                 "If you did not ask for this, ignore the mail — your password "

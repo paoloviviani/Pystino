@@ -22,7 +22,7 @@ traps that only show up on the live stack. Read it before changing anything;
   cat or print them.** Source one (`set -a; . .gh-token; set +a`) and use a
   throwaway credential helper — never argv, config or logs. They define
   `GITLAB_TOKEN` (gitlab.linksfoundation.com, the original home) and `GH_TOKEN`
-  (github.com/paoloviviani/Pistin, current origin).
+  (github.com/paoloviviani/Pistin-Gateway, current origin).
 - **The stack is loopback-only by default.** Nothing may be published on a routable
   address except through `docker-compose.proxy.yml` (Caddy TLS + rotated credentials);
   `scripts/test_public_tls_live.py` enforces that by requiring every other port to be

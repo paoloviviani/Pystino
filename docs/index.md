@@ -58,7 +58,7 @@ on loopback unless deliberately put behind the TLS proxy
 
 ## Licence
 
-[EUPL-1.2](https://github.com/paoloviviani/Pistin/blob/main/LICENCE) for all
+[EUPL-1.2](https://github.com/paoloviviani/Pistin-Gateway/blob/main/LICENCE) for all
 first-party code. This is a hard requirement, not a preference — every inbound
 dependency must be OSI-licensed, without a CLA and without an open-core model
 ([ADR 0001](adr/0001-licensing.md)).
