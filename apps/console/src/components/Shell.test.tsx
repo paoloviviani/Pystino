@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
@@ -27,17 +28,24 @@ function me(overrides: Partial<Me> = {}): Me {
     is_admin: true,
     groups: [{ id: "g1", name: "platform-admins", description: null }],
     default_billing_group: { id: "g1", name: "platform-admins", description: null },
+    issuer: "local",
+    has_password: true,
     ...overrides,
   };
 }
 
 function renderShell(user: Me = me(), path = "/") {
+  // The account menu carries a mutation (change password), so the shell needs
+  // the provider its real app wraps it in.
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <MemoryRouter initialEntries={[path]}>
-      <Shell me={user}>
-        <p>content</p>
-      </Shell>
-    </MemoryRouter>,
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={[path]}>
+        <Shell me={user}>
+          <p>content</p>
+        </Shell>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

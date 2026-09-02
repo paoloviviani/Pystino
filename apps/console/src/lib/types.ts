@@ -25,6 +25,16 @@ export interface Me {
   is_admin: boolean;
   groups: GroupSummary[];
   default_billing_group: GroupSummary | null;
+  /** "local" means a password here is the way in; anything else is the IdP's
+   * (ADR 0049) — the account menu offers password management on that basis. */
+  issuer: string;
+  has_password: boolean;
+}
+
+/** A self-service password change: the current one proves the person. */
+export interface MyPasswordChangeInput {
+  current_password: string;
+  new_password: string;
 }
 
 export interface PeriodInfo {
@@ -150,6 +160,8 @@ export interface AdminUser {
   subject: string;
   is_active: boolean;
   is_admin: boolean;
+  /** The account can sign in with a password (local accounts, ADR 0043). */
+  has_password: boolean;
   groups: string[];
   default_billing_group: string | null;
   active_key_count: number;
