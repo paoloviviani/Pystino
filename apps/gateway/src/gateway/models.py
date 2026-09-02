@@ -908,6 +908,35 @@ class LimitRule(Base):
         )
 
 
+class PasswordResetToken(Base):
+    """A single-use link for a self-service password reset (ADR 0049).
+
+    The table stores the SHA-256 **hash** of the token the email carried, exactly
+    as ``api_keys`` stores a key's hash: whoever reads the database cannot reset
+    anyone's password. ``used_at`` is set by the confirm endpoint; a spent row is
+    kept until the account's next request replaces it, so "was this link spent"
+    stays answerable for as long as having asked it could matter.
+    """
+
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = (
+        Index("ix_password_reset_tokens_token_hash", "token_hash", unique=True),
+        Index("ix_password_reset_tokens_user_id", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE")
+    )
+    token_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column()
+    used_at: Mapped[datetime | None] = mapped_column(default=None)
+
+    def __repr__(self) -> str:
+        return f"<PasswordResetToken expires={self.expires_at.isoformat()}>"
+
+
 class OIDCPolicyConfig(Base):
     """The identity policy, as an administrator set it from the console.
 

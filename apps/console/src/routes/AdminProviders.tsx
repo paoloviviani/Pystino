@@ -11,6 +11,7 @@ import {
   
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
+import { Tooltip } from "@llmp/ui";
 import { useState } from "react";
 import {
   useCreateProvider,
@@ -124,12 +125,18 @@ export function AdminProviders() {
       header: "",
       render: (provider) => (
         <div className={ROW_ACTIONS}>
-          <Button
-            busy={test.isPending && test.variables === provider.id}
-            onClick={() => runTest(provider)}
-          >
-            Test
-          </Button>
+          {/* So a wrong URL or a stale key shows up here rather than in a
+              request to a model. Said here, where the button is — it spent a
+              while as a notice inside the create dialog, explaining an action
+              that did not exist yet. */}
+          <Tooltip label="Calls /models with the stored credential — no model request is made.">
+            <Button
+              busy={test.isPending && test.variables === provider.id}
+              onClick={() => runTest(provider)}
+            >
+              Test
+            </Button>
+          </Tooltip>
           <Button onClick={() => setEditing(provider)}>Edit</Button>
           <Button
             busy={update.isPending && update.variables?.id === provider.id}
@@ -502,11 +509,6 @@ function ProviderDialog({
         </label>
       )}
 
-      {/* So a wrong URL or a stale key shows up here rather than in a request. */}
-      <Notice tone="info">
-        <strong>Test</strong> calls the provider&apos;s <code>/models</code> with the stored
-        credential.
-      </Notice>
     </Dialog>
   );
 }

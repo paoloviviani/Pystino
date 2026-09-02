@@ -44,6 +44,7 @@ from gateway.routers import (
     tokens,
 )
 from gateway.routers import responses as responses_router
+from gateway.routers.auth import ResetRequestThrottle
 from gateway.secrets import SecretBox
 from gateway.upstream import build_http_client
 
@@ -165,6 +166,14 @@ async def init_app_state(
     except Exception:
         logger.warning("could not read the oidc policy at startup", exc_info=True)
     oidc_policy_resolver.start()
+    # The reset-email cooldown, armed only when the feature is: an absent
+    # throttle means POST /auth/password-reset answers 503, the same switch
+    # the login throttle is.
+    app.state.reset_throttle = (
+        ResetRequestThrottle(settings.local_auth.password_reset.request_cooldown_seconds)
+        if settings.local_auth.password_reset.enabled
+        else None
+    )
     app.state.token_estimator = DEFAULT_ESTIMATOR
     # Strong references to detached finalisation tasks; see chat.py.
     app.state.background_tasks = set()

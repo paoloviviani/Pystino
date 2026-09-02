@@ -59,6 +59,8 @@ verified is marked as such in the ADR that depends on it.
 | [0046](0046-local-api-credentials.md) | The local door issues `/v1` credentials: the gateway as issuer for its own accounts |
 | [0047](0047-tailwind-base-ui-modern-refresh.md) | The UI restyles on Tailwind v4 + Base UI, with a dark theme (supersedes the no-Tailwind stance of 0023/0042) |
 | [0048](0048-oidc-policy-configuration.md) | Users are created and deleted in the console; the OIDC identity policy is a runtime decision (amends 0011, 0022, 0043) |
+| [0049](0049-password-reset.md) | Self-service password reset by email, opt-in and environment-configured (amends 0043) |
+| [0050](0050-group-management.md) | Groups are created, deleted and given members in the console; manual groups only (bounds 0048) |
 
 **0015, 0016 and 0041 — the chat frontend decisions — moved to the `chat`
 branch with the chat application itself** (A Vite SPA on `packages/ui` with

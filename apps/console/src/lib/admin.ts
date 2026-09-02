@@ -23,6 +23,7 @@ import type {
   RedactionScope,
   RedactionStatus,
   UsageReport,
+  GroupCreateInput,
 } from "./types";
 
 /**
@@ -44,6 +45,7 @@ export const adminKeys = {
   prices: (modelId: string) => ["admin", "models", modelId, "prices"] as const,
   discovery: ["admin", "models", "discover"] as const,
   groups: ["admin", "groups"] as const,
+  groupMembers: (groupId: string) => ["admin", "groups", groupId, "members"] as const,
   limits: ["admin", "limits"] as const,
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
   users: ["admin", "users"] as const,
@@ -614,6 +616,66 @@ export function useUsers(query: PageQuery = { limit: MAX_LIMIT }, enabled = true
     queryFn: () => request<Page<AdminUser>>(`/api/admin/users?${search}`),
     enabled,
     ...pagedOptions,
+  });
+}
+
+export function useCreateGroup() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: GroupCreateInput) =>
+      request<AdminGroup>("/api/admin/groups", { method: "POST", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.groups }),
+  });
+}
+
+export function useDeleteGroup() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => request<void>(`/api/admin/groups/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.groups });
+      client.invalidateQueries({ queryKey: adminKeys.users });
+    },
+  });
+}
+
+export function useGroupMembers(groupId: string | null, query: PageQuery = { limit: MAX_LIMIT }) {
+  const search = pageParams(query);
+  return useQuery({
+    queryKey: pagedKey(adminKeys.groupMembers(groupId ?? "none"), search),
+    queryFn: () =>
+      request<Page<AdminUser>>(`/api/admin/groups/${groupId}/members?${search}`),
+    enabled: groupId !== null,
+    ...pagedOptions,
+  });
+}
+
+export function useAddGroupMember(groupId: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) =>
+      request<void>(`/api/admin/groups/${groupId}/members`, {
+        method: "POST",
+        body: { user_id: userId },
+      }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.groupMembers(groupId ?? "none") });
+      client.invalidateQueries({ queryKey: adminKeys.groups });
+      client.invalidateQueries({ queryKey: adminKeys.users });
+    },
+  });
+}
+
+export function useRemoveGroupMember(groupId: string | null) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) =>
+      request<void>(`/api/admin/groups/${groupId}/members/${userId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.groupMembers(groupId ?? "none") });
+      client.invalidateQueries({ queryKey: adminKeys.groups });
+      client.invalidateQueries({ queryKey: adminKeys.users });
+    },
   });
 }
 

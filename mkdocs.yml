@@ -129,6 +129,8 @@ nav:
           - "0046 — Local `/v1` credentials": adr/0046-local-api-credentials.md
           - "0047 — Tailwind + Base UI, dark theme": adr/0047-tailwind-base-ui-modern-refresh.md
           - "0048 — OIDC policy as configuration": adr/0048-oidc-policy-configuration.md
+          - "0049 — Password reset by email": adr/0049-password-reset.md
+          - "0050 — Group management": adr/0050-group-management.md
       - "Recorded now, built later":
           - "0017 — Desktop shell (Phase 4)": adr/0017-desktop-shell.md
           - "0018 — Vector store (Phase 3)": adr/0018-vector-store.md

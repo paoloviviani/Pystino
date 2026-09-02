@@ -104,6 +104,8 @@ from gateway.schemas import (
     CatalogueDriftRow,
     DiscoveredModel,
     GroupAdminResponse,
+    GroupCreateRequest,
+    GroupMemberAddRequest,
     GroupUsageRow,
     LimitRuleCreateRequest,
     LimitRuleResetRequest,
@@ -1173,6 +1175,164 @@ async def list_groups(
         ],
         total,
     )
+
+
+@router.post("/groups", response_model=GroupAdminResponse, status_code=status.HTTP_201_CREATED)
+async def create_group(
+    payload: GroupCreateRequest, admin: AdminUserDep, session: SessionDep
+) -> GroupAdminResponse:
+    """Create a manual group (ADR 0050).
+
+    Manual is not a label of convenience: a manual group is the one kind whose
+    membership this screen may edit, because nobody's identity provider will
+    reconcile it away.
+    """
+    name = payload.name.strip()
+    if not name:
+        raise BadRequestError("A group needs a name.")
+    existing = await session.execute(select(Group).where(Group.name == name))
+    if existing.scalar_one_or_none() is not None:
+        raise BadRequestError(f"A group named {name!r} already exists.", code="group_exists")
+    group = Group(
+        name=name,
+        description=payload.description or None,
+        source=GroupSource.MANUAL,
+    )
+    session.add(group)
+    await session.commit()
+    return GroupAdminResponse(
+        id=group.id,
+        name=group.name,
+        description=group.description,
+        source=group.source.value,
+        is_active=group.is_active,
+        member_count=0,
+        models=[],
+    )
+
+
+@router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_group(group_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
+    """Delete a group.
+
+    Model access rows die with it (cascade); members lose it, and anyone whose
+    default billing group it was falls back to choosing at request time. A
+    quota or redaction rule scoped to this group keeps its scope id and goes
+    inert — the same trade deleting a user makes (ADR 0048). A group the IdP
+    owns is *not* refused here, because refusing cannot stop the IdP from
+    recreating it at the next login; the deletion lasts exactly as long as
+    nobody from that group signs in, and the dialog says so.
+    """
+    group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
+    if group is None:
+        raise NotFoundError(f"No group with id {group_id}.")
+    await session.delete(group)
+    await session.commit()
+
+
+async def _load_editable_group(group_id: uuid.UUID, session: SessionDep) -> Group:
+    """The group a membership change is aimed at, or the error that stops it.
+
+    Membership is edited only on manual groups. An OIDC-sourced group is
+    authoritative in the other direction: provision_user replaces its members
+    from the token at every login (ADR 0048), so a member added here would
+    vanish at the next sign-in — access granted silently, then revoked the
+    same way, with nobody the wiser for either.
+    """
+    group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
+    if group is None:
+        raise NotFoundError(f"No group with id {group_id}.")
+    if group.source != GroupSource.MANUAL:
+        raise BadRequestError(
+            f"Group {group.name!r} is managed by the identity provider: its "
+            "membership follows the group mappings and is replaced at every "
+            "login. Map the IdP group to a manual group if you need members "
+            "the directory does not name.",
+            code="membership_managed_by_idp",
+        )
+    return group
+
+
+@router.get("/groups/{group_id}/members", response_model=Page[UserAdminResponse])
+async def list_group_members(
+    group_id: uuid.UUID,
+    admin: AdminUserDep,
+    session: SessionDep,
+    page: PageDep,
+    q: str = "",
+) -> Page[UserAdminResponse]:
+    """The members of one group, searched by email, name or subject."""
+    stmt = (
+        select(User)
+        .join(Membership, Membership.user_id == User.id)
+        .where(Membership.group_id == group_id)
+        .order_by(User.email)
+    )
+    if needle := q.strip():
+        stmt = stmt.where(_matches(needle, User.email, User.display_name, User.subject))
+    total = await count_of(session, stmt)
+    users = (await session.execute(page.apply(stmt))).scalars().all()
+    return page.page(await _user_responses(session, list(users)), total)
+
+
+@router.post(
+    "/groups/{group_id}/members",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def add_group_member(
+    group_id: uuid.UUID,
+    payload: GroupMemberAddRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+) -> None:
+    group = await _load_editable_group(group_id, session)
+    user = await session.get(User, payload.user_id)
+    if user is None:
+        raise NotFoundError(f"No user with id {payload.user_id}.")
+
+    existing = await session.execute(
+        select(Membership).where(
+            Membership.group_id == group_id, Membership.user_id == user.id
+        )
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise BadRequestError(
+            f"{user.email or user.subject} is already a member of {group.name!r}."
+        )
+
+    session.add(Membership(user_id=user.id, group_id=group.id))
+    await session.commit()
+
+
+@router.delete(
+    "/groups/{group_id}/members/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def remove_group_member(
+    group_id: uuid.UUID, user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> None:
+    group = await _load_editable_group(group_id, session)
+    user = await session.get(User, user_id)
+    if user is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+
+    membership = (
+        await session.execute(
+            select(Membership).where(
+                Membership.group_id == group_id, Membership.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        raise NotFoundError(f"{user.email or user.subject} is not a member of {group.name!r}.")
+
+    await session.delete(membership)
+    # The default billing group is a promise to bill somewhere the user
+    # belongs; a removed membership revokes the promise, and the login path's
+    # own rule (clear first, adopt-after) is applied by hand here.
+    if user.default_billing_group_id == group_id:
+        user.default_billing_group_id = None
+    await session.commit()
 
 
 @router.put(
