@@ -57,6 +57,7 @@ const NAV_ADMIN: NavItem[] = [
   // place. See routes/AdminModelDetail.tsx.
   { to: "/admin/models", label: "Models" },
   { to: "/admin/users", label: "Users" },
+  { to: "/admin/groups", label: "Groups" },
 ];
 
 /**
