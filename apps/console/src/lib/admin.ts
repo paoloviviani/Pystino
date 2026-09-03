@@ -371,12 +371,12 @@ export function useGroups(query: PageQuery = { limit: MAX_LIMIT }) {
  * slow or down, and a page that hangs on load because a third party is having a
  * bad day is worse than one with a button on it.
  */
-export function useDiscovery(providerId: string | null) {
+export function useDiscovery(providerId: string | null, catalogue: string = "provider") {
   return useQuery({
-    queryKey: [...adminKeys.discovery, providerId],
+    queryKey: [...adminKeys.discovery, providerId, catalogue],
     queryFn: () =>
       request<CatalogueDiscovery>(
-        `/api/admin/models/discover?provider_id=${encodeURIComponent(providerId ?? "")}`,
+        `/api/admin/models/discover?provider_id=${encodeURIComponent(providerId ?? "")}&catalogue=${encodeURIComponent(catalogue)}`,
       ),
     enabled: providerId !== null,
     retry: false,
@@ -433,9 +433,17 @@ export function useUpdateModel() {
 export function useImportModels() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ providerId, upstreamModels }: { providerId: string; upstreamModels: string[] }) =>
+    mutationFn: ({
+      providerId,
+      upstreamModels,
+      catalogue = "provider",
+    }: {
+      providerId: string;
+      upstreamModels: string[];
+      catalogue?: string;
+    }) =>
       request<ModelImportResponse>(
-        `/api/admin/models/import?provider_id=${encodeURIComponent(providerId)}`,
+        `/api/admin/models/import?provider_id=${encodeURIComponent(providerId)}&catalogue=${encodeURIComponent(catalogue)}`,
         {
           method: "POST",
           body: { models: upstreamModels.map((upstream_model) => ({ upstream_model })) },
