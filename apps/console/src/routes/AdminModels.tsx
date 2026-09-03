@@ -13,7 +13,7 @@ import {
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney, useExactMoney } from "@llmp/ui";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import {
   Capabilities,
@@ -506,8 +506,14 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   // model lists but no prices, so the prices come from LiteLLM's MIT file
   // instead of the provider's own endpoint.
   const [litellmSource, setLitellmSource] = useState(false);
+  // Reopening always asks again: which price source to use is a per-import
+  // decision, not a preference to remember.
+  const [choosing, setChoosing] = useState(true);
+  useEffect(() => {
+    if (open) setChoosing(true);
+  }, [open]);
   const discovery = useDiscovery(
-    open && providerId ? providerId : null,
+    open && providerId && !choosing ? providerId : null,
     litellmSource ? "litellm" : "provider",
   );
   const importModels = useImportModels();
@@ -598,9 +604,49 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
     },
   ];
 
+  const chooseSource = (useLiteLLM: boolean) => {
+    setLitellmSource(useLiteLLM);
+    setSelected([]);
+    setChoosing(false);
+  };
+
   return (
+    <>
     <Dialog
-      open={open}
+      open={open && choosing}
+      title="Where should the prices come from?"
+      onClose={onClose}
+      footer={<Button onClick={onClose}>Cancel</Button>}
+    >
+      <div className="flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={() => chooseSource(true)}
+          className="cursor-pointer rounded-md border border-line p-4 text-left transition-colors hover:bg-sunken focus-visible:outline-none focus-visible:shadow-focus"
+        >
+          <div className="font-medium">Community price catalogue (LiteLLM)</div>
+          <div className="mt-1 text-sm text-ink-muted">
+            For providers that publish no prices of their own — OpenAI,
+            Anthropic, Mistral, Nebius. Prices are USD per token from the
+            community catalogue.
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => chooseSource(false)}
+          className="cursor-pointer rounded-md border border-line p-4 text-left transition-colors hover:bg-sunken focus-visible:outline-none focus-visible:shadow-focus"
+        >
+          <div className="font-medium">The provider's own catalogue</div>
+          <div className="mt-1 text-sm text-ink-muted">
+            For providers that publish prices — OpenRouter, Cortecs. Prices can
+            still be adjusted per model after import.
+          </div>
+        </button>
+      </div>
+    </Dialog>
+
+    <Dialog
+      open={open && !choosing}
       title="Provider catalogue"
       onClose={onClose}
       footer={
@@ -644,25 +690,6 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           </option>
         ))}
       </Select>
-
-      <label className="mt-1 flex cursor-pointer items-center gap-2">
-        <input
-          type="checkbox"
-          checked={litellmSource}
-          onChange={(event) => {
-            setLitellmSource(event.target.checked);
-            setSelected([]);
-          }}
-        />
-        <span className="text-sm">
-          Use the community price catalogue (LiteLLM)
-          <span className="mt-0.5 block text-xs text-ink-faint">
-            For providers that publish no prices of their own — OpenAI,
-            Anthropic, Mistral, Nebius. Prices are USD per token; models priced
-            in another currency than the billing one are skipped on import.
-          </span>
-        </span>
-      </label>
       {providerId && discovery.isPending && <Spinner label="Asking the provider" />}
       {discovery.error ? (
         <Notice tone="danger" title="Could not read the provider catalogue">
@@ -706,5 +733,6 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
         </>
       )}
     </Dialog>
+    </>
   );
 }

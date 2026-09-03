@@ -79,7 +79,9 @@ const DISCOVERY: CatalogueDiscovery = {
       input_modalities: [],
       output_modalities: [],
       supported_features: [],
-      blocked_reason: "priced in USD; this gateway bills in EUR",
+      // ADR 0054: no longer blocked — the USD prices come along and the
+      // conversion happens at admission.
+      blocked_reason: null,
     },
   ],
   catalogued: [],
@@ -177,6 +179,10 @@ afterEach(() => vi.unstubAllGlobals());
 
 /** Pick the provider whose catalogue to inspect; nothing loads before that. */
 async function openCatalogue(user: ReturnType<typeof userEvent.setup>) {
+  // The price-source chooser sits on top until a source is picked; the tests
+  // below exercise the provider's own catalogue.
+  const chooser = await screen.findByRole("dialog");
+  await user.click(within(chooser).getByRole("button", { name: /provider's own catalogue/i }));
   const dialog = await screen.findByRole("dialog");
   await user.selectOptions(within(dialog).getByLabelText("Provider"), "pr1");
 }
@@ -292,7 +298,9 @@ describe("AdminModels", () => {
     expect(screen.getByText(/retired-model/)).toBeInTheDocument();
   });
 
-  it("refuses to import a model priced in another currency", async () => {
+  it("imports a model priced in another currency", async () => {
+    // ADR 0054: USD prices come along as published, and conversion happens
+    // at admission using the day's rate.
     const user = userEvent.setup();
     vi.stubGlobal("fetch", routes([model()]));
     renderScreen(<AdminModels />);
@@ -300,8 +308,8 @@ describe("AdminModels", () => {
     await user.click(screen.getByRole("button", { name: "Discover" }));
     await openCatalogue(user);
     const checkbox = await screen.findByLabelText("Import dollar-1");
-    expect(checkbox).toBeDisabled();
-    expect(screen.getByText(/priced in USD/)).toBeInTheDocument();
+    expect(checkbox).toBeEnabled();
+    expect(screen.queryByText(/cannot import/i)).not.toBeInTheDocument();
   });
 
   it("imports only what was explicitly selected", async () => {
