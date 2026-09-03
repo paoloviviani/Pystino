@@ -1003,6 +1003,12 @@ class UsageReportRow(BaseModel):
     # says what was actually bought (ADR 0030).
     images: int = 0
     cost: Money
+    # The native figure — what the model's price table produced, in its own
+    # currency (ADR 0054). Present on model rows only: a model's rows share one
+    # price currency, so the native sum means something; a group, user or day
+    # mixes currencies and reports in the billing currency alone.
+    native_cost: Money | None = None
+    native_currency: str | None = None
     # Requests whose token counts the provider did not return and we inferred, and
     # requests where usage could not be determined at all. Kept separate from the
     # totals so a reader can see how much of the figure is measured.

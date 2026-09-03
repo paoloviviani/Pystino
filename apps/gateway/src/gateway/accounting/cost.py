@@ -44,18 +44,10 @@ MILLION = Decimal(1_000_000)
 class CurrencyMismatch(Exception):
     """A price is denominated in something other than the billing currency.
 
-    Deliberately fatal rather than converted. An exchange rate applied silently
-    produces invoices that look right and are wrong; refusing forces an operator
-    to fix the catalogue.
+    Superseded by ADR 0054, which converts at the decision and aggregation
+    points using the daily ECB rate — kept only as the exception a stale caller
+    might still reference. Nothing raises it any more.
     """
-
-    def __init__(self, price_currency: str, billing_currency: str, model_name: str) -> None:
-        self.price_currency = price_currency
-        self.billing_currency = billing_currency
-        super().__init__(
-            f"model {model_name!r} is priced in {price_currency} but the gateway bills in "
-            f"{billing_currency}; fix the price or set GATEWAY_BILLING_CURRENCY"
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,6 +283,23 @@ class CostBreakdown:
             + self.image_cost
         )
 
+    def scaled(self, rate: Decimal, currency: str) -> CostBreakdown:
+        """The same breakdown, converted into another currency.
+
+        Used at exactly the two points ADR 0054 allows conversion: the quota
+        estimate compared against a billing-currency limit, and the recorded
+        billing-currency cost. Every component scales by the same rate, so the
+        sum of the parts keeps equalling the total.
+        """
+        return CostBreakdown(
+            input_cost=self.input_cost * rate,
+            output_cost=self.output_cost * rate,
+            cache_read_cost=self.cache_read_cost * rate,
+            cache_write_cost=self.cache_write_cost * rate,
+            image_cost=self.image_cost * rate,
+            currency=currency,
+        )
+
     @classmethod
     def zero(cls, currency: str) -> CostBreakdown:
         return cls(
@@ -319,21 +328,23 @@ def compute_cost(
     counts: TokenCounts,
     price: ModelPrice | None,
     *,
-    billing_currency: str,
-    model_name: str = "",
+    fallback_currency: str = "EUR",
 ) -> CostBreakdown:
-    """Cost of one request.
+    """Cost of one request, in the **price's own currency**.
 
     A model with no price yields zero cost rather than an error: an operator who
     has not priced a model yet should still be able to serve it, and the usage row
     records ``price_id = NULL`` so the gap is visible in reporting rather than
     hidden in a rounding.
+
+    ADR 0054 removes the currency refusal this function used to carry: a price
+    in USD is computed in USD, and the caller converts to the billing currency
+    at the decision and aggregation points, with the rate recorded on the usage
+    row. Refusing here would have kept every community-catalogue model out of
+    the ledger entirely.
     """
     if price is None:
-        return CostBreakdown.zero(billing_currency)
-
-    if price.currency.upper() != billing_currency.upper():
-        raise CurrencyMismatch(price.currency, billing_currency, model_name or "<unknown>")
+        return CostBreakdown.zero(fallback_currency)
 
     input_rate = as_decimal(price.input_per_mtok)
     output_rate = as_decimal(price.output_per_mtok)

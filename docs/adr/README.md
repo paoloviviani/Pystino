@@ -64,6 +64,7 @@ verified is marked as such in the ADR that depends on it.
 | [0051](0051-settings-identity-and-email.md) | The Settings screen: identity providers (multiple) and the mail server as console decisions (supersedes 0048's connection boundary) |
 | [0052](0052-quota-notifications.md) | Quota notifications: the rule is the administrator's, the threshold is the user's |
 | [0053](0053-model-pricing-sources.md) | Where model prices come from: native catalogues, the LiteLLM file, manual entry |
+| [0054](0054-currency-conversion.md) | USD-priced models convert at the decision and aggregation points; breakdowns stay native (supersedes 0014's currency refusal) |
 
 **0015, 0016 and 0041 — the chat frontend decisions — moved to the `chat`
 branch with the chat application itself** (A Vite SPA on `packages/ui` with

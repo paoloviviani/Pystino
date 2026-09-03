@@ -172,6 +172,8 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
         func.coalesce(func.sum(UsageRecord.total_tokens), 0).label("total_tokens"),
         func.coalesce(func.sum(UsageRecord.image_count), 0).label("images"),
         func.coalesce(func.sum(UsageRecord.cost), 0).label("cost"),
+        func.coalesce(func.sum(UsageRecord.cost_native), 0).label("native_cost"),
+        func.min(UsageRecord.cost_currency).label("native_currency"),
         func.coalesce(
             func.sum(case((UsageRecord.usage_source == UsageSource.ESTIMATED, 1), else_=0)), 0
         ).label("estimated"),
@@ -240,7 +242,18 @@ async def _labels(session: AsyncSession, group_by: GroupBy, keys: Sequence[Any])
 def _row(
     group_by: GroupBy, key: Any, labels: dict[Any, str], values: Sequence[Any]
 ) -> UsageReportRow:
-    requests, prompt, completion, total, images, cost, estimated, unavailable = values
+    (
+        requests,
+        prompt,
+        completion,
+        total,
+        images,
+        cost,
+        native_cost,
+        native_currency,
+        estimated,
+        unavailable,
+    ) = values
     if key is None:
         label = _NO_KEY_LABEL[group_by]
     else:
@@ -250,6 +263,10 @@ def _row(
         label = labels.get(key) or (
             _DELETED_LABEL.get(group_by, str(key)) if isinstance(key, uuid.UUID) else str(key)
         )
+    # The native figure is only *reportable* for a model row: a model's rows
+    # share one price currency, so its native sum means something. A group,
+    # user or day mixes currencies and reports in the billing currency only.
+    show_native = group_by == GroupBy.MODEL and native_currency is not None
     return UsageReportRow(
         key=str(key) if key is not None else None,
         label=label,
@@ -259,6 +276,8 @@ def _row(
         total_tokens=int(total or 0),
         images=int(images or 0),
         cost=Decimal(str(cost or 0)),
+        native_cost=Decimal(str(native_cost or 0)) if show_native else None,
+        native_currency=native_currency if show_native else None,
         estimated_requests=int(estimated or 0),
         unavailable_requests=int(unavailable or 0),
     )

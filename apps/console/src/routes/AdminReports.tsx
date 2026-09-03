@@ -57,7 +57,15 @@ export function AdminReports() {
       key: "cost",
       header: "Spend",
       numeric: true,
-      render: (row) => <Money amount={row.cost} currency={currency} />,
+      // A model row with a native figure reports it in the price's currency
+      // (ADR 0054) — that is what the counterparty charges — while the total
+      // and every aggregate stay in the billing currency.
+      render: (row) =>
+        row.native_cost !== null && row.native_currency ? (
+          <Money amount={row.native_cost} currency={row.native_currency} />
+        ) : (
+          <Money amount={row.cost} currency={currency} />
+        ),
     },
   ];
 

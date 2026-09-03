@@ -68,7 +68,6 @@ SURFACE = ApiSurface.CHAT_COMPLETIONS
 
 #: Re-exported: the embeddings route and the tests import it from here, and it
 #: was defined here before the metering was shared out.
-estimate_cost = _metered.estimate_cost
 
 STREAM_HEADERS = {
     "cache-control": "no-cache",

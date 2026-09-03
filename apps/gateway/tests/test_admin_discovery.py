@@ -88,7 +88,7 @@ class TestDiscovery:
         assert small["suggested_name"] == "new-small"
         assert small["context_window"] == 32000
 
-    async def test_flags_an_unimportable_currency_rather_than_hiding_it(
+    async def test_a_foreign_currency_is_importable_not_blocked(
         self,
         app: object,
         client: httpx.AsyncClient,
@@ -96,13 +96,14 @@ class TestDiscovery:
         catalogue: None,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
+        """ADR 0054: a USD-priced model imports with its USD prices — the
+        conversion happens at admission, using the day's rate."""
         as_user(app, await make_admin(session_factory, seeded))
         body = (
             await client.get("/api/admin/models/discover?provider_id=" + str(seeded.provider.id))
         ).json()
         dollar = next(m for m in body["available"] if m["upstream_model"] == "vendor/dollar-model")
-        assert dollar["blocked_reason"] is not None
-        assert "USD" in dollar["blocked_reason"]
+        assert dollar["blocked_reason"] is None
 
     async def test_reports_models_the_provider_no_longer_offers(
         self,
@@ -229,7 +230,7 @@ class TestImport:
         visible = (await client.get("/v1/models", headers=seeded.auth)).json()["data"]
         assert "new-large" not in {m["id"] for m in visible}
 
-    async def test_a_foreign_currency_is_skipped_not_imported_unpriced(
+    async def test_a_foreign_currency_imports_with_its_own_prices(
         self,
         app: object,
         client: httpx.AsyncClient,
@@ -237,15 +238,18 @@ class TestImport:
         catalogue: None,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """An unpriced model serves happily and records zero cost."""
+        """ADR 0054: the USD prices come along as they are published. The
+        conversion happens at admission, so an unpriced-model import — the
+        failure this test used to pin — is no longer the outcome; the model
+        is priced and the daily rate decides the rest."""
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
             "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
             json={"models": [{"upstream_model": "vendor/dollar-model"}]},
         )
         result = response.json()["results"][0]
-        assert result["imported"] is False
-        assert "USD" in result["reason"]
+        assert result["imported"] is True
+        assert result["priced"] is True
 
         async with session_factory() as session:
             found = (
@@ -253,7 +257,13 @@ class TestImport:
                     select(ModelDef).where(ModelDef.upstream_model == "vendor/dollar-model")
                 )
             ).scalar_one_or_none()
-        assert found is None
+        assert found is not None
+        price = (
+            await session.execute(
+                select(ModelPrice).where(ModelPrice.model_id == found.id)
+            )
+        ).scalar_one()
+        assert price.currency == "USD"
 
     async def test_reimport_is_reported_not_duplicated(
         self,
@@ -327,9 +337,11 @@ class TestImport:
             },
         )
         results = {r["upstream_model"]: r["imported"] for r in response.json()["results"]}
+        # The dollar model imports too now (ADR 0054): its USD prices come
+        # along, and conversion happens at admission.
         assert results == {
             "vendor/new-small": True,
-            "vendor/dollar-model": False,
+            "vendor/dollar-model": True,
             "vendor/new-large": True,
         }
 

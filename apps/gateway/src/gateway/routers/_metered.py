@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.access import accessible_model_by_name
 from gateway.accounting import RequestAccounting, RequestContext, TokenCounts
-from gateway.accounting.cost import CostBreakdown, CurrencyMismatch, compute_cost, select_price
+from gateway.accounting.cost import CostBreakdown, compute_cost, select_price
 from gateway.accounting.tokens import TokenEstimator
 from gateway.config import EffectivePolicy, Settings
 from gateway.deps import Principal
@@ -49,6 +49,7 @@ from gateway.errors import (
     UpstreamUnavailableError,
     error_response,
 )
+from gateway.fx import FXService
 from gateway.models import ApiSurface, ModelDef, ModelKind, UsageRecord, UsageSource, UsageStatus
 from gateway.providers import ProviderConfigurationError, ProviderRegistry
 from gateway.quota import (
@@ -134,13 +135,37 @@ async def resolve_upstream(
         raise UpstreamUnavailableError(str(exc)) from exc
 
 
-def estimate_cost(model: ModelDef, counts: TokenCounts, *, currency: str) -> CostBreakdown:
+async def estimate_cost(
+    model: ModelDef,
+    counts: TokenCounts,
+    *,
+    currency: str,
+    fx: FXService | None = None,
+) -> CostBreakdown:
+    """The worst-case cost of the request, in the **billing currency**.
+
+    The quota engine compares this against limits set in the billing currency,
+    so a price in a foreign currency converts here — the one decision point
+    ADR 0054 allows conversion at besides settle. No rate (API down, nothing
+    stored yet) refuses the request rather than serving it unmetered: a cost
+    ceiling that silently stops applying because the rate service had a bad
+    day is worse than an explicit outage.
+    """
     price = select_price(list(model.prices))
-    try:
-        return compute_cost(counts, price, billing_currency=currency, model_name=model.name)
-    except CurrencyMismatch as exc:
-        # Refuse rather than bill in the wrong currency.
-        raise BadRequestError(str(exc), code="price_currency_mismatch") from exc
+    if price is None:
+        return CostBreakdown.zero(currency)
+    breakdown = compute_cost(counts, price, fallback_currency=currency)
+    if breakdown.currency.upper() != currency.upper():
+        rate = await fx.rate(breakdown.currency, currency) if fx is not None else None
+        if rate is None:
+            raise BadRequestError(
+                f"model {model.name!r} is priced in {breakdown.currency} and no "
+                f"{breakdown.currency}->{currency} exchange rate is available; try "
+                "again shortly or price it in the billing currency",
+                code="fx_rate_unavailable",
+            )
+        return breakdown.scaled(rate.rate, currency)
+    return breakdown
 
 
 @dataclass(slots=True)
@@ -236,7 +261,9 @@ async def begin(
     refusal is a normal answer with a ``retry-after`` header on it, not an
     exception.
     """
-    worst_case_cost = estimate_cost(model, worst_case, currency=settings.billing_currency)
+    worst_case_cost = await estimate_cost(
+        model, worst_case, currency=settings.billing_currency, fx=request.app.state.fx
+    )
 
     try:
         reservation = await quota.check_and_reserve(
@@ -280,6 +307,7 @@ async def begin(
         ),
         session_factory=request.app.state.session_factory,
         settings=settings,
+        fx=request.app.state.fx,
         estimator=estimator,
         model=model,
     )
