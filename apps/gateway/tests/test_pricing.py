@@ -13,6 +13,7 @@ from conftest import Seeded
 from gateway.models import ModelDef, ModelPrice, PriceSource
 from gateway.pricing import (
     CataloguePrice,
+    fill_missing_prices,
     import_prices,
     parse_catalogue,
     parse_litellm_catalogue,
@@ -219,7 +220,11 @@ class TestImportPrices:
         assert len(prices) == 2  # the seeded one, plus the imported one
         newest = max(prices, key=lambda price: price.effective_from)
         assert newest.input_per_mtok == Decimal("2")
-        assert newest.source is PriceSource.CORTECS
+        # `CATALOGUE`, not `CORTECS`: this importer serves whichever provider's
+        # catalogue it is pointed at, and stamping every one of them `cortecs`
+        # made a price read as coming from a counterparty that never quoted it
+        # (ADR 0053). `CORTECS` remains only for rows already written.
+        assert newest.source is PriceSource.CATALOGUE
 
     async def test_dry_run_writes_nothing(self, session: AsyncSession, seeded: Seeded) -> None:
         report = await import_prices(
@@ -450,3 +455,65 @@ class TestLiteLLMCatalogue:
         prices, unparsable = parse_litellm_catalogue(payload, providers=["openai"])
         assert prices == []
         assert unparsable == ["mystery-model"]
+
+
+class TestFillMissingPrices:
+    """The fill's one rule: it adds prices and never changes one (ADR 0053)."""
+
+    @staticmethod
+    def price(model_id: str, rate: str, currency: str = "EUR") -> CataloguePrice:
+        return CataloguePrice(
+            model_id=model_id,
+            input_per_mtok=Decimal(rate),
+            output_per_mtok=Decimal(rate),
+            currency=currency,
+        )
+
+    def test_a_listed_unpriced_model_gets_the_community_price(self) -> None:
+        prices, still_unpriced, filled = fill_missing_prices(
+            [], ["gpt-4o"], [self.price("gpt-4o", "2.50", "USD")]
+        )
+        assert [entry.model_id for entry in prices] == ["gpt-4o"]
+        assert filled == {"gpt-4o"}
+        assert still_unpriced == []
+
+    def test_a_published_price_is_never_replaced(self) -> None:
+        """The load-bearing assertion.
+
+        The counterparty that will invoice us is authoritative about its own
+        rates; a community file that disagrees is wrong by definition here. A
+        fill that could overwrite would let a third party edit an invoice.
+        """
+        published = [self.price("router/model", "1.00")]
+        prices, _, filled = fill_missing_prices(
+            published, [], [self.price("router/model", "99.00", "USD")]
+        )
+        assert filled == set()
+        assert prices == published
+
+    def test_a_price_the_community_also_lacks_stays_unpriced(self) -> None:
+        prices, still_unpriced, filled = fill_missing_prices([], ["obscure-1"], [])
+        assert prices == []
+        assert filled == set()
+        # Named, not dropped: an operator can see it was offered and skipped.
+        assert still_unpriced == ["obscure-1"]
+
+    def test_an_entry_with_no_id_is_not_filled(self) -> None:
+        """There is nothing to match on, so a fill would have to guess."""
+        prices, still_unpriced, filled = fill_missing_prices(
+            [], ["<unidentified model>"], [self.price("anything", "1.00")]
+        )
+        assert prices == []
+        assert filled == set()
+        assert still_unpriced == ["<unidentified model>"]
+
+    def test_a_model_priced_under_the_same_id_is_not_double_added(self) -> None:
+        """A parser may report an id in both lists; the row must appear once."""
+        published = [self.price("dup-1", "1.00")]
+        prices, still_unpriced, filled = fill_missing_prices(
+            published, ["dup-1"], [self.price("dup-1", "9.00", "USD")]
+        )
+        assert [entry.model_id for entry in prices] == ["dup-1"]
+        assert prices[0].input_per_mtok == Decimal("1.00")
+        assert filled == set()
+        assert still_unpriced == ["dup-1"]

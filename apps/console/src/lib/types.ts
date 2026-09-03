@@ -211,6 +211,13 @@ export interface DiscoveredModel {
   output_modalities: string[];
   supported_features: string[];
   blocked_reason: string | null;
+  /**
+   * Who supplied the figures above: `provider` for the counterparty's own
+   * catalogue, `community` for a gap filled from LiteLLM, null for a model the
+   * provider lists and nobody prices. Per row, because one import can mix all
+   * three (ADR 0053).
+   */
+  price_source: "provider" | "community" | null;
 }
 
 export interface CatalogueDriftRow {
@@ -235,6 +242,8 @@ export interface ModelImportResult {
   imported: boolean;
   priced: boolean;
   reason: string | null;
+  /** Who supplied the price that was written to the append-only history. */
+  price_source: "provider" | "community" | null;
 }
 
 export interface ModelImportResponse {

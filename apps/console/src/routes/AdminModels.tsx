@@ -13,7 +13,7 @@ import {
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney, useExactMoney } from "@llmp/ui";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import {
   Capabilities,
@@ -501,21 +501,18 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   const providers = useProviders();
   const [providerId, setProviderId] = useState("");
   // "What is on offer" is only a meaningful question about one endpoint, so
-  // nothing is fetched until one is chosen.
-  // The community price catalogue (ADR 0053): the first-party APIs publish
-  // model lists but no prices, so the prices come from LiteLLM's MIT file
-  // instead of the provider's own endpoint.
-  const [litellmSource, setLitellmSource] = useState(false);
-  // Reopening always asks again: which price source to use is a per-import
-  // decision, not a preference to remember.
-  const [choosing, setChoosing] = useState(true);
-  useEffect(() => {
-    if (open) setChoosing(true);
-  }, [open]);
-  const discovery = useDiscovery(
-    open && providerId && !choosing ? providerId : null,
-    litellmSource ? "litellm" : "provider",
-  );
+  // nothing is fetched until one is chosen — the provider is the first choice
+  // here, and the only one that has to be made before anything can be shown.
+  //
+  // Filling missing prices from the community catalogue (ADR 0053) is a
+  // *refinement* of that answer, not a fork in the road: the model list always
+  // comes from the provider, and this decides only whether a price the provider
+  // left out is taken from LiteLLM's MIT file. Asking it first, as a modal
+  // before the provider was even known, made an operator choose between two
+  // sources for a provider they had not named yet — and the wrong choice
+  // returned an empty screen rather than an explanation.
+  const [fillMissing, setFillMissing] = useState(false);
+  const discovery = useDiscovery(open && providerId ? providerId : null, fillMissing);
   const importModels = useImportModels();
   const toast = useOptionalToast();
   const [selected, setSelected] = useState<string[]>([]);
@@ -594,59 +591,31 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
       header: "Price / Mtok",
       numeric: true,
       render: (row) =>
-        row.input_per_mtok && row.currency
-          ? `${formatMoney(row.input_per_mtok, row.currency, { exact })} / ${formatMoney(
+        row.input_per_mtok && row.currency ? (
+          <>
+            {`${formatMoney(row.input_per_mtok, row.currency, { exact })} / ${formatMoney(
               row.output_per_mtok ?? "0",
               row.currency,
               { exact },
-            )}`
-          : "—",
+            )}`}
+            {/* Only the community figures are marked. A badge on every row
+                would be noise; the question is which of these prices a third
+                party supplied, and that is the answer to it. */}
+            {row.price_source === "community" && (
+              <span className="ml-2 align-middle">
+                <Badge>community</Badge>
+              </span>
+            )}
+          </>
+        ) : (
+          <span className={MUTED}>—</span>
+        ),
     },
   ];
 
-  const chooseSource = (useLiteLLM: boolean) => {
-    setLitellmSource(useLiteLLM);
-    setSelected([]);
-    setChoosing(false);
-  };
-
   return (
-    <>
     <Dialog
-      open={open && choosing}
-      title="Where should the prices come from?"
-      onClose={onClose}
-      footer={<Button onClick={onClose}>Cancel</Button>}
-    >
-      <div className="flex flex-col gap-2">
-        <button
-          type="button"
-          onClick={() => chooseSource(true)}
-          className="cursor-pointer rounded-md border border-line p-4 text-left transition-colors hover:bg-sunken focus-visible:outline-none focus-visible:shadow-focus"
-        >
-          <div className="font-medium">Community price catalogue (LiteLLM)</div>
-          <div className="mt-1 text-sm text-ink-muted">
-            For providers that publish no prices of their own — OpenAI,
-            Anthropic, Mistral, Nebius. Prices are USD per token from the
-            community catalogue.
-          </div>
-        </button>
-        <button
-          type="button"
-          onClick={() => chooseSource(false)}
-          className="cursor-pointer rounded-md border border-line p-4 text-left transition-colors hover:bg-sunken focus-visible:outline-none focus-visible:shadow-focus"
-        >
-          <div className="font-medium">The provider's own catalogue</div>
-          <div className="mt-1 text-sm text-ink-muted">
-            For providers that publish prices — OpenRouter, Cortecs. Prices can
-            still be adjusted per model after import.
-          </div>
-        </button>
-      </div>
-    </Dialog>
-
-    <Dialog
-      open={open && !choosing}
+      open={open}
       title="Provider catalogue"
       onClose={onClose}
       footer={
@@ -658,7 +627,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             disabled={selected.length === 0 || !providerId}
             onClick={() =>
               importModels.mutate(
-                { providerId, upstreamModels: selected, catalogue: litellmSource ? "litellm" : "provider" },
+                { providerId, upstreamModels: selected, fillMissingPrices: fillMissing },
                 {
                   onSuccess: () => {
                     toast?.add({ title: "Models imported", type: "success" });
@@ -690,6 +659,30 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           </option>
         ))}
       </Select>
+
+      {/* Off by default: a provider's own catalogue is the authority where one
+          exists, and this is only needed for the APIs that publish nothing.
+          Ticking it never overwrites a price the provider published. */}
+      <label className="flex cursor-pointer items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={fillMissing}
+          onChange={(event) => {
+            setFillMissing(event.target.checked);
+            setSelected([]);
+          }}
+        />
+        <span>
+          Fill missing prices from the community catalogue (LiteLLM)
+          <span className="mt-1 block text-sm text-ink-muted">
+            For providers that publish model lists but no prices — OpenAI,
+            Anthropic, Mistral, Nebius. Prices the provider does publish are
+            never replaced, and each row below says which source it came from.
+          </span>
+        </span>
+      </label>
+
       {providerId && discovery.isPending && <Spinner label="Asking the provider" />}
       {discovery.error ? (
         <Notice tone="danger" title="Could not read the provider catalogue">
@@ -702,7 +695,13 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           {importModels.data.results.map((result) => (
             <div key={result.upstream_model}>
               {result.imported
-                ? `${result.name} imported${result.priced ? " with its price" : ""}`
+                ? `${result.name} imported${
+                    result.priced
+                      ? result.price_source === "community"
+                        ? " with a community price"
+                        : " with its price"
+                      : ""
+                  }`
                 : `${result.upstream_model} skipped — ${result.reason}`}
             </div>
           ))}
@@ -733,6 +732,5 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
         </>
       )}
     </Dialog>
-    </>
   );
 }

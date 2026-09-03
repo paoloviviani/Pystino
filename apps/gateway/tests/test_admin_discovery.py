@@ -10,7 +10,7 @@ from __future__ import annotations
 import httpx
 import pytest
 from conftest import Seeded
-from gateway.models import GroupModelAccess, ModelDef, ModelPrice
+from gateway.models import GroupModelAccess, ModelDef, ModelPrice, PriceSource
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
@@ -40,6 +40,39 @@ CATALOGUE = {
 }
 
 
+#: A provider that lists a model and publishes no price for it — the shape of
+#: every first-party API (OpenAI, Anthropic, Mistral, Nebius) and the reason the
+#: community fill exists at all (ADR 0053).
+CATALOGUE_WITH_A_GAP = {
+    "data": [
+        {
+            "id": "vendor/priced-1",
+            "pricing": {"input_token": "1", "output_token": "2", "currency": "EUR"},
+        },
+        {"id": "vendor/unpriced-1"},
+        {"id": "vendor/nobody-prices-this"},
+    ]
+}
+
+#: LiteLLM's file, keyed by model id. It knows `unpriced-1`, and it also carries
+#: a figure for `priced-1` that must never be used.
+COMMUNITY_CATALOGUE = {
+    "vendor/unpriced-1": {
+        "litellm_provider": "generic",
+        "input_cost_per_token": 0.0000025,
+        "output_cost_per_token": 0.00001,
+        "max_input_tokens": 128000,
+        "mode": "chat",
+    },
+    "vendor/priced-1": {
+        "litellm_provider": "generic",
+        "input_cost_per_token": 0.99,
+        "output_cost_per_token": 0.99,
+        "mode": "chat",
+    },
+}
+
+
 @pytest.fixture
 def catalogue(app: object) -> None:
     """Point the control-plane client at a canned provider catalogue."""
@@ -50,6 +83,180 @@ def catalogue(app: object) -> None:
     app.state.control_http = httpx.AsyncClient(  # type: ignore[attr-defined]
         transport=httpx.MockTransport(handler)
     )
+
+
+@pytest.fixture
+def catalogue_with_a_gap(app: object) -> None:
+    """Both sources, answered by URL: the provider's own, and LiteLLM's file."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "litellm" in str(request.url):
+            return httpx.Response(200, json=COMMUNITY_CATALOGUE)
+        return httpx.Response(200, json=CATALOGUE_WITH_A_GAP)
+
+    app.state.control_http = httpx.AsyncClient(  # type: ignore[attr-defined]
+        transport=httpx.MockTransport(handler)
+    )
+
+
+class TestCommunityPriceFill:
+    """The provider lists what it offers; the community file fills gaps only.
+
+    Written after the flow was reversed (ADR 0053): the question used to be
+    *either* the provider's catalogue *or* LiteLLM's, asked before a provider
+    had even been chosen — which meant the model list itself could come from a
+    community file, and an operator who picked wrong got an empty screen.
+    """
+
+    async def test_an_unpriced_model_is_listed_and_says_nobody_priced_it(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Visible without the fill, with the reason. Hiding it is what made a
+        discovery against OpenAI look like an endpoint serving nothing."""
+        as_user(app, await make_admin(session_factory, seeded))
+        body = (
+            await client.get("/api/admin/models/discover?provider_id=" + str(seeded.provider.id))
+        ).json()
+
+        rows = {row["upstream_model"]: row for row in body["available"]}
+        assert set(rows) == {"vendor/priced-1", "vendor/unpriced-1", "vendor/nobody-prices-this"}
+        assert rows["vendor/priced-1"]["price_source"] == "provider"
+        assert rows["vendor/unpriced-1"]["price_source"] is None
+        assert "no price" in rows["vendor/unpriced-1"]["blocked_reason"]
+        # Offered means listed, priced or not.
+        assert body["provider_model_count"] == 3
+
+    async def test_the_fill_prices_the_gap_and_marks_it(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        body = (
+            await client.get(
+                "/api/admin/models/discover?fill_missing_prices=true&provider_id="
+                + str(seeded.provider.id)
+            )
+        ).json()
+
+        rows = {row["upstream_model"]: row for row in body["available"]}
+        filled = rows["vendor/unpriced-1"]
+        assert filled["price_source"] == "community"
+        assert filled["blocked_reason"] is None
+        # 0.0000025 USD per token is 2.50 per million — the unit conversion the
+        # per-token price implies, and the off-by-a-million the parsers exist
+        # to prevent.
+        assert filled["input_per_mtok"].startswith("2.5")
+        assert filled["currency"] == "USD"
+        assert filled["context_window"] == 128000
+        # Still nobody's price, and still not importable.
+        assert rows["vendor/nobody-prices-this"]["price_source"] is None
+
+    async def test_the_fill_never_replaces_a_published_price(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The community file quotes 0.99/token for this model. The provider
+        that will invoice us says 1 per million, and that is what stands."""
+        as_user(app, await make_admin(session_factory, seeded))
+        body = (
+            await client.get(
+                "/api/admin/models/discover?fill_missing_prices=true&provider_id="
+                + str(seeded.provider.id)
+            )
+        ).json()
+
+        priced = next(r for r in body["available"] if r["upstream_model"] == "vendor/priced-1")
+        assert priced["price_source"] == "provider"
+        assert priced["input_per_mtok"].startswith("1")
+        assert priced["currency"] == "EUR"
+
+    async def test_an_imported_community_price_is_recorded_as_one(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        session: AsyncSession,
+    ) -> None:
+        """The durable half. Until this, every catalogue import wrote
+        `cortecs`, so a community figure for someone else's model was stored as
+        that counterparty's own published price."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?fill_missing_prices=true&provider_id="
+            + str(seeded.provider.id),
+            json={"models": [{"upstream_model": "vendor/unpriced-1"}]},
+        )
+        assert response.status_code == 201
+        assert response.json()["results"][0]["price_source"] == "community"
+
+        price = (
+            await session.execute(
+                select(ModelPrice)
+                .join(ModelDef, ModelDef.id == ModelPrice.model_id)
+                .where(ModelDef.upstream_model == "vendor/unpriced-1")
+            )
+        ).scalar_one()
+        assert price.source is PriceSource.COMMUNITY
+
+    async def test_a_provider_price_imports_as_the_providers_own(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        session: AsyncSession,
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?fill_missing_prices=true&provider_id="
+            + str(seeded.provider.id),
+            json={"models": [{"upstream_model": "vendor/priced-1"}]},
+        )
+        assert response.json()["results"][0]["price_source"] == "provider"
+
+        price = (
+            await session.execute(
+                select(ModelPrice)
+                .join(ModelDef, ModelDef.id == ModelPrice.model_id)
+                .where(ModelDef.upstream_model == "vendor/priced-1")
+            )
+        ).scalar_one()
+        assert price.source is PriceSource.CATALOGUE
+
+    async def test_an_unpriced_model_cannot_be_imported(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """An unpriced model serves happily and records a cost of zero, which is
+        a quiet way to give away money."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={"models": [{"upstream_model": "vendor/unpriced-1"}]},
+        )
+        result = response.json()["results"][0]
+        assert result["imported"] is False
+        assert result["priced"] is False
 
 
 class TestDiscovery:
@@ -186,6 +393,8 @@ class TestImport:
             "imported": True,
             "priced": True,
             "reason": None,
+            # The provider published this one, and the row that stores it says so.
+            "price_source": "provider",
         }
 
         async with session_factory() as session:
