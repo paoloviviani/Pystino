@@ -40,7 +40,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 class TestRegistry:
     def test_the_builtins_are_there(self) -> None:
-        assert {"generic", "anthropic", "cortecs"} <= set(available())
+        assert {
+            "generic",
+            "anthropic",
+            "cortecs",
+            "openai",
+            "mistral",
+            "nebius",
+            "tensorix",
+            "openrouter",
+        } <= set(available())
 
     def test_no_name_is_the_generic_provider(self) -> None:
         """Every row that predates plugins resolves to the old behaviour."""
@@ -322,3 +331,65 @@ class TestItReachesTheLedger:
                 headers=seeded.auth,
             )
         ).status_code == 200
+
+
+class TestNewBuiltins:
+    """OpenAI, Mistral, Nebius, Tensorix and OpenRouter (ADR 0032 additions).
+
+    Most are generic OpenAI-compatible endpoints: the plugin exists to name the
+    counterparty and pre-fill its endpoint, not to invent behaviour. The tests
+    assert exactly that, plus the one place OpenRouter earns its own file.
+    """
+
+    @pytest.mark.parametrize(
+        ("name", "base_url"),
+        [
+            ("openai", "https://api.openai.com/v1"),
+            ("mistral", "https://api.mistral.ai/v1"),
+            ("nebius", "https://api.studio.nebius.com/v1"),
+        ],
+    )
+    def test_known_endpoints_are_pre_filled(self, name: str, base_url: str) -> None:
+        plugin = resolve(name)
+        assert plugin.default_base_url == base_url
+        assert plugin.kind == ProviderKind.PROVIDER
+        # They report tokens, not charges: pass-through billing stays
+        # unselectable, which the console reads from billing_modes.
+        assert plugin.reports_authoritative_cost is False
+
+    def test_tensorix_asserts_no_endpoint(self) -> None:
+        # An address the gateway cannot verify is not a fact a plugin should
+        # assert; the provider row's Base URL field is where it goes.
+        plugin = resolve("tensorix")
+        assert plugin.default_base_url is None
+        assert plugin.kind == ProviderKind.PROVIDER
+
+
+class TestOpenRouter:
+    def test_it_is_a_router_with_pass_through_billing(self) -> None:
+        plugin = resolve("openrouter")
+        assert plugin.kind == ProviderKind.ROUTER
+        assert plugin.reports_authoritative_cost is True
+
+    def test_the_serving_provider_comes_from_the_body(self) -> None:
+        plugin = resolve("openrouter")
+        served = plugin.read_served_by({"provider": "DeepInfra"}, {})
+        assert served is not None
+        assert served.endpoint == "DeepInfra"
+
+    def test_the_charge_is_credits_and_authoritative(self) -> None:
+        plugin = resolve("openrouter")
+        reported = plugin.read_reported_cost({"cost": 0.0126, "total_tokens": 100})
+        assert reported is not None
+        assert reported.amount == Decimal("0.0126")
+        # The unit travels with the figure: credits are their billing unit,
+        # and converting them here would be a reconciliation report lying.
+        assert reported.currency == "credits"
+        assert reported.authoritative is True
+
+    def test_no_figure_or_nonsense_is_none(self) -> None:
+        plugin = resolve("openrouter")
+        assert plugin.read_reported_cost(None) is None
+        assert plugin.read_reported_cost({}) is None
+        assert plugin.read_reported_cost({"cost": "lots"}) is None
+        assert plugin.read_reported_cost({"cost": -1}) is None

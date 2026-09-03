@@ -28,6 +28,11 @@ from gateway.plugins.anthropic import AnthropicPlugin
 from gateway.plugins.base import ProviderPlugin
 from gateway.plugins.cortecs import CortecsRouterPlugin
 from gateway.plugins.generic import GenericOpenAIPlugin
+from gateway.plugins.mistral import MistralPlugin
+from gateway.plugins.nebius import NebiusPlugin
+from gateway.plugins.openai import OpenAIPlugin
+from gateway.plugins.openrouter import OpenRouterPlugin
+from gateway.plugins.tensorix import TensorixPlugin
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +50,13 @@ PluginFactory = Callable[[], ProviderPlugin]
 
 _BUILTIN: dict[str, PluginFactory] = {
     "generic": GenericOpenAIPlugin,
+    "openai": OpenAIPlugin,
     "anthropic": AnthropicPlugin,
+    "mistral": MistralPlugin,
+    "nebius": NebiusPlugin,
+    "tensorix": TensorixPlugin,
     "cortecs": CortecsRouterPlugin,
+    "openrouter": OpenRouterPlugin,
 }
 
 
