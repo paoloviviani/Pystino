@@ -1,6 +1,6 @@
 # AGENTS.md
 
-A self-hosted LLM platform, built and run by its author at personal expense: an
+A self-hosted model gateway: an
 OpenAI-compatible gateway with accounting, quotas and redaction, and the admin
 console for it. The chat application lives on the `chat` branch, not here.
 Licence is **EUPL-1.2** for all first-party code.

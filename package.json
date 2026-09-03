@@ -1,5 +1,5 @@
 {
-  "name": "llm-platform",
+  "name": "pystino",
   "private": true,
   "license": "EUPL-1.2",
   "packageManager": "pnpm@11.21.0",

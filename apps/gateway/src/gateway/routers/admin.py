@@ -2317,11 +2317,10 @@ async def set_oidc_policy(
         # — per-field saves are the normal case, so "the previous decision
         # already turned provisioning off" is a valid state, not an error.
         policy_in_force = getattr(request.app.state, "oidc_policy", None)
-        auto_after = (
-            fields["auto_provision"]
-            if "auto_provision" in fields
-            else (policy_in_force.policy.auto_provision if policy_in_force is not None else True)
+        default_after = (
+            policy_in_force.policy.auto_provision if policy_in_force is not None else True
         )
+        auto_after = fields.get("auto_provision", default_after)
         if auto_after:
             raise BadRequestError(
                 "unknown_user_policy only applies when automatic provisioning "

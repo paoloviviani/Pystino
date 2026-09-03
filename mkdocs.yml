@@ -8,7 +8,7 @@
 
 site_name: Pystino
 site_description: >
-  A self-hosted LLM platform: an OpenAI-compatible gateway with per-user and
+  A self-hosted model gateway: OpenAI-compatible, with per-user and
   per-group accounting, quotas and redaction, and the console that operates it.
 repo_url: https://github.com/paoloviviani/Pistin-Gateway
 repo_name: paoloviviani/Pistin-Gateway
