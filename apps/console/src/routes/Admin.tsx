@@ -25,9 +25,9 @@ interface Section {
 
 const ADMIN_SECTIONS: Section[] = [
   {
-    to: "/admin/identity",
-    title: "Identity",
-    description: "Automatic provisioning, the group claim, and what each IdP group means here.",
+    to: "/admin/settings",
+    title: "Settings",
+    description: "The mail server, the identity providers, and who may become a user.",
   },
   {
     to: "/admin/reports",

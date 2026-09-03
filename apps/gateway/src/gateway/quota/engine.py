@@ -19,12 +19,14 @@ bounded by one request's actual usage, and the *next* request is refused.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -183,10 +185,15 @@ class QuotaEngine:
         settings: QuotaSettings,
         fallback: CounterStore | None = None,
         billing_timezone: str = "Europe/Rome",
+        notifier: Any | None = None,
     ) -> None:
         self._store = store
         self._fallback = fallback
         self._settings = settings
+        # The quota notifier (ADR 0052), if the deployment has one wired: an
+        # optional observer called with every measured (rule, percentage) so
+        # admission stays ignorant of mail, thresholds and everything else.
+        self._notifier = notifier
         # The same timezone reporting uses, so a calendar budget and a monthly report
         # share one definition of when the period starts (ADR 0024, ADR 0025).
         self._billing_timezone = billing_timezone
@@ -523,6 +530,7 @@ class QuotaEngine:
         totals = await self._reserve(deltas, queries, now=moment)
 
         violations: list[Violation] = []
+        measured: list[tuple[LimitRule, int]] = []
         for (rule, query), total in zip(scoped, totals, strict=True):
             # Our own contribution is subtracted back out, so the decision is
             # made on what the window held *before* this request — which is the
@@ -533,6 +541,13 @@ class QuotaEngine:
                 (query.scope.key_part, query.metric.value, query.window_id, query.reset_epoch), 0
             )
             current = from_units(rule.metric, max(0, total.units - mine))
+            if rule.limit_value > 0:
+                measured.append(
+                    (
+                        rule,
+                        min(100, int(current / rule.limit_value * 100)),
+                    )
+                )
             # ">=" not ">": at the limit means spent, so the next request is
             # refused. See the overrun policy in the module docstring.
             if current >= rule.limit_value:
@@ -550,6 +565,13 @@ class QuotaEngine:
                         retry_after_seconds=retry_after,
                     )
                 )
+
+        # Announce crossings before judging violations: a request that busts
+        # the limit is exactly when a user asked to hear about it, and the
+        # notifier is in-memory + detached, so it costs admission nothing.
+        if self._notifier is not None and measured:
+            with contextlib.suppress(Exception):
+                self._notifier.observe(measured)
 
         if violations:
             # Undo what was reserved a moment ago. The refusal is the caller's

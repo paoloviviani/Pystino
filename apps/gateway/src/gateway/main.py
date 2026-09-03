@@ -17,9 +17,9 @@ from gateway.accounting import DEFAULT_ESTIMATOR
 from gateway.config import Settings, get_settings
 from gateway.db import create_engine, create_session_factory
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
+from gateway.identity_registry import OIDCProviderRegistry, seed_from_env
 from gateway.logging_config import configure_logging
 from gateway.login_throttle import LoginThrottle
-from gateway.oidc import OIDCClient
 from gateway.oidc_policy import OIDCPolicyResolver
 from gateway.providers import ProviderRegistry
 from gateway.quota import (
@@ -28,6 +28,7 @@ from gateway.quota import (
     QuotaEngine,
     ValkeyCounterStore,
 )
+from gateway.quota.notifications import QuotaNotifier
 from gateway.redaction.base import Redactor
 from gateway.redaction.resolver import RedactionResolver
 from gateway.routers import (
@@ -127,6 +128,17 @@ async def init_app_state(
         # production this is None, so each provider gets its own pool.
         client_factory=(lambda _settings: injected_upstream) if injected_upstream else None,
     )
+    # The quota notifier is built before the engine so the engine can carry it
+    # (ADR 0052); its poller starts beside the others further down. The set is
+    # app.state.background_tasks, shared with chat.py's detached finalisations.
+    background_tasks: set[asyncio.Task[None]] = set()
+    notifier = QuotaNotifier(
+        session_factory,
+        settings,
+        app.state.secrets,
+        background_tasks=background_tasks,
+    )
+    app.state.quota_notifier = notifier
     app.state.quota_engine = QuotaEngine(
         store,
         settings=settings.quota,
@@ -134,6 +146,7 @@ async def init_app_state(
         # The same timezone reporting uses, so a monthly budget and a monthly
         # report agree about when the month started (ADR 0024).
         billing_timezone=settings.billing_timezone,
+        notifier=notifier,
     )
 
     # `app.state.redactor` stays the one place the request path reads, so
@@ -175,11 +188,31 @@ async def init_app_state(
         else None
     )
     app.state.token_estimator = DEFAULT_ESTIMATOR
-    # Strong references to detached finalisation tasks; see chat.py.
-    app.state.background_tasks = set()
-    app.state.oidc_client = (
-        OIDCClient(settings.oidc, control_http) if settings.oidc.enabled else None
-    )
+    # Strong references to detached finalisation tasks (chat.py) and quota
+    # notification sends; the notifier shares this set.
+    app.state.background_tasks = background_tasks
+    # Non-fatal by construction, like every startup read here: under the test
+    # fixtures the schema does not exist yet, and a database blip must not
+    # refuse to boot. The poll catches up; until then there are no
+    # subscriptions and observe() is a no-op.
+    try:
+        await notifier.refresh_once()
+    except Exception:
+        logger.warning("could not read quota notification settings at startup", exc_info=True)
+    notifier.start()
+    # Identity providers (ADR 0051): rows seeded from the environment when the
+    # table is empty, and cached per-provider clients built on demand. The old
+    # single-client state is gone — the registry is the only way in.
+    registry = OIDCProviderRegistry(control_http, app.state.secrets, settings)
+    app.state.oidc_providers = registry
+    # The seed is best-effort for the same reason every startup read here is:
+    # under the test fixtures the schema does not exist yet, and the fallback
+    # (list_providers over an empty table) answers meanwhile.
+    try:
+        async with session_factory() as session:
+            await seed_from_env(session, settings, app.state.secrets)
+    except Exception:
+        logger.warning("could not seed identity providers at startup", exc_info=True)
     # The local-login throttle. Its presence *is* the feature switch: an
     # absent throttle means POST /auth/login answers 503, and /auth/methods
     # reports no local way in.
@@ -237,6 +270,8 @@ async def shutdown_app_state(app: FastAPI) -> None:
         await resolver.aclose()
     if (policy := getattr(app.state, "oidc_policy", None)) is not None:
         await policy.stop()
+    if (notifier := getattr(app.state, "quota_notifier", None)) is not None:
+        await notifier.stop()
     if (valkey := getattr(app.state, "valkey", None)) is not None:
         await valkey.aclose()
     await app.state.engine.dispose()

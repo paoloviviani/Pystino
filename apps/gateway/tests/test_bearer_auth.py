@@ -20,8 +20,8 @@ from conftest import (
     ABSENT,
     BEARER_ISSUER,
     Seeded,
-    StubOIDCClient,
     make_token,
+    seed_identity_provider,
 )
 from conftest import (
     bearer_auth as auth,
@@ -250,7 +250,7 @@ class TestNotConfigured:
         settings.oidc = OIDCSettings(
             enabled=True, issuer=BEARER_ISSUER, client_id="llm-gateway", access_token_audience=""
         )
-        app.state.oidc_client = StubOIDCClient(settings.oidc, signing_key)
+        await seed_identity_provider(app, app.state.session_factory, signing_key)
 
         response = await client.get("/v1/models", headers=auth(make_token(signing_key)))
         assert response.status_code == 401

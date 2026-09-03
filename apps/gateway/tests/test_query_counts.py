@@ -129,7 +129,9 @@ class TestTheMeteredPath:
     ) -> None:
         """An access token must not be the expensive way in.
 
-        The budget is the same three selects the API key path gets, and it holds
+        The budget is the API key path's three selects plus one: routing the
+        token to the identity provider whose keys must verify it (ADR 0051) is
+        an indexed lookup on a table with a row per configured IdP. It holds
         only because memberships are reconciled *when the token disagrees with
         them* rather than on every request. Writing them every time would put
         two writes on the hot path of every chat message; the second request
@@ -154,4 +156,4 @@ class TestTheMeteredPath:
         assert not writes, f"a steady-state token request wrote:\n{summarise(writes)}"
         # Three: the user (joined to its default billing group), memberships
         # (joined to their groups), the catalogue.
-        assert len(selects) <= 3, f"{len(selects)} selects:\n{summarise(selects)}"
+        assert len(selects) <= 4, f"{len(selects)} selects:\n{summarise(selects)}"

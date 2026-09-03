@@ -49,6 +49,16 @@ class ModelNotFoundError(GatewayError):
     code = "model_not_found"
 
 
+class NotFoundError(GatewayError):
+    """A management-surface object that does not exist — from this caller's
+    point of view. Deliberately not :class:`ModelNotFoundError`, whose error
+    code is part of the OpenAI wire contract for `/v1/models`."""
+
+    status_code = status.HTTP_404_NOT_FOUND
+    error_type = "invalid_request_error"
+    code = "not_found"
+
+
 class BadRequestError(GatewayError):
     status_code = status.HTTP_400_BAD_REQUEST
     error_type = "invalid_request_error"

@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OidcPolicy } from "../lib/types";
-import { AdminIdentity } from "./AdminIdentity";
+import { ProvisioningPolicySection as AdminIdentity } from "./AdminIdentity";
 
 /**
  * The identity policy screen.

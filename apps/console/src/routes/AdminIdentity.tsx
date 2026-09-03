@@ -30,7 +30,7 @@ interface MappingRow {
   local: string;
 }
 
-export function AdminIdentity() {
+export function ProvisioningPolicySection() {
   const policy = useOidcPolicy();
   const save = useUpdateOidcPolicy();
   const toast = useOptionalToast();
@@ -83,27 +83,17 @@ export function AdminIdentity() {
     );
   };
 
-  if (policy.isPending) {
+  if (policy.isPending || policy.error) {
     return (
-      <div className={PAGE}>
-        <PageHeader title="Identity" />
-        <Card>
+      <Card>
+        {policy.isPending ? (
           <Spinner label="Loading the identity policy" />
-        </Card>
-      </div>
-    );
-  }
-
-  if (policy.error) {
-    return (
-      <div className={PAGE}>
-        <PageHeader title="Identity" />
-        <Card>
+        ) : (
           <Notice tone="danger" title="Could not load the identity policy">
             {policy.error instanceof Error ? policy.error.message : "Unknown error."}
           </Notice>
-        </Card>
-      </div>
+        )}
+      </Card>
     );
   }
 

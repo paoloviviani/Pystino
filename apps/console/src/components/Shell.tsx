@@ -55,7 +55,7 @@ const NAV_ADMIN: NavItem[] = [
   { to: "/admin", label: "Summary" },
   { to: "/admin/reports", label: "Usage" },
   { to: "/admin/quotas", label: "Quotas" },
-  { to: "/admin/identity", label: "Identity" },
+  { to: "/admin/settings", label: "Settings" },
   { to: "/admin/redaction", label: "Redaction" },
   { to: "/admin/providers", label: "Providers" },
   // No Pricing entry: a model's prices live on the model's own page, because

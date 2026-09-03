@@ -22,7 +22,7 @@ from sqlalchemy import and_, case, false, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from gateway.deps import ManagementUserDep, QuotaDep, SessionDep, SettingsDep
-from gateway.errors import BadRequestError, PermissionError_
+from gateway.errors import BadRequestError, NotFoundError, PermissionError_
 from gateway.models import (
     ApiKey,
     Group,
@@ -35,6 +35,7 @@ from gateway.models import (
 )
 from gateway.pagination import Page, PageDep, count_of
 from gateway.passwords import hash_password, validate_password, verify_password
+from gateway.quota.notifications import replace_thresholds, thresholds_for_user
 from gateway.reporting import (
     GroupBy,
     ReportFilter,
@@ -49,6 +50,7 @@ from gateway.schemas import (
     GroupSummary,
     MeResponse,
     MyLimitResponse,
+    MyNotificationThresholdsRequest,
     MyPasswordChangeRequest,
     SetDefaultBillingGroupRequest,
     UsageReport,
@@ -363,6 +365,50 @@ async def my_usage_report_csv(
     )
 
 
+@router.put(
+    "/me/limits/{rule_id}/notifications",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def set_my_notification_thresholds(
+    rule_id: uuid.UUID,
+    payload: MyNotificationThresholdsRequest,
+    user: ManagementUserDep,
+    session: SessionDep,
+    quota: QuotaDep,
+) -> None:
+    """Set the percentages this person wants to be told about, for one rule.
+
+    The rule must be one that actually constrains the caller — the same set
+    the limits listing returns — because a threshold on a quota that never
+    applies to you is a subscription to somebody else's budget. Replacing (not
+    patching) keeps the decision whole: the UI sends the full list, the API
+    stores it as the new truth, and the announcement memory for this rule
+    clears so an already-crossed threshold announces on the next poll.
+    """
+    # The membership check is explicit rather than engine-shaped: "does this
+    # rule constrain me" is exactly the query the limits route makes, and a
+    # threshold on a quota that never applies to you is a subscription to
+    # somebody else's budget.
+    group_ids = user.group_ids()
+    conditions = [LimitRule.scope == LimitScope.GLOBAL]
+    for group_id in group_ids or []:
+        conditions.append(
+            and_(LimitRule.scope == LimitScope.GROUP, LimitRule.scope_id == group_id)
+        )
+    conditions.append(and_(LimitRule.scope == LimitScope.USER, LimitRule.scope_id == user.id))
+    applies = (
+        await session.execute(
+            select(LimitRule.id).where(
+                LimitRule.id == rule_id, LimitRule.is_active.is_(True), or_(*conditions)
+            )
+        )
+    ).scalar_one_or_none() is not None
+    if not applies:
+        raise NotFoundError(f"No quota rule {rule_id} applies to you.")
+
+    await replace_thresholds(session, user.id, rule_id, payload.thresholds)
+
+
 @router.get("/me/usage/groups", response_model=dict[str, UsageSummaryResponse])
 async def my_group_usage(
     user: ManagementUserDep,
@@ -461,6 +507,7 @@ async def my_limits(
     # distinction the admin listing makes. A budget shown as 0% used because
     # Valkey is down is worse than one shown as unknown.
     current = await quota.current_values(rules)
+    my_thresholds = await thresholds_for_user(session, user.id)
 
     # The same envelope every other listing returns, though a person has a
     # handful of rules at most. Consistency is the point: a client that has to
@@ -476,6 +523,7 @@ async def my_limits(
                 window_label=rule.window_label,
                 limit_value=rule.limit_value,
                 current_value=current.get(rule.id),
+                notification_thresholds=my_thresholds.get(rule.id, []),
             )
             for rule in rules
         ]

@@ -24,13 +24,16 @@ from joserfc.jwt import JWTClaimsRegistry
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select
 
+from gateway.config import Settings
 from gateway.deps import ManagementUserDep, SessionDep, SettingsDep
 from gateway.errors import AuthenticationError as _AuthnError
 from gateway.errors import (
     BadRequestError,
+    ModelNotFoundError,
     ServiceUnavailableError,
     TooManyRequestsError,
 )
+from gateway.identity_registry import OIDCProviderRegistry, list_providers, provider_by_name
 from gateway.login_throttle import LoginThrottle
 from gateway.mail import MailDeliveryError, send_mail_async
 from gateway.models import LocalCredential, PasswordResetToken, RefreshCredential, User
@@ -125,14 +128,38 @@ def _read_flow_cookie(token: str, secret: str) -> dict[str, Any]:
     return dict(decoded.claims)
 
 
-def _oidc_client(request: Request) -> OIDCClient:
-    client = getattr(request.app.state, "oidc_client", None)
-    if not isinstance(client, OIDCClient):
+async def _resolve_provider_client(
+    request: Request, session: SessionDep, provider_name: str | None
+) -> tuple[OIDCClient, Any]:
+    """The client for the named provider, or for the only one there is.
+
+    A deployment with exactly one provider should not have to name it in a
+    URL — that was the whole shape of OIDC here before there could be two.
+    With several, the name is required, because guessing which directory a
+    person means is not a thing a login can do quietly.
+    """
+    settings: Settings = request.app.state.settings
+    registry: OIDCProviderRegistry | None = getattr(request.app.state, "oidc_providers", None)
+    if registry is None:
         raise ServiceUnavailableError(
             "OIDC is not configured. Set GATEWAY_OIDC__ENABLED=true and the "
-            "issuer/client credentials."
+            "issuer/client credentials, or add a provider in the Settings screen."
         )
-    return client
+    origin = str(request.base_url).rstrip("/")
+    if provider_name is None:
+        providers = await list_providers(session, settings, registry._secrets, enabled_only=True)
+        if len(providers) == 1:
+            return registry.client_for(providers[0], origin), providers[0]
+        if len(providers) > 1:
+            raise BadRequestError(
+                "Several identity providers are configured: choose one with "
+                "?provider=<name>."
+            )
+        raise ServiceUnavailableError("No identity provider is enabled.")
+    record = await provider_by_name(session, settings, registry._secrets, provider_name)
+    if record is None or not record.is_enabled:
+        raise ModelNotFoundError(f"No identity provider named {provider_name!r}.")
+    return registry.client_for(record, origin), record
 
 
 class LocalLoginRequest(BaseModel):
@@ -247,15 +274,21 @@ async def _rotate_refresh_credential(
 
 @router.get("/login")
 async def login(
-    request: Request, settings: SettingsDep, next: str | None = None
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    next: str | None = None,
+    provider: str | None = None,
 ) -> RedirectResponse:
-    """Start the flow, remembering where the browser was trying to go.
+    """Start the flow against one identity provider, remembering where the
+    browser was trying to go.
 
     ``next`` lets a deep link survive signing in: following a bookmark to a
     quota rule should end at that rule, not at the overview with the reader
-    navigating back to where they already were.
+    navigating back to where they already were. ``provider`` names the IdP —
+    required when several are enabled, optional when there is exactly one.
     """
-    client = _oidc_client(request)
+    client, _record = await _resolve_provider_client(request, session, provider)
     state = secrets.token_urlsafe(32)
     nonce = secrets.token_urlsafe(32)
     verifier, challenge = generate_pkce_pair()
@@ -314,17 +347,28 @@ class ResetRequestThrottle:
 
 
 @router.get("/methods")
-async def methods(request: Request) -> AuthMethods:
+async def methods(
+    request: Request, session: SessionDep, settings: SettingsDep
+) -> AuthMethods:
     """Which sign-in methods this deployment offers.
 
     Unauthenticated by design: the console must ask *before* it can show a
     login page, and a 401 there would loop it back to redirecting. What this
-    reveals — whether local login or OIDC is on — is already public the moment
-    anyone visits ``/auth/login``, so hiding it would protect nothing.
+    reveals — whether local login is on and which identity providers exist —
+    is already public the moment anyone visits ``/auth/login``, so hiding it
+    would protect nothing.
     """
+    providers: list[dict[str, str]] = []
+    registry: OIDCProviderRegistry | None = getattr(request.app.state, "oidc_providers", None)
+    if registry is not None:
+        records = await list_providers(
+            session, settings, registry._secrets, enabled_only=True
+        )
+        providers = [{"name": record.name, "issuer": record.issuer} for record in records]
     return AuthMethods(
         local=bool(getattr(request.app.state, "login_throttle", None)),
-        oidc=getattr(request.app.state, "oidc_client", None) is not None,
+        oidc=bool(providers),
+        providers=providers,
     )
 
 
@@ -548,8 +592,9 @@ async def confirm_password_reset(
     return JSONResponse({"status": "ok"})
 
 
-@router.get("/callback")
+@router.get("/callback/{provider_name}")
 async def callback(
+    provider_name: str,
     request: Request,
     session: SessionDep,
     settings: SettingsDep,
@@ -557,6 +602,9 @@ async def callback(
     state: str | None = None,
     error: str | None = None,
 ) -> Response:
+    """The IdP lands here, namespaced per provider (ADR 0051): the redirect URI
+    each provider registers is this path with its own name in it, so two
+    directories cannot deliver a code to the wrong flow."""
     if error:
         raise BadRequestError(f"The identity provider returned an error: {error}")
     if not code or not state:
@@ -572,7 +620,23 @@ async def callback(
     if flow.get("state") != state:
         raise BadRequestError("The login state does not match. Start again.")
 
-    client = _oidc_client(request)
+    client, record = await _resolve_provider_client(request, session, provider_name)
+    # The policy in force, with this provider's dialect folded in: its group
+    # claim and its IdP→local mappings. Provisioning decisions (auto-provision,
+    # the unknown-user rule, admin groups) stay global — they answer "who may
+    # exist here", not "how does this directory speak".
+    global_policy = getattr(request.app.state, "oidc_policy", None)
+    from dataclasses import replace as _dc_replace
+
+    policy = (
+        _dc_replace(
+            global_policy.policy,
+            groups_claim=record.groups_claim,
+            group_mappings=record.mappings_dict(),
+        )
+        if global_policy is not None
+        else None
+    )
     try:
         tokens = await client.exchange_code(code, str(flow["cv"]))
         id_token = tokens.get("id_token")
@@ -582,7 +646,7 @@ async def callback(
 
         # Groups may live only on userinfo, depending on the provider.
         merged: dict[str, Any] = dict(claims)
-        if settings.oidc.fetch_userinfo and isinstance(
+        if record.fetch_userinfo and isinstance(
             access_token := tokens.get("access_token"), str
         ):
             merged.update(await client.fetch_userinfo(access_token))
@@ -590,11 +654,6 @@ async def callback(
         logger.warning("OIDC login failed: %s", exc)
         raise BadRequestError("Sign-in failed. Please try again.") from exc
 
-    # The identity policy in force on this worker (ADR 0048). Optional read:
-    # tests build the app without the resolver, and absence means the
-    # environment's policy — the behaviour every deployment had before.
-    policy = getattr(request.app.state, "oidc_policy", None)
-    policy = policy.policy if policy is not None else None
     # Mapping first: from here on, the flow speaks local group names.
     groups = extract_groups(merged, settings.oidc, policy)
     if policy is not None:

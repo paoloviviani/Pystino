@@ -23,6 +23,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, ClassVar
 
+import sqlalchemy as sa
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -935,6 +936,122 @@ class PasswordResetToken(Base):
 
     def __repr__(self) -> str:
         return f"<PasswordResetToken expires={self.expires_at.isoformat()}>"
+
+
+class EmailSettings(Base):
+    """The deployment's outbound mail server, as the console set it (ADR 0051).
+
+    A single row by convention — there is one mail server. Empty (no row, or a
+    row with an empty host) means the environment's SMTP values stand (ADR
+    0049's fallback), which is what keeps an upgrade silent. The password is
+    encrypted at rest with the same box as upstream credentials (ADR 0027) and
+    is never rendered back to a browser.
+    """
+
+    __tablename__ = "email_settings"
+
+    id: Mapped[int] = mapped_column(sa.Integer, primary_key=True, default=1)
+    smtp_host: Mapped[str] = mapped_column(String(255), default="")
+    smtp_port: Mapped[int] = mapped_column(sa.Integer, default=587)
+    smtp_username: Mapped[str] = mapped_column(String(255), default="")
+    smtp_password_encrypted: Mapped[str | None] = mapped_column(Text, default=None)
+    smtp_from: Mapped[str] = mapped_column(String(255), default="")
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+    # Nullable for the recorded reason of every table here that keeps a
+    # decision: erasing a user must not erase the fact they made one.
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+
+    def __repr__(self) -> str:
+        return f"<EmailSettings host={self.smtp_host!r}>"
+
+
+class IdentityProvider(Base):
+    """One configured identity provider (ADR 0051).
+
+    Rows are seeded from the environment at startup when the table is empty,
+    and afterwards belong to the console. Users are keyed on ``(issuer,
+    subject)``, so two providers are two namespaces of accounts by design — a
+    person with a row in each is two users, which is the honest answer rather
+    than a guess about which directory entry is really them.
+
+    The client secret is encrypted at rest (ADR 0027): it is the credential
+    that mints identities. Group claim, userinfo toggle and the IdP→local
+    mappings live here because with more than one IdP each directory names its
+    groups differently — they were per-provider facts all along.
+    """
+
+    __tablename__ = "identity_providers"
+    __table_args__ = (
+        Index("ix_identity_providers_name", "name", unique=True),
+        Index("ix_identity_providers_issuer", "issuer", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(64))
+    issuer: Mapped[str] = mapped_column(String(512))
+    client_id: Mapped[str] = mapped_column(String(255))
+    client_secret_encrypted: Mapped[str] = mapped_column(Text)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    groups_claim: Mapped[str] = mapped_column(String(255), default="groups")
+    fetch_userinfo: Mapped[bool] = mapped_column(Boolean, default=True)
+    group_mappings: Mapped[list[list[str]]] = mapped_column(JSON, default=list)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+
+    def __repr__(self) -> str:
+        return f"<IdentityProvider name={self.name!r} issuer={self.issuer!r}>"
+
+
+class QuotaNotificationSetting(Base):
+    """A user's decision to be told when a quota reaches a percentage (ADR 0052).
+
+    The rule is the administrator's; the threshold is the user's. Both must
+    still hold: the API validates that the rule actually applies to the user
+    who is subscribing, because a threshold on a quota that never constrains
+    you is a mail subscription to somebody else's budget.
+    """
+
+    __tablename__ = "quota_notification_settings"
+    __table_args__ = (
+        sa.CheckConstraint("threshold >= 1 AND threshold <= 100", name="ck_quota_threshold_range"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("limit_rules.id", ondelete="CASCADE"), primary_key=True
+    )
+    threshold: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class QuotaNotificationState(Base):
+    """Where the announcements for one (user, rule) have got to.
+
+    ``notified_pct`` is the highest usage percentage already announced. A
+    threshold fires when the live percentage reaches it **above** this mark,
+    and the mark is pulled back down whenever usage falls below it — a reset
+    or the natural decay of a rolling window re-arms the threshold. Without
+    the re-arm, one crossing in March would buy silence forever.
+    """
+
+    __tablename__ = "quota_notification_state"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    rule_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("limit_rules.id", ondelete="CASCADE"), primary_key=True
+    )
+    notified_pct: Mapped[int] = mapped_column(sa.Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
 
 class OIDCPolicyConfig(Base):

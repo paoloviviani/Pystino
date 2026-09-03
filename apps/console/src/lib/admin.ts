@@ -22,8 +22,13 @@ import type {
   RedactionRule,
   RedactionScope,
   RedactionStatus,
-  UsageReport,
+  EmailSettings,
+  EmailSettingsInput,
+  EmailTestResult,
   GroupCreateInput,
+  IdentityProvider,
+  IdentityProviderInput,
+  UsageReport,
 } from "./types";
 
 /**
@@ -49,6 +54,8 @@ export const adminKeys = {
   limits: ["admin", "limits"] as const,
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
   users: ["admin", "users"] as const,
+  email: ["admin", "email"] as const,
+  identityProviders: ["admin", "identity-providers"] as const,
   oidcPolicy: ["admin", "oidc-policy"] as const,
   redaction: ["admin", "redaction"] as const,
   redactionRules: ["admin", "redaction", "rules"] as const,
@@ -703,6 +710,73 @@ export function useClearUserPassword() {
     mutationFn: (id: string) =>
       request<AdminUser>(`/api/admin/users/${id}/password`, { method: "DELETE" }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
+
+// -- Settings: email + identity providers (ADR 0051) --------------------------
+
+export function useEmailSettings() {
+  return useQuery({
+    queryKey: adminKeys.email,
+    queryFn: () => request<EmailSettings>("/api/admin/email"),
+    retry: retryUnlessRejected,
+  });
+}
+
+export function useUpdateEmailSettings() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: EmailSettingsInput) =>
+      request<EmailSettings>("/api/admin/email", { method: "PUT", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.email }),
+  });
+}
+
+export function useTestEmail() {
+  return useMutation({
+    mutationFn: (to: string) =>
+      request<EmailTestResult>("/api/admin/email/test", {
+        method: "POST",
+        body: { to },
+      }),
+  });
+}
+
+export function useIdentityProviders() {
+  return useQuery({
+    queryKey: adminKeys.identityProviders,
+    queryFn: () => request<IdentityProvider[]>("/api/admin/identity-providers"),
+    retry: retryUnlessRejected,
+  });
+}
+
+export function useCreateIdentityProvider() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: IdentityProviderInput & { name: string; issuer: string; client_id: string; client_secret: string }) =>
+      request<IdentityProvider>("/api/admin/identity-providers", { method: "POST", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
+  });
+}
+
+export function useUpdateIdentityProvider() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: IdentityProviderInput & { id: string }) =>
+      request<IdentityProvider>(`/api/admin/identity-providers/${id}`, {
+        method: "PUT",
+        body,
+      }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
+  });
+}
+
+export function useDeleteIdentityProvider() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<void>(`/api/admin/identity-providers/${id}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
   });
 }
 

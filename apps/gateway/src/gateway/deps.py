@@ -17,6 +17,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from gateway.accounting import TokenEstimator
 from gateway.config import Settings
 from gateway.errors import AuthenticationError, PermissionError_
+from gateway.identity_registry import list_providers
 from gateway.models import ApiKey, Group, User
 from gateway.oidc import OIDCClient, OIDCError, sync_user_from_claims
 from gateway.oidc_policy import OIDCPolicy
@@ -257,22 +258,34 @@ async def _bearer_principal(
     redaction scoping and the ledger all read the user and the group, and none of
     them needs to know which credential arrived.
     """
-    client: OIDCClient | None = getattr(request.app.state, "oidc_client", None)
     settings: Settings = request.app.state.settings
-    if client is None or not settings.oidc.access_token_audience:
+    if not settings.oidc.access_token_audience:
         # Deliberately the same message a bad key gets. A deployment that does
         # not accept tokens should not confirm to a prober that it has an
         # identity provider at all.
         raise AuthenticationError("Invalid API key provided.")
 
+    # Several providers may be configured (ADR 0051). The unverified `iss`
+    # claim picks which one verifies — routing, not trusting: the signature
+    # check against the chosen provider's keys is what decides anything.
+    client, provider = await _bearer_client(request, session, token)
+    if client is None:
+        raise AuthenticationError("Invalid API key provided.")
+
     try:
         claims = await client.validate_access_token(token)
-        # The same policy gate the browser login answers to (ADR 0048): with
-        # provisioning off, a bearer token for a stranger is refused here too —
-        # the console's front door and the API's must not disagree about who
-        # may come to exist.
+        # The same policy gate the browser login answers to (ADR 0048), folded
+        # with this provider's dialect: its group claim and mappings.
         resolver = getattr(request.app.state, "oidc_policy", None)
         policy = resolver.policy if resolver is not None else None
+        from dataclasses import replace as _dc_replace
+
+        if policy is not None and provider is not None:
+            policy = _dc_replace(
+                policy,
+                groups_claim=provider.groups_claim,
+                group_mappings=provider.mappings_dict(),
+            )
         user = await sync_user_from_claims(
             session, claims=claims, settings=settings.oidc, policy=policy
         )
@@ -287,6 +300,40 @@ async def _bearer_principal(
 
     await session.commit()
     return Principal(user=user, billing_group=resolve_billing_group(user))
+
+
+async def _bearer_client(
+    request: Request, session: AsyncSession, token: str
+) -> tuple[OIDCClient | None, Any | None]:
+    """The provider whose keys must verify this token, routed by its issuer.
+
+    The issuer is read from the token *without* verification — it is a routing
+    label between configured providers, not a claim anyone is being asked to
+    believe. An unknown issuer means no provider here mints tokens for it, and
+    the answer is the same "invalid key" a bad signature gets.
+    """
+    import base64
+    import json
+
+    settings: Settings = request.app.state.settings
+    registry = getattr(request.app.state, "oidc_providers", None)
+    if registry is None:
+        return None, None
+    try:
+        _header, payload, _sig = token.split(".")
+        padded = payload + "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(padded))
+        issuer = claims.get("iss")
+    except Exception:
+        return None, None
+    if not isinstance(issuer, str):
+        return None, None
+
+    for record in await list_providers(session, settings, registry._secrets, enabled_only=True):
+        if record.issuer.rstrip("/") == issuer.rstrip("/"):
+            origin = str(request.base_url).rstrip("/")
+            return registry.client_for(record, origin), record
+    return None, None
 
 
 async def load_user_for_management(session: AsyncSession, user_id: uuid.UUID) -> User:

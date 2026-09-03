@@ -13,7 +13,7 @@ import { AdminRedactionRule } from "./routes/AdminRedactionRule";
 import { Admin } from "./routes/Admin";
 import { AdminReports } from "./routes/AdminReports";
 import { AdminGroups } from "./routes/AdminGroups";
-import { AdminIdentity } from "./routes/AdminIdentity";
+import { AdminSettings } from "./routes/AdminSettings";
 import { AdminUsers } from "./routes/AdminUsers";
 import { Login } from "./routes/Login";
 import { NotFound } from "./routes/NotFound";
@@ -106,10 +106,10 @@ export function App() {
         />
         <Route path="/admin/pricing" element={<Navigate to="/admin/models" replace />} />
         <Route
-          path="/admin/identity"
+          path="/admin/settings"
           element={
             <RequireAdmin me={me_}>
-              <AdminIdentity />
+              <AdminSettings />
             </RequireAdmin>
           }
         />

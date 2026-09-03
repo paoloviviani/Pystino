@@ -2,7 +2,7 @@ import { Button, Input, Notice, Spinner } from "@llmp/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { fetchAuthMethods, localLogin, login, NotAuthenticatedError } from "../lib/api";
+import { fetchAuthMethods, localLogin, loginWith, NotAuthenticatedError } from "../lib/api";
 import { FORM_STACK, LOGIN_CARD, LOGIN_CENTRE } from "../lib/layout";
 
 /**
@@ -35,10 +35,16 @@ export function Login() {
   });
 
   useEffect(() => {
-    // OIDC-only: sent straight to the identity provider, as this screen always
-    // worked before local auth existed.
-    if (methods.data && !methods.data.local && methods.data.oidc) {
-      login(next);
+    // OIDC-only, and exactly one provider: sent straight there, as this screen
+    // always worked before local auth existed. With several providers and no
+    // local form, picking is the reader's — a guess would be a login to the
+    // wrong directory.
+    if (
+      methods.data &&
+      !methods.data.local &&
+      methods.data.providers.length === 1
+    ) {
+      loginWith(methods.data.providers[0]!.name, next);
     }
   }, [methods.data, next]);
 
@@ -80,10 +86,24 @@ export function Login() {
     );
   }
 
-  return <LocalLoginForm next={next} ssoAvailable={methods.data.oidc} />;
+  return (
+    <LocalLoginForm
+      next={next}
+      ssoAvailable={methods.data.oidc}
+      ssoProviders={methods.data.providers ?? []}
+    />
+  );
 }
 
-function LocalLoginForm({ next, ssoAvailable }: { next: string; ssoAvailable: boolean }) {
+function LocalLoginForm({
+  next,
+  ssoAvailable,
+  ssoProviders,
+}: {
+  next: string;
+  ssoAvailable: boolean;
+  ssoProviders: { name: string; issuer: string }[];
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [email, setEmail] = useState("");
@@ -151,11 +171,16 @@ function LocalLoginForm({ next, ssoAvailable }: { next: string; ssoAvailable: bo
             Forgot your password?
           </Link>
         </form>
-        {ssoAvailable ? (
-          <Button onClick={() => login(next)} disabled={submitting}>
-            Sign in with SSO
-          </Button>
-        ) : null}
+        {ssoAvailable &&
+          ssoProviders.map((provider) => (
+            <Button
+              key={provider.name}
+              onClick={() => loginWith(provider.name, next)}
+              disabled={submitting}
+            >
+              Sign in with {provider.name}
+            </Button>
+          ))}
       </section>
     </div>
   );
