@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo-512.png" alt="The Pystino logo" width="256" />
+  <img src="logo.png" alt="The Pystino logo" width="256" />
 </p>
 
 # Pystino
