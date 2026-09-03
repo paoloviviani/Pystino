@@ -153,6 +153,10 @@ class RequestContext:
     billing_mode: str = "own_prices"
 
 
+if TYPE_CHECKING:
+    from gateway.fx import FXService
+
+
 class RequestAccounting:
     """Owns one usage row from creation to finalisation."""
 
@@ -164,7 +168,12 @@ class RequestAccounting:
         settings: Settings,
         estimator: TokenEstimator,
         model: ModelDef | None = None,
+        fx: FXService | None = None,
     ) -> None:
+        # The FX service (ADR 0054), when the deployment has one wired: a price
+        # in a foreign currency is converted to the billing currency at settle
+        # time, and the native figure rides beside it on the usage row.
+        self._fx = fx
         self._ctx = context
         self._reader = reader_for(context.surface)
         self._session_factory = session_factory
@@ -474,15 +483,44 @@ class RequestAccounting:
 
         price = None
         breakdown = CostBreakdown.zero(self._ctx.currency)
+        native_total: Decimal | None = None
+        native_currency: str | None = None
+        fx_rate_used: Decimal | None = None
         if self._model is not None:
             price = select_price(list(self._model.prices), at=self._started_at)
             try:
-                breakdown = compute_cost(
-                    counts,
-                    price,
-                    billing_currency=self._ctx.currency,
-                    model_name=self._ctx.model_name,
-                )
+                # Native arithmetic: the price's own currency decides the
+                # breakdown (ADR 0054). USD-priced models compute in USD.
+                breakdown = compute_cost(counts, price, fallback_currency=self._ctx.currency)
+                native_total = breakdown.total
+                native_currency = breakdown.currency
+                if breakdown.currency.upper() != self._ctx.currency.upper():
+                    # A decision and an aggregate in the billing currency need
+                    # the day's rate. No rate (API down and nothing stored)
+                    # leaves the request unbilled rather than billed at a
+                    # guessed rate — visible in reporting as zero-cost, which
+                    # is at least an honest zero.
+                    rate = (
+                        await self._fx.rate(native_currency, self._ctx.currency)
+                        if self._fx is not None
+                        else None
+                    )
+                    if rate is None:
+                        logger.error(
+                            "model %s is priced in %s but no %s->%s rate is available; "
+                            "recording the usage unbilled",
+                            self._ctx.model_name,
+                            native_currency,
+                            native_currency,
+                            self._ctx.currency,
+                        )
+                        price = None
+                        breakdown = CostBreakdown.zero(self._ctx.currency)
+                        native_total = None
+                        native_currency = None
+                    else:
+                        fx_rate_used = rate.rate
+                        breakdown = breakdown.scaled(rate.rate, self._ctx.currency)
             except Exception:
                 # A misconfigured price must not lose the usage record. Cost stays
                 # zero, price_id stays null, and the anomaly is visible in
@@ -504,29 +542,54 @@ class RequestAccounting:
         computed = breakdown.total
         charged, charged_currency, cost_source = computed, breakdown.currency, CostSource.OWN_PRICES
         if self._ctx.billing_mode == BillingMode.PROVIDER_REPORTED:
+            # A reported charge in a foreign currency converts at the same
+            # day-rate the computed figure used (ADR 0054) — pass-through
+            # billing no longer waits on currency-aware quotas. Credits are
+            # OpenRouter's USD-pegged billing unit, so they ride the USD rate;
+            # their unit still travels in upstream_cost_currency, untouched.
+            reported_native_currency = reported.currency if reported else None
+            rate_for_reported = None
+            if (
+                reported is not None
+                and reported.authoritative
+                and reported_native_currency is not None
+                and reported_native_currency.upper() != self._ctx.currency.upper()
+                and fx_rate_used is None
+            ):
+                fx = (
+                    await self._fx.rate(reported_native_currency, self._ctx.currency)
+                    if self._fx is not None
+                    else None
+                )
+                rate_for_reported = fx.rate if fx else None
             billable = (
                 reported is not None
                 and reported.authoritative
-                # Billing in a unit the quota engine cannot count would let a
-                # cost ceiling silently stop applying: counters sum `cost`
-                # across rows, and summing dollars into a euro budget is the one
-                # arithmetic this refuses to do. Reporting another currency is
-                # fine and happens above — `upstream_cost` keeps it — but
-                # *billing* in one waits on currency-aware quotas (ADR 0032).
-                and reported.currency.upper() == breakdown.currency.upper()
+                and (
+                    reported_native_currency is None
+                    or rate_for_reported is not None
+                    or reported_native_currency.upper() == self._ctx.currency.upper()
+                )
             )
             if billable and reported is not None:
                 charged = reported.amount
-                charged_currency = reported.currency
+                charged_currency = reported_native_currency or breakdown.currency
+                if (
+                    charged_currency.upper() != self._ctx.currency.upper()
+                    and rate_for_reported is not None
+                ):
+                    charged = reported.amount * rate_for_reported
+                    charged_currency = self._ctx.currency
                 cost_source = CostSource.PROVIDER_REPORTED
             else:
                 if reported is not None and reported.authoritative:
                     logger.warning(
-                        "provider reported %s %s but this gateway bills %s; charging our own "
-                        "price instead. Recording it as a fallback rather than converting.",
-                        reported.amount,
-                        reported.currency,
-                        breakdown.currency,
+                        "provider reported %s %s but no %s->%s rate is available; charging "
+                        "our own price instead. Recorded as a fallback, named in reports.",
+                        reported.amount if reported else None,
+                        reported.currency if reported else None,
+                        reported.currency if reported else None,
+                        self._ctx.currency,
                     )
                 # Named rather than silent. A pass-through deployment quietly
                 # billing from a price table nobody maintains is exactly the
@@ -569,6 +632,12 @@ class RequestAccounting:
             "model_substituted": self._was_substituted(),
             "cost": charged,
             "currency": charged_currency,
+            # The native figure rides beside the billing one (ADR 0054): the
+            # per-provider and per-model breakdowns report what the
+            # counterparty charges, and the rate reconstructs the conversion.
+            "cost_native": native_total,
+            "cost_currency": native_currency,
+            "cost_fx_rate": fx_rate_used,
             "computed_cost": computed,
             "cost_source": cost_source,
             "upstream_cost": reported.amount if reported else None,

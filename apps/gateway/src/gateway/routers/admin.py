@@ -907,17 +907,12 @@ async def discover_models(
     )
     our_upstream_ids = {model.upstream_model for model in ours}
 
-    billing_currency = settings.billing_currency.upper()
     available: list[DiscoveredModel] = []
     for upstream_id, price in sorted(by_upstream.items()):
         if upstream_id in our_upstream_ids:
             continue
-        blocked = None
-        if price.currency != billing_currency:
-            blocked = (
-                f"priced in {price.currency}, not {billing_currency}, so it cannot be "
-                "imported with a price"
-            )
+        # ADR 0054 removed the currency block: a USD-priced model imports with
+        # its USD prices and converts at admission.
         available.append(
             DiscoveredModel(
                 upstream_model=upstream_id,
@@ -930,7 +925,7 @@ async def discover_models(
                 input_modalities=list(price.input_modalities),
                 output_modalities=list(price.output_modalities),
                 supported_features=list(price.supported_features),
-                blocked_reason=blocked,
+                blocked_reason=None,
             )
         )
 
@@ -997,7 +992,6 @@ async def import_models(
     else:
         prices, _ = _catalogue_parser(provider)(fetched)
     by_upstream = {price.model_id: price for price in prices}
-    billing_currency = settings.billing_currency.upper()
 
     existing = (await session.execute(select(ModelDef))).scalars().all()
     taken_names = {model.name for model in existing}
@@ -1041,19 +1035,20 @@ async def import_models(
                 )
             )
             continue
-        if price.currency != billing_currency:
-            # Not imported unpriced: a model with no price reserves nothing, so
-            # it has no cost ceiling at all.
+        # ADR 0054 removes the currency refusal the import used to carry: a
+        # USD-priced model imports with its USD prices, and conversion happens
+        # at admission and settle using the day's rate. What is still skipped
+        # is a model with NO usable price at all — an unpriced model serves
+        # happily and records a cost of zero, which is a quiet way to give
+        # away money.
+        if price.currency == "":
             results.append(
                 ModelImportResult(
                     upstream_model=item.upstream_model,
                     name=name,
                     imported=False,
                     priced=False,
-                    reason=(
-                        f"priced in {price.currency}, not {billing_currency}; import "
-                        "and price it manually"
-                    ),
+                    reason="the catalogue carries no usable price for this model",
                 )
             )
             continue
@@ -2839,6 +2834,9 @@ def _engine_options(
                 needs_endpoint=info.needs_endpoint,
                 redacts=info.redacts,
                 is_active=info.name == active,
+                # The engine's own reachability answer — an unreachable
+                # detection service is exactly why an operator might want to
+                # switch away and needs to see why re-enabling would fail.
                 blocked_reason=blocked,
             )
         )

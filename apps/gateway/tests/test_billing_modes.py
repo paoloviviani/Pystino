@@ -19,6 +19,7 @@ from conftest import FakeUpstream, Seeded
 from gateway.models import (
     BillingMode,
     CostSource,
+    FXRate,
     GroupModelAccess,
     ModelDef,
     ModelKind,
@@ -27,6 +28,7 @@ from gateway.models import (
     UsageRecord,
 )
 from gateway.reporting import GroupBy, ReportFilter, build_report, resolve_period
+from gateway.types import utcnow
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -221,12 +223,12 @@ class TestProviderReported:
         session: AsyncSession,
         fake_upstream: FakeUpstream,
     ) -> None:
-        """Reporting dollars is supported; *billing* in them waits on quotas.
+        """Reported dollars convert at the day's rate (ADR 0054).
 
-        Cost counters sum `cost` across rows, and summing dollars into a euro
-        budget is the one arithmetic this refuses. So a foreign figure is kept in
-        its own unit and the charge stays ours — recorded as a fallback rather
-        than converted.
+        Credits and dollars ride the USD->EUR rate the fx service holds, so
+        pass-through billing works without a currency-aware quota engine. A
+        fixed seeded rate keeps the arithmetic exact and the test off the
+        network.
         """
         dollars = Provider(
             name="dollar-router",
@@ -253,6 +255,10 @@ class TestProviderReported:
             )
         )
         session.add(GroupModelAccess(group_id=seeded.group.id, model_id=model.id))
+        # The day's rate, seeded rather than fetched: 1 USD = 0.5 EUR, exactly.
+        session.add(
+            FXRate(base="USD", quote="EUR", rate=Decimal("0.5"), fetched_at=utcnow())
+        )
         await session.commit()
 
         fake_upstream.set_json(completion(cost=7))
@@ -265,8 +271,11 @@ class TestProviderReported:
 
         record = await latest(session)
         assert record.currency == "EUR"
-        assert record.cost == Decimal(1)
-        assert record.cost_source is CostSource.OWN_PRICES_FALLBACK
+        # 7 USD converted at the seeded rate: billed in the budget's currency,
+        # the way ADR 0054 lets pass-through work.
+        assert record.cost == Decimal("3.5")
+        assert record.cost_source is CostSource.PROVIDER_REPORTED
+        assert record.upstream_cost == Decimal(7)
         assert record.upstream_cost_currency == "USD"
 
 

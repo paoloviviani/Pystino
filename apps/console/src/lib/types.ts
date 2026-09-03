@@ -55,6 +55,10 @@ export interface UsageReportRow {
   /** Pictures generated. Non-zero only for image models, which often bill per image. */
   images: number;
   cost: string;
+  /** The native figure — what the model's price table produced, in its own
+   * currency (ADR 0054). Present on model rows only. */
+  native_cost: string | null;
+  native_currency: string | null;
   estimated_requests: number;
   unavailable_requests: number;
 }

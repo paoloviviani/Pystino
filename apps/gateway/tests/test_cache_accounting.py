@@ -254,7 +254,6 @@ class TestBilling:
         breakdown = compute_cost(
             counts,
             price(input_rate="10", cache_write="20"),
-            billing_currency="EUR",
         )
         # 600k at 10/Mtok + 400k at 20/Mtok
         assert breakdown.input_cost == Decimal(6)
@@ -269,12 +268,11 @@ class TestBilling:
         """
         counts = TokenCounts(prompt=1_000_000, completion=0, cache_write=1_000_000)
         correct = compute_cost(
-            counts, price(input_rate="0.673", cache_write="0.034"), billing_currency="EUR"
+            counts, price(input_rate="0.673", cache_write="0.034")
         )
         as_if_unread = compute_cost(
             TokenCounts(prompt=1_000_000, completion=0),
             price(input_rate="0.673", cache_write="0.034"),
-            billing_currency="EUR",
         )
         assert correct.total == Decimal("0.034")
         assert as_if_unread.total == Decimal("0.673")
@@ -288,7 +286,7 @@ class TestBilling:
         them at zero would give the tokens away.
         """
         counts = TokenCounts(prompt=1_000_000, completion=0, cache_write=400_000)
-        breakdown = compute_cost(counts, price(input_rate="10"), billing_currency="EUR")
+        breakdown = compute_cost(counts, price(input_rate="10"))
         assert breakdown.cache_write_cost == Decimal(0)
         assert breakdown.input_cost == Decimal(10)
 
@@ -299,7 +297,6 @@ class TestBilling:
         breakdown = compute_cost(
             counts,
             price(input_rate="10", cache_read="1", cache_write="20"),
-            billing_currency="EUR",
         )
         assert breakdown.input_cost == Decimal(3)  # 300k at 10
         assert breakdown.cache_read_cost == Decimal("0.5")  # 500k at 1

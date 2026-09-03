@@ -17,6 +17,7 @@ from gateway.accounting import DEFAULT_ESTIMATOR
 from gateway.config import Settings, get_settings
 from gateway.db import create_engine, create_session_factory
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
+from gateway.fx import FXService
 from gateway.identity_registry import OIDCProviderRegistry, seed_from_env
 from gateway.logging_config import configure_logging
 from gateway.login_throttle import LoginThrottle
@@ -139,6 +140,10 @@ async def init_app_state(
         background_tasks=background_tasks,
     )
     app.state.quota_notifier = notifier
+    # FX rates (ADR 0054): one fetch per day per pair, persisted, last known
+    # kept forever. Started with the other pollers further down.
+    fx_service = FXService(session_factory, settings)
+    app.state.fx = fx_service
     app.state.quota_engine = QuotaEngine(
         store,
         settings=settings.quota,
@@ -200,6 +205,15 @@ async def init_app_state(
     except Exception:
         logger.warning("could not read quota notification settings at startup", exc_info=True)
     notifier.start()
+    # The day's rate is fetched before serving, so the first USD-priced
+    # request of the day does not wait on the rates API. Failure is the same
+    # non-fatal story: the last known rate answers, or admission refuses
+    # loudly rather than billing at a guess.
+    try:
+        await fx_service.refresh_once()
+    except Exception:
+        logger.warning("could not fetch fx rates at startup", exc_info=True)
+    fx_service.start()
     # Identity providers (ADR 0051): rows seeded from the environment when the
     # table is empty, and cached per-provider clients built on demand. The old
     # single-client state is gone — the registry is the only way in.
@@ -272,6 +286,9 @@ async def shutdown_app_state(app: FastAPI) -> None:
         await policy.stop()
     if (notifier := getattr(app.state, "quota_notifier", None)) is not None:
         await notifier.stop()
+    if (fx := getattr(app.state, "fx", None)) is not None:
+        await fx.stop()
+        await fx.close()
     if (valkey := getattr(app.state, "valkey", None)) is not None:
         await valkey.aclose()
     await app.state.engine.dispose()

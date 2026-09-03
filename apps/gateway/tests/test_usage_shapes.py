@@ -132,7 +132,6 @@ class TestCachePricing:
                 cache_read_per_mtok=Decimal("1"),
                 cache_write_per_mtok=Decimal("12.5"),
             ),
-            billing_currency="EUR",
         )
         # 600k at 10, 300k at 1, 100k at 12.5
         assert breakdown.input_cost == Decimal("6")
@@ -148,7 +147,7 @@ class TestCachePricing:
         """
         counts = TokenCounts(prompt=1_000_000, cached_prompt=300_000, cache_write=100_000)
         breakdown = compute_cost(
-            counts, price(input_per_mtok=Decimal("10")), billing_currency="EUR"
+            counts, price(input_per_mtok=Decimal("10"))
         )
         assert breakdown.cache_read_cost == Decimal(0)
         assert breakdown.cache_write_cost == Decimal(0)
@@ -163,7 +162,7 @@ class TestCachePricing:
 class TestImagePricing:
     def test_a_per_image_model_charges_by_the_picture(self) -> None:
         counts = TokenCounts.from_image_usage(None, images=3)
-        breakdown = compute_cost(counts, price(per_image=Decimal("0.04")), billing_currency="EUR")
+        breakdown = compute_cost(counts, price(per_image=Decimal("0.04")))
         assert breakdown.image_cost == Decimal("0.12")
         assert breakdown.total == Decimal("0.12")
 
@@ -171,7 +170,7 @@ class TestImagePricing:
         counts = TokenCounts.from_image_usage(
             {"input_tokens": 1_000_000, "output_tokens": 0}, images=2
         )
-        breakdown = compute_cost(counts, price(input_per_mtok=Decimal("5")), billing_currency="EUR")
+        breakdown = compute_cost(counts, price(input_per_mtok=Decimal("5")))
         assert breakdown.input_cost == Decimal("5")
         assert breakdown.image_cost == Decimal(0)
 
@@ -181,13 +180,12 @@ class TestImagePricing:
         breakdown = compute_cost(
             counts,
             price(input_per_mtok=Decimal("5"), per_image=Decimal("0.01")),
-            billing_currency="EUR",
         )
         assert breakdown.total == Decimal("5.02")
 
     def test_an_unpriced_image_model_costs_zero_rather_than_failing(self) -> None:
         counts = TokenCounts.from_image_usage(None, images=4)
-        assert compute_cost(counts, None, billing_currency="EUR") == CostBreakdown.zero("EUR")
+        assert compute_cost(counts, None) == CostBreakdown.zero("EUR")
 
     def test_images_are_not_tokens(self) -> None:
         """`total` counts tokens; four pictures and no tokens is a total of zero."""

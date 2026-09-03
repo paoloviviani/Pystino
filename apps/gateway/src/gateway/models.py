@@ -32,6 +32,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -756,6 +757,16 @@ class UsageRecord(Base):
 
     cost: Mapped[Decimal] = mapped_column(default=Decimal(0))
     currency: Mapped[str] = mapped_column(String(3))
+    # The native figure: what the model's price table produced, in the price's
+    # own currency (ADR 0054). `cost` carries the billing-currency figure the
+    # quotas and aggregates read; per-provider and per-model breakdowns report
+    # this, because it is what the counterparty actually charges. Null on
+    # rows priced in the billing currency, where the two are the same.
+    cost_native: Mapped[Decimal | None] = mapped_column(default=None)
+    cost_currency: Mapped[str | None] = mapped_column(String(3), default=None)
+    # The rate that produced `cost` from `cost_native`, recorded so a
+    # converted aggregate can be reconstructed and audited later.
+    cost_fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 10), default=None)
     # What the *provider* said this cost, in the provider's own currency, when it
     # says so at all and the operator has declared how to read it. Never billed
     # from — it is pre-rounded and possibly in another currency — but it is the
@@ -1006,6 +1017,28 @@ class IdentityProvider(Base):
 
     def __repr__(self) -> str:
         return f"<IdentityProvider name={self.name!r} issuer={self.issuer!r}>"
+
+
+class FXRate(Base):
+    """The last known exchange rate for one currency pair (ADR 0054).
+
+    One row per pair, updated daily. The table exists so the **fallback** —
+    "use the last known rate when the API does not answer" — survives restarts
+    and cache flushes; a rate that lives only in a rebuildable cache is a rate
+    the deployment does not actually have.
+    """
+
+    __tablename__ = "fx_rates"
+    __table_args__ = (Index("ix_fx_rates_base_quote", "base", "quote", unique=True),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    base: Mapped[str] = mapped_column(String(3))
+    quote: Mapped[str] = mapped_column(String(3))
+    rate: Mapped[Decimal] = mapped_column(Numeric(18, 10))
+    fetched_at: Mapped[datetime] = mapped_column()
+
+    def __repr__(self) -> str:
+        return f"<FXRate {self.base}->{self.quote} {self.rate}>"
 
 
 class QuotaNotificationSetting(Base):

@@ -11,11 +11,9 @@ import uuid
 from datetime import timedelta
 from decimal import Decimal
 
-import pytest
 from gateway.accounting.cost import (
     MILLION,
     CostBreakdown,
-    CurrencyMismatch,
     TokenCounts,
     compute_cost,
     select_price,
@@ -95,7 +93,6 @@ class TestComputeCost:
         breakdown = compute_cost(
             TokenCounts(prompt=1_000_000, completion=500_000),
             price(),
-            billing_currency="EUR",
         )
         assert breakdown.input_cost == Decimal(1)
         assert breakdown.output_cost == Decimal(1)
@@ -106,7 +103,6 @@ class TestComputeCost:
         breakdown = compute_cost(
             TokenCounts(prompt=3, completion=7),
             price(input_rate="0.1", output_rate="0.3"),
-            billing_currency="EUR",
         )
         expected = (Decimal(3) * Decimal("0.1") + Decimal(7) * Decimal("0.3")) / MILLION
         assert breakdown.total == expected
@@ -117,7 +113,7 @@ class TestComputeCost:
         """Cached prompt tokens are a subset of prompt_tokens, not an extra."""
         counts = TokenCounts(prompt=1_000_000, completion=0, cached_prompt=400_000)
         breakdown = compute_cost(
-            counts, price(input_rate="1", cache_read="0.25"), billing_currency="EUR"
+            counts, price(input_rate="1", cache_read="0.25")
         )
         # 600k at 1/M + 400k at 0.25/M = 0.6 + 0.1
         assert breakdown.input_cost == Decimal("0.6")
@@ -127,7 +123,7 @@ class TestComputeCost:
     def test_without_cache_price_whole_prompt_billed_at_input_rate(self) -> None:
         """The conservative reading when no cache rate is configured."""
         counts = TokenCounts(prompt=1_000_000, completion=0, cached_prompt=400_000)
-        breakdown = compute_cost(counts, price(input_rate="1"), billing_currency="EUR")
+        breakdown = compute_cost(counts, price(input_rate="1"))
         assert breakdown.input_cost == Decimal(1)
         assert breakdown.cache_read_cost == Decimal(0)
 
@@ -136,36 +132,35 @@ class TestComputeCost:
         with_reasoning = compute_cost(
             TokenCounts(prompt=0, completion=1_000_000, reasoning=800_000),
             price(output_rate="2"),
-            billing_currency="EUR",
         )
         without = compute_cost(
             TokenCounts(prompt=0, completion=1_000_000),
             price(output_rate="2"),
-            billing_currency="EUR",
         )
         assert with_reasoning.total == without.total == Decimal(2)
 
     def test_unpriced_model_costs_zero_rather_than_failing(self) -> None:
         breakdown = compute_cost(
-            TokenCounts(prompt=100, completion=100), None, billing_currency="EUR"
+            TokenCounts(prompt=100, completion=100), None
         )
         assert breakdown.total == Decimal(0)
         assert breakdown.currency == "EUR"
 
-    def test_currency_mismatch_is_refused(self) -> None:
-        """Never convert silently: a wrong rate yields plausible wrong invoices."""
-        with pytest.raises(CurrencyMismatch) as caught:
-            compute_cost(
-                TokenCounts(prompt=1, completion=1),
-                price(currency="USD"),
-                billing_currency="EUR",
-                model_name="some-model",
-            )
-        assert "USD" in str(caught.value)
-        assert "EUR" in str(caught.value)
+    def test_a_foreign_price_computes_in_its_own_currency(self) -> None:
+        """ADR 0054: the breakdown is native, and conversion is the caller's.
+
+        The refusal this test used to pin kept every community-catalogue model
+        out of the ledger; the conversion now happens at the decision points,
+        with the rate recorded on the usage row.
+        """
+        breakdown = compute_cost(
+            TokenCounts(prompt=1, completion=1),
+            price(currency="USD"),
+        )
+        assert breakdown.currency == "USD"
 
     def test_zero_tokens_cost_nothing(self) -> None:
-        assert compute_cost(TokenCounts(), price(), billing_currency="EUR").total == Decimal(0)
+        assert compute_cost(TokenCounts(), price()).total == Decimal(0)
 
     def test_breakdown_zero_helper(self) -> None:
         assert CostBreakdown.zero("EUR").total == Decimal(0)
