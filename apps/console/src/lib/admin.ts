@@ -371,12 +371,15 @@ export function useGroups(query: PageQuery = { limit: MAX_LIMIT }) {
  * slow or down, and a page that hangs on load because a third party is having a
  * bad day is worse than one with a button on it.
  */
-export function useDiscovery(providerId: string | null, catalogue: string = "provider") {
+export function useDiscovery(providerId: string | null, fillMissingPrices = false) {
   return useQuery({
-    queryKey: [...adminKeys.discovery, providerId, catalogue],
+    // The flag is part of the key: the same provider answers differently with
+    // the fill on, and a cached unfilled answer shown under a ticked box is a
+    // screen that contradicts itself.
+    queryKey: [...adminKeys.discovery, providerId, fillMissingPrices],
     queryFn: () =>
       request<CatalogueDiscovery>(
-        `/api/admin/models/discover?provider_id=${encodeURIComponent(providerId ?? "")}&catalogue=${encodeURIComponent(catalogue)}`,
+        `/api/admin/models/discover?provider_id=${encodeURIComponent(providerId ?? "")}&fill_missing_prices=${fillMissingPrices}`,
       ),
     enabled: providerId !== null,
     retry: false,
@@ -436,14 +439,16 @@ export function useImportModels() {
     mutationFn: ({
       providerId,
       upstreamModels,
-      catalogue = "provider",
+      fillMissingPrices = false,
     }: {
       providerId: string;
       upstreamModels: string[];
-      catalogue?: string;
+      // Must match what discovery was shown with, or the prices written would
+      // not be the prices reviewed.
+      fillMissingPrices?: boolean;
     }) =>
       request<ModelImportResponse>(
-        `/api/admin/models/import?provider_id=${encodeURIComponent(providerId)}&catalogue=${encodeURIComponent(catalogue)}`,
+        `/api/admin/models/import?provider_id=${encodeURIComponent(providerId)}&fill_missing_prices=${fillMissingPrices}`,
         {
           method: "POST",
           body: { models: upstreamModels.map((upstream_model) => ({ upstream_model })) },

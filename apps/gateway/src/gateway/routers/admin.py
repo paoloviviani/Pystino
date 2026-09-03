@@ -97,12 +97,20 @@ from gateway.passwords import hash_password, validate_password
 from gateway.periods import PeriodKind
 from gateway.plugins import registry as plugin_registry
 from gateway.pricing import (
+    ANONYMOUS_UNPARSABLE,
     LITELLM_CATALOGUE_URL,
+    CataloguePrice,
     CatalogueUnavailable,
     fetch_catalogue,
     parse_catalogue,
     parse_litellm_catalogue,
     parse_openrouter_catalogue,
+)
+from gateway.pricing import (
+    # Aliased: the two routes below take a `fill_missing_prices` query parameter,
+    # and a function of the same name in the module scope would read as if the
+    # parameter were calling itself.
+    fill_missing_prices as fill_prices_from_community,
 )
 from gateway.providers import ProviderConfigurationError
 from gateway.redaction import Redactor
@@ -826,7 +834,6 @@ async def _catalogue_source(
     secrets: SecretBox,
     provider_id: uuid.UUID,
     url: str | None,
-    catalogue: str = "provider",
 ) -> tuple[Provider, str, str | None]:
     """Where to fetch a catalogue from, and with which credential.
 
@@ -834,15 +841,13 @@ async def _catalogue_source(
     meaningful question about a specific one. `url` overrides the endpoint for a
     provider whose catalogue lives somewhere other than `{base_url}/models`.
 
-    `catalogue="litellm"` switches the *source* to the community price file
-    (ADR 0053): the first-party APIs — OpenAI, Anthropic, Mistral, Nebius —
-    publish model lists but no prices, and this is the pragmatic source the
-    ecosystem converges on. The provider row's plugin names which tag to
-    filter on, so an Anthropic provider imports Anthropic's rows.
+    Always the provider's own endpoint. The community price file is a *filler*
+    for prices the provider leaves out (`fill_missing_prices` below), never a
+    source for the model list: the provider is the only authority on what it
+    offers, and reading the list from a community file answered that question
+    with a third party's opinion (ADR 0053).
     """
     provider = await _load_provider(session, provider_id)
-    if catalogue == "litellm":
-        return provider, url or LITELLM_CATALOGUE_URL, None
     catalogue_url = url or f"{provider.base_url}/models"
     api_key: str | None = None
     if provider.api_key_encrypted:
@@ -855,6 +860,54 @@ async def _catalogue_source(
     return provider, catalogue_url, api_key
 
 
+async def _catalogue_with_prices(
+    # `Any`, as `ControlHttpDep` itself is: the control-plane client is passed
+    # through rather than constructed here.
+    http: Any,
+    provider: Provider,
+    catalogue_url: str,
+    api_key: str | None,
+    *,
+    fill_missing: bool,
+) -> tuple[dict[str, CataloguePrice], list[str], set[str]]:
+    """The provider's catalogue, optionally with community prices in the gaps.
+
+    Returns ``(prices by upstream id, unpriced ids, ids filled from the
+    community file)``.
+
+    Both fetches are the operator's explicit request, so a failure of either is
+    reported rather than absorbed: ticking the fill and silently getting the
+    unpriced rows back would look identical to a provider that publishes
+    prices for nothing, and the operator would draw the wrong conclusion about
+    their provider. Failing says which source could not be read.
+    """
+    try:
+        payload = await fetch_catalogue(http, catalogue_url, api_key)
+    except CatalogueUnavailable as exc:
+        raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
+
+    published, unpriced = _catalogue_parser(provider)(payload)
+
+    filled: set[str] = set()
+    if fill_missing and unpriced:
+        try:
+            community_payload = await fetch_catalogue(http, LITELLM_CATALOGUE_URL, None)
+        except CatalogueUnavailable as exc:
+            raise UpstreamUnavailableError(
+                f"Could not read the community price catalogue: {exc}"
+            ) from exc
+        # The provider row's plugin is the LiteLLM tag, so an Anthropic provider
+        # is filled from Anthropic's rows and not from all 3,500.
+        community, _ = parse_litellm_catalogue(
+            community_payload, providers=[provider.plugin] if provider.plugin else None
+        )
+        prices, unpriced, filled = fill_prices_from_community(published, unpriced, community)
+    else:
+        prices = list(published)
+
+    return {price.model_id: price for price in prices}, unpriced, filled
+
+
 @router.get("/models/discover", response_model=CatalogueDiscoveryResponse)
 async def discover_models(
     admin: AdminUserDep,
@@ -864,7 +917,7 @@ async def discover_models(
     http: ControlHttpDep,
     provider_id: uuid.UUID,
     url: str | None = None,
-    catalogue: str = "provider",
+    fill_missing_prices: bool = False,
 ) -> CatalogueDiscoveryResponse:
     """Compare the provider's catalogue with ours.
 
@@ -876,23 +929,18 @@ async def discover_models(
     Reports drift in both directions. Models we serve that the provider no longer
     offers are the more dangerous half: they keep appearing in ``/v1/models`` and
     fail only when someone calls them.
+
+    ``fill_missing_prices`` consults the community file for models the provider
+    listed and left unpriced (ADR 0053). Every row says which of the two
+    supplied its figures, because an operator adopting them is entitled to know
+    that before clicking Import, not afterwards.
     """
     provider, catalogue_url, api_key = await _catalogue_source(
-        session, secrets, provider_id, url, catalogue
+        session, secrets, provider_id, url
     )
-
-    try:
-        payload = await fetch_catalogue(http, catalogue_url, api_key)
-    except CatalogueUnavailable as exc:
-        raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
-
-    if catalogue == "litellm":
-        prices, unparsable = parse_litellm_catalogue(
-            payload, providers=[provider.plugin] if provider.plugin else None
-        )
-    else:
-        prices, unparsable = _catalogue_parser(provider)(payload)
-    by_upstream = {price.model_id: price for price in prices}
+    by_upstream, unpriced, filled = await _catalogue_with_prices(
+        http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
+    )
 
     # Only this provider's models. A model served by another provider is not
     # "missing upstream" here — it was never expected to be.
@@ -926,24 +974,57 @@ async def discover_models(
                 output_modalities=list(price.output_modalities),
                 supported_features=list(price.supported_features),
                 blocked_reason=None,
+                price_source="community" if upstream_id in filled else "provider",
             )
         )
 
+    # Listed by the provider, priced by nobody. Shown rather than hidden: with
+    # the fill off, these *are* the answer to "what does this provider offer",
+    # and hiding them is what made an unticked discovery against OpenAI look
+    # like an endpoint with no models at all. They cannot be imported — an
+    # unpriced model serves happily and records a cost of zero — so each says so.
+    for upstream_id in sorted(set(unpriced) - ANONYMOUS_UNPARSABLE):
+        if upstream_id in our_upstream_ids or upstream_id in by_upstream:
+            continue
+        available.append(
+            DiscoveredModel(
+                upstream_model=upstream_id,
+                suggested_name=_suggested_name(upstream_id),
+                input_per_mtok=None,
+                output_per_mtok=None,
+                currency=None,
+                context_window=None,
+                blocked_reason=(
+                    "the provider publishes no price for this model"
+                    if fill_missing_prices
+                    else "the provider publishes no price — tick “fill missing prices” or "
+                    "add the model by hand"
+                ),
+                price_source=None,
+            )
+        )
+
+    # Offered upstream means listed, priced or not: a model the provider still
+    # serves but has stopped pricing is not "no longer offered", and calling it
+    # that would send someone hunting for a withdrawal that never happened.
+    offered = set(by_upstream) | (set(unpriced) - ANONYMOUS_UNPARSABLE)
     catalogued: list[CatalogueDriftRow] = []
     missing: list[CatalogueDriftRow] = []
     for model in ours:
         row = CatalogueDriftRow(
             name=model.name, upstream_model=model.upstream_model, is_active=model.is_active
         )
-        (catalogued if model.upstream_model in by_upstream else missing).append(row)
+        (catalogued if model.upstream_model in offered else missing).append(row)
 
     return CatalogueDiscoveryResponse(
         provider_url=catalogue_url,
-        provider_model_count=len(prices),
+        provider_model_count=len(offered),
         available=available,
         catalogued=catalogued,
         missing_upstream=missing,
-        unparsable=unparsable,
+        # Only the entries with no id at all remain genuinely unparsable; the
+        # rest are now reported as rows an operator can see and act on.
+        unparsable=[entry for entry in unpriced if entry in ANONYMOUS_UNPARSABLE],
     )
 
 
@@ -961,7 +1042,7 @@ async def import_models(
     http: ControlHttpDep,
     provider_id: uuid.UUID,
     url: str | None = None,
-    catalogue: str = "provider",
+    fill_missing_prices: bool = False,
 ) -> ModelImportResponse:
     """Adopt selected upstream models, with their published prices.
 
@@ -975,23 +1056,18 @@ async def import_models(
     A model priced in another currency is **skipped entirely** rather than created
     without a price. An unpriced model serves happily and records a cost of zero,
     which is a quiet way to give away money.
+
+    ``fill_missing_prices`` must match what the operator was shown: the price
+    written here is stamped with who supplied it (`catalogue` or `community`),
+    so the append-only history answers "where did this figure come from"
+    without needing to remember which checkbox was ticked (ADR 0053).
     """
     provider, catalogue_url, api_key = await _catalogue_source(
-        session, secrets, provider_id, url, catalogue
+        session, secrets, provider_id, url
     )
-
-    try:
-        fetched = await fetch_catalogue(http, catalogue_url, api_key)
-    except CatalogueUnavailable as exc:
-        raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
-
-    if catalogue == "litellm":
-        prices, _ = parse_litellm_catalogue(
-            fetched, providers=[provider.plugin] if provider.plugin else None
-        )
-    else:
-        prices, _ = _catalogue_parser(provider)(fetched)
-    by_upstream = {price.model_id: price for price in prices}
+    by_upstream, _unpriced, filled = await _catalogue_with_prices(
+        http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
+    )
 
     existing = (await session.execute(select(ModelDef))).scalars().all()
     taken_names = {model.name for model in existing}
@@ -1067,6 +1143,10 @@ async def import_models(
         )
         session.add(model)
         await session.flush()
+        # Who supplied this figure, kept on the row itself. Until ADR 0053 every
+        # catalogue import wrote `cortecs` regardless of provider or source, so a
+        # community price for an OpenAI model was recorded as Cortecs' own.
+        from_community = item.upstream_model in filled
         session.add(
             ModelPrice(
                 model_id=model.id,
@@ -1076,14 +1156,18 @@ async def import_models(
                 cache_write_per_mtok=price.cache_write_per_mtok,
                 currency=price.currency,
                 effective_from=utcnow(),
-                source=PriceSource.CORTECS,
+                source=PriceSource.COMMUNITY if from_community else PriceSource.CATALOGUE,
             )
         )
         taken_names.add(name)
         taken_upstream.add(item.upstream_model)
         results.append(
             ModelImportResult(
-                upstream_model=item.upstream_model, name=name, imported=True, priced=True
+                upstream_model=item.upstream_model,
+                name=name,
+                imported=True,
+                priced=True,
+                price_source="community" if from_community else "provider",
             )
         )
 

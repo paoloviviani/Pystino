@@ -321,6 +321,58 @@ def parse_litellm_catalogue(
     return prices, unparsable
 
 
+#: Labels `parse_catalogue` uses for an entry it could not identify at all, as
+#: opposed to one it identified and found no price for. Only the latter can be
+#: filled from anywhere, because filling needs an id to match on.
+ANONYMOUS_UNPARSABLE = frozenset({"<unidentified model>", "<non-object entry>"})
+
+
+def fill_missing_prices(
+    published: Sequence[CataloguePrice],
+    unpriced: Sequence[str],
+    community: Sequence[CataloguePrice],
+) -> tuple[list[CataloguePrice], list[str], set[str]]:
+    """Prices for what a provider offers, with the community file filling gaps.
+
+    Returns ``(prices, still_unpriced, filled_ids)``.
+
+    The direction is the whole point and it is one way only: **a price the
+    provider published is never replaced.** The community file is consulted for
+    a model the provider *listed and left unpriced*, and for nothing else — so
+    turning the fill on cannot change a figure that came from the counterparty
+    that will invoice us. That is the same rule the accounting follows for
+    reported cost (ADR 0032): the counterparty is authoritative about its own
+    charges, and a community catalogue is a convenience for the APIs that
+    publish none.
+
+    Why this replaces choosing one source or the other: **the provider is the
+    only authority on what it offers.** Reading the model *list* from LiteLLM
+    answered "what can this endpoint serve" with a third party's opinion, which
+    can name models the provider has retired and miss ones it has just added.
+    Here the list always comes from the provider and only the missing prices
+    come from elsewhere, which is also why the operator no longer has to know
+    whether their provider publishes prices before they can look.
+    """
+    by_id = {price.model_id: price for price in published}
+    available = {price.model_id: price for price in community}
+
+    filled: set[str] = set()
+    prices = list(published)
+    still_unpriced: list[str] = []
+    for model_id in unpriced:
+        if model_id in ANONYMOUS_UNPARSABLE or model_id in by_id:
+            # Not fillable, or already priced by the provider under the same id.
+            still_unpriced.append(model_id)
+            continue
+        found = available.get(model_id)
+        if found is None:
+            still_unpriced.append(model_id)
+            continue
+        prices.append(found)
+        filled.add(model_id)
+    return prices, still_unpriced, filled
+
+
 def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
     """Extract prices from a catalogue response.
 
@@ -507,7 +559,10 @@ async def import_prices(
                 cache_write_per_mtok=candidate.cache_write_per_mtok,
                 currency=candidate.currency,
                 effective_from=utcnow(),
-                source=PriceSource.CORTECS,
+                # Whatever provider this catalogue belongs to. It said
+                # `CORTECS` when Cortecs was the only importer, which made every
+                # later provider's prices read as Cortecs' (ADR 0053).
+                source=PriceSource.CATALOGUE,
             )
         )
         if candidate.context_window and not model.context_window:

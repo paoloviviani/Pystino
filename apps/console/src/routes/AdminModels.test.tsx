@@ -67,6 +67,7 @@ const DISCOVERY: CatalogueDiscovery = {
       output_modalities: ["text"],
       supported_features: ["tools"],
       blocked_reason: null,
+      price_source: "provider",
     },
     {
       upstream_model: "provider/dollar-1",
@@ -82,6 +83,7 @@ const DISCOVERY: CatalogueDiscovery = {
       // ADR 0054: no longer blocked — the USD prices come along and the
       // conversion happens at admission.
       blocked_reason: null,
+      price_source: "provider",
     },
   ],
   catalogued: [],
@@ -91,9 +93,50 @@ const DISCOVERY: CatalogueDiscovery = {
   unparsable: [],
 };
 
+/** The same provider, asked with the community fill on.
+ *
+ * `provider/new-1` keeps the price the provider published — the fill must never
+ * replace one — `provider/unpriced-1` gains one from the community file, and
+ * `provider/nowhere-1` is listed by the provider and priced by nobody.
+ */
+const DISCOVERY_FILLED: CatalogueDiscovery = {
+  ...DISCOVERY,
+  available: [
+    ...DISCOVERY.available,
+    {
+      upstream_model: "provider/unpriced-1",
+      suggested_name: "unpriced-1",
+      input_per_mtok: "0.250000000000",
+      output_per_mtok: "0.750000000000",
+      currency: "USD",
+      context_window: 8000,
+      kind: "chat",
+      input_modalities: [],
+      output_modalities: [],
+      supported_features: [],
+      blocked_reason: null,
+      price_source: "community",
+    },
+    {
+      upstream_model: "provider/nowhere-1",
+      suggested_name: "nowhere-1",
+      input_per_mtok: null,
+      output_per_mtok: null,
+      currency: null,
+      context_window: null,
+      kind: "chat",
+      input_modalities: [],
+      output_modalities: [],
+      supported_features: [],
+      blocked_reason: "the provider publishes no price for this model",
+      price_source: null,
+    },
+  ],
+};
+
 function routes(
   models: AdminModel[],
-  calls: { imported?: string[] } = {},
+  calls: { imported?: string[]; discoverUrls?: string[]; importUrls?: string[] } = {},
   captured: { bodies: unknown[] } = { bodies: [] },
 ) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -122,8 +165,11 @@ function routes(
           updated_at: "2026-08-01T10:00:00Z",
         },
       ];
-    } else if (url.includes("/models/discover")) payload = DISCOVERY;
-    else if (url.includes("/models/import") && method === "POST") {
+    } else if (url.includes("/models/discover")) {
+      (calls.discoverUrls ??= []).push(url);
+      payload = url.includes("fill_missing_prices=true") ? DISCOVERY_FILLED : DISCOVERY;
+    } else if (url.includes("/models/import") && method === "POST") {
+      (calls.importUrls ??= []).push(url);
       const body = JSON.parse(String(init?.body)) as { models: { upstream_model: string }[] };
       calls.imported = body.models.map((entry) => entry.upstream_model);
       payload = {
@@ -133,6 +179,7 @@ function routes(
           imported: true,
           priced: true,
           reason: null,
+          price_source: url.includes("fill_missing_prices=true") ? "community" : "provider",
         })),
       };
     } else if (url.includes("/api/admin/models")) payload = models;
@@ -177,12 +224,13 @@ function renderScreen(element: ReactElement) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-/** Pick the provider whose catalogue to inspect; nothing loads before that. */
+/** Pick the provider whose catalogue to inspect; nothing loads before that.
+ *
+ * Choosing the provider is the only step needed to see a catalogue. Whether to
+ * fill missing prices from the community file is a checkbox on this same
+ * screen, so there is no chooser to get past first (ADR 0053).
+ */
 async function openCatalogue(user: ReturnType<typeof userEvent.setup>) {
-  // The price-source chooser sits on top until a source is picked; the tests
-  // below exercise the provider's own catalogue.
-  const chooser = await screen.findByRole("dialog");
-  await user.click(within(chooser).getByRole("button", { name: /provider's own catalogue/i }));
   const dialog = await screen.findByRole("dialog");
   await user.selectOptions(within(dialog).getByLabelText("Provider"), "pr1");
 }
@@ -282,6 +330,69 @@ describe("AdminModels", () => {
     await user.click(screen.getByRole("button", { name: "Discover" }));
     await screen.findByRole("dialog");
     expect(fetchMock.mock.calls.map(String).some((url) => url.includes("discover"))).toBe(false);
+  });
+
+  it("asks the provider alone until the community fill is ticked", async () => {
+    // The flow's shape, asserted: choosing a provider is enough to see a
+    // catalogue, and the fill is a refinement of that answer rather than a
+    // question standing in front of it. It was a modal asked before the
+    // provider was known, where picking wrong returned an empty screen.
+    const user = userEvent.setup();
+    const calls: { discoverUrls?: string[] } = {};
+    vi.stubGlobal("fetch", routes([model()], calls));
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+    await waitFor(() => expect(screen.getByText("new-1")).toBeInTheDocument());
+
+    expect(calls.discoverUrls?.[0]).toContain("fill_missing_prices=false");
+    expect(screen.queryByText("community")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("checkbox", { name: /fill missing prices/i }));
+    await waitFor(() => expect(screen.getByText("unpriced-1")).toBeInTheDocument());
+    expect(calls.discoverUrls?.some((url) => url.includes("fill_missing_prices=true"))).toBe(true);
+  });
+
+  it("says which prices a third party supplied, and which the provider did", async () => {
+    // The point of the tick is that some of these figures come from a community
+    // file. A screen that mixes them without saying so invites an operator to
+    // read all of them as the counterparty's own.
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", routes([model()]));
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+    await user.click(screen.getByRole("checkbox", { name: /fill missing prices/i }));
+
+    await waitFor(() => expect(screen.getByText("unpriced-1")).toBeInTheDocument());
+    // Exactly one row is marked: the filled one. The provider's own prices are
+    // unmarked, which is what makes the mark mean something.
+    expect(screen.getAllByText("community")).toHaveLength(1);
+    // And a model nobody prices cannot be selected for import.
+    expect(screen.getByRole("checkbox", { name: /Import nowhere-1/i })).toBeDisabled();
+  });
+
+  it("imports with the same fill the prices were reviewed under", async () => {
+    // Otherwise the figures written to the append-only history are not the
+    // figures anyone approved.
+    const user = userEvent.setup();
+    const calls: { imported?: string[]; importUrls?: string[] } = {};
+    vi.stubGlobal("fetch", routes([model()], calls));
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+    await user.click(screen.getByRole("checkbox", { name: /fill missing prices/i }));
+    await waitFor(() => expect(screen.getByText("unpriced-1")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("checkbox", { name: "Import unpriced-1" }));
+    await user.click(screen.getByRole("button", { name: /^Import/ }));
+
+    await waitFor(() => expect(calls.imported).toEqual(["provider/unpriced-1"]));
+    expect(calls.importUrls?.[0]).toContain("fill_missing_prices=true");
+    expect(await screen.findByText(/with a community price/i)).toBeInTheDocument();
   });
 
   it("surfaces models we still serve that the provider has dropped", async () => {

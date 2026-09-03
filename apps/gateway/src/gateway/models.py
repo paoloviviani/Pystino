@@ -208,7 +208,31 @@ class ProviderKind(enum.StrEnum):
 
 
 class PriceSource(enum.StrEnum):
+    """Who supplied a price. Stored on every append-only price row.
+
+    This is not decoration. A price is what the gateway invoices from, and the
+    three answers carry different weight: a figure typed by an administrator, a
+    figure the counterparty published, and a figure a community file supplied
+    for a counterparty that publishes none (ADR 0053). When one later proves
+    wrong, the row says who to ask.
+
+    No migration was needed to add these: `_enum` stores enums as VARCHAR with
+    no CHECK, precisely so that a new value is not a locking DDL change.
+    """
+
     MANUAL = "manual"
+    #: The provider's own catalogue, whichever provider it is. `CORTECS` below is
+    #: what this was called when Cortecs was the only importer; new rows use this.
+    CATALOGUE = "catalogue"
+    #: LiteLLM's community price file, used only to fill a price the provider
+    #: left out. Distinct from `CATALOGUE` because it is a third party's figure
+    #: for someone else's charges — the one kind of price worth re-checking
+    #: against an invoice.
+    COMMUNITY = "community"
+    #: Historical. Written by the original Cortecs importer, and by every
+    #: catalogue import until ADR 0053's fill made the distinction matter — which
+    #: means existing rows labelled `cortecs` may hold a community figure, and
+    #: that cannot be recovered from the row. Kept so those rows still read.
     CORTECS = "cortecs"
 
 

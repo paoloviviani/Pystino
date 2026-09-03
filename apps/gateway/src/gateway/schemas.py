@@ -1393,6 +1393,13 @@ class DiscoveredModel(BaseModel):
     # Set when the model cannot be imported as-is, with the reason. The commonest
     # is a price quoted in a currency this gateway does not bill in.
     blocked_reason: str | None = None
+    # Where the figures above came from: "provider" for the counterparty's own
+    # catalogue, "community" for a gap the LiteLLM file filled, None for a model
+    # the provider listed and nobody has priced. Shown per row rather than once
+    # per import, because a single import can mix all three and "which of these
+    # prices did a third party supply" is the question an operator asks before
+    # adopting them (ADR 0053).
+    price_source: str | None = None
 
 
 class CatalogueDriftRow(BaseModel):
@@ -1432,6 +1439,11 @@ class ModelImportResult(BaseModel):
     imported: bool
     priced: bool
     reason: str | None = None
+    # As on `DiscoveredModel`, and for the same reason: the price history records
+    # what was adopted, and this records who supplied it. A community figure that
+    # later proves wrong is then traceable to the import that took it, rather
+    # than looking like a hand-typed mistake.
+    price_source: str | None = None
 
 
 class ModelImportResponse(BaseModel):
