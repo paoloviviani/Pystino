@@ -19,10 +19,11 @@ traps that only show up on the live stack. Read it before changing anything;
 - **Accounting and quota logic get tests specifically.** A wrong answer there is a
   wrong invoice, not a stack trace.
 - **`.gitlab-token` / `.gh-token` at the repo root are credentials: never read,
-  cat or print them.** Source one (`set -a; . .gh-token; set +a`) and use a
+  cat or print them.** Source one (`set -a; . .gitlab-token; set +a`) and use a
   throwaway credential helper — never argv, config or logs. They define
-  `GITLAB_TOKEN` (example.invalid, the original home) and `GH_TOKEN`
-  (github.com/paoloviviani/Pistin-Gateway, current origin).
+  `GITLAB_TOKEN` (example.invalid — the original home and the current
+  origin, `viviani/pystino`) and `GH_TOKEN` (github.com/paoloviviani/
+  Pistin-Gateway, which held the origin 2026-08-29 → 2026-09-03).
 - **The stack is loopback-only by default.** Nothing may be published on a routable
   address except through `docker-compose.proxy.yml` (Caddy TLS + rotated credentials);
   `scripts/test_public_tls_live.py` enforces that by requiring every other port to be
