@@ -1,6 +1,6 @@
 # Working on this repository
 
-A self-hosted LLM platform, built and run by its author at personal expense.
+A self-hosted model gateway.
 Read this before changing anything; it is the context that is not recoverable
 from the code.
 

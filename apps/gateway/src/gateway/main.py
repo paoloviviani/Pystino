@@ -311,7 +311,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(level=resolved.log_level, json_output=resolved.log_json)
 
     app = FastAPI(
-        title="LLM Platform Gateway",
+        title="Pystino model gateway",
         version="0.1.0",
         summary="OpenAI-compatible gateway with per-group accounting, quotas and policy",
         lifespan=lifespan,
