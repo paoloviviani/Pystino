@@ -180,7 +180,6 @@ function EmailCard() {
 
 function ProvidersCard() {
   const providers = useIdentityProviders();
-  const toast = useOptionalToast();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<IdentityProvider | null>(null);
   const [deleting, setDeleting] = useState<IdentityProvider | null>(null);
@@ -243,14 +242,15 @@ function ProvidersCard() {
         </div>
       )}
 
-      <ProviderDialog open={creating} onClose={() => setCreating(false)} />
-      <ProviderDialog open={false} existing={editing} onClose={() => setEditing(null)} />
+      <ProviderDialog
+        open={creating || editing !== null}
+        existing={editing}
+        onClose={() => {
+          setCreating(false);
+          setEditing(null);
+        }}
+      />
       <DeleteProviderDialog provider={deleting} onClose={() => setDeleting(null)} />
-      {/* The editing dialog above renders only when `editing` is set; the
-          create one only when `creating` is. Both mount always so their state
-          survives a close. */}
-      {deleting === null && null}
-      {toast === null && null}
     </Card>
   );
 }

@@ -64,15 +64,16 @@ function mockGet(policy: OidcPolicy) {
 }
 
 describe("AdminIdentity", () => {
-  it("shows the policy in force, and where it came from", async () => {
+  it("seeds the form from the policy in force", async () => {
     mockGet(policyFixture());
     renderScreen(<AdminIdentity />);
-    expect(await screen.findByText("from the environment")).toBeInTheDocument();
     // The provisioning checkbox is on, because the environment's default is on.
-    expect(screen.getByRole("checkbox", { name: /create an account on first sign-in/i })).toBeChecked();
+    expect(
+      await screen.findByRole("checkbox", { name: /create an account on first sign-in/i }),
+    ).toBeChecked();
   });
 
-  it("reports a console decision as its own", async () => {
+  it("seeds a console decision as its own", async () => {
     mockGet(
       policyFixture({
         auto_provision: false,
@@ -87,10 +88,13 @@ describe("AdminIdentity", () => {
       }),
     );
     renderScreen(<AdminIdentity />);
-    expect(await screen.findByText("set in the console")).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: /create an account on first sign-in/i })).not.toBeChecked();
-    // The stored reason is on the record, not hidden behind a status call.
-    expect(await screen.findByText("approval required")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("checkbox", { name: /create an account on first sign-in/i }),
+    ).not.toBeChecked();
+    // And the rule seeded with it is the one the decision named.
+    expect(
+      await screen.findByLabelText(/first-time sign-in while provisioning is off/i),
+    ).toHaveValue("create_inactive");
   });
 
   it("offers the unknown-user rule only while provisioning is off", async () => {
@@ -110,24 +114,44 @@ describe("AdminIdentity", () => {
     ).toBeInTheDocument();
   });
 
-  it("sends the decision, not the blank form", async () => {
+  it("saves each setting as its own decision", async () => {
     const user = userEvent.setup({ delay: null });
-    mockGet(
-      policyFixture({
-        groups_claim: "roles",
-        admin_groups: ["admins"],
-        group_mappings: [{ idp: "platform-admins", local: "admins" }],
-      }),
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(policyFixture()), { status: 200 }),
     );
+    mockGet(policyFixture());
     renderScreen(<AdminIdentity />);
-    await screen.findByText("from the environment");
+    await screen.findByRole("checkbox", { name: /create an account on first sign-in/i });
 
-    // Saving with nothing changed is not a decision; the button says so.
-    const save = screen.getByRole("button", { name: "Save policy" });
-    expect(save).toBeDisabled();
-
+    // Toggling the checkbox is the save: no form, no second button.
     await user.click(screen.getByRole("checkbox", { name: /create an account on first sign-in/i }));
-    await user.click(screen.getByRole("button", { name: "Save policy" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/admin/oidc/policy",
+      expect.objectContaining({ method: "PUT" }),
+    ));
+    const call = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/oidc/policy") && (init as RequestInit).method === "PUT",
+    );
+    // One knob, one decision — the body carries that knob and nothing else,
+    // which is what the per-field rows in the policy history mean.
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      auto_provision: false,
+    });
+  });
+
+  it("saves the administrator groups when they change", async () => {
+    const user = userEvent.setup({ delay: null });
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(policyFixture()), { status: 200 }),
+    );
+    mockGet(policyFixture({ admin_groups: ["admins"] }));
+    renderScreen(<AdminIdentity />);
+    await screen.findByLabelText(/administrator groups/i);
+
+    const input = screen.getByLabelText(/administrator groups/i);
+    await user.clear(input);
+    await user.type(input, "admins, platform-admins");
+    await user.click(screen.getByRole("button", { name: /save administrator groups/i }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/admin/oidc/policy",
@@ -136,11 +160,8 @@ describe("AdminIdentity", () => {
     const call = fetchMock.mock.calls.find(
       ([url, init]) => String(url).includes("/oidc/policy") && (init as RequestInit).method === "PUT",
     );
-    const body = JSON.parse((call?.[1] as RequestInit).body as string);
-    // The form was seeded from the policy in force: what is sent carries the
-    // values it showed, plus the one decision that changed.
-    expect(body.groups_claim).toBe("roles");
-    expect(body.admin_groups).toEqual(["admins"]);
-    expect(body.auto_provision).toBe(false);
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      admin_groups: ["admins", "platform-admins"],
+    });
   });
 });
