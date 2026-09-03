@@ -9,6 +9,11 @@ OpenAI-compatible
 gateway with per-user and per-group accounting, quotas and policy, plus (later) a web
 frontend, a desktop shell and RAG.
 
+> The name is *pistino* — Turin dialect for a nitpicker, the person who checks
+> every last detail. Which is what an accounting gateway is for: counting
+> every token, every cent, every quota, and telling you exactly where each
+> one went.
+
 **Licence: [EUPL-1.2](LICENCE)** for all first-party code. This is a hard requirement,
 not a preference — see [ADR 0001](docs/adr/0001-licensing.md) for the dependency policy
 it implies.
