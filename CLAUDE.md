@@ -265,10 +265,11 @@ the proxy overlay at <https://130.192.84.103:8443/console>; note that its
 firewall permits **8443 and 22 and nothing else**, which is why that deployment
 serves one origin with a single TLS port rather than two, and why the
 Let's Encrypt configuration cannot be used there until 80 and 443 are opened.
-Git remote is GitHub (`paoloviviani/Pistin-Gateway`, since 2026-08-29; GitLab
-`viviani/ai-stack` was the original home); the tokens are in `.gitlab-token` and
-`.gh-token`, which may be sourced but should not be read. Both are gitignored by
-name and glob.
+Git remote is GitLab again (`viviani/pystino`, since 2026-09-03; `viviani/ai-stack`
+was the original home, and GitHub `paoloviviani/Pistin-Gateway` held the origin
+2026-08-29 → 2026-09-03); the tokens are in `.gitlab-token` and `.gh-token`
+(legacy — the GitHub remote is gone), which may be sourced but should not be
+read. Both are gitignored by name and glob.
 
 ## Where the project is
 
