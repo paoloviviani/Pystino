@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
@@ -96,7 +96,14 @@ from gateway.pagination import Page, PageDep, count_of
 from gateway.passwords import hash_password, validate_password
 from gateway.periods import PeriodKind
 from gateway.plugins import registry as plugin_registry
-from gateway.pricing import CatalogueUnavailable, fetch_catalogue, parse_catalogue
+from gateway.pricing import (
+    LITELLM_CATALOGUE_URL,
+    CatalogueUnavailable,
+    fetch_catalogue,
+    parse_catalogue,
+    parse_litellm_catalogue,
+    parse_openrouter_catalogue,
+)
 from gateway.providers import ProviderConfigurationError
 from gateway.redaction import Redactor
 from gateway.redaction import registry as redaction_registry
@@ -800,16 +807,42 @@ def _suggested_name(upstream_model: str) -> str:
     return upstream_model.rsplit("/", 1)[-1] or upstream_model
 
 
+def _catalogue_parser(provider: Provider) -> Callable[[Any], tuple[list[Any], list[str]]]:
+    """The catalogue parser this provider's plugin implies.
+
+    The generic parser reads per-million prices; OpenRouter publishes
+    per-token USD strings that the generic keys would silently misread as
+    per-million — an error of exactly a million, in the dangerous direction.
+    The plugin name is the routing signal because the plugin is where
+    counterparty knowledge lives (ADR 0032).
+    """
+    if provider.plugin == "openrouter":
+        return parse_openrouter_catalogue
+    return parse_catalogue
+
+
 async def _catalogue_source(
-    session: SessionDep, secrets: SecretBox, provider_id: uuid.UUID, url: str | None
+    session: SessionDep,
+    secrets: SecretBox,
+    provider_id: uuid.UUID,
+    url: str | None,
+    catalogue: str = "provider",
 ) -> tuple[Provider, str, str | None]:
     """Where to fetch a catalogue from, and with which credential.
 
     Per provider since ADR 0027: "what does the provider offer" is only a
     meaningful question about a specific one. `url` overrides the endpoint for a
     provider whose catalogue lives somewhere other than `{base_url}/models`.
+
+    `catalogue="litellm"` switches the *source* to the community price file
+    (ADR 0053): the first-party APIs — OpenAI, Anthropic, Mistral, Nebius —
+    publish model lists but no prices, and this is the pragmatic source the
+    ecosystem converges on. The provider row's plugin names which tag to
+    filter on, so an Anthropic provider imports Anthropic's rows.
     """
     provider = await _load_provider(session, provider_id)
+    if catalogue == "litellm":
+        return provider, url or LITELLM_CATALOGUE_URL, None
     catalogue_url = url or f"{provider.base_url}/models"
     api_key: str | None = None
     if provider.api_key_encrypted:
@@ -831,6 +864,7 @@ async def discover_models(
     http: ControlHttpDep,
     provider_id: uuid.UUID,
     url: str | None = None,
+    catalogue: str = "provider",
 ) -> CatalogueDiscoveryResponse:
     """Compare the provider's catalogue with ours.
 
@@ -843,14 +877,21 @@ async def discover_models(
     offers are the more dangerous half: they keep appearing in ``/v1/models`` and
     fail only when someone calls them.
     """
-    provider, catalogue_url, api_key = await _catalogue_source(session, secrets, provider_id, url)
+    provider, catalogue_url, api_key = await _catalogue_source(
+        session, secrets, provider_id, url, catalogue
+    )
 
     try:
         payload = await fetch_catalogue(http, catalogue_url, api_key)
     except CatalogueUnavailable as exc:
         raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
 
-    prices, unparsable = parse_catalogue(payload)
+    if catalogue == "litellm":
+        prices, unparsable = parse_litellm_catalogue(
+            payload, providers=[provider.plugin] if provider.plugin else None
+        )
+    else:
+        prices, unparsable = _catalogue_parser(provider)(payload)
     by_upstream = {price.model_id: price for price in prices}
 
     # Only this provider's models. A model served by another provider is not
@@ -925,6 +966,7 @@ async def import_models(
     http: ControlHttpDep,
     provider_id: uuid.UUID,
     url: str | None = None,
+    catalogue: str = "provider",
 ) -> ModelImportResponse:
     """Adopt selected upstream models, with their published prices.
 
@@ -939,14 +981,21 @@ async def import_models(
     without a price. An unpriced model serves happily and records a cost of zero,
     which is a quiet way to give away money.
     """
-    provider, catalogue_url, api_key = await _catalogue_source(session, secrets, provider_id, url)
+    provider, catalogue_url, api_key = await _catalogue_source(
+        session, secrets, provider_id, url, catalogue
+    )
 
     try:
-        catalogue = await fetch_catalogue(http, catalogue_url, api_key)
+        fetched = await fetch_catalogue(http, catalogue_url, api_key)
     except CatalogueUnavailable as exc:
         raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
 
-    prices, _ = parse_catalogue(catalogue)
+    if catalogue == "litellm":
+        prices, _ = parse_litellm_catalogue(
+            fetched, providers=[provider.plugin] if provider.plugin else None
+        )
+    else:
+        prices, _ = _catalogue_parser(provider)(fetched)
     by_upstream = {price.model_id: price for price in prices}
     billing_currency = settings.billing_currency.upper()
 

@@ -502,7 +502,14 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   const [providerId, setProviderId] = useState("");
   // "What is on offer" is only a meaningful question about one endpoint, so
   // nothing is fetched until one is chosen.
-  const discovery = useDiscovery(open && providerId ? providerId : null);
+  // The community price catalogue (ADR 0053): the first-party APIs publish
+  // model lists but no prices, so the prices come from LiteLLM's MIT file
+  // instead of the provider's own endpoint.
+  const [litellmSource, setLitellmSource] = useState(false);
+  const discovery = useDiscovery(
+    open && providerId ? providerId : null,
+    litellmSource ? "litellm" : "provider",
+  );
   const importModels = useImportModels();
   const toast = useOptionalToast();
   const [selected, setSelected] = useState<string[]>([]);
@@ -605,7 +612,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             disabled={selected.length === 0 || !providerId}
             onClick={() =>
               importModels.mutate(
-                { providerId, upstreamModels: selected },
+                { providerId, upstreamModels: selected, catalogue: litellmSource ? "litellm" : "provider" },
                 {
                   onSuccess: () => {
                     toast?.add({ title: "Models imported", type: "success" });
@@ -638,6 +645,24 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
         ))}
       </Select>
 
+      <label className="mt-1 flex cursor-pointer items-center gap-2">
+        <input
+          type="checkbox"
+          checked={litellmSource}
+          onChange={(event) => {
+            setLitellmSource(event.target.checked);
+            setSelected([]);
+          }}
+        />
+        <span className="text-sm">
+          Use the community price catalogue (LiteLLM)
+          <span className="mt-0.5 block text-xs text-ink-faint">
+            For providers that publish no prices of their own — OpenAI,
+            Anthropic, Mistral, Nebius. Prices are USD per token; models priced
+            in another currency than the billing one are skipped on import.
+          </span>
+        </span>
+      </label>
       {providerId && discovery.isPending && <Spinner label="Asking the provider" />}
       {discovery.error ? (
         <Notice tone="danger" title="Could not read the provider catalogue">

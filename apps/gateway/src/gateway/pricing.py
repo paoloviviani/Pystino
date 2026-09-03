@@ -43,6 +43,13 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CATALOGUE_URL = "https://api.cortecs.ai/v1/models"
 
+#: LiteLLM's community-maintained price file (MIT), the source for the
+#: first-party APIs that publish no pricing of their own (ADR 0053).
+LITELLM_CATALOGUE_URL = (
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/"
+    "model_prices_and_context_window.json"
+)
+
 # Keys the catalogue might plausibly use, in order of preference.
 _LIST_KEYS = ("data", "models", "items")
 _ID_KEYS = ("id", "name", "model", "model_id")
@@ -141,6 +148,177 @@ def _as_decimal(value: Any) -> Decimal | None:
     except (InvalidOperation, ValueError, TypeError):
         return None
     return parsed if parsed >= 0 else None
+
+
+def parse_openrouter_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
+    """OpenRouter's public catalogue: prices are strings of USD *per token*.
+
+    Verified against the live endpoint on 2026-09-03: ``GET
+    https://openrouter.ai/api/v1/models`` is public (no key), returns every
+    model with ``pricing.prompt`` / ``pricing.completion`` /
+    ``pricing.input_cache_read`` as decimal strings of USD per token, plus
+    ``context_length`` and ``architecture.input/output_modalities``.
+
+    The generic parser cannot read this: its keys would match (``prompt`` is in
+    ``_INPUT_KEYS``) and then treat 0.0000025 as €2.50 per *million* tokens —
+    exactly the "off by a factor of a million" failure the generic parser's own
+    docstring warns about. The x1,000,000 here is the conversion the unit
+    implies, not a currency conversion; the currency is USD because that is
+    what OpenRouter quotes.
+    """
+
+    scale = Decimal(1_000_000)
+    prices: list[CataloguePrice] = []
+    unparsable: list[str] = []
+
+    entries: Iterable[Any]
+    if isinstance(payload, dict) and isinstance(payload.get("data"), list):
+        entries = payload["data"]
+    elif isinstance(payload, list):
+        entries = payload
+    else:
+        entries = []
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            unparsable.append("<non-object entry>")
+            continue
+        model_id = entry.get("id")
+        pricing = entry.get("pricing")
+        if not isinstance(model_id, str) or not isinstance(pricing, dict):
+            unparsable.append(str(model_id) if model_id else "<unidentified model>")
+            continue
+
+        input_rate = _as_decimal(pricing.get("prompt"))
+        output_rate = _as_decimal(pricing.get("completion"))
+        if input_rate is None or output_rate is None:
+            # Free models report 0 and import fine; a missing field is a
+            # non-text model (image generators have no token pricing) and is
+            # named rather than silently dropped.
+            unparsable.append(model_id)
+            continue
+
+        architecture = entry.get("architecture")
+        arch = architecture if isinstance(architecture, dict) else {}
+
+        prices.append(
+            CataloguePrice(
+                model_id=model_id,
+                input_per_mtok=input_rate * scale,
+                output_per_mtok=output_rate * scale,
+                currency="USD",
+                cache_read_per_mtok=(
+                    cache_read * scale
+                    if (cache_read := _as_decimal(pricing.get("input_cache_read"))) is not None
+                    else None
+                ),
+                context_window=(
+                    int(entry["context_length"]) if entry.get("context_length") else None
+                ),
+                input_modalities=_string_list(arch.get("input_modalities")),
+                output_modalities=_string_list(arch.get("output_modalities")),
+            )
+        )
+
+    return prices, unparsable
+
+
+def parse_litellm_catalogue(
+    payload: Any,
+    providers: Sequence[str] | None = None,
+) -> tuple[list[CataloguePrice], list[str]]:
+    """LiteLLM's community-maintained price file: the source for the first-party
+    APIs that do not publish one.
+
+    Verified against the live file on 2026-09-03: entries carry
+    ``input_cost_per_token`` / ``output_cost_per_token`` in USD **per token**,
+    ``cache_read_input_token_cost`` where applicable, ``context_length``,
+    ``mode`` and a ``litellm_provider`` tag. 3,500+ entries, covering every
+    first-party API this gateway has a plugin for — OpenAI, Anthropic, Mistral
+    and Nebius publish model lists but **no pricing API at all**, and this file
+    is the pragmatic source the ecosystem converges on. It is MIT-licensed
+    (licence-compatible, ADR 0001) and community-maintained, so it is an
+    *import source with a review step* — the console's discovery-then-import
+    flow — and not a trusted authority: a wrong figure here lands in the price
+    history exactly as a hand-typed one would, and the append-only rows make
+    both visible.
+
+    ``providers`` filters on ``litellm_provider`` (e.g. ``anthropic``,
+    ``mistral``, ``nebius``, ``openai``). Entry keys are also the upstream
+    model ids in the provider's own namespace, which is what the import
+    matches against.
+    """
+
+    scale = Decimal(1_000_000)
+    wanted = {name.strip().lower() for name in providers} if providers else None
+
+    prices: list[CataloguePrice] = []
+    unparsable: list[str] = []
+
+    entries: Iterable[Any]
+    if isinstance(payload, dict):
+        entries = [
+            {**entry, "_id": key}
+            for key, entry in payload.items()
+            if isinstance(entry, dict)
+        ]
+    elif isinstance(payload, list):
+        entries = payload
+    else:
+        entries = []
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            unparsable.append("<non-object entry>")
+            continue
+        model_id = entry.get("_id") or _first(entry, _ID_KEYS)
+        provider_tag = str(entry.get("litellm_provider", "")).lower()
+        if wanted is not None and provider_tag not in wanted:
+            continue
+
+        input_rate = _as_decimal(entry.get("input_cost_per_token"))
+        output_rate = _as_decimal(entry.get("output_cost_per_token"))
+        if not model_id or input_rate is None or output_rate is None:
+            unparsable.append(str(model_id) or "<unidentified model>")
+            continue
+
+        # `mode` maps to what the model produces: "chat" and "completion" are
+        # chat models; "embedding" is an embedding model. Everything else
+        # (audio, moderation) is imported as chat and deactivated by hand —
+        # refused instead, because guessing an image model into existence is
+        # how a route starts serving the wrong kind of endpoint.
+        mode = str(entry.get("mode", "chat")).lower()
+        kind = (
+            ModelKind.EMBEDDING
+            if mode == "embedding"
+            else ModelKind.CHAT
+        )
+
+        prices.append(
+            CataloguePrice(
+                model_id=str(model_id),
+                input_per_mtok=input_rate * scale,
+                output_per_mtok=output_rate * scale,
+                currency="USD",
+                cache_read_per_mtok=(
+                    cache_read * scale
+                    if (
+                        cache_read := _as_decimal(entry.get("cache_read_input_token_cost"))
+                    ) is not None
+                    else None
+                ),
+                context_window=(
+                    int(entry["max_input_tokens"])
+                    if entry.get("max_input_tokens")
+                    else (
+                        int(entry["max_tokens"]) if entry.get("max_tokens") else None
+                    )
+                ),
+                kind=kind,
+            )
+        )
+
+    return prices, unparsable
 
 
 def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:

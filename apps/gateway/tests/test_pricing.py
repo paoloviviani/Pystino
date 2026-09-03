@@ -11,7 +11,13 @@ from decimal import Decimal
 
 from conftest import Seeded
 from gateway.models import ModelDef, ModelPrice, PriceSource
-from gateway.pricing import CataloguePrice, import_prices, parse_catalogue
+from gateway.pricing import (
+    CataloguePrice,
+    import_prices,
+    parse_catalogue,
+    parse_litellm_catalogue,
+    parse_openrouter_catalogue,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -333,3 +339,114 @@ class TestImportPrices:
     async def test_empty_input_is_a_no_op(self, session: AsyncSession) -> None:
         report = await import_prices(session, [], billing_currency="EUR", dry_run=False)
         assert report.summary().startswith("0 price(s) written")
+
+
+class TestOpenRouterCatalogue:
+    """The live shape, verified against https://openrouter.ai/api/v1/models on
+    2026-09-03 (ADR research for getting the new providers' prices)."""
+
+    def entry(self, **overrides: object) -> dict[str, object]:
+        entry: dict[str, object] = {
+            "id": "openai/gpt-4o-2024-11-20",
+            "name": "OpenAI: GPT-4o (2024-11-20)",
+            "context_length": 128000,
+            "architecture": {
+                "input_modalities": ["text", "image"],
+                "output_modalities": ["text"],
+            },
+            "pricing": {
+                "prompt": "0.0000025",
+                "completion": "0.00001",
+                "input_cache_read": "0.00000125",
+            },
+        }
+        entry.update(overrides)
+        return entry
+
+    def test_per_token_strings_become_per_mtok_usd(self) -> None:
+        prices, unparsable = parse_openrouter_catalogue({"data": [self.entry()]})
+        assert unparsable == []
+        price = prices[0]
+        # 0.0000025 USD/token is 2.50 USD per million - OpenAI's own list
+        # price for this model, which is the sanity check that the conversion
+        # is the unit one and not something cleverer.
+        assert price.input_per_mtok == Decimal("2.5")
+        assert price.output_per_mtok == Decimal("10")
+        assert price.currency == "USD"
+
+    def test_cache_read_and_context_and_modalities_carry_through(self) -> None:
+        prices, _ = parse_openrouter_catalogue({"data": [self.entry()]})
+        price = prices[0]
+        assert price.cache_read_per_mtok == Decimal("1.25")
+        assert price.context_window == 128000
+        assert price.input_modalities == ("image", "text")
+
+    def test_a_free_model_imports_as_free(self) -> None:
+        entry = self.entry(
+            id="meta-llama/llama-3.1-8b-instruct:free",
+            pricing={"prompt": "0", "completion": "0"},
+        )
+        prices, _ = parse_openrouter_catalogue({"data": [entry]})
+        assert prices[0].input_per_mtok == 0
+
+    def test_a_non_text_model_is_named_not_silently_dropped(self) -> None:
+        # Image generators carry no token pricing at all; the report must name
+        # them, because a model that silently fails to import looks exactly
+        # like a free model.
+        entry = self.entry(id="google/gemini-flash-1.5", pricing={})
+        prices, unparsable = parse_openrouter_catalogue({"data": [entry]})
+        assert prices == []
+        assert unparsable == ["google/gemini-flash-1.5"]
+
+
+class TestLiteLLMCatalogue:
+    """The community price file (MIT): the source for the first-party APIs that
+    publish no pricing at all."""
+
+    def entry(self, **overrides: object) -> dict[str, object]:
+        entry: dict[str, object] = {
+            "input_cost_per_token": 3e-06,
+            "output_cost_per_token": 1.5e-05,
+            "cache_read_input_token_cost": 3e-07,
+            "max_tokens": 8192,
+            "mode": "chat",
+            "litellm_provider": "anthropic",
+        }
+        entry.update(overrides)
+        return entry
+
+    def test_per_token_costs_become_per_mtok(self) -> None:
+        payload = {"claude-sonnet-4-20250514": self.entry()}
+        prices, unparsable = parse_litellm_catalogue(payload, providers=["anthropic"])
+        assert unparsable == []
+        price = prices[0]
+        assert price.model_id == "claude-sonnet-4-20250514"
+        assert price.input_per_mtok == Decimal("3.0")
+        assert price.output_per_mtok == Decimal("15.0")
+        assert price.currency == "USD"
+        assert price.cache_read_per_mtok == Decimal("0.3")
+
+    def test_the_provider_tag_filters(self) -> None:
+        payload = {
+            "claude-sonnet-4": self.entry(),
+            "gpt-4o": self.entry(litellm_provider="openai"),
+        }
+        prices, _ = parse_litellm_catalogue(payload, providers=["anthropic"])
+        assert [price.model_id for price in prices] == ["claude-sonnet-4"]
+
+    def test_embedding_mode_maps_to_the_embedding_kind(self) -> None:
+        payload = {
+            "text-embedding-3-large": self.entry(
+                mode="embedding", output_cost_per_token=0, litellm_provider="openai"
+            ),
+        }
+        prices, _ = parse_litellm_catalogue(payload, providers=["openai"])
+        from gateway.models import ModelKind
+
+        assert prices[0].kind == ModelKind.EMBEDDING
+
+    def test_an_entry_without_prices_is_named(self) -> None:
+        payload = {"mystery-model": {"litellm_provider": "openai"}}
+        prices, unparsable = parse_litellm_catalogue(payload, providers=["openai"])
+        assert prices == []
+        assert unparsable == ["mystery-model"]
