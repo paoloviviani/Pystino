@@ -1,9 +1,9 @@
-# LLM Platform
+# Pystino
 
-A self-hosted LLM platform, built and run by its author at personal expense. The
-substance is an OpenAI-compatible **gateway** with per-user and per-group
-accounting, quotas and policy, plus the **console** that operates it. The chat
-application exists and runs but is early — it is not the deliverable.
+A self-hosted OpenAI-compatible **gateway** with per-user and per-group
+accounting, quotas and policy, plus the **console** that operates it. The name
+is *pistino* — Turin dialect for a nitpicker, the person who checks every last
+detail.
 
 One origin, one port: the gateway serves the `/v1` API surfaces, the management
 API, the console at `/console`, and the chat at `/chat`. Everything is published
