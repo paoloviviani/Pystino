@@ -2310,13 +2310,23 @@ async def set_oidc_policy(
     unknown = fields.get("unknown_user_policy")
     if unknown is not None and unknown not in ("refuse", "create_inactive"):
         raise BadRequestError("unknown_user_policy must be 'refuse' or 'create_inactive'.")
-    if unknown is not None and fields.get("auto_provision") is not False:
+    if unknown is not None:
         # Refused rather than stored-never-applied: a knob that does nothing
-        # because of another knob's value reads as a bug, not as a policy.
-        raise BadRequestError(
-            "unknown_user_policy only applies when automatic provisioning is "
-            "off. Set auto_provision to false, or drop the unknown-user policy."
+        # because of another knob's value reads as a bug, not as a policy. The
+        # check is against the policy that would be in force *after* this row
+        # — per-field saves are the normal case, so "the previous decision
+        # already turned provisioning off" is a valid state, not an error.
+        policy_in_force = getattr(request.app.state, "oidc_policy", None)
+        auto_after = (
+            fields["auto_provision"]
+            if "auto_provision" in fields
+            else (policy_in_force.policy.auto_provision if policy_in_force is not None else True)
         )
+        if auto_after:
+            raise BadRequestError(
+                "unknown_user_policy only applies when automatic provisioning "
+                "is off. Turn provisioning off, or drop the unknown-user policy."
+            )
 
     groups_claim = fields.get("groups_claim")
     if groups_claim is not None and not str(groups_claim).strip():
