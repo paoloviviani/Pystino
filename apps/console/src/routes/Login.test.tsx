@@ -28,11 +28,18 @@ function renderLogin(route = "/", next?: string) {
   );
 }
 
-const METHODS = (local: boolean, oidc: boolean) =>
-  new Response(JSON.stringify({ local, oidc }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
+const METHODS = (local: boolean, oidc: boolean, providers: string[] = []) =>
+  new Response(
+    JSON.stringify({
+      local,
+      oidc,
+      providers: providers.map((name) => ({ name, issuer: `https://${name}.test` })),
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    },
+  );
 
 let assign: ReturnType<typeof vi.fn>;
 
@@ -51,24 +58,27 @@ afterEach(() => {
 
 describe("Login", () => {
   it("auto-redirects when OIDC is the only method — the behaviour every deployment had before local auth", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => METHODS(false, true)));
+    vi.stubGlobal("fetch", vi.fn(async () => METHODS(false, true, ["keycloak"])));
     renderLogin();
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/auth/login?next=%2F"));
+    // One provider and no local form: straight there, naming it (ADR 0051).
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith("/auth/login?next=%2F&provider=keycloak"),
+    );
   });
 
   it("shows the password form when local is enabled, alongside an SSO link when both are on", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => METHODS(true, true)));
+    vi.stubGlobal("fetch", vi.fn(async () => METHODS(true, true, ["keycloak"])));
     renderLogin();
     await waitFor(() => expect(screen.getByLabelText("Email")).toBeInTheDocument());
     expect(screen.getByLabelText("Password")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Sign in with SSO" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in with keycloak" })).toBeInTheDocument();
   });
 
   it("hides the SSO link when local is the only method", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => METHODS(true, false)));
     renderLogin();
     await waitFor(() => expect(screen.getByLabelText("Email")).toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: "Sign in with SSO" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Sign in with/ })).not.toBeInTheDocument();
   });
 
   it("signs in and navigates to `next` rather than always to the overview", async () => {

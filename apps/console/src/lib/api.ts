@@ -97,15 +97,23 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
  * rule. The gateway validates the path and ignores anything that is not one on
  * its own origin, so this cannot become an open redirect.
  */
-export function login(next?: string): void {
+export function login(next?: string, provider?: string): void {
   const here = next ?? window.location.pathname + window.location.search;
-  window.location.assign(`/auth/login?next=${encodeURIComponent(here)}`);
+  const chosen = provider ? `&provider=${encodeURIComponent(provider)}` : "";
+  window.location.assign(`/auth/login?next=${encodeURIComponent(here)}${chosen}`);
+}
+
+/** Per-provider login, named for the button that calls it (ADR 0051). */
+export function loginWith(provider: string, next?: string): void {
+  login(next, provider);
 }
 
 /** Which sign-in methods the deployment offers (GET /auth/methods). */
 export interface AuthMethods {
   local: boolean;
   oidc: boolean;
+  /** One entry per enabled identity provider (ADR 0051): a button each. */
+  providers: { name: string; issuer: string }[];
 }
 
 /**

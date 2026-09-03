@@ -61,6 +61,8 @@ verified is marked as such in the ADR that depends on it.
 | [0048](0048-oidc-policy-configuration.md) | Users are created and deleted in the console; the OIDC identity policy is a runtime decision (amends 0011, 0022, 0043) |
 | [0049](0049-password-reset.md) | Self-service password reset by email, opt-in and environment-configured (amends 0043) |
 | [0050](0050-group-management.md) | Groups are created, deleted and given members in the console; manual groups only (bounds 0048) |
+| [0051](0051-settings-identity-and-email.md) | The Settings screen: identity providers (multiple) and the mail server as console decisions (supersedes 0048's connection boundary) |
+| [0052](0052-quota-notifications.md) | Quota notifications: the rule is the administrator's, the threshold is the user's |
 
 **0015, 0016 and 0041 — the chat frontend decisions — moved to the `chat`
 branch with the chat application itself** (A Vite SPA on `packages/ui` with

@@ -431,7 +431,6 @@ export interface RedactionPreview {
 export interface MyLimit {
   id: string;
   name: string;
-  /** "global", "group" or "user" — enough to say whose ceiling this is. */
   scope: string;
   metric: string;
   window_label: string;
@@ -441,6 +440,8 @@ export interface MyLimit {
    * as untouched because Valkey is down is worse than one drawn as unknown.
    */
   current_value: string | null;
+  /** The caller's own notification thresholds (ADR 0052). */
+  notification_thresholds?: number[];
 }
 
 /**
@@ -575,4 +576,73 @@ export interface GroupCreateInput {
 export interface PasswordResetEnabled {
   local: boolean;
   reset_available: boolean;
+}
+
+// -- Settings (ADR 0051) ------------------------------------------------------
+
+/** One configured identity provider. The client secret is write-only: a
+ * response never carries it, only the fact that one is stored. */
+export interface IdentityProvider {
+  id: string;
+  name: string;
+  issuer: string;
+  client_id: string;
+  has_client_secret: boolean;
+  scopes: string[];
+  groups_claim: string;
+  fetch_userinfo: boolean;
+  group_mappings: { idp: string; local: string }[];
+  is_enabled: boolean;
+  source: "console" | "environment";
+}
+
+export interface IdentityProviderInput {
+  name?: string;
+  issuer?: string;
+  client_id?: string;
+  client_secret?: string;
+  scopes?: string[];
+  groups_claim?: string;
+  fetch_userinfo?: boolean;
+  group_mappings?: { idp: string; local: string }[];
+  is_enabled?: boolean;
+}
+
+/** The SMTP configuration in force — the row's, or the environment's. */
+export interface EmailSettings {
+  host: string;
+  port: number;
+  username: string;
+  from_address: string;
+  has_password: boolean;
+  source: "console" | "environment";
+  enabled: boolean;
+}
+
+export interface EmailSettingsInput {
+  host: string;
+  port: number;
+  username?: string;
+  /** Write-only. Omitted means "keep the stored one". */
+  password?: string;
+  from_address: string;
+}
+
+export interface EmailTestResult {
+  ok: boolean;
+  detail: string;
+}
+
+/** The sign-in page's menu, from GET /auth/methods (ADR 0051). */
+export interface AuthMethods {
+  local: boolean;
+  oidc: boolean;
+  providers: { name: string; issuer: string }[];
+}
+
+// -- Quota notifications (ADR 0052) -------------------------------------------
+
+/** The caller's thresholds for one rule: percentages, arbitrary, user-owned. */
+export interface MyNotificationThresholdsInput {
+  thresholds: number[];
 }

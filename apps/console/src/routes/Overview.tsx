@@ -31,7 +31,15 @@ import {
   STATS,
 } from "../lib/layout";
 import { recentPeriods } from "../lib/periods";
-import { useDeleteKey, useMintKey, useMyKeys, useMyLimits, useMyReport, useRevokeKey } from "../lib/queries";
+import {
+  useDeleteKey,
+  useMintKey,
+  useMyKeys,
+  useMyLimits,
+  useMyReport,
+  useRevokeKey,
+  useSetNotificationThresholds,
+} from "../lib/queries";
 import type { ApiKey, Me, MintedApiKey, MyLimit, UsageReportRow } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 
@@ -298,6 +306,12 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
   // Absent is not zero. An unreachable counter store must not draw as an
   // untouched budget, so no bar is drawn at all rather than a guessed one.
   const used = rule.current_value === null ? null : Number(rule.current_value);
+  const thresholds = useSetNotificationThresholds();
+  const toast = useOptionalToast();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(
+    (rule.notification_thresholds ?? []).join(", "),
+  );
 
   return (
     <div className={QUOTA}>
@@ -323,6 +337,58 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
             )}{" "}
             · {rule.window_label}
           </p>
+          {editing ? (
+            <form
+              className="flex items-end gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                thresholds.mutate(
+                  {
+                    ruleId: rule.id,
+                    thresholds: value
+                      .split(",")
+                      .map((part) => Number(part.trim()))
+                      .filter((n) => Number.isInteger(n) && n >= 1 && n <= 100),
+                  },
+                  {
+                    onSuccess: () => {
+                      toast?.add({ title: "Notices saved", type: "success" });
+                      setEditing(false);
+                    },
+                    onError: () =>
+                      toast?.add({ title: "Could not save the notices", type: "error" }),
+                  },
+                );
+              }}
+            >
+              <input
+                className="w-40 rounded-md border border-line bg-surface px-2 py-1 text-sm"
+                value={value}
+                onChange={(event) => setValue(event.target.value)}
+                placeholder="e.g. 50, 80, 95"
+                aria-label={`Notice thresholds for ${rule.name}`}
+                autoFocus
+              />
+              <Button variant="ghost" onClick={() => setEditing(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" busy={thresholds.isPending}>
+                Save
+              </Button>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="cursor-pointer text-left text-xs text-ink-faint underline-offset-2 hover:text-ink-muted hover:underline"
+            >
+              {(rule.notification_thresholds ?? []).length > 0
+                ? `Email me at ${(
+                    rule.notification_thresholds ?? []
+                  ).join("%, ")}% — change`
+                : "Email me when this reaches…"}
+            </button>
+          )}
         </>
       )}
     </div>

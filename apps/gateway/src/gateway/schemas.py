@@ -415,6 +415,13 @@ class MyLimitResponse(BaseModel):
     window_label: str = ""
     limit_value: Money
     current_value: Money | None = None
+    #: The caller's own notification thresholds on this rule (ADR 0052).
+    notification_thresholds: list[int] = []
+
+
+class MyNotificationThresholdsRequest(BaseModel):
+    """Replace the caller's thresholds for one rule. Percentages 1-100."""
+    thresholds: list[int] = Field(default_factory=list)
 
 
 # -- administration ---------------------------------------------------------
@@ -706,6 +713,75 @@ class ModelAdminResponse(BaseModel):
     granted_to: list[str]
     # Users granted this model personally, over and above their groups.
     granted_to_users: list[str] = Field(default_factory=list)
+
+
+class IdentityProviderResponse(BaseModel):
+    """A provider row. The secret is never returned — only whether one is set."""
+
+    id: uuid.UUID
+    name: str
+    issuer: str
+    client_id: str
+    has_client_secret: bool = True
+    scopes: list[str]
+    groups_claim: str
+    fetch_userinfo: bool
+    group_mappings: list[OidcMappingRule]
+    is_enabled: bool
+    source: str
+
+
+class IdentityProviderCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]*$")
+    issuer: str = Field(min_length=8, max_length=512)
+    client_id: str = Field(min_length=1, max_length=255)
+    client_secret: str = Field(min_length=1, max_length=1024)
+    scopes: list[str] | None = None
+    groups_claim: str = Field(default="groups", min_length=1, max_length=255)
+    fetch_userinfo: bool = True
+    group_mappings: list[OidcMappingRule] = Field(default_factory=list)
+
+
+class IdentityProviderUpdateRequest(BaseModel):
+    """A provider edit. `client_secret` omitted means "keep the stored one"."""
+
+    issuer: str | None = Field(default=None, min_length=8, max_length=512)
+    client_id: str | None = Field(default=None, min_length=1, max_length=255)
+    client_secret: str | None = Field(default=None, min_length=1, max_length=1024)
+    scopes: list[str] | None = None
+    groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
+    fetch_userinfo: bool | None = None
+    group_mappings: list[OidcMappingRule] | None = None
+    is_enabled: bool | None = None
+
+
+class EmailSettingsResponse(BaseModel):
+    host: str
+    port: int
+    username: str
+    from_address: str
+    has_password: bool
+    source: str
+    enabled: bool
+
+
+class EmailSettingsUpdateRequest(BaseModel):
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(default=587, ge=1, le=65535)
+    username: str = Field(default="", max_length=255)
+    # Write-only. Omitted means "keep the stored one" — an edit that only
+    # touches the port must not have to re-type a password it never saw.
+    password: str | None = Field(default=None, min_length=1, max_length=1024)
+    from_address: str = Field(min_length=3, max_length=255)
+
+
+class EmailTestRequest(BaseModel):
+    to: str = Field(min_length=3, max_length=255)
+
+
+class EmailTestResponse(BaseModel):
+    ok: bool
+    detail: str
 
 
 class GroupCreateRequest(BaseModel):

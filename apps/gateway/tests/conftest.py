@@ -38,6 +38,7 @@ from gateway.models import (
     Base,
     Group,
     GroupModelAccess,
+    IdentityProvider,
     Membership,
     ModelDef,
     ModelPrice,
@@ -496,6 +497,54 @@ def bearer_auth(token: str) -> dict[str, str]:
     return {"authorization": f"Bearer {token}"}
 
 
+async def seed_identity_provider(
+    app: FastAPI,
+    session_factory: async_sessionmaker[AsyncSession],
+    signing_key: RSAKey,
+    *,
+    name: str = "default",
+    issuer: str = BEARER_ISSUER,
+) -> IdentityProvider:
+    """An identity provider row the bearer tests can authenticate against.
+
+    The client the registry would build is replaced with the stub (local
+    discovery and JWKS) by being placed in the registry's cache directly,
+    keyed to the origin the test transport uses. This is the new single
+    configuration path: ADR 0051 moved providers into rows, so tests seed
+    rows rather than stuffing ``app.state.oidc_client``.
+    """
+    from gateway.identity_registry import record_from_row
+
+    box: SecretBox = app.state.secrets
+    row = IdentityProvider(
+        name=name,
+        issuer=issuer,
+        client_id="llm-gateway",
+        client_secret_encrypted=box.encrypt("test-idp-secret"),
+        scopes=["openid", "profile", "email"],
+        is_enabled=True,
+    )
+
+    async with session_factory() as session:
+        session.add(row)
+        await session.commit()
+
+
+    record = record_from_row(row, box)
+    origin = "http://gateway"
+    # The audience is what switches /v1 bearer tokens on (ADR 0040) — the
+    # registry would inject it in client_for; the stub bypasses client_for, so
+    # it injects it itself.
+    settings: Settings = app.state.settings
+    stub_settings = record.as_oidc_settings(
+        f"{origin}/auth/callback/{name}", settings.oidc.access_token_audience
+    )
+    app.state.oidc_providers._clients[(row.id, row.updated_at, origin)] = StubOIDCClient(
+        stub_settings, signing_key
+    )
+    return row
+
+
 @pytest_asyncio.fixture
 async def bearer_app(app: FastAPI, signing_key: RSAKey) -> FastAPI:
     """The real app, configured to accept tokens for BEARER_AUDIENCE."""
@@ -507,5 +556,5 @@ async def bearer_app(app: FastAPI, signing_key: RSAKey) -> FastAPI:
         groups_claim="groups",
         access_token_audience=BEARER_AUDIENCE,
     )
-    app.state.oidc_client = StubOIDCClient(app_settings.oidc, signing_key)
+    await seed_identity_provider(app, app.state.session_factory, signing_key)
     return app

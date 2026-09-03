@@ -30,6 +30,7 @@ from typing import Any, Protocol, runtime_checkable
 from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from llmp_shared import EntitySpan, PlaceholderMap
+from pydantic import SecretStr
 from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,18 +47,28 @@ from gateway.deps import (
     SessionDep,
     SettingsDep,
 )
+from gateway.email_config import effective_smtp
 from gateway.errors import (
     BadRequestError,
     ContentBlockedError,
     GatewayError,
     UpstreamUnavailableError,
 )
+from gateway.identity_registry import (
+    list_providers as list_provider_records,
+)
+from gateway.identity_registry import (
+    record_from_row,
+)
+from gateway.mail import MailDeliveryError, send_mail_async
 from gateway.models import (
     ApiKey,
     BillingMode,
+    EmailSettings,
     Group,
     GroupModelAccess,
     GroupSource,
+    IdentityProvider,
     LimitMetric,
     LimitRule,
     LimitScope,
@@ -103,10 +114,17 @@ from gateway.schemas import (
     CatalogueDiscoveryResponse,
     CatalogueDriftRow,
     DiscoveredModel,
+    EmailSettingsResponse,
+    EmailSettingsUpdateRequest,
+    EmailTestRequest,
+    EmailTestResponse,
     GroupAdminResponse,
     GroupCreateRequest,
     GroupMemberAddRequest,
     GroupUsageRow,
+    IdentityProviderCreateRequest,
+    IdentityProviderResponse,
+    IdentityProviderUpdateRequest,
     LimitRuleCreateRequest,
     LimitRuleResetRequest,
     LimitRuleResponse,
@@ -2040,6 +2058,235 @@ async def get_oidc_policy_view(
 ) -> OidcPolicyResponse:
     """The identity policy in force, and the newest decision behind it."""
     return await _oidc_policy_response(request, session)
+
+
+# -- email configuration (ADR 0051) -------------------------------------------
+
+
+@router.get("/email", response_model=EmailSettingsResponse)
+async def get_email_settings(
+    admin: AdminUserDep, session: SessionDep, request: Request
+) -> EmailSettingsResponse:
+    """The mail configuration in force — the row's, or the environment's."""
+    effective = await effective_smtp(
+        session, request.app.state.settings, request.app.state.secrets
+    )
+    return EmailSettingsResponse(
+        host=effective.host,
+        port=effective.port,
+        username=effective.username,
+        from_address=effective.from_address,
+        has_password=bool(effective.password),
+        source=effective.source,
+        enabled=effective.enabled,
+    )
+
+
+@router.put("/email", response_model=EmailSettingsResponse)
+async def set_email_settings(
+    payload: EmailSettingsUpdateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+) -> EmailSettingsResponse:
+    """Save the mail configuration as the console's decision.
+
+    One row; the password is write-only, and omitted means "keep the stored
+    one" — an edit that only fixes a port must not have to re-type a password
+    it was never shown.
+    """
+    row = await session.get(EmailSettings, 1)
+    if row is None:
+        row = EmailSettings(id=1)
+        session.add(row)
+    row.smtp_host = payload.host.strip()
+    row.smtp_port = payload.port
+    row.smtp_username = payload.username.strip()
+    if payload.password is not None:
+        row.smtp_password_encrypted = request.app.state.secrets.encrypt(payload.password)
+    row.smtp_from = payload.from_address.strip()
+    row.updated_by = admin.id
+    await session.commit()
+    return await get_email_settings(admin, session, request)
+
+
+@router.post("/email/test", response_model=EmailTestResponse)
+async def test_email_settings(
+    payload: EmailTestRequest, admin: AdminUserDep, session: SessionDep, request: Request
+) -> EmailTestResponse:
+    """Send a test email with the configuration in force, and say what happened.
+
+    The point of this endpoint is the error: a wrong host, a refused TLS
+    handshake or a rejected login is exactly the thing an operator needs to see
+    *before* a person is sitting on a reset page wondering where the mail went.
+    The message says who asked for it, so a test mail is never mistaken for a
+    real one.
+    """
+    effective = await effective_smtp(
+        session, request.app.state.settings, request.app.state.secrets
+    )
+    if not effective.usable:
+        return EmailTestResponse(
+            ok=False,
+            detail="Email is not configured: set the SMTP host and a From address first.",
+        )
+    try:
+        await send_mail_async(
+            effective.__class__(
+                host=effective.host,
+                port=effective.port,
+                username=effective.username,
+                password=effective.password,
+                from_address=effective.from_address,
+                source=effective.source,
+                enabled=effective.enabled,
+            )
+            if False
+            else _smtp_like(effective),
+            payload.to.strip(),
+            "Pystino — test email",
+            "This is a test message from the Pystino gateway, sent from the "
+            "Settings screen. If you are reading it, the mail configuration "
+            "works.",
+        )
+    except MailDeliveryError as exc:
+        return EmailTestResponse(ok=False, detail=str(exc))
+    return EmailTestResponse(ok=True, detail="The message was handed to the mail server.")
+
+
+def _smtp_like(effective: Any) -> Any:
+    """Adapt the effective config to the shape send_mail_async reads."""
+    from gateway.config import PasswordResetSettings
+
+    return PasswordResetSettings(
+        enabled=True,
+        smtp_host=effective.host,
+        smtp_port=effective.port,
+        smtp_username=effective.username,
+        smtp_password=SecretStr(effective.password),
+        smtp_from=effective.from_address,
+    )
+
+
+# -- identity providers (ADR 0051) ---------------------------------------------
+
+
+def _idp_response(record: Any) -> IdentityProviderResponse:
+    return IdentityProviderResponse(
+        id=record.id,
+        name=record.name,
+        issuer=record.issuer,
+        client_id=record.client_id,
+        has_client_secret=bool(record.client_secret),
+        scopes=list(record.scopes),
+        groups_claim=record.groups_claim,
+        fetch_userinfo=record.fetch_userinfo,
+        group_mappings=[
+            OidcMappingRule(idp=idp, local=local) for idp, local in record.group_mappings.items()
+        ],
+        is_enabled=record.is_enabled,
+        source=record.source,
+    )
+
+
+@router.get("/identity-providers", response_model=list[IdentityProviderResponse])
+async def list_identity_providers(
+    admin: AdminUserDep, session: SessionDep, request: Request
+) -> list[IdentityProviderResponse]:
+    """Every configured identity provider, rows and any environment fallback."""
+    settings: Settings = request.app.state.settings
+    records = await list_provider_records(
+        session, settings, request.app.state.secrets, enabled_only=False
+    )
+    return [_idp_response(record) for record in records]
+
+
+@router.post(
+    "/identity-providers",
+    response_model=IdentityProviderResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_identity_provider(
+    payload: IdentityProviderCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+) -> IdentityProviderResponse:
+    """Add an identity provider. The secret is encrypted at rest (ADR 0027)."""
+    name = payload.name.strip()
+    issuer = payload.issuer.strip().rstrip("/")
+    clash = await session.execute(
+        select(IdentityProvider).where(
+            (IdentityProvider.name == name) | (IdentityProvider.issuer == issuer)
+        )
+    )
+    if clash.scalar_one_or_none() is not None:
+        raise BadRequestError(
+            "A provider with that name or issuer already exists.", code="provider_exists"
+        )
+    row = IdentityProvider(
+        name=name,
+        issuer=issuer,
+        client_id=payload.client_id.strip(),
+        client_secret_encrypted=request.app.state.secrets.encrypt(payload.client_secret),
+        scopes=payload.scopes or ["openid", "profile", "email"],
+        groups_claim=payload.groups_claim,
+        fetch_userinfo=payload.fetch_userinfo,
+        group_mappings=[[rule.idp, rule.local] for rule in payload.group_mappings],
+        is_enabled=True,
+        created_by=admin.id,
+    )
+    session.add(row)
+    await session.commit()
+    return _idp_response(record_from_row(row, request.app.state.secrets))
+
+
+@router.put("/identity-providers/{provider_id}", response_model=IdentityProviderResponse)
+async def update_identity_provider(
+    provider_id: uuid.UUID,
+    payload: IdentityProviderUpdateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+) -> IdentityProviderResponse:
+    """Edit a provider. A secret that is not re-typed stays the stored one."""
+    row = await session.get(IdentityProvider, provider_id)
+    if row is None:
+        raise NotFoundError(f"No identity provider with id {provider_id}.")
+    fields = payload.model_dump(exclude_unset=True)
+    if fields.get("issuer"):
+        row.issuer = fields["issuer"].strip().rstrip("/")
+    if fields.get("client_id"):
+        row.client_id = fields["client_id"].strip()
+    if fields.get("client_secret"):
+        row.client_secret_encrypted = request.app.state.secrets.encrypt(fields["client_secret"])
+    if "scopes" in fields and fields["scopes"] is not None:
+        row.scopes = fields["scopes"]
+    if fields.get("groups_claim"):
+        row.groups_claim = fields["groups_claim"]
+    if "fetch_userinfo" in fields and fields["fetch_userinfo"] is not None:
+        row.fetch_userinfo = fields["fetch_userinfo"]
+    if "group_mappings" in fields and fields["group_mappings"] is not None:
+        row.group_mappings = [[rule.idp, rule.local] for rule in fields["group_mappings"]]
+    if "is_enabled" in fields and fields["is_enabled"] is not None:
+        row.is_enabled = fields["is_enabled"]
+    await session.commit()
+    return _idp_response(record_from_row(row, request.app.state.secrets))
+
+
+@router.delete("/identity-providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_identity_provider(
+    provider_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> None:
+    row = await session.get(IdentityProvider, provider_id)
+    if row is None:
+        raise NotFoundError(f"No identity provider with id {provider_id}.")
+    # A provider whose rows are gone comes back only from the environment
+    # fallback — which exists only while the table is empty. Deleting the last
+    # row therefore removes OIDC sign-in entirely, and that is what the
+    # operator asked for.
+    await session.delete(row)
+    await session.commit()
 
 
 @router.put("/oidc/policy", response_model=OidcPolicyResponse)

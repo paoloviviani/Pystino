@@ -6,6 +6,7 @@ import type {
   Me,
   MintedApiKey,
   MyLimit,
+  MyNotificationThresholdsInput,
   MyPasswordChangeInput,
   UsageReport,
 } from "./types";
@@ -153,6 +154,18 @@ export function useChangeMyPassword() {
     mutationFn: (body: MyPasswordChangeInput) =>
       request<void>("/api/me/password", { method: "PUT", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: keys.me }),
+  });
+}
+
+export function useSetNotificationThresholds() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ruleId, thresholds }: MyNotificationThresholdsInput & { ruleId: string }) =>
+      request<void>(`/api/me/limits/${ruleId}/notifications`, {
+        method: "PUT",
+        body: { thresholds },
+      }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.myLimits }),
   });
 }
 

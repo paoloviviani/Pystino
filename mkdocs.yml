@@ -131,6 +131,8 @@ nav:
           - "0048 — OIDC policy as configuration": adr/0048-oidc-policy-configuration.md
           - "0049 — Password reset by email": adr/0049-password-reset.md
           - "0050 — Group management": adr/0050-group-management.md
+          - "0051 — Settings: identity providers and email": adr/0051-settings-identity-and-email.md
+          - "0052 — Quota notifications": adr/0052-quota-notifications.md
       - "Recorded now, built later":
           - "0017 — Desktop shell (Phase 4)": adr/0017-desktop-shell.md
           - "0018 — Vector store (Phase 3)": adr/0018-vector-store.md
