@@ -1,303 +1,319 @@
-# An MCP gateway: what LiteLLM built, and what this one should be
+# An MCP gateway: authentication, access, confidentiality
 
 - Date: 2026-09-04
-- Status: **proposal, nothing built**
+- Status: **proposal, nothing built, not approved to build**
 - Asked as: "I'm considering implementing an MCP gateway. Review how LiteLLM
-  implements it and propose a plan."
-- Reading order if you are short of time: §2 (the one thing we already have that
-  LiteLLM does not), §5 (the security rule that shapes the design), §7 (the
-  sequence).
+  implements it and propose a plan", then narrowed: *"I care about
+  authorization, confidentiality, access control"*, *"we need also passthrough
+  OIDC"*, *"we need to support exposing stdio mcps as endpoints too"*, and
+  finally the case in §5 — a service whose only way in is a browser flow.
+- **Billing and audit are out of scope by instruction.** §8 says what that
+  leaves undone, in two sentences, so nobody re-derives it as an oversight.
+- Everything attributed to LiteLLM or to the MCP specification was read at
+  source on 2026-09-04; URLs in §10. The first version of this document led with
+  accounting, which is what this repository is about but not what was asked;
+  this one is organised around the three properties above.
 
-Everything quoted from LiteLLM and from the MCP specification was read at source
-on 2026-09-04; the URLs are in §8. Where a claim is theirs and unverified by us,
-it says so.
+## 1. What it is, in one paragraph
 
-## 1. What LiteLLM built
+Pystino becomes the single MCP endpoint that clients point at — Claude Desktop,
+Claude Code, Cursor, an agent — instead of pointing at real MCP servers. The
+real servers are registered behind it. Clients never reach them directly and,
+in three of the four upstream modes in §4, never hold their credentials. The
+gateway decides **who is calling** (§3), **which tools they can see** (§6),
+**what credential reaches the upstream** (§4, §5), and **what leaves in the
+arguments** (§7).
 
-LiteLLM's MCP gateway is a **reverse proxy for MCP servers**, exactly analogous
-to what this gateway is for LLM endpoints: many upstream servers behind one
-address, one credential at the front, and a policy layer in the middle.
+## 2. What LiteLLM built, factually
 
-**The surface.** A JSON-RPC MCP endpoint at `/mcp`, plus `/{server_name}/mcp`
-for one named server, and a REST pair — `/mcp-rest/tools/list` and
-`/mcp-rest/tools/call` — for calling a tool without an LLM in the loop.
-Management lives at `GET /v1/mcp/server`. Three transports are documented:
-Streamable HTTP, SSE, and stdio.
+A reverse proxy for MCP servers, structurally what this gateway already is for
+LLM endpoints.
 
-**Registration** is config-file shaped, under `mcp_servers`:
+- **Surface.** JSON-RPC at `/mcp` and `/{server_name}/mcp`; a REST pair
+  `/mcp-rest/tools/list` and `/mcp-rest/tools/call` for calling a tool with no
+  LLM involved; management at `GET /v1/mcp/server`.
+- **Registration** in `config.yaml` under `mcp_servers`, with `server_name`,
+  `url`, `transport`, and `available_on_public_internet` to keep a server off
+  the public surface. Internal ranges are named with `mcp_internal_ip_ranges`.
+- **Namespacing.** Tools from every server are flattened into one list and
+  prefixed `{server_prefix}{separator}{upstream_tool_name}`, separator `-`, so
+  `github_mcp-search_issues`. A client narrows with an `x-mcp-servers` header or
+  by URL (`/github_mcp,zapier/mcp`).
+- **Permissions** attach to six subject kinds — keys, teams, end users, agents,
+  internal users, organisations — with server-level grants (`mcp_servers`,
+  `mcp_access_groups`, `allow_all_keys`), tool-level filtering
+  (`mcp_tool_permissions` as `Dict[server_id, List[tool_name]]`,
+  `allowed_tools`/`disallowed_tools` at registration), parameter-level
+  (`allowed_params` as `Dict[tool_name, List[param_names]]`), and a per-server
+  `mcp_rpm_limit`. Resolution is an intersection, "most-restrictive wins", with
+  the organisation as a ceiling and a `no-mcp-servers` sentinel to deny a key
+  everything.
+- **Transports:** Streamable HTTP, SSE, and stdio (see §9).
 
-```yaml
-mcp_servers:
-  - server_name: internal-db
-    url: http://db-mcp.internal:8000/mcp
-    transport: http
-    available_on_public_internet: false
-```
+Worth knowing as a thing to avoid rather than copy: their issue #29800 reports
+`serverInfo.name` hardcoded to `litellm-mcp-server` for every `/mcp/{alias}`
+endpoint — what happens when the aggregate identity is written once and each
+server's own identity is an afterthought.
 
-**Namespacing.** Tools from many servers are flattened into one list and
-prefixed: `{server_prefix}{separator}{upstream_tool_name}`, separator `-` by
-default, so `github_mcp-search_issues`. A client narrows the list with an
-`x-mcp-servers` header, or by URL (`/github_mcp,zapier/mcp`).
+## 3. Inbound: who is calling
 
-**Client auth** is their own proxy key — "the same auth (LiteLLM API key)" that
-protects the LLM routes, `Authorization: Bearer sk-...`.
+**Most of this already exists.** ADR 0040 put OIDC access tokens on `/v1`
+alongside API keys, gated by `GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE` — set the
+audience and tokens naming it are accepted. An MCP endpoint reuses that same
+principal resolver and inherits both credentials for nothing.
 
-**Upstream auth** is per server, with `api_key`, `bearer_token`, `basic`,
-`authorization`, `oauth2` and `aws_sigv4` supported, and an
-`upstream_token_header` for counterparties that want the credential somewhere
-other than `Authorization`. A client may also pass a credential through with
-`x-mcp-auth` or `x-mcp-{server_alias}-{header_name}`.
+Four inbound cases, in the order I would build them:
 
-**Permissions** are the most developed part, and worth studying rather than
-copying wholesale. They attach to six kinds of subject — keys, teams, end users,
-agents, internal users, organisations — with server-level grants
-(`mcp_servers`, `mcp_access_groups`, `allow_all_keys`), tool-level filtering
-(`mcp_tool_permissions` as `Dict[server_id, List[tool_name]]`,
-`allowed_tools`/`disallowed_tools` at registration), parameter-level control
-(`allowed_params` as `Dict[tool_name, List[param_names]]`), and a per-server
-`mcp_rpm_limit`. Resolution is an intersection — "most-restrictive wins" — with
-the organisation as a ceiling, and a `no-mcp-servers` sentinel to deny a key
-everything.
+1. **`gwk_` API key** in `Authorization: Bearer`. Works with any client that
+   lets you set a header. Revoking it cuts off LLM and tool access together,
+   which is the property worth having.
+2. **OIDC access token**, audience-gated, exactly as `/v1` accepts it today.
+   This is what makes a per-user linked credential (§5) possible without
+   inventing a second identity system.
+3. **OAuth, driven by the client** — the spec's own model. MCP servers **MUST**
+   implement RFC 9728 Protected Resource Metadata and return
+   `WWW-Authenticate` on a 401 pointing at it; clients **MUST** use it for
+   discovery. This is not politeness: Claude Desktop, Claude Code and Cursor
+   drive OAuth themselves and have nowhere to type a custom header, so without
+   it they cannot connect at all. LiteLLM's `dcr_bridge: true` exists for
+   exactly these clients. **Until this exists we are usable but not conformant
+   on authorization, and the doc should keep saying so.**
+4. **Nothing of ours** — `true_passthrough`, §4.
 
-**Cost** is a fixed price per call, configured per server:
+## 4. Upstream: what credential reaches the server
 
-```yaml
-mcp_servers:
-  zapier_server:
-    mcp_info:
-      mcp_server_cost_info:
-        default_cost_per_query: 0.01
-        tool_name_to_cost_per_query:
-          send_email: 0.05
-```
+Four modes, per registered server. LiteLLM has all of them and the matrix is
+worth copying wholesale.
 
-The figure lands in their log as `response_cost`. A `CustomMCPCostTracker` class
-can compute it from the response instead. Their documentation does not say what
-happens when no price is configured — which matters, and §4 takes a position on
-it.
+| Mode | Client sends | Upstream receives | Do we know the user? |
+|---|---|---|---|
+| **Static** | our key or OIDC token | the server's own stored secret | yes |
+| **Delegated** (`oauth_delegate`) | admission in one header, upstream token in `Authorization` | the client's upstream token, uninspected | yes |
+| **Exchanged** (`oauth2_token_exchange`) | our key or OIDC token | a token exchanged at the IdP for that server's audience | yes |
+| **Linked** (§5) | our key or OIDC token | that user's own credential, collected once via a browser | yes |
+| **Passthrough** (`true_passthrough`) | nothing of ours | the client's token verbatim | **no** |
 
-## 2. What we would be building that they are not
+Notes that matter:
 
-Their gateway routes and permits. This one **accounts**. That difference is the
-whole reason to write a plan rather than start typing.
+- **Static** is what we already do for LLM providers: one credential, encrypted
+  with `SecretBox` (ADR 0027), rotated centrally, never seen by users. It is
+  also a service account — every user gets the upstream's full authority — which
+  is why §5 exists.
+- **Exchanged** is RFC 8693 OAuth 2.0 Token Exchange: the caller's token is the
+  `subject_token`, posted to the IdP's exchange endpoint with the server's
+  `audience`, and only the exchanged token reaches the upstream. Config keys, in
+  LiteLLM's spelling: `auth_type: oauth2_token_exchange`,
+  `token_exchange_endpoint`, `client_id`, `client_secret`, `audience`, `scopes`.
+  Entra ID needs `token_exchange_profile: entra_obo`, which uses the RFC 7523
+  `jwt-bearer` grant with the caller's token as `assertion` instead.
+  **This is "passthrough OIDC" done properly**, and it is the mode that lets the
+  upstream do its own per-user authorization.
+- **Passthrough** relays blindly and, in LiteLLM's own words, *"spend tracking,
+  per-key rate limits, and any guardrail depending on `user_api_key_auth.user_id`
+  do not run"*, with the warning to *"only enable it on servers whose upstream
+  OAuth issuer you trust to enforce access control"*. It is a TCP relay with
+  OAuth discovery attached. Worth having; worth labelling in the console as the
+  mode where our access control does not apply.
 
-Three properties this repository already holds that an MCP feature must not
-break, each of which their design does not have to think about:
+**On the specification's prohibition, because the first version of this document
+overstated it.** The spec says an MCP server *"**MUST NOT** pass through the
+token it received from the MCP client"* to an upstream API. That forbids
+relaying a token *issued for us* — it does not forbid acting on behalf of a
+user. Exchange (RFC 8693) and a separately-obtained upstream token (delegated,
+linked) are the sanctioned ways, which is why the matrix above has four rows and
+not one.
 
-1. **A price is a decision with provenance.** `model_prices` is append-only and
-   effective-dated, and every row records who supplied the figure —
-   `manual`, `catalogue`, `community` (ADR 0053). A per-call tool price is a
-   price and belongs in that history, not in a config file that the next
-   deployment overwrites silently.
-2. **Nothing is billed from a table nobody maintains.** An unpriced model
-   reserves nothing and therefore has no cost ceiling at all;
-   `unpriced_model_count` on the provider listing is the standing warning. The
-   same rule has to hold for tools, and §4 says what it means.
-3. **The counterparty's figure and ours are both recorded, always.** `cost`,
-   `computed_cost`, `upstream_cost` and `cost_source` (ADR 0032) exist so that a
-   divergence is reconstructable. An MCP server that reports no cost is the
-   normal case, so `own_prices` is the only mode that applies — but the columns
-   should be populated on the same terms, not left null because "MCP is
-   different".
+## 5. The linked-account browser flow
 
-## 3. The metering shape, and the precedent that makes it cheap
+**The case:** a service whose own authentication is a browser flow, with no
+bearer token to hold and nothing to exchange. We need an endpoint that triggers
+that flow and ends with the gateway holding *that user's* credential.
 
-**A tool call is one unit, priced like an image.** This is not an analogy
-invented for the plan: `accounting/cost.py:383` already does
-`counts.images * price.per_image`, added by ADR 0030 for a surface that produces
-no tokens at all. The one place in the codebase permitted to multiply a count by
-a rate already knows how to charge per unit rather than per token.
+### The precondition that decides whether this is buildable
 
-So the arithmetic is a third case beside tokens and images — `per_call` on the
-price row — and `accounting/cost.py` stays the only file that computes money.
-Nothing in the plugin layer prices anything, per ADR 0032's load-bearing rule.
+Does the service's browser flow **end by redirecting to a URL we register**,
+handing us a code or a token?
 
-What that leaves to decide, and both answers are cheap:
+- **Yes** — even if they never say "OAuth" — then we are its client and
+  everything below works.
+- **No**, it ends with a session cookie in the user's own browser and hands
+  nothing to a third party — then the credential physically never reaches us.
+  The only remaining shapes are a headless browser driven with the user's
+  password, which should not be built, or letting the client talk to that
+  service directly and leaving it out of the gateway. **This is the open
+  question in §11 and it gates the work.**
 
-- **Do tool arguments and results count tokens?** They are text, and an
-  argument blob can be large. My proposal: **no token metering in the first
-  version**, and `total_tokens = 0` on the row. A count we cannot tie to a rate
-  anyone charges is a number that invites arithmetic nobody asked for. Revisit
-  only if a real MCP counterparty prices by size.
-- **What does `usage_source` say?** `measured` is wrong — nothing measured
-  tokens. Either a new member or reuse of `estimated` with the disclosure
-  reworded. This wants an ADR sentence, not a guess, because
-  `_disclosures` in `reporting.py` reads that field to tell an operator how much
-  of a total is inferred — and it already has one bug of exactly this kind (it
-  blames the provider for client disconnects).
+### The pieces
 
-## 4. Pricing, and the unpriced case
+**A per-user credential row**, keyed `(user_id, mcp_server_id)`, holding the
+encrypted credential, its expiry and its scopes. Distinct from the server's
+static secret and from an exchanged token: this one is collected once,
+interactively, and belongs to a person.
 
-Follow the model rule rather than LiteLLM's: **an unpriced tool is visible,
-callable only if an administrator says so, and reserves nothing.** LiteLLM's
-docs are silent here; silence resolves to "free", and a tool call that is
-actually billed by Zapier while our ledger says €0 is the exact failure the
-`own_prices_fallback` machinery exists to make impossible for models.
+**Two endpoints**, deliberately the same shape as the sign-in machinery that
+already exists:
 
-Concretely:
+- `GET /mcp/connect/{server}` — begins the upstream flow: PKCE, `state` in a
+  signed cookie, redirect to the service's authorize URL.
+- `GET /mcp/connect/{server}/callback` — the service lands here; verify `state`,
+  exchange the code using our registered client credentials, encrypt and store
+  against that user, render "connected, return to your client".
 
-- `per_call` lands on `model_prices` (or its MCP sibling — see §6) through the
-  same append-only, effective-dated write as any other price, stamped
-  `manual` since no MCP server publishes a price catalogue today.
-- An **unpriced tool count** per server, mirroring `unpriced_model_count`, on
-  the listing the console renders. The absence has to be visible, because the
-  absence is the risk.
-- Quota admission for an unpriced tool reserves nothing, which means **no cost
-  ceiling** — identical to an unpriced model, and worth stating in the console
-  in the same words rather than new ones.
+Copy `/auth/callback/{provider_name}` rather than reinventing it: namespaced per
+server so that, as that route's comment puts it, "two directories cannot deliver
+a code to the wrong flow", with `state` as an anti-CSRF nonce in a signed flow
+cookie.
 
-## 5. The security rule that shapes everything: no token passthrough
+**How the agent learns it must happen**, in this order:
 
-The MCP specification is explicit, and it is a **MUST NOT**:
+1. If the client declared the `elicitation` capability, send
+   `elicitation/create` with the connect URL in `message` and a boolean
+   acknowledgement field, then retry the call. Note the hard constraint: the
+   spec says *"Servers **MUST NOT** use elicitation to request sensitive
+   information"*, so this hands over a URL and takes a confirmation — it never
+   collects a credential.
+2. Otherwise, and this is the universal path since few clients implement
+   elicitation yet, **fail the tool call with an error whose text carries the
+   connect URL.** The human sees it in the transcript and clicks it.
 
-> "If the MCP server makes requests to upstream APIs, it may act as an OAuth
-> client to them. The access token used at the upstream API is a separate token,
-> issued by the upstream authorization server. The MCP server **MUST NOT** pass
-> through the token it received from the MCP client."
+**The link is one-time, short-lived and user-bound.** An agent will put that URL
+in a transcript, a log, possibly a shared channel. So: an opaque token, minutes
+long, bound to `(user, server, nonce)`, consumed on first use — whoever opens it
+is about to have a credential attached to their account.
 
-We are in exactly the position that rule is about: a client presents a
-credential to us, and we call a third party on their behalf. So:
+### Two consequences to accept before choosing this for a service
 
-- The caller's `gwk_` key authenticates them **to us** and is never forwarded.
-- Each MCP server carries its **own** credential, encrypted at rest with the
-  same `SecretBox` that holds provider keys (ADR 0027). This is the shape we
-  already have, so the compliant design is also the cheap one.
-- LiteLLM's `x-mcp-auth` — a client supplying its own upstream credential —
-  is the feature to **leave out of the first version**. It is useful, and it is
-  a confused-deputy hazard the spec devotes a section to. If it lands later it
-  needs its own ADR, and the reason it was deferred belongs in it.
+- **If the service issues no refresh token**, every expiry is another browser
+  trip. "Reconnect your account" twice a day is a product decision, not a bug.
+- **List the tools even when the user has not connected.** Hiding them teaches
+  the agent the capability does not exist, so it never triggers the flow. A
+  grant controls visibility; connection state controls success.
 
-**Client authentication.** Two options, and they are not exclusive:
+## 6. Access control: tools are an allowlist
 
-1. **Our bearer key on the MCP endpoint** (ADR 0040 already put bearer tokens on
-   `/v1`, ADR 0046 issues them locally). Works today with any client that lets
-   you set a header. This is what LiteLLM does, and it is the first version.
-2. **The spec's OAuth flow.** The spec says MCP servers **MUST** implement
-   RFC 9728 Protected Resource Metadata and return `WWW-Authenticate` on 401
-   pointing at it, and clients **MUST** use it for discovery. A client with a
-   built-in OAuth flow and no header field will not connect without this. We
-   have an OIDC stack and per-connection callbacks already, so it is reachable —
-   but it is a second ADR, not a paragraph in the first one, and the honest
-   framing is that **without it we are not spec-conformant on authorization**,
-   only usable.
+Copy the models rule, which is already the house pattern: *"a model is invisible
+to callers until a group is granted it."* So a tool is invisible until granted,
+and `tools/list` returns **only** what this caller may call.
 
-**Transport.** Streamable HTTP only, first version: one endpoint path serving
-both POST and GET, `Mcp-Session-Id` echoed on every subsequent request,
-`MCP-Protocol-Version` validated (400 on unsupported), and the `Origin` header
-validated — the spec calls out DNS rebinding by name. stdio is a client-side
-transport for subprocess servers and is not something a hosted gateway serves;
-supporting stdio *upstream* (we launch a subprocess) is a separate question and
-my proposal is not to, because a subprocess per session inside the gateway
-container is a resource model this deployment has no answer for.
+That is a security property, not a tidiness one: an agent cannot attempt what it
+cannot see, and a prompt injection cannot name a tool that was never in the
+list. Refusing at call time instead would still leak the inventory.
 
-Three things we get for free and should not re-solve: Caddy already streams with
-`flush_interval -1` for every `/v1` surface, our SSE pipeline exists, and
-`FORWARDED_ALLOW_IPS` is already set so forwarded headers are believed (ADR
-0035).
+- Grants per server **and** per tool within a server, union of group and user
+  grants, as `access.py` already computes for models.
+- **Separate state-changing tools from read-only ones.** "Search Jira" and
+  "close a ticket" should not arrive on the same grant. This wants a flag per
+  tool, set at registration and re-checked when the upstream's tool list
+  changes.
+- Use the **models** precedence rule, not the other two this codebase has:
+  quotas are *all rules must pass*, redaction is *any applicable scope requiring
+  it wins*, model access is *granted or invisible*. A tool is a capability, so
+  it is the third.
 
-## 6. Where it goes in the data model
+A tool list is not static — servers add and rename tools. So a newly appeared
+tool must default to **not granted**, and the console needs to show that a
+server is offering something nobody has approved. The provider-catalogue drift
+warning is the shape to copy.
 
-**A new table, not `providers` with a third kind.** `providers.kind` already
-distinguishes `provider` from `router` (ADR 0032), and a third value is
-tempting, but the fields do not overlap enough: an MCP server has a transport, a
-session, a tool list that changes under it, and no notion of a served model. The
-cost of a shared table is that every provider screen and every provider plugin
-grows a branch for a thing that is not an LLM endpoint.
+## 7. Confidentiality: what leaves in the arguments
 
-What to reuse instead, deliberately:
-
-| Concern | Reuse |
-|---|---|
-| Credential at rest | `SecretBox`, as `providers.api_key_encrypted` does |
-| Access | the **allowlist** shape: a tool is invisible until a group or user is granted it, union of the two, as `access.py` does for models |
-| Prices | append-only + effective-dated + `PriceSource`, as `model_prices` does |
-| Listing | `pagination.py`'s envelope, like every other management route |
-| Vendor quirks | a plugin per auth scheme, returning facts and never money |
-
-**Tool naming.** Copy LiteLLM's prefix, because a flattened list needs it and
-their separator choice is already what clients see: `{server}-{tool}`. Note
-their live bug as a thing to avoid — issue #29800 reports `serverInfo.name`
-hardcoded to `litellm-mcp-server` for every `/mcp/{alias}` endpoint, which is
-what happens when the aggregate identity is written once and the per-server
-identity is an afterthought.
-
-**Access precedence.** Use the models rule (allowlist, union of group and user
-grants), **not** the quota rule and **not** the redaction rule. All three exist
-here and they differ on purpose: quotas are *all rules must pass*, redaction is
-*any applicable scope requiring it wins*, and model access is *granted or
-invisible*. A tool is a capability, so it is the third.
-
-## 7. Redaction is the part that will bite
-
-Tool arguments are prompt-shaped text sent to a third party. Everything ADR 0037
-established about prompts applies to them, and the machinery is scoped by
+Tool arguments are user-written text going to a third party, which is what
+prompts are, so ADR 0037's machinery applies to them. Redaction scopes today are
 provider, model, group, user and API key (ADR 0038) — none of which name an MCP
-server.
-
-So an MCP gateway needs `RedactionScope.MCP_SERVER`, and the request path needs
-the detect-and-substitute step applied to **arguments on the way out** and the
-restore step applied to **results on the way back**. The `_metered` pipeline
-already sequences that for five surfaces; this is a sixth, and the honest
-estimate is that it is the largest single piece of work in the plan.
+server, so this needs `RedactionScope.MCP_SERVER`.
 
 Two hazards specific to tools:
 
-- **A tool result is not assistant text.** It is structured content, often JSON.
-  The restore step walks assistant-text fields today
-  (`protocols.py:rewrite_whole`); for MCP it has to walk a content array of
-  typed blocks. That is a new reader in `protocols.py`, which is the right home
-  — it is exactly "where the interesting fields live in a frame".
-- **Placeholders in an argument may break the tool.** A redacted email address
-  passed to `send_email` is not a smaller privacy problem, it is a failed call.
-  The per-entity `block` mode exists for values whose presence is the incident;
-  for tools, `block` may be the *right default on some arguments*, and that is a
-  policy decision an operator must be able to make per tool. First version:
-  the catch-all rule applies as it does everywhere else, and this is recorded as
-  a known sharp edge rather than solved.
+- **A tool result is not assistant text.** It is structured, typed content
+  blocks, often JSON. The restore step walks assistant-text fields today
+  (`protocols.py:rewrite_whole`); MCP needs a new reader there — which is the
+  right home, since that file's job is "where the interesting fields live in a
+  frame".
+- **A placeholder in an argument may break the tool.** A redacted address passed
+  to `send_email` is not a smaller privacy problem, it is a failed call. The
+  per-entity `block` mode may be the right default for some arguments, which
+  makes this a per-tool policy decision an operator has to be able to make. The
+  first version applies the catch-all rule like everywhere else and records this
+  as a known sharp edge.
 
-## 8. Sequence, and what each step buys
+## 8. Billing and audit: deliberately out of scope
 
-1. **The transport and one server, no policy.** Streamable HTTP at
-   `/mcp`, our bearer key, one registered server, tools listed and callable,
-   nothing billed. Buys: the protocol is right, verified against a real client.
-2. **The ledger row.** A tool call writes a `UsageRecord` with `per_call` cost,
-   zero tokens, and its own `cost_source`. Buys: the thing that makes this our
-   gateway rather than a proxy. Needs tests specifically, per ground rule 3.
-3. **Access and the console.** Registration screen, tool allowlist, grants,
-   unpriced-tool warning. Buys: an administrator can run it.
-4. **Quotas.** Admission on cost, which mostly falls out of step 2 if the row is
-   right.
-5. **Redaction.** The new scope, the argument path, the typed-content restorer.
-6. **Later, each with its own ADR:** RFC 9728 + OAuth discovery for clients that
-   need it; `x-mcp-auth` client-supplied upstream credentials; per-tool
-   parameter allowlists; stdio upstream.
+Not wanted, and cheap to add later if that changes: a tool call is one unit, and
+`accounting/cost.py:383` already multiplies an image count by `per_image` for a
+surface with no tokens, so a `per_call` rate would be a third case in the one
+file allowed to compute money. Nothing else in the plan depends on it.
 
-Steps 1–2 are the ones worth doing before deciding whether the rest is wanted:
-they answer "does this deployment want to be in the MCP path at all" with a
-working thing rather than an argument.
+## 9. stdio servers: where they run
 
-## 9. What this plan does not do
+**In LiteLLM, inside the proxy's own container.** It spawns the subprocess and
+manages its lifecycle:
 
-- **No agent/team model.** LiteLLM permits on six subject kinds including agents
-  and organisations. We have users, groups and keys, and adding subject kinds to
-  serve MCP would be the tail wagging the dog.
-- **No `mcp_rpm_limit`.** Rate limiting per server is a real need and we have no
-  request-rate quota metric at all today — only cost and tokens. It is a quota
-  feature that happens to be wanted here, so it belongs in the quota engine on
-  its own merits, not bolted to MCP.
-- **No claim of spec conformance on authorization** until §5's option 2 exists.
-- **No stdio, no client-supplied upstream credentials, no parameter filtering**
-  in the first version.
+```yaml
+mcp_servers:
+  circleci_mcp:
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@circleci/mcp-server-circleci"]
+    env:
+      CIRCLECI_TOKEN: "your-circleci-token"
+```
+
+It can also map request headers into the child's environment with
+`${X-HEADER_NAME}` — `X-GITHUB_PERSONAL_ACCESS_TOKEN` becoming
+`GITHUB_PERSONAL_ACCESS_TOKEN` in the process.
+
+**I would not run them in the gateway container**, for one specific reason
+rather than taste: that container holds the PostgreSQL credentials and the
+`SecretBox` key that decrypts every stored provider credential. `npx -y
+@vendor/thing` there is third-party code, fetched from a registry at start,
+running with the gateway's filesystem, network position and secrets. On the
+smaller development host it is also 3 GB of RAM shared with PostgreSQL, Valkey
+and Presidio.
+
+**Proposed shape:** a separate `mcp-runner` service in the compose stack — no
+gateway secrets in its environment, its own memory and CPU limits, reachable
+only on the compose network — with the gateway speaking to it over HTTP and the
+runner owning the stdio subprocesses. One image, one place to reason about what
+third-party code can touch.
+
+**The isolation question to settle inside the runner**, because it is a
+confidentiality bug if got wrong: environment is per *process*, so a long-lived
+subprocess shared between callers gives the second caller the first caller's
+token in its environment. Per-caller credentials therefore require a process per
+caller or per session, with a lifecycle and a cap on concurrent processes.
+LiteLLM's documentation does not say which they do; their code would have to be
+read before trusting either answer.
 
 ## 10. Sources, read 2026-09-04
 
 - LiteLLM: [MCP deployment](https://docs.litellm.ai/docs/mcp_deployment),
-  [MCP overview](https://docs.litellm.ai/docs/mcp),
+  [overview](https://docs.litellm.ai/docs/mcp),
   [permission management](https://docs.litellm.ai/docs/mcp_control),
+  [OAuth passthrough](https://docs.litellm.ai/docs/mcp_oauth_passthrough),
+  [on-behalf-of auth](https://docs.litellm.ai/docs/mcp_obo_auth),
   [cost tracking](https://docs.litellm.ai/docs/mcp_cost),
   [REST API](https://docs.litellm.ai/docs/mcp_rest_api),
-  and issue [#29800](https://github.com/BerriAI/litellm/issues/29800) for the
-  `serverInfo.name` bug.
+  issue [#29800](https://github.com/BerriAI/litellm/issues/29800).
 - MCP specification 2025-06-18:
   [transports](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports),
-  [authorization](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization).
+  [authorization](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization),
+  [elicitation](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation).
+- Ours: [ADR 0040](adr/0040-bearer-tokens-on-v1.md) (OIDC access tokens on
+  `/v1`), [ADR 0027](adr/0027-inference-providers.md) (credentials encrypted at
+  rest), [ADR 0037](adr/0037-redaction-policy.md) and
+  [ADR 0038](adr/0038-scoped-redaction.md) (redaction policy and scopes),
+  [ADR 0051](adr/0051-settings-identity-and-email.md) (per-connection OIDC
+  callbacks, the shape §5 copies).
+
+## 11. Open questions, in the order they block work
+
+1. **Does the browser-only service's flow redirect back to a URL we register,
+   with a code or token?** §5 is buildable if yes and mostly not if no. Nothing
+   else in §5 matters until this is answered.
+2. **Which inbound credentials must work on day one?** If Claude Desktop or
+   Cursor are targets, RFC 9728 discovery (§3.3) is not optional and is the
+   largest single piece of the authentication work.
+3. **Per-caller stdio processes, or shared?** Decides the runner's design and,
+   if got wrong, leaks one user's credential into another's process (§9).
+4. **Does a state-changing tool need approval per call**, or is the grant the
+   whole control (§6)?
