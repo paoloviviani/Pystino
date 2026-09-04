@@ -1,10 +1,10 @@
 /**
  * The way into administration.
  *
- * A landing page rather than a redirect to the first section, because the six
+ * A landing page rather than a redirect to the first section, because the eight
  * screens under here are not a sequence and the first of them is not more
  * important than the rest. Sending somebody straight to Usage would make the
- * other five feel like sub-pages of a report.
+ * other seven feel like sub-pages of a report.
  *
  * It also gives the section a shape: each card says what the screen decides,
  * not what it is called. "Models" is a noun; "what exists, and what it costs"
@@ -23,12 +23,11 @@ interface Section {
   description: string;
 }
 
+// Same order as the header's admin nav (components/Shell.tsx), and Settings is
+// last in both. Two orderings of one set of screens is a small thing that makes
+// a section feel arbitrary — and Settings led here while coming last there,
+// which is the one position that reads as "start with this".
 const ADMIN_SECTIONS: Section[] = [
-  {
-    to: "/admin/settings",
-    title: "Settings",
-    description: "The mail server, the identity providers, and who may become a user.",
-  },
   {
     to: "/admin/reports",
     title: "Usage",
@@ -63,6 +62,11 @@ const ADMIN_SECTIONS: Section[] = [
     to: "/admin/groups",
     title: "Groups",
     description: "Who belongs together, and what each group may use.",
+  },
+  {
+    to: "/admin/settings",
+    title: "Settings",
+    description: "The mail server, the identity providers, and who may become a user.",
   },
 ];
 
