@@ -1403,6 +1403,10 @@ class DiscoveredModel(BaseModel):
 
 
 class CatalogueDriftRow(BaseModel):
+    # Carried so the console can link straight to the model. The drift that
+    # matters is "we serve this and the provider does not offer it", and the only
+    # useful next click is the screen where it can be repointed or deactivated.
+    id: uuid.UUID
     name: str
     upstream_model: str
     is_active: bool

@@ -88,7 +88,7 @@ const DISCOVERY: CatalogueDiscovery = {
   ],
   catalogued: [],
   missing_upstream: [
-    { name: "retired-model", upstream_model: "provider/retired", is_active: true },
+    { id: "m-retired", name: "retired-model", upstream_model: "provider/retired", is_active: true },
   ],
   unparsable: [],
 };
@@ -406,7 +406,60 @@ describe("AdminModels", () => {
     await waitFor(() =>
       expect(screen.getByText(/no longer offered upstream/i)).toBeInTheDocument(),
     );
-    expect(screen.getByText(/retired-model/)).toBeInTheDocument();
+    // Both halves, in the direction that says which is which. "retired-model
+    // (provider/retired)" reads as one model with two names; the point is that
+    // ours asks for an id the provider does not have.
+    const warning = screen.getByText(/asks this provider for/i);
+    expect(warning).toHaveTextContent("retired-model");
+    expect(warning).toHaveTextContent("provider/retired");
+    // And it links to the model, which is where it gets repointed or retired.
+    expect(screen.getByRole("link", { name: "retired-model" })).toHaveAttribute(
+      "href",
+      "/admin/models/m-retired",
+    );
+  });
+
+  it("says when a dropped model is already deactivated", async () => {
+    // The urgency differs: a deactivated model cannot be called, so this is a
+    // tidy-up rather than a request waiting to fail.
+    const user = userEvent.setup();
+    const discovery: CatalogueDiscovery = {
+      ...DISCOVERY,
+      missing_upstream: [
+        { id: "m-off", name: "old-model", upstream_model: "provider/gone", is_active: false },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/api/admin/providers"))
+          return jsonResponse([
+            {
+              id: "pr1",
+              name: "acme",
+              description: null,
+              base_url: "https://acme.test/v1",
+              api_key_hint: "sk-a…3456",
+              has_api_key: true,
+              extra_headers: {},
+              is_active: true,
+              model_count: 1,
+              created_at: "2026-08-01T10:00:00Z",
+              updated_at: "2026-08-01T10:00:00Z",
+            },
+          ]);
+        if (url.includes("/models/discover")) return jsonResponse(discovery);
+        if (url.includes("/api/admin/models")) return jsonResponse([model()]);
+        return jsonResponse([]);
+      }),
+    );
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+
+    expect(await screen.findByText(/deactivated, so nothing can call it/i)).toBeInTheDocument();
   });
 
   it("imports a model priced in another currency", async () => {

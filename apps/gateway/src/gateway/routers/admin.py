@@ -1012,7 +1012,10 @@ async def discover_models(
     missing: list[CatalogueDriftRow] = []
     for model in ours:
         row = CatalogueDriftRow(
-            name=model.name, upstream_model=model.upstream_model, is_active=model.is_active
+            id=model.id,
+            name=model.name,
+            upstream_model=model.upstream_model,
+            is_active=model.is_active,
         )
         (catalogued if model.upstream_model in offered else missing).append(row)
 

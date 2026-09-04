@@ -221,6 +221,8 @@ export interface DiscoveredModel {
 }
 
 export interface CatalogueDriftRow {
+  /** So the drift warning can link to the model it is about. */
+  id: string;
   name: string;
   upstream_model: string;
   is_active: boolean;
