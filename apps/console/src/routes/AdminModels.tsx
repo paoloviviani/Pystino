@@ -558,6 +558,10 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
       header: "Capabilities",
       // Shown before importing, because "does this one do tool calling" and
       // "can it read an image" are the questions asked at exactly this moment.
+      // Dropped on a handset all the same: this dialog is about adopting a
+      // model *at a price*, and keeping every column meant the price scrolled
+      // off the right-hand edge — the one figure the screen exists to show.
+      hideBelow: "md",
       render: (row) => {
         const shown = [
           ...(row.kind !== "chat" ? [row.kind] : []),
@@ -579,6 +583,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
       key: "context",
       header: "Context",
       numeric: true,
+      hideBelow: "sm",
       render: (row) =>
         row.context_window ? (
           row.context_window.toLocaleString()
@@ -662,11 +667,14 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
 
       {/* Off by default: a provider's own catalogue is the authority where one
           exists, and this is only needed for the APIs that publish nothing.
-          Ticking it never overwrites a price the provider published. */}
-      <label className="flex cursor-pointer items-start gap-2">
+          Ticking it never overwrites a price the provider published, and each
+          filled row is badged `community` — both facts the screen shows by
+          doing rather than by explaining. The first version said all of that in
+          three lines of prose above the list, on a dialog that has to fit a
+          phone: the rationale belongs here, in the comment. */}
+      <label className="flex cursor-pointer items-baseline gap-2">
         <input
           type="checkbox"
-          className="mt-1"
           checked={fillMissing}
           onChange={(event) => {
             setFillMissing(event.target.checked);
@@ -674,12 +682,8 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           }}
         />
         <span>
-          Fill missing prices from the community catalogue (LiteLLM)
-          <span className="mt-1 block text-sm text-ink-muted">
-            For providers that publish model lists but no prices — OpenAI,
-            Anthropic, Mistral, Nebius. Prices the provider does publish are
-            never replaced, and each row below says which source it came from.
-          </span>
+          Fill missing prices from LiteLLM
+          <span className={`${MUTED} ml-1 text-sm`}>(community)</span>
         </span>
       </label>
 
@@ -714,17 +718,22 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
               These fail only when someone calls them. */}
           {discovery.data.missing_upstream.length > 0 && (
             <Notice tone="warn" title="Served here, no longer offered upstream">
-              {/* Which of ours points where, said in that order. It read
+              {/* Ours on the left, the id it asks for on the right. It read
                   "demo-model (gpt-4o-mini)", which looks like one model with
                   two names rather than one of ours aimed at an id the provider
                   does not have — and the id is the half you have to fix. The
-                  name links to the model, because repointing or deactivating it
-                  is the only useful next step. */}
+                  arrow carries that direction in the space a sentence wanted
+                  two lines for; the notice's own title already says what the
+                  problem is, so the row does not repeat it. */}
               {discovery.data.missing_upstream.map((row) => (
-                <div key={row.id}>
-                  <Link to={`/admin/models/${row.id}`}>{row.name}</Link> asks this provider for{" "}
-                  <code className={CODE}>{row.upstream_model}</code>, which it no longer offers
-                  {row.is_active ? "" : " (this model is deactivated, so nothing can call it)"}.
+                <div key={row.id} className="flex flex-wrap items-baseline gap-x-2">
+                  <Link to={`/admin/models/${row.id}`}>{row.name}</Link>
+                  <span aria-hidden>→</span>
+                  <code className={CODE}>{row.upstream_model}</code>
+                  {/* A deactivated model cannot be called, so this row is a
+                      tidy-up rather than a request waiting to fail. */}
+                  {!row.is_active && <Badge>inactive</Badge>}
+                  <span className="sr-only">is no longer offered by this provider</span>
                 </div>
               ))}
             </Notice>
