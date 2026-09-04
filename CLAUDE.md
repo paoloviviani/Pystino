@@ -388,3 +388,19 @@ Known open items, none of them blocking:
 - Deferred by the user: per-provider default body params (`eu_native`,
   `allow_zero_data_retention`), image editing and variations, per-size image
   pricing, reranking.
+- **Usage reporting on `/v1` is deferred: passing the provider's `usage` object
+  through is enough for now** (asked and answered 2026-09-04). What that leaves
+  undone, so nobody re-derives it: there are no `x-ratelimit-*` headers (only
+  `retry-after` on a quota refusal), no `/v1/usage` and no credits or balance
+  endpoint — "balance" is not a concept here, since quotas are ceilings with
+  counters rather than a prepaid sum. Every spend and quota figure is therefore
+  reachable only under `/api` behind a **session cookie**
+  (`get_management_user`), so a program holding a `gwk_` key cannot read its own
+  usage and learns the ceiling by being refused. Two things to settle before
+  building it, whenever it comes back: quotas are cost- *and* token-based across
+  five scopes where all rules must pass, so "remaining" is the minimum over
+  every applicable rule and cost has no standard header at all — a header that
+  looks like OpenAI's and means something subtly different is worse than none;
+  and OpenAI's costs response has no field for "our arithmetic versus the
+  counterparty's", so a strictly-standard export flattens `cost_source` and
+  `usage_source`, which is the distinction this gateway exists to keep.
