@@ -409,14 +409,12 @@ describe("AdminModels", () => {
     // Both halves, in the direction that says which is which. "retired-model
     // (provider/retired)" reads as one model with two names; the point is that
     // ours asks for an id the provider does not have.
-    const warning = screen.getByText(/asks this provider for/i);
-    expect(warning).toHaveTextContent("retired-model");
-    expect(warning).toHaveTextContent("provider/retired");
+    const ours = screen.getByRole("link", { name: "retired-model" });
     // And it links to the model, which is where it gets repointed or retired.
-    expect(screen.getByRole("link", { name: "retired-model" })).toHaveAttribute(
-      "href",
-      "/admin/models/m-retired",
-    );
+    expect(ours).toHaveAttribute("href", "/admin/models/m-retired");
+    expect(ours.parentElement).toHaveTextContent("provider/retired");
+    // The direction is carried by the arrow, so the row itself stays one line.
+    expect(ours.parentElement).toHaveTextContent("→");
   });
 
   it("says when a dropped model is already deactivated", async () => {
@@ -459,7 +457,7 @@ describe("AdminModels", () => {
     await user.click(screen.getByRole("button", { name: "Discover" }));
     await openCatalogue(user);
 
-    expect(await screen.findByText(/deactivated, so nothing can call it/i)).toBeInTheDocument();
+    expect(await screen.findByText("inactive")).toBeInTheDocument();
   });
 
   it("imports a model priced in another currency", async () => {
