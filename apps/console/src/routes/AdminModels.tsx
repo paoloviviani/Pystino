@@ -714,9 +714,17 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
               These fail only when someone calls them. */}
           {discovery.data.missing_upstream.length > 0 && (
             <Notice tone="warn" title="Served here, no longer offered upstream">
+              {/* Which of ours points where, said in that order. It read
+                  "demo-model (gpt-4o-mini)", which looks like one model with
+                  two names rather than one of ours aimed at an id the provider
+                  does not have — and the id is the half you have to fix. The
+                  name links to the model, because repointing or deactivating it
+                  is the only useful next step. */}
               {discovery.data.missing_upstream.map((row) => (
-                <div key={row.name}>
-                  {row.name} ({row.upstream_model})
+                <div key={row.id}>
+                  <Link to={`/admin/models/${row.id}`}>{row.name}</Link> asks this provider for{" "}
+                  <code className={CODE}>{row.upstream_model}</code>, which it no longer offers
+                  {row.is_active ? "" : " (this model is deactivated, so nothing can call it)"}.
                 </div>
               ))}
             </Notice>
