@@ -85,6 +85,7 @@ nav:
       - "Phase 2 — redaction and the console": phase-2-plan.md
       - "Redaction scoping — design": redaction-scoping-design.md
       - "Redaction scoping — plan": redaction-scoping-plan.md
+      - "MCP gateway — proposal": mcp-gateway-plan.md
   - Design decisions:
       - adr/README.md
       - Foundational:
