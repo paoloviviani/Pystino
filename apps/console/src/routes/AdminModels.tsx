@@ -32,7 +32,7 @@ import {
   useProviders,
   useUpdateModel,
 } from "../lib/admin";
-import { CHIPS, CODE, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
+import { CHIPS, CODE, FORM, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
 import type { AdminModel, DiscoveredModel, ModelKind } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
@@ -308,21 +308,27 @@ function DeleteModelDialog({ model, onClose }: { model: AdminModel | null; onClo
         </>
       }
     >
-      {del.error ? (
-        <Notice tone="danger">
-          {del.error instanceof Error ? del.error.message : "Unknown error."}
-        </Notice>
-      ) : null}
-      <p>
-        Removed from the catalogue and from <code className={CODE}>/v1/models</code>; its
-        prices and access grants go with it. Callers asking for{" "}
-        <code className={CODE}>{model?.name}</code> get "model not found" from the next
-        request on. This cannot be undone.
-      </p>
-      <p className={MUTED}>
-        Recorded spend is unaffected: past usage keeps the model's name and stays attributed to
-        the people and groups that ran it.
-      </p>
+      {/* Every dialog on every other screen stacks its content with FORM's
+          rhythm. The three in this file did not, so their blocks sat flush
+          against one another — on the discovery dialog a select, a checkbox and
+          a warning read as one undifferentiated column. */}
+      <div className={FORM}>
+        {del.error ? (
+          <Notice tone="danger">
+            {del.error instanceof Error ? del.error.message : "Unknown error."}
+          </Notice>
+        ) : null}
+        <p>
+          Removed from the catalogue and from <code className={CODE}>/v1/models</code>; its
+          prices and access grants go with it. Callers asking for{" "}
+          <code className={CODE}>{model?.name}</code> get "model not found" from the next
+          request on. This cannot be undone.
+        </p>
+        <p className={MUTED}>
+          Recorded spend is unaffected: past usage keeps the model's name and stays attributed to
+          the people and groups that ran it.
+        </p>
+      </div>
     </Dialog>
   );
 }
@@ -393,89 +399,91 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
         </>
       }
     >
-      {create.error ? (
-        <Notice tone="danger">
-          {create.error instanceof Error ? create.error.message : "Unknown error."}
-        </Notice>
-      ) : null}
+      <div className={FORM}>
+        {create.error ? (
+          <Notice tone="danger">
+            {create.error instanceof Error ? create.error.message : "Unknown error."}
+          </Notice>
+        ) : null}
 
-      <Input
-        label="Name"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="fast-summariser"
-        hint="What callers send as `model`. Cannot be changed later."
-      />
-      <Input
-        label="Upstream model"
-        value={upstream}
-        onChange={(e) => setUpstream(e.target.value)}
-        placeholder="provider/model-id"
-        hint="What the gateway asks the provider for."
-      />
+        <Input
+          label="Name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="fast-summariser"
+          hint="What callers send as `model`. Cannot be changed later."
+        />
+        <Input
+          label="Upstream model"
+          value={upstream}
+          onChange={(e) => setUpstream(e.target.value)}
+          placeholder="provider/model-id"
+          hint="What the gateway asks the provider for."
+        />
 
-      <Select
-        label="Kind"
-        value={kind}
-        onChange={(e) => setKind(e.target.value as ModelKind)}
-        hint="Which routes will serve it."
-      >
-        <option value="chat">Chat — /v1/chat/completions, /v1/responses, /v1/messages</option>
-        <option value="embedding">Embedding — /v1/embeddings</option>
-        <option value="image">Image — /v1/images/generations</option>
-      </Select>
+        <Select
+          label="Kind"
+          value={kind}
+          onChange={(e) => setKind(e.target.value as ModelKind)}
+          hint="Which routes will serve it."
+        >
+          <option value="chat">Chat — /v1/chat/completions, /v1/responses, /v1/messages</option>
+          <option value="embedding">Embedding — /v1/embeddings</option>
+          <option value="image">Image — /v1/images/generations</option>
+        </Select>
 
-      {/* Describing it now rather than importing-then-editing. Left empty this
-          reads "not stated", which is honest for a model nobody has described. */}
-      <CapabilityPicker
-        key={`inputs-${generation}`}
-        label="Accepts"
-        otherLabel="Other input modalities"
-        hint="What can be sent to it."
-        known={KNOWN_INPUTS}
-        value={inputs}
-        onChange={setInputs}
-      />
-      <CapabilityPicker
-        key={`outputs-${generation}`}
-        label="Produces"
-        otherLabel="Other output modalities"
-        hint="What comes back."
-        known={KNOWN_OUTPUTS}
-        value={outputs}
-        onChange={setOutputs}
-      />
-      <CapabilityPicker
-        key={`features-${generation}`}
-        label="Features"
-        otherLabel="Other features"
-        hint="Not limited to the boxes above."
-        known={KNOWN_FEATURES}
-        value={features}
-        onChange={setFeatures}
-      />
+        {/* Describing it now rather than importing-then-editing. Left empty this
+            reads "not stated", which is honest for a model nobody has described. */}
+        <CapabilityPicker
+          key={`inputs-${generation}`}
+          label="Accepts"
+          otherLabel="Other input modalities"
+          hint="What can be sent to it."
+          known={KNOWN_INPUTS}
+          value={inputs}
+          onChange={setInputs}
+        />
+        <CapabilityPicker
+          key={`outputs-${generation}`}
+          label="Produces"
+          otherLabel="Other output modalities"
+          hint="What comes back."
+          known={KNOWN_OUTPUTS}
+          value={outputs}
+          onChange={setOutputs}
+        />
+        <CapabilityPicker
+          key={`features-${generation}`}
+          label="Features"
+          otherLabel="Other features"
+          hint="Not limited to the boxes above."
+          known={KNOWN_FEATURES}
+          value={features}
+          onChange={setFeatures}
+        />
 
-      <Select
-        label="Provider"
-        value={providerId}
-        onChange={(e) => setProviderId(e.target.value)}
-      >
-        <option value="">Choose an endpoint…</option>
-        {choices.map((provider) => (
-          <option key={provider.id} value={provider.id}>
-            {provider.name} — {provider.base_url}
-          </option>
-        ))}
-      </Select>
-      {choices.length === 0 && !providers.isPending && (
-        <Notice tone="warn">
-          No active provider. Add one on the Providers page first.
-        </Notice>
-      )}
+        <Select
+          label="Provider"
+          value={providerId}
+          onChange={(e) => setProviderId(e.target.value)}
+        >
+          <option value="">Choose an endpoint…</option>
+          {choices.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.name} — {provider.base_url}
+            </option>
+          ))}
+        </Select>
+        {choices.length === 0 && !providers.isPending && (
+          <Notice tone="warn">
+            No active provider. Add one on the Providers page first.
+          </Notice>
+        )}
 
-      {/* Both are deliberate: a new model is invisible until someone chooses to
-          expose it, and an unpriced model would record a cost of zero. */}
-      <Notice tone="info">No group is granted access, and no price is set.</Notice>
+        {/* Both are deliberate: a new model is invisible until someone chooses to
+            expose it, and an unpriced model would record a cost of zero. */}
+        <Notice tone="info">No group is granted access, and no price is set.</Notice>
+      </div>
     </Dialog>
   );
 }
@@ -649,105 +657,107 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
         </>
       }
     >
-      <Select
-        label="Provider"
-        value={providerId}
-        onChange={(event) => {
-          setProviderId(event.target.value);
-          setSelected([]);
-        }}
-      >
-        <option value="">Choose an endpoint…</option>
-        {choices.map((provider) => (
-          <option key={provider.id} value={provider.id}>
-            {provider.name}
-          </option>
-        ))}
-      </Select>
-
-      {/* Off by default: a provider's own catalogue is the authority where one
-          exists, and this is only needed for the APIs that publish nothing.
-          Ticking it never overwrites a price the provider published, and each
-          filled row is badged `community` — both facts the screen shows by
-          doing rather than by explaining. The first version said all of that in
-          three lines of prose above the list, on a dialog that has to fit a
-          phone: the rationale belongs here, in the comment. */}
-      <label className="flex cursor-pointer items-baseline gap-2">
-        <input
-          type="checkbox"
-          checked={fillMissing}
+      <div className={FORM}>
+        <Select
+          label="Provider"
+          value={providerId}
           onChange={(event) => {
-            setFillMissing(event.target.checked);
+            setProviderId(event.target.value);
             setSelected([]);
           }}
-        />
-        <span>
-          Fill missing prices from LiteLLM
-          <span className={`${MUTED} ml-1 text-sm`}>(community)</span>
-        </span>
-      </label>
-
-      {providerId && discovery.isPending && <Spinner label="Asking the provider" />}
-      {discovery.error ? (
-        <Notice tone="danger" title="Could not read the provider catalogue">
-          {discovery.error instanceof Error ? discovery.error.message : "Unknown error."}
-        </Notice>
-      ) : null}
-
-      {importModels.data && (
-        <Notice tone="info" title="Import finished">
-          {importModels.data.results.map((result) => (
-            <div key={result.upstream_model}>
-              {result.imported
-                ? `${result.name} imported${
-                    result.priced
-                      ? result.price_source === "community"
-                        ? " with a community price"
-                        : " with its price"
-                      : ""
-                  }`
-                : `${result.upstream_model} skipped — ${result.reason}`}
-            </div>
+        >
+          <option value="">Choose an endpoint…</option>
+          {choices.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.name}
+            </option>
           ))}
-        </Notice>
-      )}
+        </Select>
 
-      {discovery.data && (
-        <>
-          {/* The dangerous direction of drift: still served, no longer offered.
-              These fail only when someone calls them. */}
-          {discovery.data.missing_upstream.length > 0 && (
-            <Notice tone="warn" title="Served here, no longer offered upstream">
-              {/* Ours on the left, the id it asks for on the right. It read
-                  "demo-model (gpt-4o-mini)", which looks like one model with
-                  two names rather than one of ours aimed at an id the provider
-                  does not have — and the id is the half you have to fix. The
-                  arrow carries that direction in the space a sentence wanted
-                  two lines for; the notice's own title already says what the
-                  problem is, so the row does not repeat it. */}
-              {discovery.data.missing_upstream.map((row) => (
-                <div key={row.id} className="flex flex-wrap items-baseline gap-x-2">
-                  <Link to={`/admin/models/${row.id}`}>{row.name}</Link>
-                  <span aria-hidden>→</span>
-                  <code className={CODE}>{row.upstream_model}</code>
-                  {/* A deactivated model cannot be called, so this row is a
-                      tidy-up rather than a request waiting to fail. */}
-                  {!row.is_active && <Badge>inactive</Badge>}
-                  <span className="sr-only">is no longer offered by this provider</span>
-                </div>
-              ))}
-            </Notice>
-          )}
-
-          <Table
-            columns={columns}
-            rows={discovery.data.available}
-            rowKey={(row) => row.upstream_model}
-            empty="The provider offers nothing that is not already catalogued."
-            caption={`${discovery.data.provider_model_count} models offered by the provider.`}
+        {/* Off by default: a provider's own catalogue is the authority where one
+            exists, and this is only needed for the APIs that publish nothing.
+            Ticking it never overwrites a price the provider published, and each
+            filled row is badged `community` — both facts the screen shows by
+            doing rather than by explaining. The first version said all of that in
+            three lines of prose above the list, on a dialog that has to fit a
+            phone: the rationale belongs here, in the comment. */}
+        <label className="flex cursor-pointer items-baseline gap-2">
+          <input
+            type="checkbox"
+            checked={fillMissing}
+            onChange={(event) => {
+              setFillMissing(event.target.checked);
+              setSelected([]);
+            }}
           />
-        </>
-      )}
+          <span>
+            Fill missing prices from LiteLLM
+            <span className={`${MUTED} ml-1 text-sm`}>(community)</span>
+          </span>
+        </label>
+
+        {providerId && discovery.isPending && <Spinner label="Asking the provider" />}
+        {discovery.error ? (
+          <Notice tone="danger" title="Could not read the provider catalogue">
+            {discovery.error instanceof Error ? discovery.error.message : "Unknown error."}
+          </Notice>
+        ) : null}
+
+        {importModels.data && (
+          <Notice tone="info" title="Import finished">
+            {importModels.data.results.map((result) => (
+              <div key={result.upstream_model}>
+                {result.imported
+                  ? `${result.name} imported${
+                      result.priced
+                        ? result.price_source === "community"
+                          ? " with a community price"
+                          : " with its price"
+                        : ""
+                    }`
+                  : `${result.upstream_model} skipped — ${result.reason}`}
+              </div>
+            ))}
+          </Notice>
+        )}
+
+        {discovery.data && (
+          <>
+            {/* The dangerous direction of drift: still served, no longer offered.
+                These fail only when someone calls them. */}
+            {discovery.data.missing_upstream.length > 0 && (
+              <Notice tone="warn" title="Served here, no longer offered upstream">
+                {/* Ours on the left, the id it asks for on the right. It read
+                    "demo-model (gpt-4o-mini)", which looks like one model with
+                    two names rather than one of ours aimed at an id the provider
+                    does not have — and the id is the half you have to fix. The
+                    arrow carries that direction in the space a sentence wanted
+                    two lines for; the notice's own title already says what the
+                    problem is, so the row does not repeat it. */}
+                {discovery.data.missing_upstream.map((row) => (
+                  <div key={row.id} className="flex flex-wrap items-baseline gap-x-2">
+                    <Link to={`/admin/models/${row.id}`}>{row.name}</Link>
+                    <span aria-hidden>→</span>
+                    <code className={CODE}>{row.upstream_model}</code>
+                    {/* A deactivated model cannot be called, so this row is a
+                        tidy-up rather than a request waiting to fail. */}
+                    {!row.is_active && <Badge>inactive</Badge>}
+                    <span className="sr-only">is no longer offered by this provider</span>
+                  </div>
+                ))}
+              </Notice>
+            )}
+
+            <Table
+              columns={columns}
+              rows={discovery.data.available}
+              rowKey={(row) => row.upstream_model}
+              empty="The provider offers nothing that is not already catalogued."
+              caption={`${discovery.data.provider_model_count} models offered by the provider.`}
+            />
+          </>
+        )}
+      </div>
     </Dialog>
   );
 }
