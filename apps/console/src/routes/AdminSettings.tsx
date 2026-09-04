@@ -24,7 +24,7 @@ import type { EmailSettingsInput, IdentityProvider, IdentityProviderInput } from
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
 import { ProvisioningPolicySection } from "./AdminIdentity";
-import { DETAIL_LABEL, FORM, PAGE } from "../lib/layout";
+import { CODE, DETAIL_LABEL, FORM, PAGE, SECRET_ROW } from "../lib/layout";
 
 export function AdminSettings() {
   return (
@@ -177,6 +177,59 @@ function EmailCard() {
 }
 
 // -- identity providers ---------------------------------------------------------
+
+/**
+ * The callback URL to register at the provider, shown as the name is typed.
+ *
+ * It has to be shown, and it has to be shown *here*. The path carries the
+ * connection's own name — `/auth/callback/<name>` — so it is not something an
+ * administrator can guess or read off a docs page, and the IdP rejects the
+ * login unless it holds this exact string. Registering it wrong produces a
+ * successful sign-in that fails on the way back, which is the worst place to
+ * discover a typo.
+ *
+ * Built from `window.location.origin` rather than served by the API, and that
+ * is the accurate source rather than a shortcut: the gateway derives the
+ * redirect URI from the origin the login *arrived on*
+ * (`OIDCProviderRegistry.client_for`), so the URI this deployment will actually
+ * send is the origin the administrator is reading this on. A value computed on
+ * the server would be whatever `PUBLIC_ORIGIN` says, which is the same thing
+ * only when it is set correctly — and if it is not, this line is the fastest
+ * way to notice.
+ */
+export function RedirectUri({ name }: { name: string }) {
+  const [copied, setCopied] = useState<boolean | null>(null);
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const slug = name.trim();
+  const uri = `${origin}/auth/callback/${slug || "<name>"}`;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(uri);
+      setCopied(true);
+    } catch {
+      // No clipboard API on an insecure origin, or permission denied. The text
+      // is selectable either way, so this is a downgrade rather than a failure.
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className={DETAIL_LABEL}>Redirect URI</div>
+      <div className={SECRET_ROW}>
+        <code className={CODE}>{uri}</code>
+        {slug && <Button onClick={copy}>{copied ? "Copied" : "Copy"}</Button>}
+      </div>
+      <p className="mt-1 text-sm text-ink-muted">
+        Register exactly this at the provider — never a wildcard.
+      </p>
+      {copied === false && (
+        <p className="text-sm text-warn">Could not reach the clipboard; copy it by hand.</p>
+      )}
+    </div>
+  );
+}
 
 function ProvidersCard() {
   const providers = useIdentityProviders();
@@ -390,6 +443,7 @@ function ProviderDialog({
           hint="A short slug: the sign-in button reads “Sign in with <name>”."
           disabled={isEdit}
         />
+        <RedirectUri name={name} />
         <Input
           label="Issuer"
           value={issuer}
