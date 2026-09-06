@@ -12,6 +12,7 @@ already been authenticated at the gateway. Do not publish its port.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -19,11 +20,17 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
-from llmp_shared import DetectionRequest, DetectionResponse, TextFindings
+from fastapi import FastAPI, Request
+from llmp_shared import (
+    DetectionRequest,
+    DetectionResponse,
+    ExtractionResponse,
+    TextFindings,
+)
 from pydantic import BaseModel
 
 from llmp_redaction.detector import Detector
+from llmp_redaction.documents import extract
 
 logger = logging.getLogger(__name__)
 
@@ -311,6 +318,45 @@ def create_app(detector: Detector | None = None) -> FastAPI:
             degraded_languages=capabilities.degraded,
             entities=capabilities.entities,
         )
+
+    @app.post("/extract", response_model=ExtractionResponse)
+    async def extract_document(request: Request) -> ExtractionResponse:
+        """Text out of one document. The body *is* the document.
+
+        Raw bytes with their own `Content-Type` rather than multipart: the
+        payload is a single file, multipart would add a dependency and a parser
+        to a service whose job is to be small, and 25 MB of base64 in JSON is
+        33 MB of JSON. `X-Filename` is optional and only consulted when the
+        content type is unrecognised — several clients send
+        `application/octet-stream` for every upload.
+
+        Always 200 with an outcome, never 4xx for an unreadable document: "we
+        could not read this" is an answer the caller has to act on, and an HTTP
+        error makes it indistinguishable from the service being broken. The one
+        thing that must not happen is an empty string reaching a caller that
+        reads it as "nothing sensitive in here", which is why the contract's
+        `kind` carries the reason and `inspected` is the predicate to branch on.
+
+        Runs in a worker thread for the same reason detection does: parsing a
+        200-page PDF is CPU-bound, and doing it on the event loop stalls every
+        other request in the process.
+        """
+        data = await request.body()
+        started = time.monotonic()
+        outcome = await asyncio.to_thread(
+            extract,
+            data,
+            media_type=request.headers.get("content-type"),
+            filename=request.headers.get("x-filename"),
+        )
+        logger.info(
+            "extracted %d bytes: %s (%s) in %dms",
+            len(data),
+            outcome.kind.value,
+            outcome.extractor or "none",
+            int((time.monotonic() - started) * 1000),
+        )
+        return outcome
 
     @app.post("/detect", response_model=DetectionResponse)
     async def detect(request: DetectionRequest) -> DetectionResponse:
