@@ -205,6 +205,8 @@ class RequestAccounting:
         self._first_token_at: datetime | None = None
         #: Set by the image route, which counts pictures rather than tokens.
         self._images = 0
+        # Set by `observe_redaction` when the *response* was the redacted half.
+        self._redaction_observed = False
         self._image_size: str | None = None
 
         self._flushed_chars = 0
@@ -324,6 +326,30 @@ class RequestAccounting:
                 slot.finish_reason = str(reason)
                 continue
             slot.observe_delta(delta)
+
+    def observe_redaction(
+        self,
+        *,
+        engine: str | None,
+        entity_count: int = 0,
+        scope: str | None = None,
+        rule_id: uuid.UUID | None = None,
+    ) -> None:
+        """Redaction facts discovered *after* the row was created.
+
+        Every other surface redacts the request, so the engine, the count and
+        the rule are known before `begin` writes the row. The OCR surface
+        redacts the **response** — the document as text is where a scanned
+        identity card becomes searchable — and that only happens once the
+        document has been read. Recorded here and written by `finalise`,
+        because a row reporting "0 entities redacted" for a request that had
+        forty replaced is worse than one reporting nothing at all.
+        """
+        self._ctx.redaction_engine = engine
+        self._ctx.redacted_entity_count = max(0, entity_count)
+        self._ctx.redaction_scope = scope
+        self._ctx.redaction_rule_id = rule_id
+        self._redaction_observed = True
 
     def observe_images(self, count: int, size: str | None) -> None:
         """How many pictures came back, and at what size.
@@ -643,6 +669,19 @@ class RequestAccounting:
             "upstream_model": self._upstream_model,
             "upstream_provider": self._upstream_provider,
             "model_substituted": self._was_substituted(),
+            # Only when the response was what got redacted. On every other
+            # surface these were written with the row, and rewriting them here
+            # would overwrite the request's facts with defaults.
+            **(
+                {
+                    "redaction_engine": self._ctx.redaction_engine,
+                    "redacted_entity_count": self._ctx.redacted_entity_count,
+                    "redaction_scope": self._ctx.redaction_scope,
+                    "redaction_rule_id": self._ctx.redaction_rule_id,
+                }
+                if self._redaction_observed
+                else {}
+            ),
             "cost": charged,
             "currency": charged_currency,
             # The native figure rides beside the billing one (ADR 0054): the

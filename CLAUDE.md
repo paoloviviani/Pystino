@@ -388,6 +388,18 @@ Known open items, none of them blocking:
 - Deferred by the user: per-provider default body params (`eu_native`,
   `allow_zero_data_retention`), image editing and variations, per-size image
   pricing, reranking.
+- **The OCR surface is built and its console half is not.** `POST /v1/ocr`
+  (ADR 0055) meters by the page, with two backends chosen by the model's
+  provider: an upstream OCR model, or this deployment's own extractor
+  (markitdown, in the redaction image with its NLP engine switched off, so a
+  `.docx` or a text-layer PDF never leaves). Outstanding: the price form has no
+  `per_page` field, so an OCR price is set through the API rather than the
+  console; there is no live script; and `usage_info.credits` — what Cortecs
+  reports for OCR — is **not read**, because whether it is micro-EUR like their
+  chat surface or something else needs one real call with a key, and a figure in
+  an unverified unit is worse than none. Note also that OCR models are absent
+  from Cortecs' `/v1/models`, so discovery cannot find them and they are
+  catalogued by hand.
 - **Usage reporting on `/v1` is deferred: passing the provider's `usage` object
   through is enough for now** (asked and answered 2026-09-04). What that leaves
   undone, so nobody re-derives it: there are no `x-ratelimit-*` headers (only
