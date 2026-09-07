@@ -10,7 +10,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from conftest import Seeded
-from gateway.models import ModelDef, ModelPrice, PriceSource
+from gateway.models import ModelDef, ModelKind, ModelPrice, PriceSource
 from gateway.pricing import (
     CataloguePrice,
     fill_missing_prices,
@@ -517,3 +517,87 @@ class TestFillMissingPrices:
         assert prices[0].input_per_mtok == Decimal("1.00")
         assert filled == set()
         assert still_unpriced == ["dup-1"]
+
+
+class TestOcrCatalogueEntries:
+    """Cortecs' OCR models, as the live catalogue really returns them.
+
+    The fixture is a copy of `mistral-ocr-4.1` from
+    `GET /v1/models?tag=OCR`, read on 2026-09-07. Two things about it are the
+    whole reason this class exists: the token rates are **zero** and the price
+    is somewhere else, and `output_modalities` is `["text"]` exactly like a
+    chat model's.
+    """
+
+    @staticmethod
+    def entry(**overrides: object) -> dict:
+        base = {
+            "id": "mistral-ocr-4.1",
+            "owned_by": "Mistral AI",
+            "pricing": {
+                "currency": "EUR",
+                "input_token": 0.0,
+                "output_token": 0.0,
+                "ocr_cost": 3.5904,
+                "ocr_annotated_cost": 4.488,
+            },
+            "context_size": 0,
+            "tags": ["OCR"],
+            "input_modalities": ["file", "image"],
+            "output_modalities": ["text"],
+            "supported_features": ["json_mode", "tools"],
+        }
+        base.update(overrides)
+        return base
+
+    def test_the_ocr_tag_decides_the_kind(self) -> None:
+        """`output_modalities` cannot: it says "text", like every chat model.
+        Nor can "accepts a file" — 33 chat models carry the Document tag."""
+        prices, unparsable = parse_catalogue({"data": [self.entry()]})
+        assert unparsable == []
+        assert prices[0].kind is ModelKind.OCR
+
+    def test_the_page_price_is_per_thousand_pages(self) -> None:
+        """Documented as "Standard OCR cost per 1,000 processed pages". The
+        failure this pins is dividing by a million instead, four lines from
+        where the token rates legitimately do."""
+        prices, _ = parse_catalogue({"data": [self.entry()]})
+        assert prices[0].per_page == Decimal("3.5904") / Decimal(1000)
+        assert prices[0].per_page == Decimal("0.0035904")
+
+    def test_an_ocr_model_is_not_reported_unparsable_for_having_no_token_price(
+        self,
+    ) -> None:
+        """It quotes 0.0 for both token rates. Requiring them reported every OCR
+        model as unreadable, which is a model the operator never sees."""
+        prices, unparsable = parse_catalogue({"data": [self.entry()]})
+        assert [p.model_id for p in prices] == ["mistral-ocr-4.1"]
+        assert unparsable == []
+
+    def test_the_annotated_rate_is_not_used(self) -> None:
+        """`ocr_annotated_cost` prices a different service. Billing every page
+        at it would overcharge every plain extraction."""
+        prices, _ = parse_catalogue({"data": [self.entry()]})
+        assert prices[0].per_page != Decimal("4.488") / Decimal(1000)
+
+    def test_a_model_with_neither_price_is_still_unparsable(self) -> None:
+        entry = self.entry(pricing={"currency": "EUR"})
+        prices, unparsable = parse_catalogue({"data": [entry]})
+        assert prices == []
+        assert unparsable == ["mistral-ocr-4.1"]
+
+    def test_an_embedding_model_keeps_its_own_kind(self) -> None:
+        """From the same live catalogue, `tag=Embedding`: these declare
+        `output_modalities: ["embeddings"]`, which already worked — asserted so
+        that reading the OCR tag first cannot regress it."""
+        entry = {
+            "id": "multilingual-e5-large",
+            "pricing": {"currency": "EUR", "input_token": 0.03, "output_token": 0.0},
+            "tags": ["Embedding"],
+            "input_modalities": ["text"],
+            "output_modalities": ["embeddings"],
+            "context_size": 4096,
+        }
+        prices, _ = parse_catalogue({"data": [entry]})
+        assert prices[0].kind is ModelKind.EMBEDDING
+        assert prices[0].per_page is None

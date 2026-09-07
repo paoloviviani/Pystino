@@ -26,6 +26,7 @@ from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
@@ -835,6 +836,7 @@ async def _catalogue_source(
     secrets: SecretBox,
     provider_id: uuid.UUID,
     url: str | None,
+    tag: str | None = None,
 ) -> tuple[Provider, str, str | None]:
     """Where to fetch a catalogue from, and with which credential.
 
@@ -850,6 +852,15 @@ async def _catalogue_source(
     """
     provider = await _load_provider(session, provider_id)
     catalogue_url = url or f"{provider.base_url}/models"
+    if tag:
+        # Cortecs' catalogue **defaults to `tag=Instruct`**, so an unfiltered
+        # request is a filtered one — which is how eleven embedding models and
+        # three OCR models sat in that endpoint while this gateway reported
+        # that it offered none. Passed through rather than interpreted: the
+        # vocabulary is the counterparty's, and a fixed list here would go
+        # stale the first time they add one.
+        joiner = "&" if "?" in catalogue_url else "?"
+        catalogue_url = f"{catalogue_url}{joiner}tag={quote(tag)}"
     api_key: str | None = None
     if provider.api_key_encrypted:
         try:
@@ -919,6 +930,7 @@ async def discover_models(
     provider_id: uuid.UUID,
     url: str | None = None,
     fill_missing_prices: bool = False,
+    tag: str | None = None,
 ) -> CatalogueDiscoveryResponse:
     """Compare the provider's catalogue with ours.
 
@@ -937,7 +949,7 @@ async def discover_models(
     that before clicking Import, not afterwards.
     """
     provider, catalogue_url, api_key = await _catalogue_source(
-        session, secrets, provider_id, url
+        session, secrets, provider_id, url, tag
     )
     by_upstream, unpriced, filled = await _catalogue_with_prices(
         http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
@@ -968,6 +980,7 @@ async def discover_models(
                 suggested_name=_suggested_name(upstream_id),
                 input_per_mtok=price.input_per_mtok,
                 output_per_mtok=price.output_per_mtok,
+                per_page=price.per_page,
                 currency=price.currency,
                 context_window=price.context_window,
                 kind=price.kind.value,
@@ -1047,6 +1060,7 @@ async def import_models(
     provider_id: uuid.UUID,
     url: str | None = None,
     fill_missing_prices: bool = False,
+    tag: str | None = None,
 ) -> ModelImportResponse:
     """Adopt selected upstream models, with their published prices.
 
@@ -1067,7 +1081,7 @@ async def import_models(
     without needing to remember which checkbox was ticked (ADR 0053).
     """
     provider, catalogue_url, api_key = await _catalogue_source(
-        session, secrets, provider_id, url
+        session, secrets, provider_id, url, tag
     )
     by_upstream, _unpriced, filled = await _catalogue_with_prices(
         http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
@@ -1158,6 +1172,8 @@ async def import_models(
                 output_per_mtok=price.output_per_mtok,
                 cache_read_per_mtok=price.cache_read_per_mtok,
                 cache_write_per_mtok=price.cache_write_per_mtok,
+                # An OCR model's whole price is here; the token rates are zero.
+                per_page=price.per_page,
                 currency=price.currency,
                 effective_from=utcnow(),
                 source=PriceSource.COMMUNITY if from_community else PriceSource.CATALOGUE,

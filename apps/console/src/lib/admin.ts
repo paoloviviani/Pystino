@@ -371,15 +371,21 @@ export function useGroups(query: PageQuery = { limit: MAX_LIMIT }) {
  * slow or down, and a page that hangs on load because a third party is having a
  * bad day is worse than one with a button on it.
  */
-export function useDiscovery(providerId: string | null, fillMissingPrices = false) {
+export function useDiscovery(
+  providerId: string | null,
+  fillMissingPrices = false,
+  tag = "",
+) {
   return useQuery({
-    // The flag is part of the key: the same provider answers differently with
-    // the fill on, and a cached unfilled answer shown under a ticked box is a
-    // screen that contradicts itself.
-    queryKey: [...adminKeys.discovery, providerId, fillMissingPrices],
+    // Both refinements are part of the key: the same provider answers
+    // differently with the fill on or a different tag asked for, and a cached
+    // answer shown under changed controls is a screen that contradicts itself.
+    queryKey: [...adminKeys.discovery, providerId, fillMissingPrices, tag],
     queryFn: () =>
       request<CatalogueDiscovery>(
-        `/api/admin/models/discover?provider_id=${encodeURIComponent(providerId ?? "")}&fill_missing_prices=${fillMissingPrices}`,
+        `/api/admin/models/discover?provider_id=${encodeURIComponent(providerId ?? "")}` +
+          `&fill_missing_prices=${fillMissingPrices}` +
+          (tag ? `&tag=${encodeURIComponent(tag)}` : ""),
       ),
     enabled: providerId !== null,
     retry: false,
@@ -440,15 +446,20 @@ export function useImportModels() {
       providerId,
       upstreamModels,
       fillMissingPrices = false,
+      tag = "",
     }: {
       providerId: string;
       upstreamModels: string[];
-      // Must match what discovery was shown with, or the prices written would
-      // not be the prices reviewed.
+      // Both must match what discovery was shown with, or the prices written
+      // would not be the prices reviewed — and with the wrong tag the model
+      // would not be in the catalogue the import reads at all.
       fillMissingPrices?: boolean;
+      tag?: string;
     }) =>
       request<ModelImportResponse>(
-        `/api/admin/models/import?provider_id=${encodeURIComponent(providerId)}&fill_missing_prices=${fillMissingPrices}`,
+        `/api/admin/models/import?provider_id=${encodeURIComponent(providerId)}` +
+          `&fill_missing_prices=${fillMissingPrices}` +
+          (tag ? `&tag=${encodeURIComponent(tag)}` : ""),
         {
           method: "POST",
           body: { models: upstreamModels.map((upstream_model) => ({ upstream_model })) },
@@ -529,6 +540,7 @@ export interface CreatePriceInput {
   cache_write_per_mtok?: string | null;
   /** Omitted for a token-priced model; the two are not alternatives. */
   per_image?: string | null;
+  per_page?: string | null;
   effective_from?: string | null;
 }
 

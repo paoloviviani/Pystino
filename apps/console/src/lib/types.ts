@@ -103,7 +103,7 @@ export interface MintedApiKey extends ApiKey {
 // them as `number` would undo that at the last hop.
 
 /** What a model produces, and therefore which route may use it. */
-export type ModelKind = "chat" | "embedding" | "image";
+export type ModelKind = "chat" | "embedding" | "image" | "ocr";
 
 export interface Price {
   id: string;
@@ -113,6 +113,8 @@ export interface Price {
   cache_write_per_mtok: string | null;
   /** Per generated image, for image models nobody prices per token. */
   per_image: string | null;
+  /** Per page read, for OCR models, whose token rates are usually zero. */
+  per_page: string | null;
   currency: string;
   effective_from: string;
   source: string;
@@ -203,6 +205,9 @@ export interface DiscoveredModel {
   suggested_name: string;
   input_per_mtok: string | null;
   output_per_mtok: string | null;
+  /** Per page, for an OCR model — whose token rates are zero and whose real
+   * price is this one. Shown before adopting, like the token rates. */
+  per_page: string | null;
   currency: string | null;
   context_window: number | null;
   /** What the provider claims, shown before importing so the choice is informed. */

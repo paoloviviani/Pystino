@@ -35,6 +35,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
       id: "p1",
       input_per_mtok: "1.000000000000",
       output_per_mtok: "2.000000000000",
+      per_page: null,
       cache_read_per_mtok: null,
       cache_write_per_mtok: null,
       per_image: null,
@@ -60,6 +61,7 @@ const DISCOVERY: CatalogueDiscovery = {
       suggested_name: "new-1",
       input_per_mtok: "0.500000000000",
       output_per_mtok: "1.500000000000",
+      per_page: null,
       currency: "EUR",
       context_window: 32000,
       kind: "chat",
@@ -74,6 +76,7 @@ const DISCOVERY: CatalogueDiscovery = {
       suggested_name: "dollar-1",
       input_per_mtok: "0.900000000000",
       output_per_mtok: "1.900000000000",
+      per_page: null,
       currency: "USD",
       context_window: null,
       kind: "chat",
@@ -108,6 +111,7 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
       suggested_name: "unpriced-1",
       input_per_mtok: "0.250000000000",
       output_per_mtok: "0.750000000000",
+      per_page: null,
       currency: "USD",
       context_window: 8000,
       kind: "chat",
@@ -122,6 +126,7 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
       suggested_name: "nowhere-1",
       input_per_mtok: null,
       output_per_mtok: null,
+      per_page: null,
       currency: null,
       context_window: null,
       kind: "chat",
@@ -236,6 +241,53 @@ async function openCatalogue(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("AdminModels", () => {
+  it("groups the catalogue by what each model is for", async () => {
+    // A chat model, an embedding model and an OCR model are not alternatives
+    // an operator picks between — they are different things in one table, and
+    // the columns that matter differ between them.
+    vi.stubGlobal(
+      "fetch",
+      routes([
+        model(),
+        model({ id: "m2", name: "vectoriser", kind: "embedding" }),
+        model({ id: "m3", name: "reader", kind: "ocr" }),
+      ]),
+    );
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("fast-summariser")).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: /^Chat/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Embedding/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Document extraction/ })).toBeInTheDocument();
+    // Nothing of that kind, so no empty section: "no image models" is not
+    // information anybody needs on this screen.
+    expect(screen.queryByRole("heading", { name: /^Image/ })).not.toBeInTheDocument();
+  });
+
+  it("counts each section, so a long catalogue is legible at a glance", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes([model(), model({ id: "m2", name: "second-chat" })]),
+    );
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("second-chat")).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: /^Chat/ })).toHaveTextContent("(2)");
+  });
+
+  it("shows a kind the console has never heard of rather than hiding it", async () => {
+    // The gateway's enum can gain a value before this file does, and a model
+    // that exists but renders nowhere is worse than one under a raw heading.
+    vi.stubGlobal(
+      "fetch",
+      routes([model({ id: "m9", name: "future-thing", kind: "rerank" as never })]),
+    );
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("future-thing")).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: /^Other/ })).toBeInTheDocument();
+  });
+
   it("lists a model with its current price", async () => {
     vi.stubGlobal("fetch", routes([model()]));
     renderScreen(<AdminModels />);
