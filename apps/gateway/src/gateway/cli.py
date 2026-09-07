@@ -30,6 +30,7 @@ from gateway.models import (
     LocalCredential,
     Membership,
     MembershipRole,
+    MembershipSource,
     ModelDef,
     ModelPrice,
     PriceSource,
@@ -123,16 +124,26 @@ async def _seed(
                 session.add(GroupModelAccess(group_id=group.id, model_id=model.id))
 
             # A local user with a fixed subject, so re-seeding is idempotent.
+            #
+            # Casefolded, because the local login casefolds what it is given
+            # and `passwd` casefolds what it stores: a subject seeded as typed
+            # produced an account that could never sign in with its password.
+            # A deployment that already seeded a mixed-case address gets a
+            # *second* row here rather than a repair of the first — accepted
+            # deliberately (ADR 0056), as the alternative is a lookup that
+            # matches either spelling forever to rescue an address nobody
+            # should have typed that way.
+            seed_subject = email.casefold()
             user = (
                 await session.execute(
-                    select(User).where(User.issuer == "local", User.subject == email)
+                    select(User).where(User.issuer == "local", User.subject == seed_subject)
                 )
             ).scalar_one_or_none()
             if user is None:
                 user = User(
                     issuer="local",
-                    subject=email,
-                    email=email,
+                    subject=seed_subject,
+                    email=seed_subject,
                     display_name="Seed user",
                     is_admin=True,
                 )
@@ -161,7 +172,12 @@ async def _seed(
             ).scalar_one_or_none()
             if membership is None:
                 session.add(
-                    Membership(user_id=user.id, group_id=group.id, role=MembershipRole.ADMIN)
+                    Membership(
+                        user_id=user.id,
+                        group_id=group.id,
+                        role=MembershipRole.ADMIN,
+                        source=MembershipSource.MANUAL,
+                    )
                 )
 
             user.default_billing_group_id = group.id
@@ -415,7 +431,12 @@ async def _passwd(
                 ).scalar_one_or_none()
                 if membership is None:
                     session.add(
-                        Membership(user_id=user.id, group_id=grp.id, role=MembershipRole.MEMBER)
+                        Membership(
+                            user_id=user.id,
+                            group_id=grp.id,
+                            role=MembershipRole.MEMBER,
+                            source=MembershipSource.MANUAL,
+                        )
                     )
                 if user.default_billing_group_id is None:
                     user.default_billing_group_id = grp.id

@@ -8,7 +8,7 @@
  * provisioning rule.
  */
 
-import { Badge, Button, Card, Dialog, Input, Notice, Spinner } from "@llmp/ui";
+import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner } from "@llmp/ui";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
@@ -20,7 +20,12 @@ import {
   useUpdateEmailSettings,
   useUpdateIdentityProvider,
 } from "../lib/admin";
-import type { EmailSettingsInput, IdentityProvider, IdentityProviderInput } from "../lib/types";
+import type {
+  EmailSettingsInput,
+  GroupSync,
+  IdentityProvider,
+  IdentityProviderInput,
+} from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
 import { ProvisioningPolicySection } from "./AdminIdentity";
@@ -334,6 +339,7 @@ function ProviderDialog({
   const [groupsClaim, setGroupsClaim] = useState("groups");
   const [mappings, setMappings] = useState<{ idp: string; local: string }[]>([]);
   const [linkLocal, setLinkLocal] = useState(false);
+  const [groupSync, setGroupSync] = useState<GroupSync>("every_login");
   const [isEnabled, setIsEnabled] = useState(true);
 
   const target = isEdit ? existing : null;
@@ -347,6 +353,7 @@ function ProviderDialog({
     setGroupsClaim(target.groups_claim);
     setMappings(target.group_mappings.map((rule) => ({ ...rule })));
     setLinkLocal(target.link_local_by_email);
+    setGroupSync(target.group_sync);
     setIsEnabled(target.is_enabled);
   }, [target]);
 
@@ -358,6 +365,7 @@ function ProviderDialog({
     setGroupsClaim("groups");
     setMappings([]);
     setLinkLocal(false);
+    setGroupSync("every_login");
     setIsEnabled(true);
     create.reset();
     update.reset();
@@ -374,6 +382,7 @@ function ProviderDialog({
         fetch_userinfo: true,
         group_mappings: mappings.filter((r) => r.idp.trim() && r.local.trim()),
         link_local_by_email: linkLocal,
+        group_sync: groupSync,
         is_enabled: isEnabled,
       };
       if (clientSecret) body.client_secret = clientSecret;
@@ -401,6 +410,7 @@ function ProviderDialog({
           groups_claim: groupsClaim.trim(),
           group_mappings: mappings.filter((r) => r.idp.trim() && r.local.trim()),
           link_local_by_email: linkLocal,
+          group_sync: groupSync,
         },
         {
           onSuccess: (created) => {
@@ -517,6 +527,24 @@ function ProviderDialog({
             Add mapping
           </Button>
         </div>
+        <Select
+          label="Group membership from this directory"
+          value={groupSync}
+          onChange={(e) => setGroupSync(e.target.value as GroupSync)}
+          hint="Applies only to memberships this directory granted. A group an
+            administrator assigned is never removed by a sign-in, whichever of
+            these is chosen."
+        >
+          <option value="every_login">
+            Set on every sign-in — the directory is authoritative
+          </option>
+          <option value="first_login">
+            Set once, when the account first appears — administered here afterwards
+          </option>
+          <option value="never">
+            Never — sign-in only, groups assigned here
+          </option>
+        </Select>
         <div>
           <label className="flex cursor-pointer items-start gap-2">
             <input

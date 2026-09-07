@@ -31,7 +31,15 @@ import pytest
 from conftest import Seeded
 from gateway.config import OIDCSettings
 from gateway.identity_registry import record_from_env, record_from_row
-from gateway.models import Group, IdentityProvider, LocalCredential, Membership, User, UserIdentity
+from gateway.models import (
+    Group,
+    IdentityProvider,
+    LocalCredential,
+    Membership,
+    MembershipSource,
+    User,
+    UserIdentity,
+)
 from gateway.oidc import provision_user, sync_user_from_claims
 from gateway.oidc_policy import OIDCPolicy
 from gateway.secrets import SecretBox
@@ -266,21 +274,31 @@ class TestRefusals:
         assert link.subject == "first-subject", "the first link is untouched"
 
 
-class TestTheDirectoryBecomesAuthoritative:
+class TestWhatAdoptionChanges:
     """Consequences of linking, pinned so they are decisions and not surprises."""
 
-    async def test_manual_memberships_are_replaced_by_the_directory(
+    async def test_groups_the_local_account_already_had_survive_adoption(
         self, session: AsyncSession
     ) -> None:
+        """Changed by ADR 0057, and this test with it.
+
+        It used to assert the opposite — that the directory replaced the
+        adopted account's groups — which is exactly the behaviour that was
+        wrong: an administrator's grant is not the directory's to withdraw,
+        and an account being adopted is the least appropriate moment to
+        withdraw one.
+        """
         local = await make_local_user(session)
         group = Group(name="finance")
         session.add(group)
         await session.flush()
-        session.add(Membership(user_id=local.id, group_id=group.id))
+        session.add(
+            Membership(user_id=local.id, group_id=group.id, source=MembershipSource.MANUAL)
+        )
         await session.commit()
 
         user = await sign_in(session, groups=["research"])
-        assert {m.group.name for m in user.memberships} == {"research"}
+        assert {m.group.name for m in user.memberships} == {"finance", "research"}
 
     async def test_admin_follows_the_directory_when_admin_groups_are_configured(
         self, session: AsyncSession

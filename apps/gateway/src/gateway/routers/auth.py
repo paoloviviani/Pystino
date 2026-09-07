@@ -681,6 +681,8 @@ async def callback(
             # a directory happens to spell, and this is the one gate that
             # separates linking from "an email claim is a password".
             email_verified=merged.get("email_verified"),
+            # How far this directory's answer about groups reaches (ADR 0057).
+            group_sync=record.group_sync,
         )
     except ProvisioningRefused as exc:
         # The policy's message is written for the person at the keyboard

@@ -12,7 +12,14 @@ from typing import Any
 
 import httpx
 import pytest_asyncio
-from gateway.models import Group, GroupModelAccess, GroupSource, User
+from gateway.models import (
+    Group,
+    GroupModelAccess,
+    GroupSource,
+    Membership,
+    MembershipSource,
+    User,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_my_limits import session_cookie
@@ -160,8 +167,6 @@ class TestMembers:
         # no longer belongs to — which is how a spend ends up attributed to
         # someone the access rule no longer names.
         async with session_factory() as session:
-            from gateway.models import Membership
-
             group = Group(name="solo", source=GroupSource.MANUAL)
             session.add(group)
             await session.flush()
@@ -183,20 +188,40 @@ class TestMembers:
             ).scalar_one()
             assert refreshed.default_billing_group_id is None
 
-    async def test_membership_of_an_oidc_group_is_refused(
+    async def test_membership_of_an_oidc_group_is_allowed(
         self,
         client: httpx.AsyncClient,
         admin_session: dict[str, str],
         seeded: Any,
         oidc_group: Group,
+        session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
+        """Refused until ADR 0057, and the refusal's premise is what changed.
+
+        It was refused because the next login would have replaced the group's
+        members from the token, so the grant would have disappeared without a
+        word. Now the grant is recorded as the administrator's and no login
+        touches it, which is exactly what an administrator asking for this
+        wants: somebody in a directory's group whom the directory does not
+        name.
+        """
         response = await client.post(
             f"/api/admin/groups/{oidc_group.id}/members",
             json={"user_id": str(seeded.user.id)},
             headers=admin_session,
         )
-        assert response.status_code == 400
-        assert response.json()["error"]["code"] == "membership_managed_by_idp"
+        assert response.status_code == 204
+
+        async with session_factory() as session:
+            membership = (
+                await session.execute(
+                    select(Membership).where(
+                        Membership.group_id == oidc_group.id,
+                        Membership.user_id == seeded.user.id,
+                    )
+                )
+            ).scalar_one()
+            assert membership.source is MembershipSource.MANUAL
 
     async def test_an_unknown_user_is_404(
         self, client: httpx.AsyncClient, admin_session: dict[str, str], manual_group: dict[str, Any]

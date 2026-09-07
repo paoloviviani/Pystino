@@ -18,7 +18,7 @@ from gateway.accounting import TokenEstimator
 from gateway.config import Settings
 from gateway.errors import AuthenticationError, PermissionError_
 from gateway.identity_registry import list_providers
-from gateway.models import ApiKey, Group, User
+from gateway.models import ApiKey, Group, GroupSync, User
 from gateway.oidc import OIDCClient, OIDCError, sync_user_from_claims
 from gateway.oidc_policy import OIDCPolicy
 from gateway.providers import ProviderRegistry
@@ -287,7 +287,15 @@ async def _bearer_principal(
                 group_mappings=provider.mappings_dict(),
             )
         user = await sync_user_from_claims(
-            session, claims=claims, settings=settings.oidc, policy=policy
+            session,
+            claims=claims,
+            settings=settings.oidc,
+            policy=policy,
+            # Free: `_bearer_client` already resolved the row to check the
+            # signature, so honouring its group policy here costs no query.
+            # Without it this path would reconcile on every request for a
+            # provider the operator set to leave groups alone.
+            group_sync=provider.group_sync if provider is not None else GroupSync.EVERY_LOGIN,
         )
     except OIDCError as exc:
         # Logged in full, returned as one word: the reason a token failed is a

@@ -30,6 +30,7 @@ function user(index: number, overrides: Partial<AdminUser> = {}): AdminUser {
     is_admin: false,
     has_password: false,
     linked_identities: [],
+    membership_source: null,
     groups: ["research"],
     default_billing_group: "research",
     active_key_count: 1,

@@ -84,6 +84,46 @@ class GroupSource(enum.StrEnum):
     MANUAL = "manual"
 
 
+class MembershipSource(enum.StrEnum):
+    """Who put this person in this group (ADR 0057).
+
+    The load-bearing distinction: a directory may take away what it granted,
+    and may not take away what an administrator granted. Provenance is
+    per-membership rather than per-group because both kinds occur in the same
+    group — a directory grants "engineering" to forty people and an
+    administrator adds the contractor who is not in the directory's copy of it.
+    """
+
+    #: Granted by an identity provider's answer, and revocable by it.
+    OIDC = "oidc"
+    #: Granted here, by an administrator or the CLI. Never removed by a login.
+    MANUAL = "manual"
+
+
+class GroupSync(enum.StrEnum):
+    """How far an identity provider's answer about groups reaches (ADR 0057).
+
+    Modelled on Keycloak's mapper sync modes, because the question is the same
+    one and operators already know the vocabulary. What the three modes govern
+    is narrower than it looks: a directory's answer only ever reaches the
+    memberships it granted (``MembershipSource.OIDC``). What an administrator
+    granted is untouched by all three.
+    """
+
+    #: The directory's answer wins on every login. What this gateway has always
+    #: done, and the default, because revoking a group in the directory has to
+    #: revoke the ability to bill it.
+    EVERY_LOGIN = "every_login"
+    #: Applied when the account first appears here, and never again. Groups are
+    #: seeded from the directory and administered afterwards.
+    FIRST_LOGIN = "first_login"
+    #: The directory never sets membership at all — not even for a new account.
+    #: For a deployment that uses SSO to authenticate and decides authorisation
+    #: itself; a new user arrives with no groups and cannot bill until an
+    #: administrator puts them in one.
+    NEVER = "never"
+
+
 class LimitScope(enum.StrEnum):
     GLOBAL = "global"
     GROUP = "group"
@@ -414,6 +454,15 @@ class Membership(Base):
     )
     role: Mapped[MembershipRole] = mapped_column(
         _enum(MembershipRole, "membership_role"), default=MembershipRole.MEMBER
+    )
+    # Defaults to the administrator's, not the directory's, because four of the
+    # five places that create a membership are administrative and exactly one
+    # is the login sync — which says so explicitly. A row that does not know
+    # where it came from is safer treated as a decision somebody made here.
+    source: Mapped[MembershipSource] = mapped_column(
+        _enum(MembershipSource, "membership_source"),
+        default=MembershipSource.MANUAL,
+        server_default=text("'manual'"),
     )
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
@@ -1114,6 +1163,12 @@ class IdentityProvider(Base):
     # says nothing about the next one added.
     link_local_by_email: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
+    )
+    # How far this directory's answer about groups reaches (ADR 0057).
+    group_sync: Mapped[GroupSync] = mapped_column(
+        _enum(GroupSync, "group_sync"),
+        default=GroupSync.EVERY_LOGIN,
+        server_default=text("'every_login'"),
     )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)

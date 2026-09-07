@@ -241,7 +241,18 @@ async def extract_document(
             raise await metered.upstream_unreachable(exc) from exc
 
         try:
-            extracted = extraction.as_ocr_response(outcome, model_name=model.name)
+            # Built with the *upstream* name, and rewritten to ours on the way
+            # out a few lines below — the same order the proxied branch uses,
+            # and for the same reason. `observe_payload` reads the served model
+            # from this dict, so building it with our client-facing name made
+            # the recorder compare `local-documents` against `markitdown` and
+            # conclude the provider had substituted a model. It had not: those
+            # are two names for one thing. The reports then disclosed that the
+            # total "may not match the provider's invoice" for a request that
+            # cost nothing and had no counterparty to invoice it.
+            extracted = extraction.as_ocr_response(
+                outcome, model_name=model.upstream_model
+            )
         except extraction.DocumentRefused as exc:
             # Nothing was read, so nothing is charged — and the row records the
             # refusal rather than a successful request that returned no pages.
@@ -262,6 +273,8 @@ async def extract_document(
         )) is not None:
             return blocked
         await metered.completed(upstream_status=200)
+        # Our name for the caller, the extractor's own in the ledger.
+        extracted["model"] = model.name
         return JSONResponse(status_code=200, content=extracted)
 
     assert upstream is not None  # `local` is false, so this was resolved above
