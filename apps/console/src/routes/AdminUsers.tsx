@@ -70,6 +70,15 @@ export function AdminUsers() {
               Showing the issuer makes that legible instead of looking like a
               duplicate nobody can explain. */}
           <div className={`${MUTED} ${CODE}`}>{user.issuer}</div>
+          {/* A linked account answers to a directory as well as to its own
+              key (ADR 0056). Shown here rather than in a column of its own
+              because it is the same question this cell already answers: which
+              issuer, or issuers, name this person. */}
+          {user.linked_identities.map((issuer) => (
+            <div key={issuer} className={`${MUTED} ${CODE}`}>
+              + {issuer}
+            </div>
+          ))}
         </>
       ),
     },

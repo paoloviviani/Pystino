@@ -333,6 +333,7 @@ function ProviderDialog({
   const [clientSecret, setClientSecret] = useState("");
   const [groupsClaim, setGroupsClaim] = useState("groups");
   const [mappings, setMappings] = useState<{ idp: string; local: string }[]>([]);
+  const [linkLocal, setLinkLocal] = useState(false);
   const [isEnabled, setIsEnabled] = useState(true);
 
   const target = isEdit ? existing : null;
@@ -345,6 +346,7 @@ function ProviderDialog({
     setClientSecret("");
     setGroupsClaim(target.groups_claim);
     setMappings(target.group_mappings.map((rule) => ({ ...rule })));
+    setLinkLocal(target.link_local_by_email);
     setIsEnabled(target.is_enabled);
   }, [target]);
 
@@ -355,6 +357,7 @@ function ProviderDialog({
     setClientSecret("");
     setGroupsClaim("groups");
     setMappings([]);
+    setLinkLocal(false);
     setIsEnabled(true);
     create.reset();
     update.reset();
@@ -370,6 +373,7 @@ function ProviderDialog({
         groups_claim: groupsClaim.trim(),
         fetch_userinfo: true,
         group_mappings: mappings.filter((r) => r.idp.trim() && r.local.trim()),
+        link_local_by_email: linkLocal,
         is_enabled: isEnabled,
       };
       if (clientSecret) body.client_secret = clientSecret;
@@ -396,6 +400,7 @@ function ProviderDialog({
           client_secret: clientSecret,
           groups_claim: groupsClaim.trim(),
           group_mappings: mappings.filter((r) => r.idp.trim() && r.local.trim()),
+          link_local_by_email: linkLocal,
         },
         {
           onSuccess: (created) => {
@@ -511,6 +516,26 @@ function ProviderDialog({
           >
             Add mapping
           </Button>
+        </div>
+        <div>
+          <label className="flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={linkLocal}
+              onChange={(e) => setLinkLocal(e.target.checked)}
+            />
+            <span>
+              Adopt local accounts with the same address
+              <span className="mt-0.5 block text-xs text-ink-faint">
+                A first sign-in here becomes the existing local account when this
+                directory reports the same address as verified — one person, one
+                account, keys and spend included. Its groups then become
+                authoritative for that account, including whether it is an
+                administrator. Unverified addresses are never matched.
+              </span>
+            </span>
+          </label>
         </div>
         {isEdit && (
           <label className="flex cursor-pointer items-center gap-2">

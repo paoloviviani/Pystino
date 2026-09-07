@@ -43,12 +43,12 @@ from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import KeySet, OctKey
 from joserfc.jwt import JWTClaimsRegistry
-from sqlalchemy import select
+from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from gateway.config import OIDCSettings
-from gateway.models import Group, GroupSource, Membership, User
+from gateway.models import Group, GroupSource, Membership, User, UserIdentity
 from gateway.oidc_policy import OIDCPolicy
 from gateway.types import utcnow
 
@@ -428,6 +428,132 @@ class OIDCClient:
         return payload if isinstance(payload, dict) else {}
 
 
+
+# The issuer of an account whose door is a password (ADR 0043). Spelled out
+# here because this module now has to *avoid* matching it as a directory.
+_LOCAL_ISSUER = "local"
+
+
+def _identity_select(issuer: str, subject: str) -> Select[tuple[User]]:
+    """The one query that resolves ``(issuer, subject)`` to a person.
+
+    Two places an identity can be recorded — the ``users`` row it was created
+    with, and a ``user_identities`` row linking it to an account that already
+    existed (ADR 0056) — resolved in a single statement rather than a lookup
+    and a fallback. That is not tidiness: ``sync_user_from_claims`` runs this
+    on the ``/v1`` request path, where ``test_query_counts.py`` bounds
+    authentication at three round trips. A correlated subquery costs none of
+    them; a second ``await session.execute`` would cost one on every request.
+    """
+    return (
+        select(User)
+        .where(
+            or_(
+                and_(User.issuer == issuer, User.subject == subject),
+                User.id.in_(
+                    select(UserIdentity.user_id).where(
+                        UserIdentity.issuer == issuer, UserIdentity.subject == subject
+                    )
+                ),
+            )
+        )
+        # `Membership.group` and `User.default_billing_group` are both
+        # `lazy="joined"` on the model, so this loads everything the caller
+        # needs. A lazy attribute touched later would raise MissingGreenlet
+        # under asyncio rather than quietly costing a query.
+        .options(selectinload(User.memberships))
+    )
+
+
+async def _adopt_local_account(
+    session: AsyncSession,
+    *,
+    issuer: str,
+    subject: str,
+    email: str | None,
+    email_verified: bool | None,
+) -> User | None:
+    """The local account this directory identity may adopt, or ``None``.
+
+    Linking is off unless an operator turned it on for this provider, and the
+    caller has already established that. What is decided here is whether the
+    claims earn it.
+
+    **A verified address, or nothing.** ``email_verified`` absent is treated as
+    unverified, never as consent: a provider that does not say has not said
+    yes, and reading silence as verification is what would turn an ``email``
+    claim into a password for the account it names. This is the single property
+    that makes the feature tolerable — see ADR 0056.
+
+    The match is on ``(issuer="local", subject=<address>)``, which is unique by
+    construction, and not on ``users.email``, which is neither unique nor
+    stable. Every refusal is logged with its reason: a login that quietly
+    creates a second account instead of linking is exactly the confusion an
+    operator would otherwise debug from the outside.
+    """
+    if not email:
+        logger.warning(
+            "account linking declined for %s/%s: the claims carry no email", issuer, subject
+        )
+        return None
+    if email_verified is not True:
+        logger.warning(
+            "account linking declined for %s at %s: email_verified is %r — an unverified "
+            "address is a claim, not proof that the person owns it",
+            email,
+            issuer,
+            email_verified,
+        )
+        return None
+
+    # Local subjects are casefolded addresses: that is what `local_login`
+    # looks up, so it is what a link has to agree with.
+    address = email.strip().casefold()
+    local = (
+        await session.execute(
+            _identity_select(_LOCAL_ISSUER, address)
+        )
+    ).scalar_one_or_none()
+    if local is None:
+        # Not a refusal. There is simply no local account by that name, and
+        # the caller goes on to create the ordinary new one.
+        return None
+
+    held = (
+        await session.execute(
+            select(UserIdentity).where(
+                UserIdentity.user_id == local.id, UserIdentity.issuer == issuer
+            )
+        )
+    ).scalar_one_or_none()
+    if held is not None:
+        # One person, one identity per directory. A second subject arriving
+        # from the same issuer for the same address is not the same person
+        # twice — it is a directory that reassigned the address, or two
+        # accounts in it, and adopting on the strength of the address alone
+        # would hand the second one everything the first one has.
+        logger.warning(
+            "account linking declined for %s/%s: local account %s is already linked to "
+            "%s at this provider",
+            issuer,
+            subject,
+            local.id,
+            held.subject,
+        )
+        return None
+
+    session.add(
+        UserIdentity(
+            user_id=local.id, issuer=issuer, subject=subject, matched_email=address
+        )
+    )
+    await session.flush()
+    logger.info(
+        "linked identity %s/%s to local account %s (%s)", issuer, subject, local.id, address
+    )
+    return local
+
+
 async def provision_user(
     session: AsyncSession,
     *,
@@ -439,6 +565,8 @@ async def provision_user(
     settings: OIDCSettings,
     touch_login: bool = True,
     policy: OIDCPolicy | None = None,
+    allow_local_link: bool = False,
+    email_verified: bool | None = None,
 ) -> User:
     """Create or update a user and reconcile their group memberships.
 
@@ -455,13 +583,28 @@ async def provision_user(
     Groups created manually in the gateway are also removed if the IdP does not
     report them, which is a deliberate consequence of that same rule — mixing
     authoritative and local membership silently produces access nobody intended.
+
+    ``allow_local_link`` is this provider's ``link_local_by_email`` switch and
+    defaults to off, so every caller that does not pass it keeps the behaviour
+    it always had. Note where it is *not* passed: an access token on ``/v1``
+    resolves an existing link but never creates one (ADR 0056). Linking is a
+    decision about who an account belongs to, and the browser callback is the
+    only door that sees the full claim set — userinfo included, which is where
+    several providers put ``email_verified``.
     """
-    stmt = (
-        select(User)
-        .where(User.issuer == issuer, User.subject == subject)
-        .options(selectinload(User.memberships))
-    )
-    user = (await session.execute(stmt)).scalar_one_or_none()
+    user = (await session.execute(_identity_select(issuer, subject))).scalar_one_or_none()
+
+    if user is None and allow_local_link:
+        # An adopted account is not a new one, so this runs *before* the
+        # auto-provisioning gate below: refusing to create strangers is a
+        # rule about strangers, and this person already has a row here.
+        user = await _adopt_local_account(
+            session,
+            issuer=issuer,
+            subject=subject,
+            email=email,
+            email_verified=email_verified,
+        )
 
     if user is None and policy is not None and not policy.auto_provision:
         # Automatic provisioning is off (ADR 0048). Two answers, the operator's
@@ -563,16 +706,10 @@ async def sync_user_from_claims(
     if not isinstance(issuer, str) or not isinstance(subject, str):
         raise OIDCError("access token has no usable issuer or subject")
 
-    stmt = (
-        select(User)
-        .where(User.issuer == issuer, User.subject == subject)
-        # `Membership.group` and `User.default_billing_group` are both
-        # `lazy="joined"` on the model, so this is two round trips and everything
-        # the caller needs is loaded. A lazy attribute touched later would raise
-        # MissingGreenlet under asyncio rather than quietly costing a query.
-        .options(selectinload(User.memberships))
-    )
-    user = (await session.execute(stmt)).scalar_one_or_none()
+    # The same resolution the browser login uses, so a linked account answers
+    # to its directory identity on `/v1` too — without which someone would
+    # sign into the console as themselves and bill as a second person.
+    user = (await session.execute(_identity_select(issuer, subject))).scalar_one_or_none()
 
     # Mapping first (ADR 0048): the rest of the flow — reconciliation,
     # divergence, admin — speaks local names only.

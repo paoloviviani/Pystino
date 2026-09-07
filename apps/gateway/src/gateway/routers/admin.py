@@ -90,6 +90,7 @@ from gateway.models import (
     UsageSource,
     UsageStatus,
     User,
+    UserIdentity,
     UserModelAccess,
 )
 from gateway.oidc_policy import environment_policy
@@ -1887,6 +1888,18 @@ async def _user_responses(session: SessionDep, users: Sequence[User]) -> list[Us
         ).all()
     }
 
+    # One lookup for the page, same reason as the password set above: a query
+    # per row is the shape test_query_counts.py exists to prevent.
+    linked: dict[uuid.UUID, list[str]] = {}
+    for user_id, issuer in (
+        await session.execute(
+            select(UserIdentity.user_id, UserIdentity.issuer)
+            .where(UserIdentity.user_id.in_(ids))
+            .order_by(UserIdentity.issuer)
+        )
+    ).all():
+        linked.setdefault(user_id, []).append(issuer)
+
     return [
         UserAdminResponse(
             id=user.id,
@@ -1897,6 +1910,7 @@ async def _user_responses(session: SessionDep, users: Sequence[User]) -> list[Us
             is_active=user.is_active,
             is_admin=user.is_admin,
             has_password=user.id in with_password,
+            linked_identities=linked.get(user.id, []),
             groups=sorted(m.group.name for m in user.memberships),
             default_billing_group=(
                 group_names.get(user.default_billing_group_id)
@@ -2354,6 +2368,7 @@ def _idp_response(record: Any) -> IdentityProviderResponse:
         group_mappings=[
             OidcMappingRule(idp=idp, local=local) for idp, local in record.group_mappings.items()
         ],
+        link_local_by_email=record.link_local_by_email,
         is_enabled=record.is_enabled,
         source=record.source,
     )
@@ -2403,6 +2418,7 @@ async def create_identity_provider(
         groups_claim=payload.groups_claim,
         fetch_userinfo=payload.fetch_userinfo,
         group_mappings=[[rule.idp, rule.local] for rule in payload.group_mappings],
+        link_local_by_email=payload.link_local_by_email,
         is_enabled=True,
         created_by=admin.id,
     )
@@ -2438,6 +2454,12 @@ async def update_identity_provider(
         row.fetch_userinfo = fields["fetch_userinfo"]
     if "group_mappings" in fields and fields["group_mappings"] is not None:
         row.group_mappings = [[rule.idp, rule.local] for rule in fields["group_mappings"]]
+    if "link_local_by_email" in fields and fields["link_local_by_email"] is not None:
+        # Turning it off stops *new* links; it does not undo the ones already
+        # made. Unlinking is deleting a `user_identities` row, and doing it
+        # implicitly here would silently split one person's account in two —
+        # spend, keys and quotas on one row, their next login on another.
+        row.link_local_by_email = fields["link_local_by_email"]
     if "is_enabled" in fields and fields["is_enabled"] is not None:
         row.is_enabled = fields["is_enabled"]
     await session.commit()

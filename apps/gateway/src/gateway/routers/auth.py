@@ -668,6 +668,19 @@ async def callback(
             group_names=groups,
             settings=settings.oidc,
             policy=policy,
+            # This provider's switch, and the claim that has to back it up
+            # (ADR 0056). `merged` rather than `claims` on purpose: several
+            # providers put `email_verified` on userinfo only, and reading it
+            # from the ID token alone would decline every link they could
+            # legitimately make.
+            allow_local_link=record.link_local_by_email,
+            # Passed raw, not coerced. OIDC core says this claim is a boolean;
+            # a provider that sends the *string* "true" gets its link declined
+            # and the value printed in the log, which is a five-second
+            # diagnosis. Coercing it here would make the gate accept whatever
+            # a directory happens to spell, and this is the one gate that
+            # separates linking from "an email claim is a password".
+            email_verified=merged.get("email_verified"),
         )
     except ProvisioningRefused as exc:
         # The policy's message is written for the person at the keyboard

@@ -158,6 +158,24 @@ Inside the gateway, the pieces that carry the most weight:
   **`iss` is part of a user's identity** — users are keyed on
   `(issuer, subject)`, so changing the issuer re-provisions everyone as new
   rows with no memberships at their next login.
+- **A directory login can adopt the local account with the same address, and
+  only if the operator says so** ([ADR 0056](docs/adr/0056-account-linking.md)).
+  `identity_providers.link_local_by_email`, per provider and off by default. It
+  reverses a refusal that used to be absolute, so read the ADR before touching
+  either side; three things about it will save time. The gate is
+  **`email_verified` boolean `true`** — absent and the string `"true"` are both
+  declined, and every decline is logged with the value that caused it, because
+  reading silence as verification is what would make an `email` claim a
+  password. The link is a **`user_identities` row beside the identity, never a
+  rewrite of it**: `issuer == "local"` is read in eight places as "this account
+  has a password", and rewriting a linked user's issuer would flip all eight
+  silently. And adoption hands that account to the directory — **memberships
+  are replaced and `is_admin` follows `admin_groups`**, so a local admin
+  adopted by a directory that does not place them in an admin group loses the
+  flag on that login; the recovery is the local door, which is exactly what the
+  shape keeps working. Linking never happens on `/v1`: an access token resolves
+  an existing link but makes no userinfo request, so it does not hold the claim
+  that would justify a new one.
 - **Three things bite anything served behind the TLS proxy** (all found
   building it, all recorded in [ADR 0035](docs/adr/0035-public-tls-exposure.md)).
   **SNI may not carry an IP address**, so an address-only deployment offers no

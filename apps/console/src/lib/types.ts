@@ -168,6 +168,9 @@ export interface AdminUser {
   is_admin: boolean;
   /** The account can sign in with a password (local accounts, ADR 0043). */
   has_password: boolean;
+  /** Directories that also name this account, by issuer (ADR 0056). A linked
+   * account has two doors, and one of them is not on this screen otherwise. */
+  linked_identities: string[];
   groups: string[];
   default_billing_group: string | null;
   active_key_count: number;
@@ -612,6 +615,9 @@ export interface IdentityProvider {
   groups_claim: string;
   fetch_userinfo: boolean;
   group_mappings: { idp: string; local: string }[];
+  /** Whether a login here may adopt the local account with the same verified
+   * address (ADR 0056). */
+  link_local_by_email: boolean;
   is_enabled: boolean;
   source: "console" | "environment";
 }
@@ -625,6 +631,7 @@ export interface IdentityProviderInput {
   groups_claim?: string;
   fetch_userinfo?: boolean;
   group_mappings?: { idp: string; local: string }[];
+  link_local_by_email?: boolean;
   is_enabled?: boolean;
 }
 

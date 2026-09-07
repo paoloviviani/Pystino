@@ -810,6 +810,7 @@ class IdentityProviderResponse(BaseModel):
     groups_claim: str
     fetch_userinfo: bool
     group_mappings: list[OidcMappingRule]
+    link_local_by_email: bool
     is_enabled: bool
     source: str
 
@@ -823,6 +824,9 @@ class IdentityProviderCreateRequest(BaseModel):
     groups_claim: str = Field(default="groups", min_length=1, max_length=255)
     fetch_userinfo: bool = True
     group_mappings: list[OidcMappingRule] = Field(default_factory=list)
+    # Off unless asked for, in the request as on the row: a client that omits
+    # the field is not consenting to it (ADR 0056).
+    link_local_by_email: bool = False
 
 
 class IdentityProviderUpdateRequest(BaseModel):
@@ -835,6 +839,7 @@ class IdentityProviderUpdateRequest(BaseModel):
     groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
     fetch_userinfo: bool | None = None
     group_mappings: list[OidcMappingRule] | None = None
+    link_local_by_email: bool | None = None
     is_enabled: bool | None = None
 
 
@@ -898,6 +903,10 @@ class UserAdminResponse(BaseModel):
     # itself never leaves the database; the fact of its existence is what the
     # console's user screen needs.
     has_password: bool = False
+    # The directories that also name this account (ADR 0056), by issuer. A
+    # linked account has two doors, and an operator reading a user screen that
+    # says only "has a password" would not know the second one exists.
+    linked_identities: list[str] = Field(default_factory=list)
     groups: list[str]
     default_billing_group: str | None
     active_key_count: int
