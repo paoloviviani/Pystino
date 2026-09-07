@@ -27,6 +27,7 @@ from importlib.metadata import entry_points
 from gateway.plugins.anthropic import AnthropicPlugin
 from gateway.plugins.base import ProviderPlugin
 from gateway.plugins.cortecs import CortecsRouterPlugin
+from gateway.plugins.extractor import LocalExtractorPlugin
 from gateway.plugins.generic import GenericOpenAIPlugin
 from gateway.plugins.mistral import MistralPlugin
 from gateway.plugins.nebius import NebiusPlugin
@@ -57,6 +58,11 @@ _BUILTIN: dict[str, PluginFactory] = {
     "tensorix": TensorixPlugin,
     "cortecs": CortecsRouterPlugin,
     "openrouter": OpenRouterPlugin,
+    # Not a counterparty: this deployment's own extractor service. Listed
+    # here because `providers.plugin` is already the answer to "what kind of
+    # thing is behind this row", and a second discriminator for one case
+    # would be a second thing to keep in step.
+    "extractor": LocalExtractorPlugin,
 }
 
 

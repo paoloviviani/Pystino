@@ -20,6 +20,7 @@ from gateway.models import (
     ModelDef,
     ModelKind,
     ModelPrice,
+    Provider,
     UsageRecord,
     UsageSource,
 )
@@ -254,3 +255,258 @@ class TestRefusals:
             "/v1/ocr", json={"model": "ungranted", "document": DOCUMENT}, headers=seeded.auth
         )
         assert response.status_code == 404
+
+
+# --------------------------------------------------------------------------
+# The local backend
+# --------------------------------------------------------------------------
+
+INLINE_DOCX = (
+    "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ";base64,UEsDBBQAAAAIAA=="
+)
+
+
+class FakeExtractor:
+    """The extraction service, answering on the control-plane client."""
+
+    def __init__(self) -> None:
+        self.bodies: list[bytes] = []
+        self.headers: list[httpx.Headers] = []
+        self._payload: dict[str, Any] = {
+            "kind": "text",
+            "text": "Invoice for Luca Bianchi",
+            "extractor": "markitdown",
+            "pages": 0,
+        }
+
+    def set(self, **payload: Any) -> None:
+        self._payload = payload
+
+    def client(self) -> httpx.AsyncClient:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.bodies.append(request.content)
+            self.headers.append(request.headers)
+            return httpx.Response(200, json=self._payload)
+
+        return httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+
+async def add_local_model(
+    session: AsyncSession,
+    seeded: Seeded,
+    *,
+    name: str = "local-reader",
+    per_page: str | None = "0.001",
+) -> ModelDef:
+    """A model whose provider is this deployment's own extractor."""
+    provider = Provider(
+        name=f"{name}-provider",
+        base_url="http://extractor:8080",
+        plugin="extractor",
+    )
+    session.add(provider)
+    await session.flush()
+    model = ModelDef(
+        name=name, upstream_model="markitdown", provider_id=provider.id, kind=ModelKind.OCR
+    )
+    session.add(model)
+    await session.flush()
+    session.add(
+        ModelPrice(
+            model_id=model.id,
+            input_per_mtok=Decimal(0),
+            output_per_mtok=Decimal(0),
+            per_page=Decimal(per_page) if per_page else None,
+            currency="EUR",
+        )
+    )
+    session.add(GroupModelAccess(group_id=seeded.group.id, model_id=model.id))
+    await session.commit()
+    return model
+
+
+class TestLocalBackend:
+    async def test_the_document_never_leaves_the_deployment(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """The whole point of the local backend: no provider is called at all."""
+        extractor = FakeExtractor()
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded)
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+        # The extractor saw the bytes; the upstream saw nothing.
+        assert extractor.bodies, "the extraction service was not called"
+        assert not fake_upstream.bodies
+
+        body = response.json()
+        assert body["pages"][0]["markdown"] == "Invoice for Luca Bianchi"
+        assert body["extractor"] == "markitdown"
+        assert body["model"] == model.name
+
+    async def test_a_url_is_refused_rather_than_fetched(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        """A security decision, not a missing feature: fetching a caller-supplied
+        URL from the gateway is server-side request forgery against our own
+        network."""
+        extractor = FakeExtractor()
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded, name="local-url")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": "http://169.254.169.254/"},
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "document_url_not_supported"
+        # Nothing was fetched, by us or by anyone.
+        assert not extractor.bodies
+
+    async def test_a_scan_is_refused_with_the_reason_not_an_empty_success(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        """An empty `pages` array is indistinguishable from a blank document, so
+        a caller that indexed it would have indexed nothing and not known."""
+        extractor = FakeExtractor()
+        extractor.set(kind="no_text_layer", text="", extractor="markitdown", pages=12)
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded, name="local-scan")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 422
+        body = response.json()
+        assert body["error"]["code"] == "no_text_layer"
+        # It names the next step rather than just failing.
+        assert "OCR model" in body["error"]["message"]
+
+    async def test_a_refused_document_is_not_charged(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        extractor = FakeExtractor()
+        extractor.set(kind="unsupported", text="", extractor="", pages=0)
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded, name="local-unsupported")
+
+        await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        record = await latest_record(session)
+        assert record.cost == Decimal(0)
+
+    async def test_a_pdf_page_count_is_billed_locally(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        """A deployment may price its own extractor — an internal chargeback —
+        and the count comes from the document, never from the text length."""
+        extractor = FakeExtractor()
+        extractor.set(kind="text", text="page one page two", extractor="markitdown", pages=2)
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded, name="local-priced", per_page="0.001")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        assert response.json()["usage_info"]["pages_processed"] == 2
+        record = await latest_record(session)
+        assert record.cost == Decimal("0.002")
+
+    async def test_a_format_without_pages_reports_zero_not_one(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        """A spreadsheet has no pages until something picks a paper size.
+        Reporting one would be a billing figure invented to look tidy."""
+        extractor = FakeExtractor()
+        extractor.set(kind="text", text="a,b,c", extractor="markitdown", pages=0)
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded, name="local-sheet", per_page="0.001")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        assert response.json()["usage_info"]["pages_processed"] == 0
+        record = await latest_record(session)
+        assert record.cost == Decimal(0)
+
+    async def test_an_extractor_that_is_down_is_a_502_like_any_provider(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        def refuse(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("no route to host")
+
+        app.state.control_http = httpx.AsyncClient(transport=httpx.MockTransport(refuse))
+        model = await add_local_model(session, seeded, name="local-down")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 502
