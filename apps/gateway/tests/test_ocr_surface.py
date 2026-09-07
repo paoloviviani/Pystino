@@ -9,6 +9,7 @@ document reaches the provider in the shape the caller sent it.
 
 from __future__ import annotations
 
+import uuid
 from decimal import Decimal
 from typing import Any
 
@@ -718,3 +719,22 @@ class TestResponseRedaction:
         assert body["pages"][0]["markdown"] == "Minutes of the meeting."
         record = await latest_record(session)
         assert record.redacted_entity_count == 0
+
+
+def test_the_wire_contract_accepts_the_ocr_kind() -> None:
+    """Found live, not by a test.
+
+    `ModelCreateRequest.kind` is a `Literal` spelled out by hand, so adding a
+    value to `ModelKind` left the API answering "kind: Input should be 'chat',
+    'embedding' or 'image'". An OCR model was impossible to create through the
+    API or the console while the surface that serves them worked perfectly —
+    which is why this asserts the two agree rather than trusting that they do.
+    """
+    from gateway.models import ModelKind
+    from gateway.schemas import ModelCreateRequest, ModelUpdateRequest
+
+    for kind in ModelKind:
+        assert ModelCreateRequest(
+            name=f"m-{kind.value}", upstream_model="x", provider_id=uuid.uuid4(), kind=kind.value
+        ).kind == kind.value
+        assert ModelUpdateRequest(kind=kind.value).kind == kind.value

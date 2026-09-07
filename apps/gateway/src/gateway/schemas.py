@@ -694,7 +694,7 @@ class ModelCreateRequest(BaseModel):
     # Which endpoint serves it. Required: a model with no provider cannot be
     # routed, and defaulting one would guess at spending money (ADR 0027).
     provider_id: uuid.UUID
-    kind: Literal["chat", "embedding", "image"] = "chat"
+    kind: Literal["chat", "embedding", "image", "ocr"] = "chat"
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -724,7 +724,7 @@ class ModelUpdateRequest(BaseModel):
     # and a mis-inferred kind takes a model off the only route that would serve
     # it. Historical usage rows record the surface they actually went through,
     # so correcting this does not make past spend unreadable (ADR 0030).
-    kind: Literal["chat", "embedding", "image"] | None = None
+    kind: Literal["chat", "embedding", "image", "ocr"] | None = None
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
