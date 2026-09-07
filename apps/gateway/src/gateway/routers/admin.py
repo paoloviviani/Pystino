@@ -103,6 +103,7 @@ from gateway.pricing import (
     CataloguePrice,
     CatalogueUnavailable,
     fetch_catalogue,
+    kinds_by_id,
     parse_catalogue,
     parse_litellm_catalogue,
     parse_openrouter_catalogue,
@@ -881,7 +882,7 @@ async def _catalogue_with_prices(
     api_key: str | None,
     *,
     fill_missing: bool,
-) -> tuple[dict[str, CataloguePrice], list[str], set[str]]:
+) -> tuple[dict[str, CataloguePrice], list[str], set[str], dict[str, ModelKind]]:
     """The provider's catalogue, optionally with community prices in the gaps.
 
     Returns ``(prices by upstream id, unpriced ids, ids filled from the
@@ -893,10 +894,19 @@ async def _catalogue_with_prices(
     prices for nothing, and the operator would draw the wrong conclusion about
     their provider. Failing says which source could not be read.
     """
-    try:
-        payload = await fetch_catalogue(http, catalogue_url, api_key)
-    except CatalogueUnavailable as exc:
-        raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
+    # A plugin that *is* the thing being served knows what it offers, and
+    # asking the network would mean asking a service with no such endpoint.
+    # Pressing Discover on the local extractor used to answer "could not fetch
+    # http://extractor:8080/models: 404" — an error naming a URL the operator
+    # never typed, for a provider that cannot fail in that way.
+    payload = plugin_registry.resolve(provider.plugin).builtin_catalogue()
+    if payload is None:
+        try:
+            payload = await fetch_catalogue(http, catalogue_url, api_key)
+        except CatalogueUnavailable as exc:
+            raise UpstreamUnavailableError(
+                f"Could not read the provider catalogue: {exc}"
+            ) from exc
 
     published, unpriced = _catalogue_parser(provider)(payload)
 
@@ -917,7 +927,7 @@ async def _catalogue_with_prices(
     else:
         prices = list(published)
 
-    return {price.model_id: price for price in prices}, unpriced, filled
+    return {price.model_id: price for price in prices}, unpriced, filled, kinds_by_id(payload)
 
 
 @router.get("/models/discover", response_model=CatalogueDiscoveryResponse)
@@ -951,7 +961,7 @@ async def discover_models(
     provider, catalogue_url, api_key = await _catalogue_source(
         session, secrets, provider_id, url, tag
     )
-    by_upstream, unpriced, filled = await _catalogue_with_prices(
+    by_upstream, unpriced, filled, kinds = await _catalogue_with_prices(
         http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
     )
 
@@ -1008,6 +1018,10 @@ async def discover_models(
                 output_per_mtok=None,
                 currency=None,
                 context_window=None,
+                # What the catalogue says it is, even with no price to read:
+                # an unpriced OCR model showed as `chat` because a row built
+                # from an id alone has no kind and the default is chat.
+                kind=kinds.get(upstream_id, ModelKind.CHAT).value,
                 blocked_reason=(
                     "the provider publishes no price for this model"
                     if fill_missing_prices
@@ -1083,7 +1097,7 @@ async def import_models(
     provider, catalogue_url, api_key = await _catalogue_source(
         session, secrets, provider_id, url, tag
     )
-    by_upstream, _unpriced, filled = await _catalogue_with_prices(
+    by_upstream, _unpriced, filled, _kinds = await _catalogue_with_prices(
         http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
     )
 

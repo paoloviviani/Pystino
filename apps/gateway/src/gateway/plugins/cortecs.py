@@ -159,3 +159,7 @@ class CortecsRouterPlugin:
             authoritative=True,
             details=dict(details) if isinstance(details, dict) else {},
         )
+
+    def builtin_catalogue(self) -> dict[str, Any] | None:
+        """Nothing: ask the counterparty what it serves."""
+        return None

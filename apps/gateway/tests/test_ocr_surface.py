@@ -28,6 +28,7 @@ from gateway.models import (
 )
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from test_admin import as_user, make_admin
 
 DOCUMENT = {"type": "document_url", "document_url": "https://example.org/invoice.pdf"}
 
@@ -738,3 +739,71 @@ def test_the_wire_contract_accepts_the_ocr_kind() -> None:
             name=f"m-{kind.value}", upstream_model="x", provider_id=uuid.uuid4(), kind=kind.value
         ).kind == kind.value
         assert ModelUpdateRequest(kind=kind.value).kind == kind.value
+
+
+class TestDiscoverAgainstTheBuiltInExtractor:
+    """Found in the console, on a phone: pressing Discover on the local
+    extractor answered
+
+        Could not read the provider catalogue: could not fetch
+        http://extractor:8080/models: 404 Not Found
+
+    — an error naming a URL the operator never typed, for the one provider that
+    cannot have a catalogue endpoint because it is not a counterparty. A plugin
+    that *is* the thing being served answers the question itself.
+    """
+
+    async def test_it_offers_its_own_model_instead_of_failing(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+    ) -> None:
+
+        provider = Provider(
+            name="local-extractor", base_url="http://extractor:8080", plugin="extractor"
+        )
+        session.add(provider)
+        await session.commit()
+
+        # No transport for /models at all: if the route reaches for the network
+        # this fails, which is the point.
+        def refuse(request: httpx.Request) -> httpx.Response:
+            raise AssertionError(f"the route fetched {request.url}")
+
+        app.state.control_http = httpx.AsyncClient(transport=httpx.MockTransport(refuse))
+
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.get(f"/api/admin/models/discover?provider_id={provider.id}")
+        assert response.status_code == 200
+        body = response.json()
+        offered = {row["upstream_model"] for row in body["available"]}
+        assert offered == {"markitdown"}
+
+    async def test_its_model_is_offered_as_ocr_and_unpriced(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+    ) -> None:
+        """Unpriced rather than free: what a deployment charges for reading a
+        document locally is nobody else's decision, and a rate invented here
+        would be a ledger figure with no source."""
+
+        provider = Provider(
+            name="local-extractor-2", base_url="http://extractor:8080", plugin="extractor"
+        )
+        session.add(provider)
+        await session.commit()
+
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.get(f"/api/admin/models/discover?provider_id={provider.id}")
+        row = response.json()["available"][0]
+        assert row["kind"] == "ocr"
+        assert row["input_per_mtok"] is None
+        assert row["per_page"] is None
+        assert row["blocked_reason"] is not None

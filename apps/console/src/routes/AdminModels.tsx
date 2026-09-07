@@ -118,11 +118,17 @@ export function AdminModels() {
     {
       key: "capabilities",
       header: "Capabilities",
+      // Worth a column on a laptop, not worth the price column on a phone.
+      hideBelow: "lg",
       render: (model) => <Capabilities model={model} />,
     },
     {
       key: "provider",
       header: "Provider",
+      // The "Provider off" badge is the reason this is `md` and not `lg`: a
+      // model behind a deactivated provider is unreachable, and that has to be
+      // visible before someone spends time wondering why.
+      hideBelow: "md",
       render: (model) => (
         <>
           <div>{model.provider_name}</div>
@@ -161,6 +167,7 @@ export function AdminModels() {
     {
       key: "access",
       header: "Access",
+      hideBelow: "lg",
       render: (model) =>
         model.granted_to.length === 0 && model.granted_to_users.length === 0 ? (
           <span className={MUTED}>nobody</span>
@@ -182,6 +189,7 @@ export function AdminModels() {
     {
       key: "status",
       header: "Status",
+      hideBelow: "sm",
       render: (model) => (
         <div className={CHIPS}>
           {model.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
