@@ -43,6 +43,7 @@ from gateway.routers import (
     me,
     messages,
     models,
+    ocr,
     tokens,
 )
 from gateway.routers import responses as responses_router
@@ -347,6 +348,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(responses_router.router)
     app.include_router(messages.router)
     app.include_router(images.router)
+    app.include_router(ocr.router)
     app.include_router(models.router)
     app.include_router(auth.router)
     app.include_router(tokens.router)
