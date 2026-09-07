@@ -1048,7 +1048,14 @@ async def discover_models(
         (catalogued if model.upstream_model in offered else missing).append(row)
 
     return CatalogueDiscoveryResponse(
-        provider_url=catalogue_url,
+        # What was actually read. For a provider whose plugin answers from
+        # itself, naming an endpoint nothing fetched is a small lie in a field
+        # whose whole job is saying where the answer came from.
+        provider_url=(
+            catalogue_url
+            if plugin_registry.resolve(provider.plugin).builtin_catalogue() is None
+            else f"built in ({provider.plugin})"
+        ),
         provider_model_count=len(offered),
         available=available,
         catalogued=catalogued,
