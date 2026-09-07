@@ -60,22 +60,22 @@ const KIND_SECTIONS: { kind: ModelKind; title: string; description: string }[] =
   {
     kind: "chat",
     title: "Chat",
-    description: "Conversation, on /v1/chat/completions, /v1/responses and /v1/messages.",
+    description: "/v1/chat/completions, /v1/responses and /v1/messages.",
   },
   {
     kind: "embedding",
     title: "Embedding",
-    description: "Vectors, on /v1/embeddings. Priced per token, and they generate none.",
+    description: "/v1/embeddings. Priced per token, and they generate none.",
   },
   {
     kind: "ocr",
     title: "Document extraction",
-    description: "Documents in, text out, on /v1/ocr. Priced per page rather than per token.",
+    description: "/v1/ocr. Priced per page rather than per token.",
   },
   {
     kind: "image",
     title: "Image",
-    description: "Pictures, on /v1/images/generations. Often priced per image.",
+    description: "/v1/images/generations. Often priced per image.",
   },
 ];
 
@@ -320,15 +320,27 @@ export function AdminModels() {
                   : []),
               ].filter((section) => section.rows.length > 0);
 
-              return sections.map((section) => (
-                <div key={section.kind}>
-                  <div className="mb-2">
-                    <h2 className="text-base font-medium text-ink">
+              return sections.map((section, index) => (
+                <div
+                  key={section.kind}
+                  // Two sections in a flush card abutted: the first table's last
+                  // row ran straight into the next heading, so nothing marked
+                  // where one kind ended. The strong rule, like the table's own
+                  // header rule, because this separates *kinds* of row.
+                  className={index > 0 ? "border-t border-line" : undefined}
+                >
+                  {/* `px-5` is the table's cell padding, not a number picked to
+                      look right: the heading sat on the card's edge, one inset
+                      short of the "Model" column it heads. */}
+                  <div className="px-5 pt-5 pb-3">
+                    <h2 className="text-md font-semibold leading-tight">
                       {section.title}{" "}
-                      <span className={`${MUTED} font-normal`}>({section.rows.length})</span>
+                      <span className={`${MUTED} text-base font-normal`}>
+                        ({section.rows.length})
+                      </span>
                     </h2>
                     {section.description && (
-                      <p className={`${MUTED} text-sm`}>{section.description}</p>
+                      <p className={`${MUTED} mt-1 text-sm`}>{section.description}</p>
                     )}
                   </div>
                   <Table
