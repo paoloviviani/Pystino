@@ -1464,6 +1464,10 @@ class DiscoveredModel(BaseModel):
     suggested_name: str
     input_per_mtok: Money | None
     output_per_mtok: Money | None
+    #: Per page, for an OCR model, whose token rates are zero and whose real
+    #: price is this. Shown before adopting for the same reason the token rates
+    #: are: an operator approving a price should see the one that will be charged.
+    per_page: Money | None = None
     currency: str | None
     context_window: int | None
     # What the provider says it can do, shown before importing so the choice is

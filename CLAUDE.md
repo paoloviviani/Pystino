@@ -393,13 +393,19 @@ Known open items, none of them blocking:
   provider: an upstream OCR model, or this deployment's own extractor
   (markitdown, in the redaction image with its NLP engine switched off, so a
   `.docx` or a text-layer PDF never leaves). Outstanding: the price form has no
-  `per_page` field, so an OCR price is set through the API rather than the
-  console; there is no live script; and `usage_info.credits` — what Cortecs
-  reports for OCR — is **not read**, because whether it is micro-EUR like their
-  chat surface or something else needs one real call with a key, and a figure in
-  an unverified unit is worse than none. Note also that OCR models are absent
-  from Cortecs' `/v1/models`, so discovery cannot find them and they are
-  catalogued by hand.
+  `per_page` field, so there is no live script yet, and
+  `usage_info.credits` — what Cortecs reports on an OCR *response* — is **not
+  read**, because whether it is micro-EUR like their chat surface or something
+  else needs one real call with a key, and a figure in an unverified unit is
+  worse than none.
+- **Cortecs' `/v1/models` defaults to `tag=Instruct`, and that hid two whole
+  kinds of model.** An earlier note here claimed OCR models were absent from
+  the catalogue and had to be entered by hand; they were never absent, only
+  filtered out by a default the response does not mention. `tag=OCR` returns
+  three, `tag=Embedding` eleven. Their prices are published too —
+  `pricing.ocr_cost` is per **1,000** processed pages, not per million of
+  anything, which is why `_kind_of` reads the tag and the parser divides by a
+  thousand.
 - **Usage reporting on `/v1` is deferred: passing the provider's `usage` object
   through is enough for now** (asked and answered 2026-09-04). What that leaves
   undone, so nobody re-derives it: there are no `x-ratelimit-*` headers (only

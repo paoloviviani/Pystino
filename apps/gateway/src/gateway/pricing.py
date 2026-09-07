@@ -58,6 +58,16 @@ _INPUT_KEYS = ("input_token", "input", "prompt", "input_per_mtok", "input_cost")
 _OUTPUT_KEYS = ("output_token", "output", "completion", "output_per_mtok", "output_cost")
 _CACHE_READ_KEYS = ("cache_read_cost", "cache_read", "cache_read_input_token")
 _CACHE_WRITE_KEYS = ("cache_write_cost", "cache_write", "cache_write_input_token")
+#: Per-thousand-pages OCR rates. `ocr_cost` is the standard one;
+#: `ocr_annotated_cost` prices annotated pages and is deliberately *not* read —
+#: it is a different service, and billing every page at the annotated rate would
+#: overcharge every plain extraction.
+_PAGE_KEYS = ("ocr_cost",)
+
+#: What `ocr_cost` is quoted per, and the reason this constant has a name: the
+#: token rates divide by a million four lines away, and a reader skimming for
+#: "the divisor" would find the wrong one.
+PAGES_PER_QUOTE = Decimal(1_000)
 
 
 class CatalogueUnavailable(Exception):
@@ -95,6 +105,12 @@ class CataloguePrice:
     currency: str
     cache_read_per_mtok: Decimal | None = None
     cache_write_per_mtok: Decimal | None = None
+    #: Per page read, for OCR models. Cortecs publishes `ocr_cost` per **1,000**
+    #: processed pages, so this is that figure divided by a thousand — a
+    #: different divisor from the token rates' million, sitting two fields away
+    #: from them, which is exactly the shape of mistake ADR 0053's OpenRouter
+    #: parser exists to prevent one order of magnitude up.
+    per_page: Decimal | None = None
     context_window: int | None = None
     # Chat unless the catalogue says otherwise. Cortecs reports it in
     # `output_modalities`; a catalogue that says nothing gets the safe default,
@@ -407,12 +423,26 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
         input_rate = _as_decimal(_first(source, _INPUT_KEYS))
         output_rate = _as_decimal(_first(source, _OUTPUT_KEYS))
         currency = _first(source, ("currency",)) or _first(entry, ("currency",))
+        # An OCR model's token rates are zero and its real price is per page,
+        # so a parser that read only tokens would import it as free.
+        page_quote = _as_decimal(_first(source, _PAGE_KEYS))
+        per_page = page_quote / PAGES_PER_QUOTE if page_quote is not None else None
 
-        if not model_id or input_rate is None or output_rate is None or not currency:
+        # An OCR model quotes 0.0 for both token rates and its price in
+        # `ocr_cost`; a model with neither is genuinely unreadable. Requiring
+        # token rates alone reported every OCR model as unparsable, which is a
+        # model the operator never sees rather than one they can adopt.
+        priced = input_rate is not None and output_rate is not None
+        if not model_id or not currency or not (priced or per_page is not None):
             unparsable.append(model_id or "<unidentified model>")
             continue
+        if input_rate is None:
+            input_rate = Decimal(0)
+        if output_rate is None:
+            output_rate = Decimal(0)
 
         kind = _kind_of(entry)
+
 
         # `context_size` is what the reference provider actually sends, and its
         # absence from this list is why every imported model had a null context
@@ -433,6 +463,7 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
                 input_per_mtok=input_rate,
                 output_per_mtok=output_rate,
                 currency=str(currency).upper(),
+                per_page=per_page,
                 cache_read_per_mtok=_as_decimal(_first(source, _CACHE_READ_KEYS)),
                 cache_write_per_mtok=_as_decimal(_first(source, _CACHE_WRITE_KEYS)),
                 context_window=context_window,
@@ -471,6 +502,17 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
     take it off the chat route entirely — a worse failure than leaving an image
     model to be labelled by hand.
     """
+    # Tags first, and only for OCR. An OCR model reports `output_modalities:
+    # ["text"]` exactly as a chat model does — the modalities genuinely cannot
+    # tell them apart — while its `tags` say `OCR` and its `input_modalities`
+    # say `file`. Read from the tag rather than inferred from "file" being
+    # accepted, because plenty of chat models accept documents too (33 of them
+    # carry the `Document` tag) and mislabelling one would take it off the chat
+    # route entirely.
+    tags = entry.get("tags")
+    if isinstance(tags, list) and any(str(tag).strip().lower() == "ocr" for tag in tags):
+        return ModelKind.OCR
+
     modalities = entry.get("output_modalities")
     if isinstance(modalities, list):
         lowered = [str(item).lower() for item in modalities]
@@ -494,6 +536,9 @@ def _differs(existing: ModelPrice | None, candidate: CataloguePrice) -> bool:
         or existing.output_per_mtok != candidate.output_per_mtok
         or existing.cache_read_per_mtok != candidate.cache_read_per_mtok
         or existing.cache_write_per_mtok != candidate.cache_write_per_mtok
+        # Without this a changed page rate re-imports as "unchanged" and the
+        # deployment keeps billing yesterday's price.
+        or existing.per_page != candidate.per_page
         or existing.currency.upper() != candidate.currency
     )
 

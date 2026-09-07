@@ -38,6 +38,48 @@ import type { AdminModel, DiscoveredModel, ModelKind } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 
 
+/**
+ * The catalogue, grouped by what each model is for.
+ *
+ * One flat list stopped working when the fourth kind arrived: a chat model, an
+ * embedding model and an OCR model are not alternatives an operator chooses
+ * between, they are different things that happen to live in one table, and the
+ * columns that matter differ — a per-page rate is meaningless on a chat row and
+ * a context window is meaningless on an OCR one.
+ *
+ * Ordered by how often a deployment touches them, not alphabetically. A section
+ * with nothing in it is omitted rather than rendered empty: "no image models"
+ * is not information anybody needs on the screen where they manage the ones
+ * they have.
+ *
+ * The pager stays on the page as a whole. Paginating each section separately
+ * would mean four independent offsets in one URL, and the catalogue is not
+ * large enough to earn that.
+ */
+const KIND_SECTIONS: { kind: ModelKind; title: string; description: string }[] = [
+  {
+    kind: "chat",
+    title: "Chat",
+    description: "Conversation, on /v1/chat/completions, /v1/responses and /v1/messages.",
+  },
+  {
+    kind: "embedding",
+    title: "Embedding",
+    description: "Vectors, on /v1/embeddings. Priced per token, and they generate none.",
+  },
+  {
+    kind: "ocr",
+    title: "Document extraction",
+    description: "Documents in, text out, on /v1/ocr. Priced per page rather than per token.",
+  },
+  {
+    kind: "image",
+    title: "Image",
+    description: "Pictures, on /v1/images/generations. Often priced per image.",
+  },
+];
+
+
 export function AdminModels() {
   // A rate is money too, so it follows the reader's precision preference. Read
   // by hand rather than via <Money> because these figures sit inside a phrase
@@ -237,17 +279,59 @@ export function AdminModels() {
           </Notice>
         ) : (
           <>
-            <Table
-              columns={columns}
-              rows={models.data?.items ?? []}
-              rowKey={(model) => model.id}
-              empty={
-                paged.query
-                  ? "No model matches that."
-                  : "No models catalogued. Use Discover to see what the provider offers."
+            {(() => {
+              const rows = models.data?.items ?? [];
+              if (rows.length === 0) {
+                return (
+                  <Table
+                    columns={columns}
+                    rows={[]}
+                    rowKey={(model) => model.id}
+                    empty={
+                      paged.query
+                        ? "No model matches that."
+                        : "No models catalogued. Use Discover to see what the provider offers."
+                    }
+                    caption="Catalogued models."
+                  />
+                );
               }
-              caption="Catalogued models, their current price and who may use them."
-            />
+              // A kind the console does not know about must still be visible:
+              // the gateway's enum can gain a value before this file does, and
+              // a model that exists but renders nowhere is worse than one in a
+              // section headed by its raw name.
+              const known = new Set(KIND_SECTIONS.map((section) => section.kind));
+              const unknown = rows.filter((model) => !known.has(model.kind));
+              const sections = [
+                ...KIND_SECTIONS.map((section) => ({
+                  ...section,
+                  rows: rows.filter((model) => model.kind === section.kind),
+                })),
+                ...(unknown.length
+                  ? [{ kind: "other" as ModelKind, title: "Other", description: "", rows: unknown }]
+                  : []),
+              ].filter((section) => section.rows.length > 0);
+
+              return sections.map((section) => (
+                <div key={section.kind}>
+                  <div className="mb-2">
+                    <h2 className="text-base font-medium text-ink">
+                      {section.title}{" "}
+                      <span className={`${MUTED} font-normal`}>({section.rows.length})</span>
+                    </h2>
+                    {section.description && (
+                      <p className={`${MUTED} text-sm`}>{section.description}</p>
+                    )}
+                  </div>
+                  <Table
+                    columns={columns}
+                    rows={section.rows}
+                    rowKey={(model) => model.id}
+                    caption={`${section.title} models, their current price and who may use them.`}
+                  />
+                </div>
+              ));
+            })()}
             <Pagination
               total={models.data?.total ?? 0}
               limit={paged.limit}
@@ -520,7 +604,17 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   // sources for a provider they had not named yet — and the wrong choice
   // returned an empty screen rather than an explanation.
   const [fillMissing, setFillMissing] = useState(false);
-  const discovery = useDiscovery(open && providerId ? providerId : null, fillMissing);
+  // Which slice of the provider's catalogue to ask for.
+  //
+  // Not cosmetic, and the reason it exists is a genuine surprise: Cortecs'
+  // `/v1/models` **defaults to `tag=Instruct`**, so a request that looks
+  // unfiltered is filtered. Eleven embedding models and three OCR models sat in
+  // that endpoint while this console reported the provider offered none of
+  // either. Free text rather than a fixed list, because the vocabulary is the
+  // counterparty's and one compiled here would go stale the first time they
+  // add to it.
+  const [tag, setTag] = useState("");
+  const discovery = useDiscovery(open && providerId ? providerId : null, fillMissing, tag);
   const importModels = useImportModels();
   const toast = useOptionalToast();
   const [selected, setSelected] = useState<string[]>([]);
@@ -640,7 +734,12 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             disabled={selected.length === 0 || !providerId}
             onClick={() =>
               importModels.mutate(
-                { providerId, upstreamModels: selected, fillMissingPrices: fillMissing },
+                {
+                  providerId,
+                  upstreamModels: selected,
+                  fillMissingPrices: fillMissing,
+                  tag,
+                },
                 {
                   onSuccess: () => {
                     toast?.add({ title: "Models imported", type: "success" });
@@ -673,6 +772,17 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             </option>
           ))}
         </Select>
+
+        <Input
+          label="Catalogue tag"
+          value={tag}
+          onChange={(event) => {
+            setTag(event.target.value);
+            setSelected([]);
+          }}
+          placeholder="Instruct"
+          hint="Cortecs filters its catalogue by tag and defaults to Instruct — ask for Embedding or OCR to see those."
+        />
 
         {/* Off by default: a provider's own catalogue is the authority where one
             exists, and this is only needed for the APIs that publish nothing.

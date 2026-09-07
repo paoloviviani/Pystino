@@ -52,15 +52,26 @@ critical path precisely because nothing defaults to it.
 Cortecs serves `POST /v1/ocr` with `mistral-ocr-4.1` behind it. Two facts about
 it shaped this, both established at source on 2026-09-06:
 
-* **The OCR models are not in `/v1/models`.** That catalogue returns 109 entries,
-  every one `output_modalities: ["text"]`, and none of them an OCR model — while
-  `POST /v1/ocr` answers 401 rather than 404. So discovery cannot find these
-  models and they are catalogued by hand.
+* **The OCR models are in `/v1/models`, behind a default nobody mentioned.**
+  This document first said the opposite, and the correction is worth keeping
+  because the mistake is instructive: the catalogue's `tag` parameter
+  **defaults to `['Instruct']`**, so a query that looks unfiltered is filtered.
+  Asking plainly returns them — `tag=OCR` gives `mistral-ocr-4.1`, `4.0` and
+  `2512`; `tag=Embedding` gives eleven embedding models that the same default
+  had been hiding all along. An API whose default view is a subset, with no
+  field in the response saying so, is a thing to check for rather than assume
+  the absence of.
 * **The response carries `usage_info` with `pages_processed` and `credits`.** The
   billable unit is a page. Whether `credits` is micro-EUR as their chat surface
   reports, or something else, is **unverified** — it needs one real call with a
   key, and until then no plugin reads it. Reporting a figure in the wrong unit
   is worse than reporting none (ADR 0032).
+* **The price is published, per thousand pages.** The catalogue entry carries
+  `pricing.ocr_cost`, documented as "Standard OCR cost per 1,000 processed
+  pages" (and `ocr_annotated_cost` for annotated ones), with both token rates
+  at zero. So `per_page` is `ocr_cost / 1000` — a divisor of a thousand sitting
+  next to the token rates' million, which is the same class of error ADR 0053's
+  OpenRouter parser exists to prevent, one order of magnitude down.
 
 Then the scope widened, and the wider version is the better one: extraction is
 worth exposing as a surface in its own right. A RAG pipeline that lets you point
