@@ -396,8 +396,13 @@ class RequestAccounting:
         """Best available token counts, and an honest label for their provenance."""
         if self._upstream_usage:
             counts = self._reader.counts(self._upstream_usage)
-            if counts.total:
-                return self._with_images(counts), UsageSource.UPSTREAM_EXACT
+            # `total` is tokens, and on the OCR surface there are none: the
+            # counterparty reports `pages_processed` and charges by it. Testing
+            # tokens alone sent a perfectly exact page count down the estimation
+            # path, where `_with_units` then dropped it and the request recorded
+            # a cost of zero — found by the first ocr surface test.
+            if counts.total or counts.pages:
+                return self._with_units(counts), UsageSource.UPSTREAM_EXACT
 
         # No usable usage frame. Estimate rather than record zero.
         completion_text = "".join(part for slot in self._choices.values() for part in slot.content)
@@ -412,7 +417,7 @@ class RequestAccounting:
             # from the response and is exact, and it is what the model is
             # billed on — so the row is `upstream_exact`, with zero tokens
             # rather than an estimate of a quantity nobody charges for.
-            return self._with_images(TokenCounts()), UsageSource.UPSTREAM_EXACT
+            return self._with_units(TokenCounts()), UsageSource.UPSTREAM_EXACT
 
         if failed and not completion:
             # The upstream refused before generating anything, and reported no
@@ -427,14 +432,21 @@ class RequestAccounting:
             return TokenCounts(), UsageSource.UNAVAILABLE
 
         return (
-            self._with_images(
+            self._with_units(
                 TokenCounts(prompt=self._ctx.estimated_prompt_tokens, completion=completion)
             ),
             UsageSource.ESTIMATED,
         )
 
-    def _with_images(self, counts: TokenCounts) -> TokenCounts:
-        if not self._images:
+    def _with_units(self, counts: TokenCounts) -> TokenCounts:
+        """Carry the non-token quantities through a rebuild.
+
+        Both are billable units that no token count implies: pictures on the
+        image surface, pages on the OCR one. This rebuilds the frozen
+        dataclass, so anything it forgets to copy is silently lost — which is
+        exactly how a page-counted request first recorded a cost of zero.
+        """
+        if not self._images and not counts.pages:
             return counts
         return TokenCounts(
             prompt=counts.prompt,
@@ -443,6 +455,7 @@ class RequestAccounting:
             reasoning=counts.reasoning,
             cache_write=counts.cache_write,
             images=self._images,
+            pages=counts.pages,
         )
 
     def _was_substituted(self) -> bool:

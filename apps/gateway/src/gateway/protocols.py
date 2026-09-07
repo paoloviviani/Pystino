@@ -454,12 +454,87 @@ class ImagesReader:
         raise NotImplementedError("the image route does not stream")
 
 
+class OcrReader:
+    """Document extraction, `POST /v1/ocr`.
+
+    Three things sit differently here from every other surface, and all three
+    are why this file exists rather than each route reading its own fields:
+
+    **Usage is under `usage_info`, not `usage`.** Cortecs and Mistral both spell
+    it that way, and it carries `pages_processed` rather than any token count.
+    `frame` aliases it, which keeps the recorder's "read `usage` off the frame"
+    true for one more surface instead of teaching the recorder a sixth special
+    case.
+
+    **The billable quantity is exact and is not tokens.** A page count is
+    measured, not estimated, so `deltas` returns nothing — the same argument the
+    image reader makes. Feeding the extracted text through as completion tokens
+    would label an exactly-known bill "estimated", which is backwards.
+
+    **The text in the response is not the model's output in the usual sense.**
+    It is the document, transcribed. That makes `pages[].markdown` the most
+    sensitive field this gateway handles — a scanned identity card becomes
+    searchable text at exactly this point — which is why it is walked here and
+    why the response-side redaction has somewhere to hook.
+    """
+
+    accumulates_usage = False
+
+    def frame(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        usage = payload.get("usage_info")
+        if not isinstance(usage, dict):
+            return payload
+        # A shallow copy with the alias added: the caller's payload is what goes
+        # back to the client, and adding a key to it would invent a field the
+        # OCR API does not have.
+        aliased = dict(payload)
+        aliased["usage"] = usage
+        return aliased
+
+    def counts(self, usage: dict[str, Any] | None) -> TokenCounts:
+        return TokenCounts.from_ocr_usage(usage)
+
+    def deltas(self, payload: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+        """Nothing: pages are counted, never inferred from the text."""
+        return []
+
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
+        return []
+
+    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None:
+        return None
+
+    def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        """Every page's markdown, in place.
+
+        Used by restoration like every other surface — a document whose text was
+        redacted on the way out would come back carrying placeholders — and it is
+        the hook the response-side redaction needs, because on this surface the
+        text that matters is what came *back*.
+        """
+        changed = False
+        for page in payload.get("pages") or []:
+            if not isinstance(page, dict):
+                continue
+            if isinstance(text := page.get("markdown"), str) and (new := rewrite(text)) != text:
+                page["markdown"] = new
+                changed = True
+        return changed
+
+    def is_terminal(self, payload: dict[str, Any]) -> bool:
+        return True
+
+    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
+        raise NotImplementedError("the ocr route does not stream")
+
+
 _READERS: dict[ApiSurface, SurfaceProtocol] = {
     ApiSurface.CHAT_COMPLETIONS: ChatCompletionsReader(),
     ApiSurface.EMBEDDINGS: ChatCompletionsReader(),
     ApiSurface.RESPONSES: ResponsesReader(),
     ApiSurface.MESSAGES: MessagesReader(),
     ApiSurface.IMAGES: ImagesReader(),
+    ApiSurface.OCR: OcrReader(),
 }
 
 

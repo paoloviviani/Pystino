@@ -166,6 +166,10 @@ class ApiSurface(enum.StrEnum):
     RESPONSES = "responses"
     MESSAGES = "messages"
     IMAGES = "images"
+    #: Document extraction, `POST /v1/ocr`: the Cortecs and Mistral shape,
+    #: served either by an upstream OCR model or by this deployment's own
+    #: extractor. Metered by the page rather than the token.
+    OCR = "ocr"
 
 
 class BillingMode(enum.StrEnum):

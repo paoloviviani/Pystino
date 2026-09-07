@@ -250,6 +250,84 @@ class MessagesRequest(BaseModel):
         return payload
 
 
+class OcrDocument(BaseModel):
+    """The document to read, in the shape Cortecs and Mistral both accept.
+
+    Two forms, and the difference is not cosmetic — it decides whether this
+    deployment ever sees the bytes:
+
+    * ``document_url`` / ``image_url`` pointing at an address. The *provider*
+      fetches it, so the document never passes through the gateway, and nothing
+      here can inspect or redact it. That is a property of the request, not a
+      gap to fix: we cannot read what we never receive.
+    * a ``data:`` URI in either field, which is the document itself. That one we
+      hold, and it is the form local extraction and inspection can act on.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    #: ``document_url`` or ``image_url``. Passed through as the provider's own
+    #: discriminator rather than reinterpreted.
+    type: str
+    document_url: str | None = None
+    image_url: str | None = None
+
+    def location(self) -> str:
+        """Wherever the document is, whichever field carries it."""
+        return self.document_url or self.image_url or ""
+
+    def inline_bytes(self) -> tuple[bytes, str] | None:
+        """``(data, media type)`` when the document travelled with the request.
+
+        ``None`` for an address, which is the case where the provider does the
+        fetching and there is nothing local to read.
+        """
+        location = self.location()
+        if not location.startswith("data:"):
+            return None
+        header, _, encoded = location.partition(",")
+        if not encoded:
+            return None
+        media_type = header[5:].split(";")[0] or "application/octet-stream"
+        if ";base64" not in header:
+            # A plain data: URI is percent-encoded text, not a document anyone
+            # sends an OCR model. Treated as absent rather than guessed at.
+            return None
+        import base64
+        import binascii
+
+        try:
+            return base64.b64decode(encoded, validate=True), media_type
+        except (binascii.Error, ValueError):
+            return None
+
+
+class OcrRequest(BaseModel):
+    """``POST /v1/ocr`` — the Cortecs and Mistral shape.
+
+    Same passthrough philosophy as every other ``/v1`` request model: the fields
+    the gateway acts on are declared and the rest is forwarded, because the
+    option set here is long and provider-specific (``table_format``,
+    ``include_blocks``, ``confidence_scores_granularity``, the annotation
+    formats, and the routing preferences ``eu_native`` and
+    ``allow_zero_data_retention``). A gateway that validated all of it would
+    reject valid requests every time the counterparty added a field.
+    """
+
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
+
+    model: str
+    document: OcrDocument
+    #: Which pages to read, when the caller wants a subset. Declared because it
+    #: bounds the bill: the page count is otherwise unknown until the response.
+    pages: list[int] | None = None
+
+    def upstream_payload(self, *, upstream_model: str) -> dict[str, Any]:
+        payload = self.model_dump(exclude_unset=True)
+        payload["model"] = upstream_model
+        return payload
+
+
 class ImageGenerationRequest(BaseModel):
     """``POST /v1/images/generations``.
 

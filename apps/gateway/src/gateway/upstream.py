@@ -201,6 +201,17 @@ class OpenAICompatibleUpstream:
         """
         return await self.post_json("/images/generations", payload, request_id=request_id)
 
+    async def ocr(
+        self, payload: Mapping[str, Any], *, request_id: str | None = None
+    ) -> UpstreamResponse:
+        """Extract a document. Never streams: the response is one JSON body.
+
+        The path is `/ocr`, which is what Cortecs and Mistral both serve. A
+        provider that puts it elsewhere needs a plugin, not a branch here — the
+        rule ADR 0032 exists for.
+        """
+        return await self.post_json("/ocr", payload, request_id=request_id)
+
     async def list_models(self) -> UpstreamResponse:
         """Ask the provider what it offers.
 

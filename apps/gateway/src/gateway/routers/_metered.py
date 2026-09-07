@@ -76,12 +76,14 @@ _SURFACE_KINDS: dict[ApiSurface, tuple[ModelKind, ...]] = {
     ApiSurface.MESSAGES: (ModelKind.CHAT,),
     ApiSurface.EMBEDDINGS: (ModelKind.EMBEDDING,),
     ApiSurface.IMAGES: (ModelKind.IMAGE,),
+    ApiSurface.OCR: (ModelKind.OCR,),
 }
 
 _KIND_ROUTES: dict[ModelKind, str] = {
     ModelKind.CHAT: "/v1/chat/completions, /v1/responses or /v1/messages",
     ModelKind.EMBEDDING: "/v1/embeddings",
     ModelKind.IMAGE: "/v1/images/generations",
+    ModelKind.OCR: "/v1/ocr",
 }
 
 
