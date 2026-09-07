@@ -414,6 +414,47 @@ class TestLocalBackend:
         assert body["extractor"] == "markitdown"
         assert body["model"] == model.name
 
+    async def test_the_ledger_records_the_extractor_and_no_substitution(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """Found on the live deployment, in a report nobody could explain.
+
+        The reports screen said "2 request(s) were served by a substitute model
+        and priced at the requested model's price, so this total may not match
+        the provider's invoice for them" — for a locally-extracted document
+        that cost nothing and had no counterparty to invoice it.
+
+        The cause: this branch built its response with the *client-facing*
+        model name, and the recorder reads the served model out of that same
+        dict. So it compared `local-documents` against `markitdown` — two names
+        for one thing — and recorded a substitution that never happened.
+        """
+        extractor = FakeExtractor()
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded)
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                # A data: URL, because the local backend refuses to fetch one.
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+        # The caller still compares the echoed name with what they sent.
+        assert response.json()["model"] == model.name
+
+        record = await latest_record(session)
+        assert record.upstream_model == model.upstream_model
+        assert record.model_substituted is False
+
     async def test_a_url_is_refused_rather_than_fetched(
         self,
         app: Any,

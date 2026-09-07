@@ -811,6 +811,7 @@ class IdentityProviderResponse(BaseModel):
     fetch_userinfo: bool
     group_mappings: list[OidcMappingRule]
     link_local_by_email: bool
+    group_sync: Literal["every_login", "first_login", "never"]
     is_enabled: bool
     source: str
 
@@ -827,6 +828,9 @@ class IdentityProviderCreateRequest(BaseModel):
     # Off unless asked for, in the request as on the row: a client that omits
     # the field is not consenting to it (ADR 0056).
     link_local_by_email: bool = False
+    # The behaviour this gateway has always had, so a client that says nothing
+    # gets what it would have got before the field existed (ADR 0057).
+    group_sync: Literal["every_login", "first_login", "never"] = "every_login"
 
 
 class IdentityProviderUpdateRequest(BaseModel):
@@ -840,6 +844,7 @@ class IdentityProviderUpdateRequest(BaseModel):
     fetch_userinfo: bool | None = None
     group_mappings: list[OidcMappingRule] | None = None
     link_local_by_email: bool | None = None
+    group_sync: Literal["every_login", "first_login", "never"] | None = None
     is_enabled: bool | None = None
 
 
@@ -908,6 +913,12 @@ class UserAdminResponse(BaseModel):
     # says only "has a password" would not know the second one exists.
     linked_identities: list[str] = Field(default_factory=list)
     groups: list[str]
+    # Who granted *this* person's membership of the group being listed (ADR
+    # 0057): "manual" for an administrator's grant, "oidc" for the directory's.
+    # Only the group-members route can answer it — a user has many memberships
+    # and the question is per group — so it is None everywhere else rather than
+    # a value that would be a guess.
+    membership_source: str | None = None
     default_billing_group: str | None
     active_key_count: int
     last_login_at: datetime | None

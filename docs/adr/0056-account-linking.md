@@ -7,8 +7,8 @@
 - **Reverses a refusal recorded in code** — the `LocalCredential` docstring said
   linking "is refused, not merely unimplemented". See "The refusal this
   reverses".
-- Builds on [0043](0043-local-password-auth.md) (the local door),
-  [0048](0048-provisioning-policy.md) (who may exist here) and
+- Builds on [0043](0043-local-authentication.md) (the local door),
+  [0048](0048-oidc-policy-configuration.md) (who may exist here) and
   [0051](0051-settings-identity-and-email.md) (providers are rows, and
   per-directory facts live on them).
 
@@ -34,18 +34,28 @@ The reason not to do this was written down, and it has not stopped being true:
 > Linking one person's local credential to their directory identity would let a
 > leaked password ride an issuer's trust.
 
-There is a second direction, sharper than the first, that the original note did
-not spell out: if an account is adopted on the strength of an `email` claim, then
-whoever can make a directory emit that claim can *become* the account it names —
-inheriting its admin flag, its groups, its API keys and its billing. In a
-directory where people can set their own profile address, an email claim would
-be a password for every local account.
+**One correction to how this was first written up here**, because the first
+version of this ADR overstated it. It said that adopting on an `email` claim
+means "whoever can make a directory emit that claim" becomes the account it
+names. That is wrong about who is in the picture. A directory only reaches this
+code once an **administrator** has registered it: its issuer, its client id and
+its client secret, over HTTPS, through an admin-only route. Nobody adds a
+provider from outside. The reviewer of that sentence was right to call it what
+it was.
 
-What changed is not the risk assessment. It is **who decides**. An operator who
-runs the directory their local accounts were named after can make that
-statement; the gateway cannot make it for them. So this is a per-provider
-switch, off by default, and it is the *only* thing that turns any of the
-following on.
+What is actually left, and is the reason for the two things this ADR keeps:
+
+- **Which directories, not whether.** An operator vouches for the directory
+  their local accounts were named after. They have said nothing about the next
+  one somebody adds — a shared consumer IdP, a test realm, a partner's tenant —
+  so the decision belongs to the provider row and not to the deployment.
+- **Whether the directory vouches for the address.** Inside a registered
+  directory, an address is worth exactly what that directory's word for it is
+  worth, which is the question `email_verified` answers. A directory that lets
+  people type an address and does not check it is common, and its unchecked
+  claim should not select an existing account.
+
+So: a per-provider switch, off by default, and a verified address.
 
 ## The decision
 
@@ -121,16 +131,19 @@ Adopting an account makes the directory authoritative for it, because
 exception. Two consequences, both pinned by tests so that they are decisions
 rather than surprises:
 
-- **Manual group memberships are replaced.** The IdP is authoritative for
-  membership (0048), so groups assigned by hand to the local account disappear
-  on the login that adopts it.
+- **Groups the directory grants are added, and the ones it granted before are
+  kept in step.** What an administrator assigned to the local account survives
+  adoption — that was not true when this ADR was first written, and
+  [0057](0057-group-ownership-and-sync.md) is why it is now.
 - **`is_admin` follows the directory when admin groups are configured.** A
   local admin adopted by a directory that does not place them in an admin group
   **loses the flag on that login**. This is the one operational hazard worth
-  reading twice before turning the switch on, and the recovery is the local door
-  the shape above deliberately keeps working: the row is still `issuer =
-  "local"`, so `gateway passwd` still works and the administrator's own
-  `is_admin` edit is still permitted.
+  reading twice before turning the switch on. Two recoveries, both deliberate:
+  the local door still works — the row is still `issuer = "local"`, so
+  `gateway passwd` and the administrator's own `is_admin` edit are still
+  permitted — and, since [0057](0057-group-ownership-and-sync.md), an
+  administrator can put the account into the admin group *by hand* and no login
+  will undo it.
 
 An inactive local account is adopted and stays inactive: disabling someone must
 not be undone by their signing in through SSO.
@@ -151,17 +164,21 @@ cannot be configured otherwise. An upgrade may not change who can sign in as
 whom; the seed turns that fallback into a row on first startup, so turning
 linking on is one edit away in the console.
 
-## Bug found while building this, not fixed here
+## Bug found while building this, and how it was settled
 
-`gateway seed` stores a local user's subject **as typed**, while `gateway
+`gateway seed` stored a local user's subject **as typed**, while `gateway
 passwd` and the local login both casefold it. A deployment seeded with a
-mixed-case address therefore has a local account that cannot sign in with its
-password today — the login's casefolded lookup never finds the row — and, with
-this ADR, cannot be adopted either, for the same reason and consistently with
-it. The fix is not a one-liner: casefolding the `seed` lookup would make a
-re-seed create a *second* row for any address already stored mixed-case, so it
-needs to match either spelling while writing only the casefolded one. Recorded
-rather than done, because it is a different bug from this feature.
+mixed-case address therefore had a local account that could not sign in with
+its password at all — the login's casefolded lookup never found the row — and
+could not be adopted either, for the same reason.
+
+`seed` now casefolds, and the consequence was decided rather than engineered
+around: a deployment that already seeded a mixed-case address gets a **second
+row** on its next re-seed, not a repair of the first. Asked and answered — "we
+can live with it creating duplicates, if people uses uppercase in the email
+that's just the hell they deserve". The alternative was a lookup that matches
+either spelling forever, carried in the code to rescue an address nobody should
+have typed that way.
 
 ## Alternatives rejected
 
@@ -172,9 +189,18 @@ rather than done, because it is a different bug from this feature.
   advance.
 - **Matching on `users.email`.** Not unique, not stable, and overwritten from
   the claims on every login. It is the column that looks right and is wrong.
-- **Treating a missing `email_verified` as verified.** This is the whole
-  feature's safety property, and several providers omit the claim entirely.
-  Being strict costs a support question; being lenient costs the account.
+- **Treating a missing `email_verified` as verified.** Several providers omit
+  the claim entirely, so strictness has a cost: with such a directory, linking
+  cannot happen at all. It is still the right default — silently selecting an
+  existing account on an address nobody checked is the one outcome with no
+  recovery — and the decline is logged with the value that caused it. If a real
+  directory turns out to omit it, the answer is an explicit administrative link
+  (below), not a looser claim reader.
+- **An administrator linking an account by hand**, from the user screen. The
+  obvious complement to this feature, and the escape hatch for a directory
+  that never sends `email_verified`: the administrator is the party entitled to
+  say two accounts are one person. Not built — nobody has asked for it — but it
+  is where `user_identities` was designed to be written from.
 - **A full identity-alias model, with `users.(issuer, subject)` migrated into
   `user_identities` for every row.** The right long-term shape, and what would
   be needed to link one person across *two* directories. Not done: it touches

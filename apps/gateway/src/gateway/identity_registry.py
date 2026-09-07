@@ -26,7 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.config import OIDCSettings, Settings
-from gateway.models import IdentityProvider
+from gateway.models import GroupSync, IdentityProvider
 from gateway.oidc import OIDCClient
 from gateway.secrets import SecretBox
 
@@ -49,6 +49,8 @@ class ProviderRecord:
     # May a login here adopt a local account with the same verified address
     # (ADR 0056)? A per-provider fact, like the group claim beside it.
     link_local_by_email: bool
+    # How far this directory's answer about groups reaches (ADR 0057).
+    group_sync: GroupSync
     is_enabled: bool
     source: str  # "console" | "environment"
     updated_at: object = None
@@ -91,6 +93,7 @@ def record_from_row(row: IdentityProvider, secrets: SecretBox) -> ProviderRecord
         fetch_userinfo=row.fetch_userinfo,
         group_mappings=dict(row.group_mappings or []),
         link_local_by_email=row.link_local_by_email,
+        group_sync=row.group_sync,
         is_enabled=row.is_enabled,
         source="console",
         updated_at=row.updated_at,
@@ -119,6 +122,9 @@ def record_from_env(settings: Settings) -> ProviderRecord | None:
         # that fallback into a row on first startup, so turning linking on is
         # one edit away in the console.
         link_local_by_email=False,
+        # What the environment fallback has always done, and the only answer
+        # that keeps an upgrade invisible.
+        group_sync=GroupSync.EVERY_LOGIN,
         is_enabled=True,
         source="environment",
     )

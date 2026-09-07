@@ -69,12 +69,14 @@ from gateway.models import (
     Group,
     GroupModelAccess,
     GroupSource,
+    GroupSync,
     IdentityProvider,
     LimitMetric,
     LimitRule,
     LimitScope,
     LocalCredential,
     Membership,
+    MembershipSource,
     ModelDef,
     ModelKind,
     ModelPrice,
@@ -1419,26 +1421,26 @@ async def delete_group(group_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     await session.commit()
 
 
-async def _load_editable_group(group_id: uuid.UUID, session: SessionDep) -> Group:
-    """The group a membership change is aimed at, or the error that stops it.
+async def _load_group_for_membership(group_id: uuid.UUID, session: SessionDep) -> Group:
+    """The group a membership change is aimed at.
 
-    Membership is edited only on manual groups. An OIDC-sourced group is
-    authoritative in the other direction: provision_user replaces its members
-    from the token at every login (ADR 0048), so a member added here would
-    vanish at the next sign-in — access granted silently, then revoked the
-    same way, with nobody the wiser for either.
+    This used to refuse an OIDC-sourced group, and the reason it gave was
+    sound at the time: "a member added here would vanish at the next sign-in —
+    access granted silently, then revoked the same way, with nobody the wiser
+    for either". That premise is what ADR 0057 removed. A membership added
+    here is recorded as an administrator's (``MembershipSource.MANUAL``) and no
+    login touches it, so the refusal now prevents nothing and blocks the thing
+    it was protecting: putting somebody into a directory's group when the
+    directory does not name them.
+
+    Removal is allowed on any membership for the same reason it always was —
+    it takes effect immediately. A membership the directory granted may of
+    course come back at that person's next sign-in, which is what the group
+    listing's source badge is for.
     """
     group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
     if group is None:
         raise NotFoundError(f"No group with id {group_id}.")
-    if group.source != GroupSource.MANUAL:
-        raise BadRequestError(
-            f"Group {group.name!r} is managed by the identity provider: its "
-            "membership follows the group mappings and is replaced at every "
-            "login. Map the IdP group to a manual group if you need members "
-            "the directory does not name.",
-            code="membership_managed_by_idp",
-        )
     return group
 
 
@@ -1461,7 +1463,9 @@ async def list_group_members(
         stmt = stmt.where(_matches(needle, User.email, User.display_name, User.subject))
     total = await count_of(session, stmt)
     users = (await session.execute(page.apply(stmt))).scalars().all()
-    return page.page(await _user_responses(session, list(users)), total)
+    return page.page(
+        await _user_responses(session, list(users), membership_in=group_id), total
+    )
 
 
 @router.post(
@@ -1474,7 +1478,7 @@ async def add_group_member(
     admin: AdminUserDep,
     session: SessionDep,
 ) -> None:
-    group = await _load_editable_group(group_id, session)
+    group = await _load_group_for_membership(group_id, session)
     user = await session.get(User, payload.user_id)
     if user is None:
         raise NotFoundError(f"No user with id {payload.user_id}.")
@@ -1489,7 +1493,11 @@ async def add_group_member(
             f"{user.email or user.subject} is already a member of {group.name!r}."
         )
 
-    session.add(Membership(user_id=user.id, group_id=group.id))
+    # An administrator's grant, and recorded as one: no login will undo it,
+    # even for a user the directory manages (ADR 0057).
+    session.add(
+        Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL)
+    )
     await session.commit()
 
 
@@ -1500,7 +1508,7 @@ async def add_group_member(
 async def remove_group_member(
     group_id: uuid.UUID, user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
 ) -> None:
-    group = await _load_editable_group(group_id, session)
+    group = await _load_group_for_membership(group_id, session)
     user = await session.get(User, user_id)
     if user is None:
         raise NotFoundError(f"No user with id {user_id}.")
@@ -1855,7 +1863,9 @@ async def delete_limit(rule_id: uuid.UUID, admin: AdminUserDep, session: Session
 # -- users ------------------------------------------------------------------
 
 
-async def _user_responses(session: SessionDep, users: Sequence[User]) -> list[UserAdminResponse]:
+async def _user_responses(
+    session: SessionDep, users: Sequence[User], *, membership_in: uuid.UUID | None = None
+) -> list[UserAdminResponse]:
     """Decorate user rows with the counts and names the console shows.
 
     Both lookups are restricted to the users being rendered. Reading every key
@@ -1890,6 +1900,23 @@ async def _user_responses(session: SessionDep, users: Sequence[User]) -> list[Us
 
     # One lookup for the page, same reason as the password set above: a query
     # per row is the shape test_query_counts.py exists to prevent.
+    # Who granted the membership being listed, when it is a group being listed.
+    # One query for the page, like the two above.
+    granted_here: set[uuid.UUID] = set()
+    if membership_in is not None:
+        granted_here = {
+            user_id
+            for user_id, in (
+                await session.execute(
+                    select(Membership.user_id).where(
+                        Membership.group_id == membership_in,
+                        Membership.user_id.in_(ids),
+                        Membership.source == MembershipSource.MANUAL,
+                    )
+                )
+            ).all()
+        }
+
     linked: dict[uuid.UUID, list[str]] = {}
     for user_id, issuer in (
         await session.execute(
@@ -1911,6 +1938,11 @@ async def _user_responses(session: SessionDep, users: Sequence[User]) -> list[Us
             is_admin=user.is_admin,
             has_password=user.id in with_password,
             linked_identities=linked.get(user.id, []),
+            membership_source=(
+                None
+                if membership_in is None
+                else ("manual" if user.id in granted_here else "oidc")
+            ),
             groups=sorted(m.group.name for m in user.memberships),
             default_billing_group=(
                 group_names.get(user.default_billing_group_id)
@@ -2135,7 +2167,9 @@ async def create_user(
             await session.flush()
         groups.append(group)
     for group in groups:
-        session.add(Membership(user_id=user.id, group_id=group.id))
+        session.add(
+            Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL)
+        )
     # The same sole-group rule the login path applies: one group means it is
     # the default, and the account can bill without a settings detour.
     if len(groups) == 1:
@@ -2369,6 +2403,7 @@ def _idp_response(record: Any) -> IdentityProviderResponse:
             OidcMappingRule(idp=idp, local=local) for idp, local in record.group_mappings.items()
         ],
         link_local_by_email=record.link_local_by_email,
+        group_sync=record.group_sync.value,
         is_enabled=record.is_enabled,
         source=record.source,
     )
@@ -2419,6 +2454,7 @@ async def create_identity_provider(
         fetch_userinfo=payload.fetch_userinfo,
         group_mappings=[[rule.idp, rule.local] for rule in payload.group_mappings],
         link_local_by_email=payload.link_local_by_email,
+        group_sync=GroupSync(payload.group_sync),
         is_enabled=True,
         created_by=admin.id,
     )
@@ -2460,6 +2496,10 @@ async def update_identity_provider(
         # implicitly here would silently split one person's account in two —
         # spend, keys and quotas on one row, their next login on another.
         row.link_local_by_email = fields["link_local_by_email"]
+    if "group_sync" in fields and fields["group_sync"] is not None:
+        # Takes effect at the next login, like every other field on this row:
+        # nothing here reaches back over memberships already granted.
+        row.group_sync = GroupSync(fields["group_sync"])
     if "is_enabled" in fields and fields["is_enabled"] is not None:
         row.is_enabled = fields["is_enabled"]
     await session.commit()

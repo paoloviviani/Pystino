@@ -181,6 +181,31 @@ cloud host, the metadata endpoint. So the local extractor reads documents that
 travelled with the request, and the refusal says which model to use instead. A
 test points at `169.254.169.254` and asserts nothing was fetched.
 
+## Bug found after shipping, on the live deployment
+
+The reports screen disclosed that "2 request(s) were served by a substitute
+model and priced at the requested model's price, so this total may not match
+the provider's invoice for them" — one of them a locally-extracted document
+that cost nothing and had no counterparty to invoice it. Nothing had been
+substituted.
+
+The local branch built its response with the **client-facing** model name, and
+`observe_payload` reads the served model out of that same dict. So the recorder
+compared `local-documents` against `markitdown` — two names for one thing — and
+wrote `model_substituted = true`. The proxied branch never had the problem
+because it observes the raw upstream payload first and rewrites `model` to ours
+on the way out; the local branch now does the same, in the same order.
+
+Worth noting what was *not* wrong: the substitution detector, which compares
+against the upstream name we sent because our client-facing name differs from
+the provider's on every request by design. Given a payload claiming
+`local-documents` had served it, "the provider served something else" was the
+correct conclusion from an incorrect input.
+
+(The other flagged request was `demo-model` against the smoke upstream, which
+answers with its own fixed model name whatever you ask it for. That detection
+is right: the stub really did serve something other than what was asked.)
+
 ## Consequences
 
 - **markitdown, not four libraries or a framework.** One upstream and one API,

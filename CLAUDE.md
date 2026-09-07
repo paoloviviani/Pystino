@@ -158,15 +158,35 @@ Inside the gateway, the pieces that carry the most weight:
   **`iss` is part of a user's identity** — users are keyed on
   `(issuer, subject)`, so changing the issuer re-provisions everyone as new
   rows with no memberships at their next login.
+- **A directory owns the memberships it granted, and no others**
+  ([ADR 0057](docs/adr/0057-group-ownership-and-sync.md)). `memberships.source`
+  is `oidc` or `manual`; a login's sync grants and revokes the first kind and
+  never touches the second, so an administrator's group assignment survives a
+  sign-in. `identity_providers.group_sync` says how often the directory gets to
+  answer — `every_login` (the default, and what this always did), `first_login`,
+  `never`. Three things worth knowing before touching it. The test is the
+  **provenance of the membership**, not of the group: "whoever created the group
+  owns it" was implemented first and killed by the bearer revocation test, since
+  it would let a directory add people to an admin-created group and never remove
+  them. `is_admin`, the default billing group and the sole-group rule now read
+  the **effective** memberships rather than the token — all three were wrong for
+  a manually-added user. And `_claims_diverge` asks "would a sync change
+  anything" rather than comparing sets, because a user with one manual group is
+  permanently unequal to their token and equality meant a write per `/v1`
+  request.
 - **A directory login can adopt the local account with the same address, and
   only if the operator says so** ([ADR 0056](docs/adr/0056-account-linking.md)).
   `identity_providers.link_local_by_email`, per provider and off by default. It
   reverses a refusal that used to be absolute, so read the ADR before touching
   either side; three things about it will save time. The gate is
   **`email_verified` boolean `true`** — absent and the string `"true"` are both
-  declined, and every decline is logged with the value that caused it, because
-  reading silence as verification is what would make an `email` claim a
-  password. The link is a **`user_identities` row beside the identity, never a
+  declined, and every decline is logged with the value that caused it: inside a
+  directory an administrator registered, an address is worth what that
+  directory's word for it is worth, and an unchecked claim should not select an
+  existing account. (Registering the directory is itself admin-only and needs
+  its issuer, client id and secret; an earlier version of that ADR described
+  the risk as if a stranger could add a provider, which is not true and is
+  corrected there.) The link is a **`user_identities` row beside the identity, never a
   rewrite of it**: `issuer == "local"` is read in eight places as "this account
   has a password", and rewriting a linked user's issuer would flip all eight
   silently. And adoption hands that account to the directory — **memberships
