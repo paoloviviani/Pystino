@@ -58,7 +58,7 @@ from gateway.deps import (
     SessionDep,
     SettingsDep,
 )
-from gateway.errors import BadRequestError
+from gateway.errors import BadRequestError, ContentBlockedError
 from gateway.models import ApiSurface, ModelDef
 from gateway.routers import _metered
 from gateway.schemas import OcrRequest
@@ -84,6 +84,78 @@ def _extractor_endpoint(model: ModelDef, settings: Settings) -> str:
     """
     configured = (model.provider.base_url or "").strip() if model.provider else ""
     return configured or settings.extractor.endpoint
+
+
+async def _redact_pages(
+    request: Request,
+    payload: dict[str, Any],
+    *,
+    redactor: Any,
+    principal: Any,
+    model: ModelDef,
+    metered: Any,
+) -> JSONResponse | None:
+    """Detect and substitute in `pages[].markdown`, in place.
+
+    **The direction is the opposite of every other surface, and that is the
+    point.** Elsewhere the request is redacted on the way out and placeholders
+    are restored on the way back. Here the document went out as bytes or as a
+    URL — with a URL we never even held it — and what returns is the document
+    *as text*. That is the moment a scanned identity card stops being a picture
+    and becomes searchable, indexable, greppable data, so the response is the
+    half worth protecting.
+
+    Returns a response to send instead, when the policy blocks; `None` when the
+    pages were rewritten in place and the caller should carry on.
+
+    The request is **not** un-charged when the policy blocks. The counterparty
+    read the document and will invoice for it whatever we then decide to hand
+    over, so the row stays `completed` with its real cost and records what was
+    refused. Reversing the charge would be a nicer story and a false one.
+    """
+    pages = [page for page in (payload.get("pages") or []) if isinstance(page, dict)]
+    texts = [page.get("markdown") for page in pages]
+    if not any(isinstance(text, str) and text for text in texts):
+        return None
+
+    policy = _metered.redaction_policy(request, principal=principal, model=model)
+    messages = [
+        {"role": "user", "content": text if isinstance(text, str) else ""} for text in texts
+    ]
+    try:
+        outcome = await redactor.redact_request(messages, policy=policy)
+    except ContentBlockedError as exc:
+        # Nothing was substituted — the policy refused outright — but which
+        # rule refused it is the fact worth keeping.
+        metered.accounting.observe_redaction(
+            engine=getattr(redactor, "name", None),
+            scope=policy.scope if policy else None,
+            rule_id=policy.rule_id if policy else None,
+        )
+        await metered.completed(upstream_status=200)
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": {
+                    "message": (
+                        "The extracted text contains data this deployment's redaction "
+                        f"policy refuses to return: {exc}"
+                    ),
+                    "type": "invalid_request_error",
+                    "code": exc.code,
+                }
+            },
+        )
+
+    for page, message in zip(pages, outcome.messages, strict=True):
+        page["markdown"] = str(message.get("content") or "")
+    metered.accounting.observe_redaction(
+        engine=outcome.engine,
+        entity_count=outcome.entity_count,
+        scope=outcome.scope,
+        rule_id=outcome.rule_id,
+    )
+    return None
 
 
 @router.post("/ocr", response_model=None)
@@ -180,6 +252,15 @@ async def extract_document(
             )
 
         metered.accounting.observe_payload(extracted)
+        if (blocked := await _redact_pages(
+            request,
+            extracted,
+            redactor=redactor,
+            principal=principal,
+            model=model,
+            metered=metered,
+        )) is not None:
+            return blocked
         await metered.completed(upstream_status=200)
         return JSONResponse(status_code=200, content=extracted)
 
@@ -204,9 +285,18 @@ async def extract_document(
         # it; the reader knows where both live.
         metered.accounting.observe_payload(response.payload, headers=response.headers)
 
-    await metered.completed(upstream_status=response.status_code)
-
     body_out: dict[str, Any] = dict(response.payload or {})
+    if (blocked := await _redact_pages(
+        request,
+        body_out,
+        redactor=redactor,
+        principal=principal,
+        model=model,
+        metered=metered,
+    )) is not None:
+        return blocked
+
+    await metered.completed(upstream_status=response.status_code)
     # Our model name, not the counterparty's, exactly as every other route does:
     # clients compare the echoed name against what they sent. The upstream's own
     # name is in the ledger.

@@ -13,6 +13,7 @@ from decimal import Decimal
 from typing import Any
 
 import httpx
+import orjson
 from conftest import FakeUpstream, Seeded
 from gateway.models import (
     ApiSurface,
@@ -28,6 +29,59 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 DOCUMENT = {"type": "document_url", "document_url": "https://example.org/invoice.pdf"}
+
+IBAN = "IT60X0542811101000000123456"
+
+
+def install_detector(app: Any, findings: list[tuple[str, str]]) -> None:
+    """Give the app a detector that finds exactly `(entity_type, needle)`.
+
+    Uses the same fake-detector approach as test_redaction_http: what is under
+    test here is the gateway's half — that the extracted text goes through
+    detection at all and comes back substituted — not whether Presidio can
+    recognise an IBAN, which is Presidio's test and runs in services/redaction.
+    """
+    from gateway.config import EntityMode, RedactionPolicy, RedactionSettings
+    from gateway.redaction.http import HttpDetectionRedactor
+    from pydantic import SecretStr
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = orjson.loads(request.content)
+        out = []
+        for index, text in enumerate(payload["texts"]):
+            spans = []
+            for entity_type, needle in findings:
+                start = text.find(needle)
+                while start != -1:
+                    spans.append(
+                        {
+                            "start": start,
+                            "end": start + len(needle),
+                            "entity_type": entity_type,
+                            "score": 0.99,
+                        }
+                    )
+                    start = text.find(needle, start + 1)
+            out.append({"index": index, "spans": spans})
+        return httpx.Response(200, json={"findings": out, "engine": "fake"})
+
+    # No resolver, so the redactor's own policy is the effective one. With a
+    # resolver present and no rules written, ADR 0039's default applies and
+    # nothing is substituted — correct behaviour, and it would make every
+    # assertion below pass against a redactor that does nothing.
+    app.state.redaction = None
+    app.state.redactor = HttpDetectionRedactor(
+        RedactionSettings(
+            engine="http",
+            endpoint="http://detector:8080",
+            placeholder_key=SecretStr("ocr-test-key"),
+            # Without this the policy default is "off" and every assertion
+            # below would pass against a redactor that does nothing.
+            policy=RedactionPolicy(default_mode=EntityMode.ANONYMISE_RESTORE),
+        ),
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
 
 
 async def add_ocr_model(
@@ -510,3 +564,157 @@ class TestLocalBackend:
             headers=seeded.auth,
         )
         assert response.status_code == 502
+
+
+# --------------------------------------------------------------------------
+# The response is the sensitive half
+# --------------------------------------------------------------------------
+
+
+class TestResponseRedaction:
+    """Extraction is where a picture of a document becomes searchable text.
+
+    Every other surface redacts the request and restores placeholders on the
+    way back. Here the document left as bytes or as a URL — with a URL we never
+    held it — so the only place PII can be caught is the response, and these
+    assert it is caught there.
+    """
+
+    async def test_extracted_text_is_redacted_before_the_caller_sees_it(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        install_detector(app, [("IBAN_CODE", IBAN)])
+        model = await add_ocr_model(session, seeded, name="redacted-ocr")
+        fake_upstream.set_json(
+            {
+                "model": "mistral-ocr-4.1",
+                "pages": [{"index": 0, "markdown": f"Pay to {IBAN} immediately."}],
+                "usage_info": {"pages_processed": 1},
+            }
+        )
+
+        response = await client.post(
+            "/v1/ocr", json={"model": model.name, "document": DOCUMENT}, headers=seeded.auth
+        )
+        assert response.status_code == 200
+        markdown = response.json()["pages"][0]["markdown"]
+        assert IBAN not in markdown
+        assert "<IBAN_CODE_" in markdown
+
+    async def test_the_row_records_what_the_response_cost_and_what_it_hid(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """The count is discovered after the row is created, so it has to be
+        written at settle — a row saying zero for a request that had one
+        replaced is worse than one saying nothing."""
+        install_detector(app, [("IBAN_CODE", IBAN)])
+        model = await add_ocr_model(session, seeded, name="counted-ocr", per_page="0.01")
+        fake_upstream.set_json(
+            {
+                "model": "mistral-ocr-4.1",
+                "pages": [{"index": 0, "markdown": f"Pay {IBAN}."}],
+                "usage_info": {"pages_processed": 2},
+            }
+        )
+
+        await client.post(
+            "/v1/ocr", json={"model": model.name, "document": DOCUMENT}, headers=seeded.auth
+        )
+        record = await latest_record(session)
+        assert record.redacted_entity_count == 1
+        assert record.redaction_engine is not None
+        # Charged for what was read, whatever was then hidden.
+        assert record.cost == Decimal("0.02")
+
+    async def test_every_page_is_walked_not_only_the_first(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        install_detector(app, [("IBAN_CODE", IBAN)])
+        model = await add_ocr_model(session, seeded, name="multipage-ocr")
+        fake_upstream.set_json(
+            {
+                "model": "mistral-ocr-4.1",
+                "pages": [
+                    {"index": 0, "markdown": "cover page"},
+                    {"index": 1, "markdown": f"account {IBAN}"},
+                ],
+                "usage_info": {"pages_processed": 2},
+            }
+        )
+
+        body = (
+            await client.post(
+                "/v1/ocr", json={"model": model.name, "document": DOCUMENT}, headers=seeded.auth
+            )
+        ).json()
+        assert IBAN not in orjson.dumps(body).decode()
+
+    async def test_locally_extracted_text_is_redacted_too(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        """The local path is not a shortcut past the policy: a document read
+        here still has its text inspected before it is handed over."""
+        extractor = FakeExtractor()
+        extractor.set(
+            kind="text", text=f"Transfer to {IBAN}", extractor="markitdown", pages=1
+        )
+        app.state.control_http = extractor.client()
+        install_detector(app, [("IBAN_CODE", IBAN)])
+        model = await add_local_model(session, seeded, name="local-redacted")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+        assert IBAN not in response.json()["pages"][0]["markdown"]
+
+    async def test_a_clean_document_is_returned_untouched(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        install_detector(app, [])
+        model = await add_ocr_model(session, seeded, name="clean-ocr")
+        fake_upstream.set_json(
+            {
+                "model": "mistral-ocr-4.1",
+                "pages": [{"index": 0, "markdown": "Minutes of the meeting."}],
+                "usage_info": {"pages_processed": 1},
+            }
+        )
+
+        body = (
+            await client.post(
+                "/v1/ocr", json={"model": model.name, "document": DOCUMENT}, headers=seeded.auth
+            )
+        ).json()
+        assert body["pages"][0]["markdown"] == "Minutes of the meeting."
+        record = await latest_record(session)
+        assert record.redacted_entity_count == 0
