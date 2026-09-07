@@ -461,6 +461,12 @@ class ModelKind(enum.StrEnum):
     CHAT = "chat"
     EMBEDDING = "embedding"
     IMAGE = "image"
+    #: Document extraction: a document in, its text out, priced per page rather
+    #: than per token. Served either by an upstream OCR model or by this
+    #: deployment's own extractor, which is the distinction the *provider*
+    #: carries and not the kind — `/v1/ocr` is one surface with two kinds of
+    #: counterparty behind it.
+    OCR = "ocr"
 
 
 class Provider(Base):
@@ -635,6 +641,14 @@ class ModelPrice(Base):
     # Per generated image, for the image models that are not priced per token
     # (ADR 0030). Not per million of anything — the divisor does not apply.
     per_image: Mapped[Decimal | None] = mapped_column(default=None)
+    # Per page read, for OCR and document extraction, which is what every OCR
+    # counterparty charges by. Same shape as `per_image` and for the same
+    # reason: the unit is not a token, so the per-million divisor is wrong.
+    #
+    # A model may carry this *and* the token rates: an OCR model that also
+    # returns a summary is billed for both, and leaving one null is how a real
+    # charge records as zero.
+    per_page: Mapped[Decimal | None] = mapped_column(default=None)
 
     currency: Mapped[str] = mapped_column(String(3))
     effective_from: Mapped[datetime] = mapped_column(default=utcnow)

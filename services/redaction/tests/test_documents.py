@@ -13,6 +13,17 @@ import zipfile
 
 import pytest
 from llmp_redaction.documents import MAX_BYTES, extract, media_type_for
+
+# markitdown is services/redaction's dependency, not the gateway's, and the root
+# suite deliberately runs this directory (pyproject's `testpaths`) so these tests
+# do not rot in a corner nobody executes. In the gateway's environment the
+# extractor's library is absent, so these skip — visibly, with a reason — and
+# run for real under `uv run --python 3.13 pytest` in services/redaction, which
+# is where the 37-package tree is installed.
+pytest.importorskip(
+    "markitdown",
+    reason="document extraction needs services/redaction's own environment",
+)
 from llmp_shared import ExtractionKind, ExtractionResponse
 
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"

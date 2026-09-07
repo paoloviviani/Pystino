@@ -668,6 +668,7 @@ class PriceResponse(BaseModel):
     cache_read_per_mtok: Money | None
     cache_write_per_mtok: Money | None
     per_image: Money | None
+    per_page: Money | None
     currency: str
     effective_from: datetime
     source: str
@@ -684,6 +685,10 @@ class PriceCreateRequest(BaseModel):
     # anything, and set alongside the token rates rather than instead of them —
     # a model can be metered both ways (ADR 0030).
     per_image: Money | None = Field(default=None, ge=0)
+    # Per page read, for OCR models. Same shape, same reason: an OCR
+    # counterparty charges by the page, and a page is not a million of
+    # anything.
+    per_page: Money | None = Field(default=None, ge=0)
     # Defaults to the gateway's billing currency; anything else is refused.
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     # Future-dated prices are allowed: that is how a change is scheduled.

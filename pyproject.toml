@@ -91,6 +91,16 @@ module = ["presidio_analyzer.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+# The same situation as presidio_analyzer above, for the document extractors:
+# they are services/redaction's dependencies, and putting markitdown's
+# 37-package tree (onnxruntime, pandas, magika) into the gateway's lockfile to
+# satisfy a type checker would be the tail wagging the dog. `docx`, `openpyxl`
+# and `pptx` appear only in that service's tests, where they *write* the
+# fixtures the extractor then reads.
+module = ["markitdown.*", "pdfminer.*", "docx.*", "openpyxl.*", "pptx.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
 
@@ -119,4 +129,9 @@ filterwarnings = [
     # SQLite in tests, and money columns go through the Money TypeDecorator
     # which round-trips Decimal as text. See apps/gateway/src/gateway/types.py
     "ignore::sqlalchemy.exc.SAWarning",
+    # Starlette's TestClient warns about httpx on *import*, so this cannot be a
+    # per-module marker: the error happens during collection, before any marker
+    # applies. Third-party and unactionable here — the replacement it names
+    # (httpx2) is not what FastAPI's own test client uses yet.
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
 ]

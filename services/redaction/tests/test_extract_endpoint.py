@@ -10,15 +10,28 @@ every request while the service is healthy.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 from fastapi.testclient import TestClient
 from llmp_redaction.app import create_app
 from llmp_shared import ExtractionKind
 from test_documents import DOCX, IBAN, docx_bytes, pdf_bytes
 
+# markitdown is services/redaction's dependency, not the gateway's, and the root
+# suite deliberately runs this directory (pyproject's `testpaths`) so these tests
+# do not rot in a corner nobody executes. In the gateway's environment the
+# extractor's library is absent, so these skip — visibly, with a reason — and
+# run for real under `uv run --python 3.13 pytest` in services/redaction, which
+# is where the 37-package tree is installed.
+pytest.importorskip(
+    "markitdown",
+    reason="document extraction needs services/redaction's own environment",
+)
+
 
 @pytest.fixture(scope="module")
-def client() -> TestClient:
+def client() -> Iterator[TestClient]:
     # No NER: extraction never needs a model, and loading ~900 MB of spaCy to
     # test a zip reader would make this suite unrunnable on the small host.
     import os

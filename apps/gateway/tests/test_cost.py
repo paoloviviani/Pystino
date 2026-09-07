@@ -192,3 +192,91 @@ class TestSelectPrice:
         now = utcnow()
         assert select_price([], at=now) is None
         assert select_price([price(effective_from=now + timedelta(days=1))], at=now) is None
+
+
+class TestPerPagePricing:
+    """OCR is charged by the page, which is a unit and not a millionth of one.
+
+    Same shape as per-image pricing (ADR 0030), tested to the same standard:
+    this is the arithmetic that turns a document into an invoice line.
+    """
+
+    @staticmethod
+    def ocr_price(
+        *, per_page: str | None, input_rate: str = "0", output_rate: str = "0"
+    ) -> ModelPrice:
+        return ModelPrice(
+            id=uuid.uuid4(),
+            model_id=uuid.uuid4(),
+            input_per_mtok=Decimal(input_rate),
+            output_per_mtok=Decimal(output_rate),
+            per_page=Decimal(per_page) if per_page is not None else None,
+            currency="EUR",
+            effective_from=utcnow(),
+        )
+
+    def test_pages_are_charged_at_the_page_rate(self) -> None:
+        breakdown = compute_cost(TokenCounts(pages=12), self.ocr_price(per_page="0.001"))
+        assert breakdown.page_cost == Decimal("0.012")
+        assert breakdown.total == Decimal("0.012")
+
+    def test_a_page_is_not_divided_by_a_million(self) -> None:
+        """The failure this test exists for: reusing the token divisor here
+        would charge a millionth of the real price and look plausible."""
+        breakdown = compute_cost(TokenCounts(pages=1), self.ocr_price(per_page="1"))
+        assert breakdown.page_cost == Decimal(1)
+        assert breakdown.page_cost != Decimal(1) / MILLION
+
+    def test_an_unpriced_page_charges_nothing_rather_than_guessing(self) -> None:
+        """An unpriced model reserves nothing and records zero — visibly, so the
+        console's unpriced warning is what catches it, not a number invented
+        here."""
+        breakdown = compute_cost(TokenCounts(pages=200), self.ocr_price(per_page=None))
+        assert breakdown.page_cost == Decimal(0)
+        assert breakdown.total == Decimal(0)
+
+    def test_pages_and_tokens_are_both_charged_when_both_are_priced(self) -> None:
+        """An OCR model that also returns generated text has incurred both, and
+        leaving either out records a real charge as zero."""
+        price_row = self.ocr_price(per_page="0.01", input_rate="1", output_rate="2")
+        breakdown = compute_cost(
+            TokenCounts(prompt=1_000_000, completion=1_000_000, pages=3), price_row
+        )
+        assert breakdown.page_cost == Decimal("0.03")
+        assert breakdown.input_cost == Decimal(1)
+        assert breakdown.output_cost == Decimal(2)
+        assert breakdown.total == Decimal("3.03")
+
+    def test_a_page_charge_converts_with_everything_else(self) -> None:
+        """ADR 0054 scales every component by one rate, so the parts keep
+        summing to the total after conversion."""
+        breakdown = compute_cost(TokenCounts(pages=10), self.ocr_price(per_page="0.10"))
+        converted = breakdown.scaled(Decimal("0.5"), "EUR")
+        assert converted.page_cost == Decimal("0.500")
+        assert converted.total == converted.page_cost
+
+
+class TestOcrUsageReader:
+    """Its own reader, because the field is named differently *and* means
+    something else — the argument the Anthropic reader already makes."""
+
+    def test_reads_the_reported_page_count(self) -> None:
+        counts = TokenCounts.from_ocr_usage({"pages_processed": 7, "credits": 3})
+        assert counts.pages == 7
+        # No tokens on this surface: inventing some would bill one request twice.
+        assert counts.total == 0
+
+    def test_falls_back_to_the_local_count_when_nobody_reported_one(self) -> None:
+        """Local extraction has no counterparty, so the count comes from the
+        document itself."""
+        assert TokenCounts.from_ocr_usage(None, pages=4).pages == 4
+        assert TokenCounts.from_ocr_usage({}, pages=4).pages == 4
+
+    def test_a_reported_count_wins_over_the_local_one(self) -> None:
+        """The counterparty is authoritative about what it charged for."""
+        assert TokenCounts.from_ocr_usage({"pages_processed": 9}, pages=2).pages == 9
+
+    def test_no_count_anywhere_is_zero_not_one(self) -> None:
+        """Zero pages charges nothing. Defaulting to one would invent a charge
+        for a request whose size nobody could establish."""
+        assert TokenCounts.from_ocr_usage(None).pages == 0
