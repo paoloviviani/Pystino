@@ -62,6 +62,12 @@ class TokenCounts:
     #: Images produced. Only ever non-zero on the image route, where many models
     #: are priced per image rather than per token (ADR 0030).
     images: int = 0
+    #: Pages read. Only ever non-zero on the OCR route. Taken from the
+    #: counterparty's `usage_info.pages_processed` where it reports one, and from
+    #: the document itself when extraction happened locally — never inferred
+    #: from the length of the text, which would be a billing figure with no
+    #: source.
+    pages: int = 0
 
     @property
     def total(self) -> int:
@@ -181,6 +187,27 @@ class TokenCounts:
             images=max(0, images),
         )
 
+    @classmethod
+    def from_ocr_usage(cls, usage: dict[str, Any] | None, *, pages: int = 0) -> TokenCounts:
+        """Read an OCR ``usage_info`` object.
+
+        Its own reader rather than a tolerant one, for the reason the Anthropic
+        reader exists: the field is named differently *and* means something else.
+        ``usage_info.pages_processed`` is the billable count on this surface —
+        Cortecs and Mistral both report it — and there is no ``prompt_tokens``
+        to read at all, so a reader that went looking for one would return zero
+        counts for a request that really cost money.
+
+        ``pages`` is the fallback for the local extractor, which has no
+        counterparty and therefore no reported usage: the page count comes from
+        the document. Never from the length of the extracted text, which would
+        be a billing figure with no source (ADR 0053's rule, one surface over).
+        """
+        reported = 0
+        if usage:
+            reported = _as_int(usage.get("pages_processed"))
+        return cls(pages=max(0, reported or pages))
+
 
 #: Every spelling of "cache write tokens" seen in the wild, in the order they
 #: are tried. All live inside ``prompt_tokens_details`` on the OpenAI-shaped
@@ -272,6 +299,10 @@ class CostBreakdown:
     currency: str
     cache_write_cost: Decimal = Decimal(0)
     image_cost: Decimal = Decimal(0)
+    #: Per page read, on the OCR surface. A component rather than folded
+    #: into the input cost, so a reader can see which half of an OCR charge
+    #: was pages and which was tokens.
+    page_cost: Decimal = Decimal(0)
 
     @property
     def total(self) -> Decimal:
@@ -281,6 +312,7 @@ class CostBreakdown:
             + self.cache_read_cost
             + self.cache_write_cost
             + self.image_cost
+            + self.page_cost
         )
 
     def scaled(self, rate: Decimal, currency: str) -> CostBreakdown:
@@ -297,6 +329,7 @@ class CostBreakdown:
             cache_read_cost=self.cache_read_cost * rate,
             cache_write_cost=self.cache_write_cost * rate,
             image_cost=self.image_cost * rate,
+            page_cost=self.page_cost * rate,
             currency=currency,
         )
 
@@ -383,11 +416,20 @@ def compute_cost(
     if counts.images and price.per_image is not None:
         image_cost = Decimal(counts.images) * as_decimal(price.per_image)
 
+    # Per-page pricing, for the same reason and on the same terms: an OCR
+    # counterparty charges by the page, and a page is not a million of anything.
+    # A model priced both ways is charged both ways — an OCR call that also
+    # returns generated text has really incurred both.
+    page_cost = Decimal(0)
+    if counts.pages and price.per_page is not None:
+        page_cost = Decimal(counts.pages) * as_decimal(price.per_page)
+
     return CostBreakdown(
         input_cost=input_cost,
         output_cost=output_cost,
         cache_read_cost=cache_cost,
         cache_write_cost=write_cost,
         image_cost=image_cost,
+        page_cost=page_cost,
         currency=price.currency.upper(),
     )

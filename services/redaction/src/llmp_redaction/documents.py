@@ -163,7 +163,7 @@ def _pdf_pages(data: bytes) -> int:
     report 0 rather than 1, which would be a guess dressed as a measurement.
     """
     try:
-        from pdfminer.pdfpage import PDFPage  # type: ignore[import-untyped]
+        from pdfminer.pdfpage import PDFPage
 
         return sum(1 for _ in PDFPage.get_pages(io.BytesIO(data)))
     except Exception as exc:
