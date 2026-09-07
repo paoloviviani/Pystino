@@ -527,6 +527,38 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
     return ModelKind.EMBEDDING if "embed" in identifier else ModelKind.CHAT
 
 
+
+def kinds_by_id(payload: Any) -> dict[str, ModelKind]:
+    """What kind each entry in a catalogue declares, whether or not it is priced.
+
+    `parse_catalogue` reports an unpriced entry as a bare id, which is all the
+    *pricing* code needs — and left discovery showing an unpriced OCR or
+    embedding model as `chat`, because a row built from an id alone has no kind
+    to carry and the default is chat. The kind is right there in the entry; this
+    reads it without requiring a price.
+
+    Only entries with a usable id appear: a kind for a model nobody can name is
+    not usable by anything.
+    """
+    entries: Iterable[Any]
+    if isinstance(payload, list):
+        entries = payload
+    elif isinstance(payload, dict):
+        found = _first(payload, _LIST_KEYS)
+        entries = found if isinstance(found, list) else []
+    else:
+        entries = []
+
+    kinds: dict[str, ModelKind] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        raw_id = _first(entry, _ID_KEYS)
+        if raw_id is None:
+            continue
+        kinds[str(raw_id)] = _kind_of(entry)
+    return kinds
+
 def _differs(existing: ModelPrice | None, candidate: CataloguePrice) -> bool:
     """Whether *candidate* is a genuine change from the price now in force."""
     if existing is None:

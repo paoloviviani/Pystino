@@ -105,3 +105,23 @@ class GenericOpenAIPlugin:
         provider overcharging rather than as a configuration mistake.
         """
         return None
+
+    def builtin_catalogue(self) -> dict[str, Any] | None:
+        """A catalogue this plugin can answer from itself, if it has one.
+
+        ``None`` for every counterparty on the internet: what it offers is a
+        question only it can answer, and the gateway asks over HTTP. A plugin
+        that *is* the thing being served knows the answer already, and asking
+        the network would mean asking a service that has no such endpoint —
+        which is what produced a 404 in the console the first time someone
+        pressed Discover on the local extractor.
+
+        The return value is a catalogue payload in the shape
+        ``parse_catalogue`` reads, deliberately, so a built-in answer goes
+        through exactly the same parsing, pricing and kind detection as a
+        fetched one rather than a shortcut nobody tests.
+
+        A narrow first step towards the ``catalogue()`` ADR 0032 describes —
+        which is about replacing the import script — and not that feature.
+        """
+        return None

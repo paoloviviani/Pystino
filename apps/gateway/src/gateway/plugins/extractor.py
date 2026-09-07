@@ -26,6 +26,7 @@ Two claims it makes, both true by construction rather than by configuration:
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 from gateway.plugins.generic import GenericOpenAIPlugin
 
@@ -50,3 +51,34 @@ class LocalExtractorPlugin(GenericOpenAIPlugin):
         """None. The extractor is not reachable off the compose network, and a
         credential it would ignore is a credential someone has to rotate."""
         return {}
+
+    def builtin_catalogue(self) -> dict[str, Any] | None:
+        """What this deployment's extractor offers: one model, itself.
+
+        Answered here rather than fetched, because there is nothing to fetch —
+        the service serves `/extract`, not `/models`, and Discover against it
+        used to fail with a 404 naming a URL the operator never typed.
+
+        No price. What a deployment charges its own users for reading a
+        document locally is a decision nobody else can make, and inventing a
+        rate here would put a number in the ledger with no source. It imports
+        unpriced and the console's unpriced warning says so — the same
+        treatment any model with no published price gets.
+        """
+        return {
+            "data": [
+                {
+                    "id": "markitdown",
+                    "description": (
+                        "Word, Excel, PowerPoint and text-layer PDFs, read inside this "
+                        "deployment. Scanned pages are refused rather than guessed at."
+                    ),
+                    "tags": ["OCR"],
+                    "input_modalities": ["file"],
+                    "output_modalities": ["text"],
+                    # No `pricing`, so the parser reports it unpriced rather
+                    # than free — the distinction the console renders as a
+                    # warning.
+                }
+            ]
+        }
