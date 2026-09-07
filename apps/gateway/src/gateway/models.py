@@ -325,10 +325,19 @@ class LocalCredential(Base):
     and deleting the row revokes local login without touching the identity.
 
     The user it points at is keyed ``(issuer="local", subject=email)``, the same
-    convention ``gateway seed`` has always used, so an OIDC user and a local
-    user with the same address are deliberately different accounts. Linking one
-    person's local credential to their directory identity would let a leaked
-    password ride an issuer's trust — it is refused, not merely unimplemented.
+    convention ``gateway seed`` has always used, so by default an OIDC user and
+    a local user with the same address are different accounts.
+
+    That default used to be absolute, and the reason was written here: linking
+    one person's local credential to their directory identity lets a leaked
+    password ride an issuer's trust. That risk is real and has not gone away —
+    what changed is who decides. An operator who runs the directory their local
+    accounts were named after can now turn linking on **per identity provider**
+    (``IdentityProvider.link_local_by_email``, ADR 0056), and the link is
+    recorded as a ``UserIdentity`` row rather than by rewriting this row's key.
+    Read that ADR before touching either side: the guarantee that makes it
+    tolerable is that a verified email is required, and it is what stops an
+    ``email`` claim from being a password.
     """
 
     __tablename__ = "local_credentials"
@@ -344,6 +353,54 @@ class LocalCredential(Base):
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
     user: Mapped[User] = relationship(foreign_keys=[user_id])
+
+
+class UserIdentity(Base):
+    """An *additional* way one person's account is named by an issuer (ADR 0056).
+
+    ``users`` still holds the identity a row was created with — the primary
+    key of a person as far as ``(issuer, subject)`` goes. This table holds the
+    others, and exists so that account linking never has to rewrite that pair.
+
+    That is the whole design, and it is not fussiness. ``issuer == "local"`` is
+    read in eight places as *"this account's door is a password"* — local
+    login, the password reset, both CLI commands, changing your own password,
+    the administrator password routes, creating a local account, and the rule
+    that refuses an ``is_admin`` edit when the directory is authoritative.
+    Rewriting a linked user's issuer to the provider's would flip all eight
+    silently: the person would keep an unusable password and the deployment
+    would lose the escape hatch that recovers it when the directory is
+    misconfigured. So the local row stays local, and the directory identity is
+    recorded beside it. ADR 0056 lists the eight.
+
+    Two unique constraints, each preventing a different confusion: one identity
+    belongs to one person, and one person has at most one identity per
+    directory. Deleting a row unlinks, which is why the link is auditable —
+    ``linked_at`` and the address it matched on are kept.
+    """
+
+    __tablename__ = "user_identities"
+    __table_args__ = (
+        UniqueConstraint("issuer", "subject", name="uq_user_identities_issuer_subject"),
+        UniqueConstraint("user_id", "issuer", name="uq_user_identities_user_issuer"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    issuer: Mapped[str] = mapped_column(String(512))
+    subject: Mapped[str] = mapped_column(String(255))
+    # The address the match was made on, kept as it was at the time. The
+    # provider may report a different one later and `users.email` follows it;
+    # what this link was justified by must not move with it.
+    matched_email: Mapped[str | None] = mapped_column(String(320), default=None)
+    linked_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    user: Mapped[User] = relationship(foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return f"<UserIdentity {self.issuer}/{self.subject} -> {self.user_id}>"
 
 
 class Membership(Base):
@@ -1050,6 +1107,14 @@ class IdentityProvider(Base):
     groups_claim: Mapped[str] = mapped_column(String(255), default="groups")
     fetch_userinfo: Mapped[bool] = mapped_column(Boolean, default=True)
     group_mappings: Mapped[list[list[str]]] = mapped_column(JSON, default=list)
+    # May a login here adopt a local account with the same verified address
+    # (ADR 0056)? Per provider and off by default, because it is this
+    # directory's word that gets to name an existing account: an operator
+    # trusts the corporate IdP their local accounts were named after, and
+    # says nothing about the next one added.
+    link_local_by_email: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
