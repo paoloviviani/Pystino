@@ -3,7 +3,6 @@ import {
   Button,
   Card,
   Dialog,
-  Input,
   Notice,
   Select,
   Spinner,
@@ -575,10 +574,12 @@ function PreviewBox() {
  * The installed engines, and which one is in force.
  *
  * Switching is a two-step for one case only: an engine that redacts nothing
- * needs a written reason, because that is the change which makes the system
- * quietly stop protecting anything and the reason is kept permanently. Every
- * other switch is one click — asking for a justification to *turn protection on*
- * would be friction with no reader.
+ * gets a confirmation, because that is the change which makes the system
+ * quietly stop protecting anything. It used to demand a written reason as
+ * well; that was dropped on the grounds that a sentence typed to get past a
+ * dialog is not an audit trail, and the row still records the engine, who
+ * changed it and when. Every other switch is one click — asking anyone to
+ * justify *turning protection on* would be friction with no reader.
  */
 function EngineList({ status }: { status: RedactionStatus }) {
   const setEngine = useSetRedactionEngine();
@@ -671,10 +672,10 @@ function EngineList({ status }: { status: RedactionStatus }) {
         engine={confirming}
         pending={setEngine.isPending}
         onCancel={() => setConfirming(null)}
-        onConfirm={(reason) =>
+        onConfirm={() =>
           confirming &&
           setEngine.mutate(
-            { engine: confirming.name, reason },
+            { engine: confirming.name, reason: "" },
             {
               onSuccess: () => {
                 setConfirming(null);
@@ -695,11 +696,11 @@ function EngineList({ status }: { status: RedactionStatus }) {
 }
 
 /**
- * The one switch that needs a sentence typed out.
+ * The one switch that stops and asks.
  *
- * The reason is a required field rather than a checkbox saying "I understand",
- * because a checkbox produces no record. This one is stored on an append-only
- * row and is what a data-protection review reads six months later.
+ * Confirmation without a form: what this change does is worth a sentence *to*
+ * the operator, not one *from* them. The append-only row still records which
+ * engine, who chose it and when, which is the part a later review can rely on.
  */
 function ConfirmOff({
   engine,
@@ -710,10 +711,8 @@ function ConfirmOff({
   engine: RedactionEngineOption | null;
   pending: boolean;
   onCancel: () => void;
-  onConfirm: (reason: string) => void;
+  onConfirm: () => void;
 }) {
-  const [reason, setReason] = useState("");
-
   return (
     <Dialog
       open={engine !== null}
@@ -724,11 +723,7 @@ function ConfirmOff({
           <Button variant="secondary" onClick={onCancel}>
             Cancel
           </Button>
-          <Button
-            variant="danger"
-            disabled={reason.trim().length === 0 || pending}
-            onClick={() => onConfirm(reason.trim())}
-          >
+          <Button variant="danger" disabled={pending} onClick={onConfirm}>
             {pending ? "Saving…" : "Turn it off"}
           </Button>
         </>
@@ -737,13 +732,9 @@ function ConfirmOff({
       <Notice tone="danger">
         Prompts will reach providers exactly as callers sent them.
       </Notice>
-      <Input
-        label="Reason"
-        value={reason}
-        onChange={(event) => setReason(event.target.value)}
-        placeholder="detection service migration"
-        hint="Kept permanently, with who changed it and when."
-      />
+      <p className="m-0 text-sm text-ink-muted">
+        Recorded with who changed it and when.
+      </p>
     </Dialog>
   );
 }

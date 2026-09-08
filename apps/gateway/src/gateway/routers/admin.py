@@ -3179,14 +3179,16 @@ async def set_redaction_engine(
             f"{', '.join(redaction_registry.available())}."
         )
 
+    # A reason is *accepted* and kept, and no longer demanded. It used to be
+    # required for the one switch that stops redaction entirely, on the grounds
+    # that a later review would read it. Asked to drop it, and the argument for
+    # dropping it is better than the argument that put it there: a required
+    # field on the only path that turns protection off is friction exactly
+    # where an operator is already being told, in red, what the change does —
+    # and a sentence typed to get past a dialog is not an audit trail. What
+    # actually survives the change is still recorded without it: the engine,
+    # who switched it, and when.
     reason = payload.reason.strip()
-    if not info.redacts and not reason:
-        # The reason is kept permanently and is what a later review reads, which
-        # is the whole point of demanding one here.
-        raise BadRequestError(
-            f"switching to {engine!r} stops redaction entirely: prompts will reach "
-            "providers exactly as callers sent them. Give a reason."
-        )
 
     # Proves the engine can actually be built in this environment, using the same
     # code path the resolver will use. Refusing here is the difference between an

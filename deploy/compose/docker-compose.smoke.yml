@@ -20,6 +20,14 @@ services:
       - ../../scripts:/app/scripts:ro
     working_dir: /app/scripts
     command: ["python", "-m", "uvicorn", "_fake_upstream:app", "--host", "0.0.0.0", "--port", "9099"]
+    ports:
+      # Loopback only, and that is the whole of the justification: ground rule 4
+      # forbids publishing anything but the proxy's TLS port on a *routable*
+      # address, and `scripts/test_public_tls_live.py` enforces it there.
+      # 127.0.0.1 is not that, and `benchmark_live.py` needs to call this
+      # upstream directly from the host — bracketing the gateway against the
+      # same upstream is how it attributes the gateway's own added latency.
+      - "127.0.0.1:8081:9099"
     healthcheck:
       # A 405 proves the route exists and the app is serving; the endpoint is
       # POST-only, so any HTTP response at all is success here.

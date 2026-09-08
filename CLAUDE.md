@@ -399,7 +399,10 @@ rediscovered — one being built, one not started:
   append-only row that overrides `GATEWAY_REDACTION__ENGINE`, and
   `RedactionResolver` polls it every 10s so a change reaches the other worker
   without a restart and without a query on the request path. Switching to an
-  engine that redacts nothing needs a written reason, kept permanently. Note
+  engine that redacts nothing **no longer needs a written reason** — that
+  requirement was dropped on request (ADR 0033, item 1, which now records why);
+  the console still confirms and the row still names the engine, the admin and
+  the moment. Note
   `_engine_redacts` asks the registry rather than comparing against `"noop"` — an
   installable engine could redact nothing under any name.
   **What is redacted is now an admin decision**
