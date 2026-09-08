@@ -3,7 +3,7 @@
 Serves exactly one useful endpoint, ``POST /detect``, defined by
 ``llmp_shared.redaction`` — spans in, spans out, no placeholder text ever. Any
 service that serves this contract can replace this one without the gateway
-changing (docs/adr/0026-pluggable-detection.md).
+changing (ADR 0026).
 
 It holds no state, has no database, and needs no authentication of its own: it is
 reachable only on the internal compose network, and it is given text that has
@@ -111,7 +111,7 @@ def _configured_languages() -> list[str]:
 #
 # and every Italian identifier silently stops being detected — including in the
 # MIT-only image, whose entire justification is that those recognisers need no
-# model (docs/adr/0026-pluggable-detection.md). They are pattern and checksum
+# model (ADR 0026). They are pattern and checksum
 # matchers, so the language tag has no bearing on whether they match; registering
 # them under the loaded language is what makes the claim true rather than merely
 # plausible. Their context words stay Italian, which only affects score boosting.

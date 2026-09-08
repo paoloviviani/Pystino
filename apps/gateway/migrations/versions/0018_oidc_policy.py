@@ -4,7 +4,7 @@ Revision ID: 0018
 Revises: 0017
 Create Date: 2026-09-02
 
-See docs/adr/0048-oidc-policy-configuration.md.
+See ADR 0048.
 
 One table, modelled on ``redaction_config`` (ADR 0033): the identity *policy* —
 who may come to exist, which claim names their groups, what an IdP group means

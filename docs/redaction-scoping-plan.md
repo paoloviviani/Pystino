@@ -5,9 +5,9 @@
   and 3 — scoping, then configurable engines — are still the requirement below,
   recorded before being designed so the design is not reverse-engineered from a
   diff.
-- Related: [ADR 0012](adr/0012-redaction-interface.md) (the detection contract),
-  [ADR 0026](adr/0026-pluggable-detection.md) (the `llmp.redactors` entry point),
-  [ADR 0009](adr/0009-quota-model.md) (the precedence rule to copy).
+- Related: [ADR 0012](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0012-redaction-interface.md) (the detection contract),
+  [ADR 0026](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0026-pluggable-detection.md) (the `llmp.redactors` entry point),
+  [ADR 0009](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0009-quota-model.md) (the precedence rule to copy).
 
 ## 1. Visibility — **done**
 
@@ -80,7 +80,7 @@ possible.
 
 *Updated 2026-08-24.* An admin can now see every installed engine and choose
 which is in force, from the console, recorded on an append-only row. See
-[ADR 0033](adr/0033-redaction-engine-selection.md), which also records why the
+[ADR 0033](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0033-redaction-engine-selection.md), which also records why the
 warning below about a console toggle was overridden rather than honoured — the
 short version being that the effort went into the word *silently*, and that the
 alternative an operator actually reaches for during an incident is editing an

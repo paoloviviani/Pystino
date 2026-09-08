@@ -13,7 +13,7 @@ capability:
 | `docker-compose.smoke.yml` | a fake OpenAI-compatible upstream — exercise the whole topology with no provider account |
 | `docker-compose.redaction.yml` | the Presidio detection service |
 | `docker-compose.chat.yml` | *(on the `chat` branch)* chat-api and the chat SPA at `/chat` |
-| `docker-compose.proxy.yml` | Caddy terminating TLS — the only route to a routable address ([ADR 0035](adr/0035-public-tls-exposure.md)) |
+| `docker-compose.proxy.yml` | Caddy terminating TLS — the only route to a routable address ([ADR 0035](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0035-public-tls-exposure.md)) |
 
 ```bash
 # the common development shape:
@@ -41,7 +41,7 @@ upstream in the base file would be one careless `-f` away from production.
 | `GATEWAY_UPSTREAM_BASE_URL` / `GATEWAY_UPSTREAM_API_KEY` | the default upstream provider |
 | `GATEWAY_REDACTION_ENGINE`, `GATEWAY_REDACTION_PLACEHOLDER_KEY` | see [Redaction](redaction.md) — the key must be backed up with the transcripts it labelled |
 | `GATEWAY_OIDC__*` | any OIDC provider. Discovery is read **once at startup** — changing any value needs a gateway restart. `iss` is part of user identity, so changing the issuer re-provisions every user as a new row with no memberships. See [OIDC against any provider](oidc-generic-provider.md) |
-| `GATEWAY_LOCAL_AUTH__ENABLED` | local email + password sign-in beside OIDC ([ADR 0043](adr/0043-local-authentication.md)); passwords are set out-of-band with `gateway passwd` and never through the environment |
+| `GATEWAY_LOCAL_AUTH__ENABLED` | local email + password sign-in beside OIDC ([ADR 0043](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0043-local-authentication.md)); passwords are set out-of-band with `gateway passwd` and never through the environment |
 | `PUBLIC_HOST`, `HTTPS_PORT`, `TLS_DIRECTIVE`, `PUBLIC_ORIGIN`, `ACME_EMAIL`, `PUBLIC_BIND` | only with the proxy overlay (below) |
 | `CHAT_PORT`, chat OIDC settings | only with the chat overlay; the chat's OIDC client is distinct from the gateway's — two services that authenticate people are two clients, each revocable on its own |
 
@@ -94,7 +94,7 @@ One origin, one port, everything behind TLS — the console, the chat and `/v1`
 alike.
 
 **Behind the proxy, local sign-in is on by default.** The only management
-credential this shape seeds is the local admin's ([ADR 0043](adr/0043-local-authentication.md)),
+credential this shape seeds is the local admin's ([ADR 0043](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0043-local-authentication.md)),
 and its password comes from `deploy/.env`, which is gitignored and never
 committed. Create the account the usual way
 (`docker compose ... exec gateway gateway passwd admin@local`).
@@ -102,7 +102,7 @@ committed. Create the account the usual way
 ### The three traps behind a proxy
 
 All three were found building it, and all are recorded in
-[ADR 0035](adr/0035-public-tls-exposure.md):
+[ADR 0035](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0035-public-tls-exposure.md):
 
 1. **SNI may not carry an IP address**, so an address-only deployment offers no
    certificate at all until Caddy's `default_sni` names one — every handshake
@@ -136,6 +136,6 @@ host's routable address**.
 
 !!! warning "This is still not a production deployment"
 
-    Read [ADR 0035](adr/0035-public-tls-exposure.md) before calling it one.
+    Read [ADR 0035](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0035-public-tls-exposure.md) before calling it one.
     The self-signed configuration still trains people to click through a
     warning, and a session holder can still spend real provider credentials.

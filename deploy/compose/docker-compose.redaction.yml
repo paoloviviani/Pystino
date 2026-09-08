@@ -28,7 +28,7 @@
 #   Redaction off              drop this overlay and set
 #                              GATEWAY_REDACTION__ENGINE=noop on the gateway.
 #
-# See docs/adr/0026-pluggable-detection.md and services/redaction/README.md.
+# See https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0026-pluggable-detection.md and services/redaction/README.md.
 services:
   redaction:
     build:

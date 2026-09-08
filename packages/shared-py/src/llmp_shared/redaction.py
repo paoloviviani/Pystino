@@ -1,6 +1,6 @@
 """Wire contract for PII detection, and the deterministic placeholder scheme.
 
-Design (see docs/adr/0012-redaction-interface.md):
+Design (see ADR 0012):
 
 The *engine* only ever detects spans. It never invents placeholder text. The
 gateway performs substitution itself using :func:`placeholder_for`. That split is

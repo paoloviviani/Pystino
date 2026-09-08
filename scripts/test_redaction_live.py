@@ -4,7 +4,7 @@
 What only this can prove: that Presidio, with a real model, finds what the design
 assumed it would — in particular that Italian identifiers are detected in the
 MIT-only image, which is the finding the licence decision rests on
-(docs/adr/0026-pluggable-detection.md).
+(ADR 0026).
 
 It also checks the property that matters most in the request path and cannot be
 seen from inside the gateway's tests: **the upstream never receives the PII.** The

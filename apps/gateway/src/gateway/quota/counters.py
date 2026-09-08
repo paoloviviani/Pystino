@@ -357,7 +357,7 @@ class DatabaseCounterStore:
     invisible here in a way they are not in Valkey. Overshoot while running on
     the fallback is therefore bounded by
     ``concurrent_requests * default_max_output_tokens`` rather than by a single
-    request. See docs/adr/0009-quota-model.md
+    request. See ADR 0009
     """
 
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:

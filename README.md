@@ -14,7 +14,7 @@ frontend, desktop shell and RAG are planned.
 > one went.
 
 **Licence: [EUPL-1.2](LICENCE)** for all first-party code — see
-[ADR 0001](docs/adr/0001-licensing.md) for the dependency policy it implies.
+[ADR 0001](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0001-licensing.md) for the dependency policy it implies.
 
 ## Components
 
@@ -25,18 +25,23 @@ frontend, desktop shell and RAG are planned.
 | `services/redaction` | Presidio detection service, out of process. |
 | `packages/ui` | Design tokens and UI primitives, shared with the console. |
 | `apps/console` | The admin console: usage reports, quotas, providers, models, users, groups, settings. |
-| `apps/web`, `apps/desktop`, `services/rag`, `packages/shared` | Placeholders for later phases. |
+
+The chat application, the desktop shell and the RAG pipeline are **not here**.
+They live in [pystino-chat](https://gitlab.linksfoundation.com/viviani/pystino-chat),
+which is a `/v1` *client* of this gateway and imports nothing from it. The
+decision record for all of it is in
+[ai-stack](https://gitlab.linksfoundation.com/viviani/ai-stack).
 
 ## Architecture
 
 ```
-                    ┌──────────────┐        ┌──────────────┐
-   browser ────────▶│  apps/web    │        │ apps/desktop │
-   (planned)        │  Next.js PWA │        │  Tauri shell │
-                    └──────┬───────┘        └──────┬───────┘
-                           │  OIDC + /api          │ wraps the same web app
-                           ▼                       ▼
-  opencode ──────▶ ┌────────────────────────────────────────┐
+                    ┌───────────────────────────────┐
+   any /v1 client ─▶│  pystino-chat, opencode, the  │
+                    │  OpenAI SDKs — a key or an    │
+                    │  OIDC bearer, nothing special │
+                    └───────────────┬───────────────┘
+                                    ▼
+  apps/console ──▶ ┌────────────────────────────────────────┐
   OpenAI SDK       │           apps/gateway                 │
   any OpenAI       │                                        │
   client           │  /v1/chat/completions   API-key auth   │
@@ -65,13 +70,13 @@ The four ideas that carry most of the design:
 
 1. **PostgreSQL is the ledger of record; Valkey is a rebuildable cache.**
    Quotas still evaluate correctly with Valkey gone, just more slowly.
-   ([0006](docs/adr/0006-counter-store.md))
+   ([0006](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0006-counter-store.md))
 2. **Quota check before the upstream call, accounting after, a reservation in
    between** — otherwise concurrent requests each read the same under-limit
-   total and collectively blow the budget. ([0009](docs/adr/0009-quota-model.md))
+   total and collectively blow the budget. ([0009](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0009-quota-model.md))
 3. **Accounting never silently reports zero**: if usage never arrives from the
    upstream, tokens are counted locally and the row is stamped `estimated`.
-   ([0008](docs/adr/0008-accounting-model.md))
+   ([0008](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0008-accounting-model.md))
 4. **The server is authoritative for conversations** — which is why the
    desktop app is a shell rather than a second client.
 
@@ -148,7 +153,7 @@ docker compose --env-file deploy/.env \
 ```
 
 The console is then at `https://<PUBLIC_HOST>:8443/console`. Read
-[ADR 0035](docs/adr/0035-public-tls-exposure.md) before calling this a
+[ADR 0035](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0035-public-tls-exposure.md) before calling this a
 production deployment. `./scripts/test_public_tls_live.py` asserts the
 certificate verifies and that nothing else is reachable on a routable address.
 
@@ -175,7 +180,7 @@ uv run mkdocs build --strict   # output in site/; `mkdocs serve` to browse
 ```
 
 - **[docs/index.md](docs/index.md)** — start here.
-- **[docs/adr/](docs/adr/README.md)** — every significant decision, with the
+- **[docs/adr/](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/README.md)** — every significant decision, with the
   licence, version and CVE evidence behind it.
 - **[apps/gateway/README.md](apps/gateway/README.md)** — the gateway's
   surfaces, layout, and streaming traps.
@@ -185,12 +190,9 @@ uv run mkdocs build --strict   # output in site/; `mkdocs serve` to browse
 ```
 apps/gateway/        FastAPI service — gateway + console host
 apps/console/        React admin console, built into the gateway image
-apps/web/            Next.js frontend            (planned)
-apps/desktop/        Tauri shell                 (planned)
-services/rag/        indexing + retrieval        (planned)
+
 services/redaction/  Presidio detection service
 packages/ui/         shared design tokens + UI primitives
-packages/shared/     shared TypeScript types     (planned)
 packages/shared-py/  shared Python contracts
 scripts/             live checks, fake upstream, pricing importer
 deploy/compose/      docker compose: base + smoke, redaction and proxy overlays

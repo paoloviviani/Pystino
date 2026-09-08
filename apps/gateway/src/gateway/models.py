@@ -476,7 +476,7 @@ class ApiKey(Base):
     Keys are high-entropy random values, so they are stored as a plain SHA-256
     digest rather than under a slow KDF: there is no low-entropy secret to
     brute-force, and a per-request Argon2 verification would add tens of
-    milliseconds to every call. See docs/adr/0010-api-keys.md
+    milliseconds to every call. See ADR 0010
     """
 
     __tablename__ = "api_keys"
@@ -583,7 +583,7 @@ class Provider(Base):
     """An OpenAI-compatible inference endpoint the gateway can route to.
 
     Configured through the admin API rather than the environment, so adding a
-    provider is not a deploy ([0027](../../../docs/adr/0027-inference-providers.md)).
+    provider is not a deploy (0027).
 
     The API key is stored **encrypted** (see :mod:`gateway.secrets`) and is never
     returned by the API — only ``api_key_hint``, which is enough to tell two keys
@@ -804,7 +804,7 @@ class UserModelAccess(Base):
     """Per-user model availability, in addition to whatever their groups grant.
 
     Access is the **union** of the two: a caller may use a model if their group
-    has it or they do personally ([0027](../../../docs/adr/0027-inference-providers.md)).
+    has it or they do personally (0027).
     It exists so that "give this one researcher the expensive model" does not
     require inventing a group for one person.
 
@@ -1268,7 +1268,7 @@ class QuotaNotificationState(Base):
 class OIDCPolicyConfig(Base):
     """The identity policy, as an administrator set it from the console.
 
-    See [ADR 0048](../../../../docs/adr/0048-oidc-policy-configuration.md).
+    See ADR 0048.
 
     **Append-only, newest row wins**, modelled on ``redaction_config`` (ADR
     0033) and for the same reason: whether a stranger can become a user by
@@ -1327,7 +1327,7 @@ class OIDCPolicyConfig(Base):
 class RedactionConfig(Base):
     """Which redaction engine this deployment is running, as an admin set it.
 
-    See [ADR 0033](../../../../docs/adr/0033-redaction-engine-selection.md).
+    See ADR 0033.
 
     **Append-only, and the newest row wins.** Never updated, never deleted:
     switching redaction off is a decision about whether personal data leaves this
@@ -1384,7 +1384,7 @@ class RedactionConfig(Base):
 class RedactionRule(Base):
     """A redaction policy attached to one provider, model, group, user or key.
 
-    See [ADR 0038](../../../../docs/adr/0038-scoped-redaction.md). The shape is
+    See ADR 0038. The shape is
     ``limit_rules`` deliberately — an operator already understands it and the
     console already renders it — with three differences worth naming:
 

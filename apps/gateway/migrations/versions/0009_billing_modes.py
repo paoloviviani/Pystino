@@ -4,7 +4,7 @@ Revision ID: 0009
 Revises: 0008
 Create Date: 2026-08-22
 
-See docs/adr/0032-provider-plugins.md, decision 6.
+See ADR 0032, decision 6.
 
 * ``providers.billing_mode`` — ``own_prices`` (the default, and what every row
   did before this existed) or ``provider_reported`` for a deployment whose policy

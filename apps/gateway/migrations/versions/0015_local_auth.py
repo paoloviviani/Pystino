@@ -4,7 +4,7 @@ Revision ID: 0015
 Revises: 0014
 Create Date: 2026-08-29
 
-See docs/adr/0043-local-authentication.md.
+See ADR 0043.
 
 One table, and deliberately nothing on ``users``. A user's identity is
 ``(issuer, subject)`` and most rows will never carry a password; "who can sign

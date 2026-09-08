@@ -3,7 +3,7 @@
 Everything here was **measured against the live API**, not read from
 documentation — dates and evidence in
 [docs/cache-accounting-findings.md](../../../../docs/cache-accounting-findings.md)
-and [ADR 0032](../../../../docs/adr/0032-provider-plugins.md). The point of
+and ADR 0032. The point of
 writing a plugin rather than more `if` statements is that each of these becomes a
 declared behaviour with a test beside it.
 

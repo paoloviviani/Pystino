@@ -4,7 +4,7 @@ Revision ID: 0017
 Revises: 0016
 Create Date: 2026-08-31
 
-See docs/adr/0046-local-api-credentials.md.
+See ADR 0046.
 
 Two pieces, both additive. ``refresh_credentials`` is one row per
 ``(user, client)``: the long-lived credential a named client exchanges for

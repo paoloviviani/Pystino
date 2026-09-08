@@ -1,6 +1,6 @@
 """Foreign-exchange rates for pricing that is not in the billing currency.
 
-See [ADR 0054](../../../../docs/adr/0054-currency-conversion.md).
+See ADR 0054.
 
 The policy the operator chose, precisely scoped:
 
