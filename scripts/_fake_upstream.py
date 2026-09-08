@@ -58,6 +58,42 @@ def _echo(body: dict[str, Any]) -> str:
     return ""
 
 
+
+#: Appended to a searched answer, and then cited. A fixed marker so a live
+#: script can assert "the citation still quotes *this word*" rather than
+#: recomputing the arithmetic it is trying to check.
+CITED = "source"
+
+
+def _wants_search(body: dict[str, Any]) -> bool:
+    return any(
+        isinstance(tool, dict) and str(tool.get("type", "")).startswith("web_search")
+        for tool in body.get("tools") or []
+    )
+
+
+def _with_citation(text: str) -> tuple[str, list[dict[str, Any]]]:
+    """A searched answer and an OpenAI-shaped citation into it.
+
+    The offsets are computed against the text being returned, which is what a
+    real provider does — and the point of the exercise: they are in the
+    coordinate system of the text *the gateway is about to rewrite* (ADR 0059).
+    """
+    answer = f"{text} [{CITED}]"
+    start = answer.rindex(CITED)
+    return answer, [
+        {
+            "type": "url_citation",
+            "url_citation": {
+                "url": "https://example.org/a",
+                "title": "A source",
+                "start_index": start,
+                "end_index": start + len(CITED),
+            },
+        }
+    ]
+
+
 def chunk(
     content: str | None = None,
     finish_reason: str | None = None,
@@ -99,6 +135,15 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
     echoed = _echo(body)
 
     if not body.get("stream"):
+        content = f"buffered hello. You said: {echoed}"
+        # Only a request that asked for search gets a citation, so every
+        # existing live script sees exactly the answer it always did.
+        annotations: list[dict[str, Any]] = []
+        if _wants_search(body):
+            content, annotations = _with_citation(content)
+        message: dict[str, Any] = {"role": "assistant", "content": content}
+        if annotations:
+            message["annotations"] = annotations
         return JSONResponse(
             {
                 "id": "chatcmpl-smoke",
@@ -108,10 +153,7 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
                 "choices": [
                     {
                         "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": f"buffered hello. You said: {echoed}",
-                        },
+                        "message": message,
                         "finish_reason": "stop",
                     }
                 ],
@@ -119,6 +161,11 @@ async def chat_completions(request: Request) -> JSONResponse | StreamingResponse
                     "prompt_tokens": 1_000_000,
                     "completion_tokens": 500_000,
                     "total_tokens": 1_500_000,
+                    **(
+                        {"server_tool_use": {"web_search_requests": 2}}
+                        if _wants_search(body)
+                        else {}
+                    ),
                 },
             }
         )
