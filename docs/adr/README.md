@@ -68,6 +68,7 @@ verified is marked as such in the ADR that depends on it.
 | [0055](0055-ocr-surface.md) | `/v1/ocr` as a metered surface, priced per page, with a local markitdown backend so office documents never leave — and the response, not the request, is the half that gets redacted |
 | [0056](0056-account-linking.md) | An identity provider may adopt the local account with the same **verified** address, per provider and off by default — recorded beside the identity rather than rewriting it, because `issuer = "local"` is what eight places read as "this account has a password" |
 | [0057](0057-group-ownership-and-sync.md) | A directory owns the memberships it granted and no others, so an administrator's group assignment survives a login — plus Keycloak's three sync modes, per provider |
+| [0058](0058-per-search-pricing.md) | Provider-side web search is a third non-token unit, priced per search and capped by writing `max_uses` into the outgoing tool — the count read only from what the counterparty reports, never from counting response blocks |
 
 **0015, 0016 and 0041 — the chat frontend decisions — moved to the `chat`
 branch with the chat application itself** (A Vite SPA on `packages/ui` with
@@ -101,6 +102,7 @@ Everything else in the brief's assumptions was validated as correct.
 ## Plans
 
 - [phase-2-plan.md](../phase-2-plan.md) — redaction and the console, sequenced.
+- [web-search-plan.md](../web-search-plan.md) — search: priced and capped (0058), then backends, then the loop.
 - The chat application's plan (`phase-3-plan.md`) lives on the `chat` branch.
 
 ## Writing a new one

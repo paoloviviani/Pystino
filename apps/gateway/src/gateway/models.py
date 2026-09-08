@@ -759,6 +759,14 @@ class ModelPrice(Base):
     # returns a summary is billed for both, and leaving one null is how a real
     # charge records as zero.
     per_page: Mapped[Decimal | None] = mapped_column(default=None)
+    # Per server-side web search the provider ran on our behalf (ADR 0058).
+    # A third non-token unit, and the one that is a *surcharge*: unlike a page
+    # or an image it arrives on top of an ordinary chat request's tokens, so a
+    # model priced only per token bills a real charge as zero and nothing on
+    # the screen says so. Stored per single search, like `per_image` — the
+    # providers publish it per thousand ($10 per 1,000 for Anthropic), and the
+    # division happens where the figure is entered, not here.
+    per_search: Mapped[Decimal | None] = mapped_column(default=None)
 
     currency: Mapped[str] = mapped_column(String(3))
     effective_from: Mapped[datetime] = mapped_column(default=utcnow)
@@ -902,6 +910,14 @@ class UsageRecord(Base):
     # the ledger cannot be repriced if that pricing is ever modelled properly.
     image_count: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     image_size: Mapped[str | None] = mapped_column(String(32), default=None)
+    # Server-side web searches the provider ran and billed for (ADR 0058).
+    # A column for the same reason `image_count` is one, and one migration 0023
+    # deliberately refused for *cost*: this is the billable **count**, it is
+    # what a provider's invoice is itemised by, and it cannot be recovered from
+    # the money afterwards. Only ever from the provider's reported figure —
+    # counting the tool-use blocks in a response would bill the searches that
+    # errored, which Anthropic states it does not charge for.
+    search_count: Mapped[int] = mapped_column(default=0, server_default=text("0"))
 
     cost: Mapped[Decimal] = mapped_column(default=Decimal(0))
     currency: Mapped[str] = mapped_column(String(3))

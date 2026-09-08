@@ -194,7 +194,17 @@ async def chat_completions(
         body.requested_max_output_tokens(settings.quota.default_max_output_tokens)
         * body.choice_count()
     )
-    worst_case = TokenCounts(prompt=prompt_tokens, completion=max_output)
+    # Server-side web search is charged per search on top of tokens, and
+    # nothing in the request bounds it unless the caller said so (ADR 0058).
+    # Read once, here: the same object supplies the reservation below and the
+    # cap written into the outgoing tools, so the two cannot disagree.
+    search = _metered.bound_web_search(
+        (body.model_extra or {}).get("tools"),
+        default=settings.quota.default_max_web_searches,
+    )
+    worst_case = TokenCounts(
+        prompt=prompt_tokens, completion=max_output, searches=search.reserved
+    )
 
     # -- reserve, then open the usage row (steps 4-5) -----------------------
     metered = await _metered.begin(
@@ -215,6 +225,7 @@ async def chat_completions(
         return metered
 
     payload = build_upstream_payload(body, outcome=outcome, upstream_model=model.upstream_model)
+    search.apply(payload)
     payload = metered.shape_payload(payload, surface=SURFACE)
 
     if body.stream:

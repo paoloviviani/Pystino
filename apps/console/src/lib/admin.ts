@@ -541,6 +541,8 @@ export interface CreatePriceInput {
   /** Omitted for a token-priced model; the two are not alternatives. */
   per_image?: string | null;
   per_page?: string | null;
+  /** Per provider-side web search. Per one search, not per thousand. */
+  per_search?: string | null;
   effective_from?: string | null;
 }
 

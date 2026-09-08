@@ -30,7 +30,7 @@ remainder and the cache reads.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -68,6 +68,11 @@ class TokenCounts:
     #: from the length of the text, which would be a billing figure with no
     #: source.
     pages: int = 0
+    #: Server-side web searches the provider ran and charged for (ADR 0058).
+    #: Read only from what the provider reports — never from counting
+    #: `server_tool_use` blocks in the response, because a search that errors
+    #: produces a block and is explicitly not billed.
+    searches: int = 0
 
     @property
     def total(self) -> int:
@@ -111,6 +116,7 @@ class TokenCounts:
             cached_prompt=cached,
             cache_write=cache_write,
             reasoning=reasoning,
+            searches=_search_requests(usage),
         )
 
     @classmethod
@@ -141,6 +147,7 @@ class TokenCounts:
             cached_prompt=cached,
             cache_write=cache_write,
             reasoning=reasoning,
+            searches=_search_requests(usage),
         )
 
     @classmethod
@@ -167,6 +174,9 @@ class TokenCounts:
             completion=_as_int(usage.get("output_tokens")),
             cached_prompt=cache_read,
             cache_write=cache_write,
+            # Documented on this surface, and verified against the live schema
+            # on 2026-09-08: `usage.server_tool_use.web_search_requests`.
+            searches=_search_requests(usage),
         )
 
     @classmethod
@@ -177,15 +187,10 @@ class TokenCounts:
         per-image-priced models — which is why ``images`` is carried separately
         rather than inferred from the token counts.
         """
-        counts = cls.from_responses_usage(usage)
-        return cls(
-            prompt=counts.prompt,
-            completion=counts.completion,
-            cached_prompt=counts.cached_prompt,
-            cache_write=counts.cache_write,
-            reasoning=counts.reasoning,
-            images=max(0, images),
-        )
+        # `replace` rather than a field-by-field rebuild: this listed every
+        # field it knew about, so each new billable unit added to TokenCounts
+        # was silently dropped here. The same trap `_with_units` fell into.
+        return replace(cls.from_responses_usage(usage), images=max(0, images))
 
     @classmethod
     def from_ocr_usage(cls, usage: dict[str, Any] | None, *, pages: int = 0) -> TokenCounts:
@@ -207,6 +212,38 @@ class TokenCounts:
         if usage:
             reported = _as_int(usage.get("pages_processed"))
         return cls(pages=max(0, reported or pages))
+
+
+
+def _search_requests(usage: dict[str, Any]) -> int:
+    """Server-side web searches reported in a ``usage`` object.
+
+    One spelling, in one place, read on **every** surface — and that needs
+    justifying against this module's own rule that the surfaces must not share
+    a tolerant parser.
+
+    The rule is about *meaning*. ``prompt_tokens`` and ``input_tokens`` differ
+    in what they include, so merging them produces wrong numbers.
+    ``server_tool_use.web_search_requests`` means exactly one thing wherever it
+    appears: how many searches the counterparty ran and will invoice. Anthropic
+    documents it on the Messages surface; a router that proxies Anthropic
+    through an OpenAI-shaped response passes it through unchanged, and reading
+    it there too costs nothing and bills correctly. This is the
+    ``_CACHE_WRITE_KEYS`` case — one quantity, one meaning — not the prompt
+    case.
+
+    What is deliberately *not* read: OpenAI's own web search. It is billed per
+    call, but its documentation states no usage field for the count, and its
+    rate varies by ``search_context_size``. A count inferred from
+    ``web_search_call`` output items would bill the calls that failed and
+    would still not know the rate — the same refusal as ``usage_info.credits``
+    on the OCR surface, for the same reason: a figure in an unverified unit is
+    worse than none.
+    """
+    tool_use = usage.get("server_tool_use")
+    if not isinstance(tool_use, dict):
+        return 0
+    return max(0, _as_int(tool_use.get("web_search_requests")))
 
 
 #: Every spelling of "cache write tokens" seen in the wild, in the order they
@@ -303,6 +340,11 @@ class CostBreakdown:
     #: into the input cost, so a reader can see which half of an OCR charge
     #: was pages and which was tokens.
     page_cost: Decimal = Decimal(0)
+    #: Per server-side web search. A component of its own because it is the one
+    #: charge on this list that is a *surcharge* on an otherwise ordinary
+    #: request: a reader looking at a chat model's bill needs to see that part
+    #: of it was not tokens at all.
+    search_cost: Decimal = Decimal(0)
 
     @property
     def total(self) -> Decimal:
@@ -313,6 +355,7 @@ class CostBreakdown:
             + self.cache_write_cost
             + self.image_cost
             + self.page_cost
+            + self.search_cost
         )
 
     def scaled(self, rate: Decimal, currency: str) -> CostBreakdown:
@@ -330,6 +373,7 @@ class CostBreakdown:
             cache_write_cost=self.cache_write_cost * rate,
             image_cost=self.image_cost * rate,
             page_cost=self.page_cost * rate,
+            search_cost=self.search_cost * rate,
             currency=currency,
         )
 
@@ -424,6 +468,15 @@ def compute_cost(
     if counts.pages and price.per_page is not None:
         page_cost = Decimal(counts.pages) * as_decimal(price.per_page)
 
+    # Per search, and the only one of the three that lands on a request the
+    # caller thinks of as an ordinary completion. A model without the rate
+    # charges nothing for searches the provider *did* invoice — which is the
+    # under-billing this unit exists to end, and why the searches are recorded
+    # on the row whether or not a rate existed to price them.
+    search_cost = Decimal(0)
+    if counts.searches and price.per_search is not None:
+        search_cost = Decimal(counts.searches) * as_decimal(price.per_search)
+
     return CostBreakdown(
         input_cost=input_cost,
         output_cost=output_cost,
@@ -431,5 +484,6 @@ def compute_cost(
         cache_write_cost=write_cost,
         image_cost=image_cost,
         page_cost=page_cost,
+        search_cost=search_cost,
         currency=price.currency.upper(),
     )

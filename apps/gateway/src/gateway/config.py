@@ -630,6 +630,12 @@ class QuotaSettings(BaseModel):
     default_max_output_tokens: int = 4096
     # Prompt tokens are counted locally before the call, so only the completion
     # needs assuming.
+    # The same question for server-side web search, which is charged per search
+    # on top of tokens (ADR 0058). Used when a request asks for the tool
+    # without capping it — and, on the surfaces whose tool definition has a cap
+    # field, *written into* the outgoing request, so the number reserved is a
+    # bound that actually holds rather than a guess that looks like one.
+    default_max_web_searches: int = 5
 
     # Valkey is a rebuildable cache, never the ledger. If it is unreachable we
     # fall back to exact PostgreSQL aggregates: slower, but correct, and the
