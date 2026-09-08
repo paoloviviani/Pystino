@@ -76,12 +76,14 @@ _SURFACE_KINDS: dict[ApiSurface, tuple[ModelKind, ...]] = {
     ApiSurface.MESSAGES: (ModelKind.CHAT,),
     ApiSurface.EMBEDDINGS: (ModelKind.EMBEDDING,),
     ApiSurface.IMAGES: (ModelKind.IMAGE,),
+    ApiSurface.OCR: (ModelKind.OCR,),
 }
 
 _KIND_ROUTES: dict[ModelKind, str] = {
     ModelKind.CHAT: "/v1/chat/completions, /v1/responses or /v1/messages",
     ModelKind.EMBEDDING: "/v1/embeddings",
     ModelKind.IMAGE: "/v1/images/generations",
+    ModelKind.OCR: "/v1/ocr",
 }
 
 
@@ -233,6 +235,103 @@ class Metered:
         )
         await self.quota.settle(self.reservation, actuals)
         return actuals
+
+
+
+@dataclass(frozen=True, slots=True)
+class WebSearchBound:
+    """How many provider-side web searches this request may be charged for.
+
+    Server-side search is billed **per search, on top of tokens** — $10 per
+    1,000 for Anthropic — so a request that asks for it has a cost component
+    that no token count implies and no `max_tokens` bounds (ADR 0058).
+
+    Two fields because there are two honest answers to "is this a ceiling".
+    ``reserved`` is what the quota engine holds. ``enforced`` says whether the
+    same number was written into the outgoing tool definition, so the
+    counterparty will refuse the search after it. Where it can be, it is: a
+    number we reserve against but do not enforce is a figure that looks like a
+    ceiling and is not one, which is the shape the OCR surface is stuck with
+    (a document's page count has no cap field to write into) and this surface
+    is not.
+    """
+
+    reserved: int
+    enforced: bool
+    default: int
+
+    def apply(self, payload: dict[str, Any]) -> None:
+        """Write the cap into the tools of *payload*, where the tool takes one.
+
+        Called on the payload rather than on the request body because the
+        payload is a dump — mutating the body's copy would change nothing that
+        gets sent. Both this and ``reserved`` come out of the same detection
+        over the same tools list, which is what stops the number we reserve and
+        the number we enforce from drifting apart.
+        """
+        for tool in _search_tools(payload.get("tools")):
+            if _declared_cap(tool) is None and _takes_a_cap(tool):
+                tool["max_uses"] = self.default
+
+
+def _search_tools(tools: Any) -> list[dict[str, Any]]:
+    """The server-side search tools in a request's ``tools`` array.
+
+    Matches ``web_search`` and Anthropic's date-versioned
+    ``web_search_20250305`` family. Deliberately not OpenRouter's
+    ``openrouter:web_search``: that is their namespace for a tool *they*
+    execute, and nothing here executes a search.
+    """
+    if not isinstance(tools, list):
+        return []
+    found: list[dict[str, Any]] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        kind = tool.get("type")
+        if isinstance(kind, str) and (kind == "web_search" or kind.startswith("web_search_")):
+            found.append(tool)
+    return found
+
+
+def _declared_cap(tool: dict[str, Any]) -> int | None:
+    cap = tool.get("max_uses")
+    return cap if isinstance(cap, int) and cap > 0 else None
+
+
+def _takes_a_cap(tool: dict[str, Any]) -> bool:
+    """Whether ``max_uses`` is a field this tool definition actually has.
+
+    Only the date-versioned Anthropic family. Writing it into OpenAI's
+    ``web_search`` tool — whose options are ``search_context_size``,
+    ``filters`` and friends — risks a 400 on a request that would otherwise
+    have worked, and refusing somebody's request to protect a reservation is
+    the wrong trade.
+    """
+    return str(tool.get("type", "")).startswith("web_search_")
+
+
+def bound_web_search(tools: Any, *, default: int) -> WebSearchBound:
+    """Read the search cap out of a request, filling in the deployment's.
+
+    A request that does not ask for search reserves nothing: this must not
+    put a cost on every ordinary completion.
+    """
+    found = _search_tools(tools)
+    if not found:
+        return WebSearchBound(reserved=0, enforced=True, default=default)
+
+    reserved = 0
+    enforced = True
+    for tool in found:
+        if (cap := _declared_cap(tool)) is not None:
+            # The caller bounded it themselves, and the provider will hold them
+            # to it. Nothing to write and nothing to guess.
+            reserved += cap
+        else:
+            reserved += default
+            enforced = enforced and _takes_a_cap(tool)
+    return WebSearchBound(reserved=reserved, enforced=enforced, default=default)
 
 
 async def begin(

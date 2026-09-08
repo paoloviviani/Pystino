@@ -22,6 +22,7 @@ from gateway.models import (
     UsageSource,
 )
 from gateway.redaction import RedactionOutcome
+from llmp_shared import Restored
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -383,5 +384,5 @@ class _ShoutyRedactor:
 
         return passthrough
 
-    async def redact_response_text(self, text: str, outcome: RedactionOutcome) -> str:
-        return text
+    async def restore_response(self, text: str, outcome: RedactionOutcome) -> Restored:
+        return Restored(text=text)

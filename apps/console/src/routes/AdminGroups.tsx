@@ -328,8 +328,16 @@ function GroupMembersDialog({ group, onClose }: { group: AdminGroup | null; onCl
                 className="flex items-center justify-between gap-2 rounded-md border border-line p-2"
               >
                 <div className="min-w-0">
-                  <div className="truncate text-sm">
-                    {user.display_name || user.email || user.subject}
+                  <div className="flex items-center gap-2">
+                    <span className="truncate text-sm">
+                      {user.display_name || user.email || user.subject}
+                    </span>
+                    {/* Which of these the directory will still be deciding at
+                        the next sign-in (ADR 0057). "Why is this person
+                        still in this group" is asked on exactly this screen. */}
+                    {user.membership_source === "oidc" && (
+                      <Badge tone="neutral">from the directory</Badge>
+                    )}
                   </div>
                   <div className="truncate text-xs text-ink-faint">
                     {user.email ?? user.subject}

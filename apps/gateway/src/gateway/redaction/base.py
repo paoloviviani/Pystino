@@ -27,7 +27,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from llmp_shared import PlaceholderMap
+from llmp_shared import PlaceholderMap, Restored
 
 from gateway.config import EffectivePolicy
 from gateway.models import ApiSurface
@@ -88,8 +88,15 @@ class Redactor(Protocol):
         """
         ...
 
-    async def redact_response_text(self, text: str, outcome: RedactionOutcome) -> str:
-        """The non-streaming equivalent of :meth:`response_stage`."""
+    async def restore_response(self, text: str, outcome: RedactionOutcome) -> Restored:
+        """The non-streaming equivalent of :meth:`response_stage`.
+
+        Returns the text **and the edits that produced it**, because a caller
+        may be holding offsets into the text it passed in — OpenAI's
+        ``url_citation`` annotations are character indices — and restoring a
+        value of a different length moves everything after it (ADR 0059).
+        A caller with no offsets to fix reads ``.text`` and ignores the rest.
+        """
         ...
 
 
@@ -118,6 +125,16 @@ class TextRewriteStage(ABC):
     ) -> None:
         self._tail_size = max(0, tail_size)
         self._pending: dict[int, str] = {}
+        # The provider's text as it arrived, per choice, kept only so that a
+        # citation can be moved. A streamed citation's offsets are into the
+        # *whole accumulated message*, not into the frame that carries them, so
+        # nothing less than the whole answer can place them (ADR 0059).
+        #
+        # Recomputed lazily and only for a frame that actually carries offsets,
+        # which is a handful per response — accumulating is a list append, and
+        # remapping never runs on the frames that are just text.
+        self._provider: dict[int, list[str]] = {}
+        self._maps: dict[int, Restored] = {}
         self._template: dict[str, Any] | None = None
         # Where this surface keeps its assistant text. The buffering below is
         # protocol-independent; only the accessors differ.
@@ -133,6 +150,16 @@ class TextRewriteStage(ABC):
         Called with the accumulated unreleased text. ``final`` is True on the
         last call for a choice, when nothing more will arrive.
         """
+
+    def edits_in(self, text: str) -> Restored | None:
+        """The same rewrite as :meth:`transform`, and *where* it wrote.
+
+        ``None`` — the default — means this transform never moves a character,
+        so any offset a frame carries is still correct and no work is done.
+        Overridden by the restoring rewriter, which is the one that changes
+        lengths (ADR 0059).
+        """
+        return None
 
     async def __call__(self, events: AsyncIterator[SSEEvent]) -> AsyncIterator[SSEEvent]:
         async for event in events:
@@ -162,19 +189,27 @@ class TextRewriteStage(ABC):
                 if self._proto.is_terminal(payload):
                     for extra in self._flush_all():
                         yield extra
-                if self._proto.rewrite_whole(payload, self._rewrite_settled):
+                moved = self._proto.rewrite_whole(payload, self._rewrite_settled)
+                # Citations usually arrive on exactly this kind of frame: no
+                # text of their own, pointing back at text already sent.
+                if self._proto.shift_citations(payload, self._shift):
+                    moved = True
+                if moved:
                     event.replace_json(payload)
                 yield event
                 continue
 
             mutated = False
             for index, text in texts:
+                self._remember(index, text)
                 rewritten = self._advance(index, text)
                 if rewritten != text:
                     mutated = True
                 self._proto.set_stream_text(payload, index, rewritten)
 
             if self._proto.rewrite_whole(payload, self._rewrite_settled):
+                mutated = True
+            if self._proto.shift_citations(payload, self._shift):
                 mutated = True
             if mutated:
                 event.replace_json(payload)
@@ -235,6 +270,32 @@ class TextRewriteStage(ABC):
                 continue
             events.append(self._synthesise(index, text))
         return events
+
+    def _remember(self, index: int, text: str) -> None:
+        """Keep the provider's own text, and drop any stale offset map."""
+        if text:
+            self._provider.setdefault(index, []).append(text)
+            self._maps.pop(index, None)
+
+    def _shift(self, index: int, offset: int) -> int:
+        """Where *offset* in choice *index* ended up after restoration.
+
+        The map is built from every character the provider has sent for this
+        choice, which is the coordinate system its citations use. Cached until
+        more text arrives, so a frame carrying several annotations pays for one
+        pass and a run of text frames pays for none.
+        """
+        cached = self._maps.get(index)
+        if cached is None:
+            arrived = "".join(self._provider.get(index, ()))
+            if not arrived:
+                return offset
+            computed = self.edits_in(arrived)
+            if computed is None:
+                return offset
+            cached = computed
+            self._maps[index] = cached
+        return cached.shift(offset)
 
     def _rewrite_settled(self, text: str) -> str:
         """Transform a complete text field.

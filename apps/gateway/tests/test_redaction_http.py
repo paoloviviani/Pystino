@@ -489,10 +489,16 @@ class TestResponseRestoration:
         outcome = await redactor.redact_request([{"role": "user", "content": "Mario Rossi"}])
         placeholder = outcome.messages[0]["content"]
 
-        restored = await redactor.redact_response_text(
+        restored = await redactor.restore_response(
             f"I will contact {placeholder} today.", outcome
         )
-        assert restored == "I will contact Mario Rossi today."
+        assert restored.text == "I will contact Mario Rossi today."
+        # The edit is what a citation needs: where it happened, and by how much
+        # the text after it moved (ADR 0059).
+        assert restored.moved is True
+        assert [(e.at, e.was, e.now) for e in restored.edits] == [
+            (15, len(placeholder), len("Mario Rossi"))
+        ]
 
     async def test_restoration_can_be_turned_off(self) -> None:
         """For a deployment that wants the placeholder to reach the user."""
@@ -500,7 +506,7 @@ class TestResponseRestoration:
         redactor = detector.redactor(restore_in_response=False)
         outcome = await redactor.redact_request([{"role": "user", "content": "Mario Rossi"}])
         placeholder = outcome.messages[0]["content"]
-        assert await redactor.redact_response_text(placeholder, outcome) == placeholder
+        assert (await redactor.restore_response(placeholder, outcome)).text == placeholder
 
     async def test_a_placeholder_split_across_frames_is_still_restored(self) -> None:
         """The reason TextRewriteStage exists. A placeholder arriving as
@@ -540,7 +546,7 @@ class TestResponseRestoration:
         detector = FakeDetector({"Mario Rossi": "PERSON"})
         redactor = detector.redactor()
         outcome = await redactor.redact_request([{"role": "user", "content": "Mario Rossi"}])
-        restored = await redactor.redact_response_text("<PERSON_NEVERSEEN1>", outcome)
+        restored = (await redactor.restore_response("<PERSON_NEVERSEEN1>", outcome)).text
         assert restored == "<PERSON_NEVERSEEN1>"
 
 

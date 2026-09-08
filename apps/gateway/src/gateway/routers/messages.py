@@ -92,9 +92,19 @@ async def create_message(
     )
 
     prompt_tokens = estimator.count_messages(outcome.messages)
+    # Server-side web search is charged per search on top of tokens, and
+    # nothing in the request bounds it unless the caller said so (ADR 0058).
+    # Read once, here: the same object supplies the reservation below and the
+    # cap written into the outgoing tools, so the two cannot disagree.
+    search = _metered.bound_web_search(
+        (body.model_extra or {}).get("tools"),
+        default=settings.quota.default_max_web_searches,
+    )
     # `max_tokens` is required on this API, so the worst case is exact rather
     # than a configured guess — the one surface where that is true.
-    worst_case = TokenCounts(prompt=prompt_tokens, completion=body.max_tokens)
+    worst_case = TokenCounts(
+        prompt=prompt_tokens, completion=body.max_tokens, searches=search.reserved
+    )
 
     metered = await _metered.begin(
         request,
@@ -114,6 +124,7 @@ async def create_message(
         return metered
 
     payload = body.upstream_payload(outcome, upstream_model=model.upstream_model)
+    search.apply(payload)
     payload = metered.shape_payload(payload, surface=SURFACE)
 
     if body.stream:
@@ -148,7 +159,9 @@ async def create_message(
         out["model"] = model.name
     for block in out.get("content") or []:
         if isinstance(block, dict) and isinstance(block.get("text"), str):
-            block["text"] = await redactor.redact_response_text(block["text"], outcome)
+            # `.text` alone: this surface's citations carry their own copy of
+            # the quoted text rather than offsets into ours (ADR 0059).
+            block["text"] = (await redactor.restore_response(block["text"], outcome)).text
 
     await metered.completed(upstream_status=response.status_code)
     return JSONResponse(status_code=response.status_code, content=out)

@@ -6,8 +6,25 @@ export interface Column<Row> {
   header: ReactNode;
   /** Right-aligned and rendered with tabular figures. Use for money and counts. */
   numeric?: boolean;
+  /**
+   * Drop this column on screens narrower than the named breakpoint.
+   *
+   * For secondary columns only, and the test is whether the row still answers
+   * the question it exists for without it. A table that keeps every column on a
+   * phone does not stay readable — it scrolls sideways, and the columns that go
+   * off the edge are the ones at the end, chosen by declaration order rather
+   * than by importance. Hiding says which ones are secondary.
+   */
+  hideBelow?: "sm" | "md" | "lg";
   render: (row: Row) => ReactNode;
 }
+
+/** Tailwind cannot see a class name built by interpolation, so these are literal. */
+const HIDE_BELOW = {
+  sm: "hidden sm:table-cell",
+  md: "hidden md:table-cell",
+  lg: "hidden lg:table-cell",
+} as const;
 
 export interface TableProps<Row> {
   columns: Column<Row>[];
@@ -60,6 +77,7 @@ export function Table<Row>({
                 className={cx(
                   "border-b border-line bg-sunken px-5 py-2 text-left text-xs font-medium tracking-[0.01em] whitespace-nowrap text-ink",
                   cellTone(column.numeric),
+                  column.hideBelow && HIDE_BELOW[column.hideBelow],
                 )}
               >
                 {column.header}
@@ -80,6 +98,7 @@ export function Table<Row>({
                     // read as a border under a border.
                     index < rows.length - 1 && "border-b border-line-quiet",
                     cellTone(column.numeric),
+                    column.hideBelow && HIDE_BELOW[column.hideBelow],
                   )}
                 >
                   {column.render(row)}
@@ -102,6 +121,10 @@ export function Table<Row>({
                     // looking at the real console, not by a test.
                     "border-t border-line-strong px-5 py-3 font-bold",
                     cellTone(column.numeric),
+                    // Not optional. Hiding a column in the head and body but
+                    // not here leaves the total row one cell wider than the
+                    // rest, so every figure in it lands under the wrong header.
+                    column.hideBelow && HIDE_BELOW[column.hideBelow],
                   )}
                 >
                   {column.render(footer)}

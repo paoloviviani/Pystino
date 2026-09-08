@@ -37,6 +37,53 @@ from gateway.models import ApiSurface
 Rewrite = Callable[[str], str]
 
 
+
+#: ``(choice index, offset) -> offset``: where a position in the text a provider
+#: generated ended up in the text the caller is given. Identity when nothing was
+#: restored.
+#:
+#: The choice index is not decoration. Restoration uses one placeholder map for
+#: the whole request, but the *positions* it edits differ per choice, because
+#: each choice is different text — so a request asking for ``n: 2`` needs two
+#: maps and the caller has to say which one it is asking about.
+Shift = Callable[[int, int], int]
+
+
+def _shift_annotations(annotations: Any, shift: Shift, choice: int) -> bool:
+    """Move the offsets in one OpenAI-shaped ``annotations`` array.
+
+    A ``url_citation`` says which characters of the assistant's message a source
+    supports, as ``start_index`` and ``end_index``. Those indices were computed
+    against the text the provider generated, which contained our placeholders.
+    Restoring a real value of a different length moves every character after it,
+    so the indices move with it or they point at the wrong words (ADR 0059).
+
+    Shared by both OpenAI-shaped surfaces because the annotation object is the
+    same on each; only where it *hangs* differs, and that is what the readers
+    below know.
+    """
+    if not isinstance(annotations, list):
+        return False
+    moved = False
+    for annotation in annotations:
+        if not isinstance(annotation, dict):
+            continue
+        # The offsets live one level down on chat completions and at the top
+        # level on the Responses API. Both spellings, no guessing about which.
+        for holder in (annotation.get("url_citation"), annotation):
+            if not isinstance(holder, dict):
+                continue
+            for key in ("start_index", "end_index"):
+                index = holder.get(key)
+                if isinstance(index, int) and (new := shift(choice, index)) != index:
+                    holder[key] = new
+                    moved = True
+            if holder is not annotation:
+                # Found the nested form; do not also treat the wrapper as one.
+                break
+    return moved
+
+
 class SurfaceProtocol(Protocol):
     """How to read one API surface's response frames."""
 
@@ -69,6 +116,16 @@ class SurfaceProtocol(Protocol):
         ...
 
     def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None: ...
+
+    def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
+        """Move any character offsets this frame holds into the assistant's text.
+
+        Called whenever restoration changed the text's length. Surfaces that
+        return no such offsets do nothing — Anthropic's web-search citations
+        carry an ``encrypted_index`` and a copy of the ``cited_text`` rather
+        than positions in our text, so there is nothing there to move.
+        """
+        ...
 
     def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
         """Rewrite every complete assistant-text field in place.
@@ -141,6 +198,30 @@ class ChatCompletionsReader:
             if isinstance(delta := choice.get("delta"), dict):
                 delta["content"] = text
 
+    def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
+        """``annotations`` hangs off the message, and off the delta when streamed.
+
+        Both are handled here because a streamed response carries them in
+        ``choices[].delta.annotations`` — with offsets into the *accumulated*
+        message, not into the delta they arrive on, which is why the streaming
+        rewriter has to know the whole answer to shift them (ADR 0059).
+        """
+        moved = False
+        for position, choice in enumerate(payload.get("choices") or []):
+            if not isinstance(choice, dict):
+                continue
+            # The declared index, falling back to the position: a chunk names
+            # its choice, and a non-streamed body lists them in order.
+            declared = choice.get("index")
+            which = declared if isinstance(declared, int) else position
+            for holder in ("message", "delta"):
+                part = choice.get(holder)
+                if isinstance(part, dict) and _shift_annotations(
+                    part.get("annotations"), shift, which
+                ):
+                    moved = True
+        return moved
+
     def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
         """Non-streamed bodies only; a chunk has deltas, never a whole message."""
         changed = False
@@ -205,6 +286,33 @@ class ResponsesReader:
 
     def counts(self, usage: dict[str, Any] | None) -> TokenCounts:
         return TokenCounts.from_responses_usage(usage)
+
+    def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
+        """Offsets hang off each content part of each message output item.
+
+        Three shapes, because this surface has three: the assembled body, the
+        ``response.completed`` envelope that repeats it, and the
+        ``response.output_text.annotation.added`` event that carries one
+        annotation on its own while streaming.
+        """
+        moved = False
+        # A single annotation, arriving on its own event while streaming. Wrapped
+        # in a list because the helper reads arrays, and this surface has no
+        # choices, so the map is always the only one there is.
+        if _shift_annotations([payload.get("annotation")], shift, 0):
+            moved = True
+        for envelope in (payload, payload.get("response")):
+            if not isinstance(envelope, dict):
+                continue
+            for item in envelope.get("output") or []:
+                if not isinstance(item, dict):
+                    continue
+                for part in item.get("content") or []:
+                    if isinstance(part, dict) and _shift_annotations(
+                        part.get("annotations"), shift, 0
+                    ):
+                        moved = True
+        return moved
 
     def deltas(self, payload: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
         if payload.get("type") == "response.output_text.delta":
@@ -310,6 +418,15 @@ class MessagesReader:
     def counts(self, usage: dict[str, Any] | None) -> TokenCounts:
         return TokenCounts.from_anthropic_usage(usage)
 
+    def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
+        """Nothing. This surface's web-search citations carry an
+        ``encrypted_index`` and a copy of the ``cited_text``, not offsets
+        into the text we rewrite, so there is nothing to move. Its
+        *document* citations do use character indices — but into the
+        document the caller supplied, not into the answer, so they are
+        equally untouched by restoring the answer."""
+        return False
+
     def deltas(self, payload: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
         kind = payload.get("type")
         if kind == "content_block_delta":
@@ -411,6 +528,10 @@ class ImagesReader:
     def counts(self, usage: dict[str, Any] | None) -> TokenCounts:
         return TokenCounts.from_responses_usage(usage)
 
+    def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
+        """Nothing. An image response has no cited text."""
+        return False
+
     def deltas(self, payload: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
         """Nothing. An image request generates no billable text.
 
@@ -454,12 +575,92 @@ class ImagesReader:
         raise NotImplementedError("the image route does not stream")
 
 
+class OcrReader:
+    """Document extraction, `POST /v1/ocr`.
+
+    Three things sit differently here from every other surface, and all three
+    are why this file exists rather than each route reading its own fields:
+
+    **Usage is under `usage_info`, not `usage`.** Cortecs and Mistral both spell
+    it that way, and it carries `pages_processed` rather than any token count.
+    `frame` aliases it, which keeps the recorder's "read `usage` off the frame"
+    true for one more surface instead of teaching the recorder a sixth special
+    case.
+
+    **The billable quantity is exact and is not tokens.** A page count is
+    measured, not estimated, so `deltas` returns nothing — the same argument the
+    image reader makes. Feeding the extracted text through as completion tokens
+    would label an exactly-known bill "estimated", which is backwards.
+
+    **The text in the response is not the model's output in the usual sense.**
+    It is the document, transcribed. That makes `pages[].markdown` the most
+    sensitive field this gateway handles — a scanned identity card becomes
+    searchable text at exactly this point — which is why it is walked here and
+    why the response-side redaction has somewhere to hook.
+    """
+
+    accumulates_usage = False
+
+    def frame(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        usage = payload.get("usage_info")
+        if not isinstance(usage, dict):
+            return payload
+        # A shallow copy with the alias added: the caller's payload is what goes
+        # back to the client, and adding a key to it would invent a field the
+        # OCR API does not have.
+        aliased = dict(payload)
+        aliased["usage"] = usage
+        return aliased
+
+    def counts(self, usage: dict[str, Any] | None) -> TokenCounts:
+        return TokenCounts.from_ocr_usage(usage)
+
+    def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
+        """Nothing. This surface redacts its pages rather than
+        restoring them (ADR 0055), and a page carries no citations."""
+        return False
+
+    def deltas(self, payload: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+        """Nothing: pages are counted, never inferred from the text."""
+        return []
+
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
+        return []
+
+    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None:
+        return None
+
+    def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        """Every page's markdown, in place.
+
+        Used by restoration like every other surface — a document whose text was
+        redacted on the way out would come back carrying placeholders — and it is
+        the hook the response-side redaction needs, because on this surface the
+        text that matters is what came *back*.
+        """
+        changed = False
+        for page in payload.get("pages") or []:
+            if not isinstance(page, dict):
+                continue
+            if isinstance(text := page.get("markdown"), str) and (new := rewrite(text)) != text:
+                page["markdown"] = new
+                changed = True
+        return changed
+
+    def is_terminal(self, payload: dict[str, Any]) -> bool:
+        return True
+
+    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
+        raise NotImplementedError("the ocr route does not stream")
+
+
 _READERS: dict[ApiSurface, SurfaceProtocol] = {
     ApiSurface.CHAT_COMPLETIONS: ChatCompletionsReader(),
     ApiSurface.EMBEDDINGS: ChatCompletionsReader(),
     ApiSurface.RESPONSES: ResponsesReader(),
     ApiSurface.MESSAGES: MessagesReader(),
     ApiSurface.IMAGES: ImagesReader(),
+    ApiSurface.OCR: OcrReader(),
 }
 
 

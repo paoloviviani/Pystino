@@ -84,6 +84,46 @@ class GroupSource(enum.StrEnum):
     MANUAL = "manual"
 
 
+class MembershipSource(enum.StrEnum):
+    """Who put this person in this group (ADR 0057).
+
+    The load-bearing distinction: a directory may take away what it granted,
+    and may not take away what an administrator granted. Provenance is
+    per-membership rather than per-group because both kinds occur in the same
+    group — a directory grants "engineering" to forty people and an
+    administrator adds the contractor who is not in the directory's copy of it.
+    """
+
+    #: Granted by an identity provider's answer, and revocable by it.
+    OIDC = "oidc"
+    #: Granted here, by an administrator or the CLI. Never removed by a login.
+    MANUAL = "manual"
+
+
+class GroupSync(enum.StrEnum):
+    """How far an identity provider's answer about groups reaches (ADR 0057).
+
+    Modelled on Keycloak's mapper sync modes, because the question is the same
+    one and operators already know the vocabulary. What the three modes govern
+    is narrower than it looks: a directory's answer only ever reaches the
+    memberships it granted (``MembershipSource.OIDC``). What an administrator
+    granted is untouched by all three.
+    """
+
+    #: The directory's answer wins on every login. What this gateway has always
+    #: done, and the default, because revoking a group in the directory has to
+    #: revoke the ability to bill it.
+    EVERY_LOGIN = "every_login"
+    #: Applied when the account first appears here, and never again. Groups are
+    #: seeded from the directory and administered afterwards.
+    FIRST_LOGIN = "first_login"
+    #: The directory never sets membership at all — not even for a new account.
+    #: For a deployment that uses SSO to authenticate and decides authorisation
+    #: itself; a new user arrives with no groups and cannot bill until an
+    #: administrator puts them in one.
+    NEVER = "never"
+
+
 class LimitScope(enum.StrEnum):
     GLOBAL = "global"
     GROUP = "group"
@@ -166,6 +206,10 @@ class ApiSurface(enum.StrEnum):
     RESPONSES = "responses"
     MESSAGES = "messages"
     IMAGES = "images"
+    #: Document extraction, `POST /v1/ocr`: the Cortecs and Mistral shape,
+    #: served either by an upstream OCR model or by this deployment's own
+    #: extractor. Metered by the page rather than the token.
+    OCR = "ocr"
 
 
 class BillingMode(enum.StrEnum):
@@ -208,7 +252,31 @@ class ProviderKind(enum.StrEnum):
 
 
 class PriceSource(enum.StrEnum):
+    """Who supplied a price. Stored on every append-only price row.
+
+    This is not decoration. A price is what the gateway invoices from, and the
+    three answers carry different weight: a figure typed by an administrator, a
+    figure the counterparty published, and a figure a community file supplied
+    for a counterparty that publishes none (ADR 0053). When one later proves
+    wrong, the row says who to ask.
+
+    No migration was needed to add these: `_enum` stores enums as VARCHAR with
+    no CHECK, precisely so that a new value is not a locking DDL change.
+    """
+
     MANUAL = "manual"
+    #: The provider's own catalogue, whichever provider it is. `CORTECS` below is
+    #: what this was called when Cortecs was the only importer; new rows use this.
+    CATALOGUE = "catalogue"
+    #: LiteLLM's community price file, used only to fill a price the provider
+    #: left out. Distinct from `CATALOGUE` because it is a third party's figure
+    #: for someone else's charges — the one kind of price worth re-checking
+    #: against an invoice.
+    COMMUNITY = "community"
+    #: Historical. Written by the original Cortecs importer, and by every
+    #: catalogue import until ADR 0053's fill made the distinction matter — which
+    #: means existing rows labelled `cortecs` may hold a community figure, and
+    #: that cannot be recovered from the row. Kept so those rows still read.
     CORTECS = "cortecs"
 
 
@@ -297,10 +365,19 @@ class LocalCredential(Base):
     and deleting the row revokes local login without touching the identity.
 
     The user it points at is keyed ``(issuer="local", subject=email)``, the same
-    convention ``gateway seed`` has always used, so an OIDC user and a local
-    user with the same address are deliberately different accounts. Linking one
-    person's local credential to their directory identity would let a leaked
-    password ride an issuer's trust — it is refused, not merely unimplemented.
+    convention ``gateway seed`` has always used, so by default an OIDC user and
+    a local user with the same address are different accounts.
+
+    That default used to be absolute, and the reason was written here: linking
+    one person's local credential to their directory identity lets a leaked
+    password ride an issuer's trust. That risk is real and has not gone away —
+    what changed is who decides. An operator who runs the directory their local
+    accounts were named after can now turn linking on **per identity provider**
+    (``IdentityProvider.link_local_by_email``, ADR 0056), and the link is
+    recorded as a ``UserIdentity`` row rather than by rewriting this row's key.
+    Read that ADR before touching either side: the guarantee that makes it
+    tolerable is that a verified email is required, and it is what stops an
+    ``email`` claim from being a password.
     """
 
     __tablename__ = "local_credentials"
@@ -318,6 +395,54 @@ class LocalCredential(Base):
     user: Mapped[User] = relationship(foreign_keys=[user_id])
 
 
+class UserIdentity(Base):
+    """An *additional* way one person's account is named by an issuer (ADR 0056).
+
+    ``users`` still holds the identity a row was created with — the primary
+    key of a person as far as ``(issuer, subject)`` goes. This table holds the
+    others, and exists so that account linking never has to rewrite that pair.
+
+    That is the whole design, and it is not fussiness. ``issuer == "local"`` is
+    read in eight places as *"this account's door is a password"* — local
+    login, the password reset, both CLI commands, changing your own password,
+    the administrator password routes, creating a local account, and the rule
+    that refuses an ``is_admin`` edit when the directory is authoritative.
+    Rewriting a linked user's issuer to the provider's would flip all eight
+    silently: the person would keep an unusable password and the deployment
+    would lose the escape hatch that recovers it when the directory is
+    misconfigured. So the local row stays local, and the directory identity is
+    recorded beside it. ADR 0056 lists the eight.
+
+    Two unique constraints, each preventing a different confusion: one identity
+    belongs to one person, and one person has at most one identity per
+    directory. Deleting a row unlinks, which is why the link is auditable —
+    ``linked_at`` and the address it matched on are kept.
+    """
+
+    __tablename__ = "user_identities"
+    __table_args__ = (
+        UniqueConstraint("issuer", "subject", name="uq_user_identities_issuer_subject"),
+        UniqueConstraint("user_id", "issuer", name="uq_user_identities_user_issuer"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    issuer: Mapped[str] = mapped_column(String(512))
+    subject: Mapped[str] = mapped_column(String(255))
+    # The address the match was made on, kept as it was at the time. The
+    # provider may report a different one later and `users.email` follows it;
+    # what this link was justified by must not move with it.
+    matched_email: Mapped[str | None] = mapped_column(String(320), default=None)
+    linked_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    user: Mapped[User] = relationship(foreign_keys=[user_id])
+
+    def __repr__(self) -> str:
+        return f"<UserIdentity {self.issuer}/{self.subject} -> {self.user_id}>"
+
+
 class Membership(Base):
     __tablename__ = "memberships"
 
@@ -329,6 +454,15 @@ class Membership(Base):
     )
     role: Mapped[MembershipRole] = mapped_column(
         _enum(MembershipRole, "membership_role"), default=MembershipRole.MEMBER
+    )
+    # Defaults to the administrator's, not the directory's, because four of the
+    # five places that create a membership are administrative and exactly one
+    # is the login sync — which says so explicitly. A row that does not know
+    # where it came from is safer treated as a decision somebody made here.
+    source: Mapped[MembershipSource] = mapped_column(
+        _enum(MembershipSource, "membership_source"),
+        default=MembershipSource.MANUAL,
+        server_default=text("'manual'"),
     )
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
@@ -437,6 +571,12 @@ class ModelKind(enum.StrEnum):
     CHAT = "chat"
     EMBEDDING = "embedding"
     IMAGE = "image"
+    #: Document extraction: a document in, its text out, priced per page rather
+    #: than per token. Served either by an upstream OCR model or by this
+    #: deployment's own extractor, which is the distinction the *provider*
+    #: carries and not the kind — `/v1/ocr` is one surface with two kinds of
+    #: counterparty behind it.
+    OCR = "ocr"
 
 
 class Provider(Base):
@@ -611,6 +751,22 @@ class ModelPrice(Base):
     # Per generated image, for the image models that are not priced per token
     # (ADR 0030). Not per million of anything — the divisor does not apply.
     per_image: Mapped[Decimal | None] = mapped_column(default=None)
+    # Per page read, for OCR and document extraction, which is what every OCR
+    # counterparty charges by. Same shape as `per_image` and for the same
+    # reason: the unit is not a token, so the per-million divisor is wrong.
+    #
+    # A model may carry this *and* the token rates: an OCR model that also
+    # returns a summary is billed for both, and leaving one null is how a real
+    # charge records as zero.
+    per_page: Mapped[Decimal | None] = mapped_column(default=None)
+    # Per server-side web search the provider ran on our behalf (ADR 0058).
+    # A third non-token unit, and the one that is a *surcharge*: unlike a page
+    # or an image it arrives on top of an ordinary chat request's tokens, so a
+    # model priced only per token bills a real charge as zero and nothing on
+    # the screen says so. Stored per single search, like `per_image` — the
+    # providers publish it per thousand ($10 per 1,000 for Anthropic), and the
+    # division happens where the figure is entered, not here.
+    per_search: Mapped[Decimal | None] = mapped_column(default=None)
 
     currency: Mapped[str] = mapped_column(String(3))
     effective_from: Mapped[datetime] = mapped_column(default=utcnow)
@@ -754,6 +910,14 @@ class UsageRecord(Base):
     # the ledger cannot be repriced if that pricing is ever modelled properly.
     image_count: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     image_size: Mapped[str | None] = mapped_column(String(32), default=None)
+    # Server-side web searches the provider ran and billed for (ADR 0058).
+    # A column for the same reason `image_count` is one, and one migration 0023
+    # deliberately refused for *cost*: this is the billable **count**, it is
+    # what a provider's invoice is itemised by, and it cannot be recovered from
+    # the money afterwards. Only ever from the provider's reported figure —
+    # counting the tool-use blocks in a response would bill the searches that
+    # errored, which Anthropic states it does not charge for.
+    search_count: Mapped[int] = mapped_column(default=0, server_default=text("0"))
 
     cost: Mapped[Decimal] = mapped_column(default=Decimal(0))
     currency: Mapped[str] = mapped_column(String(3))
@@ -1008,6 +1172,20 @@ class IdentityProvider(Base):
     groups_claim: Mapped[str] = mapped_column(String(255), default="groups")
     fetch_userinfo: Mapped[bool] = mapped_column(Boolean, default=True)
     group_mappings: Mapped[list[list[str]]] = mapped_column(JSON, default=list)
+    # May a login here adopt a local account with the same verified address
+    # (ADR 0056)? Per provider and off by default, because it is this
+    # directory's word that gets to name an existing account: an operator
+    # trusts the corporate IdP their local accounts were named after, and
+    # says nothing about the next one added.
+    link_local_by_email: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+    # How far this directory's answer about groups reaches (ADR 0057).
+    group_sync: Mapped[GroupSync] = mapped_column(
+        _enum(GroupSync, "group_sync"),
+        default=GroupSync.EVERY_LOGIN,
+        server_default=text("'every_login'"),
+    )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

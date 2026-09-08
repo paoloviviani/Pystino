@@ -30,6 +30,7 @@ from typing import Any
 import orjson
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from llmp_shared import Restored
 
 from gateway.accounting import (
     RequestAccounting,
@@ -49,6 +50,7 @@ from gateway.errors import (
     error_payload,
 )
 from gateway.models import ApiSurface, ModelDef, UsageStatus
+from gateway.protocols import reader_for
 from gateway.quota import (
     QuotaEngine,
     Reservation,
@@ -194,7 +196,17 @@ async def chat_completions(
         body.requested_max_output_tokens(settings.quota.default_max_output_tokens)
         * body.choice_count()
     )
-    worst_case = TokenCounts(prompt=prompt_tokens, completion=max_output)
+    # Server-side web search is charged per search on top of tokens, and
+    # nothing in the request bounds it unless the caller said so (ADR 0058).
+    # Read once, here: the same object supplies the reservation below and the
+    # cap written into the outgoing tools, so the two cannot disagree.
+    search = _metered.bound_web_search(
+        (body.model_extra or {}).get("tools"),
+        default=settings.quota.default_max_web_searches,
+    )
+    worst_case = TokenCounts(
+        prompt=prompt_tokens, completion=max_output, searches=search.reserved
+    )
 
     # -- reserve, then open the usage row (steps 4-5) -----------------------
     metered = await _metered.begin(
@@ -215,6 +227,7 @@ async def chat_completions(
         return metered
 
     payload = build_upstream_payload(body, outcome=outcome, upstream_model=model.upstream_model)
+    search.apply(payload)
     payload = metered.shape_payload(payload, surface=SURFACE)
 
     if body.stream:
@@ -270,12 +283,32 @@ async def _buffered_response(
 
     # Report our model name, and restore any placeholders we introduced.
     body_payload["model"] = model.name
-    for choice in body_payload.get("choices") or []:
+    # One restoration per choice, kept by choice index: each choice is different
+    # text, so the *positions* the substitutions edited differ even though the
+    # placeholder map is one per request.
+    restored_by_choice: dict[int, Restored] = {}
+    for position, choice in enumerate(body_payload.get("choices") or []):
         if not isinstance(choice, dict):
             continue
+        declared = choice.get("index")
+        which = declared if isinstance(declared, int) else position
         message = choice.get("message")
         if isinstance(message, dict) and isinstance(message.get("content"), str):
-            message["content"] = await redactor.redact_response_text(message["content"], outcome)
+            restored = await redactor.restore_response(message["content"], outcome)
+            message["content"] = restored.text
+            restored_by_choice[which] = restored
+
+    # A citation is character offsets into the text just rewritten, so it moves
+    # with it or it points at the wrong words (ADR 0059).
+    if any(item.moved for item in restored_by_choice.values()):
+        reader_for(SURFACE).shift_citations(
+            body_payload,
+            lambda choice_index, offset: (
+                restored_by_choice[choice_index].shift(offset)
+                if choice_index in restored_by_choice
+                else offset
+            ),
+        )
 
     await metered.completed(upstream_status=response.status_code)
     return JSONResponse(status_code=200, content=body_payload)

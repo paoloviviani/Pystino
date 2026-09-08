@@ -8,7 +8,7 @@
  * provisioning rule.
  */
 
-import { Badge, Button, Card, Dialog, Input, Notice, Spinner } from "@llmp/ui";
+import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner } from "@llmp/ui";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
@@ -20,11 +20,16 @@ import {
   useUpdateEmailSettings,
   useUpdateIdentityProvider,
 } from "../lib/admin";
-import type { EmailSettingsInput, IdentityProvider, IdentityProviderInput } from "../lib/types";
+import type {
+  EmailSettingsInput,
+  GroupSync,
+  IdentityProvider,
+  IdentityProviderInput,
+} from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
 import { ProvisioningPolicySection } from "./AdminIdentity";
-import { DETAIL_LABEL, FORM, PAGE } from "../lib/layout";
+import { CODE, DETAIL_LABEL, FORM, PAGE, SECRET_ROW } from "../lib/layout";
 
 export function AdminSettings() {
   return (
@@ -178,6 +183,59 @@ function EmailCard() {
 
 // -- identity providers ---------------------------------------------------------
 
+/**
+ * The callback URL to register at the provider, shown as the name is typed.
+ *
+ * It has to be shown, and it has to be shown *here*. The path carries the
+ * connection's own name — `/auth/callback/<name>` — so it is not something an
+ * administrator can guess or read off a docs page, and the IdP rejects the
+ * login unless it holds this exact string. Registering it wrong produces a
+ * successful sign-in that fails on the way back, which is the worst place to
+ * discover a typo.
+ *
+ * Built from `window.location.origin` rather than served by the API, and that
+ * is the accurate source rather than a shortcut: the gateway derives the
+ * redirect URI from the origin the login *arrived on*
+ * (`OIDCProviderRegistry.client_for`), so the URI this deployment will actually
+ * send is the origin the administrator is reading this on. A value computed on
+ * the server would be whatever `PUBLIC_ORIGIN` says, which is the same thing
+ * only when it is set correctly — and if it is not, this line is the fastest
+ * way to notice.
+ */
+export function RedirectUri({ name }: { name: string }) {
+  const [copied, setCopied] = useState<boolean | null>(null);
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const slug = name.trim();
+  const uri = `${origin}/auth/callback/${slug || "<name>"}`;
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(uri);
+      setCopied(true);
+    } catch {
+      // No clipboard API on an insecure origin, or permission denied. The text
+      // is selectable either way, so this is a downgrade rather than a failure.
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className={DETAIL_LABEL}>Redirect URI</div>
+      <div className={SECRET_ROW}>
+        <code className={CODE}>{uri}</code>
+        {slug && <Button onClick={copy}>{copied ? "Copied" : "Copy"}</Button>}
+      </div>
+      <p className="mt-1 text-sm text-ink-muted">
+        Register exactly this at the provider — never a wildcard.
+      </p>
+      {copied === false && (
+        <p className="text-sm text-warn">Could not reach the clipboard; copy it by hand.</p>
+      )}
+    </div>
+  );
+}
+
 function ProvidersCard() {
   const providers = useIdentityProviders();
   const [creating, setCreating] = useState(false);
@@ -280,6 +338,8 @@ function ProviderDialog({
   const [clientSecret, setClientSecret] = useState("");
   const [groupsClaim, setGroupsClaim] = useState("groups");
   const [mappings, setMappings] = useState<{ idp: string; local: string }[]>([]);
+  const [linkLocal, setLinkLocal] = useState(false);
+  const [groupSync, setGroupSync] = useState<GroupSync>("every_login");
   const [isEnabled, setIsEnabled] = useState(true);
 
   const target = isEdit ? existing : null;
@@ -292,6 +352,8 @@ function ProviderDialog({
     setClientSecret("");
     setGroupsClaim(target.groups_claim);
     setMappings(target.group_mappings.map((rule) => ({ ...rule })));
+    setLinkLocal(target.link_local_by_email);
+    setGroupSync(target.group_sync);
     setIsEnabled(target.is_enabled);
   }, [target]);
 
@@ -302,6 +364,8 @@ function ProviderDialog({
     setClientSecret("");
     setGroupsClaim("groups");
     setMappings([]);
+    setLinkLocal(false);
+    setGroupSync("every_login");
     setIsEnabled(true);
     create.reset();
     update.reset();
@@ -317,6 +381,8 @@ function ProviderDialog({
         groups_claim: groupsClaim.trim(),
         fetch_userinfo: true,
         group_mappings: mappings.filter((r) => r.idp.trim() && r.local.trim()),
+        link_local_by_email: linkLocal,
+        group_sync: groupSync,
         is_enabled: isEnabled,
       };
       if (clientSecret) body.client_secret = clientSecret;
@@ -343,6 +409,8 @@ function ProviderDialog({
           client_secret: clientSecret,
           groups_claim: groupsClaim.trim(),
           group_mappings: mappings.filter((r) => r.idp.trim() && r.local.trim()),
+          link_local_by_email: linkLocal,
+          group_sync: groupSync,
         },
         {
           onSuccess: (created) => {
@@ -390,6 +458,7 @@ function ProviderDialog({
           hint="A short slug: the sign-in button reads “Sign in with <name>”."
           disabled={isEdit}
         />
+        <RedirectUri name={name} />
         <Input
           label="Issuer"
           value={issuer}
@@ -457,6 +526,44 @@ function ProviderDialog({
           >
             Add mapping
           </Button>
+        </div>
+        <Select
+          label="Group membership from this directory"
+          value={groupSync}
+          onChange={(e) => setGroupSync(e.target.value as GroupSync)}
+          hint="Applies only to memberships this directory granted. A group an
+            administrator assigned is never removed by a sign-in, whichever of
+            these is chosen."
+        >
+          <option value="every_login">
+            Set on every sign-in — the directory is authoritative
+          </option>
+          <option value="first_login">
+            Set once, when the account first appears — administered here afterwards
+          </option>
+          <option value="never">
+            Never — sign-in only, groups assigned here
+          </option>
+        </Select>
+        <div>
+          <label className="flex cursor-pointer items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={linkLocal}
+              onChange={(e) => setLinkLocal(e.target.checked)}
+            />
+            <span>
+              Adopt local accounts with the same address
+              <span className="mt-0.5 block text-xs text-ink-faint">
+                A first sign-in here becomes the existing local account when this
+                directory reports the same address as verified — one person, one
+                account, keys and spend included. Its groups then become
+                authoritative for that account, including whether it is an
+                administrator. Unverified addresses are never matched.
+              </span>
+            </span>
+          </label>
         </div>
         {isEdit && (
           <label className="flex cursor-pointer items-center gap-2">

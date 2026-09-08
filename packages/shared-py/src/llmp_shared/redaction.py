@@ -33,6 +33,7 @@ import hashlib
 import hmac
 import re
 import unicodedata
+from dataclasses import dataclass
 from typing import Final
 
 from pydantic import BaseModel, Field
@@ -191,6 +192,56 @@ class DetectionResponse(BaseModel):
     unsupported_types: list[str] = Field(default_factory=list)
 
 
+
+@dataclass(frozen=True, slots=True)
+class TextEdit:
+    """One substitution, in the coordinates of the text before it happened."""
+
+    #: Where the replaced run started.
+    at: int
+    #: How many characters were replaced.
+    was: int
+    #: How many were written in their place.
+    now: int
+
+
+@dataclass(frozen=True, slots=True)
+class Restored:
+    """Restored text, and the edits that produced it."""
+
+    text: str
+    edits: tuple[TextEdit, ...] = ()
+
+    @property
+    def moved(self) -> bool:
+        """Whether any offset into this text needs adjusting at all.
+
+        False when nothing was substituted *and* when every substitution
+        happened to be the same length as what it replaced — in both cases the
+        old offsets are still right, and a caller can skip the work.
+        """
+        return any(edit.was != edit.now for edit in self.edits)
+
+    def shift(self, index: int) -> int:
+        """Where *index* ended up after the substitutions.
+
+        An offset inside a replaced run has no exact answer — the placeholder
+        it pointed into is gone — so it lands at the start of the value that
+        replaced it. That only arises if a provider cited half of a
+        placeholder, which would mean it cited half of an entity name.
+        """
+        moved = index
+        for edit in self.edits:
+            if edit.at + edit.was <= index:
+                moved += edit.now - edit.was
+            elif edit.at < index:
+                # Inside the replaced run: `moved - index` is the drift from the
+                # edits that came before this one, and the run's own start is
+                # the only defensible landing place.
+                return edit.at + (moved - index)
+        return moved
+
+
 class PlaceholderMap:
     """Bidirectional map for one request's entities.
 
@@ -238,13 +289,57 @@ class PlaceholderMap:
         Longest first, so a placeholder that is a prefix of another cannot be
         substituted inside it.
         """
-        if not self._to_original:
-            return text
+        return self.restore_with_edits(text).text
 
+    def restore_with_edits(self, text: str) -> Restored:
+        """:meth:`restore`, and *where* each substitution happened.
+
+        The positions are what a citation needs. A provider that returns
+        character offsets into the assistant's text — OpenAI's ``url_citation``
+        annotations do — computed them against the text it generated, which
+        contained placeholders. Restoring a name that is longer or shorter than
+        the placeholder moves every character after it, so the offsets have to
+        move with it or they quietly point at the wrong words (ADR 0059).
+
+        One left-to-right pass rather than a chain of :meth:`str.replace` calls,
+        because a chain cannot say where it wrote. The result is the same:
+        candidates are ranked longest-first, so a placeholder that is a prefix
+        of another is never substituted inside it, and overlapping matches are
+        resolved in favour of the longer one.
+        """
+        if not self._to_original:
+            return Restored(text=text, edits=())
+
+        # Every occurrence of every known placeholder, longest first so that a
+        # prefix loses to the placeholder containing it.
+        found: list[tuple[int, str]] = []
         for placeholder in sorted(self._to_original, key=len, reverse=True):
-            if placeholder in text:
-                text = text.replace(placeholder, self._to_original[placeholder])
-        return text
+            start = text.find(placeholder)
+            while start != -1:
+                found.append((start, placeholder))
+                start = text.find(placeholder, start + 1)
+        if not found:
+            return Restored(text=text, edits=())
+
+        # Sorted by position, and by length descending within a position, so the
+        # overlap check below keeps the longer of two matches that start together.
+        found.sort(key=lambda item: (item[0], -len(item[1])))
+
+        pieces: list[str] = []
+        edits: list[TextEdit] = []
+        cursor = 0
+        for start, placeholder in found:
+            if start < cursor:
+                # Overlaps something already substituted. The earlier, longer
+                # match won; this one was never really there.
+                continue
+            original = self._to_original[placeholder]
+            pieces.append(text[cursor:start])
+            pieces.append(original)
+            edits.append(TextEdit(at=start, was=len(placeholder), now=len(original)))
+            cursor = start + len(placeholder)
+        pieces.append(text[cursor:])
+        return Restored(text="".join(pieces), edits=tuple(edits))
 
     def __len__(self) -> int:
         return len(self._to_original)

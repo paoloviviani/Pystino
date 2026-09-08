@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -205,6 +205,8 @@ class RequestAccounting:
         self._first_token_at: datetime | None = None
         #: Set by the image route, which counts pictures rather than tokens.
         self._images = 0
+        # Set by `observe_redaction` when the *response* was the redacted half.
+        self._redaction_observed = False
         self._image_size: str | None = None
 
         self._flushed_chars = 0
@@ -325,6 +327,30 @@ class RequestAccounting:
                 continue
             slot.observe_delta(delta)
 
+    def observe_redaction(
+        self,
+        *,
+        engine: str | None,
+        entity_count: int = 0,
+        scope: str | None = None,
+        rule_id: uuid.UUID | None = None,
+    ) -> None:
+        """Redaction facts discovered *after* the row was created.
+
+        Every other surface redacts the request, so the engine, the count and
+        the rule are known before `begin` writes the row. The OCR surface
+        redacts the **response** — the document as text is where a scanned
+        identity card becomes searchable — and that only happens once the
+        document has been read. Recorded here and written by `finalise`,
+        because a row reporting "0 entities redacted" for a request that had
+        forty replaced is worse than one reporting nothing at all.
+        """
+        self._ctx.redaction_engine = engine
+        self._ctx.redacted_entity_count = max(0, entity_count)
+        self._ctx.redaction_scope = scope
+        self._ctx.redaction_rule_id = rule_id
+        self._redaction_observed = True
+
     def observe_images(self, count: int, size: str | None) -> None:
         """How many pictures came back, and at what size.
 
@@ -396,8 +422,13 @@ class RequestAccounting:
         """Best available token counts, and an honest label for their provenance."""
         if self._upstream_usage:
             counts = self._reader.counts(self._upstream_usage)
-            if counts.total:
-                return self._with_images(counts), UsageSource.UPSTREAM_EXACT
+            # `total` is tokens, and on the OCR surface there are none: the
+            # counterparty reports `pages_processed` and charges by it. Testing
+            # tokens alone sent a perfectly exact page count down the estimation
+            # path, where `_with_units` then dropped it and the request recorded
+            # a cost of zero — found by the first ocr surface test.
+            if counts.total or counts.pages or counts.searches:
+                return self._with_units(counts), UsageSource.UPSTREAM_EXACT
 
         # No usable usage frame. Estimate rather than record zero.
         completion_text = "".join(part for slot in self._choices.values() for part in slot.content)
@@ -412,7 +443,7 @@ class RequestAccounting:
             # from the response and is exact, and it is what the model is
             # billed on — so the row is `upstream_exact`, with zero tokens
             # rather than an estimate of a quantity nobody charges for.
-            return self._with_images(TokenCounts()), UsageSource.UPSTREAM_EXACT
+            return self._with_units(TokenCounts()), UsageSource.UPSTREAM_EXACT
 
         if failed and not completion:
             # The upstream refused before generating anything, and reported no
@@ -427,23 +458,27 @@ class RequestAccounting:
             return TokenCounts(), UsageSource.UNAVAILABLE
 
         return (
-            self._with_images(
+            self._with_units(
                 TokenCounts(prompt=self._ctx.estimated_prompt_tokens, completion=completion)
             ),
             UsageSource.ESTIMATED,
         )
 
-    def _with_images(self, counts: TokenCounts) -> TokenCounts:
-        if not self._images:
-            return counts
-        return TokenCounts(
-            prompt=counts.prompt,
-            completion=counts.completion,
-            cached_prompt=counts.cached_prompt,
-            reasoning=counts.reasoning,
-            cache_write=counts.cache_write,
-            images=self._images,
-        )
+    def _with_units(self, counts: TokenCounts) -> TokenCounts:
+        """Add the picture count, which only this object knows.
+
+        Every other billable unit — pages, searches — arrives inside the
+        counterparty's own usage frame and is already on *counts*. Images are
+        the exception: they are counted from the response by the recorder.
+
+        ``replace`` rather than a field-by-field rebuild, and that is the whole
+        change. This function used to list the fields it knew about, so every
+        new unit added to ``TokenCounts`` was silently dropped here — which is
+        exactly how a page-counted request first recorded a cost of zero, and
+        would have been how a searched request recorded one too. A copy that
+        cannot forget a field is worth more than a fast path that can.
+        """
+        return replace(counts, images=self._images or counts.images)
 
     def _was_substituted(self) -> bool:
         """Whether the provider served a model other than the one we asked for.
@@ -625,11 +660,29 @@ class RequestAccounting:
             "cache_write_tokens": counts.cache_write,
             "reasoning_tokens": counts.reasoning,
             "image_count": counts.images,
+            # Recorded whether or not a `per_search` rate existed to price
+            # them: the count is what the provider will itemise its invoice
+            # by, and an unpriced search that leaves no trace is exactly the
+            # charge nobody finds until the invoice arrives (ADR 0058).
+            "search_count": counts.searches,
             "image_size": self._image_size,
             "usage_source": source,
             "upstream_model": self._upstream_model,
             "upstream_provider": self._upstream_provider,
             "model_substituted": self._was_substituted(),
+            # Only when the response was what got redacted. On every other
+            # surface these were written with the row, and rewriting them here
+            # would overwrite the request's facts with defaults.
+            **(
+                {
+                    "redaction_engine": self._ctx.redaction_engine,
+                    "redacted_entity_count": self._ctx.redacted_entity_count,
+                    "redaction_scope": self._ctx.redaction_scope,
+                    "redaction_rule_id": self._ctx.redaction_rule_id,
+                }
+                if self._redaction_observed
+                else {}
+            ),
             "cost": charged,
             "currency": charged_currency,
             # The native figure rides beside the billing one (ADR 0054): the
