@@ -172,6 +172,14 @@ def main() -> int:
             8000: "the gateway, without TLS",
             8081: "the fake upstream",
             int(os.environ.get("CHAT_PORT", "8100")): "the chat service, without TLS",
+            # The development Keycloak (docker-compose.keycloak.yml). It is
+            # deliberately not published — a browser reaches it through Caddy
+            # at /idp on the origin above — and this line is what keeps that
+            # true. Its admin console on a routable address would be the worst
+            # single thing this stack could expose, since it mints the
+            # identities the gateway then trusts.
+            8080: "the development Keycloak",
+            9000: "Keycloak's management port",
         }
         for number, what in sorted(private.items()):
             if not port_open("127.0.0.1", number):
