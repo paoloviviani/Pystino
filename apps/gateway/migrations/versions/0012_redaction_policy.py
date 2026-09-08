@@ -4,7 +4,7 @@ Revision ID: 0012
 Revises: 0011
 Create Date: 2026-08-26
 
-See docs/adr/0037-redaction-policy.md.
+See ADR 0037.
 
 One nullable JSON column on the append-only ``redaction_config`` table, rather
 than a table of entity rows. A policy is a document an admin edits and saves

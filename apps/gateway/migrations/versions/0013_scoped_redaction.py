@@ -4,7 +4,7 @@ Revision ID: 0013
 Revises: 0012
 Create Date: 2026-08-27
 
-See docs/adr/0038-scoped-redaction.md.
+See ADR 0038.
 
 Three things, all additive:
 

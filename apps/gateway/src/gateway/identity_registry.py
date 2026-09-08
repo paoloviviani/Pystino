@@ -1,6 +1,6 @@
 """Identity providers as rows: seeded from the environment, owned by the console.
 
-See [ADR 0051](../../../../docs/adr/0051-settings-identity-and-email.md).
+See ADR 0051.
 
 Two jobs live here. The **registry** turns a provider row into an
 ``OIDCClient`` on demand and caches it by the row's identity and

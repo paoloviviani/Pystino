@@ -4,7 +4,7 @@ Revision ID: 0014
 Revises: 0013
 Create Date: 2026-08-27
 
-See docs/adr/0039-redaction-rules-only.md.
+See ADR 0039.
 
 Two changes, and they are the same change seen from either end.
 

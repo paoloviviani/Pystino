@@ -1,6 +1,6 @@
 """Counterparty plugins: providers and routers.
 
-See [ADR 0032](../../../../docs/adr/0032-provider-plugins.md). The rule worth
+See ADR 0032. The rule worth
 repeating at the door: **a plugin returns facts and never computes money.**
 """
 

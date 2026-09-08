@@ -5,7 +5,7 @@ Two flows, deliberately separate. The **authorization-code** flow authenticates 
 human to the management surface and ends in a session cookie. The **access
 token** path authenticates a first-party application calling ``/v1`` on behalf of
 the human using it — the chat app, and the ``opencode`` device flow — and is what
-[ADR 0040](docs/adr/0040-bearer-tokens-on-v1.md) exists for. The alternative was
+ADR 0040 exists for. The alternative was
 minting an API key per user inside each application, which is credential storage
 invented to work around a missing token path.
 

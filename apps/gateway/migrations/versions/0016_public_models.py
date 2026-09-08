@@ -4,7 +4,7 @@ Revision ID: 0016
 Revises: 0015
 Create Date: 2026-08-30
 
-See docs/adr/0045-public-models.md.
+See ADR 0045.
 
 One column. A model marked public may be used by any authenticated caller,
 billed to the caller's own default billing group — access is granted, billing

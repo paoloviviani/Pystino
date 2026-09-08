@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that a citation survives redaction (docs/adr/0059-citation-offsets.md).
+"""Check that a citation survives redaction (ADR 0059).
 
 What only this can prove: the whole chain, with the real detection service
 finding a real name, the real placeholder derivation, and a provider that

@@ -5,7 +5,7 @@
 #
 # Valkey rather than Redis: BSD-3-Clause, Linux Foundation, wire-compatible, and
 # now the packaged default on current Debian/Ubuntu/Fedora. See
-# docs/adr/0006-counter-store.md
+# https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0006-counter-store.md
 name: llm-platform
 
 services:

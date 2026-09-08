@@ -4,7 +4,7 @@ Revision ID: 0020
 Revises: 0019
 Create Date: 2026-09-03
 
-See docs/adr/0051-settings-identity-and-email.md.
+See ADR 0051.
 
 Two configuration tables, both **seeded from the environment at startup** and
 afterwards owned by the console. This consciously supersedes the boundary ADR

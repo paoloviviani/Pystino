@@ -4,7 +4,7 @@ Revision ID: 0021
 Revises: 0020
 Create Date: 2026-09-03
 
-See docs/adr/0052-quota-notifications.md.
+See ADR 0052.
 
 The split that makes this two tables: ``quota_notification_settings`` is the
 user's *decision* — a percentage threshold on a rule that applies to them —

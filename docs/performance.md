@@ -138,7 +138,7 @@ redaction actually costs.
 
 ### Moving the final write off the critical path (2026-09-08)
 
-[ADR 0060](adr/0060-settle-after-the-response.md). The `UPDATE usage_records`
+[ADR 0060](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0060-settle-after-the-response.md). The `UPDATE usage_records`
 and the counter settle used to be awaited between the upstream answering and
 the response going out; they now ride on the response as a background task.
 Same host, same 2 workers, redaction on:

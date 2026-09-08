@@ -1,6 +1,6 @@
 """The OIDC identity policy: what the environment says, what the console says.
 
-See [ADR 0048](../../../../docs/adr/0048-oidc-policy-configuration.md).
+See ADR 0048.
 
 The split that shapes this module: **connection is environment, policy is
 configuration.** The issuer, client secret and redirect URI are read once at

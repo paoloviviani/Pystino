@@ -1,8 +1,8 @@
 """Calendar period boundaries.
 
 **The single implementation of "when does August start".** Reporting uses it
-([0024](../../../docs/adr/0024-billing-periods.md)) and calendar quotas use it
-([0025](../../../docs/adr/0025-quota-model-v2.md)), which is what makes a monthly
+(0024) and calendar quotas use it
+(0025), which is what makes a monthly
 budget and a monthly report agree by construction rather than by vigilance.
 
 Two things make this less trivial than it looks:

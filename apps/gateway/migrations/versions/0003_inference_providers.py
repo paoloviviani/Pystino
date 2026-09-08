@@ -5,7 +5,7 @@ Revises: 0002
 Create Date: 2026-08-15
 
 Turns the single environment-configured upstream into provider records
-(docs/adr/0027-inference-providers.md).
+(ADR 0027).
 
 The upgrade must be invisible to a running deployment, so it creates a
 ``default`` provider from the existing ``GATEWAY_UPSTREAM__*`` values and points

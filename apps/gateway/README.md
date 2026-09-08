@@ -30,18 +30,18 @@ per-group model availability and a pluggable redaction layer.
 `input_modalities`, `output_modalities` and `supported_features`, so a client
 can pick a model that does tool calling or reads images without taking a 400 to
 find out. Non-standard fields, which OpenAI clients ignore
-([ADR 0031](../../docs/adr/0031-model-capabilities.md)).
+([ADR 0031](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0031-model-capabilities.md)).
 
 Every management listing answers with `{items, total, limit, offset}` and takes
 `?limit=&offset=` (ceiling 200; out of range is a 400, not a clamp). Users,
 models and groups also take `?q=` for a case-insensitive substring search.
 Reports are aggregations, not listings, and return every row they summed.
-([ADR 0029](../../docs/adr/0029-pagination.md))
+([ADR 0029](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0029-pagination.md))
 
 There is **no HTML admin panel**. `/docs` is the operator console — Swagger, generated
 from the same schemas the endpoints validate against. Sign in at `/auth/login` first, so
 the session cookie travels with the requests. See
-[ADR 0022](../../docs/adr/0022-administration-surface.md).
+[ADR 0022](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0022-administration-surface.md).
 
 Two authentication schemes on purpose: `/v1` is for programs and uses revocable
 API keys that carry a billing group; `/api` is for humans and uses OIDC.
@@ -122,15 +122,15 @@ Stated plainly, so none of these is a surprise later.
   others differ in exactly the places ADR 0011 makes configurable: where groups live,
   whether they appear in the ID token at all, how they are named. Re-run the same checks
   against the real provider before going live.
-  ([ADR 0011](../../docs/adr/0011-oidc-integration.md))
+  ([ADR 0011](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0011-oidc-integration.md))
 - **Load behaviour.** Nothing here has been run under concurrency at the few-hundred
   simultaneous streams the design argues about. The arithmetic in
-  [ADR 0004](../../docs/adr/0004-gateway-runtime.md) says Python is not the constraint;
+  [ADR 0004](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0004-gateway-runtime.md) says Python is not the constraint;
   that is reasoning, not a measurement. Profile before scaling.
 - **The Cortecs catalogue envelope.** The pricing *fields* were verified against the
   documentation; the JSON shape wrapping the model list was not seen live. The parser
   accepts several plausible shapes and reports what it cannot read.
-  ([ADR 0014](../../docs/adr/0014-model-catalogue-and-pricing.md))
+  ([ADR 0014](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0014-model-catalogue-and-pricing.md))
 
 **Verified against a real running stack**
 
@@ -138,30 +138,30 @@ Stated plainly, so none of these is a surprise later.
 gateway all healthy, real requests served, quotas enforced, the database fallback confirmed
 by stopping Valkey mid-workload, and the **full OIDC login flow** driven against a real
 identity provider — including a session minting an API key that then served a billed
-completion. See ADRs [0005](../../docs/adr/0005-persistence.md),
-[0006](../../docs/adr/0006-counter-store.md) and
-[0011](../../docs/adr/0011-oidc-integration.md) for what was checked and the problems it
+completion. See ADRs [0005](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0005-persistence.md),
+[0006](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0006-counter-store.md) and
+[0011](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0011-oidc-integration.md) for what was checked and the problems it
 found.
 
 **Deliberately not implemented**
 
 - Device authorization flow endpoints, which the `opencode` bootstrap needs. See
   `scripts/README.md`.
-- Reranking. The embedding half of [ADR 0020](../../docs/adr/0020-embeddings-and-reranking.md)
+- Reranking. The embedding half of [ADR 0020](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0020-embeddings-and-reranking.md)
   is now served; `/v1/rerank` is not, and has no OpenAI-compatible shape to copy.
 - Image editing and variations (`/v1/images/edits`, `/v1/images/variations`). They
   take multipart uploads, which the redaction layer has no story for.
-  ([ADR 0030](../../docs/adr/0030-more-surfaces.md))
+  ([ADR 0030](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0030-more-surfaces.md))
 - Server-side conversation state on `/v1/responses`. `previous_response_id` and
   `store` are refused: a stored prefix is billed on every follow-up and this
   gateway would have no record of what it contained.
 - Retrying an upstream request without `stream_options` when a provider rejects unknown
   parameters. A provider that does gets a plugin whose `prepare_payload` never adds it,
   which costs nothing at request time.
-  ([ADR 0028](../../docs/adr/0028-embeddings-and-served-model.md),
-  [ADR 0032](../../docs/adr/0032-provider-plugins.md))
+  ([ADR 0028](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0028-embeddings-and-served-model.md),
+  [ADR 0032](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0032-provider-plugins.md))
 - A hard mid-stream quota ceiling via `max_tokens` clamping. The chosen policy admits the
-  request that crosses the limit. ([ADR 0009](../../docs/adr/0009-quota-model.md))
+  request that crosses the limit. ([ADR 0009](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0009-quota-model.md))
 
 **Known operational sharp edges**
 
@@ -175,5 +175,5 @@ found.
   gateway keeps running, the cache reports zero and quotas are briefly too permissive until
   the gateway restarts. An empty cache is not a failed read, so nothing detects it at
   runtime. Restart the gateway after any cache loss.
-  ([ADR 0006](../../docs/adr/0006-counter-store.md))
+  ([ADR 0006](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0006-counter-store.md))
 - Rules are loaded per request. Cacheable if it ever shows up in a profile.
