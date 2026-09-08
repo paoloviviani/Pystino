@@ -34,6 +34,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.background import BackgroundTask
 
 from gateway.access import accessible_model_by_name
 from gateway.accounting import RequestAccounting, RequestContext, TokenCounts
@@ -227,7 +228,9 @@ class Metered:
             error_message=message,
         )
         await self.quota.settle(self.reservation, actuals)
-        return JSONResponse(status_code=status_code, content=content if content is not None else {})
+        return JSONResponse(
+            status_code=status_code, content=content if content is not None else {}
+        )
 
     async def completed(self, *, upstream_status: int | None = None) -> QuotaAmounts:
         actuals = await self.accounting.finalise(
@@ -235,6 +238,52 @@ class Metered:
         )
         await self.quota.settle(self.reservation, actuals)
         return actuals
+
+    def completed_after_response(
+        self, *, upstream_status: int | None = None
+    ) -> BackgroundTask:
+        """The same work, run once the answer is already on its way out.
+
+        Attach to the response instead of awaiting: a Starlette background task
+        runs *after* the last byte is sent, so the caller no longer waits for a
+        ``UPDATE usage_records`` and a counter settle it has no use for. On a
+        ~26ms request that is the couple of milliseconds those two round trips
+        cost, and rather more at p95, where they queue behind everything else.
+
+        Three things make this safe rather than merely faster.
+
+        **The row already exists.** It was inserted before the upstream call,
+        so a request in this window is visible as ``in_progress`` — which
+        reporting already counts separately and discloses as "still in flight
+        and excluded" — rather than absent.
+
+        **Nothing downstream reads the return value.** Every caller ignored the
+        ``QuotaAmounts`` this returns; the reservation is settled against the
+        counter store, not handed back to the route.
+
+        **A failure is logged, not raised.** By the time this runs the caller
+        has a 200 and the upstream has served them, so raising would report a
+        failure for a request that succeeded and bill them for it anyway. What
+        it costs is that a settle which fails leaves the row ``in_progress``
+        instead of returning a 500 — visible in the ledger and in the log,
+        which is the better of two bad answers.
+
+        Streaming is deliberately **not** routed through here: its
+        finalisation already runs in the body iterator's ``finally``, and the
+        open cancellation bug there needs ``spawn_finalisation`` and its own
+        tests (see CLAUDE.md), not a different response class.
+        """
+        return BackgroundTask(self._settle_quietly, upstream_status)
+
+    async def _settle_quietly(self, upstream_status: int | None) -> None:
+        try:
+            await self.completed(upstream_status=upstream_status)
+        except Exception:
+            logger.exception(
+                "failed to finalise request %s after the response was sent; its row "
+                "stays in_progress",
+                self.accounting.request_id,
+            )
 
 
 
