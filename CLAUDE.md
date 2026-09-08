@@ -176,6 +176,20 @@ Inside the gateway, the pieces that carry the most weight:
   whether it is a provider or a router. The rule that keeps this safe is that a
   **plugin returns facts and never computes money** — there is deliberately
   nothing it can return that would let it price a request (ADR 0032).
+- **The final ledger write happens after the response is sent**
+  ([ADR 0060](docs/adr/0060-settle-after-the-response.md)). Six non-streamed
+  routes attach `metered.completed_after_response(...)` to the response instead
+  of awaiting it: −16% p50 and −33% p95 with headroom, CPU unchanged. Three
+  things follow. A failure there is **logged, not raised** — the caller already
+  has a 200 — so the row stays `in_progress` rather than becoming a 500. It is
+  **worse under saturation** (p95 at concurrency 12 went 135ms → ~200ms),
+  because awaiting the settle was accidental backpressure; that is accepted
+  since the deployment is meant to stay below the knee. And **streaming is not
+  included**: its `finally` needs `spawn_finalisation` and its own tests, which
+  is still the open item below. Note the trap the tests guard: httpx's ASGI
+  transport awaits background tasks, so through the client deferred and awaited
+  look identical — `test_deferred_settlement.py` drives raw ASGI to assert the
+  body goes out first.
 - **Per-request round trips are pinned by a test.** `test_query_counts.py`
   bounds them at 3 selects to authenticate and 5 + 2 writes for a metered
   request. `selectinload` on a many-to-one relation costs a round trip that

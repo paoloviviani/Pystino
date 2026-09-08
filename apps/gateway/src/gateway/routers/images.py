@@ -135,8 +135,11 @@ async def create_image(
             restored = await redactor.restore_response(entry["revised_prompt"], outcome)
             entry["revised_prompt"] = restored.text
 
-    await metered.completed(upstream_status=response.status_code)
-    return JSONResponse(status_code=response.status_code, content=out)
+    return JSONResponse(
+        status_code=response.status_code,
+        content=out,
+        background=metered.completed_after_response(upstream_status=response.status_code),
+    )
 
 
 def _reported_size(payload: dict[str, object]) -> str | None:

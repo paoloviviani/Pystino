@@ -163,8 +163,12 @@ async def create_message(
             # the quoted text rather than offsets into ours (ADR 0059).
             block["text"] = (await redactor.restore_response(block["text"], outcome)).text
 
-    await metered.completed(upstream_status=response.status_code)
-    return JSONResponse(status_code=response.status_code, content=out)
+    # Finalised after the answer is sent, not before it (ADR 0060).
+    return JSONResponse(
+        status_code=response.status_code,
+        content=out,
+        background=metered.completed_after_response(upstream_status=response.status_code),
+    )
 
 
 def _anthropic_error_text(payload: Any) -> str | None:
