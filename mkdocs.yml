@@ -85,6 +85,7 @@ nav:
       - "Phase 2 — redaction and the console": phase-2-plan.md
       - "Redaction scoping — design": redaction-scoping-design.md
       - "Redaction scoping — plan": redaction-scoping-plan.md
+      - "MCP gateway — proposal": mcp-gateway-plan.md
   - Design decisions:
       - adr/README.md
       - Foundational:
@@ -135,6 +136,7 @@ nav:
           - "0052 — Quota notifications": adr/0052-quota-notifications.md
           - "0053 — Model pricing sources": adr/0053-model-pricing-sources.md
           - "0054 — Currency conversion": adr/0054-currency-conversion.md
+          - "0055 — OCR surface": adr/0055-ocr-surface.md
       - "Recorded now, built later":
           - "0017 — Desktop shell (Phase 4)": adr/0017-desktop-shell.md
           - "0018 — Vector store (Phase 3)": adr/0018-vector-store.md

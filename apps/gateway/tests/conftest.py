@@ -40,6 +40,7 @@ from gateway.models import (
     GroupModelAccess,
     IdentityProvider,
     Membership,
+    MembershipSource,
     ModelDef,
     ModelPrice,
     Provider,
@@ -254,7 +255,13 @@ async def seeded(session_factory: async_sessionmaker[AsyncSession]) -> Seeded:
         )
         db.add(user)
         await db.flush()
-        db.add(Membership(user_id=user.id, group_id=group.id))
+        # This user's issuer is a directory, so the membership is one a login
+        # made — which is what keeps the revocation tests meaningful (ADR 0057).
+        db.add(
+            Membership(
+                user_id=user.id, group_id=group.id, source=MembershipSource.OIDC
+            )
+        )
 
         # Every model needs a provider now (ADR 0027); the fake upstream is one.
         # Its credential is stored the way a real one is — encrypted — so the

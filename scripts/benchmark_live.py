@@ -18,7 +18,8 @@ The capacity model this produces is::
 Modes:
 
     ladder      per-layer cost, by bracketing endpoints (default)
-    load        throughput and latency against concurrency
+    load        throughput and latency against concurrency; a second argument
+                is the sweep, e.g. `load 1,2,4,8,16,32`
     stream      cost against answer length, to separate fixed from per-frame
     redaction   cost against prompt length — detection is the dominant term
     all
@@ -330,13 +331,45 @@ async def ladder(client: httpx.AsyncClient, plain: httpx.AsyncClient) -> None:
         capacity(sum(full["cpu_ms"].values()), "a short non-streamed request")
 
 
-async def load(client: httpx.AsyncClient) -> None:
+#: The default sweep. Coarse on purpose — it is the shape that matters, and a
+#: finer one costs minutes. Override it to find the knee on a particular box:
+#: ``benchmark_live.py load 1,2,4,8,16,24,32``.
+LOAD_STEPS = (1, 2, 8, 32)
+
+
+async def load(client: httpx.AsyncClient, steps: tuple[int, ...] = LOAD_STEPS) -> None:
     print("\n=== throughput against concurrency ===")
     print("  the load generator shares this machine's cores, so req/s is a floor")
-    for concurrency in (1, 2, 8, 32):
-        show(f"concurrency {concurrency}", await probe(
-            client, "POST", f"{GATEWAY}/v1/chat/completions", body=chat(),
-            n=200, concurrency=concurrency), wide=True)
+    results: list[tuple[int, dict[str, Any]]] = []
+    for concurrency in steps:
+        count = max(200, concurrency * 8)
+        # A distinct prompt per request, at the same length. With redaction on,
+        # one repeated prompt hits the detection cache after the first and this
+        # measures the cache rather than the pipeline — silently, and only when
+        # redaction happens to be enabled, which is the worst kind of artefact
+        # for a number somebody plans capacity from.
+        bodies = [chat(f"hello there [{index}]") for index in range(count)]
+        result = await probe(
+            client, "POST", f"{GATEWAY}/v1/chat/completions", bodies=bodies,
+            n=count, concurrency=concurrency)
+        show(f"concurrency {concurrency}", result, wide=True)
+        results.append((concurrency, result))
+
+    # The knee is the actionable number: the last step whose throughput still
+    # improved. Past it, latency grows and throughput does not, which is where
+    # a queue in front of the gateway starts paying for itself.
+    best = max(results, key=lambda item: item[1]["rps"])
+    if best is not results[-1] and len(results) > 1:
+        print(
+            f"\n  peak throughput at concurrency {best[0]}: {best[1]['rps']:.1f} req/s, "
+            f"p95 {best[1]['p95']:.0f}ms"
+        )
+        last = results[-1][1]
+        print(
+            f"  at concurrency {results[-1][0]} it is {last['rps']:.1f} req/s with "
+            f"p95 {last['p95']:.0f}ms — {last['p95'] / best[1]['p95']:.1f}x the latency "
+            "for no more work done."
+        )
     print("\n  A falling req/s with rising concurrency is saturation collapse, not noise:")
     print("  it is the case for shedding load at the edge rather than queueing it here.")
 
@@ -375,8 +408,21 @@ async def redaction(client: httpx.AsyncClient) -> None:
         print("  policy does not require it (docs/redaction-scoping-plan.md).")
 
 
+def _steps(argument: str | None) -> tuple[int, ...]:
+    """A concurrency sweep from the command line, or the default."""
+    if not argument:
+        return LOAD_STEPS
+    try:
+        parsed = tuple(int(part) for part in argument.split(",") if part.strip())
+    except ValueError:
+        print(f"not a concurrency list: {argument!r}")
+        return LOAD_STEPS
+    return tuple(step for step in parsed if step > 0) or LOAD_STEPS
+
+
 async def main() -> int:
     mode = sys.argv[1] if len(sys.argv) > 1 else "ladder"
+    steps = _steps(sys.argv[2] if len(sys.argv) > 2 else None)
     if not HAVE_CPU:
         print("note: cgroup CPU counters unreadable (not the docker host?);")
         print("      latency is still measured, capacity is not.")
@@ -395,7 +441,7 @@ async def main() -> int:
             if mode in ("ladder", "all"):
                 await ladder(client, plain)
             if mode in ("load", "all"):
-                await load(client)
+                await load(client, steps)
             if mode in ("stream", "all"):
                 await stream(client)
             if mode in ("redaction", "all"):

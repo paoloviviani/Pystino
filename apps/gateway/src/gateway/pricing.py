@@ -58,6 +58,16 @@ _INPUT_KEYS = ("input_token", "input", "prompt", "input_per_mtok", "input_cost")
 _OUTPUT_KEYS = ("output_token", "output", "completion", "output_per_mtok", "output_cost")
 _CACHE_READ_KEYS = ("cache_read_cost", "cache_read", "cache_read_input_token")
 _CACHE_WRITE_KEYS = ("cache_write_cost", "cache_write", "cache_write_input_token")
+#: Per-thousand-pages OCR rates. `ocr_cost` is the standard one;
+#: `ocr_annotated_cost` prices annotated pages and is deliberately *not* read —
+#: it is a different service, and billing every page at the annotated rate would
+#: overcharge every plain extraction.
+_PAGE_KEYS = ("ocr_cost",)
+
+#: What `ocr_cost` is quoted per, and the reason this constant has a name: the
+#: token rates divide by a million four lines away, and a reader skimming for
+#: "the divisor" would find the wrong one.
+PAGES_PER_QUOTE = Decimal(1_000)
 
 
 class CatalogueUnavailable(Exception):
@@ -95,6 +105,12 @@ class CataloguePrice:
     currency: str
     cache_read_per_mtok: Decimal | None = None
     cache_write_per_mtok: Decimal | None = None
+    #: Per page read, for OCR models. Cortecs publishes `ocr_cost` per **1,000**
+    #: processed pages, so this is that figure divided by a thousand — a
+    #: different divisor from the token rates' million, sitting two fields away
+    #: from them, which is exactly the shape of mistake ADR 0053's OpenRouter
+    #: parser exists to prevent one order of magnitude up.
+    per_page: Decimal | None = None
     context_window: int | None = None
     # Chat unless the catalogue says otherwise. Cortecs reports it in
     # `output_modalities`; a catalogue that says nothing gets the safe default,
@@ -321,6 +337,58 @@ def parse_litellm_catalogue(
     return prices, unparsable
 
 
+#: Labels `parse_catalogue` uses for an entry it could not identify at all, as
+#: opposed to one it identified and found no price for. Only the latter can be
+#: filled from anywhere, because filling needs an id to match on.
+ANONYMOUS_UNPARSABLE = frozenset({"<unidentified model>", "<non-object entry>"})
+
+
+def fill_missing_prices(
+    published: Sequence[CataloguePrice],
+    unpriced: Sequence[str],
+    community: Sequence[CataloguePrice],
+) -> tuple[list[CataloguePrice], list[str], set[str]]:
+    """Prices for what a provider offers, with the community file filling gaps.
+
+    Returns ``(prices, still_unpriced, filled_ids)``.
+
+    The direction is the whole point and it is one way only: **a price the
+    provider published is never replaced.** The community file is consulted for
+    a model the provider *listed and left unpriced*, and for nothing else — so
+    turning the fill on cannot change a figure that came from the counterparty
+    that will invoice us. That is the same rule the accounting follows for
+    reported cost (ADR 0032): the counterparty is authoritative about its own
+    charges, and a community catalogue is a convenience for the APIs that
+    publish none.
+
+    Why this replaces choosing one source or the other: **the provider is the
+    only authority on what it offers.** Reading the model *list* from LiteLLM
+    answered "what can this endpoint serve" with a third party's opinion, which
+    can name models the provider has retired and miss ones it has just added.
+    Here the list always comes from the provider and only the missing prices
+    come from elsewhere, which is also why the operator no longer has to know
+    whether their provider publishes prices before they can look.
+    """
+    by_id = {price.model_id: price for price in published}
+    available = {price.model_id: price for price in community}
+
+    filled: set[str] = set()
+    prices = list(published)
+    still_unpriced: list[str] = []
+    for model_id in unpriced:
+        if model_id in ANONYMOUS_UNPARSABLE or model_id in by_id:
+            # Not fillable, or already priced by the provider under the same id.
+            still_unpriced.append(model_id)
+            continue
+        found = available.get(model_id)
+        if found is None:
+            still_unpriced.append(model_id)
+            continue
+        prices.append(found)
+        filled.add(model_id)
+    return prices, still_unpriced, filled
+
+
 def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
     """Extract prices from a catalogue response.
 
@@ -355,12 +423,26 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
         input_rate = _as_decimal(_first(source, _INPUT_KEYS))
         output_rate = _as_decimal(_first(source, _OUTPUT_KEYS))
         currency = _first(source, ("currency",)) or _first(entry, ("currency",))
+        # An OCR model's token rates are zero and its real price is per page,
+        # so a parser that read only tokens would import it as free.
+        page_quote = _as_decimal(_first(source, _PAGE_KEYS))
+        per_page = page_quote / PAGES_PER_QUOTE if page_quote is not None else None
 
-        if not model_id or input_rate is None or output_rate is None or not currency:
+        # An OCR model quotes 0.0 for both token rates and its price in
+        # `ocr_cost`; a model with neither is genuinely unreadable. Requiring
+        # token rates alone reported every OCR model as unparsable, which is a
+        # model the operator never sees rather than one they can adopt.
+        priced = input_rate is not None and output_rate is not None
+        if not model_id or not currency or not (priced or per_page is not None):
             unparsable.append(model_id or "<unidentified model>")
             continue
+        if input_rate is None:
+            input_rate = Decimal(0)
+        if output_rate is None:
+            output_rate = Decimal(0)
 
         kind = _kind_of(entry)
+
 
         # `context_size` is what the reference provider actually sends, and its
         # absence from this list is why every imported model had a null context
@@ -381,6 +463,7 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
                 input_per_mtok=input_rate,
                 output_per_mtok=output_rate,
                 currency=str(currency).upper(),
+                per_page=per_page,
                 cache_read_per_mtok=_as_decimal(_first(source, _CACHE_READ_KEYS)),
                 cache_write_per_mtok=_as_decimal(_first(source, _CACHE_WRITE_KEYS)),
                 context_window=context_window,
@@ -419,6 +502,17 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
     take it off the chat route entirely — a worse failure than leaving an image
     model to be labelled by hand.
     """
+    # Tags first, and only for OCR. An OCR model reports `output_modalities:
+    # ["text"]` exactly as a chat model does — the modalities genuinely cannot
+    # tell them apart — while its `tags` say `OCR` and its `input_modalities`
+    # say `file`. Read from the tag rather than inferred from "file" being
+    # accepted, because plenty of chat models accept documents too (33 of them
+    # carry the `Document` tag) and mislabelling one would take it off the chat
+    # route entirely.
+    tags = entry.get("tags")
+    if isinstance(tags, list) and any(str(tag).strip().lower() == "ocr" for tag in tags):
+        return ModelKind.OCR
+
     modalities = entry.get("output_modalities")
     if isinstance(modalities, list):
         lowered = [str(item).lower() for item in modalities]
@@ -433,6 +527,38 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
     return ModelKind.EMBEDDING if "embed" in identifier else ModelKind.CHAT
 
 
+
+def kinds_by_id(payload: Any) -> dict[str, ModelKind]:
+    """What kind each entry in a catalogue declares, whether or not it is priced.
+
+    `parse_catalogue` reports an unpriced entry as a bare id, which is all the
+    *pricing* code needs — and left discovery showing an unpriced OCR or
+    embedding model as `chat`, because a row built from an id alone has no kind
+    to carry and the default is chat. The kind is right there in the entry; this
+    reads it without requiring a price.
+
+    Only entries with a usable id appear: a kind for a model nobody can name is
+    not usable by anything.
+    """
+    entries: Iterable[Any]
+    if isinstance(payload, list):
+        entries = payload
+    elif isinstance(payload, dict):
+        found = _first(payload, _LIST_KEYS)
+        entries = found if isinstance(found, list) else []
+    else:
+        entries = []
+
+    kinds: dict[str, ModelKind] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        raw_id = _first(entry, _ID_KEYS)
+        if raw_id is None:
+            continue
+        kinds[str(raw_id)] = _kind_of(entry)
+    return kinds
+
 def _differs(existing: ModelPrice | None, candidate: CataloguePrice) -> bool:
     """Whether *candidate* is a genuine change from the price now in force."""
     if existing is None:
@@ -442,6 +568,9 @@ def _differs(existing: ModelPrice | None, candidate: CataloguePrice) -> bool:
         or existing.output_per_mtok != candidate.output_per_mtok
         or existing.cache_read_per_mtok != candidate.cache_read_per_mtok
         or existing.cache_write_per_mtok != candidate.cache_write_per_mtok
+        # Without this a changed page rate re-imports as "unchanged" and the
+        # deployment keeps billing yesterday's price.
+        or existing.per_page != candidate.per_page
         or existing.currency.upper() != candidate.currency
     )
 
@@ -507,7 +636,10 @@ async def import_prices(
                 cache_write_per_mtok=candidate.cache_write_per_mtok,
                 currency=candidate.currency,
                 effective_from=utcnow(),
-                source=PriceSource.CORTECS,
+                # Whatever provider this catalogue belongs to. It said
+                # `CORTECS` when Cortecs was the only importer, which made every
+                # later provider's prices read as Cortecs' (ADR 0053).
+                source=PriceSource.CATALOGUE,
             )
         )
         if candidate.context_window and not model.context_window:

@@ -62,6 +62,44 @@ services:
       retries: 5
       start_period: 180s
 
+  # The same image as `redaction`, deployed a second time to do a different job.
+  #
+  # Not a second Dockerfile: extraction and detection are built from one package
+  # and differ only in which endpoint the caller uses. Not the same *container*
+  # either, and that is the point — document extraction is bursty and payload-
+  # heavy (a RAG pipeline ingests a directory at once), detection is already
+  # ~90% of this deployment's CPU (docs/performance.md), and one process serving
+  # both means a batch of PDFs stalls every prompt waiting on redaction.
+  #
+  # `REDACTION_NLP_ENGINE=disabled` is what makes the second copy cheap: no
+  # spaCy model is loaded, ~150 MB instead of ~900. Extraction never needed one
+  # — it reads zips and PDFs, it does not recognise entities.
+  extractor:
+    build:
+      context: ../..
+      dockerfile: services/redaction/Dockerfile
+      args:
+        SPACY_MODELS: ${SPACY_MODELS:-en_core_web_lg}
+    environment:
+      REDACTION_NLP_ENGINE: disabled
+    restart: unless-stopped
+    # Deliberately no `ports:`, like `redaction`: it has no authentication of
+    # its own because it is reachable only on the compose network, and it is
+    # handed documents that were already authenticated at the gateway.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      # No model to load, so this one is ready in seconds rather than minutes.
+      start_period: 20s
+
   # Published only under this overlay, so the redaction check can read what the
   # gateway actually sent. A development fake; nothing else exposes it.
   fake-upstream:
@@ -72,6 +110,12 @@ services:
     environment:
       GATEWAY_REDACTION__ENGINE: http
       GATEWAY_REDACTION__ENDPOINT: http://redaction:8080
+      # Where local document extraction happens: the second deployment of the
+      # same image, above. Separate from the redaction endpoint on purpose —
+      # they are two services that happen to share an image today, and a
+      # deployment that scales one without the other should not have to edit
+      # the other's address.
+      GATEWAY_EXTRACTOR__ENDPOINT: http://extractor:8080
       # The HMAC key placeholders are derived from. It must stay stable for as
       # long as the transcripts it labelled are kept: rotating it re-labels every
       # entity. Generate a real one for anything but a demo.

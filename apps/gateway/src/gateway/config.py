@@ -519,6 +519,21 @@ class EffectivePolicy:
 DEFAULT_REDACTION_POLICY = RedactionPolicy()
 
 
+class ExtractorSettings(BaseModel):
+    """The local document extraction service (`/v1/ocr`'s local backend).
+
+    Its own section rather than a field on the redaction settings, even though
+    both are served by one image today: they are two services that happen to
+    share a build, and a deployment scaling one without the other should not
+    have to edit the other's address.
+    """
+
+    #: Where the service is. A provider row's own Base URL wins over this, so a
+    #: deployment can run more than one extractor; this is the default the
+    #: plugin's rows fall back to.
+    endpoint: str = "http://extractor:8080"
+
+
 class RedactionSettings(BaseModel):
     """Redaction/guardrail layer.
 
@@ -615,6 +630,12 @@ class QuotaSettings(BaseModel):
     default_max_output_tokens: int = 4096
     # Prompt tokens are counted locally before the call, so only the completion
     # needs assuming.
+    # The same question for server-side web search, which is charged per search
+    # on top of tokens (ADR 0058). Used when a request asks for the tool
+    # without capping it — and, on the surfaces whose tool definition has a cap
+    # field, *written into* the outgoing request, so the number reserved is a
+    # bound that actually holds rather than a guess that looks like one.
+    default_max_web_searches: int = 5
 
     # Valkey is a rebuildable cache, never the ledger. If it is unreachable we
     # fall back to exact PostgreSQL aggregates: slower, but correct, and the
@@ -700,6 +721,7 @@ class Settings(BaseSettings):
     oidc: OIDCSettings = Field(default_factory=OIDCSettings)
     local_auth: LocalAuthSettings = Field(default_factory=LocalAuthSettings)
     redaction: RedactionSettings = Field(default_factory=RedactionSettings)
+    extractor: ExtractorSettings = Field(default_factory=ExtractorSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
 
     @field_validator("billing_currency")

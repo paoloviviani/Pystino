@@ -54,6 +54,7 @@ export interface UsageReportRow {
   total_tokens: number;
   /** Pictures generated. Non-zero only for image models, which often bill per image. */
   images: number;
+  searches: number;
   cost: string;
   /** The native figure — what the model's price table produced, in its own
    * currency (ADR 0054). Present on model rows only. */
@@ -103,7 +104,7 @@ export interface MintedApiKey extends ApiKey {
 // them as `number` would undo that at the last hop.
 
 /** What a model produces, and therefore which route may use it. */
-export type ModelKind = "chat" | "embedding" | "image";
+export type ModelKind = "chat" | "embedding" | "image" | "ocr";
 
 export interface Price {
   id: string;
@@ -113,6 +114,10 @@ export interface Price {
   cache_write_per_mtok: string | null;
   /** Per generated image, for image models nobody prices per token. */
   per_image: string | null;
+  /** Per page read, for OCR models, whose token rates are usually zero. */
+  per_page: string | null;
+  /** Per provider-side web search, charged on top of tokens (ADR 0058). */
+  per_search: string | null;
   currency: string;
   effective_from: string;
   source: string;
@@ -166,6 +171,12 @@ export interface AdminUser {
   is_admin: boolean;
   /** The account can sign in with a password (local accounts, ADR 0043). */
   has_password: boolean;
+  /** Directories that also name this account, by issuer (ADR 0056). A linked
+   * account has two doors, and one of them is not on this screen otherwise. */
+  linked_identities: string[];
+  /** Who granted this person's membership of the group being listed (ADR 0057).
+   * Only the group-members listing answers it; null everywhere else. */
+  membership_source: "manual" | "oidc" | null;
   groups: string[];
   default_billing_group: string | null;
   active_key_count: number;
@@ -203,6 +214,9 @@ export interface DiscoveredModel {
   suggested_name: string;
   input_per_mtok: string | null;
   output_per_mtok: string | null;
+  /** Per page, for an OCR model — whose token rates are zero and whose real
+   * price is this one. Shown before adopting, like the token rates. */
+  per_page: string | null;
   currency: string | null;
   context_window: number | null;
   /** What the provider claims, shown before importing so the choice is informed. */
@@ -211,9 +225,18 @@ export interface DiscoveredModel {
   output_modalities: string[];
   supported_features: string[];
   blocked_reason: string | null;
+  /**
+   * Who supplied the figures above: `provider` for the counterparty's own
+   * catalogue, `community` for a gap filled from LiteLLM, null for a model the
+   * provider lists and nobody prices. Per row, because one import can mix all
+   * three (ADR 0053).
+   */
+  price_source: "provider" | "community" | null;
 }
 
 export interface CatalogueDriftRow {
+  /** So the drift warning can link to the model it is about. */
+  id: string;
   name: string;
   upstream_model: string;
   is_active: boolean;
@@ -235,6 +258,8 @@ export interface ModelImportResult {
   imported: boolean;
   priced: boolean;
   reason: string | null;
+  /** Who supplied the price that was written to the append-only history. */
+  price_source: "provider" | "community" | null;
 }
 
 export interface ModelImportResponse {
@@ -584,6 +609,8 @@ export interface PasswordResetEnabled {
 
 // -- Settings (ADR 0051) ------------------------------------------------------
 
+export type GroupSync = "every_login" | "first_login" | "never";
+
 /** One configured identity provider. The client secret is write-only: a
  * response never carries it, only the fact that one is stored. */
 export interface IdentityProvider {
@@ -596,6 +623,12 @@ export interface IdentityProvider {
   groups_claim: string;
   fetch_userinfo: boolean;
   group_mappings: { idp: string; local: string }[];
+  /** Whether a login here may adopt the local account with the same verified
+   * address (ADR 0056). */
+  link_local_by_email: boolean;
+  /** How far this directory's answer about groups reaches (ADR 0057). It never
+   * reaches a membership an administrator granted, in any of the three. */
+  group_sync: GroupSync;
   is_enabled: boolean;
   source: "console" | "environment";
 }
@@ -609,6 +642,8 @@ export interface IdentityProviderInput {
   groups_claim?: string;
   fetch_userinfo?: boolean;
   group_mappings?: { idp: string; local: string }[];
+  link_local_by_email?: boolean;
+  group_sync?: GroupSync;
   is_enabled?: boolean;
 }
 

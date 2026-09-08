@@ -96,7 +96,7 @@ class TestNoOpRedactor:
     async def test_response_text_is_unchanged(self) -> None:
         redactor = NoOpRedactor()
         outcome = await redactor.redact_request([])
-        assert await redactor.redact_response_text("Mario Rossi", outcome) == "Mario Rossi"
+        assert (await redactor.restore_response("Mario Rossi", outcome)).text == "Mario Rossi"
 
 
 class TestTextRewriteStage:

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from llmp_shared import Restored
+
 from gateway.config import EffectivePolicy
 from gateway.models import ApiSurface
 from gateway.redaction.base import RedactionOutcome, Redactor
@@ -36,5 +38,5 @@ class NoOpRedactor(Redactor):
     ) -> StreamStage:
         return passthrough
 
-    async def redact_response_text(self, text: str, outcome: RedactionOutcome) -> str:
-        return text
+    async def restore_response(self, text: str, outcome: RedactionOutcome) -> Restored:
+        return Restored(text=text)

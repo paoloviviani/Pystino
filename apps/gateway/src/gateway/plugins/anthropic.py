@@ -110,3 +110,7 @@ class AnthropicPlugin:
     def read_reported_cost(self, usage: dict[str, Any] | None) -> ReportedCost | None:
         """Nothing. Anthropic reports tokens; the charge is ours to compute."""
         return None
+
+    def builtin_catalogue(self) -> dict[str, Any] | None:
+        """Nothing: ask the counterparty what it serves."""
+        return None

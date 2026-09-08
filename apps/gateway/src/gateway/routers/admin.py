@@ -26,6 +26,7 @@ from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
@@ -68,12 +69,14 @@ from gateway.models import (
     Group,
     GroupModelAccess,
     GroupSource,
+    GroupSync,
     IdentityProvider,
     LimitMetric,
     LimitRule,
     LimitScope,
     LocalCredential,
     Membership,
+    MembershipSource,
     ModelDef,
     ModelKind,
     ModelPrice,
@@ -89,6 +92,7 @@ from gateway.models import (
     UsageSource,
     UsageStatus,
     User,
+    UserIdentity,
     UserModelAccess,
 )
 from gateway.oidc_policy import environment_policy
@@ -97,12 +101,21 @@ from gateway.passwords import hash_password, validate_password
 from gateway.periods import PeriodKind
 from gateway.plugins import registry as plugin_registry
 from gateway.pricing import (
+    ANONYMOUS_UNPARSABLE,
     LITELLM_CATALOGUE_URL,
+    CataloguePrice,
     CatalogueUnavailable,
     fetch_catalogue,
+    kinds_by_id,
     parse_catalogue,
     parse_litellm_catalogue,
     parse_openrouter_catalogue,
+)
+from gateway.pricing import (
+    # Aliased: the two routes below take a `fill_missing_prices` query parameter,
+    # and a function of the same name in the module scope would read as if the
+    # parameter were calling itself.
+    fill_missing_prices as fill_prices_from_community,
 )
 from gateway.providers import ProviderConfigurationError
 from gateway.redaction import Redactor
@@ -267,6 +280,8 @@ def _price_response(price: ModelPrice | None) -> PriceResponse | None:
         cache_read_per_mtok=price.cache_read_per_mtok,
         cache_write_per_mtok=price.cache_write_per_mtok,
         per_image=price.per_image,
+        per_page=price.per_page,
+        per_search=price.per_search,
         currency=price.currency,
         effective_from=price.effective_from,
         source=price.source.value,
@@ -826,7 +841,7 @@ async def _catalogue_source(
     secrets: SecretBox,
     provider_id: uuid.UUID,
     url: str | None,
-    catalogue: str = "provider",
+    tag: str | None = None,
 ) -> tuple[Provider, str, str | None]:
     """Where to fetch a catalogue from, and with which credential.
 
@@ -834,16 +849,23 @@ async def _catalogue_source(
     meaningful question about a specific one. `url` overrides the endpoint for a
     provider whose catalogue lives somewhere other than `{base_url}/models`.
 
-    `catalogue="litellm"` switches the *source* to the community price file
-    (ADR 0053): the first-party APIs — OpenAI, Anthropic, Mistral, Nebius —
-    publish model lists but no prices, and this is the pragmatic source the
-    ecosystem converges on. The provider row's plugin names which tag to
-    filter on, so an Anthropic provider imports Anthropic's rows.
+    Always the provider's own endpoint. The community price file is a *filler*
+    for prices the provider leaves out (`fill_missing_prices` below), never a
+    source for the model list: the provider is the only authority on what it
+    offers, and reading the list from a community file answered that question
+    with a third party's opinion (ADR 0053).
     """
     provider = await _load_provider(session, provider_id)
-    if catalogue == "litellm":
-        return provider, url or LITELLM_CATALOGUE_URL, None
     catalogue_url = url or f"{provider.base_url}/models"
+    if tag:
+        # Cortecs' catalogue **defaults to `tag=Instruct`**, so an unfiltered
+        # request is a filtered one — which is how eleven embedding models and
+        # three OCR models sat in that endpoint while this gateway reported
+        # that it offered none. Passed through rather than interpreted: the
+        # vocabulary is the counterparty's, and a fixed list here would go
+        # stale the first time they add one.
+        joiner = "&" if "?" in catalogue_url else "?"
+        catalogue_url = f"{catalogue_url}{joiner}tag={quote(tag)}"
     api_key: str | None = None
     if provider.api_key_encrypted:
         try:
@@ -855,6 +877,63 @@ async def _catalogue_source(
     return provider, catalogue_url, api_key
 
 
+async def _catalogue_with_prices(
+    # `Any`, as `ControlHttpDep` itself is: the control-plane client is passed
+    # through rather than constructed here.
+    http: Any,
+    provider: Provider,
+    catalogue_url: str,
+    api_key: str | None,
+    *,
+    fill_missing: bool,
+) -> tuple[dict[str, CataloguePrice], list[str], set[str], dict[str, ModelKind]]:
+    """The provider's catalogue, optionally with community prices in the gaps.
+
+    Returns ``(prices by upstream id, unpriced ids, ids filled from the
+    community file)``.
+
+    Both fetches are the operator's explicit request, so a failure of either is
+    reported rather than absorbed: ticking the fill and silently getting the
+    unpriced rows back would look identical to a provider that publishes
+    prices for nothing, and the operator would draw the wrong conclusion about
+    their provider. Failing says which source could not be read.
+    """
+    # A plugin that *is* the thing being served knows what it offers, and
+    # asking the network would mean asking a service with no such endpoint.
+    # Pressing Discover on the local extractor used to answer "could not fetch
+    # http://extractor:8080/models: 404" — an error naming a URL the operator
+    # never typed, for a provider that cannot fail in that way.
+    payload = plugin_registry.resolve(provider.plugin).builtin_catalogue()
+    if payload is None:
+        try:
+            payload = await fetch_catalogue(http, catalogue_url, api_key)
+        except CatalogueUnavailable as exc:
+            raise UpstreamUnavailableError(
+                f"Could not read the provider catalogue: {exc}"
+            ) from exc
+
+    published, unpriced = _catalogue_parser(provider)(payload)
+
+    filled: set[str] = set()
+    if fill_missing and unpriced:
+        try:
+            community_payload = await fetch_catalogue(http, LITELLM_CATALOGUE_URL, None)
+        except CatalogueUnavailable as exc:
+            raise UpstreamUnavailableError(
+                f"Could not read the community price catalogue: {exc}"
+            ) from exc
+        # The provider row's plugin is the LiteLLM tag, so an Anthropic provider
+        # is filled from Anthropic's rows and not from all 3,500.
+        community, _ = parse_litellm_catalogue(
+            community_payload, providers=[provider.plugin] if provider.plugin else None
+        )
+        prices, unpriced, filled = fill_prices_from_community(published, unpriced, community)
+    else:
+        prices = list(published)
+
+    return {price.model_id: price for price in prices}, unpriced, filled, kinds_by_id(payload)
+
+
 @router.get("/models/discover", response_model=CatalogueDiscoveryResponse)
 async def discover_models(
     admin: AdminUserDep,
@@ -864,7 +943,8 @@ async def discover_models(
     http: ControlHttpDep,
     provider_id: uuid.UUID,
     url: str | None = None,
-    catalogue: str = "provider",
+    fill_missing_prices: bool = False,
+    tag: str | None = None,
 ) -> CatalogueDiscoveryResponse:
     """Compare the provider's catalogue with ours.
 
@@ -876,23 +956,18 @@ async def discover_models(
     Reports drift in both directions. Models we serve that the provider no longer
     offers are the more dangerous half: they keep appearing in ``/v1/models`` and
     fail only when someone calls them.
+
+    ``fill_missing_prices`` consults the community file for models the provider
+    listed and left unpriced (ADR 0053). Every row says which of the two
+    supplied its figures, because an operator adopting them is entitled to know
+    that before clicking Import, not afterwards.
     """
     provider, catalogue_url, api_key = await _catalogue_source(
-        session, secrets, provider_id, url, catalogue
+        session, secrets, provider_id, url, tag
     )
-
-    try:
-        payload = await fetch_catalogue(http, catalogue_url, api_key)
-    except CatalogueUnavailable as exc:
-        raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
-
-    if catalogue == "litellm":
-        prices, unparsable = parse_litellm_catalogue(
-            payload, providers=[provider.plugin] if provider.plugin else None
-        )
-    else:
-        prices, unparsable = _catalogue_parser(provider)(payload)
-    by_upstream = {price.model_id: price for price in prices}
+    by_upstream, unpriced, filled, kinds = await _catalogue_with_prices(
+        http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
+    )
 
     # Only this provider's models. A model served by another provider is not
     # "missing upstream" here — it was never expected to be.
@@ -919,6 +994,7 @@ async def discover_models(
                 suggested_name=_suggested_name(upstream_id),
                 input_per_mtok=price.input_per_mtok,
                 output_per_mtok=price.output_per_mtok,
+                per_page=price.per_page,
                 currency=price.currency,
                 context_window=price.context_window,
                 kind=price.kind.value,
@@ -926,24 +1002,71 @@ async def discover_models(
                 output_modalities=list(price.output_modalities),
                 supported_features=list(price.supported_features),
                 blocked_reason=None,
+                price_source="community" if upstream_id in filled else "provider",
             )
         )
 
+    # Listed by the provider, priced by nobody. Shown rather than hidden: with
+    # the fill off, these *are* the answer to "what does this provider offer",
+    # and hiding them is what made an unticked discovery against OpenAI look
+    # like an endpoint with no models at all. They cannot be imported — an
+    # unpriced model serves happily and records a cost of zero — so each says so.
+    for upstream_id in sorted(set(unpriced) - ANONYMOUS_UNPARSABLE):
+        if upstream_id in our_upstream_ids or upstream_id in by_upstream:
+            continue
+        available.append(
+            DiscoveredModel(
+                upstream_model=upstream_id,
+                suggested_name=_suggested_name(upstream_id),
+                input_per_mtok=None,
+                output_per_mtok=None,
+                currency=None,
+                context_window=None,
+                # What the catalogue says it is, even with no price to read:
+                # an unpriced OCR model showed as `chat` because a row built
+                # from an id alone has no kind and the default is chat.
+                kind=kinds.get(upstream_id, ModelKind.CHAT).value,
+                blocked_reason=(
+                    "the provider publishes no price for this model"
+                    if fill_missing_prices
+                    else "the provider publishes no price — tick “fill missing prices” or "
+                    "add the model by hand"
+                ),
+                price_source=None,
+            )
+        )
+
+    # Offered upstream means listed, priced or not: a model the provider still
+    # serves but has stopped pricing is not "no longer offered", and calling it
+    # that would send someone hunting for a withdrawal that never happened.
+    offered = set(by_upstream) | (set(unpriced) - ANONYMOUS_UNPARSABLE)
     catalogued: list[CatalogueDriftRow] = []
     missing: list[CatalogueDriftRow] = []
     for model in ours:
         row = CatalogueDriftRow(
-            name=model.name, upstream_model=model.upstream_model, is_active=model.is_active
+            id=model.id,
+            name=model.name,
+            upstream_model=model.upstream_model,
+            is_active=model.is_active,
         )
-        (catalogued if model.upstream_model in by_upstream else missing).append(row)
+        (catalogued if model.upstream_model in offered else missing).append(row)
 
     return CatalogueDiscoveryResponse(
-        provider_url=catalogue_url,
-        provider_model_count=len(prices),
+        # What was actually read. For a provider whose plugin answers from
+        # itself, naming an endpoint nothing fetched is a small lie in a field
+        # whose whole job is saying where the answer came from.
+        provider_url=(
+            catalogue_url
+            if plugin_registry.resolve(provider.plugin).builtin_catalogue() is None
+            else f"built in ({provider.plugin})"
+        ),
+        provider_model_count=len(offered),
         available=available,
         catalogued=catalogued,
         missing_upstream=missing,
-        unparsable=unparsable,
+        # Only the entries with no id at all remain genuinely unparsable; the
+        # rest are now reported as rows an operator can see and act on.
+        unparsable=[entry for entry in unpriced if entry in ANONYMOUS_UNPARSABLE],
     )
 
 
@@ -961,7 +1084,8 @@ async def import_models(
     http: ControlHttpDep,
     provider_id: uuid.UUID,
     url: str | None = None,
-    catalogue: str = "provider",
+    fill_missing_prices: bool = False,
+    tag: str | None = None,
 ) -> ModelImportResponse:
     """Adopt selected upstream models, with their published prices.
 
@@ -975,23 +1099,18 @@ async def import_models(
     A model priced in another currency is **skipped entirely** rather than created
     without a price. An unpriced model serves happily and records a cost of zero,
     which is a quiet way to give away money.
+
+    ``fill_missing_prices`` must match what the operator was shown: the price
+    written here is stamped with who supplied it (`catalogue` or `community`),
+    so the append-only history answers "where did this figure come from"
+    without needing to remember which checkbox was ticked (ADR 0053).
     """
     provider, catalogue_url, api_key = await _catalogue_source(
-        session, secrets, provider_id, url, catalogue
+        session, secrets, provider_id, url, tag
     )
-
-    try:
-        fetched = await fetch_catalogue(http, catalogue_url, api_key)
-    except CatalogueUnavailable as exc:
-        raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
-
-    if catalogue == "litellm":
-        prices, _ = parse_litellm_catalogue(
-            fetched, providers=[provider.plugin] if provider.plugin else None
-        )
-    else:
-        prices, _ = _catalogue_parser(provider)(fetched)
-    by_upstream = {price.model_id: price for price in prices}
+    by_upstream, _unpriced, filled, _kinds = await _catalogue_with_prices(
+        http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
+    )
 
     existing = (await session.execute(select(ModelDef))).scalars().all()
     taken_names = {model.name for model in existing}
@@ -1067,6 +1186,10 @@ async def import_models(
         )
         session.add(model)
         await session.flush()
+        # Who supplied this figure, kept on the row itself. Until ADR 0053 every
+        # catalogue import wrote `cortecs` regardless of provider or source, so a
+        # community price for an OpenAI model was recorded as Cortecs' own.
+        from_community = item.upstream_model in filled
         session.add(
             ModelPrice(
                 model_id=model.id,
@@ -1074,16 +1197,22 @@ async def import_models(
                 output_per_mtok=price.output_per_mtok,
                 cache_read_per_mtok=price.cache_read_per_mtok,
                 cache_write_per_mtok=price.cache_write_per_mtok,
+                # An OCR model's whole price is here; the token rates are zero.
+                per_page=price.per_page,
                 currency=price.currency,
                 effective_from=utcnow(),
-                source=PriceSource.CORTECS,
+                source=PriceSource.COMMUNITY if from_community else PriceSource.CATALOGUE,
             )
         )
         taken_names.add(name)
         taken_upstream.add(item.upstream_model)
         results.append(
             ModelImportResult(
-                upstream_model=item.upstream_model, name=name, imported=True, priced=True
+                upstream_model=item.upstream_model,
+                name=name,
+                imported=True,
+                priced=True,
+                price_source="community" if from_community else "provider",
             )
         )
 
@@ -1170,6 +1299,8 @@ async def create_price(
         cache_read_per_mtok=payload.cache_read_per_mtok,
         cache_write_per_mtok=payload.cache_write_per_mtok,
         per_image=payload.per_image,
+        per_page=payload.per_page,
+        per_search=payload.per_search,
         currency=currency,
         effective_from=payload.effective_from or utcnow(),
         source=PriceSource.MANUAL,
@@ -1292,26 +1423,26 @@ async def delete_group(group_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     await session.commit()
 
 
-async def _load_editable_group(group_id: uuid.UUID, session: SessionDep) -> Group:
-    """The group a membership change is aimed at, or the error that stops it.
+async def _load_group_for_membership(group_id: uuid.UUID, session: SessionDep) -> Group:
+    """The group a membership change is aimed at.
 
-    Membership is edited only on manual groups. An OIDC-sourced group is
-    authoritative in the other direction: provision_user replaces its members
-    from the token at every login (ADR 0048), so a member added here would
-    vanish at the next sign-in — access granted silently, then revoked the
-    same way, with nobody the wiser for either.
+    This used to refuse an OIDC-sourced group, and the reason it gave was
+    sound at the time: "a member added here would vanish at the next sign-in —
+    access granted silently, then revoked the same way, with nobody the wiser
+    for either". That premise is what ADR 0057 removed. A membership added
+    here is recorded as an administrator's (``MembershipSource.MANUAL``) and no
+    login touches it, so the refusal now prevents nothing and blocks the thing
+    it was protecting: putting somebody into a directory's group when the
+    directory does not name them.
+
+    Removal is allowed on any membership for the same reason it always was —
+    it takes effect immediately. A membership the directory granted may of
+    course come back at that person's next sign-in, which is what the group
+    listing's source badge is for.
     """
     group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
     if group is None:
         raise NotFoundError(f"No group with id {group_id}.")
-    if group.source != GroupSource.MANUAL:
-        raise BadRequestError(
-            f"Group {group.name!r} is managed by the identity provider: its "
-            "membership follows the group mappings and is replaced at every "
-            "login. Map the IdP group to a manual group if you need members "
-            "the directory does not name.",
-            code="membership_managed_by_idp",
-        )
     return group
 
 
@@ -1334,7 +1465,9 @@ async def list_group_members(
         stmt = stmt.where(_matches(needle, User.email, User.display_name, User.subject))
     total = await count_of(session, stmt)
     users = (await session.execute(page.apply(stmt))).scalars().all()
-    return page.page(await _user_responses(session, list(users)), total)
+    return page.page(
+        await _user_responses(session, list(users), membership_in=group_id), total
+    )
 
 
 @router.post(
@@ -1347,7 +1480,7 @@ async def add_group_member(
     admin: AdminUserDep,
     session: SessionDep,
 ) -> None:
-    group = await _load_editable_group(group_id, session)
+    group = await _load_group_for_membership(group_id, session)
     user = await session.get(User, payload.user_id)
     if user is None:
         raise NotFoundError(f"No user with id {payload.user_id}.")
@@ -1362,7 +1495,11 @@ async def add_group_member(
             f"{user.email or user.subject} is already a member of {group.name!r}."
         )
 
-    session.add(Membership(user_id=user.id, group_id=group.id))
+    # An administrator's grant, and recorded as one: no login will undo it,
+    # even for a user the directory manages (ADR 0057).
+    session.add(
+        Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL)
+    )
     await session.commit()
 
 
@@ -1373,7 +1510,7 @@ async def add_group_member(
 async def remove_group_member(
     group_id: uuid.UUID, user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
 ) -> None:
-    group = await _load_editable_group(group_id, session)
+    group = await _load_group_for_membership(group_id, session)
     user = await session.get(User, user_id)
     if user is None:
         raise NotFoundError(f"No user with id {user_id}.")
@@ -1728,7 +1865,9 @@ async def delete_limit(rule_id: uuid.UUID, admin: AdminUserDep, session: Session
 # -- users ------------------------------------------------------------------
 
 
-async def _user_responses(session: SessionDep, users: Sequence[User]) -> list[UserAdminResponse]:
+async def _user_responses(
+    session: SessionDep, users: Sequence[User], *, membership_in: uuid.UUID | None = None
+) -> list[UserAdminResponse]:
     """Decorate user rows with the counts and names the console shows.
 
     Both lookups are restricted to the users being rendered. Reading every key
@@ -1761,6 +1900,35 @@ async def _user_responses(session: SessionDep, users: Sequence[User]) -> list[Us
         ).all()
     }
 
+    # One lookup for the page, same reason as the password set above: a query
+    # per row is the shape test_query_counts.py exists to prevent.
+    # Who granted the membership being listed, when it is a group being listed.
+    # One query for the page, like the two above.
+    granted_here: set[uuid.UUID] = set()
+    if membership_in is not None:
+        granted_here = {
+            user_id
+            for user_id, in (
+                await session.execute(
+                    select(Membership.user_id).where(
+                        Membership.group_id == membership_in,
+                        Membership.user_id.in_(ids),
+                        Membership.source == MembershipSource.MANUAL,
+                    )
+                )
+            ).all()
+        }
+
+    linked: dict[uuid.UUID, list[str]] = {}
+    for user_id, issuer in (
+        await session.execute(
+            select(UserIdentity.user_id, UserIdentity.issuer)
+            .where(UserIdentity.user_id.in_(ids))
+            .order_by(UserIdentity.issuer)
+        )
+    ).all():
+        linked.setdefault(user_id, []).append(issuer)
+
     return [
         UserAdminResponse(
             id=user.id,
@@ -1771,6 +1939,12 @@ async def _user_responses(session: SessionDep, users: Sequence[User]) -> list[Us
             is_active=user.is_active,
             is_admin=user.is_admin,
             has_password=user.id in with_password,
+            linked_identities=linked.get(user.id, []),
+            membership_source=(
+                None
+                if membership_in is None
+                else ("manual" if user.id in granted_here else "oidc")
+            ),
             groups=sorted(m.group.name for m in user.memberships),
             default_billing_group=(
                 group_names.get(user.default_billing_group_id)
@@ -1995,7 +2169,9 @@ async def create_user(
             await session.flush()
         groups.append(group)
     for group in groups:
-        session.add(Membership(user_id=user.id, group_id=group.id))
+        session.add(
+            Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL)
+        )
     # The same sole-group rule the login path applies: one group means it is
     # the default, and the account can bill without a settings detour.
     if len(groups) == 1:
@@ -2228,6 +2404,8 @@ def _idp_response(record: Any) -> IdentityProviderResponse:
         group_mappings=[
             OidcMappingRule(idp=idp, local=local) for idp, local in record.group_mappings.items()
         ],
+        link_local_by_email=record.link_local_by_email,
+        group_sync=record.group_sync.value,
         is_enabled=record.is_enabled,
         source=record.source,
     )
@@ -2277,6 +2455,8 @@ async def create_identity_provider(
         groups_claim=payload.groups_claim,
         fetch_userinfo=payload.fetch_userinfo,
         group_mappings=[[rule.idp, rule.local] for rule in payload.group_mappings],
+        link_local_by_email=payload.link_local_by_email,
+        group_sync=GroupSync(payload.group_sync),
         is_enabled=True,
         created_by=admin.id,
     )
@@ -2312,6 +2492,16 @@ async def update_identity_provider(
         row.fetch_userinfo = fields["fetch_userinfo"]
     if "group_mappings" in fields and fields["group_mappings"] is not None:
         row.group_mappings = [[rule.idp, rule.local] for rule in fields["group_mappings"]]
+    if "link_local_by_email" in fields and fields["link_local_by_email"] is not None:
+        # Turning it off stops *new* links; it does not undo the ones already
+        # made. Unlinking is deleting a `user_identities` row, and doing it
+        # implicitly here would silently split one person's account in two —
+        # spend, keys and quotas on one row, their next login on another.
+        row.link_local_by_email = fields["link_local_by_email"]
+    if "group_sync" in fields and fields["group_sync"] is not None:
+        # Takes effect at the next login, like every other field on this row:
+        # nothing here reaches back over memberships already granted.
+        row.group_sync = GroupSync(fields["group_sync"])
     if "is_enabled" in fields and fields["is_enabled"] is not None:
         row.is_enabled = fields["is_enabled"]
     await session.commit()
@@ -2989,14 +3179,16 @@ async def set_redaction_engine(
             f"{', '.join(redaction_registry.available())}."
         )
 
+    # A reason is *accepted* and kept, and no longer demanded. It used to be
+    # required for the one switch that stops redaction entirely, on the grounds
+    # that a later review would read it. Asked to drop it, and the argument for
+    # dropping it is better than the argument that put it there: a required
+    # field on the only path that turns protection off is friction exactly
+    # where an operator is already being told, in red, what the change does —
+    # and a sentence typed to get past a dialog is not an audit trail. What
+    # actually survives the change is still recorded without it: the engine,
+    # who switched it, and when.
     reason = payload.reason.strip()
-    if not info.redacts and not reason:
-        # The reason is kept permanently and is what a later review reads, which
-        # is the whole point of demanding one here.
-        raise BadRequestError(
-            f"switching to {engine!r} stops redaction entirely: prompts will reach "
-            "providers exactly as callers sent them. Give a reason."
-        )
 
     # Proves the engine can actually be built in this environment, using the same
     # code path the resolver will use. Refusing here is the difference between an

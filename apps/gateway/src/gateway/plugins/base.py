@@ -205,3 +205,18 @@ class ProviderPlugin(Protocol):
     def read_reported_cost(self, usage: dict[str, Any] | None) -> ReportedCost | None:
         """What the counterparty says it charged, or None if it does not say."""
         ...
+    def builtin_catalogue(self) -> dict[str, Any] | None:
+        """A catalogue this plugin can answer from itself, or ``None``.
+
+        ``None`` for every counterparty on the internet: what it offers is a
+        question only it can answer, and the gateway asks over HTTP. A plugin
+        that *is* the thing being served knows already, and asking the network
+        would mean asking a service with no such endpoint.
+
+        Part of the protocol rather than duck-typed, because "can you answer
+        this yourself" is a fact about a counterparty and facts are what a
+        plugin is for (ADR 0032). The payload is in the shape
+        ``parse_catalogue`` reads, so a built-in answer is parsed, priced and
+        kind-detected by exactly the code a fetched one is.
+        """
+        ...

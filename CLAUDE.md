@@ -132,6 +132,40 @@ Inside the gateway, the pieces that carry the most weight:
   broken. Admins reach full precision with the **Exact figures** toggle in the
   identity menu, which is a `MoneyPrecisionContext` — a `formatMoney` call made
   outside `<Money>` has to read it by hand (`useExactMoney`).
+- **Provider-side web search is a billable unit, and it is a *surcharge***
+  ([ADR 0058](docs/adr/0058-per-search-pricing.md)). `per_search` on the price
+  row, `search_count` on the usage row. Unlike a page or an image it lands on
+  an ordinary chat request, which is why it went unbilled: the tool passes
+  through `extra="allow"` untouched, so search already worked and cost nothing.
+  Three things to know. The count comes **only** from
+  `usage.server_tool_use.web_search_requests` — never from counting
+  `server_tool_use` blocks, because an errored search produces a block and is
+  not billed. The searches are recorded **even when the model has no
+  `per_search` rate**, charging nothing but leaving the gap findable here
+  instead of on an invoice. And the ceiling is two mechanisms: `max_uses`
+  written into the outgoing tool bounds *this* request (only on Anthropic's
+  date-versioned tool family — OpenAI's `web_search` has no such field and a
+  guess there is a 400), while the reservation makes search spend count so the
+  limit engages for the *next* request. OpenAI's own search is deliberately
+  unpriced: no documented usage field, and a rate that varies by
+  `search_context_size`. Phases 2 and 3 — our own search backends, and a loop
+  that executes them — are in
+  [docs/web-search-plan.md](docs/web-search-plan.md), not started.
+- **Restoring a placeholder moves every offset after it**
+  ([ADR 0059](docs/adr/0059-citation-offsets.md)). A real name is rarely the
+  same length as the placeholder that stood in for it, and a provider's
+  citations are *character offsets into the answer* — OpenAI's `url_citation`
+  is `start_index`/`end_index`. So `restore_with_edits` reports where it wrote,
+  and `shift_citations` on each surface protocol moves what that surface holds.
+  Three things worth knowing. `Shift` is **`(choice index, offset)`**, because
+  one placeholder map edits different positions in each choice of an `n: 2`
+  request. **Anthropic needs nothing moved** — its web-search citations carry
+  `encrypted_index` and their own `cited_text`, and its document citations
+  index the caller's document rather than the answer. And **the streamed case
+  needs the whole answer**: a streamed citation's offsets are into the
+  accumulated message, so the rewriter keeps the provider's text per choice and
+  builds the map lazily, only for the frames that actually carry offsets. It
+  cannot fire at all when nothing was substituted, which is why it was latent.
 - **Redaction is ~90% of the CPU, and it scales with prompt length** — about
   0.1ms per prompt token, against a gateway cost that stays flat at 24-31ms.
   Capacity planning is redaction planning; see
@@ -158,6 +192,44 @@ Inside the gateway, the pieces that carry the most weight:
   **`iss` is part of a user's identity** — users are keyed on
   `(issuer, subject)`, so changing the issuer re-provisions everyone as new
   rows with no memberships at their next login.
+- **A directory owns the memberships it granted, and no others**
+  ([ADR 0057](docs/adr/0057-group-ownership-and-sync.md)). `memberships.source`
+  is `oidc` or `manual`; a login's sync grants and revokes the first kind and
+  never touches the second, so an administrator's group assignment survives a
+  sign-in. `identity_providers.group_sync` says how often the directory gets to
+  answer — `every_login` (the default, and what this always did), `first_login`,
+  `never`. Three things worth knowing before touching it. The test is the
+  **provenance of the membership**, not of the group: "whoever created the group
+  owns it" was implemented first and killed by the bearer revocation test, since
+  it would let a directory add people to an admin-created group and never remove
+  them. `is_admin`, the default billing group and the sole-group rule now read
+  the **effective** memberships rather than the token — all three were wrong for
+  a manually-added user. And `_claims_diverge` asks "would a sync change
+  anything" rather than comparing sets, because a user with one manual group is
+  permanently unequal to their token and equality meant a write per `/v1`
+  request.
+- **A directory login can adopt the local account with the same address, and
+  only if the operator says so** ([ADR 0056](docs/adr/0056-account-linking.md)).
+  `identity_providers.link_local_by_email`, per provider and off by default. It
+  reverses a refusal that used to be absolute, so read the ADR before touching
+  either side; three things about it will save time. The gate is
+  **`email_verified` boolean `true`** — absent and the string `"true"` are both
+  declined, and every decline is logged with the value that caused it: inside a
+  directory an administrator registered, an address is worth what that
+  directory's word for it is worth, and an unchecked claim should not select an
+  existing account. (Registering the directory is itself admin-only and needs
+  its issuer, client id and secret; an earlier version of that ADR described
+  the risk as if a stranger could add a provider, which is not true and is
+  corrected there.) The link is a **`user_identities` row beside the identity, never a
+  rewrite of it**: `issuer == "local"` is read in eight places as "this account
+  has a password", and rewriting a linked user's issuer would flip all eight
+  silently. And adoption hands that account to the directory — **memberships
+  are replaced and `is_admin` follows `admin_groups`**, so a local admin
+  adopted by a directory that does not place them in an admin group loses the
+  flag on that login; the recovery is the local door, which is exactly what the
+  shape keeps working. Linking never happens on `/v1`: an access token resolves
+  an existing link but makes no userinfo request, so it does not hold the claim
+  that would justify a new one.
 - **Three things bite anything served behind the TLS proxy** (all found
   building it, all recorded in [ADR 0035](docs/adr/0035-public-tls-exposure.md)).
   **SNI may not carry an IP address**, so an address-only deployment offers no
@@ -225,6 +297,9 @@ docker compose --env-file deploy/.env \
 ./scripts/test_surfaces_live.py     # responses, anthropic messages, images
 ./scripts/test_quota_race_live.py   # admission under concurrency, real Valkey
 ./scripts/test_cache_accounting_live.py  # a real cache hit, and the ledger
+./scripts/test_web_search_live.py    # per-search billing, the report and its CSV
+./scripts/test_citations_live.py     # a citation still quotes its words after
+                                    # redaction; needs an active redaction rule
 ./scripts/benchmark_live.py         # per-layer cost; see docs/performance.md
 ./scripts/test_public_tls_live.py   # only with the proxy overlay: TLS, the
                                     # rotated credentials, and that nothing else
@@ -324,7 +399,10 @@ rediscovered — one being built, one not started:
   append-only row that overrides `GATEWAY_REDACTION__ENGINE`, and
   `RedactionResolver` polls it every 10s so a change reaches the other worker
   without a restart and without a query on the request path. Switching to an
-  engine that redacts nothing needs a written reason, kept permanently. Note
+  engine that redacts nothing **no longer needs a written reason** — that
+  requirement was dropped on request (ADR 0033, item 1, which now records why);
+  the console still confirms and the row still names the engine, the admin and
+  the moment. Note
   `_engine_redacts` asks the registry rather than comparing against `"noop"` — an
   installable engine could redact nothing under any name.
   **What is redacted is now an admin decision**
@@ -388,3 +466,37 @@ Known open items, none of them blocking:
 - Deferred by the user: per-provider default body params (`eu_native`,
   `allow_zero_data_retention`), image editing and variations, per-size image
   pricing, reranking.
+- **The OCR surface is built and its console half is not.** `POST /v1/ocr`
+  (ADR 0055) meters by the page, with two backends chosen by the model's
+  provider: an upstream OCR model, or this deployment's own extractor
+  (markitdown, in the redaction image with its NLP engine switched off, so a
+  `.docx` or a text-layer PDF never leaves). Outstanding: the price form has no
+  `per_page` field, so there is no live script yet, and
+  `usage_info.credits` — what Cortecs reports on an OCR *response* — is **not
+  read**, because whether it is micro-EUR like their chat surface or something
+  else needs one real call with a key, and a figure in an unverified unit is
+  worse than none.
+- **Cortecs' `/v1/models` defaults to `tag=Instruct`, and that hid two whole
+  kinds of model.** An earlier note here claimed OCR models were absent from
+  the catalogue and had to be entered by hand; they were never absent, only
+  filtered out by a default the response does not mention. `tag=OCR` returns
+  three, `tag=Embedding` eleven. Their prices are published too —
+  `pricing.ocr_cost` is per **1,000** processed pages, not per million of
+  anything, which is why `_kind_of` reads the tag and the parser divides by a
+  thousand.
+- **Usage reporting on `/v1` is deferred: passing the provider's `usage` object
+  through is enough for now** (asked and answered 2026-09-04). What that leaves
+  undone, so nobody re-derives it: there are no `x-ratelimit-*` headers (only
+  `retry-after` on a quota refusal), no `/v1/usage` and no credits or balance
+  endpoint — "balance" is not a concept here, since quotas are ceilings with
+  counters rather than a prepaid sum. Every spend and quota figure is therefore
+  reachable only under `/api` behind a **session cookie**
+  (`get_management_user`), so a program holding a `gwk_` key cannot read its own
+  usage and learns the ceiling by being refused. Two things to settle before
+  building it, whenever it comes back: quotas are cost- *and* token-based across
+  five scopes where all rules must pass, so "remaining" is the minimum over
+  every applicable rule and cost has no standard header at all — a header that
+  looks like OpenAI's and means something subtly different is worse than none;
+  and OpenAI's costs response has no field for "our arithmetic versus the
+  counterparty's", so a strictly-standard export flattens `cost_source` and
+  `usage_source`, which is the distinction this gateway exists to keep.

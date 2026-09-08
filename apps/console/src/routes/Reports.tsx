@@ -75,6 +75,17 @@ export function Reports() {
         row.images ? row.images.toLocaleString() : <span className={MUTED}>—</span>,
     },
     {
+      key: "searches",
+      header: "Searches",
+      numeric: true,
+      // Same dash rule as images, and the column exists for a sharper reason:
+      // this charge lands on ordinary chat rows, so without it part of the
+      // spend has no visible cause at all (ADR 0058).
+      hideBelow: "md",
+      render: (row) =>
+        row.searches ? row.searches.toLocaleString() : <span className={MUTED}>—</span>,
+    },
+    {
       key: "cost",
       header: "Spend",
       numeric: true,

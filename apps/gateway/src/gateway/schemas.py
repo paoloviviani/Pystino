@@ -250,6 +250,84 @@ class MessagesRequest(BaseModel):
         return payload
 
 
+class OcrDocument(BaseModel):
+    """The document to read, in the shape Cortecs and Mistral both accept.
+
+    Two forms, and the difference is not cosmetic — it decides whether this
+    deployment ever sees the bytes:
+
+    * ``document_url`` / ``image_url`` pointing at an address. The *provider*
+      fetches it, so the document never passes through the gateway, and nothing
+      here can inspect or redact it. That is a property of the request, not a
+      gap to fix: we cannot read what we never receive.
+    * a ``data:`` URI in either field, which is the document itself. That one we
+      hold, and it is the form local extraction and inspection can act on.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    #: ``document_url`` or ``image_url``. Passed through as the provider's own
+    #: discriminator rather than reinterpreted.
+    type: str
+    document_url: str | None = None
+    image_url: str | None = None
+
+    def location(self) -> str:
+        """Wherever the document is, whichever field carries it."""
+        return self.document_url or self.image_url or ""
+
+    def inline_bytes(self) -> tuple[bytes, str] | None:
+        """``(data, media type)`` when the document travelled with the request.
+
+        ``None`` for an address, which is the case where the provider does the
+        fetching and there is nothing local to read.
+        """
+        location = self.location()
+        if not location.startswith("data:"):
+            return None
+        header, _, encoded = location.partition(",")
+        if not encoded:
+            return None
+        media_type = header[5:].split(";")[0] or "application/octet-stream"
+        if ";base64" not in header:
+            # A plain data: URI is percent-encoded text, not a document anyone
+            # sends an OCR model. Treated as absent rather than guessed at.
+            return None
+        import base64
+        import binascii
+
+        try:
+            return base64.b64decode(encoded, validate=True), media_type
+        except (binascii.Error, ValueError):
+            return None
+
+
+class OcrRequest(BaseModel):
+    """``POST /v1/ocr`` — the Cortecs and Mistral shape.
+
+    Same passthrough philosophy as every other ``/v1`` request model: the fields
+    the gateway acts on are declared and the rest is forwarded, because the
+    option set here is long and provider-specific (``table_format``,
+    ``include_blocks``, ``confidence_scores_granularity``, the annotation
+    formats, and the routing preferences ``eu_native`` and
+    ``allow_zero_data_retention``). A gateway that validated all of it would
+    reject valid requests every time the counterparty added a field.
+    """
+
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
+
+    model: str
+    document: OcrDocument
+    #: Which pages to read, when the caller wants a subset. Declared because it
+    #: bounds the bill: the page count is otherwise unknown until the response.
+    pages: list[int] | None = None
+
+    def upstream_payload(self, *, upstream_model: str) -> dict[str, Any]:
+        payload = self.model_dump(exclude_unset=True)
+        payload["model"] = upstream_model
+        return payload
+
+
 class ImageGenerationRequest(BaseModel):
     """``POST /v1/images/generations``.
 
@@ -616,7 +694,7 @@ class ModelCreateRequest(BaseModel):
     # Which endpoint serves it. Required: a model with no provider cannot be
     # routed, and defaulting one would guess at spending money (ADR 0027).
     provider_id: uuid.UUID
-    kind: Literal["chat", "embedding", "image"] = "chat"
+    kind: Literal["chat", "embedding", "image", "ocr"] = "chat"
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -646,7 +724,7 @@ class ModelUpdateRequest(BaseModel):
     # and a mis-inferred kind takes a model off the only route that would serve
     # it. Historical usage rows record the surface they actually went through,
     # so correcting this does not make past spend unreadable (ADR 0030).
-    kind: Literal["chat", "embedding", "image"] | None = None
+    kind: Literal["chat", "embedding", "image", "ocr"] | None = None
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -668,6 +746,8 @@ class PriceResponse(BaseModel):
     cache_read_per_mtok: Money | None
     cache_write_per_mtok: Money | None
     per_image: Money | None
+    per_page: Money | None
+    per_search: Money | None
     currency: str
     effective_from: datetime
     source: str
@@ -684,6 +764,15 @@ class PriceCreateRequest(BaseModel):
     # anything, and set alongside the token rates rather than instead of them —
     # a model can be metered both ways (ADR 0030).
     per_image: Money | None = Field(default=None, ge=0)
+    # Per page read, for OCR models. Same shape, same reason: an OCR
+    # counterparty charges by the page, and a page is not a million of
+    # anything.
+    per_page: Money | None = Field(default=None, ge=0)
+    # Per provider-side web search (ADR 0058). Per *one* search, though every
+    # provider publishes it per thousand — $10 per 1,000 is 0.01 — because the
+    # ledger multiplies by a count of searches, and a rate whose unit differs
+    # from the count's is how a bill comes out a thousand times wrong.
+    per_search: Money | None = Field(default=None, ge=0)
     # Defaults to the gateway's billing currency; anything else is refused.
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     # Future-dated prices are allowed: that is how a change is scheduled.
@@ -727,6 +816,8 @@ class IdentityProviderResponse(BaseModel):
     groups_claim: str
     fetch_userinfo: bool
     group_mappings: list[OidcMappingRule]
+    link_local_by_email: bool
+    group_sync: Literal["every_login", "first_login", "never"]
     is_enabled: bool
     source: str
 
@@ -740,6 +831,12 @@ class IdentityProviderCreateRequest(BaseModel):
     groups_claim: str = Field(default="groups", min_length=1, max_length=255)
     fetch_userinfo: bool = True
     group_mappings: list[OidcMappingRule] = Field(default_factory=list)
+    # Off unless asked for, in the request as on the row: a client that omits
+    # the field is not consenting to it (ADR 0056).
+    link_local_by_email: bool = False
+    # The behaviour this gateway has always had, so a client that says nothing
+    # gets what it would have got before the field existed (ADR 0057).
+    group_sync: Literal["every_login", "first_login", "never"] = "every_login"
 
 
 class IdentityProviderUpdateRequest(BaseModel):
@@ -752,6 +849,8 @@ class IdentityProviderUpdateRequest(BaseModel):
     groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
     fetch_userinfo: bool | None = None
     group_mappings: list[OidcMappingRule] | None = None
+    link_local_by_email: bool | None = None
+    group_sync: Literal["every_login", "first_login", "never"] | None = None
     is_enabled: bool | None = None
 
 
@@ -815,7 +914,17 @@ class UserAdminResponse(BaseModel):
     # itself never leaves the database; the fact of its existence is what the
     # console's user screen needs.
     has_password: bool = False
+    # The directories that also name this account (ADR 0056), by issuer. A
+    # linked account has two doors, and an operator reading a user screen that
+    # says only "has a password" would not know the second one exists.
+    linked_identities: list[str] = Field(default_factory=list)
     groups: list[str]
+    # Who granted *this* person's membership of the group being listed (ADR
+    # 0057): "manual" for an administrator's grant, "oidc" for the directory's.
+    # Only the group-members route can answer it — a user has many memberships
+    # and the question is per group — so it is None everywhere else rather than
+    # a value that would be a guess.
+    membership_source: str | None = None
     default_billing_group: str | None
     active_key_count: int
     last_login_at: datetime | None
@@ -1002,6 +1111,11 @@ class UsageReportRow(BaseModel):
     # real cost against zero tokens, which reads as a bug unless the report
     # says what was actually bought (ADR 0030).
     images: int = 0
+    # Provider-side web searches, charged per search on top of tokens
+    # (ADR 0058). Reported for the reason `images` is: part of this cost was
+    # not tokens, and a reader reconciling against a provider's invoice needs
+    # the count the invoice is itemised by.
+    searches: int = 0
     cost: Money
     # The native figure — what the model's price table produced, in its own
     # currency (ADR 0054). Present on model rows only: a model's rows share one
@@ -1381,6 +1495,10 @@ class DiscoveredModel(BaseModel):
     suggested_name: str
     input_per_mtok: Money | None
     output_per_mtok: Money | None
+    #: Per page, for an OCR model, whose token rates are zero and whose real
+    #: price is this. Shown before adopting for the same reason the token rates
+    #: are: an operator approving a price should see the one that will be charged.
+    per_page: Money | None = None
     currency: str | None
     context_window: int | None
     # What the provider says it can do, shown before importing so the choice is
@@ -1393,9 +1511,20 @@ class DiscoveredModel(BaseModel):
     # Set when the model cannot be imported as-is, with the reason. The commonest
     # is a price quoted in a currency this gateway does not bill in.
     blocked_reason: str | None = None
+    # Where the figures above came from: "provider" for the counterparty's own
+    # catalogue, "community" for a gap the LiteLLM file filled, None for a model
+    # the provider listed and nobody has priced. Shown per row rather than once
+    # per import, because a single import can mix all three and "which of these
+    # prices did a third party supply" is the question an operator asks before
+    # adopting them (ADR 0053).
+    price_source: str | None = None
 
 
 class CatalogueDriftRow(BaseModel):
+    # Carried so the console can link straight to the model. The drift that
+    # matters is "we serve this and the provider does not offer it", and the only
+    # useful next click is the screen where it can be repointed or deactivated.
+    id: uuid.UUID
     name: str
     upstream_model: str
     is_active: bool
@@ -1432,6 +1561,11 @@ class ModelImportResult(BaseModel):
     imported: bool
     priced: bool
     reason: str | None = None
+    # As on `DiscoveredModel`, and for the same reason: the price history records
+    # what was adopted, and this records who supplied it. A community figure that
+    # later proves wrong is then traceable to the import that took it, rather
+    # than looking like a hand-typed mistake.
+    price_source: str | None = None
 
 
 class ModelImportResponse(BaseModel):
