@@ -265,6 +265,16 @@ async def messages(request: Request) -> JSONResponse | StreamingResponse:
         "cache_creation_input_tokens": 100_000,
         "cache_read_input_tokens": 300_000,
     }
+    # A request that asks for server-side search gets a search reported back,
+    # so the live scripts can exercise the per-search charge end to end
+    # (ADR 0058). Two, arbitrarily, and fewer than the cap the gateway writes
+    # in — a provider reports what it *did*, not what it was allowed to do.
+    searched = any(
+        isinstance(tool, dict) and str(tool.get("type", "")).startswith("web_search")
+        for tool in body.get("tools") or []
+    )
+    if searched:
+        usage_in["server_tool_use"] = {"web_search_requests": 2}  # type: ignore[assignment]
 
     if not body.get("stream"):
         return JSONResponse(
