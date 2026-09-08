@@ -151,6 +151,21 @@ Inside the gateway, the pieces that carry the most weight:
   `search_context_size`. Phases 2 and 3 — our own search backends, and a loop
   that executes them — are in
   [docs/web-search-plan.md](docs/web-search-plan.md), not started.
+- **Restoring a placeholder moves every offset after it**
+  ([ADR 0059](docs/adr/0059-citation-offsets.md)). A real name is rarely the
+  same length as the placeholder that stood in for it, and a provider's
+  citations are *character offsets into the answer* — OpenAI's `url_citation`
+  is `start_index`/`end_index`. So `restore_with_edits` reports where it wrote,
+  and `shift_citations` on each surface protocol moves what that surface holds.
+  Three things worth knowing. `Shift` is **`(choice index, offset)`**, because
+  one placeholder map edits different positions in each choice of an `n: 2`
+  request. **Anthropic needs nothing moved** — its web-search citations carry
+  `encrypted_index` and their own `cited_text`, and its document citations
+  index the caller's document rather than the answer. And **the streamed case
+  needs the whole answer**: a streamed citation's offsets are into the
+  accumulated message, so the rewriter keeps the provider's text per choice and
+  builds the map lazily, only for the frames that actually carry offsets. It
+  cannot fire at all when nothing was substituted, which is why it was latent.
 - **Redaction is ~90% of the CPU, and it scales with prompt length** — about
   0.1ms per prompt token, against a gateway cost that stays flat at 24-31ms.
   Capacity planning is redaction planning; see

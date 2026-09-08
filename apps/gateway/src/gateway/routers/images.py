@@ -132,9 +132,8 @@ async def create_image(
 
     for entry in out.get("data") or []:
         if isinstance(entry, dict) and isinstance(entry.get("revised_prompt"), str):
-            entry["revised_prompt"] = await redactor.redact_response_text(
-                entry["revised_prompt"], outcome
-            )
+            restored = await redactor.restore_response(entry["revised_prompt"], outcome)
+            entry["revised_prompt"] = restored.text
 
     await metered.completed(upstream_status=response.status_code)
     return JSONResponse(status_code=response.status_code, content=out)

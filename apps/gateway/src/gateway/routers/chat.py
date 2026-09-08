@@ -30,6 +30,7 @@ from typing import Any
 import orjson
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from llmp_shared import Restored
 
 from gateway.accounting import (
     RequestAccounting,
@@ -49,6 +50,7 @@ from gateway.errors import (
     error_payload,
 )
 from gateway.models import ApiSurface, ModelDef, UsageStatus
+from gateway.protocols import reader_for
 from gateway.quota import (
     QuotaEngine,
     Reservation,
@@ -281,12 +283,32 @@ async def _buffered_response(
 
     # Report our model name, and restore any placeholders we introduced.
     body_payload["model"] = model.name
-    for choice in body_payload.get("choices") or []:
+    # One restoration per choice, kept by choice index: each choice is different
+    # text, so the *positions* the substitutions edited differ even though the
+    # placeholder map is one per request.
+    restored_by_choice: dict[int, Restored] = {}
+    for position, choice in enumerate(body_payload.get("choices") or []):
         if not isinstance(choice, dict):
             continue
+        declared = choice.get("index")
+        which = declared if isinstance(declared, int) else position
         message = choice.get("message")
         if isinstance(message, dict) and isinstance(message.get("content"), str):
-            message["content"] = await redactor.redact_response_text(message["content"], outcome)
+            restored = await redactor.restore_response(message["content"], outcome)
+            message["content"] = restored.text
+            restored_by_choice[which] = restored
+
+    # A citation is character offsets into the text just rewritten, so it moves
+    # with it or it points at the wrong words (ADR 0059).
+    if any(item.moved for item in restored_by_choice.values()):
+        reader_for(SURFACE).shift_citations(
+            body_payload,
+            lambda choice_index, offset: (
+                restored_by_choice[choice_index].shift(offset)
+                if choice_index in restored_by_choice
+                else offset
+            ),
+        )
 
     await metered.completed(upstream_status=response.status_code)
     return JSONResponse(status_code=200, content=body_payload)
