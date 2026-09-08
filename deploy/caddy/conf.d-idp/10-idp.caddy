@@ -1,0 +1,21 @@
+# The development Keycloak, on the origin that is already published.
+# Mounted into conf.d only by docker-compose.keycloak.yml.
+#
+# `handle_path` rather than `handle`: it strips the matched prefix before
+# proxying, so Keycloak keeps serving at the root it believes it is at while
+# every URL it *advertises* carries /idp, because KC_HOSTNAME says so. The
+# prefix is therefore applied exactly once, here, in the layer that owns
+# routing — which is why KC_HTTP_RELATIVE_PATH is deliberately not set.
+#
+# Getting this wrong is quiet rather than loud: with `handle` the upstream sees
+# /idp/realms/... against a Keycloak rooted at /, every path 404s, and the
+# discovery document — the one thing that would explain it — is one of the 404s.
+handle_path /idp/* {
+	reverse_proxy keycloak:8080 {
+		# The login page is not a stream, but the header matters for a
+		# different reason: Keycloak builds absolute URLs from what it thinks
+		# the client asked for, and KC_PROXY_HEADERS=xforwarded is what makes
+		# it read these rather than the container's own address.
+		header_up X-Forwarded-Prefix /idp
+	}
+}

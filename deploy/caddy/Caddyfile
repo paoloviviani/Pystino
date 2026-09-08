@@ -28,6 +28,16 @@
 # The IdP is therefore *not* part of this stack at all: OIDC is configured
 # against whatever provider deploy/.env names (docs/oidc-generic-provider.md),
 # on its own host, and this file routes only to what lives here.
+#
+# They collide at the *root*. Under a prefix they do not, which is the opening
+# `docker-compose.keycloak.yml` takes: a development Keycloak on `/idp`, still
+# one origin and still one published port. That overlay drops a file into
+# conf.d below; nothing else routes there, so a deployment that does not use it
+# is byte-for-byte unchanged.
+#
+# The glob is why conf.d/00-empty.caddy is committed: Caddy treats an `import`
+# that matches no files as an error, so the placeholder is what keeps the base
+# configuration valid on its own.
 
 {
 	# Only used in prod, where Caddy needs somewhere to send expiry warnings.
@@ -48,6 +58,10 @@
 
 {$PUBLIC_ORIGIN} {
 	{$TLS_DIRECTIVE}
+
+	# Opt-in extra routes, before the catch-all below. Only the committed
+	# placeholder matches unless an overlay mounts something here.
+	import /etc/caddy/conf.d/*.caddy
 
 	handle {
 		# `-1` means flush every write straight through instead of buffering.
