@@ -38,11 +38,22 @@ def create_engine(settings: Settings) -> AsyncEngine:
         engine = create_async_engine(settings.database_url, **kwargs)
 
         @event.listens_for(engine.sync_engine, "connect")
-        def _enable_sqlite_fks(
+        def _configure_sqlite(
             dbapi_connection: DBAPIConnection, _record: ConnectionPoolEntry
         ) -> None:
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            # Durability is worth nothing to a database in a temp directory that
+            # is deleted at teardown, and it is expensive: the suite builds this
+            # schema once per test — 24 tables and 32 indexes — and `synchronous
+            # =FULL` fsyncs its way through them in 987ms against 85ms with the
+            # fsyncs off, measured on the 5-core host. That was 91% of every
+            # test's setup. Neither pragma changes semantics: transactions,
+            # rollback and the FK enforcement above all behave the same, and
+            # what is lost is only the guarantee that the file survives losing
+            # power mid-write, which no test asks for.
+            cursor.execute("PRAGMA synchronous=OFF")
+            cursor.execute("PRAGMA journal_mode=MEMORY")
             cursor.close()
 
         return engine
