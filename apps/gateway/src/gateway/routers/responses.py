@@ -177,8 +177,11 @@ async def create_response(
                 out, lambda _choice, offset: restored.shift(offset)
             )
 
-    await metered.completed(upstream_status=response.status_code)
-    return JSONResponse(status_code=response.status_code, content=out)
+    return JSONResponse(
+        status_code=response.status_code,
+        content=out,
+        background=metered.completed_after_response(upstream_status=response.status_code),
+    )
 
 
 def _assembled_text(payload: dict[str, Any]) -> str:

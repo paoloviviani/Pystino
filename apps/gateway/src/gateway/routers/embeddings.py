@@ -136,12 +136,15 @@ async def create_embeddings(
         # Feeds usage, and the model/provider that actually served it.
         metered.accounting.observe_payload(response.payload, headers=response.headers)
 
-    await metered.completed(upstream_status=response.status_code)
-
     body_out = dict(response.payload or {})
     # Report our model name, not the upstream's, exactly as the chat route does:
     # clients compare the echoed name with what they sent. The original is in the
     # ledger.
     if body_out.get("model") is not None:
         body_out["model"] = model.name
-    return JSONResponse(status_code=response.status_code, content=body_out)
+    # Finalised after the answer is sent, not before it (ADR 0060).
+    return JSONResponse(
+        status_code=response.status_code,
+        content=body_out,
+        background=metered.completed_after_response(upstream_status=response.status_code),
+    )

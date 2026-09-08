@@ -70,6 +70,7 @@ verified is marked as such in the ADR that depends on it.
 | [0057](0057-group-ownership-and-sync.md) | A directory owns the memberships it granted and no others, so an administrator's group assignment survives a login — plus Keycloak's three sync modes, per provider |
 | [0058](0058-per-search-pricing.md) | Provider-side web search is a third non-token unit, priced per search and capped by writing `max_uses` into the outgoing tool — the count read only from what the counterparty reports, never from counting response blocks |
 | [0059](0059-citation-offsets.md) | Restoring a placeholder moves every character after it, so the citations that point past it move too — one `shift_citations` per surface, and the streamed case needs the whole answer |
+| [0060](0060-settle-after-the-response.md) | The final ledger write and the counter settle ride on the response instead of blocking it: −16% p50 and −33% p95 with headroom, and a worse p95 under saturation because awaiting them was accidental backpressure |
 
 **0015, 0016 and 0041 — the chat frontend decisions — moved to the `chat`
 branch with the chat application itself** (A Vite SPA on `packages/ui` with
