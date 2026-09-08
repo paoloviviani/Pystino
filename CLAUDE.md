@@ -132,6 +132,25 @@ Inside the gateway, the pieces that carry the most weight:
   broken. Admins reach full precision with the **Exact figures** toggle in the
   identity menu, which is a `MoneyPrecisionContext` — a `formatMoney` call made
   outside `<Money>` has to read it by hand (`useExactMoney`).
+- **Provider-side web search is a billable unit, and it is a *surcharge***
+  ([ADR 0058](docs/adr/0058-per-search-pricing.md)). `per_search` on the price
+  row, `search_count` on the usage row. Unlike a page or an image it lands on
+  an ordinary chat request, which is why it went unbilled: the tool passes
+  through `extra="allow"` untouched, so search already worked and cost nothing.
+  Three things to know. The count comes **only** from
+  `usage.server_tool_use.web_search_requests` — never from counting
+  `server_tool_use` blocks, because an errored search produces a block and is
+  not billed. The searches are recorded **even when the model has no
+  `per_search` rate**, charging nothing but leaving the gap findable here
+  instead of on an invoice. And the ceiling is two mechanisms: `max_uses`
+  written into the outgoing tool bounds *this* request (only on Anthropic's
+  date-versioned tool family — OpenAI's `web_search` has no such field and a
+  guess there is a 400), while the reservation makes search spend count so the
+  limit engages for the *next* request. OpenAI's own search is deliberately
+  unpriced: no documented usage field, and a rate that varies by
+  `search_context_size`. Phases 2 and 3 — our own search backends, and a loop
+  that executes them — are in
+  [docs/web-search-plan.md](docs/web-search-plan.md), not started.
 - **Redaction is ~90% of the CPU, and it scales with prompt length** — about
   0.1ms per prompt token, against a gateway cost that stays flat at 24-31ms.
   Capacity planning is redaction planning; see

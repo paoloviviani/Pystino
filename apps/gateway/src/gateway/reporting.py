@@ -171,6 +171,7 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
         func.coalesce(func.sum(UsageRecord.completion_tokens), 0).label("completion_tokens"),
         func.coalesce(func.sum(UsageRecord.total_tokens), 0).label("total_tokens"),
         func.coalesce(func.sum(UsageRecord.image_count), 0).label("images"),
+        func.coalesce(func.sum(UsageRecord.search_count), 0).label("searches"),
         func.coalesce(func.sum(UsageRecord.cost), 0).label("cost"),
         func.coalesce(func.sum(UsageRecord.cost_native), 0).label("native_cost"),
         func.min(UsageRecord.cost_currency).label("native_currency"),
@@ -248,6 +249,7 @@ def _row(
         completion,
         total,
         images,
+        searches,
         cost,
         native_cost,
         native_currency,
@@ -275,6 +277,7 @@ def _row(
         completion_tokens=int(completion or 0),
         total_tokens=int(total or 0),
         images=int(images or 0),
+        searches=int(searches or 0),
         cost=Decimal(str(cost or 0)),
         native_cost=Decimal(str(native_cost or 0)) if show_native else None,
         native_currency=native_currency if show_native else None,
@@ -292,6 +295,7 @@ def _totals(rows: Sequence[UsageReportRow]) -> UsageReportRow:
         completion_tokens=sum(row.completion_tokens for row in rows),
         total_tokens=sum(row.total_tokens for row in rows),
         images=sum(row.images for row in rows),
+        searches=sum(row.searches for row in rows),
         cost=sum((row.cost for row in rows), Decimal(0)),
         estimated_requests=sum(row.estimated_requests for row in rows),
         unavailable_requests=sum(row.unavailable_requests for row in rows),
@@ -393,6 +397,18 @@ def _disclosures(
         notes.append(
             f"{totals.images} image(s) were generated: image models are commonly priced "
             "per image, so they add cost without adding tokens."
+        )
+    if totals.searches:
+        # Same reason as the image sentence, one step less obvious: this cost
+        # lands on requests the caller thinks of as ordinary completions, so
+        # without a line saying so the tokens simply look mispriced. And the
+        # figure is a floor when the model carries no `per_search` rate — the
+        # searches are recorded either way, which is what makes the gap
+        # findable before the provider's invoice arrives (ADR 0058).
+        notes.append(
+            f"{totals.searches} provider-side web search(es) were billed on top of "
+            "tokens. They are charged from each model's per-search rate; a model "
+            "without one records the searches and charges nothing for them."
         )
     if fell_back:
         # Said at all because a pass-through deployment silently billing from

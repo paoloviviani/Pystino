@@ -54,6 +54,7 @@ export interface UsageReportRow {
   total_tokens: number;
   /** Pictures generated. Non-zero only for image models, which often bill per image. */
   images: number;
+  searches: number;
   cost: string;
   /** The native figure — what the model's price table produced, in its own
    * currency (ADR 0054). Present on model rows only. */
@@ -115,6 +116,8 @@ export interface Price {
   per_image: string | null;
   /** Per page read, for OCR models, whose token rates are usually zero. */
   per_page: string | null;
+  /** Per provider-side web search, charged on top of tokens (ADR 0058). */
+  per_search: string | null;
   currency: string;
   effective_from: string;
   source: string;

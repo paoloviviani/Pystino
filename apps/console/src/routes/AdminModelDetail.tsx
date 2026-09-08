@@ -437,6 +437,13 @@ function Pricing({ model }: { model: AdminModel }) {
       hideBelow: "md",
     },
     {
+      key: "search",
+      header: "Per search",
+      numeric: true,
+      render: (price) => <Rate amount={price.per_search} currency={price.currency} />,
+      hideBelow: "lg",
+    },
+    {
       key: "source",
       header: "Source",
       render: (price) => <Badge>{price.source}</Badge>,
@@ -485,6 +492,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
   const [cacheWrite, setCacheWrite] = useState("");
   const [perImage, setPerImage] = useState("");
   const [perPage, setPerPage] = useState("");
+  const [perSearch, setPerSearch] = useState("");
   const [effective, setEffective] = useState("");
 
   const submit = () => {
@@ -500,6 +508,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
         cache_write_per_mtok: cacheWrite === "" ? null : cacheWrite,
         per_image: perImage === "" ? null : perImage,
         per_page: perPage === "" ? null : perPage,
+        per_search: perSearch === "" ? null : perSearch,
         // A datetime-local value carries no zone; converting through Date makes
         // the browser's zone explicit rather than letting the server guess.
         effective_from: effective ? new Date(effective).toISOString() : null,
@@ -512,6 +521,8 @@ function AppendPrice({ model }: { model: AdminModel }) {
           setCacheRead("");
           setCacheWrite("");
           setPerImage("");
+          setPerPage("");
+          setPerSearch("");
           setEffective("");
         },
         onError: () => toast?.add({ title: "Could not append the price", type: "error" }),
@@ -583,6 +594,16 @@ function AppendPrice({ model }: { model: AdminModel }) {
             value={perPage}
             onChange={(event) => setPerPage(event.target.value)}
             hint="OCR models, which charge by the page and usually nothing per token."
+          />
+          <Input
+            label="Per search"
+            type="number"
+            min="0"
+            step="0.0000001"
+            value={perSearch}
+            onChange={(event) => setPerSearch(event.target.value)}
+            hint="Provider-side web search, charged per search on top of tokens.
+              Providers publish it per thousand — $10 per 1,000 is 0.01 here."
           />
           <Input
             label="Effective from"

@@ -747,6 +747,7 @@ class PriceResponse(BaseModel):
     cache_write_per_mtok: Money | None
     per_image: Money | None
     per_page: Money | None
+    per_search: Money | None
     currency: str
     effective_from: datetime
     source: str
@@ -767,6 +768,11 @@ class PriceCreateRequest(BaseModel):
     # counterparty charges by the page, and a page is not a million of
     # anything.
     per_page: Money | None = Field(default=None, ge=0)
+    # Per provider-side web search (ADR 0058). Per *one* search, though every
+    # provider publishes it per thousand — $10 per 1,000 is 0.01 — because the
+    # ledger multiplies by a count of searches, and a rate whose unit differs
+    # from the count's is how a bill comes out a thousand times wrong.
+    per_search: Money | None = Field(default=None, ge=0)
     # Defaults to the gateway's billing currency; anything else is refused.
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     # Future-dated prices are allowed: that is how a change is scheduled.
@@ -1105,6 +1111,11 @@ class UsageReportRow(BaseModel):
     # real cost against zero tokens, which reads as a bug unless the report
     # says what was actually bought (ADR 0030).
     images: int = 0
+    # Provider-side web searches, charged per search on top of tokens
+    # (ADR 0058). Reported for the reason `images` is: part of this cost was
+    # not tokens, and a reader reconciling against a provider's invoice needs
+    # the count the invoice is itemised by.
+    searches: int = 0
     cost: Money
     # The native figure — what the model's price table produced, in its own
     # currency (ADR 0054). Present on model rows only: a model's rows share one

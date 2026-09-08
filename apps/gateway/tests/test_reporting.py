@@ -52,6 +52,7 @@ async def record(
     at: datetime | None = None,
     source: UsageSource = UsageSource.UPSTREAM_EXACT,
     status: UsageStatus = UsageStatus.COMPLETED,
+    searches: int = 0,
 ) -> UsageRecord:
     row = UsageRecord(
         request_id=f"r-{uuid.uuid4().hex[:8]}",
@@ -66,6 +67,7 @@ async def record(
         total_tokens=prompt + completion,
         cost=Decimal(cost),
         usage_source=source,
+        search_count=searches,
         created_at=at or datetime.now(UTC),
     )
     session.add(row)
@@ -835,3 +837,41 @@ class TestReportAndQuotaAgree:
 
         assert current[rule.id] == Decimal(report["totals"]["cost"])
         assert current[rule.id] == Decimal(5)
+
+
+class TestSearchesInTheReport:
+    """ADR 0058: the count a provider's invoice is itemised by.
+
+    Reported for the reason `images` is, and one sharper: a search charge lands
+    on a row that otherwise looks like an ordinary completion, so without the
+    count part of the spend has no visible cause.
+    """
+
+    async def test_the_count_is_summed_and_disclosed(
+        self,
+        admin_client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        await record(session, group_id=seeded.group.id, cost="1", searches=3)
+        await record(session, group_id=seeded.group.id, cost="2", searches=4)
+
+        response = await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["totals"]["searches"] == 7
+        assert any("web search" in note for note in body["disclosures"])
+
+    async def test_a_month_without_searches_says_nothing_about_them(
+        self,
+        admin_client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        """A disclosure for something that did not happen is noise."""
+        await record(session, group_id=seeded.group.id, cost="1")
+
+        response = await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")
+        body = response.json()
+        assert body["totals"]["searches"] == 0
+        assert not any("web search" in note for note in body["disclosures"])

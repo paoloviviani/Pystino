@@ -103,7 +103,17 @@ async def create_response(
     # `instructions` is a system prompt by another name and is charged like one.
     prompt_tokens += estimator.count_text(body.instructions or "")
     max_output = body.max_output_tokens or settings.quota.default_max_output_tokens
-    worst_case = TokenCounts(prompt=prompt_tokens, completion=max_output)
+    # Server-side web search is charged per search on top of tokens, and
+    # nothing in the request bounds it unless the caller said so (ADR 0058).
+    # Read once, here: the same object supplies the reservation below and the
+    # cap written into the outgoing tools, so the two cannot disagree.
+    search = _metered.bound_web_search(
+        (body.model_extra or {}).get("tools"),
+        default=settings.quota.default_max_web_searches,
+    )
+    worst_case = TokenCounts(
+        prompt=prompt_tokens, completion=max_output, searches=search.reserved
+    )
 
     metered = await _metered.begin(
         request,
@@ -123,6 +133,7 @@ async def create_response(
         return metered
 
     payload = body.upstream_payload(outcome, upstream_model=model.upstream_model)
+    search.apply(payload)
     payload = metered.shape_payload(payload, surface=SURFACE)
 
     if body.stream:

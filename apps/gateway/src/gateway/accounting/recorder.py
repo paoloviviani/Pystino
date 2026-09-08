@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -427,7 +427,7 @@ class RequestAccounting:
             # tokens alone sent a perfectly exact page count down the estimation
             # path, where `_with_units` then dropped it and the request recorded
             # a cost of zero — found by the first ocr surface test.
-            if counts.total or counts.pages:
+            if counts.total or counts.pages or counts.searches:
                 return self._with_units(counts), UsageSource.UPSTREAM_EXACT
 
         # No usable usage frame. Estimate rather than record zero.
@@ -465,24 +465,20 @@ class RequestAccounting:
         )
 
     def _with_units(self, counts: TokenCounts) -> TokenCounts:
-        """Carry the non-token quantities through a rebuild.
+        """Add the picture count, which only this object knows.
 
-        Both are billable units that no token count implies: pictures on the
-        image surface, pages on the OCR one. This rebuilds the frozen
-        dataclass, so anything it forgets to copy is silently lost — which is
-        exactly how a page-counted request first recorded a cost of zero.
+        Every other billable unit — pages, searches — arrives inside the
+        counterparty's own usage frame and is already on *counts*. Images are
+        the exception: they are counted from the response by the recorder.
+
+        ``replace`` rather than a field-by-field rebuild, and that is the whole
+        change. This function used to list the fields it knew about, so every
+        new unit added to ``TokenCounts`` was silently dropped here — which is
+        exactly how a page-counted request first recorded a cost of zero, and
+        would have been how a searched request recorded one too. A copy that
+        cannot forget a field is worth more than a fast path that can.
         """
-        if not self._images and not counts.pages:
-            return counts
-        return TokenCounts(
-            prompt=counts.prompt,
-            completion=counts.completion,
-            cached_prompt=counts.cached_prompt,
-            reasoning=counts.reasoning,
-            cache_write=counts.cache_write,
-            images=self._images,
-            pages=counts.pages,
-        )
+        return replace(counts, images=self._images or counts.images)
 
     def _was_substituted(self) -> bool:
         """Whether the provider served a model other than the one we asked for.
@@ -664,6 +660,11 @@ class RequestAccounting:
             "cache_write_tokens": counts.cache_write,
             "reasoning_tokens": counts.reasoning,
             "image_count": counts.images,
+            # Recorded whether or not a `per_search` rate existed to price
+            # them: the count is what the provider will itemise its invoice
+            # by, and an unpriced search that leaves no trace is exactly the
+            # charge nobody finds until the invoice arrives (ADR 0058).
+            "search_count": counts.searches,
             "image_size": self._image_size,
             "usage_source": source,
             "upstream_model": self._upstream_model,
