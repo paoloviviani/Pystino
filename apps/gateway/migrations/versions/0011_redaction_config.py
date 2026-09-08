@@ -4,7 +4,7 @@ Revision ID: 0011
 Revises: 0010
 Create Date: 2026-08-24
 
-See docs/adr/0033-redaction-engine-selection.md.
+See ADR 0033.
 
 ``redaction_config`` is append-only: one row per change, newest wins, nothing
 updated and nothing deleted. Switching redaction off decides whether personal

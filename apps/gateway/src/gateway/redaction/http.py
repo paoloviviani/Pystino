@@ -2,10 +2,10 @@
 
 Speaks the contract in :mod:`llmp_shared.redaction` and nothing else, so any
 service that serves ``POST /detect`` is a valid detector regardless of the model
-behind it ([0026](../../../../docs/adr/0026-pluggable-detection.md)). Presidio in
+behind it (0026). Presidio in
 ``services/redaction`` is a reference implementation, not a dependency.
 
-The division of labour matters and is from [0012](../../../../docs/adr/0012-redaction-interface.md):
+The division of labour matters and is from 0012:
 the detector returns **spans only**. Placeholders are derived here, by keyed HMAC,
 so a detector can never see the key, never break placeholder stability across
 turns, and can be swapped without re-labelling anything already shown to a user.

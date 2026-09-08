@@ -4,7 +4,7 @@ Revision ID: 0022
 Revises: 0021
 Create Date: 2026-09-03
 
-See docs/adr/0054-currency-conversion.md.
+See ADR 0054.
 
 Two pieces:
 

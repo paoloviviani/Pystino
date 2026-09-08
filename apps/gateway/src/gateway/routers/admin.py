@@ -3172,7 +3172,7 @@ async def set_redaction_engine(
     info = {entry.name: entry for entry in redaction_registry.describe()}.get(engine)
     if info is None:
         # Third-party engines register under the 'llmp.redactors' entry-point
-        # group (docs/adr/0026-pluggable-detection.md). That is how a name gets
+        # group (ADR 0026). That is how a name gets
         # into the installed list, and not something an operator acts on here.
         raise BadRequestError(
             f"unknown redaction engine {engine!r}. Installed: "

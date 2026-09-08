@@ -2,7 +2,7 @@
 
 A request has to reach the endpoint that serves the model it names, with that
 endpoint's credentials. This holds the clients that do it
-([0027](../../../docs/adr/0027-inference-providers.md)).
+(0027).
 
 Per provider rather than one shared client, because an HTTP connection pool is a
 pool *to a host*: pooling across providers would mean nothing is actually

@@ -6,7 +6,7 @@
 # make "the gateway depends on Presidio" true in the one place it must not be.
 #
 # The gateway depends on the *contract* (packages/shared-py). This project is one
-# implementation of it. See docs/adr/0026-pluggable-detection.md
+# implementation of it. See https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0026-pluggable-detection.md
 [project]
 name = "llmp-redaction"
 version = "0.1.0"
@@ -18,7 +18,7 @@ dependencies = [
     "fastapi>=0.141,<0.142",
     "uvicorn[standard]>=0.42,<0.43",
     "orjson>=3.11,<4",
-    # MIT. See the licence table in docs/adr/0026-pluggable-detection.md — the
+    # MIT. See the licence table in https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0026-pluggable-detection.md — the
     # spaCy *models* are licensed separately and that is the part that matters.
     "presidio-analyzer>=2.2.363,<3",
     # Text out of attached documents, so detection has something to read

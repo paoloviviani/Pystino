@@ -4,7 +4,7 @@ Revision ID: 0006
 Revises: 0005
 Create Date: 2026-08-16
 
-See docs/adr/0031-model-capabilities.md. Three JSON columns on ``models``,
+See ADR 0031. Three JSON columns on ``models``,
 empty on existing rows — which is honest: nothing knew what those models could
 do, and inventing a capability set from the model's name would be a guess
 presented as a fact. Re-running discovery fills them in.

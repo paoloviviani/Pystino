@@ -1,6 +1,6 @@
 """The deployment's mail configuration: a console decision over an env fallback.
 
-See [ADR 0051](../../../../docs/adr/0051-settings-identity-and-email.md).
+See ADR 0051.
 
 ``email_settings`` is a single row the console edits; when there is no row (or
 it names no host) the environment's SMTP values stand, which is what keeps an

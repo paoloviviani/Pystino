@@ -1,6 +1,6 @@
 """Which engine this worker is running, and how it learns that it changed.
 
-See [ADR 0033](../../../../docs/adr/0033-redaction-engine-selection.md).
+See ADR 0033.
 
 Redaction used to be read once, at startup, from the environment. Now an admin
 can change it from the console, which raises a question the old design did not

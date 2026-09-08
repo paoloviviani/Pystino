@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check the Responses, Anthropic Messages and image routes against the stack.
 
-What only this can prove (docs/adr/0030-more-surfaces.md):
+What only this can prove (ADR 0030):
 
 * the three new routes are reachable, authenticated and metered over real HTTP,
   through the real provider client rather than an injected transport;

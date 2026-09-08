@@ -1,8 +1,8 @@
 """Plugin lookup.
 
-Same shape as the redaction registry ([ADR 0026](../../../../docs/adr/0026-pluggable-detection.md)),
+Same shape as the redaction registry (ADR 0026),
 for the same reasons and resolved the same way in
-[ADR 0032](../../../../docs/adr/0032-provider-plugins.md): the plugins we
+ADR 0032: the plugins we
 maintain are in-tree, so they are reviewed and tested with the gateway, and a
 deployment can add a counterparty of its own without forking:
 
@@ -151,7 +151,7 @@ def resolve(name: str | None) -> ProviderPlugin:
         return factory()
 
     # Third-party plugins register under the ENTRY_POINT_GROUP entry point; see
-    # docs/adr/0032-provider-plugins.md. That is how a name reaches the available
+    # ADR 0032. That is how a name reaches the available
     # list, and is not an action for whoever typed the wrong one.
     raise UnknownPluginError(
         f"unknown provider plugin {wanted!r}. Available: {', '.join(available())}."

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Quota admission under concurrency, against a real Valkey.
 
-What only this can prove (docs/adr/0009-quota-model.md):
+What only this can prove (ADR 0009):
 
 The unit suite exercises `InMemoryCounterStore`, which is atomic for an
 uninteresting reason — it never awaits, so the event loop cannot interleave

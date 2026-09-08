@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check inference providers against the running compose stack.
 
-What only this can prove (docs/adr/0027-inference-providers.md):
+What only this can prove (ADR 0027):
 
 * the credential really is encrypted **in PostgreSQL**, not just in a unit test's
   SQLite file;

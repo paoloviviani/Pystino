@@ -4,7 +4,7 @@ Revision ID: 0010
 Revises: 0009
 Create Date: 2026-08-24
 
-See docs/adr/0032-provider-plugins.md. ``providers.plugin`` replaces three
+See ADR 0032. ``providers.plugin`` replaces three
 columns that were each added for one counterparty's habit:
 
 * ``auth_scheme`` — added when Anthropic's own API turned out to reject a bearer
@@ -75,7 +75,7 @@ def _warn_about_untranslatable_values(bind: sa.engine.Connection) -> None:
                 f"  migration 0010: provider {name!r} had forward_stream_options="
                 f"{bool(forwards)!r} and its plugin ({plugin or 'generic'}) {became} "
                 "stream usage. Behaviour changes at this upgrade. If that is wrong, "
-                "the fix is a plugin, not a column — see docs/adr/0032-provider-plugins.md."
+                "the fix is a plugin, not a column — see ADR 0032."
             )
         # A plugin that reads its own counterparty's cost does not need the
         # declaration; only the generic one relied on it, and it now reports
@@ -86,7 +86,7 @@ def _warn_about_untranslatable_values(bind: sa.engine.Connection) -> None:
                 "and has no plugin that knows that unit, so its reported cost will no "
                 "longer be recorded. Past rows keep the figure they were recorded with. "
                 "To keep recording it, register a plugin under the 'llmp.providers' "
-                "entry point — see docs/adr/0032-provider-plugins.md."
+                "entry point — see ADR 0032."
             )
 
 

@@ -4,7 +4,7 @@ Revision ID: 0005
 Revises: 0004
 Create Date: 2026-08-16
 
-See docs/adr/0030-more-surfaces.md. Four additions, all safe on a populated
+See ADR 0030. Four additions, all safe on a populated
 table:
 
 * ``models.kind`` gains ``image``. The column is a non-native enum (a varchar

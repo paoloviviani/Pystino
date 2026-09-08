@@ -1,6 +1,6 @@
 """What a counterparty plugin is, and the one rule it must obey.
 
-See [ADR 0032](../../../../docs/adr/0032-provider-plugins.md). Three ideas
+See ADR 0032. Three ideas
 carry the design.
 
 **Providers and routers are different kinds**, distinguished by a single

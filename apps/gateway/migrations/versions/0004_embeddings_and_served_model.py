@@ -4,7 +4,7 @@ Revision ID: 0004
 Revises: 0003
 Create Date: 2026-08-15
 
-See docs/adr/0028-embeddings-and-served-model.md. Three additions, all safe on a
+See ADR 0028. Three additions, all safe on a
 populated table:
 
 * ``models.kind`` — chat or embedding. Everything catalogued today is chat, which

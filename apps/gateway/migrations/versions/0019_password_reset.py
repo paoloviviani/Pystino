@@ -4,7 +4,7 @@ Revision ID: 0019
 Revises: 0018
 Create Date: 2026-09-02
 
-See docs/adr/0049-password-reset.md.
+See ADR 0049.
 
 One row per email sent, and it is spent by use: the hash stored here is what
 the confirm endpoint looks up, so the link in the email carries a secret that

@@ -10,7 +10,7 @@ authors = [{ name = "LINKS Foundation" }]
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",       # brings uvloop + httptools
-    "httpx>=0.28",                   # see docs/adr/0013-upstream-http-client.md
+    "httpx>=0.28",                   # see https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0013-upstream-http-client.md
     "sqlalchemy[asyncio]>=2.0.36,<2.1",  # 2.1 is beta as of 2026-08; do not ship it
     "asyncpg>=0.30",
     "alembic>=1.14",
