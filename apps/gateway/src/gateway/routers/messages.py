@@ -159,7 +159,9 @@ async def create_message(
         out["model"] = model.name
     for block in out.get("content") or []:
         if isinstance(block, dict) and isinstance(block.get("text"), str):
-            block["text"] = await redactor.redact_response_text(block["text"], outcome)
+            # `.text` alone: this surface's citations carry their own copy of
+            # the quoted text rather than offsets into ours (ADR 0059).
+            block["text"] = (await redactor.restore_response(block["text"], outcome)).text
 
     await metered.completed(upstream_status=response.status_code)
     return JSONResponse(status_code=response.status_code, content=out)

@@ -43,6 +43,7 @@ from gateway.deps import (
 )
 from gateway.errors import BadRequestError, error_payload
 from gateway.models import ApiSurface
+from gateway.protocols import reader_for
 from gateway.routers import _metered
 from gateway.routers.chat import STREAM_HEADERS, settle_completed, spawn_finalisation
 from gateway.schemas import ResponsesRequest
@@ -169,7 +170,12 @@ async def create_response(
     if out.get("model") is not None:
         out["model"] = model.name
     if assembled := _assembled_text(out):
-        _rewrite_all(out, await redactor.redact_response_text(assembled, outcome))
+        restored = await redactor.restore_response(assembled, outcome)
+        _rewrite_all(out, restored.text)
+        if restored.moved:
+            reader_for(SURFACE).shift_citations(
+                out, lambda _choice, offset: restored.shift(offset)
+            )
 
     await metered.completed(upstream_status=response.status_code)
     return JSONResponse(status_code=response.status_code, content=out)

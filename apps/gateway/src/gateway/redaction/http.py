@@ -25,6 +25,7 @@ from llmp_shared import (
     DetectionResponse,
     EntitySpan,
     PlaceholderMap,
+    Restored,
     opaque_placeholder,
     placeholder_for,
 )
@@ -281,6 +282,9 @@ class RestoreStage(TextRewriteStage):
     def transform(self, text: str, *, final: bool) -> str:
         return self._placeholders.restore(text)
 
+    def edits_in(self, text: str) -> Restored:
+        return self._placeholders.restore_with_edits(text)
+
 
 class HttpDetectionRedactor:
     """Redaction backed by an HTTP detection service."""
@@ -495,10 +499,12 @@ class HttpDetectionRedactor:
             surface=surface,
         )
 
-    async def redact_response_text(self, text: str, outcome: RedactionOutcome) -> str:
+    async def restore_response(self, text: str, outcome: RedactionOutcome) -> Restored:
         if not self._settings.restore_in_response:
-            return text
-        return outcome.placeholder_map.restore(text)
+            # Callers keep the placeholders, so nothing moved and any offsets
+            # they hold are still the provider's own.
+            return Restored(text=text)
+        return outcome.placeholder_map.restore_with_edits(text)
 
 
 def _longest_placeholder(placeholders: PlaceholderMap) -> int:

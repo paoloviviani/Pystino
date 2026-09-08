@@ -83,39 +83,20 @@ backend slots in. Results coming back are untrusted text entering the prompt —
 a prompt-injection surface added deliberately, and it should be written down as
 such rather than discovered.
 
-**Citation offsets do not survive redaction.** This replaces a claim an
-earlier version of this document made, which was wrong and is worth recording
-as such: it said Anthropic's `encrypted_content` requirement and our redaction
-were "in direct conflict" and that a 400 was waiting. Checked against the code
-rather than inferred from the provider's documentation, that is not true.
-`_message_texts` in `redaction/http.py` collects a content part's `text` string
-and nothing else, and `MessagesReader.rewrite_whole` rewrites `block["text"]`
-and nothing else. A `web_search_tool_result` block has no `text` key — its
-results live under `content`, with `encrypted_content` inside them — so neither
-direction touches it. Anthropic gets its blocks back byte for byte.
+**Citation offsets and redaction: fixed, and not the conflict this document
+first claimed.** The original version said Anthropic's `encrypted_content`
+requirement and our redaction were in direct conflict, with a 400 waiting for
+multi-turn native search. That was inferred from Anthropic's documentation and
+never checked against the code; it is wrong, and checking it turned up the real
+defect one field over. Both are written up in
+[ADR 0059](adr/0059-citation-offsets.md), which is built: restoration now
+reports where it wrote, and each surface moves the offsets it knows about.
 
-What is actually broken is one field over, and it is real:
-
-**Placeholder restoration changes the length of the assistant's text, and
-OpenAI's citations are character offsets into that text.** A `url_citation`
-annotation carries `start_index` and `end_index`; restoring `<PERSON_1>` to a
-real name moves every character after it. `ChatCompletionsReader.rewrite_whole`
-rewrites `message["content"]` and never looks at `message["annotations"]` —
-nothing in the gateway reads or writes annotations at all today — so every
-citation on a redacted response points at the wrong span. Latent until
-somebody uses search on the chat surface, and then wrong quietly rather than
-loudly.
-
-Anthropic's *web search* citations escape this because they carry
-`encrypted_index` and `cited_text` rather than offsets into our text. Its
-**document** citations do use character indices, which is the same trap one
-feature over.
-
-The mild version, worth knowing before somebody debugs it: on a multi-turn
-conversation the client replays the assistant turn, we re-redact its `text`
-blocks, and `encrypted_content` passes through untouched — so the provider
-decrypts its own original search results and reads them beside our redacted
-prose. Not an error; just the two halves of one message disagreeing.
+What remains true and unfixed is the mild version. On a multi-turn conversation
+the client replays the assistant turn, we re-redact its `text` blocks, and
+`encrypted_content` passes through untouched — so the provider decrypts its own
+original search results and reads them beside our redacted prose. Not an error;
+just the two halves of one message disagreeing.
 
 ## One thing not to copy
 
