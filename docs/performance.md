@@ -10,6 +10,12 @@
   throughput as a floor and CPU-per-request as the transferable number.
 - Related: [docs/redaction-scoping-plan.md](redaction-scoping-plan.md), which
   turns out to be a performance feature as much as a policy one.
+- Sources for the comparison table: LiteLLM's own
+  [benchmarks page](https://docs.litellm.ai/docs/benchmarks), Tetrate's
+  [Envoy AI Gateway benchmarks](https://tetrate.io/learn/ai/ai-gateway-benchmarks),
+  and DeepInspect's
+  [reading the 2026 numbers](https://www.deepinspect.ai/blog/ai-gateway-latency-benchmarks),
+  whose warning about mock upstreams applies to every figure here including ours.
 
 ## Method, and why it is CPU rather than throughput
 
@@ -129,6 +135,71 @@ With redaction switched on the shape is identical and the knee moves out one
 step, to concurrency 12 at 130 req/s — the prompts in this sweep are a few
 tokens each, so detection has almost nothing to do. The next section is where
 redaction actually costs.
+
+### How this compares, and to what
+
+Worth writing down because "is 24ms of overhead good" has no answer without a
+peer group, and the peer group is not the one the marketing pages imply.
+
+| | added latency | measured on |
+|---|---|---|
+| Envoy AI Gateway | 1–3ms | proxy only; no metering, no ledger |
+| Kong (nginx + Lua) | 2–5ms | same class |
+| Portkey, bare proxy | <1ms claimed | — |
+| Portkey **with guardrails on** | 20–40ms, community-reported | the comparable class |
+| LiteLLM proxy | **12ms** median, p95 29ms, at 1,036 RPS | 2 instances × 4 CPU / 8 GB, fake upstream |
+| LiteLLM proxy | 2ms median, at 1,170 RPS | 4 instances × 4 CPU / 8 GB |
+| **this gateway** | **~24ms** (26.3 total − 2.0 upstream) | 2 workers, 5 shared cores, everything co-resident |
+
+Read honestly, three things follow.
+
+**The sub-3ms figures are a different class of product.** A proxy that routes
+and forwards does not write a ledger row before the upstream call, reserve
+against five quota scopes, settle at actuals, or run named-entity recognition.
+Those are not overheads that better engineering removes; they are the thing
+being built. The right comparison for us is the "guardrails enabled" band, and
+~24ms sits inside it.
+
+**Against LiteLLM we are about 2x slower per request, on half the cores.** That
+is the comparison that should sting a little, and it is not explained away by
+the ledger: their published run used a fake upstream and PostgreSQL, as ours
+does. Two differences are real and worth keeping in view — they measure
+`x-litellm-overhead-duration-ms`, their own processing as they instrument it,
+against our wall-clock p50 minus the upstream; and their advice is
+"workers = CPU count" where we ship two. See below for what that is actually
+worth here.
+
+**Per core we are 2.5–5x behind their throughput.** Theirs is ~129 req/s per
+core (1,036 RPS over 8 cores); ours is ~26 measured (130 over 5) or 49 by the
+CPU model. Some of that gap is the two ledger writes and the reserve/settle
+pair, which are deliberate. How much is *not* deliberate is unmeasured, and
+that is the honest state of it.
+
+### Does the worker count explain it? Measured: mostly no
+
+LiteLLM's guidance is workers = CPU count. The gateway ships two. Four were
+measured on this 5-core box, same everything else, redaction on:
+
+| concurrency | 2 workers | 4 workers |
+|---|---|---|
+| 4 | 98 req/s, p95 58ms | 74 req/s, p95 97ms |
+| 8 | 124 req/s, p95 89ms | 86 req/s, p95 158ms |
+| 12 | **130 req/s**, p95 135ms | 127 req/s, p95 189ms |
+| 16 | 112 req/s, p95 256ms | **139 req/s**, p95 250ms |
+| 24 | 100 req/s, p95 602ms | 137 req/s, p95 349ms |
+| 32 | 83 req/s, p95 830ms | 115 req/s, p95 529ms |
+
+Peak throughput moved 130 → 139 req/s: **7%, for double the processes.** What
+four workers actually bought is a gentler collapse — at concurrency 32,
+115 req/s against 83, with p95 529ms against 830ms — and it cost latency below
+the knee, where four processes contend for cores that Postgres, Valkey and
+Presidio are also using.
+
+So the box is **core-limited, not worker-limited**, and "workers = CPU count"
+does not transfer to a deployment where the CPUs are shared with the
+dependencies — above all with the detection service, which is the hungriest
+thing on the host. Two workers stays the default. On a host where the gateway
+runs alone, raise it; the measurement to repeat is this table.
 
 ### Redaction against prompt length, re-measured
 
