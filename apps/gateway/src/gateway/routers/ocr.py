@@ -272,10 +272,13 @@ async def extract_document(
             metered=metered,
         )) is not None:
             return blocked
-        await metered.completed(upstream_status=200)
         # Our name for the caller, the extractor's own in the ledger.
         extracted["model"] = model.name
-        return JSONResponse(status_code=200, content=extracted)
+        return JSONResponse(
+            status_code=200,
+            content=extracted,
+            background=metered.completed_after_response(upstream_status=200),
+        )
 
     assert upstream is not None  # `local` is false, so this was resolved above
     payload = body.upstream_payload(upstream_model=model.upstream_model)
@@ -309,10 +312,13 @@ async def extract_document(
     )) is not None:
         return blocked
 
-    await metered.completed(upstream_status=response.status_code)
     # Our model name, not the counterparty's, exactly as every other route does:
     # clients compare the echoed name against what they sent. The upstream's own
     # name is in the ledger.
     if body_out.get("model") is not None:
         body_out["model"] = model.name
-    return JSONResponse(status_code=response.status_code, content=body_out)
+    return JSONResponse(
+        status_code=response.status_code,
+        content=body_out,
+        background=metered.completed_after_response(upstream_status=response.status_code),
+    )

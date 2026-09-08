@@ -214,6 +214,11 @@ class RequestAccounting:
         self._finalised = False
         self._last_actuals = QuotaAmounts()
 
+    @property
+    def request_id(self) -> str:
+        """The id this request is logged and traced under."""
+        return self._ctx.request_id
+
     # -- lifecycle ---------------------------------------------------------
 
     async def begin(self) -> uuid.UUID:

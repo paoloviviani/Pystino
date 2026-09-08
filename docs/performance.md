@@ -136,6 +136,36 @@ step, to concurrency 12 at 130 req/s — the prompts in this sweep are a few
 tokens each, so detection has almost nothing to do. The next section is where
 redaction actually costs.
 
+### Moving the final write off the critical path (2026-09-08)
+
+[ADR 0060](adr/0060-settle-after-the-response.md). The `UPDATE usage_records`
+and the counter settle used to be awaited between the upstream answering and
+the response going out; they now ride on the response as a background task.
+Same host, same 2 workers, redaction on:
+
+| | before | after (median of 3) |
+|---|---|---|
+| `/v1/chat/completions` p50 | 25.4ms | **21.1ms** |
+| p95 | 37.9ms | **25.4ms** |
+| CPU per request | 22.2ms | 20.5ms |
+
+CPU unchanged, latency down: the signature of work moved rather than removed.
+
+Under saturation it is neutral to worse — peak throughput unchanged inside a
+wide spread (110–127 req/s across three runs of the same code, against 130
+before), and p95 at concurrency 12 consistently worse (192–245ms against
+135ms). Awaiting the settle was accidental backpressure; deferring overlaps the
+write with the next request instead of removing it. Below the knee that overlap
+is free, and below the knee is where this doc already argues a deployment
+should stay.
+
+**A cheaper-looking idea that was measured and dropped:** switching response
+serialisation from the standard library to orjson. Six to fourteen times
+faster in relative terms and worth 0.009ms on a chat completion — 0.04% of the
+request. The ADR has the table. FastAPI 0.141 already serialises
+response-model routes straight to bytes, and its `ORJSONResponse` is
+deprecated for that reason.
+
 ### How this compares, and to what
 
 Worth writing down because "is 24ms of overhead good" has no answer without a

@@ -310,8 +310,12 @@ async def _buffered_response(
             ),
         )
 
-    await metered.completed(upstream_status=response.status_code)
-    return JSONResponse(status_code=200, content=body_payload)
+    # Finalised after the answer is sent, not before it (ADR 0060).
+    return JSONResponse(
+        status_code=200,
+        content=body_payload,
+        background=metered.completed_after_response(upstream_status=response.status_code),
+    )
 
 
 async def _stream_response(
