@@ -282,6 +282,7 @@ docker compose --env-file deploy/.env \
 ./scripts/test_surfaces_live.py     # responses, anthropic messages, images
 ./scripts/test_quota_race_live.py   # admission under concurrency, real Valkey
 ./scripts/test_cache_accounting_live.py  # a real cache hit, and the ledger
+./scripts/test_web_search_live.py    # per-search billing, the report and its CSV
 ./scripts/benchmark_live.py         # per-layer cost; see docs/performance.md
 ./scripts/test_public_tls_live.py   # only with the proxy overlay: TLS, the
                                     # rotated credentials, and that nothing else
