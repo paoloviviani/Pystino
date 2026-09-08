@@ -152,18 +152,32 @@ class TestTheRoute:
         assert response.status_code == 400
         assert "noop" in response.text
 
-    async def test_switching_off_without_a_reason_is_refused(
+    async def test_switching_off_without_a_reason_is_allowed(
         self, app: object, client: httpx.AsyncClient, seeded: Seeded, session_factory: object
     ) -> None:
-        """The one change that makes the system quietly stop protecting anything.
+        """Refused until this was asked to be dropped, and the drop is the point.
 
-        So it is the one that has to be typed out. A checkbox saying "I
-        understand" would produce no record; this produces a row.
+        Turning redaction off used to require a written reason on the grounds
+        that a later review would read it. A sentence typed to get past a
+        dialog is not an audit trail, and what a review can actually rely on —
+        which engine, who chose it, when — is recorded either way. The
+        confirmation stays; the form does not.
         """
         as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
         response = await client.put(ENGINE_URL, json={"engine": "noop", "reason": "   "})
-        assert response.status_code == 400
-        assert "give a reason" in response.text.lower()
+        assert response.status_code == 200
+        assert response.json()["engine"] == "noop"
+
+    async def test_a_reason_is_still_kept_when_one_is_given(
+        self, app: object, client: httpx.AsyncClient, seeded: Seeded, session_factory: object
+    ) -> None:
+        """Optional, not removed: an operator who explains is still recorded."""
+        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
+        response = await client.put(
+            ENGINE_URL, json={"engine": "noop", "reason": "detector down for maintenance"}
+        )
+        assert response.status_code == 200
+        assert response.json()["configured"]["reason"] == "detector down for maintenance"
 
     async def test_an_engine_the_environment_cannot_satisfy_is_refused_before_saving(
         self,

@@ -320,9 +320,12 @@ describe("AdminRedaction", () => {
     expect(captured.puts[0]!.body).toEqual({ engine: "http", reason: "" });
   });
 
-  it("makes turning redaction off require a written reason", async () => {
-    // The one change that makes the system quietly stop protecting anything. A
-    // checkbox saying "I understand" would leave no record; this leaves a row.
+  it("stops and asks before turning redaction off, and asks for nothing", async () => {
+    // Still the one change that makes the system quietly stop protecting
+    // anything, so it still confirms. It no longer demands a written reason:
+    // that was dropped deliberately, on the grounds that a sentence typed to
+    // get past a dialog is not an audit trail, and the row records the engine,
+    // who chose it and when regardless.
     const { fetch, captured } = withEngineChange(
       status(),
       status({ engine: "noop", enabled: false }),
@@ -334,15 +337,17 @@ describe("AdminRedaction", () => {
     await user.click(await screen.findByRole("button", { name: "Turn redaction off" }));
 
     const dialog = within(await screen.findByRole("dialog"));
-    // Nothing is sent until a reason is typed.
-    expect(dialog.getByRole("button", { name: "Turn it off" })).toBeDisabled();
+    // What the change does is still said, in red, before anything is sent.
+    expect(
+      dialog.getByText(/prompts will reach providers exactly as callers sent them/i),
+    ).toBeInTheDocument();
+    expect(dialog.queryByLabelText("Reason")).not.toBeInTheDocument();
     expect(captured.puts.length).toBe(0);
 
-    await user.type(dialog.getByLabelText("Reason"), "service migration");
     await user.click(dialog.getByRole("button", { name: "Turn it off" }));
 
     await waitFor(() => expect(captured.puts.length).toBe(1));
-    expect(captured.puts[0]!.body).toEqual({ engine: "noop", reason: "service migration" });
+    expect(captured.puts[0]!.body).toEqual({ engine: "noop", reason: "" });
   });
 
   it("says whether the environment or this console decided the engine", async () => {

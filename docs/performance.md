@@ -1,7 +1,10 @@
 # What the gateway costs, measured
 
 - Measured 2026-08-22 against the running compose stack with
-  `scripts/benchmark_live.py`, which reproduces every figure here.
+  `scripts/benchmark_live.py`, which reproduces every figure here, and
+  **re-measured on a 5-core box on 2026-09-08** — see "Re-measured on 5 cores"
+  below for what changed (single-request latency: nothing) and what it revealed
+  (the throughput knee, at concurrency 8).
 - **The box: 2 cores, 3 GB, everything co-resident** — gateway, Postgres,
   Valkey, Presidio, Keycloak, the fake upstream, *and* the load generator. Treat
   throughput as a floor and CPU-per-request as the transferable number.
@@ -76,6 +79,101 @@ TTL.
 
 The two writes are by design — the in-progress row exists before the upstream
 call so a crash mid-request is visible — and are not a saving to go after.
+
+## Re-measured on 5 cores, 2026-09-08
+
+The figures above are from the 2-core/3 GB box. Repeated on
+`130.192.84.103` — **5 cores, 14 GB**, still with everything co-resident
+including the load generator, and with the gateway running its usual **2 uvicorn
+workers**. Two conclusions, and the second is the useful one.
+
+**Single-request latency barely moved**, which is what the CPU-per-request model
+predicts: one request uses one core, so more cores buy nothing for it.
+
+| | 2 cores (2026-08-22) | 5 cores (2026-09-08) |
+|---|---|---|
+| upstream called directly | 1.6ms | 2.0ms |
+| `/healthz` | 1.2ms | 2.9ms |
+| `/readyz` | 2.5ms | 3.9ms |
+| `/v1/models` | 5.3ms | 8.7ms |
+| `/v1/chat/completions` | 19.3ms | 26.3ms (p95 42.6) |
+
+Slower per request on the bigger box, not faster. The measurement is p50 at
+concurrency 1 over a loopback network, so it is dominated by per-request CPU
+work and scheduler noise, not by core count — and this host is busier, with
+other development containers on it. **This is why the doc leads with CPU per
+request:** 20.3ms of CPU here against 12.2ms there is the same shape of answer,
+and it is the number that extrapolates.
+
+**Throughput has a knee, and it is early.** A sweep from 1 to 48 concurrent
+requests, unique prompt per request:
+
+| concurrency | p50 | p95 | req/s |
+|---|---|---|---|
+| 1 | 27ms | 41ms | 35 |
+| 2 | 26ms | 37ms | 73 |
+| 4 | 45ms | 56ms | 96 |
+| **8** | **61ms** | **86ms** | **130** |
+| 12 | 88ms | 122ms | 128 |
+| 16 | 123ms | 233ms | 120 |
+| 24 | 190ms | 575ms | 103 |
+| 32 | 250ms | 855ms | 98 |
+| 48 | 358ms | 1123ms | 104 |
+
+Peak throughput is at **concurrency 8: 130 req/s at p95 86ms**. Past it the
+work done stops growing and only the queue does — at 48 the p95 is **13x** the
+p95 at the knee for *less* throughput. That is the argument for shedding load at
+the edge rather than queueing it here, made in numbers rather than in principle.
+
+With redaction switched on the shape is identical and the knee moves out one
+step, to concurrency 12 at 130 req/s — the prompts in this sweep are a few
+tokens each, so detection has almost nothing to do. The next section is where
+redaction actually costs.
+
+### Redaction against prompt length, re-measured
+
+Unique text per request, so nothing hits the per-process detection cache:
+
+| prompt | p50 | total CPU | of which the gateway |
+|---|---|---|---|
+| ~35 tokens | 74ms | 61ms | 32ms |
+| ~284 tokens | 122ms | 108ms | 35ms |
+| ~1,136 tokens | 268ms | 229ms | 44ms |
+| ~4,544 tokens | 596ms | 625ms | 64ms |
+
+**0.116ms of latency per prompt token**, against 0.1ms measured on the 2-core
+box — the same number within noise, and for the same reason single-request
+latency did not improve: detection is one CPU-bound pass in one Presidio
+process. The gateway's own share stays between 32ms and 64ms across a 130x
+range of prompt sizes; everything else is the detector.
+
+A 4,500-token prompt costs **0.6 seconds** and **0.625 CPU-seconds**. At that
+size one core serves 1.6 requests per second. That is the capacity fact behind
+[docs/redaction-scoping-plan.md](redaction-scoping-plan.md): scoping redaction
+is not a policy nicety, it is how a deployment with long prompts stays
+affordable.
+
+### How these were taken
+
+```bash
+set -a; . deploy/.env; set +a
+export FAKE_UPSTREAM_URL=http://127.0.0.1:8081
+uv run python scripts/benchmark_live.py ladder
+uv run python scripts/benchmark_live.py load 1,2,4,8,12,16,24,32,48
+uv run python scripts/benchmark_live.py redaction
+```
+
+The `load` mode takes an explicit sweep now, because the knee is the actionable
+number and the old fixed `(1, 2, 8, 32)` steps could not see it. It also sends a
+distinct prompt per request: with one repeated prompt every request after the
+first hits the detection cache, which flatters the numbers **only when redaction
+happens to be enabled** — the worst kind of artefact for a figure somebody plans
+capacity from.
+
+The direct-upstream row needs the fake upstream reachable from the host, which
+the smoke overlay now publishes on **127.0.0.1:8081** — loopback only. Ground
+rule 4 forbids publishing anything but the proxy's TLS port on a *routable*
+address, and `scripts/test_public_tls_live.py` still enforces exactly that.
 
 ## Redaction dominates everything
 

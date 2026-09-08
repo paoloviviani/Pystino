@@ -32,9 +32,17 @@ That reasoning still holds and it was raised before building this. The decision
 is to build the toggle anyway, and to spend the design effort on the word
 **silently** rather than on refusing. Concretely, four things make it loud:
 
-1. **A written reason is required** to move to an engine that redacts nothing,
-   and only for that direction. Turning protection *on* needs no justification —
-   a prompt with no reader trains people to type "x".
+1. ~~**A written reason is required** to move to an engine that redacts
+   nothing, and only for that direction.~~ **Dropped on 2026-09-08**, on
+   request. A reason is still accepted and still kept when one is given; it is
+   no longer demanded. The argument for dropping it beat the argument that put
+   it here, and by this ADR's own reasoning: it worried that a prompt with no
+   reader "trains people to type 'x'" — and then required exactly such a prompt
+   on the one path an operator reaches while handling an incident. What a later
+   review can actually rely on is items 2 to 4, which are unchanged: an
+   append-only row naming the engine, the admin and the moment; a screen that
+   says so in `danger` tone; and a WARNING in the log. The console still stops
+   and confirms, it just no longer asks for a sentence to get past the dialog.
 2. **The row is append-only.** The history is the feature: "who turned it off,
    when, and why" is a question asked about a window that has already closed, and
    a mutable row answers it only for the most recent change, which is the one
@@ -42,7 +50,8 @@ is to build the toggle anyway, and to spend the design effort on the word
 3. **The screen already says so.** `_redaction_warnings` has warned about a
    non-redacting engine since the read-only version, in `danger` tone, and the
    engine list carries a `Redacts nothing` badge on the row itself.
-4. **The change is logged at WARNING** with the admin and the reason.
+4. **The change is logged at WARNING** with the admin, and the reason when
+   one was given.
 
 What would have been genuinely worse than a loud toggle: an operator responding
 to an incident by editing an environment variable and restarting the gateway,
@@ -108,7 +117,7 @@ In order, in `PUT /api/admin/redaction/engine`:
 | an engine that is not installed | the registry's own rule: a gateway that believes redaction is on when it is not is the worst available outcome |
 | an engine the environment cannot satisfy | the row would hold a configuration that cannot be built, so every worker logs a construction failure on its next poll and continues with the old engine — which looks like the change not working and reads like a bug |
 | a detection engine whose service is not answering | test before save, the same rule providers follow. Enabling it fails every request needing redaction, or with `fail_open` forwards every prompt unredacted |
-| switching the layer off with no reason | the record is the whole mitigation in §"the concern", above |
+| ~~switching the layer off with no reason~~ | no longer refused — see item 1 of §"the concern". The record is still the mitigation; the typed sentence was not part of it |
 
 The service check is **skipped when it is already the engine in force**, or an
 operator could not switch away from a broken engine and back during an incident.
