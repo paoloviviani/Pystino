@@ -5,7 +5,7 @@ provider support…)", against
 <https://openrouter.ai/docs/guides/features/server-tools/web-search>.
 
 The answer is yes, in three pieces of very different size. **Phase 1 is built**
-([ADR 0058](adr/0058-per-search-pricing.md)). Phases 2 and 3 are recorded here
+([ADR 0058](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0058-per-search-pricing.md)). Phases 2 and 3 are recorded here
 rather than started, because the second one asks a question about what this
 gateway *is* that should be answered deliberately.
 
@@ -89,7 +89,7 @@ requirement and our redaction were in direct conflict, with a 400 waiting for
 multi-turn native search. That was inferred from Anthropic's documentation and
 never checked against the code; it is wrong, and checking it turned up the real
 defect one field over. Both are written up in
-[ADR 0059](adr/0059-citation-offsets.md), which is built: restoration now
+[ADR 0059](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0059-citation-offsets.md), which is built: restoration now
 reports where it wrote, and each surface moves the offsets it knows about.
 
 What remains true and unfixed is the mild version. On a multi-turn conversation

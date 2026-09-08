@@ -42,7 +42,7 @@ class UpstreamSettings(BaseModel):
     extra_headers: dict[str, str] = Field(default_factory=dict)
     # httpx's default read timeout is 5s, which silently kills long streams.
     # Read must be None; connect must stay finite so a dead provider fails fast.
-    # See docs/adr/0013-upstream-http-client.md
+    # See ADR 0013
     connect_timeout_seconds: float = 10.0
     write_timeout_seconds: float = 30.0
     pool_timeout_seconds: float = 10.0
@@ -62,7 +62,7 @@ class OIDCSettings(BaseModel):
     ``access_token_audience`` additionally accepts OIDC **access** tokens there,
     which is what lets a first-party application (the chat app, the ``opencode``
     device flow) call the gateway as the human using it without minting and
-    storing a key per user. See [ADR 0040](docs/adr/0040-bearer-tokens-on-v1.md).
+    storing a key per user. See ADR 0040.
     """
 
     enabled: bool = False
@@ -540,7 +540,7 @@ class RedactionSettings(BaseModel):
     Phase 1 ships ``noop``. ``http`` calls an out-of-process detection service
     (Presidio in Phase 2) — never in-process, because spaCy inference is
     CPU-bound and synchronous and would stall every concurrent stream on the
-    worker. See docs/adr/0012-redaction-interface.md
+    worker. See ADR 0012
     """
 
     # Not a Literal: third-party engines register through the `llmp.redactors`
@@ -620,7 +620,7 @@ class QuotaSettings(BaseModel):
     # Sliding windows are approximated with fixed buckets. The window edge is
     # accurate to one bucket, and a window is covered by at most
     # window/granularity keys, read in a single MGET. See
-    # docs/adr/0009-quota-model.md
+    # ADR 0009
     min_bucket_seconds: int = 1
     max_buckets_per_window: int = 60
 

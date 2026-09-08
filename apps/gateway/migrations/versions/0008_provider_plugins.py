@@ -4,7 +4,7 @@ Revision ID: 0008
 Revises: 0007
 Create Date: 2026-08-22
 
-See docs/adr/0032-provider-plugins.md.
+See ADR 0032.
 
 * ``providers.plugin`` — which plugin carries this counterparty's quirks. Null on
   every existing row, which resolves to the generic OpenAI-compatible behaviour:

@@ -2,7 +2,7 @@
 
 Built-in engines are registered here; third-party ones register through the
 ``llmp.redactors`` entry-point group, so ``pip install`` plus one setting is the
-whole integration ([0026](../../../../docs/adr/0026-pluggable-detection.md)):
+whole integration (0026):
 
 ```toml
 [project.entry-points."llmp.redactors"]
@@ -179,5 +179,5 @@ def resolve(name: str) -> RedactorFactory:
     raise UnknownEngineError(
         f"unknown redaction engine {name!r}. Available: {', '.join(available())}. "
         f"Third-party engines register under the {ENTRY_POINT_GROUP!r} entry-point group; "
-        "see docs/adr/0026-pluggable-detection.md."
+        "see ADR 0026."
     )

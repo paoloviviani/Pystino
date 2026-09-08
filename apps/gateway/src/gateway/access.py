@@ -4,8 +4,8 @@ One place, because the rule is now a union and it is asked in three: ``GET
 /v1/models``, ``GET /v1/models/{name}``, and the chat path. The same predicate
 written out three times is the same predicate until someone edits two of them.
 
-The rule ([0027](../../../docs/adr/0027-inference-providers.md), extended by
-[0045](../../../docs/adr/0045-public-models.md)):
+The rule (0027, extended by
+0045):
 
     a caller may use a model if **their billing group has been granted it, or
     they have been granted it personally, or the model is public**

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check per-search billing against the stack (docs/adr/0058-per-search-pricing.md).
+"""Check per-search billing against the stack (ADR 0058).
 
 What only this can prove:
 

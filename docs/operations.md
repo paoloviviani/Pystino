@@ -126,7 +126,7 @@ None blocking; all recorded so they are not rediscovered as surprises.
 
 ## Where decisions live
 
-Every significant decision is an ADR in [docs/adr/](adr/README.md), with the
+Every significant decision is an ADR in [docs/adr/](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/README.md), with the
 licence, version and CVE evidence behind it and the date it was checked. The
 conventions: number sequentially, never renumber, never delete — **supersede
 instead**, and say which ADR supersedes which. An ADR whose decision was

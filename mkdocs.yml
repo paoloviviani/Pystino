@@ -70,7 +70,6 @@ validation:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
-  - Architecture: architecture.md
   - Gateway: gateway.md
   - Accounting and quotas: accounting-and-quotas.md
   - Redaction: redaction.md
@@ -82,64 +81,10 @@ nav:
       - "OIDC against any provider": oidc-generic-provider.md
       - "Cache accounting findings": cache-accounting-findings.md
   - Plans:
-      - "Phase 2 — redaction and the console": phase-2-plan.md
       - "Redaction scoping — design": redaction-scoping-design.md
       - "Redaction scoping — plan": redaction-scoping-plan.md
-      - "MCP gateway — proposal": mcp-gateway-plan.md
-  - Design decisions:
-      - adr/README.md
-      - Foundational:
-          - "0001 — Licensing": adr/0001-licensing.md
-          - "0002 — Monorepo tooling": adr/0002-monorepo-tooling.md
-          - "0003 — Build, don't adopt, the gateway": adr/0003-build-vs-adopt-gateway.md
-      - "Gateway, built in Phase 1":
-          - "0004 — Runtime: Python 3.13 + FastAPI": adr/0004-gateway-runtime.md
-          - "0005 — Persistence: PostgreSQL": adr/0005-persistence.md
-          - "0006 — Counter store: Valkey": adr/0006-counter-store.md
-          - "0007 — SSE streaming": adr/0007-sse-streaming.md
-          - "0008 — Accounting model": adr/0008-accounting-model.md
-          - "0009 — Quota model": adr/0009-quota-model.md
-          - "0010 — API keys": adr/0010-api-keys.md
-          - "0011 — OIDC integration": adr/0011-oidc-integration.md
-          - "0012 — Redaction interface": adr/0012-redaction-interface.md
-          - "0013 — Upstream HTTP client: httpx": adr/0013-upstream-http-client.md
-          - "0014 — Model catalogue and pricing": adr/0014-model-catalogue-and-pricing.md
-          - "0022 — Administration as an API": adr/0022-administration-surface.md
-          - "0023 — The admin console": adr/0023-admin-console.md
-          - "0024 — Billing periods": adr/0024-billing-periods.md
-          - "0025 — Quota model v2": adr/0025-quota-model-v2.md
-          - "0026 — Pluggable detection": adr/0026-pluggable-detection.md
-          - "0027 — Inference providers": adr/0027-inference-providers.md
-          - "0028 — Embeddings and the served model": adr/0028-embeddings-and-served-model.md
-          - "0029 — Pagination": adr/0029-pagination.md
-          - "0030 — More surfaces": adr/0030-more-surfaces.md
-          - "0031 — Model capabilities": adr/0031-model-capabilities.md
-          - "0032 — Provider plugins": adr/0032-provider-plugins.md
-          - "0033 — Redaction engine selection": adr/0033-redaction-engine-selection.md
-          - "0034 — Bauhaus design language (superseded)": adr/0034-bauhaus-design-language.md
-          - "0035 — Public TLS exposure": adr/0035-public-tls-exposure.md
-          - "0036 — The model page": adr/0036-model-page.md
-          - "0037 — Redaction policy": adr/0037-redaction-policy.md
-          - "0038 — Scoped redaction": adr/0038-scoped-redaction.md
-          - "0039 — Redaction rules only": adr/0039-redaction-rules-only.md
-          - "0040 — Bearer tokens on /v1": adr/0040-bearer-tokens-on-v1.md
-          - "0042 — Material Design 3": adr/0042-material-design-3.md
-          - "0043 — Local authentication": adr/0043-local-authentication.md
-          - "0044 — Keycloak removed": adr/0044-keycloak-removed.md
-          - "0045 — Public models": adr/0045-public-models.md
-          - "0046 — Local `/v1` credentials": adr/0046-local-api-credentials.md
-          - "0047 — Tailwind + Base UI, dark theme": adr/0047-tailwind-base-ui-modern-refresh.md
-          - "0048 — OIDC policy as configuration": adr/0048-oidc-policy-configuration.md
-          - "0049 — Password reset by email": adr/0049-password-reset.md
-          - "0050 — Group management": adr/0050-group-management.md
-          - "0051 — Settings: identity providers and email": adr/0051-settings-identity-and-email.md
-          - "0052 — Quota notifications": adr/0052-quota-notifications.md
-          - "0053 — Model pricing sources": adr/0053-model-pricing-sources.md
-          - "0054 — Currency conversion": adr/0054-currency-conversion.md
-          - "0055 — OCR surface": adr/0055-ocr-surface.md
-      - "Recorded now, built later":
-          - "0017 — Desktop shell (Phase 4)": adr/0017-desktop-shell.md
-          - "0018 — Vector store (Phase 3)": adr/0018-vector-store.md
-          - "0019 — Document conversion (Phase 3)": adr/0019-document-conversion.md
-          - "0020 — Embeddings and reranking (Phase 3)": adr/0020-embeddings-and-reranking.md
-          - "0021 — Code sandbox (Phase 4+)": adr/0021-code-sandbox.md
+      - "Web search — priced, then the rest": web-search-plan.md
+  # The decisions themselves live in the ai-stack repository; this page is the
+  # generated index of them. The whole-stack architecture and the plans for work
+  # that has not started went with them.
+  - Design decisions: decisions.md
