@@ -562,6 +562,7 @@ CSV_HEADER = [
     "completion_tokens",
     "total_tokens",
     "images",
+    "searches",
     "cost",
     "currency",
     "estimated_requests",
@@ -598,6 +599,7 @@ def report_to_csv(report: UsageReport) -> str:
                 row.completion_tokens,
                 row.total_tokens,
                 row.images,
+                row.searches,
                 # Plain decimal, never scientific notation: a spreadsheet reading
                 # "1E-7" as text is a support ticket.
                 f"{row.cost:f}",

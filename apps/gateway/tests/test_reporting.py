@@ -367,6 +367,23 @@ class TestCsv:
         assert rows[-1]["label"] == "total"
         assert rows[-1]["currency"] == "EUR"
 
+    async def test_the_csv_carries_the_search_count(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        """Found by the live check, not by this suite.
+
+        The export keeps its own list of columns, so a unit added to the report
+        reaches the screen and silently misses the spreadsheet — which is the
+        artefact somebody reconciles an invoice in.
+        """
+        await record(
+            session, group_id=seeded.group.id, cost="3", searches=6, at=inside_this_month()
+        )
+        response = await admin_client.get("/api/admin/reports/usage.csv")
+
+        rows = list(csv.DictReader(io.StringIO(response.text)))
+        assert [row["searches"] for row in rows] == ["6", "6"]
+
     async def test_costs_are_plain_decimals_not_scientific_notation(
         self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
     ) -> None:
