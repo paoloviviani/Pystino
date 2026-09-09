@@ -107,7 +107,8 @@ async def create_message(
     )
 
     metered = await _metered.begin(
-        request,
+        fx=request.app.state.fx,
+        session_factory=request.app.state.session_factory,
         session=session,
         principal=principal,
         settings=settings,

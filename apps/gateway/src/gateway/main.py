@@ -19,6 +19,7 @@ from gateway.db import create_engine, create_session_factory
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.fx import FXService
 from gateway.identity_registry import OIDCProviderRegistry, seed_from_env
+from gateway.knowledge.resolver import KnowledgeResolver
 from gateway.logging_config import configure_logging
 from gateway.login_throttle import LoginThrottle
 from gateway.oidc_policy import OIDCPolicyResolver
@@ -186,6 +187,20 @@ async def init_app_state(
     except Exception:
         logger.warning("could not read the oidc policy at startup", exc_info=True)
     oidc_policy_resolver.start()
+    # The knowledge pipeline's settings (ADR 0062): the same
+    # console-decided, environment-baselined, polled arrangement as the two
+    # above. Read once before serving so a worker never ingests a document
+    # with the environment's chunk geometry when the console has already
+    # overridden it — the base snapshots what it was built with, so getting
+    # this wrong writes an index nobody can reproduce. Non-fatal by
+    # construction, like every startup read here.
+    knowledge_resolver = KnowledgeResolver(settings, session_factory)
+    app.state.knowledge = knowledge_resolver
+    try:
+        await knowledge_resolver.refresh()
+    except Exception:
+        logger.warning("could not read the knowledge configuration at startup", exc_info=True)
+    knowledge_resolver.start()
     # The reset-email cooldown, armed only when the feature is: an absent
     # throttle means POST /auth/password-reset answers 503, the same switch
     # the login throttle is.
@@ -284,6 +299,8 @@ async def shutdown_app_state(app: FastAPI) -> None:
     # after a console change.
     if (resolver := getattr(app.state, "redaction", None)) is not None:
         await resolver.aclose()
+    if (knowledge := getattr(app.state, "knowledge", None)) is not None:
+        await knowledge.aclose()
     if (policy := getattr(app.state, "oidc_policy", None)) is not None:
         await policy.stop()
     if (notifier := getattr(app.state, "quota_notifier", None)) is not None:

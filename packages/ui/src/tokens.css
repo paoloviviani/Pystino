@@ -19,7 +19,7 @@
  *
  * **The design language is a neutral greyscale with one indigo accent**, in
  * the contemporary product-console idiom (requested 2026-09-01, ADR 0047,
- * replacing the Material Design 3 pass of 0042). What carried over from 0042
+ * replacing the Material Design 3 pass of ADR 0042). What carried over from it
  * are the *requirements*, not the palette: sentence-case labels, tabular
  * figures under numbers, soft ink past the 4.5:1 floor, green/red as the
  * ok/danger pair, and — still, deliberately — no blur, no glass, no glow, no
