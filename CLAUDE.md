@@ -224,6 +224,26 @@ Inside the gateway, the pieces that carry the most weight:
   **`iss` is part of a user's identity** — users are keyed on
   `(issuer, subject)`, so changing the issuer re-provisions everyone as new
   rows with no memberships at their next login.
+- **A request may choose which group pays, and a key may not**
+  ([ADR 0061](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0061-per-request-billing-group.md)). `x-bill-to: <group name>`,
+  honoured only for a caller authenticated with an OIDC access token, because a
+  key already carries its answer — a key sending it is **refused rather than
+  ignored**, since a caller billed somewhere it did not ask for finds out from
+  an invoice. It grants no capability: `resolve_billing_group` re-checks
+  membership on every request anyway, so the header only reaches groups the
+  caller could already bill by changing their default. Three things worth
+  knowing. The lookup walks the user's **own memberships**, so a real group
+  they do not hold is indistinguishable from one that does not exist —
+  otherwise a billing header enumerates every group in the deployment. The
+  options come from **effective memberships and never the token's `groups`
+  claim**, which is the same trap ADR 0057 records: a hand-granted group is in
+  no token, and `test_bill_to.py` has one test that fails only for a
+  claim-reading implementation. And **sticky belongs to the client** — the
+  gateway persists nothing, because a second stored preference would disagree
+  with `default_billing_group` with no rule for which wins.
+  `GET /v1/billing/groups` is what a client reads to build the choice, and it
+  deliberately reports no spend or quota: it is the safe slice of the deferred
+  `/v1` usage work, not a down payment on its shape.
 - **A directory owns the memberships it granted, and no others**
   ([ADR 0057](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0057-group-ownership-and-sync.md)). `memberships.source`
   is `oidc` or `manual`; a login's sync grants and revokes the first kind and
@@ -332,6 +352,8 @@ docker compose --env-file deploy/.env \
 ./scripts/test_web_search_live.py    # per-search billing, the report and its CSV
 ./scripts/test_citations_live.py     # a citation still quotes its words after
                                     # redaction; needs an active redaction rule
+./scripts/test_bill_to_live.py      # x-bill-to against a real OIDC token, and
+                                    # that it refuses a group you do not hold
 ./scripts/benchmark_live.py         # per-layer cost; see docs/performance.md
 ./scripts/test_public_tls_live.py   # only with the proxy overlay: TLS, the
                                     # rotated credentials, and that nothing else
@@ -502,8 +524,10 @@ Known open items, none of them blocking:
   (ADR 0055) meters by the page, with two backends chosen by the model's
   provider: an upstream OCR model, or this deployment's own extractor
   (markitdown, in the redaction image with its NLP engine switched off, so a
-  `.docx` or a text-layer PDF never leaves). Outstanding: the price form has no
-  `per_page` field, so there is no live script yet, and
+  `.docx` or a text-layer PDF never leaves). Outstanding: there is no live
+  script yet — the note that said the price form has no `per_page` field is
+  **stale**, it has had one since the per-search work
+  (`AdminModelDetail.tsx`) — and
   `usage_info.credits` — what Cortecs reports on an OCR *response* — is **not
   read**, because whether it is micro-EUR like their chat surface or something
   else needs one real call with a key, and a figure in an unverified unit is

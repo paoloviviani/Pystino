@@ -78,3 +78,4 @@ supersede which; read it before adding one. The next number is the next number
 | [0058](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0058-per-search-pricing.md) | Provider-side web search is a billable unit, priced per search |
 | [0059](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0059-citation-offsets.md) | Restoring a placeholder moves the citations that point past it |
 | [0060](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0060-settle-after-the-response.md) | The final ledger write happens after the answer is sent |
+| [0061](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0061-per-request-billing-group.md) | A request may choose which group pays: `x-bill-to` |

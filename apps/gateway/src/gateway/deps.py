@@ -179,13 +179,18 @@ async def resolve_api_key(session: AsyncSession, secret: str) -> ApiKey:
 def resolve_billing_group(user: User, *, pinned: Group | None = None) -> Group:
     """Decide which group pays, and check the caller may still charge it.
 
-    A key may pin a group; otherwise the user's current default applies. Either
-    way membership is re-checked here rather than trusted from when the key was
-    minted, so leaving a group immediately stops you billing it.
+    A key may pin a group; a bearer caller may ask for one per request with the
+    ``x-bill-to`` header. Otherwise the user's current default applies. Every
+    route through here re-checks membership rather than trusting it from when
+    the key was minted or the token issued, so leaving a group immediately stops
+    you billing it — which is also what makes the header safe to honour.
 
-    A bearer caller has no key and so can never pin: the user's default is the
-    only answer, and the same membership check applies to it. Nothing about
-    *how* the caller authenticated changes who pays.
+    Note what the header is *not*: a new capability. It can only name a group
+    the caller is a member of right now, and any such group could already be
+    billed by changing the default through ``PUT /api/me/default-billing-group``.
+    It removes a round trip through the management API, nothing more. That is
+    the whole security argument, and it rests on the membership check below
+    rather than on anything the caller is trusted about.
     """
     group = pinned or user.default_billing_group
 
@@ -220,6 +225,43 @@ async def _touch_last_used(session: AsyncSession, api_key: ApiKey) -> None:
         logger.debug("could not update last_used_at", exc_info=True)
 
 
+# Lowercase and with no vendor segment, matching `x-filename` and
+# `x-request-id`, the two request headers this gateway already defines. The
+# deliberate contrast is HuggingFace's `X-HF-Bill-To`, which chat-ui sends
+# today: a client that had to name a product in order to say "bill this to that
+# account" is a client welded to one server. The concept is not vendor-specific
+# and neither is the spelling, so a second gateway could honour it unchanged.
+BILL_TO_HEADER = "x-bill-to"
+
+
+def requested_billing_group(request: Request) -> str | None:
+    """The group this request asks to be billed to, if it asked.
+
+    A name, not an id: the caller is a person's browser choosing from a list of
+    group names, and ids appear nowhere in that conversation.
+    """
+    value = request.headers.get(BILL_TO_HEADER)
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _pin_from_header(user: User, requested: str) -> Group:
+    """Resolve a requested group name against this user's effective memberships.
+
+    Resolved from the memberships rather than by querying groups by name, which
+    is not an optimisation: a name that exists but is not one of this user's
+    groups must be indistinguishable from a name that does not exist, or the
+    header becomes a way to enumerate the deployment's groups.
+    """
+    for membership in user.memberships:
+        group = membership.group
+        if group is not None and group.name == requested:
+            return group
+    raise PermissionError_(f"You are not a member of billing group {requested!r}.")
+
+
 async def get_principal(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
@@ -239,6 +281,22 @@ async def get_principal(
         return await _bearer_principal(request, session, secret)
 
     api_key = await resolve_api_key(session, secret)
+    if requested_billing_group(request) is not None:
+        # Refused, not ignored, and refused for *every* key rather than only a
+        # pinned one. A key already carries its answer — the group it pins, or
+        # the user's default at request time — and that is a property of the
+        # credential an administrator issued. Letting a request override it is a
+        # separate decision with its own blast radius, and it is not the one
+        # being made here.
+        #
+        # Ignoring the header instead was the alternative and is worse: a caller
+        # who asked to bill one group and was quietly billed another finds out
+        # from an invoice.
+        raise PermissionError_(
+            "'x-bill-to' applies to callers authenticated with an OIDC token. An API "
+            "key bills the group it pins, or your default; mint a key for the group "
+            "you mean, or change your default billing group."
+        )
     group = resolve_billing_group(api_key.user, pinned=api_key.billing_group)
     await _touch_last_used(session, api_key)
     return Principal(user=api_key.user, billing_group=group, api_key=api_key)
@@ -307,7 +365,16 @@ async def _bearer_principal(
         raise AuthenticationError("Invalid API key provided.")
 
     await session.commit()
-    return Principal(user=user, billing_group=resolve_billing_group(user))
+
+    # The per-request choice (ADR 0061). Resolved after the sync above, so a
+    # group the directory granted on *this* login is already billable — and
+    # against the effective memberships, so one an administrator granted by hand
+    # is too. Reading the token's `groups` claim instead would have refused
+    # exactly the group a manual grant just added, which is the mistake
+    # ADR 0057 records for `is_admin` and the default.
+    requested = requested_billing_group(request)
+    pinned = _pin_from_header(user, requested) if requested else None
+    return Principal(user=user, billing_group=resolve_billing_group(user, pinned=pinned))
 
 
 async def _bearer_client(
