@@ -461,6 +461,12 @@ class StubOIDCClient(OIDCClient):
             authorization_endpoint=f"{BEARER_ISSUER}/auth",
             token_endpoint=f"{BEARER_ISSUER}/token",
             jwks_uri=f"{BEARER_ISSUER}/jwks",
+            # Published, because every provider this deployment is pointed at
+            # publishes one and its absence made `logout` untestable: the route
+            # returns a null `redirect_to` both when it cannot find the
+            # provider and when the provider has no logout endpoint, so a stub
+            # without this could not tell a working logout from a broken one.
+            end_session_endpoint=f"{BEARER_ISSUER}/logout",
         )
 
     async def jwks(self, *, force: bool = False) -> KeySet:
