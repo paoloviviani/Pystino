@@ -56,6 +56,10 @@ const NAV_ADMIN: NavItem[] = [
   { to: "/admin/reports", label: "Usage" },
   { to: "/admin/quotas", label: "Quotas" },
   { to: "/admin/redaction", label: "Redaction" },
+  // Beside Redaction rather than beside Models: both answer "what happens to
+  // what a user wrote", and a knowledge base is the one place this deployment
+  // keeps it rather than passing it through.
+  { to: "/admin/knowledge", label: "Knowledge" },
   { to: "/admin/providers", label: "Providers" },
   // No Pricing entry: a model's prices live on the model's own page, because
   // "what is this model" and "what does it cost" are one question asked in one

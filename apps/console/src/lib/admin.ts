@@ -28,6 +28,8 @@ import type {
   GroupCreateInput,
   IdentityProvider,
   IdentityProviderInput,
+  KnowledgeConfigInput,
+  KnowledgeStatus,
   UsageReport,
 } from "./types";
 
@@ -58,6 +60,7 @@ export const adminKeys = {
   identityProviders: ["admin", "identity-providers"] as const,
   oidcPolicy: ["admin", "oidc-policy"] as const,
   redaction: ["admin", "redaction"] as const,
+  knowledge: ["admin", "knowledge"] as const,
   redactionRules: ["admin", "redaction", "rules"] as const,
   providerPlugins: ["admin", "provider-plugins"] as const,
   report: (query: string) => ["admin", "report", query] as const,
@@ -180,23 +183,13 @@ export function useSetRedactionEngine() {
   });
 }
 
-/**
- * Set the per-entity policy (ADR 0037).
- *
- * Same cache treatment as the engine switch, for the same reason: the PUT
- * returns the whole status document, so writing it back shows exactly what the
- * change produced rather than a screen that briefly shows the old policy.
- */
-export function useSetRedactionPolicy() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { policy: RedactionPolicy; reason: string }) =>
-      request<RedactionStatus>("/api/admin/redaction/policy", { method: "PUT", body }),
-    onSuccess: (status) => {
-      client.setQueryData(adminKeys.redaction, status);
-    },
-  });
-}
+// `useSetRedactionPolicy` was here and is gone: it called
+// `PUT /api/admin/redaction/policy`, which has never existed in the gateway,
+// and no component referenced it. Since ADR 0038 the per-entity policy is set
+// through a *scoped rule* — the deployment-wide one is the rule whose scope is
+// `all` — so the endpoint it wanted was never going to be built. A hook aimed
+// at a 404 is worse than no hook: the next person to need this would have
+// wired it up and got a mystery.
 
 // -- scoped redaction rules --------------------------------------------------
 
@@ -874,5 +867,64 @@ export function useAdminReport(query: ReportQuery) {
     queryKey: adminKeys.report(search),
     queryFn: () => request<UsageReport>(`/api/admin/reports/usage?${search}`),
     retry: retryUnlessRejected,
+  });
+}
+
+// -- knowledge bases (ADR 0062) ----------------------------------------------
+
+/**
+ * The pipeline as the gateway is running it, plus every base.
+ *
+ * `staleTime: 0` and `refetchOnMount: "always"`, matching the redaction screen:
+ * both read a *live* configuration that another worker or another
+ * administrator may have changed, and a cached answer here is a screen that
+ * disagrees with the deployment.
+ */
+export function useKnowledge() {
+  return useQuery({
+    queryKey: adminKeys.knowledge,
+    queryFn: () => request<KnowledgeStatus>("/api/admin/knowledge"),
+    staleTime: 0,
+    refetchOnMount: "always",
+  });
+}
+
+/**
+ * Record a new configuration.
+ *
+ * Writes the response into the cache rather than invalidating, the same way the
+ * redaction engine switch does and for the same reason: the PUT returns the
+ * whole status document, so the screen shows what the change actually produced
+ * — including `propagation_seconds` and whether any base has become stale —
+ * instead of briefly showing the previous configuration while a refetch lands.
+ */
+export function useSetKnowledgeConfig() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: KnowledgeConfigInput) =>
+      request<KnowledgeStatus>("/api/admin/knowledge", { method: "PUT", body }),
+    onSuccess: (status) => {
+      client.setQueryData(adminKeys.knowledge, status);
+    },
+  });
+}
+
+/**
+ * Re-embed one base with the current configuration.
+ *
+ * Also writes the response back: a reindex changes every count on the screen
+ * (documents move to in-progress, `stale` clears) and the response already
+ * carries all of it.
+ */
+export function useReindexBase() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (baseId: string) =>
+      request<KnowledgeStatus>(`/api/admin/knowledge/bases/${baseId}/reindex`, {
+        method: "POST",
+      }),
+    onSuccess: (status) => {
+      client.setQueryData(adminKeys.knowledge, status);
+    },
   });
 }

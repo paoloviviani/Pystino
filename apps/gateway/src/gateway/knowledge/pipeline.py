@@ -608,6 +608,48 @@ class Ingestor:
         return vectors
 
 
+    async def embed_query(
+        self,
+        session: AsyncSession,
+        *,
+        base: KnowledgeBase,
+        owner: User,
+        group: Group,
+        text: str,
+    ) -> list[float]:
+        """Embed one search query, with the model the base was indexed with.
+
+        **The base's model, never the deployment's current default.** If an
+        administrator has changed the default and this base has not been
+        reindexed, embedding the query with the new model would compare vectors
+        from two different models — which does not degrade retrieval, it makes
+        it meaningless. PostgreSQL would refuse outright on a dimension change
+        and silently mis-rank on a same-dimension change, and the second is the
+        dangerous one.
+
+        Billed to the base's group like indexing is, and for the same reason: a
+        search costs embedding tokens, and a search nobody is charged for is a
+        search that does not appear in the report that would explain the bill.
+        """
+        model_id = base.embedding_model_id
+        if model_id is None:
+            raise IngestionFailed(
+                "This knowledge base has not been indexed yet, so it cannot be searched."
+            )
+        model = await self._model(session, model_id)
+        upstream = await _metered.resolve_upstream(self.providers, model)
+        vectors = await self._embed_batch(
+            session, owner=owner, group=group, model=model, upstream=upstream, batch=[text]
+        )
+        return vectors[0]
+
+    async def billing_for(
+        self, session: AsyncSession, base: KnowledgeBase
+    ) -> tuple[User, Group]:
+        """Public spelling of `_billing`, for the search path."""
+        return await self._billing(session, base)
+
+
 def stale_since(document: KnowledgeDocument, profile: KnowledgeProfile) -> datetime | None:
     """When this document stopped matching the deployment's configuration.
 

@@ -44,6 +44,11 @@ const ADMIN_SECTIONS: Section[] = [
     description: "What is stripped from prompts before a provider sees them, and for whom.",
   },
   {
+    to: "/admin/knowledge",
+    title: "Knowledge",
+    description: "What reads documents, what embeds them, and every base built that way.",
+  },
+  {
     to: "/admin/providers",
     title: "Providers",
     description: "Where requests go, the credentials to get there, and what each reports.",

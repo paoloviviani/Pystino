@@ -52,7 +52,7 @@ what used to share the monorepo:
 
 | Repository | What | Why it is not here |
 |---|---|---|
-| the decision record (internal) | ADRs 0001–0061, the whole-stack architecture, the roadmap and the scope of unstarted work | The series spans a gateway, a chat app, a RAG pipeline and three design languages. A numbered sequence cannot be split without renumbering, which its index forbids |
+| the decision record (internal) | ADRs 0001–0062, the whole-stack architecture, the roadmap and the scope of unstarted work | The series spans a gateway, a chat app, a RAG pipeline and three design languages. A numbered sequence cannot be split without renumbering, which its index forbids |
 | [pystino-chat](https://gitlab.linksfoundation.com/viviani/pystino-chat) | The chat application, a `/v1` **client** | It imports nothing from the gateway: it talks over `/v1` with a key or an OIDC bearer (ADR 0040, ADR 0046). On the day of the split its monorepo branch was 56 commits behind, and every gateway change made the merge worse |
 
 **Citing a decision:** by number, in prose — `(ADR 0032)`, never as a link.
@@ -82,11 +82,13 @@ Inside the gateway, the pieces that carry the most weight:
 
 | Path | What it owns |
 |---|---|
-| `routers/_metered.py` | resolve → reserve → record → settle, shared by all five `/v1` routes |
+| `routers/_metered.py` | resolve → reserve → record → settle, shared by every metered `/v1` route **and by knowledge-base ingestion** |
 | `protocols.py` | per API surface: where usage, the served model and assistant text live in a frame |
 | `accounting/cost.py` | the money arithmetic, and the three prompt slices |
 | `quota/engine.py` | admission; `counters.py` has the three stores |
 | `access.py` | one predicate for "may this caller use this model" |
+| `sharing.py` | its sibling: "may this caller reach this shared resource" (ADR 0062) |
+| `knowledge/` | extract → chunk → embed → store, and the retrieval contract |
 | `pagination.py` | the listing envelope every management route returns |
 
 ## Non-obvious things that will bite you
@@ -209,6 +211,56 @@ Inside the gateway, the pieces that carry the most weight:
   transport awaits background tasks, so through the client deferred and awaited
   look identical — `test_deferred_settlement.py` drives raw ASGI to assert the
   body goes out first.
+- **A knowledge base pins its own embedding model, and that is the whole
+  design** (ADR 0062). ADR 0020 said a fixed
+  `vector(N)` column made changing the embedding model *a migration*; measured
+  against pgvector 0.8.6 that is false — `vector` takes **no dimension
+  modifier** and rows of differing length coexist in one column, and comparing
+  two lengths **raises** rather than mis-ranking. So changing the deployment
+  default is safe: existing bases keep answering from their own vectors until
+  somebody reindexes. `dimensions` is *learned* from the first vector, never
+  typed. Three more measured facts you cannot guess: HNSW refuses `vector`
+  above **2000** dimensions and `halfvec` above **4000**, so the common
+  3072-dimension model is only indexable through a halfvec cast; the planner
+  does use a halfvec-cast index for a halfvec-cast `ORDER BY`; and ranking
+  therefore happens in half precision while storage stays full.
+- **Indexing is billed, and it goes through `_metered` rather than beside it.**
+  `_metered.begin` takes `fx` and `session_factory` instead of a `Request` for
+  exactly this reason: ingestion runs in a detached task (ADR 0019 — OCR
+  belongs nowhere near a request path) and a second private copy of the
+  reserve → record → settle path would make indexing spend invisible to the
+  reports built to catch it. A large ingestion run can cost more than the chat
+  traffic it serves. Ingestion bills the **base's owner and group**, not
+  whoever triggered it, so an admin pressing "reindex" does not move someone
+  else's spend onto their own budget.
+- **Redaction on a knowledge base is asymmetric, deliberately.** The text sent
+  to the embedding provider is **redacted** (it is an egress, and deterministic
+  placeholders are what let an indexed document and a later query still match —
+  that is what the note in `embeddings.py` was for). The text **stored** in the
+  chunk is what was extracted, unredacted: placeholders would be theatre while
+  `file_blobs` holds the original document three tables away, and would hand a
+  reader `<PERSON_…>` in place of a name in their own file. Protection stays at
+  the boundary rather than being duplicated into the store.
+- **`resource_shares` has no foreign keys, and cannot.** Both addresses are
+  polymorphic — the resource is one of three kinds, one of which lives in the
+  chat's MongoDB, and the principal is a user *or* a group. That is what gives
+  sharing one implementation instead of two. The cost: deleting a shareable
+  resource must delete its grants by hand, and `sharing.py` is the only place
+  that does it. Read `may_reach` before touching it: the two halves of a
+  principal must be joined with `and_`, and an `or_` there makes a resource
+  readable by everybody the moment it is shared with anybody. **Fourteen tests
+  passed against that bug** — every negative one failed closed for an unrelated
+  reason — so reintroduce a fault and watch the test fail before believing it.
+- **Do not run `ruff format` across this repository.** Verification is `ruff
+  check`; the tree has never been `ruff format`-clean, and running it rewrapped
+  27 unrelated files. Format only files you have just created.
+- **There is no Node toolchain on the 130.192.84.103 host.** `pnpm -r test` and
+  `tsc` run in a container: `docker run --rm -v <repo>:/w -w /w
+  node:24-bookworm-slim`, with `CI=true` (pnpm will not purge a modules
+  directory without a TTY) and `corepack enable`. Do **not** use `pnpm config
+  set --location project` there: it writes the container's store path into
+  `pnpm-workspace.yaml`, which is a committed file, and breaks every other
+  install.
 - **Per-request round trips are pinned by a test.** `test_query_counts.py`
   bounds them at 3 selects to authenticate and 5 + 2 writes for a metered
   request. `selectinload` on a many-to-one relation costs a round trip that

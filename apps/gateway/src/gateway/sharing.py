@@ -45,7 +45,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable, Sequence
 
-from sqlalchemy import ColumnElement, and_, delete, literal, or_, select
+from sqlalchemy import ColumnElement, SQLColumnExpression, and_, delete, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.models import (
@@ -85,7 +85,7 @@ def _grant_exists(
     user_id: uuid.UUID | None,
     group_ids: Sequence[uuid.UUID],
     roles: frozenset[ShareRole],
-    resource_id_column: ColumnElement[uuid.UUID],
+    resource_id_column: SQLColumnExpression[uuid.UUID],
 ) -> list[ColumnElement[bool]]:
     """EXISTS clauses for "this resource is shared with this caller".
 
@@ -124,8 +124,8 @@ def _grant_exists(
 def reachable(
     *,
     kind: ResourceKind,
-    owner_column: ColumnElement[uuid.UUID],
-    resource_id_column: ColumnElement[uuid.UUID],
+    owner_column: SQLColumnExpression[uuid.UUID],
+    resource_id_column: SQLColumnExpression[uuid.UUID],
     user_id: uuid.UUID | None,
     group_ids: Iterable[uuid.UUID],
     role: ShareRole = ShareRole.VIEWER,
