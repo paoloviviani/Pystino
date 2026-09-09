@@ -12,6 +12,7 @@ from __future__ import annotations
 import httpx
 import pytest
 import pytest_asyncio
+from fastapi import FastAPI
 from gateway.deps import get_management_user
 from gateway.login_throttle import LoginThrottle
 from gateway.models import LocalCredential, User
@@ -74,13 +75,67 @@ class TestMethods:
     ) -> None:
         enable_local_auth(app)
         body = (await client.get("/auth/methods")).json()
-        assert body == {"local": True, "oidc": False}
+        assert body == {"local": True, "oidc": False, "providers": []}
 
     async def test_reports_neither_by_default(self, client: httpx.AsyncClient) -> None:
         # A deployment with no IdP and no local auth: there is no way in, and
         # the console must be able to discover that rather than loop.
         body = (await client.get("/auth/methods")).json()
-        assert body == {"local": False, "oidc": False}
+        assert body == {"local": False, "oidc": False, "providers": []}
+
+    async def test_a_configured_provider_is_named_so_a_button_can_exist(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        signing_key: object,
+    ) -> None:
+        """The console builds one button per entry here, and needs the name.
+
+        This is the test that was missing, and its absence is why the bug
+        shipped: the two above asserted the response *exactly*, which pinned a
+        shape with no `providers` key at all. The handler had always computed
+        the list and Pydantic had always dropped it, so `/auth/methods` said
+        `oidc: true` and offered nothing to click.
+
+        `name` is load-bearing rather than decorative — it is what
+        `GET /auth/login?provider=` takes.
+        """
+        from conftest import seed_identity_provider
+
+        enable_local_auth(app)
+        await seed_identity_provider(app, session_factory, signing_key, name="keycloak")  # type: ignore[arg-type]
+
+        body = (await client.get("/auth/methods")).json()
+        assert body["oidc"] is True
+        assert [p["name"] for p in body["providers"]] == ["keycloak"]
+        assert body["providers"][0]["issuer"]
+
+    async def test_a_disabled_provider_is_not_offered(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        signing_key: object,
+    ) -> None:
+        """A button whose provider is disabled would fail on being pressed."""
+        from conftest import seed_identity_provider
+        from gateway.models import IdentityProvider
+        from sqlalchemy import select
+
+        row = await seed_identity_provider(
+            app, session_factory, signing_key, name="retired"  # type: ignore[arg-type]
+        )
+        async with session_factory() as db:
+            stored = (
+                await db.execute(select(IdentityProvider).where(IdentityProvider.id == row.id))
+            ).scalar_one()
+            stored.is_enabled = False
+            await db.commit()
+
+        body = (await client.get("/auth/methods")).json()
+        assert body["providers"] == []
+        assert body["oidc"] is False
 
 
 class TestLocalLogin:

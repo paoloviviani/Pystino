@@ -2,7 +2,7 @@
 
 OpenAI-compatible API gateway with per-user and per-group accounting, quotas,
 per-group model availability and a pluggable redaction layer. The reference for
-every decision behind it is the [ADR index](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/README.md).
+every decision behind it is the ADR index.
 
 ## Surfaces
 
@@ -22,51 +22,51 @@ every decision behind it is the [ADR index](https://example.invalid/viviani/ai-s
 
 All five `/v1` request routes share one metering path — `routers/_metered.py` —
 so resolve → reserve → record → settle cannot drift between surfaces
-([ADR 0030](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0030-more-surfaces.md)).
+(ADR 0030).
 
 `GET /v1/models` reports each model's `kind`, `context_window`,
 `input_modalities`, `output_modalities` and `supported_features`, so a client
 can pick a model that does tool calling or reads images without taking a 400 to
 find out. These are non-standard fields, which OpenAI clients ignore
-([ADR 0031](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0031-model-capabilities.md)).
+(ADR 0031).
 
 Every management listing answers with `{items, total, limit, offset}` and takes
 `?limit=&offset=` (ceiling 200; out of range is a 400, not a clamp). Users,
 models and groups also take `?q=` for case-insensitive substring search.
 Reports are aggregations, not listings, and return every row they summed
-([ADR 0029](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0029-pagination.md)).
+(ADR 0029).
 
 There is **no HTML admin panel built by hand**: `/docs` is the operator API
 console — Swagger, generated from the same schemas the endpoints validate
 against. Sign in at `/auth/login` first so the session cookie travels with the
 requests. The React console at `/console` is the human surface
-([ADR 0022](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0022-administration-surface.md), [ADR 0023](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0023-admin-console.md)).
+(ADR 0022, ADR 0023).
 
 ## Two authentication schemes, on purpose
 
 `/v1` is for programs and uses revocable API keys that carry a billing group;
 `/api` is for humans and uses OIDC sessions (or local email + password,
-[ADR 0043](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0043-local-authentication.md)).
+ADR 0043).
 
 - **API keys** are `gwk_...` secrets, shown once, stored as SHA-256 hashes —
   a slow KDF would buy nothing on 256 bits of entropy, but revocation must be
-  instant ([ADR 0010](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0010-api-keys.md)).
+  instant (ADR 0010).
 - **OIDC** works against any provider; there is no bundled identity provider
-  ([ADR 0044](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0044-keycloak-removed.md)). Discovery is read once at
+  (ADR 0044). Discovery is read once at
   startup, so changing any `GATEWAY_OIDC__*` value needs a restart. Users are
   keyed on `(issuer, subject)`: changing the issuer re-provisions every user as
   a new row with no memberships at their next login.
 - **OIDC access tokens on `/v1`** are accepted when
   `GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE` names an audience — what lets a
   first-party client stream as the person typing, and what a device-flow
-  bootstrap needs ([ADR 0040](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0040-bearer-tokens-on-v1.md)).
+  bootstrap needs (ADR 0040).
 
 ## Providers and plugins
 
 A provider record holds credentials (encrypted at rest,
-[ADR 0027](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0027-inference-providers.md)) and a **plugin** that carries its
+ADR 0027) and a **plugin** that carries its
 vendor knowledge: which header names it wants, what unit it reports cost in,
-whether it is a provider or a router ([ADR 0032](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0032-provider-plugins.md)).
+whether it is a provider or a router (ADR 0032).
 In-tree plugins cover the generic OpenAI-compatible case, Anthropic and
 Cortecs; more can install via the `llmp.providers` entry point.
 
@@ -124,7 +124,7 @@ Stated plainly, so none of them is a surprise later.
 
 - **OIDC is only fully verified against Keycloak 26.7** (`scripts/test_oidc_flow.py`,
   since removed from the stack). Entra ID, Google and others differ in exactly
-  the places [ADR 0011](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0011-oidc-integration.md) makes configurable — where
+  the places ADR 0011 makes configurable — where
   groups live, whether they appear in the ID token at all, how they are named.
   Test any new provider against your instance before relying on it; see the
   [OIDC guide](oidc-generic-provider.md) for the checklist.
@@ -139,8 +139,8 @@ Stated plainly, so none of them is a surprise later.
   while the gateway keeps running, the cache reports zero and quotas are
   briefly too permissive until the gateway restarts. An empty cache is not a
   failed read, so nothing detects it at runtime. Restart the gateway after any
-  cache loss ([ADR 0006](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0006-counter-store.md)).
+  cache loss (ADR 0006).
 - **Load behaviour is reasoned, not measured.** The arithmetic in
-  [ADR 0004](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0004-gateway-runtime.md) says Python is not the constraint;
+  ADR 0004 says Python is not the constraint;
   the [measured numbers](performance.md) cover one small box. Profile before
   scaling.

@@ -9,8 +9,8 @@
   the ground rules
   [in the repository's working notes](https://github.com/paoloviviani/Pistin-Gateway/blob/main/CLAUDE.md)
   apply: this was a money bug.
-- Related: [ADR 0028](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0028-embeddings-and-served-model.md) (the two prompt
-  conventions), [ADR 0031](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0031-model-capabilities.md) (`context_size`, the
+- Related: ADR 0028 (the two prompt
+  conventions), ADR 0031 (`context_size`, the
   same class of mistake).
 
 ## The short version
@@ -194,7 +194,7 @@ do not rely on it either way without checking.
 
    *Superseded 2026-08-24, same conclusion by a better route.* This was
    `providers.upstream_cost_unit`, null by default, with the accepted names in
-   `UPSTREAM_COST_UNITS`. [ADR 0032](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0032-provider-plugins.md) slice 3 moved
+   `UPSTREAM_COST_UNITS`. ADR 0032 slice 3 moved
    the answer into the plugin and dropped the column: the unit is knowledge about
    a counterparty, and asking an operator to fill it in was asking them to be the
    plugin. A provider whose plugin does not read a cost reports none — which is

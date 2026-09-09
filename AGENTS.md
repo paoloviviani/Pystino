@@ -7,7 +7,7 @@ Licence is **EUPL-1.2** for all first-party code.
 
 `CLAUDE.md` is the repo's own deep-context file — ground rules, recorded bugs, and the
 traps that only show up on the live stack. Read it before changing anything;
-`https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/README.md` indexes every design decision. This file is the fast layer.
+`the decision record indexes every design decision. This file is the fast layer.
 
 ## Ground rules
 

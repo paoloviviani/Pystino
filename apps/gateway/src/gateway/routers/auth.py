@@ -188,11 +188,37 @@ class LocalLoginRequest(BaseModel):
     client: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 
+class AuthProvider(BaseModel):
+    """One enabled identity provider, as the login page needs it (ADR 0051).
+
+    The name is what ``GET /auth/login?provider=`` takes, so it is the button's
+    payload rather than only its label. The issuer is shown beside it, because
+    with two directories configured "Sign in with SSO" twice tells a reader
+    nothing about which door is theirs.
+    """
+
+    name: str
+    issuer: str
+
+
 class AuthMethods(BaseModel):
     """Which ways in this deployment offers. Drives the console's login page."""
 
     local: bool
     oidc: bool
+    # Declared, and that is the whole of a bug worth naming. The handler has
+    # always computed this list — a database query per call — and passed it as
+    # `providers=`, and Pydantic dropped it on the way out because the model did
+    # not declare it. No error anywhere: `/auth/methods` answered
+    # `{"local": true, "oidc": true}`, the console read `providers` as
+    # `undefined`, rendered zero buttons, and a deployment with a working
+    # identity provider showed only the password form.
+    #
+    # It also hid a second fault. `Login.tsx` reads
+    # `methods.data.providers.length` when local login is off, to skip its own
+    # page for a single provider — which would have thrown on `undefined`. Local
+    # auth being on is the only reason nobody saw it.
+    providers: list[AuthProvider] = Field(default_factory=list)
 
 
 class PasswordResetRequest(BaseModel):

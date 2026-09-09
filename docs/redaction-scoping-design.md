@@ -3,7 +3,7 @@
 - Design brief, 2026-08-27. **No code has been written for any of this.** It
   exists so the decisions below are taken deliberately rather than discovered in
   a diff.
-- Builds on [ADR 0037](https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0037-redaction-policy.md) (four modes per entity type,
+- Builds on ADR 0037 (four modes per entity type,
   thresholds, allow-list, stored on `redaction_config`) and on
   [redaction-scoping-plan.md](redaction-scoping-plan.md) §4, which is where the
   requirement was written down and which this supersedes in the parts marked.
