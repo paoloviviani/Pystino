@@ -1870,3 +1870,74 @@ class KnowledgeChunk(Base):
 
     def __repr__(self) -> str:
         return f"<KnowledgeChunk {self.ordinal} of {self.document_id}>"
+
+
+class KnowledgeConfig(Base):
+    """Which models this deployment extracts and embeds with, as an admin set it.
+
+    See ADR 0062. **Append-only, and the newest row wins** — the same shape as
+    ``redaction_config`` (ADR 0033) and ``oidc_config`` (ADR 0048), and adopted
+    here for a reason those two do not have: changing the embedding model
+    invalidates nothing immediately but makes every base indexed before it
+    incomparable with every base indexed after. "Which model was this base
+    built with, and who changed the default, and when" is a question asked
+    while looking at results that have quietly stopped making sense, and a
+    mutable row answers it only for the most recent change.
+
+    **No row means the environment decides**, via ``KnowledgeSettings``. A
+    deployment that never opens the screen behaves exactly as it did before this
+    table existed. Migration 0028 seeds **nothing**, deliberately: writing
+    today's environment value into the table would silently pin it, so a later
+    change to the environment would stop working for a reason nobody could see.
+
+    **Every policy column is nullable, and null means "this row does not
+    decide"** — copied from ``oidc_config``, so that turning one knob does not
+    require restating the other four and cannot accidentally revert them.
+
+    What is deliberately *not* here: the extractor's endpoint, which stays in
+    the environment beside the redaction endpoint and for the same reason —
+    "an endpoint that can be typed here is an endpoint that can be pointed at a
+    logger". Choosing *which model* is a console decision; choosing what host
+    the bytes are sent to is not.
+    """
+
+    __tablename__ = "knowledge_config"
+    __table_args__ = (Index("ix_knowledge_config_created", "created_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    #: RESTRICT, matching `knowledge_bases.embedding_model_id`: a default that
+    #: points at a deleted model would make every new base unindexable, and the
+    #: failure would appear at first upload rather than at the change.
+    embedding_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("models.id", ondelete="RESTRICT"), default=None
+    )
+    #: Which OCR-kind model turns files into text. Null means the built-in
+    #: extractor, which is the default this deployment ships and the only one
+    #: that never sends a document anywhere (ADR 0055).
+    extractor_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("models.id", ondelete="SET NULL"), default=None
+    )
+    #: A registry name — `pgvector` today. A string rather than an enum for the
+    #: same reason the redaction engine is: a second backend arrives as an
+    #: installed implementation, and its name cannot be enumerated in a schema
+    #: written before it exists.
+    vector_store: Mapped[str | None] = mapped_column(String(64), default=None)
+    chunk_chars: Mapped[int | None] = mapped_column(Integer, default=None)
+    chunk_overlap: Mapped[int | None] = mapped_column(Integer, default=None)
+    #: Why. Required by the API only when a change *narrows* what is protected
+    #: or replaces the local extractor with one that sends documents to a third
+    #: party — the same rule redaction uses, and for the same reason: demanding
+    #: a sentence for every change trains people to type "x".
+    reason: Mapped[str] = mapped_column(String(500), default="")
+    # Nullable with SET NULL: erasing a user under GDPR must not delete the
+    # record of what they changed.
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    def __repr__(self) -> str:
+        return (
+            f"<KnowledgeConfig embedding={self.embedding_model_id} "
+            f"at={self.created_at.isoformat()}>"
+        )

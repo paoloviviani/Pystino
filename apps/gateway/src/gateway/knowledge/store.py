@@ -31,9 +31,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 import sqlalchemy as sa
-from gateway.models import KnowledgeChunk, KnowledgeDocument
 from sqlalchemy import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from gateway.models import KnowledgeChunk, KnowledgeDocument
 
 
 @dataclass(frozen=True, slots=True)

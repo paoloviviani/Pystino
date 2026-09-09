@@ -91,7 +91,8 @@ async def create_image(
     worst_case = TokenCounts(prompt=prompt_tokens, completion=0, images=body.n)
 
     metered = await _metered.begin(
-        request,
+        fx=request.app.state.fx,
+        session_factory=request.app.state.session_factory,
         session=session,
         principal=principal,
         settings=settings,

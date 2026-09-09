@@ -208,7 +208,8 @@ async def extract_document(
     # ceiling, and what that costs.
     reserved_pages = len(body.pages) if body.pages else 1
     metered = await _metered.begin(
-        request,
+        fx=request.app.state.fx,
+        session_factory=request.app.state.session_factory,
         session=session,
         principal=principal,
         settings=settings,

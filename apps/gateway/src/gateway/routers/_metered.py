@@ -33,7 +33,7 @@ from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
 from gateway.access import accessible_model_by_name
@@ -384,8 +384,16 @@ def bound_web_search(tools: Any, *, default: int) -> WebSearchBound:
 
 
 async def begin(
-    request: Request,
     *,
+    # `fx` and `session_factory` rather than the `Request` these used to be read
+    # from. Nothing else in this function ever touched the request, and taking
+    # them explicitly is what lets knowledge-base ingestion — which has no
+    # request, because extraction and embedding belong in a background task
+    # rather than a request path (ADR 0019) — reserve and record through *this*
+    # pipeline instead of a second copy of it. A second copy of money code is
+    # the one duplication this project cannot afford.
+    fx: FXService,
+    session_factory: async_sessionmaker[AsyncSession],
     session: AsyncSession,
     principal: Principal,
     settings: Settings,
@@ -410,7 +418,7 @@ async def begin(
     exception.
     """
     worst_case_cost = await estimate_cost(
-        model, worst_case, currency=settings.billing_currency, fx=request.app.state.fx
+        model, worst_case, currency=settings.billing_currency, fx=fx
     )
 
     try:
@@ -453,9 +461,9 @@ async def begin(
             plugin=model.provider.plugin,
             billing_mode=model.provider.billing_mode.value,
         ),
-        session_factory=request.app.state.session_factory,
+        session_factory=session_factory,
         settings=settings,
-        fx=request.app.state.fx,
+        fx=fx,
         estimator=estimator,
         model=model,
     )

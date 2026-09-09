@@ -210,7 +210,8 @@ async def chat_completions(
 
     # -- reserve, then open the usage row (steps 4-5) -----------------------
     metered = await _metered.begin(
-        request,
+        fx=request.app.state.fx,
+        session_factory=request.app.state.session_factory,
         session=session,
         principal=principal,
         settings=settings,
