@@ -35,6 +35,7 @@ from gateway.redaction.resolver import RedactionResolver
 from gateway.routers import (
     admin,
     auth,
+    billing,
     chat,
     console,
     embeddings,
@@ -350,6 +351,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(images.router)
     app.include_router(ocr.router)
     app.include_router(models.router)
+    app.include_router(billing.router)
     app.include_router(auth.router)
     app.include_router(tokens.router)
     app.include_router(me.router)
