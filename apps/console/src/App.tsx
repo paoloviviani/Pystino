@@ -5,7 +5,6 @@ import { Shell } from "./components/Shell";
 import { NotAuthenticatedError } from "./lib/api";
 import { useMe } from "./lib/queries";
 import { AdminModelDetail } from "./routes/AdminModelDetail";
-import { AdminKnowledge } from "./routes/AdminKnowledge";
 import { AdminModels } from "./routes/AdminModels";
 import { AdminProviders } from "./routes/AdminProviders";
 import { AdminQuotas } from "./routes/AdminQuotas";
@@ -78,14 +77,6 @@ export function App() {
           element={
             <RequireAdmin me={me_}>
               <AdminModelDetail />
-            </RequireAdmin>
-          }
-        />
-        <Route
-          path="/admin/knowledge"
-          element={
-            <RequireAdmin me={me_}>
-              <AdminKnowledge />
             </RequireAdmin>
           }
         />

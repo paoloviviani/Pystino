@@ -224,6 +224,17 @@ Inside the gateway, the pieces that carry the most weight:
   3072-dimension model is only indexable through a halfvec cast; the planner
   does use a halfvec-cast index for a halfvec-cast `ORDER BY`; and ranking
   therefore happens in half precision while storage stays full.
+- **There are two admin consoles, split by whose decision it is.** The
+  gateway's own console owns providers, models, prices, quotas, redaction and
+  users. The **chat's** admin console owns the knowledge pipeline — which
+  embedding model, which extractor, the chunk geometry — because that is a
+  product decision rather than an operational one (ADR 0062, corrected on
+  request after being built the wrong way round first). The consequence to know
+  before moving anything else: `/api` reads a **session cookie and nothing
+  else**, so nothing a bearer-authenticated client needs can live there. The
+  knowledge configuration is at `/v1/knowledge/config`, and **an API key is
+  refused there even when its owner is an admin** — a key is what a program
+  holds, an access token is evidence a person just signed in.
 - **A pgvector type modifier cannot be a bind parameter.** `::halfvec(:dims)`
   fails with `type modifiers must be simple constants or identifiers` — a
   *syntax* error raised when the statement is prepared, so it is invisible to
