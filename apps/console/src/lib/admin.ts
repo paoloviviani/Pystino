@@ -28,8 +28,6 @@ import type {
   GroupCreateInput,
   IdentityProvider,
   IdentityProviderInput,
-  KnowledgeConfigInput,
-  KnowledgeStatus,
   UsageReport,
 } from "./types";
 
@@ -60,7 +58,6 @@ export const adminKeys = {
   identityProviders: ["admin", "identity-providers"] as const,
   oidcPolicy: ["admin", "oidc-policy"] as const,
   redaction: ["admin", "redaction"] as const,
-  knowledge: ["admin", "knowledge"] as const,
   redactionRules: ["admin", "redaction", "rules"] as const,
   providerPlugins: ["admin", "provider-plugins"] as const,
   report: (query: string) => ["admin", "report", query] as const,
@@ -870,61 +867,3 @@ export function useAdminReport(query: ReportQuery) {
   });
 }
 
-// -- knowledge bases (ADR 0062) ----------------------------------------------
-
-/**
- * The pipeline as the gateway is running it, plus every base.
- *
- * `staleTime: 0` and `refetchOnMount: "always"`, matching the redaction screen:
- * both read a *live* configuration that another worker or another
- * administrator may have changed, and a cached answer here is a screen that
- * disagrees with the deployment.
- */
-export function useKnowledge() {
-  return useQuery({
-    queryKey: adminKeys.knowledge,
-    queryFn: () => request<KnowledgeStatus>("/api/admin/knowledge"),
-    staleTime: 0,
-    refetchOnMount: "always",
-  });
-}
-
-/**
- * Record a new configuration.
- *
- * Writes the response into the cache rather than invalidating, the same way the
- * redaction engine switch does and for the same reason: the PUT returns the
- * whole status document, so the screen shows what the change actually produced
- * — including `propagation_seconds` and whether any base has become stale —
- * instead of briefly showing the previous configuration while a refetch lands.
- */
-export function useSetKnowledgeConfig() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (body: KnowledgeConfigInput) =>
-      request<KnowledgeStatus>("/api/admin/knowledge", { method: "PUT", body }),
-    onSuccess: (status) => {
-      client.setQueryData(adminKeys.knowledge, status);
-    },
-  });
-}
-
-/**
- * Re-embed one base with the current configuration.
- *
- * Also writes the response back: a reindex changes every count on the screen
- * (documents move to in-progress, `stale` clears) and the response already
- * carries all of it.
- */
-export function useReindexBase() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (baseId: string) =>
-      request<KnowledgeStatus>(`/api/admin/knowledge/bases/${baseId}/reindex`, {
-        method: "POST",
-      }),
-    onSuccess: (status) => {
-      client.setQueryData(adminKeys.knowledge, status);
-    },
-  });
-}

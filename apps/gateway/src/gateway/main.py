@@ -36,6 +36,7 @@ from gateway.redaction.base import Redactor
 from gateway.redaction.resolver import RedactionResolver
 from gateway.routers import (
     admin,
+    agents,
     auth,
     billing,
     chat,
@@ -44,6 +45,7 @@ from gateway.routers import (
     files,
     health,
     images,
+    knowledge_admin,
     me,
     messages,
     models,
@@ -393,6 +395,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # this module's feature-switch dependency.
     app.include_router(files.router)
     app.include_router(vector_stores.router)
+    # The knowledge pipeline's configuration. On `/v1` rather than
+    # `/api/admin` because the screen that drives it lives in the chat's
+    # admin console, and no bearer-authenticated client can reach a
+    # management route (ADR 0062).
+    app.include_router(knowledge_admin.router)
+    # Authoring agents. *Using* one goes through /v1/chat/completions with
+    # `model: agent:<name>`, which is the whole point (ADR 0062).
+    app.include_router(agents.router)
     app.include_router(auth.router)
     app.include_router(tokens.router)
     app.include_router(me.router)

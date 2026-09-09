@@ -29,6 +29,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Enum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -1941,3 +1942,108 @@ class KnowledgeConfig(Base):
             f"<KnowledgeConfig embedding={self.embedding_model_id} "
             f"at={self.created_at.isoformat()}>"
         )
+
+
+class Agent(Base):
+    """A served model with a prompt, tools and knowledge bases attached.
+
+    See ADR 0062. **An agent is addressed as a model**, under the name
+    ``agent:<name>``, and that is the whole reason it lives in the gateway
+    rather than in the chat: any OpenAI-compatible client can use one by
+    picking it from ``/v1/models``, with no code that knows agents exist. The
+    alternative — a bespoke ``/v1/agents/{id}/chat`` — would have meant one
+    client could use them and nothing else ever would.
+
+    The ``agent:`` prefix is a namespace rather than decoration. Two reasons.
+    Resolution becomes a string test before any query, so the common case (a
+    plain model) costs nothing. And "why is this model adding a system prompt"
+    is answerable from the name alone, which it would not be if agents and
+    models shared a flat namespace.
+
+    **What an agent is not**: it is not a provider, not a price, and not a
+    separate metering path. The request is billed against ``model_id`` exactly
+    as a direct call would be, at that model's prices, so an agent cannot
+    become a way to spend money nothing accounts for. What it changes is the
+    *payload* — a prompt, some tools, some retrieved passages — and every one
+    of those lands in the prompt token count before the reservation is taken.
+    """
+
+    __tablename__ = "agents"
+    __table_args__ = (
+        Index("ix_agents_owner", "owner_user_id"),
+        Index("ix_agents_created", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    #: Unique, and without the ``agent:`` prefix — the prefix belongs to the
+    #: wire name, not to the row. Storing it would mean two spellings of one
+    #: identity and a lookup that has to strip before it compares.
+    name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    description: Mapped[str] = mapped_column(String(500), default="")
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    billing_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="SET NULL"), default=None
+    )
+    #: RESTRICT: an agent whose model is gone cannot serve a request, and
+    #: discovering that at the first call rather than at the deletion is the
+    #: worse of the two. Models deactivate rather than delete, so it does not
+    #: fire in practice.
+    model_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("models.id", ondelete="RESTRICT"))
+    #: Prepended as a system message, ahead of anything the caller sent.
+    #: *Prepended rather than replacing*: a caller's own system message is
+    #: their instruction about their task, and dropping it would make an agent
+    #: silently hostile to the client that chose it.
+    system_prompt: Mapped[str] = mapped_column(Text, default="")
+    #: Tool definitions in the OpenAI shape, merged into whatever the request
+    #: carries. JSON rather than a table because the shape is the provider's,
+    #: not ours — normalising it would mean re-encoding a schema that changes
+    #: whenever a provider adds a field, and `extra="allow"` exists precisely
+    #: so this gateway does not have to know.
+    tools: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    #: Sampling defaults, applied only where the request said nothing. A
+    #: caller who asked for a temperature gets the temperature they asked for.
+    generation: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    #: How many passages retrieval contributes, and the floor they must clear.
+    #: Per agent rather than deployment-wide: a base of legal definitions wants
+    #: three exact hits where a base of meeting notes wants ten loose ones.
+    retrieval_limit: Mapped[int] = mapped_column(Integer, default=6)
+    retrieval_min_score: Mapped[float] = mapped_column(Float, default=0.0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    model: Mapped[ModelDef] = relationship(lazy="joined")
+    knowledge_bases: Mapped[list[AgentKnowledgeBase]] = relationship(
+        back_populates="agent", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Agent agent:{self.name} on {self.model_id}>"
+
+
+class AgentKnowledgeBase(Base):
+    """One knowledge base an agent retrieves from.
+
+    A join table rather than a JSON array of ids, for the reason every join
+    table here exists: ``ON DELETE CASCADE`` means deleting a base cannot
+    leave an agent pointing at nothing, and a JSON array would need code to
+    keep that true.
+
+    **Access is re-checked per request, not at attach time.** An owner may
+    attach a base they can reach and later lose that access — a group
+    membership revoked, a share withdrawn — and an agent that kept retrieving
+    from it would be a way to read a document after being cut off from it.
+    """
+
+    __tablename__ = "agent_knowledge_bases"
+
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True
+    )
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    agent: Mapped[Agent] = relationship(back_populates="knowledge_bases")
+    knowledge_base: Mapped[KnowledgeBase] = relationship(lazy="joined")

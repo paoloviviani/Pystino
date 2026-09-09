@@ -115,10 +115,20 @@ class TestTheMeteredPath:
         selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
         print(f"\n  /v1/models: {len(selects)} selects")
         print(summarise(selects))
-        # Three: the key joined to its user and group, memberships, the
-        # catalogue. Was five before the loaders were changed from
-        # `selectinload` to `joinedload` for the many-to-one relations.
-        assert len(selects) <= 3, f"{len(selects)} selects:\n{summarise(selects)}"
+        # Four: the key joined to its user and group, memberships, the
+        # catalogue, and the agents the caller may reach. Was five before the
+        # loaders were changed from `selectinload` to `joinedload` for the
+        # many-to-one relations, and three before agents were listed here.
+        #
+        # The fourth is agents (ADR 0062), and it is the price of an agent
+        # being addressable as a model: a client discovers one from this
+        # listing, so it has to be in it. It stayed at four rather than five
+        # because the reachability predicate reads
+        # `principal.user.group_ids()` — memberships are already loaded to
+        # authenticate the request — where a second `effective_group_ids` call
+        # would have added a round trip for something in hand. That mistake was
+        # made and this test is what caught it.
+        assert len(selects) <= 4, f"{len(selects)} selects:\n{summarise(selects)}"
 
     async def test_bearer_authentication_costs_no_more_than_a_key(
         self,
@@ -154,6 +164,10 @@ class TestTheMeteredPath:
         print(f"\n  /v1/models (bearer): {len(selects)} selects, {len(writes)} writes")
         print(summarise(selects))
         assert not writes, f"a steady-state token request wrote:\n{summarise(writes)}"
-        # Three: the user (joined to its default billing group), memberships
-        # (joined to their groups), the catalogue.
-        assert len(selects) <= 4, f"{len(selects)} selects:\n{summarise(selects)}"
+        # Four before agents, five now: the user (joined to its default billing
+        # group), memberships (joined to their groups), the catalogue, and the
+        # agents this caller may reach. One more than the key path because a
+        # bearer resolves the user rather than being handed it by the key row —
+        # which is the asymmetry this test exists to bound, and it has not
+        # grown.
+        assert len(selects) <= 5, f"{len(selects)} selects:\n{summarise(selects)}"
