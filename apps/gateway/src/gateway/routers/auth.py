@@ -782,8 +782,68 @@ async def callback(
     return response
 
 
+async def _logout_client(
+    request: Request, session: SessionDep
+) -> tuple[OIDCClient | None, Any]:
+    """The provider whose session this logout should end, if any.
+
+    Chosen by the ``iss`` of the id-token hint we stored at login, read
+    **without** verification — the same routing-not-trusting move
+    ``_bearer_client`` documents. Nothing is granted on the strength of it: a
+    forged hint can at most send its own bearer to the wrong provider's logout
+    page, and the local session is dropped either way.
+
+    Falls back to the sole enabled provider when there is no usable hint, which
+    is every single-provider deployment. With several and no hint there is no
+    honest answer — signing someone out of a directory they did not use is not
+    better than not trying — so the local cookie goes and that is all.
+    """
+    settings: Settings = request.app.state.settings
+    registry: OIDCProviderRegistry | None = getattr(request.app.state, "oidc_providers", None)
+    if registry is None:
+        return None, None
+
+    providers = await list_providers(session, settings, registry._secrets, enabled_only=True)
+    if not providers:
+        return None, None
+
+    origin = str(request.base_url).rstrip("/")
+    hint = request.cookies.get(_HINT_COOKIE)
+    if hint and len(providers) > 1:
+        issuer = _unverified_issuer(hint)
+        if issuer is not None:
+            for record in providers:
+                if record.issuer.rstrip("/") == issuer.rstrip("/"):
+                    return registry.client_for(record, origin), record
+        # A hint naming nobody we know is not a reason to guess.
+        return None, None
+
+    if len(providers) == 1:
+        return registry.client_for(providers[0], origin), providers[0]
+    return None, None
+
+
+def _unverified_issuer(token: str) -> str | None:
+    """The ``iss`` claim of a JWT, without checking its signature."""
+    import base64
+    import json
+
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        # A malformed hint is simply unusable, and it arrived from a cookie —
+        # nothing here is worth failing a logout over.
+        return None
+    issuer = claims.get("iss")
+    return issuer if isinstance(issuer, str) else None
+
+
 @router.post("/logout")
-async def logout(request: Request, settings: SettingsDep) -> JSONResponse:
+async def logout(
+    request: Request, session: SessionDep, settings: SettingsDep
+) -> JSONResponse:
     """End the session here **and** at the identity provider.
 
     Dropping our own cookie is not logging out. Keycloak keeps its own SSO
@@ -804,7 +864,15 @@ async def logout(request: Request, settings: SettingsDep) -> JSONResponse:
     """
     redirect_to: str | None = None
     console_mounted = bool(getattr(request.app.state, "console_mounted", False))
-    client = getattr(request.app.state, "oidc_client", None)
+    # Resolved through the provider registry, because `app.state.oidc_client`
+    # is set nowhere and has not been since ADR 0051 moved providers into rows.
+    # `getattr` with a default meant this read `None` forever and the route
+    # silently did half its job: our cookie went, the provider's SSO session
+    # stayed, and the next visit to /auth/login came back signed in as the same
+    # person — the exact failure the docstring above says this exists to
+    # prevent. Nothing logged it, because a provider that publishes no
+    # `end_session_endpoint` produces the same null.
+    client, record = await _logout_client(request, session)
     if isinstance(client, OIDCClient):
         try:
             metadata = await client.metadata()
@@ -831,7 +899,14 @@ async def logout(request: Request, settings: SettingsDep) -> JSONResponse:
                 if hint:
                     parameters["id_token_hint"] = hint
                 else:
-                    parameters["client_id"] = settings.oidc.client_id
+                    # The *provider's* client id, not the environment's.
+                    # `settings.oidc.client_id` is what seeded the first row and
+                    # can name a different provider than the one being signed
+                    # out of — or nothing at all, in a deployment whose
+                    # providers were all added through the console.
+                    parameters["client_id"] = (
+                        record.client_id if record is not None else settings.oidc.client_id
+                    )
 
                 redirect_to = f"{metadata.end_session_endpoint}?{urlencode(parameters)}"
 
