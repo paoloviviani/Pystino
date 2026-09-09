@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from gateway.accounting import DEFAULT_ESTIMATOR
 from gateway.config import Settings, get_settings
@@ -360,6 +360,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Last, so a console route can never shadow an API one. Mounts only if the
     # assets are in the image and the setting allows it (ADR 0023).
     app.state.console_mounted = console.mount_console(app, resolved)
+
+    if app.state.console_mounted:
+
+        @app.get("/", include_in_schema=False)
+        async def _root() -> RedirectResponse:
+            """Send the bare origin to the console.
+
+            Without this the deployment's front door answers
+            `{"detail":"Not Found"}`. Every path that matters is under a prefix
+            — `/v1`, `/api`, `/auth`, `/console` — so nothing ever claimed `/`,
+            and the only person who notices is the one who types the address
+            they were given.
+
+            Registered only when the console is mounted, and after the mount
+            for the same reason the mount is last: a headless deployment has
+            nowhere to send anyone, and a redirect to a 404 is worse than the
+            404. 307 rather than 303 — this is a signpost, not the result of
+            anything, so the method and body survive it.
+            """
+            return RedirectResponse("/console", status_code=307)
 
     return app
 

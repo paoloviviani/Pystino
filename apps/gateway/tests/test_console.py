@@ -69,6 +69,41 @@ async def console_client(
         await shutdown_app_state(app)
 
 
+class TestTheFrontDoor:
+    @pytest.mark.asyncio
+    async def test_the_bare_origin_reaches_the_console(
+        self, console_client: httpx.AsyncClient
+    ) -> None:
+        """Typing the address you were given has to land somewhere.
+
+        Every path that matters here is under a prefix — `/v1`, `/api`,
+        `/auth`, `/console` — so nothing claimed `/`, and the deployment's front
+        door answered `{"detail":"Not Found"}`. The only person who ever sees
+        that is the one who typed the address.
+        """
+        response = await console_client.get("/", follow_redirects=False)
+        assert response.status_code == 307
+        assert response.headers["location"] == "/console"
+
+    @pytest.mark.asyncio
+    async def test_and_it_actually_arrives(
+        self, console_client: httpx.AsyncClient
+    ) -> None:
+        response = await console_client.get("/", follow_redirects=True)
+        assert response.status_code == 200
+
+    def test_a_headless_deployment_has_no_root_route(self, settings: Settings) -> None:
+        """A redirect to a 404 is worse than the 404.
+
+        With no console there is nowhere to send anyone, so `/` keeps its
+        honest answer — and something is driving a headless deployment
+        programmatically anyway.
+        """
+        app = create_app(settings.model_copy(update={"console_dir": "/nonexistent"}))
+        assert app.state.console_mounted is False
+        assert not any(getattr(route, "path", None) == "/" for route in app.routes)
+
+
 class TestMounting:
     def test_assets_present_and_enabled_mounts(self, console_settings: Settings) -> None:
         assert create_app(console_settings).state.console_mounted is True
