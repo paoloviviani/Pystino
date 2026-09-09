@@ -6,7 +6,7 @@ boring parts correctly — authenticated AES-CBC, a random IV per message, a
 version byte — and getting those wrong by hand is how this kind of code fails.
 
 Two properties the rest of the codebase depends on
-(0027):
+(ADR 0027):
 
 * **Rotation is possible.** ``GATEWAY_SECRET_KEY`` takes a comma-separated list.
   The first key encrypts; any key decrypts. So rotating is: prepend a new key,

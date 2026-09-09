@@ -2,7 +2,7 @@
 
 Speaks the contract in :mod:`llmp_shared.redaction` and nothing else, so any
 service that serves ``POST /detect`` is a valid detector regardless of the model
-behind it (0026). Presidio in
+behind it (ADR 0026). Presidio in
 ``services/redaction`` is a reference implementation, not a dependency.
 
 The division of labour matters and is from 0012:

@@ -10,7 +10,17 @@ name: llm-platform
 
 services:
   postgres:
-    image: postgres:18-alpine
+    # pgvector rather than plain postgres, because knowledge-base retrieval is a
+    # SQL query here rather than a second stateful service (ADR 0018). The image
+    # is the official postgres:18 with the extension compiled in — same
+    # entrypoint, same PG 18 data layout, so the volume below is unchanged.
+    #
+    # Two things about the swap. It is Debian where the old image was Alpine, so
+    # in principle text-index collations belong to a different libc; here they do
+    # not, because POSTGRES_INITDB_ARGS pins C.UTF-8, which is code-point order
+    # in both musl and glibc. And the pin is `>= 0.8.2` for CVE-2026-3172, a
+    # buffer overflow in parallel HNSW index builds; this tag carries 0.8.6.
+    image: pgvector/pgvector:pg18
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-gateway}

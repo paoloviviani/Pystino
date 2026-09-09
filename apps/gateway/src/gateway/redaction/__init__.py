@@ -76,7 +76,7 @@ def build_redactor(settings: RedactionSettings) -> Redactor:
 
     Built-ins are ``noop`` and ``http``; anything else comes from an installed
     package advertising the ``llmp.redactors`` entry point
-    (0026). An unknown name
+    (ADR 0026). An unknown name
     raises rather than falling back, because a gateway that believes redaction is
     on when it is not is the worst available outcome.
     """
