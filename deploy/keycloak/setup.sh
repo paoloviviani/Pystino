@@ -34,7 +34,14 @@ KEYCLOAK_ADMIN_USER="${KEYCLOAK_ADMIN_USER:-admin}"
 
 REALM="${KEYCLOAK_REALM:-pystino}"
 AUDIENCE="${GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE:-pystino-api}"
-TEST_USER="${KEYCLOAK_TEST_USER:-chat@local}"
+# A resolvable-looking address, not `chat@local`. The gateway would accept the
+# latter — it keys users on `(issuer, subject)` and treats email as a label, so
+# `admin@local` is a fine local-door convention. A chat client is stricter: this
+# one validates the `email` claim as a real address and refuses `.local` with a
+# Zod "Invalid email" from inside its OIDC callback, which reads as a broken
+# login rather than a rejected claim. `.example.org` is reserved by RFC 2606
+# and cannot collide with anything real.
+TEST_USER="${KEYCLOAK_TEST_USER:-chat@example.org}"
 TEST_PASSWORD="${KEYCLOAK_TEST_PASSWORD:-}"
 CONTAINER="${KEYCLOAK_CONTAINER:-llm-platform-keycloak-1}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
