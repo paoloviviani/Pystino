@@ -22,6 +22,11 @@ dependencies = [
     "orjson>=3.10",
     "llmp-shared",
     "google-re2>=1.1.20251105",
+    # The vector column type and its asyncpg codec, nothing more — MIT, and it
+    # declares no dependencies of its own (verified at source, 0.5.0). It is a
+    # binding, not an engine: the index and the distance operators are
+    # PostgreSQL's (ADR 0018).
+    "pgvector>=0.4",
 ]
 
 [project.scripts]

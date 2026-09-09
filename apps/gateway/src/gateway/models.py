@@ -32,6 +32,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -41,7 +42,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from gateway.periods import PeriodKind
-from gateway.types import Money, TZDateTime, utcnow
+from gateway.types import Embedding, Money, TZDateTime, utcnow
 
 
 class Base(DeclarativeBase):
@@ -537,9 +538,7 @@ class RefreshCredential(Base):
     """
 
     __tablename__ = "refresh_credentials"
-    __table_args__ = (
-        UniqueConstraint("user_id", "client", name="uq_refresh_user_client"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "client", name="uq_refresh_user_client"),)
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -583,7 +582,7 @@ class Provider(Base):
     """An OpenAI-compatible inference endpoint the gateway can route to.
 
     Configured through the admin API rather than the environment, so adding a
-    provider is not a deploy (0027).
+    provider is not a deploy (ADR 0027).
 
     The API key is stored **encrypted** (see :mod:`gateway.secrets`) and is never
     returned by the API — only ``api_key_hint``, which is enough to tell two keys
@@ -804,7 +803,7 @@ class UserModelAccess(Base):
     """Per-user model availability, in addition to whatever their groups grant.
 
     Access is the **union** of the two: a caller may use a model if their group
-    has it or they do personally (0027).
+    has it or they do personally (ADR 0027).
     It exists so that "give this one researcher the expensive model" does not
     require inventing a group for one person.
 
@@ -1101,9 +1100,7 @@ class PasswordResetToken(Base):
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE")
-    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     token_hash: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     expires_at: Mapped[datetime] = mapped_column()
@@ -1421,8 +1418,7 @@ class RedactionRule(Base):
             unique=True,
         ),
         CheckConstraint(
-            "(scope = 'all' AND scope_id IS NULL)"
-            " OR (scope <> 'all' AND scope_id IS NOT NULL)",
+            "(scope = 'all' AND scope_id IS NULL) OR (scope <> 'all' AND scope_id IS NOT NULL)",
             name="ck_redaction_rules_scope_id_presence",
         ),
         Index("ix_redaction_rules_lookup", "is_active", "scope", "scope_id"),
@@ -1490,3 +1486,387 @@ class QuotaReset(Base):
 
     def __repr__(self) -> str:
         return f"<QuotaReset rule={self.rule_id} at={self.effective_at.isoformat()}>"
+
+
+# --- knowledge: files, bases, documents, chunks, and who may see them --------
+#
+# The shape of this section follows one rule: a knowledge base is a *durable*
+# store of text, where every other surface in this gateway handles text that
+# passes through and is forgotten. Everything below that is surprising follows
+# from that difference — why the extracted text is kept beside the vectors, why
+# the embedding model is pinned per base rather than per deployment, and why
+# there is an ACL here at all when the rest of the gateway has exactly one
+# access question ("may this caller use this model").
+
+
+class ResourceKind(enum.StrEnum):
+    """What a share is a share *of*.
+
+    A string rather than a foreign key to some resources table, because the
+    kinds do not live in one table and one of them does not live in this
+    database at all: the chat application owns projects, and shares them
+    through here so that "who may see this" has one implementation rather than
+    two. This gateway therefore stores rows for a kind it can say nothing else
+    about, which is deliberate — the alternative was a second ACL in MongoDB
+    with its own idea of what a group is.
+    """
+
+    KNOWLEDGE_BASE = "knowledge_base"
+    AGENT = "agent"
+    #: Owned by the chat, shared through here. See the class docstring.
+    CHAT_PROJECT = "chat_project"
+
+
+class SharePrincipal(enum.StrEnum):
+    USER = "user"
+    GROUP = "group"
+
+
+class ShareRole(enum.StrEnum):
+    """What a share permits. Two levels, because three would be guessing.
+
+    ``viewer`` may read the resource and retrieve from it; ``editor`` may also
+    add and remove its contents. Neither may re-share or delete: that stays with
+    the owner, so there is always exactly one principal who can make a resource
+    disappear.
+    """
+
+    VIEWER = "viewer"
+    EDITOR = "editor"
+
+
+class ResourceShare(Base):
+    """One grant of one resource to one user or one group.
+
+    Modelled on ``group_model_access`` / ``user_model_access`` and inheriting
+    their two rules, which are worth restating because they are what make this
+    table safe to reason about:
+
+    * **Access is the union of every applicable row, and absence means no
+      access.** There is no allow-all.
+    * **There is deliberately no denial row.** An explicit deny overriding a
+      group grant turns "why can this person not see that base" into a question
+      needing a search rather than a look.
+
+    The owner is *not* represented here. Ownership lives on the resource itself
+    as ``owner_user_id``, so a resource with no shares at all is still reachable
+    by exactly one person, and dropping every share can never orphan it.
+
+    Note what the composite primary key forbids: one principal cannot hold two
+    roles on one resource. Re-granting is an upsert of the role, which is what
+    an administrator means by it.
+    """
+
+    __tablename__ = "resource_shares"
+    __table_args__ = (
+        # The listing query is "everything shared with these principals", so the
+        # principal comes first in the index and the resource second.
+        Index("ix_resource_shares_principal", "principal_kind", "principal_id"),
+        Index("ix_resource_shares_resource", "resource_kind", "resource_id"),
+    )
+
+    resource_kind: Mapped[ResourceKind] = mapped_column(
+        _enum(ResourceKind, "resource_kind"), primary_key=True
+    )
+    #: Not a foreign key, and cannot be: the kinds live in different tables and
+    #: one of them lives in another database entirely. Deleting a resource must
+    #: therefore delete its shares by hand — `delete_shares` in `sharing.py` is
+    #: the one place that does it.
+    resource_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    principal_kind: Mapped[SharePrincipal] = mapped_column(
+        _enum(SharePrincipal, "share_principal"), primary_key=True
+    )
+    #: Also not a foreign key, for the same reason in reverse: it addresses
+    #: either `users.id` or `groups.id` depending on the column beside it. The
+    #: cost is that erasing a user leaves dead grants, which `sharing.py`
+    #: filters out on read rather than trusting the table to be clean.
+    principal_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    role: Mapped[ShareRole] = mapped_column(
+        _enum(ShareRole, "share_role"), default=ShareRole.VIEWER
+    )
+    granted_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    def __repr__(self) -> str:
+        return (
+            f"<ResourceShare {self.resource_kind}:{self.resource_id} "
+            f"-> {self.principal_kind}:{self.principal_id} as {self.role}>"
+        )
+
+
+class StoredFile(Base):
+    """A file an authenticated caller uploaded, and the only content this
+    gateway keeps.
+
+    Everything else here is a ledger row: counts, costs, model names. This is
+    the first table that holds what a user wrote, which is why it carries an
+    owner and why erasing that owner takes the bytes with it.
+
+    The bytes are in PostgreSQL, in a separate table — see ``FileBlob``. Three
+    reasons, and one admission. One backup story and one restore story, which is
+    the same argument that chose pgvector over a second stateful service
+    (ADR 0018). No new credential, bucket, or lifecycle policy to get wrong.
+    And metadata and content commit together, so a half-finished upload cannot
+    leave a row describing bytes that are not there. The admission is that a
+    large corpus does not belong in a relational database, and this will be the
+    first thing to move; the separate table is what makes moving it a change to
+    one module rather than to every query.
+    """
+
+    __tablename__ = "files"
+    __table_args__ = (
+        # Deduplication is per owner, not global: two users uploading the same
+        # document get two rows, because one of them deleting it must not
+        # remove the other's.
+        Index("ix_files_owner_sha", "owner_user_id", "sha256"),
+        Index("ix_files_created", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    filename: Mapped[str] = mapped_column(String(255))
+    #: What the caller declared. The extractor sniffs the bytes itself and may
+    #: disagree; it wins, and this column keeps what was claimed so the two are
+    #: comparable when an extraction fails for a reason nobody expected.
+    media_type: Mapped[str] = mapped_column(String(255))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64))
+    #: CASCADE, unlike every identity foreign key on the ledger. A usage record
+    #: must survive the erasure of the user it describes, because it is
+    #: financial history; a file is that user's content and must not.
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    #: Which group paid to extract and embed it. SET NULL like the ledger's, for
+    #: the same reason: the spend already happened.
+    billing_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="SET NULL"), default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    blob: Mapped[FileBlob | None] = relationship(
+        back_populates="file", cascade="all, delete-orphan", uselist=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<StoredFile {self.filename} {self.size_bytes}B>"
+
+
+class FileBlob(Base):
+    """The bytes of one file, in a table of their own.
+
+    Separate from ``files`` so that listing files, checking quotas or resolving
+    an owner never drags a 25 MiB column through the connection. PostgreSQL
+    would TOAST it out of line anyway, but ``SELECT *`` on the parent table is
+    written by hand in enough places that keeping the column out of reach is
+    worth a join.
+    """
+
+    __tablename__ = "file_blobs"
+
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("files.id", ondelete="CASCADE"), primary_key=True
+    )
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+
+    file: Mapped[StoredFile] = relationship(back_populates="blob")
+
+
+class IndexStatus(enum.StrEnum):
+    """Where one document is in the pipeline.
+
+    Named after the stage that is *running*, not the stage that finished, so a
+    stuck document says what it is stuck in. ``failed`` carries a message; the
+    one other terminal state is ``ready``.
+    """
+
+    PENDING = "pending"
+    EXTRACTING = "extracting"
+    EMBEDDING = "embedding"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class KnowledgeBase(Base):
+    """A set of documents that can be retrieved from, and shared.
+
+    **The embedding model is pinned here, not deployment-wide.** This is the one
+    decision in this table that everything else follows from, and it exists
+    because vectors from two models are not comparable: mixing them does not
+    degrade retrieval, it makes it meaningless. Pinning per base means changing
+    the deployment's default embedding model is safe by construction — existing
+    bases keep answering from the vectors they have, and an administrator
+    reindexes each one when they choose to. The alternative, a single
+    deployment-wide dimension, makes changing that setting an outage.
+
+    ``dimensions`` is **learned rather than configured**: it is null until the
+    first embedding comes back, and taken from the length of that vector. A
+    model's output size is not something an operator should have to look up, and
+    a number typed in by hand is a number that can be wrong.
+
+    The chunk geometry is snapshotted here too, for the same reason as
+    ``model_prices``: a reindex must be able to reproduce what the last one did,
+    and a global setting that has since changed cannot tell you what it was.
+    """
+
+    __tablename__ = "knowledge_bases"
+    __table_args__ = (
+        Index("ix_knowledge_bases_owner", "owner_user_id"),
+        Index("ix_knowledge_bases_created", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(String(500), default="")
+    #: CASCADE: see `StoredFile.owner_user_id`. A shared base owned by someone
+    #: who leaves is a real operational problem and the answer is to transfer
+    #: ownership before erasing them, not to keep an ownerless base alive.
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    billing_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="SET NULL"), default=None
+    )
+    #: RESTRICT rather than SET NULL: without knowing which model made the
+    #: vectors, a query cannot be embedded compatibly and the base is silently
+    #: useless. Models here deactivate and are never deleted, so this never
+    #: fires in practice — it is a statement that deleting one would be a bug.
+    embedding_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("models.id", ondelete="RESTRICT"), default=None
+    )
+    #: Which extractor turned files into text. Null means "whatever the
+    #: deployment was configured with at the time", which is enough to reindex
+    #: from stored text but not to re-extract reproducibly — hence the column.
+    extractor_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("models.id", ondelete="SET NULL"), default=None
+    )
+    #: Learned from the first vector, never typed in. See the class docstring.
+    dimensions: Mapped[int | None] = mapped_column(Integer, default=None)
+    chunk_chars: Mapped[int] = mapped_column(Integer, default=1200)
+    chunk_overlap: Mapped[int] = mapped_column(Integer, default=150)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    documents: Mapped[list[KnowledgeDocument]] = relationship(
+        back_populates="knowledge_base", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<KnowledgeBase {self.name} dims={self.dimensions}>"
+
+
+class KnowledgeDocument(Base):
+    """One thing indexed into a base: an uploaded file, or plain text.
+
+    Both, from one table, because the alternative is two indexes with two
+    embedding configurations and two reindex buttons. Text-only sources are what
+    "retrieve over previous chats" needs — the chat has no file to upload, only
+    a transcript — and giving that its own machinery would mean the same bug has
+    to be fixed twice.
+
+    **The extracted text is kept.** It is the largest column here and it earns
+    its space: re-embedding after an embedding-model change then costs one call
+    per chunk and no extraction at all, where re-extracting a scanned PDF
+    through an OCR model costs real money per page. Only an extractor change
+    needs the original bytes again.
+    """
+
+    __tablename__ = "knowledge_documents"
+    __table_args__ = (
+        Index("ix_knowledge_documents_base", "knowledge_base_id", "status"),
+        # Re-indexing the same external thing replaces it rather than adding a
+        # second copy. Partial, because most documents have no external ref and
+        # NULLs are not equal to each other in either dialect.
+        Index(
+            "ix_knowledge_documents_source",
+            "knowledge_base_id",
+            "source_ref",
+            unique=True,
+            postgresql_where=text("source_ref IS NOT NULL"),
+            sqlite_where=text("source_ref IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE")
+    )
+    #: SET NULL, not CASCADE: deleting the upload should not silently delete
+    #: what was learned from it. The document keeps its text and stays
+    #: retrievable; only re-extraction becomes impossible, which is what
+    #: `can_reextract` reports.
+    file_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("files.id", ondelete="SET NULL"), default=None
+    )
+    title: Mapped[str] = mapped_column(String(255), default="")
+    #: An opaque handle owned by whoever supplied the text — the chat writes
+    #: `chat:conversation:<id>` here. Unique per base, so re-indexing is
+    #: idempotent.
+    source_ref: Mapped[str | None] = mapped_column(String(255), default=None)
+    text: Mapped[str | None] = mapped_column(Text, default=None)
+    text_sha256: Mapped[str | None] = mapped_column(String(64), default=None)
+    pages: Mapped[int] = mapped_column(Integer, default=0)
+    chars: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[IndexStatus] = mapped_column(
+        _enum(IndexStatus, "index_status"), default=IndexStatus.PENDING
+    )
+    #: Why it failed, in the words the caller gets. Truncated rather than
+    #: unbounded: an upstream that returns a megabyte of HTML on error should
+    #: not be able to write a megabyte here.
+    error: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    indexed_at: Mapped[datetime | None] = mapped_column(default=None)
+
+    knowledge_base: Mapped[KnowledgeBase] = relationship(back_populates="documents")
+    chunks: Mapped[list[KnowledgeChunk]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<KnowledgeDocument {self.title!r} {self.status}>"
+
+
+class KnowledgeChunk(Base):
+    """One passage and its vector.
+
+    ``knowledge_base_id`` is denormalised from the document on purpose. Every
+    retrieval is "nearest neighbours *within one base*", and making that a join
+    would put a second table in front of the vector index for no benefit — the
+    same reasoning that made `access.py` use EXISTS rather than joins.
+
+    ``dimensions`` is denormalised from the base for a sharper reason: it is the
+    partial-index predicate. Comparing vectors of different lengths raises
+    rather than ranking wrongly, so this column is what keeps a query inside one
+    length, and it must be filterable without a join to be an index predicate at
+    all. It is also what lets a reindex write new vectors beside the old ones.
+    """
+
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        # The retrieval filter, in the order the query uses it. The approximate
+        # indexes are per-dimension partial expression indexes and live in the
+        # migration rather than here, because they are PostgreSQL-only and
+        # SQLite must still be able to create this table.
+        Index("ix_knowledge_chunks_base", "knowledge_base_id", "dimensions"),
+        Index("ix_knowledge_chunks_document", "document_id", "ordinal"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_documents.id", ondelete="CASCADE")
+    )
+    knowledge_base_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE")
+    )
+    ordinal: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+    #: What we counted when we paid to embed it, kept so that the cost of a
+    #: reindex can be estimated before it is run rather than discovered after.
+    token_count: Mapped[int] = mapped_column(Integer, default=0)
+    embedding: Mapped[list[float] | None] = mapped_column(Embedding, default=None)
+    dimensions: Mapped[int | None] = mapped_column(Integer, default=None)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    document: Mapped[KnowledgeDocument] = relationship(back_populates="chunks")
+
+    def __repr__(self) -> str:
+        return f"<KnowledgeChunk {self.ordinal} of {self.document_id}>"

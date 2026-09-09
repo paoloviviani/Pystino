@@ -2,7 +2,7 @@
 
 Built-in engines are registered here; third-party ones register through the
 ``llmp.redactors`` entry-point group, so ``pip install`` plus one setting is the
-whole integration (0026):
+whole integration (ADR 0026):
 
 ```toml
 [project.entry-points."llmp.redactors"]
