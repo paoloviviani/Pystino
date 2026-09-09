@@ -9,7 +9,7 @@ from the code.
 1. **EUPL-1.2 for all first-party code, and licensing is a hard requirement.**
    Ask before adopting anything with a non-OSI licence, a CLA, or an open-core
    model. Not a preference to be traded off — see
-   [ADR 0001](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0001-licensing.md).
+   ADR 0001.
 2. **Where you are unsure whether a library or version is current, say so.**
    Research at source rather than from memory; several decisions here turned on
    details found only by reading the provider's live schema. Guessing a version
@@ -24,7 +24,7 @@ from the code.
    `docker-compose.proxy.yml` closes both — Caddy terminates TLS, and the only
    management credential that shape seeds (the local admin's, ADR 0043) comes
    from `deploy/.env`, which is not in the repository
-   ([ADR 0035](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0035-public-tls-exposure.md)); it is still not a
+   (ADR 0035); it is still not a
    production deployment, and that ADR says exactly why. Without it, reach the
    stack over the SSH tunnel. **Nothing else may be published.**
    `scripts/test_public_tls_live.py` is what checks that, by
@@ -52,15 +52,16 @@ what used to share the monorepo:
 
 | Repository | What | Why it is not here |
 |---|---|---|
-| [ai-stack](https://gitlab.linksfoundation.com/viviani/ai-stack) | The decision record (ADRs 0001–0060), the whole-stack architecture, the roadmap and the scope of unstarted work | The series spans a gateway, a chat app, a RAG pipeline and three design languages. A numbered sequence cannot be split without renumbering, which its index forbids |
+| the decision record (internal) | ADRs 0001–0061, the whole-stack architecture, the roadmap and the scope of unstarted work | The series spans a gateway, a chat app, a RAG pipeline and three design languages. A numbered sequence cannot be split without renumbering, which its index forbids |
 | [pystino-chat](https://gitlab.linksfoundation.com/viviani/pystino-chat) | The chat application, a `/v1` **client** | It imports nothing from the gateway: it talks over `/v1` with a key or an OIDC bearer (ADR 0040, ADR 0046). On the day of the split its monorepo branch was 56 commits behind, and every gateway change made the merge worse |
 
-**Citing a decision:** by number, in prose — `(ADR 0032)`. That resolves
-wherever the file lives, which is why the numbers exist; roughly 690 such
-citations in this repository were untouched by the split.
-[docs/decisions.md](docs/decisions.md) maps every number to its title and URL,
-and is generated — if it disagrees with ai-stack, ai-stack is right. The next
-number is the next number **there**, whichever repository the work lands in.
+**Citing a decision:** by number, in prose — `(ADR 0032)`, never as a link.
+The record is **not public and never will be**, so a URL into it promises a
+source the reader cannot open and advertises a private repository's address; the
+number names the reasoning so it can be asked for. Roughly 690 such citations
+here were untouched by the repository split, which is the whole point of
+numbering them. The next number is the next number in the record, whichever
+repository the work lands in.
 
 ## Where things are
 
@@ -73,8 +74,8 @@ services/redaction  Presidio behind a swappable contract, out of process
 deploy/compose   the stack: base + smoke + redaction + proxy overlays
 deploy/caddy     the TLS reverse proxy's one config file, for both configurations
 scripts/         live checks against a running stack (see below)
-docs/            how to run, deploy and operate this. docs/decisions.md indexes
-                 the ADRs, which live in another repository — see below.
+docs/            how to run, deploy and operate this. The ADRs are not here
+                 and are not linked — cite them by number; see below.
 ```
 
 Inside the gateway, the pieces that carry the most weight:
@@ -121,8 +122,8 @@ Inside the gateway, the pieces that carry the most weight:
   file.** `packages/ui/src/tokens.css` carries the palette (light **and dark**),
   the type and the geometry, and components reference tokens and never literals
   — restyles have landed three times now as a change to that file alone
-  ([ADR 0042](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0042-material-design-3.md) twice, and
-  [ADR 0047](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0047-tailwind-base-ui-modern-refresh.md)). Since 0047 the
+  (ADR 0042 twice, and
+  ADR 0047). Since 0047 the
   components are styled with **Tailwind utilities** and the interaction layer
   (Dialog, Menu, Toast, Tooltip) is **Base UI**, both verified MIT at source;
   the tokens stay plain custom properties, so a consumer that runs no Tailwind
@@ -151,7 +152,7 @@ Inside the gateway, the pieces that carry the most weight:
   identity menu, which is a `MoneyPrecisionContext` — a `formatMoney` call made
   outside `<Money>` has to read it by hand (`useExactMoney`).
 - **Provider-side web search is a billable unit, and it is a *surcharge***
-  ([ADR 0058](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0058-per-search-pricing.md)). `per_search` on the price
+  (ADR 0058). `per_search` on the price
   row, `search_count` on the usage row. Unlike a page or an image it lands on
   an ordinary chat request, which is why it went unbilled: the tool passes
   through `extra="allow"` untouched, so search already worked and cost nothing.
@@ -170,7 +171,7 @@ Inside the gateway, the pieces that carry the most weight:
   that executes them — are in
   [docs/web-search-plan.md](docs/web-search-plan.md), not started.
 - **Restoring a placeholder moves every offset after it**
-  ([ADR 0059](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0059-citation-offsets.md)). A real name is rarely the
+  (ADR 0059). A real name is rarely the
   same length as the placeholder that stood in for it, and a provider's
   citations are *character offsets into the answer* — OpenAI's `url_citation`
   is `start_index`/`end_index`. So `restore_with_edits` reports where it wrote,
@@ -195,7 +196,7 @@ Inside the gateway, the pieces that carry the most weight:
   **plugin returns facts and never computes money** — there is deliberately
   nothing it can return that would let it price a request (ADR 0032).
 - **The final ledger write happens after the response is sent**
-  ([ADR 0060](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0060-settle-after-the-response.md)). Six non-streamed
+  (ADR 0060). Six non-streamed
   routes attach `metered.completed_after_response(...)` to the response instead
   of awaiting it: −16% p50 and −33% p95 with headroom, CPU unchanged. Three
   things follow. A failure there is **logged, not raised** — the caller already
@@ -215,7 +216,7 @@ Inside the gateway, the pieces that carry the most weight:
 - **`InMemoryCounterStore` is atomic for an uninteresting reason** — it never
   awaits. It cannot prove anything about `MULTI`/`EXEC`, which is why
   `scripts/test_quota_race_live.py` exists.
-- **There is no bundled identity provider** ([ADR 0044](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0044-keycloak-removed.md)).
+- **There is no bundled identity provider** (ADR 0044).
   The console's default way in is local email + password (ADR 0043); OIDC is
   configured against whatever provider `deploy/.env` names
   ([docs/oidc-generic-provider.md](docs/oidc-generic-provider.md)). Consequences
@@ -225,7 +226,7 @@ Inside the gateway, the pieces that carry the most weight:
   `(issuer, subject)`, so changing the issuer re-provisions everyone as new
   rows with no memberships at their next login.
 - **A request may choose which group pays, and a key may not**
-  ([ADR 0061](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0061-per-request-billing-group.md)). `x-bill-to: <group name>`,
+  (ADR 0061). `x-bill-to: <group name>`,
   honoured only for a caller authenticated with an OIDC access token, because a
   key already carries its answer — a key sending it is **refused rather than
   ignored**, since a caller billed somewhere it did not ask for finds out from
@@ -245,7 +246,7 @@ Inside the gateway, the pieces that carry the most weight:
   deliberately reports no spend or quota: it is the safe slice of the deferred
   `/v1` usage work, not a down payment on its shape.
 - **A directory owns the memberships it granted, and no others**
-  ([ADR 0057](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0057-group-ownership-and-sync.md)). `memberships.source`
+  (ADR 0057). `memberships.source`
   is `oidc` or `manual`; a login's sync grants and revokes the first kind and
   never touches the second, so an administrator's group assignment survives a
   sign-in. `identity_providers.group_sync` says how often the directory gets to
@@ -261,7 +262,7 @@ Inside the gateway, the pieces that carry the most weight:
   permanently unequal to their token and equality meant a write per `/v1`
   request.
 - **A directory login can adopt the local account with the same address, and
-  only if the operator says so** ([ADR 0056](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0056-account-linking.md)).
+  only if the operator says so** (ADR 0056).
   `identity_providers.link_local_by_email`, per provider and off by default. It
   reverses a refusal that used to be absolute, so read the ADR before touching
   either side; three things about it will save time. The gate is
@@ -283,7 +284,7 @@ Inside the gateway, the pieces that carry the most weight:
   an existing link but makes no userinfo request, so it does not hold the claim
   that would justify a new one.
 - **Three things bite anything served behind the TLS proxy** (all found
-  building it, all recorded in [ADR 0035](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0035-public-tls-exposure.md)).
+  building it, all recorded in ADR 0035).
   **SNI may not carry an IP address**, so an address-only deployment offers no
   certificate at all until `default_sni` names one — every handshake fails with a
   TLS "internal error" and nothing above debug in the log. **uvicorn trusts
@@ -404,7 +405,7 @@ read. Both are gitignored by name and glob.
 
 The gateway and its console are the substance and are done through Phase 2:
 gateway, redaction, providers, quotas, reporting, five `/v1` surfaces, the admin
-console. `https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/phase-2-plan.md` records what was planned and what was added
+console. `the decision record records what was planned and what was added
 afterwards, including the bugs each addition surfaced.
 
 **The chat application lives on the `chat` branch**, not here: `apps/chat-api`
@@ -418,7 +419,7 @@ Merge order when the chat resumes: gateway features land here first, the
 Two pieces of work with their reasoning written down rather than left to be
 rediscovered — one being built, one not started:
 
-- **[ADR 0032](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0032-provider-plugins.md)** *(accepted; being built)* — providers and
+- **ADR 0032** *(accepted; being built)* — providers and
   routers are different kinds, distinguished by whether the serving endpoint is
   implied by the model or chosen per request. Vendor knowledge moves into
   plugins, pricing with it, and the load-bearing rule is that **a plugin returns
@@ -448,7 +449,7 @@ rediscovered — one being built, one not started:
 
 - **[docs/redaction-scoping-plan.md](docs/redaction-scoping-plan.md)** —
   visibility is **done** (`GET /api/admin/redaction`, the Redaction screen), and
-  so is **choosing the engine** ([ADR 0033](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0033-redaction-engine-selection.md)):
+  so is **choosing the engine** (ADR 0033):
   the registry describes every installed engine, `redaction_config` is an
   append-only row that overrides `GATEWAY_REDACTION__ENGINE`, and
   `RedactionResolver` polls it every 10s so a change reaches the other worker
@@ -460,7 +461,7 @@ rediscovered — one being built, one not started:
   `_engine_redacts` asks the registry rather than comparing against `"noop"` — an
   installable engine could redact nothing under any name.
   **What is redacted is now an admin decision**
-  ([ADR 0037](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0037-redaction-policy.md)): a per-entity policy — four
+  (ADR 0037): a per-entity policy — four
   modes on two axes (what the model sees, what the reader gets back), a
   threshold per type, an allow-list — stored as JSON on that same append-only
   row and picked up by the same poll. Two things easy to get wrong: the policy

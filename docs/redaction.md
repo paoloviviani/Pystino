@@ -14,7 +14,7 @@ planning; see [Measured performance](performance.md).
 
 The detection service (`services/redaction`, Presidio) is a separate process
 behind a wire contract defined in `packages/shared-py`
-([ADR 0012](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0012-redaction-interface.md)). The split has two reasons:
+(ADR 0012). The split has two reasons:
 
 - **The event loop must not block.** Detection is CPU-bound NER; in-process it
   would stall every concurrent request for the length of every prompt.
@@ -35,7 +35,7 @@ placeholders stop matching.
 
 The question recurs, so the numbers that answer it are recorded here. Embedding
 would save one container and one HTTP hop, and the in-process seam exists
-([ADR 0026](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0026-pluggable-detection.md)) — it is meant for engines where a
+(ADR 0026) — it is meant for engines where a
 network hop is absurd, such as a pure-regex ruleset. NER is not that case:
 
 - **Memory multiplies by worker.** Presidio with NER is ~900MB; the gateway runs
@@ -52,14 +52,14 @@ network hop is absurd, such as a pure-regex ruleset. NER is not that case:
 
 Enabling and disabling redaction from the console needs no architecture change:
 the engine choice is a UI decision that reaches every worker within ten seconds
-([ADR 0033](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0033-redaction-engine-selection.md)), and the sidecar is only
+(ADR 0033), and the sidecar is only
 needed when the engine is `http`.
 
 ## The engine is a decision, not a build flag
 
 Installed engines are described by a registry; which one runs is an admin
 decision stored on an append-only `redaction_config` row
-([ADR 0033](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0033-redaction-engine-selection.md)). `RedactionResolver`
+(ADR 0033). `RedactionResolver`
 polls it every 10 seconds, so a change reaches every worker without a restart
 and without a query on the request path. Switching to an engine that redacts
 *less* than the current one requires a written reason, kept permanently — the
@@ -71,7 +71,7 @@ must be a choice somebody made, never a default someone forgot about.
 ## What happens to a detected entity: the policy model
 
 For each entity type, a policy names a **mode**
-([ADR 0037](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0037-redaction-policy.md)) — two independent questions, what
+(ADR 0037) — two independent questions, what
 the model sees and what the reader gets back:
 
 | Mode | Upstream sees | Reader gets back |
@@ -101,10 +101,10 @@ message.
 ## Rules, not a deployment policy
 
 There is no deployment-wide policy any more
-([ADR 0039](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0039-redaction-rules-only.md)); there is a rules table
+(ADR 0039); there is a rules table
 (`redaction_rules`), and the **catch-all is one rule among them** — scope
 `all`, exactly one row may hold it. A rule can scope to `provider`, `model`,
-`group`, `user` or `api_key` ([ADR 0038](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0038-scoped-redaction.md)) —
+`group`, `user` or `api_key` (ADR 0038) —
 notably different from quota scopes, because quotas follow who *pays* while
 redaction follows where the **text goes** and who **wrote it**.
 
@@ -117,7 +117,7 @@ except four types") after that default redacted the wrong things for a
 language it was never written against: *"Riassumi le notizie del giorno da
 ilpost.it"* went upstream as `<PERSON_…> le notizie del giorno da <URL_…>` —
 an English model calling an Italian verb a person at 0.85 and the news site a
-URL ([ADR 0037](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0037-redaction-policy.md)).
+URL (ADR 0037).
 
 An allow-list (values never redacted, compared case-insensitively, **exactly**
 — a substring rule would let "it" allow every Italian domain) belongs to the
@@ -135,7 +135,7 @@ incident. Nothing needs a priority column or a "most specific wins" rule. This
 is the quota model's fold inverted: quotas are *all rules must pass* because a
 permissive rule would raise a ceiling; redaction is *the strictest answer wins*
 because a permissive rule would remove protection
-([ADR 0009](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0009-quota-model.md)).
+(ADR 0009).
 
 One subtlety cost a test to find: there is **one row per subject**, so an
 administrator's `scope=user` rule and that person's own policy are the *same

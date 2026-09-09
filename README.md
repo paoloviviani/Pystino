@@ -14,7 +14,7 @@ frontend, desktop shell and RAG are planned.
 > one went.
 
 **Licence: [EUPL-1.2](LICENCE)** for all first-party code — see
-[ADR 0001](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0001-licensing.md) for the dependency policy it implies.
+ADR 0001 for the dependency policy it implies.
 
 ## Components
 
@@ -28,9 +28,12 @@ frontend, desktop shell and RAG are planned.
 
 The chat application, the desktop shell and the RAG pipeline are **not here**.
 They live in [pystino-chat](https://gitlab.linksfoundation.com/viviani/pystino-chat),
-which is a `/v1` *client* of this gateway and imports nothing from it. The
-decision record for all of it is in
-[ai-stack](https://gitlab.linksfoundation.com/viviani/ai-stack).
+which is a `/v1` *client* of this gateway and imports nothing from it.
+
+Code and comments here cite decisions by number — `(ADR 0032)`. The decision
+record itself is internal and deliberately not linked: a citation names the
+reasoning so it can be asked for, where a link would promise a source a reader
+cannot open.
 
 ## Architecture
 
@@ -70,13 +73,13 @@ The four ideas that carry most of the design:
 
 1. **PostgreSQL is the ledger of record; Valkey is a rebuildable cache.**
    Quotas still evaluate correctly with Valkey gone, just more slowly.
-   ([0006](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0006-counter-store.md))
+   (ADR 0006)
 2. **Quota check before the upstream call, accounting after, a reservation in
    between** — otherwise concurrent requests each read the same under-limit
-   total and collectively blow the budget. ([0009](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0009-quota-model.md))
+   total and collectively blow the budget. (ADR 0009)
 3. **Accounting never silently reports zero**: if usage never arrives from the
    upstream, tokens are counted locally and the row is stamped `estimated`.
-   ([0008](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0008-accounting-model.md))
+   (ADR 0008)
 4. **The server is authoritative for conversations** — which is why the
    desktop app is a shell rather than a second client.
 
@@ -153,7 +156,7 @@ docker compose --env-file deploy/.env \
 ```
 
 The console is then at `https://<PUBLIC_HOST>:8443/console`. Read
-[ADR 0035](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0035-public-tls-exposure.md) before calling this a
+ADR 0035 before calling this a
 production deployment. `./scripts/test_public_tls_live.py` asserts the
 certificate verifies and that nothing else is reachable on a routable address.
 
@@ -180,7 +183,7 @@ uv run mkdocs build --strict   # output in site/; `mkdocs serve` to browse
 ```
 
 - **[docs/index.md](docs/index.md)** — start here.
-- **[docs/adr/](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/README.md)** — every significant decision, with the
+- **docs/adr/** — every significant decision, with the
   licence, version and CVE evidence behind it.
 - **[apps/gateway/README.md](apps/gateway/README.md)** — the gateway's
   surfaces, layout, and streaming traps.

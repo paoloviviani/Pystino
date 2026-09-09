@@ -130,14 +130,21 @@ done
 # The console's callback is the gateway's; chat-ui's is its own. Both are on the
 # single published origin, which is what makes one Caddy site enough.
 add_client() {
-	local client_id="$1" redirect="$2"
+	# Every argument after the first is a redirect URI, joined into the JSON
+	# array Keycloak wants. More than one is normal: see the console below.
+	local client_id="$1"
+	shift
+	local redirects=""
+	for uri in "$@"; do
+		redirects="${redirects:+$redirects,}\"$uri\""
+	done
 	local uuid
 	uuid="$(kc get clients -r "$REALM" -q "clientId=$client_id" --fields id --format csv --noquotes 2>/dev/null | tr -d '\r' | head -1)"
 
 	if [ -n "$uuid" ]; then
 		echo "== client $client_id exists ($uuid); updating redirect"
 		kc update "clients/$uuid" -r "$REALM" \
-			-s "redirectUris=[\"$redirect\"]" \
+			-s "redirectUris=[$redirects]" \
 			-s "webOrigins=[\"$PUBLIC_ORIGIN\"]" >/dev/null
 	else
 		echo "== creating client $client_id"
@@ -148,7 +155,7 @@ add_client() {
 			-s standardFlowEnabled=true \
 			-s directAccessGrantsEnabled=true \
 			-s serviceAccountsEnabled=false \
-			-s "redirectUris=[\"$redirect\"]" \
+			-s "redirectUris=[$redirects]" \
 			-s "webOrigins=[\"$PUBLIC_ORIGIN\"]" >/dev/null
 		uuid="$(kc get clients -r "$REALM" -q "clientId=$client_id" --fields id --format csv --noquotes | tr -d '\r' | head -1)"
 	fi
@@ -189,7 +196,14 @@ add_client() {
 	fi
 }
 
-add_client pystino-console "$PUBLIC_ORIGIN/auth/callback"
+# The console's callback carries the **provider name**: ADR 0051 made providers
+# rows, and `/auth/callback/{provider_name}` is how the gateway tells one
+# directory's answer from another's. Registering the bare `/auth/callback`
+# alone is what produced Keycloak's "Invalid parameter: redirect_uri" — the
+# button appeared, and pressing it failed. The wildcard covers whatever an
+# operator names the next provider; the bare path stays because the gateway
+# still accepts a single-provider deployment without one.
+add_client pystino-console "$PUBLIC_ORIGIN/auth/callback/*" "$PUBLIC_ORIGIN/auth/callback"
 add_client pystino-chat "$PUBLIC_ORIGIN/chat/login/callback"
 
 # ---------------------------------------------------------------------------

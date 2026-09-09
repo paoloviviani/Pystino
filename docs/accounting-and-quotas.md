@@ -23,7 +23,7 @@ fails in a specific, boring, expensive way.
 
 Every request writes one row to `usage_records` — before the upstream call, not
 after. The row carries the caller, the billing group, the requested and served
-models (which can differ behind a router — [ADR 0028](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0028-embeddings-and-served-model.md)),
+models (which can differ behind a router — ADR 0028),
 token counts, status, redaction provenance (`redaction_scope`,
 `redaction_rule_id`) and three cost figures.
 
@@ -43,7 +43,7 @@ prompts last month" is a number a data-protection review asks for).
 
 `cost_source` says which figure billed: our prices, or the counterparty's
 reported cost (billing mode is a per-provider choice,
-[ADR 0032](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0032-provider-plugins.md)). Both figures are recorded in both
+ADR 0032). Both figures are recorded in both
 modes, so a divergence is always reconstructable.
 
 `own_prices_fallback` is the value that must never appear silently: a
@@ -94,8 +94,8 @@ meaning, these differ only in spelling. The measurements behind this are in
 
 ## Quotas
 
-The quota engine ([ADR 0009](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0009-quota-model.md),
-[ADR 0025](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0025-quota-model-v2.md)) is reserve-then-settle over stacked,
+The quota engine (ADR 0009,
+ADR 0025) is reserve-then-settle over stacked,
 multi-granularity rolling windows: global, group, user and API-key rules can
 all apply to one request, and **all of them must pass** — a permissive rule
 must not raise a ceiling someone else set.
@@ -109,16 +109,16 @@ must not raise a ceiling someone else set.
 - **Overrun policy:** the request that crosses the limit is *admitted* (it
   reserved before anyone knew); the **next** one gets a 429. There is no
   mid-stream cutoff via `max_tokens` clamping — that is a deliberate choice,
-  not a gap ([ADR 0009](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0009-quota-model.md)).
+  not a gap (ADR 0009).
 - **Billing periods are calendar-based** (monthly, etc.) and are *not* rolling
   windows; a rolling window and a billing period answer different questions and
-  the model keeps them apart ([ADR 0024](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0024-billing-periods.md)).
+  the model keeps them apart (ADR 0024).
 - **Valkey holds the counters; it is never authoritative.** With Valkey gone,
   quotas fall back to the database and evaluate correctly, just more slowly.
   The counters rebuild from the ledger — which is also why flushing Valkey
   alone does **not** reset spent quota: clear both `usage_records` and the
   counters, or let the gateway restart and rebuild
-  ([ADR 0006](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0006-counter-store.md)).
+  (ADR 0006).
 - An admin reset (`POST /api/admin/limits/{id}/reset`) zeroes a quota's
   *consumption* and requires a reason; billing history is never touched.
 

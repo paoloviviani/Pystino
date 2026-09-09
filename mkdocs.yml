@@ -84,7 +84,6 @@ nav:
       - "Redaction scoping — design": redaction-scoping-design.md
       - "Redaction scoping — plan": redaction-scoping-plan.md
       - "Web search — priced, then the rest": web-search-plan.md
-  # The decisions themselves live in the ai-stack repository; this page is the
-  # generated index of them. The whole-stack architecture and the plans for work
-  # that has not started went with them.
-  - Design decisions: decisions.md
+  # No decisions page. The record is internal, so an index of links into it
+  # would be a list of URLs nobody reading these docs can open. Code and
+  # comments cite by number instead.

@@ -40,7 +40,7 @@ client.chat.completions.create(
 The request is redacted, admitted against the caller's quotas, metered and
 settled into the ledger. Streaming works the same way, with `stream=True` or
 `stream_options={"include_usage": true}` — the gateway forces usage out of the
-upstream either way ([ADR 0007](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0007-sse-streaming.md)).
+upstream either way (ADR 0007).
 
 ## Try it without a provider key
 
@@ -72,7 +72,7 @@ The console is at <http://localhost:8000/console>. Sign in with the account you
 just created. OIDC against GitLab, Entra ID or any other provider is a `.env`
 change, not a new component — see
 [OIDC against any provider](oidc-generic-provider.md). Local authentication and
-OIDC are two doors into the same session ([ADR 0043](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0043-local-authentication.md)).
+OIDC are two doors into the same session (ADR 0043).
 
 ## Reach it from another machine
 

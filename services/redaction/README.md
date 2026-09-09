@@ -24,7 +24,7 @@ Both sides have Pydantic models for this in `llmp_shared.redaction`.
 **This service is one implementation, not the interface.** Anything that serves
 `POST /detect` is a valid detector, in any language, with any model; point
 `GATEWAY_REDACTION__ENDPOINT` at it and the gateway needs no code. See
-[ADR 0026](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0026-pluggable-detection.md).
+ADR 0026.
 
 ## Plugging in a different detector
 
@@ -130,7 +130,7 @@ spaCy is CPU-bound and synchronous. In-process it would block the gateway's even
 loop for hundreds of milliseconds and stall *every concurrent stream on that
 worker*. Inside this service the same rule applies one level down: analysis runs on
 a worker thread, never on the request loop. See
-[ADR 0012](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0012-redaction-interface.md).
+ADR 0012.
 
 Latency is the honest risk. The out-of-process design protects the event loop; it
 does not make inference fast. The gateway caches detections per process on a hash of
@@ -182,7 +182,7 @@ So staleness is not the reason this service exists. The reasons are:
    spans in `llmp_shared.redaction`'s schema. Pointing the gateway at Presidio's
    `/analyze` would put one engine's wire format in the gateway and make every
    future detector imitate it — exactly what
-   [ADR 0026](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0026-pluggable-detection.md) refuses. Presidio is *a*
+   ADR 0026 refuses. Presidio is *a*
    detector we ship, not *the* detector the design assumes.
 2. **The licence gate is a build decision.** The stock image ships English only,
    and `it_core_news_lg` is CC BY-NC-SA 3.0 — so an Italian-capable deployment
