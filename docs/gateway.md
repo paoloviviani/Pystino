@@ -13,16 +13,34 @@ every decision behind it is the ADR index.
 | `POST /v1/messages` | API key | Anthropic's Messages API, over the same chat models |
 | `POST /v1/embeddings` | API key | Embeddings, metered and redacted like a completion |
 | `POST /v1/images/generations` | API key | Image generation, billed per picture or per token depending on the model |
+| `POST /v1/ocr` | API key | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor (ADR 0055) |
 | `GET /v1/models` | API key | Models the caller may use, by group or personal grant, with capabilities |
+| `GET /v1/billing/groups` | API key or bearer | Which groups this caller may bill, and which one paid for this request (ADR 0061) |
+| `/v1/files` | API key or bearer | Upload, list, download and delete the only content this gateway stores (ADR 0062) |
+| `/v1/vector_stores` | API key or bearer | Knowledge bases: documents in, passages out, and who they are shared with (ADR 0062) |
 | `GET /auth/login`, `/auth/callback` | — | OIDC authorization-code login (PKCE) |
 | `/api/me/*` | session cookie | Identity, billing group, API keys, own usage and reports |
-| `PUT /api/me/redaction` | session cookie | A user's own redaction policy — may not weaken the admin's floor |
-| `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, reports |
+| `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, the knowledge pipeline, reports |
 | `GET /healthz`, `/readyz` | — | Liveness (no dependencies) and readiness (one DB round trip) |
 
-All five `/v1` request routes share one metering path — `routers/_metered.py` —
-so resolve → reserve → record → settle cannot drift between surfaces
-(ADR 0030).
+Every metered `/v1` route shares one metering path — `routers/_metered.py` — so
+resolve → reserve → record → settle cannot drift between surfaces (ADR 0030).
+Since ADR 0062 that path is also what **knowledge-base ingestion** bills
+through, which is why `_metered.begin` takes `fx` and `session_factory` rather
+than a `Request`: a background task has no request, and a second copy of the
+money code would make indexing spend invisible to every report.
+
+Two things this table used to get wrong, corrected here rather than quietly:
+`/v1/ocr` was missing entirely, and `PUT /api/me/redaction` was listed but has
+never existed — a user's own redaction policy is a scoped rule set by an
+administrator (ADR 0038), not something a user can weaken.
+
+**Authentication differs across `/v1`.** Every route accepts an API key. Only
+some accept an OIDC access token, and none of `/api` does — it reads a session
+cookie and nothing else. That asymmetry is why `/v1/billing/groups`,
+`/v1/files` and `/v1/vector_stores` are on `/v1` at all: a chat client holding a
+bearer token cannot reach a management route, so anything it needs has to live
+where it can be reached.
 
 `GET /v1/models` reports each model's `kind`, `context_window`,
 `input_modalities`, `output_modalities` and `supported_features`, so a client

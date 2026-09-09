@@ -19,6 +19,7 @@ from gateway.db import create_engine, create_session_factory
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.fx import FXService
 from gateway.identity_registry import OIDCProviderRegistry, seed_from_env
+from gateway.knowledge.pipeline import Ingestor
 from gateway.knowledge.resolver import KnowledgeResolver
 from gateway.logging_config import configure_logging
 from gateway.login_throttle import LoginThrottle
@@ -40,6 +41,7 @@ from gateway.routers import (
     chat,
     console,
     embeddings,
+    files,
     health,
     images,
     me,
@@ -47,6 +49,7 @@ from gateway.routers import (
     models,
     ocr,
     tokens,
+    vector_stores,
 )
 from gateway.routers import responses as responses_router
 from gateway.routers.auth import ResetRequestThrottle
@@ -201,6 +204,22 @@ async def init_app_state(
     except Exception:
         logger.warning("could not read the knowledge configuration at startup", exc_info=True)
     knowledge_resolver.start()
+    # Ingestion runs detached, so it cannot reach for a request's `app.state`
+    # and has to be handed the same services up front. It shares
+    # `background_tasks` with chat.py's detached settlement for the same reason
+    # that set exists: asyncio keeps only a weak reference to a task, and a
+    # collected task abandons a document mid-index.
+    app.state.ingestor = Ingestor(
+        session_factory=session_factory,
+        settings=settings,
+        quota=app.state.quota_engine,
+        estimator=DEFAULT_ESTIMATOR,
+        fx=fx_service,
+        providers=app.state.providers,
+        control_http=control_http,
+        redactor=resolver.redactor,
+        background_tasks=background_tasks,
+    )
     # The reset-email cooldown, armed only when the feature is: an absent
     # throttle means POST /auth/password-reset answers 503, the same switch
     # the login throttle is.
@@ -369,6 +388,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ocr.router)
     app.include_router(models.router)
     app.include_router(billing.router)
+    # Before the vector stores, because `/v1/files` is where a document enters
+    # and the store is what indexes it — and because `vector_stores` imports
+    # this module's feature-switch dependency.
+    app.include_router(files.router)
+    app.include_router(vector_stores.router)
     app.include_router(auth.router)
     app.include_router(tokens.router)
     app.include_router(me.router)

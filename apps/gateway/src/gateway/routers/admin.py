@@ -71,6 +71,11 @@ from gateway.models import (
     GroupSource,
     GroupSync,
     IdentityProvider,
+    IndexStatus,
+    KnowledgeBase,
+    KnowledgeChunk,
+    KnowledgeConfig,
+    KnowledgeDocument,
     LimitMetric,
     LimitRule,
     LimitScope,
@@ -88,6 +93,8 @@ from gateway.models import (
     RedactionConfig,
     RedactionRule,
     RedactionScope,
+    ResourceKind,
+    ResourceShare,
     UsageRecord,
     UsageSource,
     UsageStatus,
@@ -145,6 +152,10 @@ from gateway.schemas import (
     IdentityProviderCreateRequest,
     IdentityProviderResponse,
     IdentityProviderUpdateRequest,
+    KnowledgeBaseSummary,
+    KnowledgeConfigEntry,
+    KnowledgeConfigRequest,
+    KnowledgeStatusResponse,
     LimitRuleCreateRequest,
     LimitRuleResetRequest,
     LimitRuleResponse,
@@ -3727,3 +3738,317 @@ async def preview_redaction(
         redacted_text=rewritten,
         entity_count=count,
     )
+
+
+# --- knowledge bases (ADR 0062) --------------------------------------------
+#
+# Three endpoints, and the interesting one is the reindex. A configurable
+# embedding model is only honest if there is a way forward for what was indexed
+# with the previous one — without it, "configurable" means "configurable once",
+# and every base created before the change is stranded.
+
+
+async def _knowledge_response(
+    *, session: AsyncSession, request: Request
+) -> KnowledgeStatusResponse:
+    """The pipeline as this worker runs it, plus every base and the trail."""
+    resolver = request.app.state.knowledge
+    profile = resolver.profile
+
+    # Every model's name in one query: the response names four different
+    # models (configured, per base, per history row) and one lookup each would
+    # be dozens of round trips to render one screen.
+    named = (await session.execute(select(ModelDef.id, ModelDef.name))).all()
+    names: dict[uuid.UUID, str] = {row[0]: row[1] for row in named}
+
+    def name_of(model_id: uuid.UUID | None) -> str | None:
+        return names.get(model_id) if model_id is not None else None
+
+    available = await session.execute(
+        select(ModelDef.name, ModelDef.kind)
+        .join(Provider, Provider.id == ModelDef.provider_id)
+        .where(ModelDef.is_active.is_(True), Provider.is_active.is_(True))
+        .order_by(ModelDef.name)
+    )
+    embedding_models: list[str] = []
+    extractor_models: list[str] = []
+    for model_name, kind in available.all():
+        if kind is ModelKind.EMBEDDING:
+            embedding_models.append(model_name)
+        elif kind is ModelKind.OCR:
+            extractor_models.append(model_name)
+
+    # Counts per base in three grouped queries rather than three per base: an
+    # administrator with fifty bases should not cost a hundred and fifty round
+    # trips to render one screen.
+    doc_counts: dict[uuid.UUID, tuple[int, int]] = {
+        base_id: (int(total or 0), int(failed or 0))
+        for base_id, total, failed in (
+            await session.execute(
+                select(
+                    KnowledgeDocument.knowledge_base_id,
+                    func.count(),
+                    func.sum(
+                        case((KnowledgeDocument.status == IndexStatus.FAILED, 1), else_=0)
+                    ),
+                ).group_by(KnowledgeDocument.knowledge_base_id)
+            )
+        ).all()
+    }
+    chunk_counts: dict[uuid.UUID, int] = {
+        base_id: int(count)
+        for base_id, count in (
+            await session.execute(
+                select(KnowledgeChunk.knowledge_base_id, func.count()).group_by(
+                    KnowledgeChunk.knowledge_base_id
+                )
+            )
+        ).all()
+    }
+    share_counts: dict[uuid.UUID, int] = {
+        resource_id: int(count)
+        for resource_id, count in (
+            await session.execute(
+                select(ResourceShare.resource_id, func.count())
+                .where(ResourceShare.resource_kind == ResourceKind.KNOWLEDGE_BASE)
+                .group_by(ResourceShare.resource_id)
+            )
+        ).all()
+    }
+
+    rows = await session.execute(
+        select(KnowledgeBase, User.email, Group.name)
+        .outerjoin(User, User.id == KnowledgeBase.owner_user_id)
+        .outerjoin(Group, Group.id == KnowledgeBase.billing_group_id)
+        .where(KnowledgeBase.is_active.is_(True))
+        .order_by(KnowledgeBase.created_at.desc())
+    )
+    bases: list[KnowledgeBaseSummary] = []
+    stale_count = 0
+    for base, owner_email, group_name in rows.all():
+        total, failed = doc_counts.get(base.id, (0, 0))
+        # Stale means "indexed with a different model than is configured now".
+        # A base with nothing indexed yet is not stale — it has no vectors to
+        # be incomparable with.
+        stale = (
+            base.embedding_model_id is not None
+            and profile.embedding_model_id is not None
+            and base.embedding_model_id != profile.embedding_model_id
+        )
+        stale_count += 1 if stale else 0
+        bases.append(
+            KnowledgeBaseSummary(
+                id=base.id,
+                name=base.name,
+                description=base.description,
+                owner_email=owner_email,
+                group_name=group_name,
+                embedding_model=name_of(base.embedding_model_id),
+                dimensions=base.dimensions,
+                document_count=int(total or 0),
+                chunk_count=int(chunk_counts.get(base.id, 0)),
+                failed_count=int(failed or 0),
+                stale=stale,
+                share_count=int(share_counts.get(base.id, 0)),
+                created_at=base.created_at,
+            )
+        )
+
+    history_rows = await session.execute(
+        select(KnowledgeConfig, User.email)
+        .outerjoin(User, User.id == KnowledgeConfig.created_by)
+        .order_by(KnowledgeConfig.created_at.desc())
+        .limit(20)
+    )
+    history = [
+        KnowledgeConfigEntry(
+            id=row.id,
+            embedding_model=name_of(row.embedding_model_id),
+            extractor_model=name_of(row.extractor_model_id),
+            vector_store=row.vector_store,
+            chunk_chars=row.chunk_chars,
+            chunk_overlap=row.chunk_overlap,
+            reason=row.reason,
+            changed_by=email,
+            created_at=row.created_at,
+        )
+        for row, email in history_rows.all()
+    ]
+
+    detail: str | None = None
+    if not profile.enabled:
+        detail = (
+            "Knowledge bases are switched off for this deployment. Set "
+            "GATEWAY_KNOWLEDGE__ENABLED=true and restart to offer them."
+        )
+    elif not profile.ready:
+        detail = (
+            "No embedding model has been chosen, so nothing can be indexed yet."
+            if embedding_models
+            else "This deployment has no embedding model. Import or create one "
+            "first, then choose it here."
+        )
+
+    return KnowledgeStatusResponse(
+        enabled=profile.enabled,
+        ready=profile.ready,
+        embedding_model=name_of(profile.embedding_model_id),
+        extractor_model=name_of(profile.extractor_model_id),
+        vector_store=profile.vector_store,
+        chunk_chars=profile.chunk_chars,
+        chunk_overlap=profile.chunk_overlap,
+        source=profile.source,
+        propagation_seconds=resolver.refresh_seconds,
+        detail=detail,
+        available_embedding_models=embedding_models,
+        available_extractor_models=extractor_models,
+        bases=bases,
+        stale_base_count=stale_count,
+        history=history,
+    )
+
+
+async def _model_named(session: AsyncSession, name: str, kind: ModelKind) -> ModelDef:
+    result = await session.execute(
+        select(ModelDef).where(ModelDef.name == name, ModelDef.is_active.is_(True))
+    )
+    model = result.scalars().first()
+    if model is None:
+        raise BadRequestError(f"No active model named {name!r}.", code="unknown_model")
+    if model.kind is not kind:
+        # Named rather than coerced: silently accepting a chat model as an
+        # embedder would fail at the first upload with a provider error nobody
+        # could trace back to this screen.
+        raise BadRequestError(
+            f"{name!r} is a {model.kind.value} model, not {kind.value}.",
+            code="wrong_model_kind",
+        )
+    return model
+
+
+@router.get("/knowledge", response_model=KnowledgeStatusResponse)
+async def knowledge_status(
+    admin: AdminUserDep, session: SessionDep, request: Request
+) -> KnowledgeStatusResponse:
+    """How documents are extracted and embedded here, and what has been."""
+    return await _knowledge_response(session=session, request=request)
+
+
+@router.put("/knowledge", response_model=KnowledgeStatusResponse)
+async def set_knowledge_config(
+    payload: KnowledgeConfigRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+) -> KnowledgeStatusResponse:
+    """Record a new configuration. Append-only: this writes a row, never edits.
+
+    **Changing the embedding model does not touch a single existing base.**
+    Each one pins the model it was indexed with, so the change applies to the
+    next base created and to any base an administrator reindexes — which is
+    what makes this setting safe to change at all, rather than a data
+    migration disguised as a form.
+
+    A reason is required for exactly one change: replacing the built-in
+    extractor with a model that sends documents to a third party. That is the
+    only edit here that alters *where user documents go*, and it is the same
+    rule redaction uses — asking for a sentence on every change trains people
+    to type "x".
+    """
+    resolver = request.app.state.knowledge
+    current = resolver.profile
+
+    embedding_id = current.embedding_model_id
+    if payload.embedding_model is not None:
+        embedding_id = (
+            await _model_named(session, payload.embedding_model, ModelKind.EMBEDDING)
+        ).id
+
+    extractor_id = current.extractor_model_id
+    if payload.clear_extractor:
+        extractor_id = None
+    elif payload.extractor_model is not None:
+        extractor = await _model_named(session, payload.extractor_model, ModelKind.OCR)
+        # Whether the documents leave this deployment. The local extractor's
+        # provider is the `extractor` plugin and holds no credential; anything
+        # else is a counterparty.
+        leaves = extractor.provider is None or extractor.provider.plugin != "extractor"
+        if leaves and not payload.reason.strip():
+            raise BadRequestError(
+                f"{extractor.name!r} sends documents to a provider rather than "
+                "extracting them here. Say why, so the decision is on the record.",
+                code="reason_required",
+            )
+        extractor_id = extractor.id
+
+    session.add(
+        KnowledgeConfig(
+            embedding_model_id=embedding_id,
+            extractor_model_id=extractor_id,
+            # Only one implementation exists, so recording it is the honest
+            # answer rather than leaving a null that a second backend would
+            # make ambiguous.
+            vector_store=current.vector_store,
+            chunk_chars=payload.chunk_chars,
+            chunk_overlap=payload.chunk_overlap,
+            reason=payload.reason.strip(),
+            created_by=admin.id,
+        )
+    )
+    await session.commit()
+    # This worker picks it up now rather than in ten seconds, so the response
+    # already reflects the change. The other worker learns from the poll, and
+    # `propagation_seconds` in the response is what says so.
+    await resolver.refresh()
+    return await _knowledge_response(session=session, request=request)
+
+
+@router.post("/knowledge/bases/{base_id}/reindex", response_model=KnowledgeStatusResponse)
+async def admin_reindex_base(
+    base_id: uuid.UUID,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+) -> KnowledgeStatusResponse:
+    """Re-embed one base with the current configuration.
+
+    An administrator can reindex any base, where the `/v1` route allows only
+    the owner. The spend still lands on the **base's** group rather than the
+    administrator's, which is the point of `Ingestor._billing` reading the base
+    rather than the caller: clicking reindex must not move somebody else's cost
+    onto whoever pressed the button.
+    """
+    resolver = request.app.state.knowledge
+    if not resolver.profile.ready:
+        raise BadRequestError(
+            "No embedding model is configured, so there is nothing to reindex with.",
+            code="embedding_model_not_configured",
+        )
+    base = await session.get(KnowledgeBase, base_id)
+    if base is None or not base.is_active:
+        raise NotFoundError(f"No such knowledge base: {base_id}")
+
+    base.embedding_model_id = resolver.profile.embedding_model_id
+    base.extractor_model_id = resolver.profile.extractor_model_id
+    base.dimensions = None
+    rows = await session.execute(
+        select(KnowledgeDocument).where(KnowledgeDocument.knowledge_base_id == base.id)
+    )
+    documents = [
+        document
+        for document in rows.scalars()
+        # Nothing to re-embed from and nothing to re-extract with: left alone
+        # rather than failed, so a lost file does not turn a reindex into a
+        # list of errors nobody can act on.
+        if document.text is not None or document.file_id is not None
+    ]
+    for document in documents:
+        document.status = IndexStatus.PENDING
+        document.error = ""
+        document.indexed_at = None
+    await session.commit()
+
+    ingestor = request.app.state.ingestor
+    for document in documents:
+        ingestor.spawn(document.id, resolver.profile)
+    return await _knowledge_response(session=session, request=request)

@@ -27,6 +27,11 @@ dependencies = [
     # binding, not an engine: the index and the distance operators are
     # PostgreSQL's (ADR 0018).
     "pgvector>=0.4",
+    # What FastAPI needs to parse a multipart body, and the only reason there is
+    # a multipart body is `POST /v1/files`. Apache-2.0, no dependencies of its
+    # own (verified at source, 0.0.32). Without it FastAPI refuses to *build*
+    # the route, at import time — so this is not an optional extra.
+    "python-multipart>=0.0.20",
 ]
 
 [project.scripts]
