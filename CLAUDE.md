@@ -224,6 +224,15 @@ Inside the gateway, the pieces that carry the most weight:
   3072-dimension model is only indexable through a halfvec cast; the planner
   does use a halfvec-cast index for a halfvec-cast `ORDER BY`; and ranking
   therefore happens in half precision while storage stays full.
+- **A pgvector type modifier cannot be a bind parameter.** `::halfvec(:dims)`
+  fails with `type modifiers must be simple constants or identifiers` — a
+  *syntax* error raised when the statement is prepared, so it is invisible to
+  any test on another dialect. The first version of `PgVectorStore.search`
+  bound it, passed all 24 SQLite tests, and answered 500 on the first real
+  search. The width is formatted into `_SEARCH_SQL` instead (an `int()` in a
+  checked range; every caller-influenced value stays bound), and
+  `scripts/test_knowledge_live.py` is what stops it coming back. This is the
+  sharpest example yet of the SQLite/PostgreSQL note above.
 - **Indexing is billed, and it goes through `_metered` rather than beside it.**
   `_metered.begin` takes `fx` and `session_factory` instead of a `Request` for
   exactly this reason: ingestion runs in a detached task (ADR 0019 — OCR
@@ -407,6 +416,8 @@ docker compose --env-file deploy/.env \
                                     # redaction; needs an active redaction rule
 ./scripts/test_bill_to_live.py      # x-bill-to against a real OIDC token, and
                                     # that it refuses a group you do not hold
+./scripts/test_knowledge_live.py    # the pgvector query, the real extractor and
+                                    # the ledger — none of which SQLite can reach
 ./scripts/benchmark_live.py         # per-layer cost; see docs/performance.md
 ./scripts/test_public_tls_live.py   # only with the proxy overlay: TLS, the
                                     # rotated credentials, and that nothing else

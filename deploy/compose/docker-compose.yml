@@ -130,6 +130,16 @@ services:
       GATEWAY_OIDC__CLIENT_SECRET: ${GATEWAY_OIDC_CLIENT_SECRET:-}
       GATEWAY_OIDC__REDIRECT_URI: ${GATEWAY_OIDC_REDIRECT_URI:-}
       GATEWAY_OIDC__GROUPS_CLAIM: ${GATEWAY_OIDC_GROUPS_CLAIM:-groups}
+
+      # Knowledge bases (ADR 0062). Off by default, and this flag is the whole
+      # switch: `/v1/files` and `/v1/vector_stores` answer 404 until it is true,
+      # so a deployment that does not want durable storage of user documents
+      # does not grow tables because somebody found the endpoint. *Which*
+      # embedding and extraction models to use is not here — those are rows in
+      # the database, chosen from the console, because naming them in the
+      # environment would mean maintaining a model name in two places.
+      GATEWAY_KNOWLEDGE__ENABLED: ${GATEWAY_KNOWLEDGE__ENABLED:-false}
+      GATEWAY_KNOWLEDGE__MAX_UPLOAD_BYTES: ${GATEWAY_KNOWLEDGE__MAX_UPLOAD_BYTES:-20971520}
     depends_on:
       postgres:
         condition: service_healthy

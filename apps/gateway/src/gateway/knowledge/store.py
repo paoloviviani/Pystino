@@ -143,6 +143,34 @@ async def _insert(
     return len(chunks)
 
 
+#: The retrieval query, with the vector width as the only formatted value.
+#:
+#: A named constant rather than an inline f-string because the width **cannot**
+#: be a bound parameter — PostgreSQL answers `type modifiers must be simple
+#: constants or identifiers` — so this query has to interpolate one value, and
+#: keeping it in one place is what makes that reviewable. Every other value
+#: stays a bind parameter, `dims` is an int() in a checked range, and there is
+#: nothing here a caller can influence.
+#:
+#: `1 - distance` is computed in the database so the score threshold applies
+#: before LIMIT and the count is honest.
+_SEARCH_SQL = """
+    SELECT c.id            AS chunk_id,
+           c.document_id   AS document_id,
+           c.ordinal       AS ordinal,
+           c.text          AS text,
+           d.title         AS title,
+           d.source_ref    AS source_ref,
+           1 - (c.embedding::halfvec({dims}) <=> (:q)::halfvec({dims})) AS score
+      FROM knowledge_chunks c
+      JOIN knowledge_documents d ON d.id = c.document_id
+     WHERE c.knowledge_base_id = :base
+       AND c.dimensions = :dims
+     ORDER BY c.embedding::halfvec({dims}) <=> (:q)::halfvec({dims})
+     LIMIT :limit
+"""
+
+
 class PgVectorStore:
     """Retrieval as a SQL query, which is the whole point of ADR 0018.
 
@@ -199,31 +227,35 @@ class PgVectorStore:
             # and answering it approximately is worse than not answering.
             raise ValueError(f"query has {len(query)} dimensions, base is indexed at {dimensions}")
         literal = "[" + ",".join(repr(float(value)) for value in query) + "]"
+        # **The dimension is formatted into the SQL, not bound.** PostgreSQL
+        # requires a type modifier to be a literal — `::halfvec($1)` fails with
+        # `type modifiers must be simple constants or identifiers`, which is a
+        # *syntax* error raised at prepare time and therefore not something a
+        # careful test on another dialect can catch. The first version of this
+        # bound it, passed 24 SQLite tests, and 500ed on the first real search.
+        #
+        # It is not an injection risk and the reason is worth stating rather
+        # than assuming: `dimensions` is read from `knowledge_bases`, was
+        # written from `len(embedding)`, and is coerced through `int()` here, so
+        # the only values that reach the string are integers. The bound
+        # parameters stay bound — the vector, the base id and the limit are all
+        # `:name`, and those are the values a caller can influence.
+        dims = int(dimensions)
+        if not 1 <= dims <= 16_000:
+            # pgvector's own ceiling is 16,000 for `vector`. A value outside it
+            # cannot have come from a stored embedding, so this is a corrupt row
+            # or a caller reaching past the API — refused before it is formatted
+            # into SQL either way.
+            raise ValueError(f"implausible embedding width: {dims}")
         # `1 - distance` at the database rather than in Python, so that the
         # threshold is applied before LIMIT and the count is honest.
-        sql = sa.text(
-            """
-            SELECT c.id            AS chunk_id,
-                   c.document_id   AS document_id,
-                   c.ordinal       AS ordinal,
-                   c.text          AS text,
-                   d.title         AS title,
-                   d.source_ref    AS source_ref,
-                   1 - (c.embedding::halfvec(:dims) <=> (:q)::halfvec(:dims)) AS score
-              FROM knowledge_chunks c
-              JOIN knowledge_documents d ON d.id = c.document_id
-             WHERE c.knowledge_base_id = :base
-               AND c.dimensions = :dims
-             ORDER BY c.embedding::halfvec(:dims) <=> (:q)::halfvec(:dims)
-             LIMIT :limit
-            """
-        )
+        sql = sa.text(_SEARCH_SQL.format(dims=dims))
         rows = (
             await session.execute(
                 sql,
                 {
                     "base": knowledge_base_id,
-                    "dims": dimensions,
+                    "dims": dims,
                     "q": literal,
                     "limit": limit,
                 },
