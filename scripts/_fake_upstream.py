@@ -20,7 +20,10 @@ Two details are deliberate:
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -35,6 +38,49 @@ SLICE_SIZE = 7
 # The most recent request body, for GET /_last_request. Single-process, single
 # slot, no locking: this is a development fake, not a service.
 LAST_REQUEST: dict[str, Any] = {}
+
+
+#: Width of the fake embedding. 384 on purpose: it is one of the dimensions
+#: migration 0027 pre-creates an HNSW index for, so a smoke run exercises the
+#: approximate index rather than falling back to an exact scan.
+EMBEDDING_DIMS = 384
+
+
+def _embed(text: str) -> list[float]:
+    """A deterministic, *meaningful* fake embedding: hashed bag of words.
+
+    This used to return a constant `[0.1, 0.2, 0.3]` for every input, which was
+    fine while the only thing being smoked was "does the accounting see an
+    embeddings call". It is useless the moment retrieval exists: identical
+    vectors make every passage equidistant from every query, so a broken ranking
+    and a correct one look the same.
+
+    Hashing tokens into buckets and normalising gives real lexical retrieval —
+    a query sharing words with a passage is genuinely nearer to it — with no
+    model, no weights and no licence to audit (ADR 0020 keeps model weights out
+    of this tree). It is not semantic: synonyms are orthogonal here where a real
+    embedding would place them together, so this proves the *plumbing* and never
+    the quality of retrieval.
+
+    Deterministic across processes, which matters more than it looks: a query
+    embedded in one worker must land beside a passage embedded in another, so
+    `hash()` — randomised per process by PYTHONHASHSEED — would have been
+    exactly the wrong tool.
+    """
+    vector = [0.0] * EMBEDDING_DIMS
+    for token in re.findall(r"\w+", text.lower()):
+        digest = hashlib.blake2b(token.encode(), digest_size=4).digest()
+        bucket = int.from_bytes(digest, "big") % EMBEDDING_DIMS
+        vector[bucket] += 1.0
+    norm = math.sqrt(sum(value * value for value in vector))
+    if norm == 0.0:
+        # An input with no word characters at all. A zero vector has no
+        # direction, so cosine distance against it is undefined; one arbitrary
+        # non-zero component keeps it comparable and harmlessly far from
+        # everything.
+        vector[0] = 1.0
+        return vector
+    return [value / norm for value in vector]
 
 
 def _echo(body: dict[str, Any]) -> str:
@@ -221,8 +267,8 @@ async def embeddings(request: Request) -> JSONResponse:
             "provider": "fake-provider",
             "model": body.get("model", "upstream/embed-model"),
             "data": [
-                {"index": index, "object": "embedding", "embedding": [0.1, 0.2, 0.3]}
-                for index, _ in enumerate(inputs)
+                {"index": index, "object": "embedding", "embedding": _embed(str(text))}
+                for index, text in enumerate(inputs)
             ],
             # Cortecs documents completion_tokens as always 0 for embeddings.
             "usage": {
