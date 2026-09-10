@@ -1,0 +1,30 @@
+# ToolHive, on the one published origin (ADR 0063).
+#
+# `handle_path` strips the prefix, so ToolHive keeps serving at the root it
+# thinks it is at — the same trick `/idp` and `/chat` use, and for the same
+# reason: things collide at the root, not under a prefix.
+#
+# Caddy is also what enforces Origin here. ToolHive says on startup that it
+# does not do so on a non-loopback listener and asks to be fronted by a proxy
+# that does; this is that proxy.
+#
+# **The open question this prefix creates**, recorded rather than assumed:
+# Stacklok's own troubleshooting names "a path segment in `issuer`" as one of
+# the two commonest causes of OAuth failure with the embedded authorization
+# server. RFC 8414 permits it — the well-known segment is inserted *before*
+# the path — so it is an implementation hazard rather than a prohibition, and
+# it needs measuring against a real upstream provider before this deployment
+# can claim dynamic client registration works here. If it does not, ADR 0063
+# records that the address-only shape has no way out: SNI cannot carry an IP
+# (ADR 0035), so there is no second hostname to move it to, and a second
+# published port is what ground rule 4 forbids.
+handle_path /mcp/* {
+	reverse_proxy toolhive:8080 {
+		# MCP streams over SSE, and Caddy's flush heuristic is a content-type
+		# match. Stated for the same reason as the chat's route: buffering a
+		# stream produces no error, just an answer that arrives all at once.
+		flush_interval -1
+	}
+}
+
+redir /mcp /mcp/

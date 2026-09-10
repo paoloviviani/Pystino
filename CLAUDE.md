@@ -71,7 +71,8 @@ apps/console     React admin SPA, served by the gateway at /console
 packages/ui      design tokens and primitives, shared with the console
 packages/shared-py  detection contract and the deterministic placeholder scheme
 services/redaction  Presidio behind a swappable contract, out of process
-deploy/compose   the stack: base + smoke + redaction + proxy overlays
+deploy/compose   the stack: base + smoke + redaction + proxy + keycloak +
+                 chat + toolhive overlays
 deploy/caddy     the TLS reverse proxy's one config file, for both configurations
 scripts/         live checks against a running stack (see below)
 docs/            how to run, deploy and operate this. The ADRs are not here
@@ -271,6 +272,39 @@ Inside the gateway, the pieces that carry the most weight:
   readable by everybody the moment it is shared with anybody. **Fourteen tests
   passed against that bug** — every negative one failed closed for an unrelated
   reason — so reintroduce a fault and watch the test fail before believing it.
+- **ToolHive holds a connector's OAuth credential; the chat holds one token**
+  (ADR 0063). It is to MCP connectors what the gateway is to models, and the
+  reason it is here is that the chat kept third-party bearer tokens in browser
+  `localStorage`. `docker-compose.toolhive.yml` plus
+  `deploy/caddy/conf.d-toolhive/30-toolhive.caddy`; verified by
+  `scripts/test_toolhive_live.py`. Four things will cost you time:
+  **`thv serve` refuses to start without a container runtime** even for
+  `--help` and even when only remote servers are wanted, so it gets the Docker
+  socket — root-equivalent, accepted for development, and *not* mounted `:ro`
+  because the API is spoken over the socket and read-only would only look like
+  a mitigation. **Unauthenticated it assigns every caller a synthetic
+  local-user identity**, by its own startup warning, so the `--oidc-*` flags
+  are the difference between a service and an open door; they take the same
+  issuer and `pystino-api` audience the gateway already validates, which is
+  what gives models and connectors one identity. **An internal plain-http
+  JWKS URL does not work** — measured: issuer-only and an https JWKS URL both
+  accept a token, `http://keycloak:8080/...` gives
+  `failed to lookup JWKS: resource ... is not ready` inside a 401 identical to
+  a bad token, while that URL answers 200 to curl from inside the container's
+  own netns. So there is no `--oidc-jwks-url`, and `SSL_CERT_FILE` pointed at
+  Caddy's root is what makes discovery work. Note Go **replaces** the system
+  pool with that file rather than adding to it, so the bundle is not yet
+  sufficient for a connector behind a public CA. And **dynamic client
+  registration under the `/mcp` prefix is unproven**: Stacklok name a path
+  segment in `issuer` as a common cause of failure, it needs a real upstream
+  OAuth app to settle, and the address-only deployment has no second hostname
+  to move to (SNI cannot carry an IP — ADR 0035).
+- **Sourcing `deploy/.env` mangles `CHAT_OPENID_CONFIG`.** It holds JSON, and
+  `set -a; . deploy/.env; set +a` strips the quotes, so the value in the
+  environment no longer parses. A live script that needs a token should build
+  it from `GATEWAY_OIDC__ISSUER` / `__CLIENT_ID` / `__CLIENT_SECRET`, which
+  survive sourcing — every client `deploy/keycloak/setup.sh` creates has
+  `directAccessGrantsEnabled`.
 - **Do not run `ruff format` across this repository.** Verification is `ruff
   check`; the tree has never been `ruff format`-clean, and running it rewrapped
   27 unrelated files. Format only files you have just created.
@@ -433,6 +467,8 @@ docker compose --env-file deploy/.env \
 ./scripts/test_public_tls_live.py   # only with the proxy overlay: TLS, the
                                     # rotated credentials, and that nothing else
                                     # is on a routable address
+./scripts/test_toolhive_live.py     # MCP connectors: one identity with the
+                                    # gateway, and the remote-OAuth surface
 ```
 
 With the proxy overlay the live scripts need the deployment's own variables and

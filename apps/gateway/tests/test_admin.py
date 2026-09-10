@@ -14,6 +14,7 @@ from decimal import Decimal
 
 import httpx
 from conftest import Seeded
+from fastapi import FastAPI
 from gateway.deps import get_management_user
 from gateway.models import (
     Group,
@@ -29,8 +30,8 @@ from gateway.models import (
 )
 from gateway.types import utcnow
 from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 
 def as_user(app: object, user: User) -> None:
