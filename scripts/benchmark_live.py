@@ -151,7 +151,14 @@ def setup() -> str | None:
         status, _, body = request(
             admin, f"{GATEWAY}/api/admin/models", method="POST",
             json_body={"name": BENCH_MODEL, "upstream_model": "upstream/smoke-model",
-                       "provider_id": fake["id"], "kind": "chat"},
+                       "provider_id": fake["id"], "kind": "chat",
+                       # What `upstream/smoke-model` declares in the fake
+                       # upstream's catalogue. Omitting them left the row
+                       # advertising no capabilities at all on `/v1/models`
+                       # (ADR 0031), which a client reads as "can do nothing".
+                       "input_modalities": ["text"],
+                       "output_modalities": ["text"],
+                       "supported_features": ["tools", "json_mode"]},
         )
         if status != 201:
             print(f"  could not create the benchmark model: HTTP {status}")
