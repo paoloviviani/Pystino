@@ -132,6 +132,17 @@ done
 add_client() {
 	# Every argument after the first is a redirect URI, joined into the JSON
 	# array Keycloak wants. More than one is normal: see the console below.
+	#
+	# `post.logout.redirect.uris` is a wildcard under the published origin, and
+	# **not** `+`. `+` means "exactly the registered redirect URIs", which for
+	# the chat is `.../chat/login/callback` and nothing else — so signing out,
+	# which sends the browser back to `.../chat/`, gets a **400** from Keycloak
+	# and leaves the person on the provider's error page still signed in. That
+	# was measured against this realm, not guessed.
+	#
+	# The wildcard is safe here for a specific reason rather than by default:
+	# this deployment serves exactly one origin (ADR 0035), so it grants a
+	# post-logout redirect only to surfaces the deployment already owns.
 	local client_id="$1"
 	shift
 	local redirects=""
@@ -145,7 +156,8 @@ add_client() {
 		echo "== client $client_id exists ($uuid); updating redirect"
 		kc update "clients/$uuid" -r "$REALM" \
 			-s "redirectUris=[$redirects]" \
-			-s "webOrigins=[\"$PUBLIC_ORIGIN\"]" >/dev/null
+			-s "webOrigins=[\"$PUBLIC_ORIGIN\"]" \
+			-s "attributes.\"post.logout.redirect.uris\"=$PUBLIC_ORIGIN/*" >/dev/null
 	else
 		echo "== creating client $client_id"
 		kc create clients -r "$REALM" \
@@ -156,7 +168,8 @@ add_client() {
 			-s directAccessGrantsEnabled=true \
 			-s serviceAccountsEnabled=false \
 			-s "redirectUris=[$redirects]" \
-			-s "webOrigins=[\"$PUBLIC_ORIGIN\"]" >/dev/null
+			-s "webOrigins=[\"$PUBLIC_ORIGIN\"]" \
+			-s "attributes.\"post.logout.redirect.uris\"=$PUBLIC_ORIGIN/*" >/dev/null
 		uuid="$(kc get clients -r "$REALM" -q "clientId=$client_id" --fields id --format csv --noquotes | tr -d '\r' | head -1)"
 	fi
 
