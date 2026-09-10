@@ -691,6 +691,7 @@ async def callback(
             subject=str(claims["sub"]),
             email=merged.get("email"),
             display_name=merged.get("name") or merged.get("preferred_username"),
+            username=merged.get("preferred_username"),
             group_names=groups,
             settings=settings.oidc,
             policy=policy,

@@ -83,6 +83,7 @@ async def sign_in(
     issuer: str = IDP,
     groups: list[str] | None = None,
     policy: OIDCPolicy | None = None,
+    admin_groups: list[str] | None = None,
 ) -> User:
     user = await provision_user(
         session,
@@ -91,7 +92,12 @@ async def sign_in(
         email=email,
         display_name="Directory Person",
         group_names=groups if groups is not None else [],
-        settings=OIDCSettings(),
+        # Empty by default *here*, because these tests are about adoption
+        # rather than about admin: `admin_groups` now defaults to
+        # `platform-admins`, so leaving it alone would have every sign-in in
+        # this file also deciding the flag. The one test that cares passes its
+        # own value.
+        settings=OIDCSettings(admin_groups=admin_groups if admin_groups is not None else []),
         policy=policy,
         allow_local_link=allow_local_link,
         email_verified=email_verified,  # type: ignore[arg-type]

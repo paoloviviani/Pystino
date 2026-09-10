@@ -1462,7 +1462,13 @@ async def list_group_members(
         .order_by(User.email)
     )
     if needle := q.strip():
-        stmt = stmt.where(_matches(needle, User.email, User.display_name, User.subject))
+        # `username` is in here because it is the name an administrator
+        # created the account under, and searching for it was the reported
+        # failure: an account made as `chat@local` in Keycloak was findable
+        # only as `chat@example.org`, its email (ADR 0062 follow-up).
+        stmt = stmt.where(
+            _matches(needle, User.email, User.display_name, User.username, User.subject)
+        )
     total = await count_of(session, stmt)
     users = (await session.execute(page.apply(stmt))).scalars().all()
     return page.page(
@@ -1934,6 +1940,7 @@ async def _user_responses(
             id=user.id,
             email=user.email,
             display_name=user.display_name,
+            username=user.username,
             issuer=user.issuer,
             subject=user.subject,
             is_active=user.is_active,
@@ -1978,7 +1985,13 @@ async def list_users(
         .order_by(User.email)
     )
     if needle := q.strip():
-        stmt = stmt.where(_matches(needle, User.email, User.display_name, User.subject))
+        # `username` is in here because it is the name an administrator
+        # created the account under, and searching for it was the reported
+        # failure: an account made as `chat@local` in Keycloak was findable
+        # only as `chat@example.org`, its email (ADR 0062 follow-up).
+        stmt = stmt.where(
+            _matches(needle, User.email, User.display_name, User.username, User.subject)
+        )
     if is_active is not None:
         stmt = stmt.where(User.is_active.is_(is_active))
 
@@ -1995,12 +2008,29 @@ async def update_user(
     session: SessionDep,
     settings: SettingsDep,
 ) -> UserAdminResponse:
-    """Deactivate a user, or grant admin manually.
+    """Deactivate a user, or make one an administrator.
 
-    Note the interaction with ``GATEWAY_OIDC__ADMIN_GROUPS``: when that is set the
-    identity provider is authoritative, so an ``is_admin`` granted here is
-    overwritten at the user's next login. Manage admin in the IdP, and use this for
-    the local accounts that never log in through it.
+    **The console is authoritative for admin, including for directory
+    accounts.** This used to refuse the change outright when
+    ``admin_groups`` was configured, on the correct observation that setting the
+    flag would be undone at the next login — but the remedy it offered ("change
+    it in the identity provider") was wrong twice over: it made the console
+    useless for the one decision an administrator most wants to make there, and
+    it is not even always available, since not every operator administers the
+    directory their users come from.
+
+    What it does instead is grant the thing admin is *derived from*: a
+    **manual membership of the admin group**. That survives every subsequent
+    login by the rule ADR 0057 already establishes — a directory's sync
+    revokes only what the directory granted — and `provision_user` recomputes
+    ``is_admin`` from *effective* membership, so the grant keeps taking effect
+    rather than merely persisting.
+
+    One asymmetry, and it is honest rather than incidental. **Granting always
+    works; revoking only works on a grant this console made.** If the person is
+    in the admin group because the directory says so, removing them here would
+    be undone at their next login, so it is refused with that reason named. The
+    directory owns its own grants; this owns its own.
     """
     user = (
         await session.execute(
@@ -2014,12 +2044,11 @@ async def update_user(
 
     fields = payload.model_dump(exclude_unset=True)
     if "is_admin" in fields and settings.oidc.admin_groups and user.issuer != "local":
-        raise BadRequestError(
-            "GATEWAY_OIDC__ADMIN_GROUPS is set, so admin follows identity-provider "
-            f"group membership ({', '.join(settings.oidc.admin_groups)}) and this "
-            "change would be undone at the next login. Change it in the identity "
-            "provider.",
-            code="admin_managed_by_idp",
+        # Not a refusal any more: grant or withdraw the membership the flag is
+        # derived from, so the decision survives the next login instead of
+        # being quietly reversed by it.
+        await _set_admin_by_membership(
+            session, user, bool(fields.pop("is_admin")), settings.oidc.admin_groups
         )
     for field, value in fields.items():
         setattr(user, field, value)
@@ -2029,6 +2058,80 @@ async def update_user(
     # a page now, and the user just edited may not be on the page.
     return (await _user_responses(session, [user]))[0]
 
+
+
+async def _set_admin_by_membership(
+    session: AsyncSession, user: User, admin: bool, admin_groups: list[str]
+) -> None:
+    """Make a directory account an administrator, durably.
+
+    ``is_admin`` is *derived* — `provision_user` recomputes it from effective
+    membership of ``admin_groups`` on every login — so writing the flag alone
+    is writing to a cache. What persists is a membership, and a **manual** one
+    is the kind a directory sync leaves alone (ADR 0057).
+
+    The group is created if it does not exist, for the same reason a login
+    creates the groups a token names: refusing because the admin group has
+    never been seen would make this fail on a fresh deployment, which is
+    exactly when somebody needs to appoint the first administrator.
+
+    Revoking is deliberately narrower than granting. A membership the
+    *directory* granted is not this console's to withdraw — the next login puts
+    it back — so that case is refused with the reason named rather than
+    appearing to work.
+    """
+    target = admin_groups[0]
+    group = (
+        await session.execute(select(Group).where(Group.name == target))
+    ).scalar_one_or_none()
+
+    if admin:
+        if group is None:
+            group = Group(
+                name=target,
+                description="Administrators. Membership of this group confers admin.",
+                source=GroupSource.MANUAL,
+            )
+            session.add(group)
+            await session.flush()
+        existing = await session.get(Membership, {"user_id": user.id, "group_id": group.id})
+        if existing is None:
+            session.add(
+                Membership(
+                    user_id=user.id,
+                    group_id=group.id,
+                    # The provenance is the whole point: `manual` is what makes
+                    # it survive the directory's next sync.
+                    source=MembershipSource.MANUAL,
+                )
+            )
+        elif existing.source is not MembershipSource.MANUAL:
+            # Already an administrator, by the directory's word. Adopting the
+            # row as manual would quietly take the grant away from the
+            # directory, so it is left as it is — the outcome the caller asked
+            # for is already true.
+            pass
+        user.is_admin = True
+        return
+
+    if group is None:
+        # No admin group at all, so no membership to withdraw. The flag may
+        # still be set on a row that predates this rule; clearing it is the
+        # caller's stated intent and nothing will contradict it.
+        user.is_admin = False
+        return
+
+    existing = await session.get(Membership, {"user_id": user.id, "group_id": group.id})
+    if existing is not None and existing.source is not MembershipSource.MANUAL:
+        raise BadRequestError(
+            f"{user.email or user.subject} is an administrator because the identity "
+            f"provider puts them in {target!r}. Remove them from that group there — "
+            "withdrawing it here would be undone at their next login.",
+            code="admin_granted_by_directory",
+        )
+    if existing is not None:
+        await session.delete(existing)
+    user.is_admin = False
 
 async def _load_local_user(user_id: uuid.UUID, session: SessionDep) -> User:
     """The user a password route was aimed at, or the error that stops it.

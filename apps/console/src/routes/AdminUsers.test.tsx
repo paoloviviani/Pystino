@@ -24,6 +24,10 @@ function user(index: number, overrides: Partial<AdminUser> = {}): AdminUser {
     id: `u${index}`,
     email: `person-${index}@example.org`,
     display_name: `Person ${index}`,
+    // Null rather than absent: `AdminUser.username` is `string | null`, and a
+    // factory that left it out made every override widen it to include
+    // `undefined` — which typechecks in isolation and fails the build.
+    username: null,
     issuer: "https://idp.test",
     subject: `subject-${index}`,
     is_active: true,

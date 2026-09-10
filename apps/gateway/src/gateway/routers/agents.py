@@ -400,8 +400,12 @@ async def delete_agent(
 
 
 class AgentShareIn(BaseModel):
+    """As on a knowledge base: an id, or the friendly form a person has."""
+
     principal_kind: SharePrincipal
-    principal_id: uuid.UUID
+    principal_id: uuid.UUID | None = None
+    principal_email: str | None = Field(default=None, max_length=320)
+    group_name: str | None = Field(default=None, max_length=255)
     role: ShareRole = ShareRole.VIEWER
 
 
@@ -424,12 +428,26 @@ async def share_agent(
     if agent.owner_user_id != principal.user.id:
         raise NotFoundError(f"No such agent: {agent_id}")
 
+    principal_id = await sharing.resolve_principal(
+        session,
+        kind=body.principal_kind,
+        principal_id=body.principal_id,
+        principal_email=body.principal_email,
+        group_name=body.group_name,
+        caller_id=principal.user.id,
+    )
+
+    # Deliberately **not** checked against the recipient's model access. An
+    # agent may run on a model they cannot use, and sharing it anyway is
+    # allowed: it is hidden from their `/v1/models` and calling it by name
+    # answers with the reason. Refusing the share would make an owner debug
+    # somebody else's permissions before they could offer anything.
     if body.principal_kind is SharePrincipal.USER:
-        target = await session.get(User, body.principal_id)
+        target = await session.get(User, principal_id)
         if target is None or not target.is_active:
             raise BadRequestError("No such user.", code="unknown_principal")
     else:
-        group = await session.get(Group, body.principal_id)
+        group = await session.get(Group, principal_id)
         if group is None or not group.is_active:
             raise BadRequestError("No such group.", code="unknown_principal")
 
@@ -438,7 +456,7 @@ async def share_agent(
         kind=KIND,
         resource_id=agent.id,
         principal_kind=body.principal_kind,
-        principal_id=body.principal_id,
+        principal_id=principal_id,
         role=body.role,
         granted_by=principal.user.id,
     )

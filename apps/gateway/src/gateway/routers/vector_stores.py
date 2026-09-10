@@ -172,12 +172,20 @@ class SearchResults(BaseModel):
 
 
 class ShareIn(BaseModel):
+    """Who to share with, named in whichever way the caller has.
+
+    Three fields for one thing, because the callers differ. A machine holds the
+    id. A person sharing from the chat holds a colleague's address or a group's
+    name and has no way to turn either into a uuid — `/api/admin/users` reads a
+    session cookie and requires admin, so there is nothing a bearer token can
+    ask. `sharing.resolve_principal` decides between them, and records what the
+    friendly forms disclose.
+    """
+
     principal_kind: SharePrincipal
-    #: A group *name* or a user's email would be friendlier, but this is a
-    #: machine surface and resolving a name here would mean deciding what to do
-    #: about two groups called the same thing. The console resolves names; this
-    #: takes ids.
-    principal_id: uuid.UUID
+    principal_id: uuid.UUID | None = None
+    principal_email: str | None = Field(default=None, max_length=320)
+    group_name: str | None = Field(default=None, max_length=255)
     role: ShareRole = ShareRole.VIEWER
 
 
@@ -852,8 +860,17 @@ async def share_base(
     if base is None or not base.is_active or base.owner_user_id != principal.user.id:
         raise NotFoundError(f"No such vector store: {base_id}")
 
+    principal_id = await sharing.resolve_principal(
+        session,
+        kind=body.principal_kind,
+        principal_id=body.principal_id,
+        principal_email=body.principal_email,
+        group_name=body.group_name,
+        caller_id=principal.user.id,
+    )
+
     if body.principal_kind is SharePrincipal.USER:
-        target = await session.get(User, body.principal_id)
+        target = await session.get(User, principal_id)
         if target is None or not target.is_active:
             raise BadRequestError("No such user.", code="unknown_principal")
         if target.id == base.owner_user_id:
@@ -862,7 +879,7 @@ async def share_base(
                 code="redundant_share",
             )
     else:
-        group = await session.get(Group, body.principal_id)
+        group = await session.get(Group, principal_id)
         if group is None or not group.is_active:
             raise BadRequestError("No such group.", code="unknown_principal")
 
@@ -871,14 +888,14 @@ async def share_base(
         kind=KIND,
         resource_id=base.id,
         principal_kind=body.principal_kind,
-        principal_id=body.principal_id,
+        principal_id=principal_id,
         role=body.role,
         granted_by=principal.user.id,
     )
     await session.commit()
     email: str | None = None
     if body.principal_kind is SharePrincipal.USER:
-        email = await session.scalar(select(User.email).where(User.id == body.principal_id))
+        email = await session.scalar(select(User.email).where(User.id == principal_id))
     return ShareObject(
         principal_kind=share.principal_kind,
         principal_id=share.principal_id,

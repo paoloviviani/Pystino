@@ -87,12 +87,29 @@ class OIDCSettings(BaseModel):
     # membership purely an admin decision.
     auto_create_groups: bool = True
 
-    # Membership of any of these groups grants `is_admin`. Leave empty and the
-    # flag is never touched by login, so it stays a manual database decision.
-    # Once set, the identity provider is authoritative in both directions:
-    # leaving the group removes admin, exactly as leaving a group removes the
-    # ability to bill it.
-    admin_groups: list[str] = Field(default_factory=list)
+    # Membership of any of these groups grants `is_admin`, and it defaults to
+    # `platform-admins` rather than to nothing.
+    #
+    # It used to default to empty, meaning "login never touches the flag". That
+    # made admin a database fact with no visible cause, and it made the one
+    # knob that decides who administers a deployment something an operator had
+    # to know to set. One well-known name, and a directory's own group names
+    # reach it through the provider's `group_mappings` (ADR 0048) — mapping is
+    # what a directory-specific name is *for*, so nothing here has to know it.
+    #
+    # This is still overridable, because a deployment whose directory cannot be
+    # made to produce this name needs somewhere to say so. What changed is the
+    # default.
+    #
+    # Two consequences to know. Admin follows membership **in both
+    # directions**, so a directory account that is not in the group loses the
+    # flag at its next login — an upgrade from an empty setting will revoke
+    # admin from any directory user who was granted it by hand *and is not in
+    # an admin group*, which is why the console now grants the group rather
+    # than the flag (`_set_admin_by_membership`). And local accounts are
+    # untouched: this derivation runs only on the OIDC provisioning path, so
+    # `gateway seed`'s admin keeps working.
+    admin_groups: list[str] = Field(default_factory=lambda: ["platform-admins"])
 
     # Naming an audience is what enables OIDC access tokens on `/v1`; empty means
     # API keys only, which is the behaviour every deployment had before this

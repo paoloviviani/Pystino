@@ -208,7 +208,7 @@ export function Shell({ me, children }: ShellProps) {
                   ].join(" ")
                 }
               >
-                {inAdmin ? "Leave admin" : "Admin"}
+                {inAdmin ? "User view" : "Admin view"}
               </NavLink>
             )}
           </nav>
