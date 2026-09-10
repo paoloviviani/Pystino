@@ -573,6 +573,10 @@ async def provision_user(
     display_name: str | None,
     group_names: list[str],
     settings: OIDCSettings,
+    #: The directory's own name for this person, `preferred_username`. Kept
+    #: separately from `display_name` because an administrator searches by the
+    #: name they created the account under, not by the one it is shown as.
+    username: str | None = None,
     touch_login: bool = True,
     policy: OIDCPolicy | None = None,
     allow_local_link: bool = False,
@@ -640,6 +644,7 @@ async def provision_user(
                 subject=subject,
                 email=email,
                 display_name=display_name,
+                username=username,
                 is_active=False,
             )
             session.add(user)
@@ -651,7 +656,13 @@ async def provision_user(
             )
 
     if user is None:
-        user = User(issuer=issuer, subject=subject, email=email, display_name=display_name)
+        user = User(
+            issuer=issuer,
+            subject=subject,
+            email=email,
+            display_name=display_name,
+            username=username,
+        )
         session.add(user)
         await session.flush()
     else:
@@ -660,6 +671,8 @@ async def provision_user(
             user.email = email
         if display_name is not None:
             user.display_name = display_name
+        if username is not None:
+            user.username = username
 
     # A `/v1` call made with an access token is not a login, and recording it as
     # one would make "last seen" mean two different things on the same column.
@@ -757,9 +770,27 @@ async def sync_user_from_claims(
     )
     email = claims.get("email")
     display_name = claims.get("name") or claims.get("preferred_username")
+    # Read in its own right, not as a fallback. `display_name` above still
+    # falls back to it for a directory that sends no `name`, but a directory
+    # that sends both used to have its username discarded — which made an
+    # account created as `chat@local` findable only as `chat@example.org`.
+    raw_username = claims.get("preferred_username")
+    username = raw_username if isinstance(raw_username, str) else None
 
-    if user is not None and not _claims_diverge(
-        user, group_names, settings, policy, group_sync
+    if (
+        user is not None
+        # A username the row does not already carry is a divergence. Without
+        # this the early return below wins for every existing account — their
+        # groups have not changed — and the column would only ever fill for
+        # people who signed up after the migration. That is exactly the bug
+        # this was added to fix, so it would have fixed nothing.
+        #
+        # Compared rather than merely tested for presence, so it settles: the
+        # first request after a login writes it, and every one after that
+        # takes the early return again. `_claims_diverge` exists precisely
+        # because equality checks here once meant a write per `/v1` request.
+        and (username is None or user.username == username)
+        and not _claims_diverge(user, group_names, settings, policy, group_sync)
     ):
         return user
 
@@ -769,6 +800,7 @@ async def sync_user_from_claims(
         subject=subject,
         email=email if isinstance(email, str) else None,
         display_name=display_name if isinstance(display_name, str) else None,
+        username=username,
         group_names=group_names,
         settings=settings,
         touch_login=False,

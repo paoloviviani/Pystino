@@ -62,8 +62,17 @@ export function AdminUsers() {
       header: "User",
       render: (user) => (
         <>
-          <div>{user.display_name || user.email || user.subject}</div>
+          <div>{user.display_name || user.username || user.email || user.subject}</div>
           <div className={MUTED}>{user.email ?? user.subject}</div>
+          {/* The directory's own name for this person, shown when it is not
+              already the line above. An account created in Keycloak as
+              `chat@local` with the address `chat@example.org` was listed only
+              by the address, so searching for the name it was made under found
+              nothing — which reads as a missing account rather than a missing
+              label. */}
+          {user.username && user.username !== user.email && user.username !== user.display_name ? (
+            <div className={`${MUTED} ${CODE}`}>{user.username}</div>
+          ) : null}
           {/* Identity is (issuer, subject), not email. Two rows can therefore
               share a name and an address and still be different accounts —
               which is exactly what happens if the OIDC issuer URL ever changes.
@@ -172,7 +181,7 @@ export function AdminUsers() {
               label="Search"
               value={paged.search}
               onChange={(event) => paged.setSearch(event.target.value)}
-              placeholder="email, name or identity provider subject"
+              placeholder="email, name, username or identity provider subject"
               hint={
                 page
                   ? `${page.total.toLocaleString()} matching`
@@ -567,9 +576,17 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
           <span>
             Administrator
             {!isLocal && (
+              /* Says what actually happens now, which is the opposite of what
+                 this used to say. Granting adds a *manual* membership of the
+                 admin group, and a directory sync never removes one — so the
+                 decision survives the next login rather than being undone by
+                 it. Revoking is the narrower half: a membership the directory
+                 granted has to be withdrawn there, and the API says so. */
               <span className="mt-0.5 block text-xs text-ink-faint">
-                For an identity-provider account this follows group membership at
-                the next login, if admin groups are mapped.
+                Granting this adds them to the admin group here, and it survives
+                their next sign-in. Removing it works only if this console
+                granted it — admin the identity provider granted has to be
+                withdrawn there.
               </span>
             )}
           </span>

@@ -45,10 +45,21 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterable, Sequence
 
-from sqlalchemy import ColumnElement, SQLColumnExpression, and_, delete, literal, or_, select
+from sqlalchemy import (
+    ColumnElement,
+    SQLColumnExpression,
+    and_,
+    delete,
+    func,
+    literal,
+    or_,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gateway.errors import BadRequestError
 from gateway.models import (
+    Group,
     Membership,
     ResourceKind,
     ResourceShare,
@@ -320,3 +331,93 @@ async def list_shares(
         .order_by(ResourceShare.created_at)
     )
     return [(share, email) for share, email in rows.all()]
+
+
+async def resolve_principal(
+    session: AsyncSession,
+    *,
+    kind: SharePrincipal,
+    principal_id: uuid.UUID | None,
+    principal_email: str | None,
+    group_name: str | None,
+    caller_id: uuid.UUID,
+) -> uuid.UUID:
+    """The id to store, from whichever way the caller named the principal.
+
+    An id, an email (for a user), or a name (for a group). The friendly forms
+    exist because the *chat* is now a first-class client of this surface, and
+    somebody sharing with a colleague knows their address rather than their
+    uuid — with no endpoint a bearer token can reach that turns one into the
+    other.
+
+    **This does disclose whether an address has an account here**, to a
+    signed-in caller, and that is a deliberate trade rather than an oversight.
+    The alternative is accepting the share and storing a grant against nothing,
+    so the sharer believes they have shared and the colleague never sees it — a
+    silent failure in exchange for withholding something a colleague could
+    confirm by asking. The disclosure is bounded to authenticated callers and
+    answers yes or no about one address at a time.
+
+    A group is resolved **only over the caller's own memberships**, which is
+    the rule ADR 0061 established for `x-bill-to`: a lookup across every group
+    in the deployment would turn a share dialog into a directory listing. The
+    consequence is the same one recorded there — a real group the caller does
+    not hold is indistinguishable from one that does not exist, which is the
+    point.
+    """
+    if principal_id is not None:
+        return principal_id
+
+    if kind is SharePrincipal.USER:
+        if not principal_email:
+            raise BadRequestError(
+                "Name the person by 'principal_id' or 'principal_email'.",
+                code="unknown_principal",
+            )
+        found = (
+            (
+                await session.execute(
+                    select(User).where(
+                        func.lower(User.email) == principal_email.strip().lower(),
+                        User.is_active.is_(True),
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        if found is None:
+            raise BadRequestError(
+                f"No active account here uses {principal_email!r}. They have to sign "
+                "in once before they can be shared with.",
+                code="unknown_principal",
+            )
+        return found.id
+
+    if not group_name:
+        raise BadRequestError(
+            "Name the group by 'principal_id' or 'group_name'.",
+            code="unknown_principal",
+        )
+    mine = (
+        (
+            await session.execute(
+                select(Group)
+                .join(Membership, Membership.group_id == Group.id)
+                .where(
+                    Membership.user_id == caller_id,
+                    func.lower(Group.name) == group_name.strip().lower(),
+                    Group.is_active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if mine is None:
+        raise BadRequestError(
+            f"You are not in a group called {group_name!r}. You can only share with "
+            "groups you belong to.",
+            code="unknown_principal",
+        )
+    return mine.id

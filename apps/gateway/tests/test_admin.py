@@ -18,7 +18,10 @@ from gateway.deps import get_management_user
 from gateway.models import (
     Group,
     GroupModelAccess,
+    GroupSource,
     LimitRule,
+    Membership,
+    MembershipSource,
     ModelPrice,
     UsageRecord,
     UsageStatus,
@@ -26,6 +29,7 @@ from gateway.models import (
 )
 from gateway.types import utcnow
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
@@ -748,7 +752,15 @@ class TestAdminGroupMapping:
     async def test_unconfigured_means_the_flag_is_never_touched(
         self, session: AsyncSession
     ) -> None:
-        """So `gateway seed`'s local admin keeps working."""
+        """So `gateway seed`'s local admin keeps working.
+
+        `admin_groups` has to be emptied **explicitly** now. It used to default
+        to nothing, which made "the directory does not decide admin" the
+        accidental default; it now defaults to `platform-admins`, so a
+        deployment that wants the flag left alone says so. The rule this test
+        guards is unchanged — an empty setting means login never writes
+        `is_admin` — only the way of reaching that state.
+        """
         from gateway.config import OIDCSettings
         from gateway.oidc import provision_user
 
@@ -759,7 +771,7 @@ class TestAdminGroupMapping:
             email=None,
             display_name=None,
             group_names=["research"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(admin_groups=[]),
         )
         user.is_admin = True
         await session.commit()
@@ -771,26 +783,107 @@ class TestAdminGroupMapping:
             email=None,
             display_name=None,
             group_names=["research"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(admin_groups=[]),
         )
         await session.commit()
         assert again.is_admin is True
 
-    async def test_manual_admin_is_refused_when_the_idp_owns_it(
+    async def test_the_console_grants_admin_by_granting_the_group(
         self,
-        app: object,
+        app: FastAPI,
         client: httpx.AsyncClient,
         seeded: Seeded,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """Silently reverting at next login would be worse than refusing."""
+        """The console is authoritative for admin, and this is how.
+
+        This test used to assert the opposite — that the change was **refused**
+        when `admin_groups` was set, because writing the flag would be undone
+        at the next login. The observation was right and the remedy was wrong:
+        it made the console useless for the decision an administrator most
+        wants to make there, and it assumed whoever runs the gateway also
+        administers the directory its users come from.
+
+        What happens now is that the grant lands on the thing `is_admin` is
+        *derived* from — a **manual** membership of the admin group — which a
+        directory sync leaves alone (ADR 0057). So it survives the next login
+        rather than being reversed by it.
+        """
+        as_user(app, await make_admin(session_factory, seeded))
         app.state.settings.oidc.admin_groups = ["platform-admins"]  # type: ignore[attr-defined]
-        try:
-            as_user(app, await make_admin(session_factory, seeded))
-            response = await client.patch(
-                f"/api/admin/users/{seeded.user.id}", json={"is_admin": True}
+
+        async with session_factory() as db:
+            target = User(issuer="https://idp.test", subject="promote-me")
+            db.add(target)
+            await db.commit()
+            target_id = target.id
+
+        response = await client.patch(
+            f"/api/admin/users/{target_id}", json={"is_admin": True}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["is_admin"] is True
+
+        async with session_factory() as db:
+            memberships = (
+                (
+                    await db.execute(
+                        select(Membership)
+                        .where(Membership.user_id == target_id)
+                        .options(selectinload(Membership.group))
+                    )
+                )
+                .scalars()
+                .all()
             )
-            assert response.status_code == 400
-            assert response.json()["error"]["code"] == "admin_managed_by_idp"
-        finally:
-            app.state.settings.oidc.admin_groups = []  # type: ignore[attr-defined]
+            admin_rows = [m for m in memberships if m.group.name == "platform-admins"]
+            assert admin_rows, "no membership of the admin group was created"
+            # The provenance is the whole point: `manual` is what makes the
+            # directory's next sync leave it alone.
+            assert admin_rows[0].source is MembershipSource.MANUAL
+
+    async def test_admin_the_directory_granted_cannot_be_withdrawn_here(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The asymmetry, and it is honest rather than incidental.
+
+        Granting always works. Revoking works only on a grant this console
+        made: a membership the *directory* granted comes back at the next
+        login, so removing it here would appear to work and then silently
+        undo itself.
+        """
+        as_user(app, await make_admin(session_factory, seeded))
+        app.state.settings.oidc.admin_groups = ["platform-admins"]  # type: ignore[attr-defined]
+
+        async with session_factory() as db:
+            group = Group(name="platform-admins", source=GroupSource.OIDC)
+            db.add(group)
+            await db.flush()
+            target = User(
+                issuer="https://idp.test", subject="theirs", email="theirs@example.org"
+            )
+            db.add(target)
+            await db.flush()
+            db.add(
+                Membership(
+                    user_id=target.id,
+                    group_id=group.id,
+                    source=MembershipSource.OIDC,
+                )
+            )
+            target.is_admin = True
+            await db.commit()
+            target_id = target.id
+
+        response = await client.patch(
+            f"/api/admin/users/{target_id}", json={"is_admin": False}
+        )
+        assert response.status_code == 400, response.text
+        assert response.json()["error"]["code"] == "admin_granted_by_directory"
+        # And it names where to go instead, because "refused" alone is useless.
+        assert "platform-admins" in response.json()["error"]["message"]
+

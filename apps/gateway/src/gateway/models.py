@@ -321,6 +321,23 @@ class User(Base):
     subject: Mapped[str] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(320), index=True, default=None)
     display_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    #: The directory's own name for this person — OIDC ``preferred_username``.
+    #:
+    #: Kept in a column of its own rather than folded into `display_name`,
+    #: because it answers a different question. `display_name` is what to
+    #: *show* a person; this is what they are *called* in the directory an
+    #: administrator created them in, and it is the string that administrator
+    #: will type into a search box.
+    #:
+    #: It was previously read only as a fallback for `display_name`
+    #: (`name or preferred_username`), so any directory that sends both threw
+    #: the username away. Keycloak sends both by default, which made an account
+    #: created as `chat@local` findable only as `chat@example.org` — a real
+    #: report, and the reason this column exists.
+    #:
+    #: Not unique and not identity: identity is `(issuer, subject)`. A username
+    #: is mutable and two directories may use the same one for two people.
+    username: Mapped[str | None] = mapped_column(String(255), index=True, default=None)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))

@@ -165,6 +165,13 @@ export interface AdminUser {
   id: string;
   email: string | null;
   display_name: string | null;
+  /** The directory's own name for this person (`preferred_username`).
+   *
+   * Distinct from `display_name`: this is what the account was *created as*,
+   * and therefore what an administrator searches for. Null for a local
+   * account, and null for a directory account that has not signed in since
+   * the gateway started recording it — the claim arrives with a login. */
+  username: string | null;
   issuer: string;
   subject: string;
   is_active: boolean;

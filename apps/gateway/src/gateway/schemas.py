@@ -906,6 +906,12 @@ class UserAdminResponse(BaseModel):
     id: uuid.UUID
     email: str | None
     display_name: str | None
+    #: The directory's own name for this person, `preferred_username`. Distinct
+    #: from `display_name`: this is the name an administrator created the
+    #: account under and will search for. Null for a local account, and null
+    #: for a directory account that has not signed in since the column existed
+    #: — the claim only arrives with a login.
+    username: str | None = None
     issuer: str
     subject: str
     is_active: bool

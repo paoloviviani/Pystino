@@ -223,7 +223,7 @@ describe("Shell", () => {
 
   it("does not offer the way into administration to a non-administrator", () => {
     renderShell(me({ is_admin: false }));
-    expect(screen.queryByRole("link", { name: "Admin" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Admin view" })).not.toBeInTheDocument();
   });
 
   it("keeps administration out of the header until you are in it", () => {
@@ -234,7 +234,7 @@ describe("Shell", () => {
     expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Your usage" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Providers" })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Admin" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Admin view" })).toBeInTheDocument();
   });
 
   it("swaps the header for the admin sections once inside", () => {
@@ -245,7 +245,7 @@ describe("Shell", () => {
     expect(screen.getByRole("link", { name: "Quotas" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Your usage" })).not.toBeInTheDocument();
     // And the way back is where the way in was.
-    expect(screen.getByRole("link", { name: "Leave admin" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "User view" })).toBeInTheDocument();
   });
 
   it("shows a non-administrator their own navigation even at an admin path", () => {
