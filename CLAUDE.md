@@ -172,9 +172,9 @@ Inside the gateway, the pieces that carry the most weight:
   guess there is a 400), while the reservation makes search spend count so the
   limit engages for the *next* request. OpenAI's own search is deliberately
   unpriced: no documented usage field, and a rate that varies by
-  `search_context_size`. Phases 2 and 3 — our own search backends, and a loop
-  that executes them — are in
-  [docs/web-search-plan.md](docs/web-search-plan.md), not started.
+  `search_context_size`. Phase 2 — our own search backends — is **built** for
+  Linkup and Exa; phase 3, a loop that executes them, is not started. Both are
+  in [docs/web-search-plan.md](docs/web-search-plan.md).
 - **There are two search counts, and adding them together destroys a
   distinction.** `usage_records.search_count` is the **counterparty's**
   server-side search, billed per search as a surcharge (ADR 0058, the bullet
@@ -197,6 +197,28 @@ Inside the gateway, the pieces that carry the most weight:
   says so on the screen.
   `own_search_backend` and `own_search_tier` are label columns with no rate;
   they exist because they cannot be backfilled.
+- **A search backend is a provider, and a search "model" is a *tier*.**
+  `POST /v1/search` (docs/web-search-plan.md, phase 2) resolves a `ModelKind.SEARCH`
+  model whose `upstream_model` holds Linkup's `depth` or Exa's `type`, behind a
+  `Provider` row whose plugin also implements `SearchPlugin`
+  (`plugins/search.py`, with `ProviderKind.SEARCH`). Nothing new was built for
+  credentials, access, caching or the ledger — it is the extractor's precedent
+  one step further. Four things to know before touching it. **The tier is the
+  model on purpose**: which depth a caller may run is then a grant, which is
+  the only enforceable answer to "a request ceiling bounds volume, not spend".
+  **A search is counted before the call and never refunded** — a vendor error,
+  a timeout and an unreadable 2xx all leave the count, because a ceiling that
+  forgave a failure would be raisable by making the search fail; the price is
+  that a misconfigured backend burns a caller's budget. **The query is
+  redacted**, which genuinely degrades it — searching for a name under a policy
+  that protects `PERSON` searches for `<PERSON_…>`, and the fix is the
+  per-provider redaction scope, not an exemption in the route. And **Exa's
+  `costDollars` is logged, never stored**: in `upstream_cost` the
+  reconciliation report would read it as a counterparty charge against a price
+  table that does not exist, and Exa's own schema says the field "is not an
+  invoice record". Read both plugins' module docstrings before changing a
+  request body — each records what its vendor's *live* OpenAPI document says
+  against what its prose says, and they disagree in both cases.
 - **Restoring a placeholder moves every offset after it**
   (ADR 0059). A real name is rarely the
   same length as the placeholder that stood in for it, and a provider's

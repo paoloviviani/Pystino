@@ -51,6 +51,7 @@ from gateway.routers import (
     messages,
     models,
     ocr,
+    search,
     tokens,
     vector_stores,
 )
@@ -389,6 +390,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(messages.router)
     app.include_router(images.router)
     app.include_router(ocr.router)
+    app.include_router(search.router)
     app.include_router(models.router)
     app.include_router(billing.router)
     app.include_router(identity.router)

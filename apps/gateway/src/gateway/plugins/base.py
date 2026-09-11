@@ -48,6 +48,14 @@ class ProviderKind(enum.StrEnum):
 
     PROVIDER = "provider"
     ROUTER = "router"
+    #: Not an inference endpoint at all: a web-search backend (Linkup, Exa).
+    #: The third kind docs/web-search-plan.md asked for, and it is a *kind*
+    #: rather than a separate table because everything a search backend needs —
+    #: an address, a credential encrypted at rest, an activation switch, models
+    #: an administrator grants to a group — is what a provider row already is.
+    #: What differs is the one thing a row cannot express: the plugin runs a
+    #: search instead of a completion, which is `plugins/search.py`.
+    SEARCH = "search"
 
 
 @dataclass(frozen=True, slots=True)

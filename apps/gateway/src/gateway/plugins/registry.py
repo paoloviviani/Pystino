@@ -27,8 +27,10 @@ from importlib.metadata import entry_points
 from gateway.plugins.anthropic import AnthropicPlugin
 from gateway.plugins.base import ProviderPlugin
 from gateway.plugins.cortecs import CortecsRouterPlugin
+from gateway.plugins.exa import ExaSearchPlugin
 from gateway.plugins.extractor import LocalExtractorPlugin
 from gateway.plugins.generic import GenericOpenAIPlugin
+from gateway.plugins.linkup import LinkupSearchPlugin
 from gateway.plugins.mistral import MistralPlugin
 from gateway.plugins.nebius import NebiusPlugin
 from gateway.plugins.openai import OpenAIPlugin
@@ -63,6 +65,22 @@ _BUILTIN: dict[str, PluginFactory] = {
     # thing is behind this row", and a second discriminator for one case
     # would be a second thing to keep in step.
     "extractor": LocalExtractorPlugin,
+    # Search backends, which are also not counterparties for inference: they
+    # answer `POST /v1/search` and are metered as a count of requests with no
+    # rate at all (`plugins/search.py`). Listed here for the same reason the
+    # extractor is — `providers.plugin` is already the answer to "what kind of
+    # thing is behind this row", and a second registry would be a second thing
+    # to keep in step, with a second credential path to get wrong.
+    #
+    # **Staan and Jina are deliberately absent.** Both were asked for and
+    # neither can be implemented honestly yet: Staan's dearer "for AI" tier is
+    # neither a documented request parameter nor reported back, so nothing
+    # here could record which tier a search ran at, and Jina publishes no
+    # per-token figure publicly. What they need is `SearchPlugin` and a live
+    # key, not a change to this file — the protocol is the hook, and adding
+    # either is a plugin module and one line here.
+    "linkup": LinkupSearchPlugin,
+    "exa": ExaSearchPlugin,
 }
 
 

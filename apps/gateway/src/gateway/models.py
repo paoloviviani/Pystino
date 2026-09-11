@@ -240,6 +240,10 @@ class ApiSurface(enum.StrEnum):
     #: served either by an upstream OCR model or by this deployment's own
     #: extractor. Metered by the page rather than the token.
     OCR = "ocr"
+    #: A web search this gateway ran itself, `POST /v1/search`. The only
+    #: surface metered by a count with no rate behind it: `own_search_requests`
+    #: rather than `cost`, for the reasons on `LimitMetric.OWN_SEARCH_REQUESTS`.
+    SEARCH = "search"
 
 
 class BillingMode(enum.StrEnum):
@@ -279,6 +283,10 @@ class ProviderKind(enum.StrEnum):
 
     PROVIDER = "provider"
     ROUTER = "router"
+    #: A web-search backend rather than an inference endpoint. See
+    #: `gateway.plugins.base.ProviderKind.SEARCH` for why this is a kind of
+    #: provider and not a table of its own.
+    SEARCH = "search"
 
 
 class PriceSource(enum.StrEnum):
@@ -622,6 +630,13 @@ class ModelKind(enum.StrEnum):
     #: carries and not the kind — `/v1/ocr` is one surface with two kinds of
     #: counterparty behind it.
     OCR = "ocr"
+    #: A web search, served by one of this deployment's own search backends.
+    #: A "model" here is a **backend at a tier** — `upstream_model` carries
+    #: Linkup's `depth` or Exa's `type` — which is what makes the tier a grant
+    #: an administrator makes rather than a parameter a caller picks. It is
+    #: metered as a count and never priced (`LimitMetric.OWN_SEARCH_REQUESTS`),
+    #: so a price row on one of these charges nothing and reserves nothing.
+    SEARCH = "search"
 
 
 class Provider(Base):
