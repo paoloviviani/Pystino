@@ -28,31 +28,31 @@
 #   between that and the internet is the absence of a published port.
 services:
   playwright:
-    # Pinned to 1.62, and the version is not a matter of taste. Measured on
-    # 2026-09-11 against the real servers: the ws handshake compares
-    # client and server at *minor* granularity and refuses a mismatch with
-    # `428 Precondition Required` — a Python 1.62.0 client against a 1.61.1
-    # server got "Playwright version mismatch: server v1.61, client v1.62" and
-    # no browser at all. So the pin has to be the newest version the *consumer*
-    # can also install, and the consumer here is the Python gateway.
+    # Pinned to 1.61.1, and the version is not a matter of taste. Measured on
+    # 2026-09-11 against the real servers: the ws handshake compares client and
+    # server at *minor* granularity and refuses a mismatch with `428
+    # Precondition Required` — a 1.62.0 client against a 1.61.1 server got
+    # "Playwright version mismatch: server v1.61, client v1.62" and no browser
+    # at all. So the pin is whatever the **consumer** can install, and this was
+    # first pinned to 1.62.1 on the assumption that the consumer would be the
+    # Python gateway.
     #
-    # npm's newest is 1.63.0 (2026-09-04); PyPI's newest `playwright` is
-    # **1.62.0**, because the Python port lags the Node release. Pinning npm's
-    # latest would ship a server no released Python client can connect to. 1.62.1
-    # is the newest patch of the newest minor that both ecosystems have, and
-    # patch differences are not compared, so a 1.62.0 Python client pairs with
-    # it — verified, not assumed.
+    # It is not. Fetching a URL somebody named belongs to the chat, so the
+    # consumer is the chat's Node client — and the chat has **1.61.1**
+    # installed. 1.62.1 would have been refused by the only thing that calls it.
     #
-    # The sibling chat repository is the cautionary tale: its package.json asks
-    # for `^1.55.1` and it has 1.61.1 installed, which is exactly the drift this
-    # protocol punishes. A consumer of this service pins `==` and moves when
-    # this line moves.
+    # 1.61.1 also keeps the other door open: PyPI carries 1.61.x as well as
+    # 1.62.0, so a future Python consumer can still pair with this server, while
+    # a 1.62 server could not have paired with the chat. When one of the two
+    # moves, both move — the chat now pins `1.61.1` exactly rather than
+    # `^1.55.1`, because a caret range against this protocol is a silent outage
+    # waiting for an unrelated `npm install`.
     #
     # PLAYWRIGHT_VERSION is interpolated into both the image tag and the command
     # on purpose: the image carries the browser binaries and the command chooses
     # the driver that must match them, so two literals here would be two places
     # to forget.
-    image: mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION:-1.62.1}-noble
+    image: mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION:-1.61.1}-noble
     # The image ships the browsers and *not* the `playwright` npm package —
     # checked: `npm ls -g` in v1.62.0-noble lists only corepack, npm and yarn.
     # So `npx` is not laziness, it is how this image is meant to be started, and
@@ -69,7 +69,7 @@ services:
     command:
       - npx
       - "-y"
-      - playwright@${PLAYWRIGHT_VERSION:-1.62.1}
+      - playwright@${PLAYWRIGHT_VERSION:-1.61.1}
       - run-server
       - --port
       - "3000"
