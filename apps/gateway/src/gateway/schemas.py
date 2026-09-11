@@ -407,6 +407,40 @@ class MeResponse(BaseModel):
     has_password: bool = False
 
 
+class CallerIdentity(BaseModel):
+    """What ``GET /v1/me`` answers, deliberately beside :class:`MeResponse`.
+
+    The two answer the same question through different doors, and keeping them
+    in one file is what makes the differences visible instead of accidental.
+    ``MeResponse`` is behind a session cookie and talks to the console, so it
+    carries what a console screen needs — the issuer, whether a password
+    exists, group ids for the pickers. This one is behind a ``/v1`` credential
+    and talks to programs, so it carries names: a client that has only ever
+    seen ``x-bill-to`` and ``/v1/billing/groups`` has never needed a group id.
+
+    ``is_admin`` is the one field that is not the same fact in both. See
+    ``routers/identity.py``: here it answers for the *credential*, which is why
+    ``credential`` is beside it rather than left to be inferred.
+    """
+
+    object: str = "user"
+    id: uuid.UUID
+    email: str | None
+    display_name: str | None
+    is_admin: bool
+    #: Which kind of credential authenticated this call, because ``is_admin``
+    #: is false for every API key and a client must be able to tell that from
+    #: "this person is not an administrator".
+    credential: Literal["access_token", "api_key"]
+    #: Effective membership names — what the person holds here, not what a
+    #: token claims (ADR 0057).
+    groups: list[str]
+    default_billing_group: str | None
+    #: What *this* caller's requests bill right now, which is not always the
+    #: default: a key may pin a group, and a bearer request may name one.
+    billing_group: str
+
+
 class MyPasswordChangeRequest(BaseModel):
     """A self-service password change: the current one proves the person."""
     current_password: str = Field(min_length=1, max_length=1024)

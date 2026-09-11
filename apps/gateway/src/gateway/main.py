@@ -44,6 +44,7 @@ from gateway.routers import (
     embeddings,
     files,
     health,
+    identity,
     images,
     knowledge_admin,
     me,
@@ -390,6 +391,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ocr.router)
     app.include_router(models.router)
     app.include_router(billing.router)
+    app.include_router(identity.router)
     # Before the vector stores, because `/v1/files` is where a document enters
     # and the store is what indexes it — and because `vector_stores` imports
     # this module's feature-switch dependency.
