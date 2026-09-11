@@ -120,6 +120,29 @@ services:
       # a public CA needs the system roots appended to this file, which is
       # what `deploy/keycloak/setup.sh` already does for Caddy's root.
       SSL_CERT_FILE: /etc/ssl/caddy/caddy-root.crt
+      # Where ToolHive keeps workloads, logs and cached registrations. It
+      # defaults to `$HOME/.local/share/toolhive`, which is the container's own
+      # layer — so the volume below was mounted and stayed empty while every
+      # workload definition died with the container. Found by creating one.
+      XDG_DATA_HOME: /data
+    # The OAuth callback, reachable on the host's loopback only.
+    #
+    # `--remote-auth-callback-port` exists and a callback *host* flag does not,
+    # so the redirect URI is always `http://localhost:<port>/callback` —
+    # localhost relative to this container. Somebody authorising a connector
+    # from another machine therefore needs an SSH tunnel, which is the same
+    # thing the README documents for reaching the console.
+    #
+    # The port published here is the **forwarder's** (8667), not the callback's
+    # (8666): the callback binds `127.0.0.1:8666` *inside* this container —
+    # measured with `ss -ltnp` in its namespace — and a published port forwards
+    # to the container's external interface, so publishing 8666 answered
+    # nothing at all. See the `toolhive-callback` service below.
+    #
+    # 127.0.0.1 on the host side, so this publishes nothing on the routable
+    # address: ground rule 4, and `test_public_tls_live.py` is what checks it.
+    ports:
+      - "127.0.0.1:${TOOLHIVE_CALLBACK_PORT:-8666}:8667"
     volumes:
       - toolhive-state:/data
       # The directory, not the file — a bind mount of a not-yet-existing file
@@ -129,6 +152,27 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       keycloak:
+        condition: service_started
+
+  # Bridges the published port to the callback server's loopback address.
+  #
+  # It shares ToolHive's network namespace (`network_mode: service:toolhive`),
+  # which is what lets it reach `127.0.0.1:8666` at all, and is also why the
+  # port above is declared on ToolHive rather than here — in a shared namespace
+  # there is one set of published ports.
+  #
+  # The alternative was `--network host` for ToolHive, which would put its API
+  # and every workload proxy on the host's interfaces. That is the opposite of
+  # what ground rule 4 asks for, to solve a problem eight lines fix.
+  toolhive-callback:
+    image: alpine/socat:1.8.0.0
+    restart: unless-stopped
+    network_mode: "service:toolhive"
+    command: >-
+      TCP-LISTEN:8667,fork,reuseaddr
+      TCP:127.0.0.1:${TOOLHIVE_CALLBACK_PORT:-8666}
+    depends_on:
+      toolhive:
         condition: service_started
 
   proxy:
