@@ -172,6 +172,10 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
         func.coalesce(func.sum(UsageRecord.total_tokens), 0).label("total_tokens"),
         func.coalesce(func.sum(UsageRecord.image_count), 0).label("images"),
         func.coalesce(func.sum(UsageRecord.search_count), 0).label("searches"),
+        # Ours, summed separately and never added to theirs — see
+        # `UsageReportRow.own_searches` for why folding them would make the
+        # figure unreconcilable against either invoice.
+        func.coalesce(func.sum(UsageRecord.own_search_requests), 0).label("own_searches"),
         func.coalesce(func.sum(UsageRecord.cost), 0).label("cost"),
         func.coalesce(func.sum(UsageRecord.cost_native), 0).label("native_cost"),
         func.min(UsageRecord.cost_currency).label("native_currency"),
@@ -250,6 +254,7 @@ def _row(
         total,
         images,
         searches,
+        own_searches,
         cost,
         native_cost,
         native_currency,
@@ -278,6 +283,7 @@ def _row(
         total_tokens=int(total or 0),
         images=int(images or 0),
         searches=int(searches or 0),
+        own_searches=int(own_searches or 0),
         cost=Decimal(str(cost or 0)),
         native_cost=Decimal(str(native_cost or 0)) if show_native else None,
         native_currency=native_currency if show_native else None,
@@ -296,6 +302,7 @@ def _totals(rows: Sequence[UsageReportRow]) -> UsageReportRow:
         total_tokens=sum(row.total_tokens for row in rows),
         images=sum(row.images for row in rows),
         searches=sum(row.searches for row in rows),
+        own_searches=sum(row.own_searches for row in rows),
         cost=sum((row.cost for row in rows), Decimal(0)),
         estimated_requests=sum(row.estimated_requests for row in rows),
         unavailable_requests=sum(row.unavailable_requests for row in rows),
@@ -421,6 +428,18 @@ def _disclosures(
             f"{totals.searches} provider-side web search(es) were billed on top of "
             "tokens. They are charged from each model's per-search rate; a model "
             "without one records the searches and charges nothing for them."
+        )
+    if totals.own_searches:
+        # The column exists precisely so this sentence can be said. Our own
+        # backends are metered by **count and never priced** — two of the four
+        # vendors do not publish a rate we could verify — so the cost figure in
+        # this report contains nothing for them. Left unsaid, a reader would
+        # take the total for the whole bill and be wrong by however much the
+        # search vendor invoices separately.
+        notes.append(
+            f"{totals.own_searches} web search(es) were made against this deployment's "
+            "own search backends. They are counted, not priced: their cost is not in "
+            "this report and is reconciled against the search vendor's own invoice."
         )
     if fell_back:
         # Said at all because a pass-through deployment silently billing from
@@ -577,6 +596,7 @@ CSV_HEADER = [
     "total_tokens",
     "images",
     "searches",
+    "own_searches",
     "cost",
     "currency",
     "estimated_requests",
@@ -614,6 +634,7 @@ def report_to_csv(report: UsageReport) -> str:
                 row.total_tokens,
                 row.images,
                 row.searches,
+                row.own_searches,
                 # Plain decimal, never scientific notation: a spreadsheet reading
                 # "1E-7" as text is a support ticket.
                 f"{row.cost:f}",

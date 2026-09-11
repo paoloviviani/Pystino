@@ -53,6 +53,7 @@ async def record(
     source: UsageSource = UsageSource.UPSTREAM_EXACT,
     status: UsageStatus = UsageStatus.COMPLETED,
     searches: int = 0,
+    own_searches: int = 0,
 ) -> UsageRecord:
     row = UsageRecord(
         request_id=f"r-{uuid.uuid4().hex[:8]}",
@@ -68,6 +69,7 @@ async def record(
         cost=Decimal(cost),
         usage_source=source,
         search_count=searches,
+        own_search_requests=own_searches,
         created_at=at or datetime.now(UTC),
     )
     session.add(row)
@@ -892,3 +894,82 @@ class TestSearchesInTheReport:
         body = response.json()
         assert body["totals"]["searches"] == 0
         assert not any("web search" in note for note in body["disclosures"])
+
+
+class TestOwnSearches:
+    """Our own search backends, counted and never priced.
+
+    The whole reason these are a separate column: one is the counterparty
+    searching while it serves a chat request, the other is this deployment
+    calling Exa or Staan. Added together they reconcile against neither
+    invoice, which is the same failure `cost` / `computed_cost` /
+    `upstream_cost` are kept apart to avoid.
+    """
+
+    async def test_theirs_and_ours_are_reported_apart(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        # Deliberately unequal. Equal numbers would pass against an
+        # implementation that summed the wrong column.
+        await record(
+            session,
+            group_id=seeded.group.id,
+            cost="1",
+            searches=9,
+            own_searches=2,
+            at=inside_this_month(),
+        )
+
+        body = (
+            await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")
+        ).json()
+        assert body["totals"]["searches"] == 9
+        assert body["totals"]["own_searches"] == 2
+
+    async def test_the_csv_carries_ours_too(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        """The export keeps its own column list, and the last unit added to the
+        report reached the screen while silently missing the spreadsheet —
+        which is the artefact somebody reconciles an invoice in."""
+        await record(
+            session,
+            group_id=seeded.group.id,
+            cost="1",
+            searches=9,
+            own_searches=2,
+            at=inside_this_month(),
+        )
+        response = await admin_client.get("/api/admin/reports/usage.csv")
+
+        rows = list(csv.DictReader(io.StringIO(response.text)))
+        assert [row["own_searches"] for row in rows] == ["2", "2"]
+        assert [row["searches"] for row in rows] == ["9", "9"]
+
+    async def test_the_disclosure_says_their_cost_is_absent(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        """A count with no price in a report full of prices reads as free."""
+        await record(
+            session, group_id=seeded.group.id, cost="1", own_searches=4, at=inside_this_month()
+        )
+
+        body = (
+            await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")
+        ).json()
+        note = next(n for n in body["disclosures"] if "own search backends" in n)
+        assert "counted, not priced" in note
+        assert "4" in note
+
+    async def test_no_disclosure_when_we_searched_nothing(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        await record(
+            session, group_id=seeded.group.id, cost="1", searches=3, at=inside_this_month()
+        )
+
+        body = (
+            await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")
+        ).json()
+        assert body["totals"]["own_searches"] == 0
+        assert not any("own search backends" in n for n in body["disclosures"])

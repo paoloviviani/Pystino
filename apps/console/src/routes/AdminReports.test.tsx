@@ -22,6 +22,7 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
     total_tokens: 10000,
     images: 0,
     searches: 0,
+    own_searches: 0,
     cost: "42.500000000000",
     native_cost: null,
     native_currency: null,
