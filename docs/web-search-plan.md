@@ -54,12 +54,16 @@ order:
 Nothing above is verified beyond Staan's public pricing page; each one's API
 shape must be read at source before it is implemented, per ground rule 2.
 
-**One piece of phase 2 is already deployed: the renderer.** A backend returns
+**A renderer is deployed, and it is not really ours.** A backend returns
 URLs and snippets, and a snippet is not an answer — turning a result into text a
 model can read means fetching the page and running its JavaScript, because a
 growing share of the web is an empty `<div>` to an HTTP client, with no error to
 say so. `deploy/compose/docker-compose.playwright.yml` is a headless browser on
-the compose network for exactly that, opt-in and consumed by nothing yet;
+the compose network, opt-in. Note what it is actually for, because the
+distinction matters: **fetching a URL somebody named is not searching**, and the
+browser exists for fetch first — see [browser.md](browser.md). Search is a
+second consumer of it, and only for Linkup, since Exa, Jina and Staan can all
+return page content themselves;
 [browser.md](browser.md) has the version pin, the measured footprint, and why it
 publishes no port. Fetching the page is a *third* egress after the prompt and
 the query, and the pages read on a user's behalf are often more revealing than

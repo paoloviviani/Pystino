@@ -9,20 +9,28 @@ is the first thing to know about it.
 
 ## What it is for
 
-Web search, phases 2 and 3 of [web-search-plan.md](web-search-plan.md). A search
-backend — Exa, Jina, Staan, Linkup — answers with URLs and short snippets. A
-snippet is not an answer, so something has to fetch the page and turn it into
-text the model can read, and a growing share of the web is an empty `<div>`
-until JavaScript has run. An HTTP client returns that empty div and no error.
+**Fetching a URL somebody named.** That is a different operation from searching,
+and conflating the two is the mistake to avoid here: if you are given a plain
+URL you do not search for it, you fetch it. This is the fancy `curl` that does
+the fetching — and it has to be a browser rather than an HTTP client because a
+growing share of the web is an empty `<div>` until JavaScript has run, and an
+HTTP client returns that empty div with no error to say so.
+
+The chat already has the user-facing half of this: a "fetch a URL" affordance in
+the composer that today reaches whatever the app could manage on its own. A
+renderer behind it is what makes the answer the page a person actually sees.
+
+It is *also* useful to web search — a search backend that returns links and
+snippets needs something to turn a result into readable text, and three of the
+four candidates in [web-search-plan.md](web-search-plan.md) can return page
+content themselves while Linkup cannot. But that is a second consumer, not the
+reason this exists. Fetch stands on its own.
 
 The reason it is deployed here rather than bought is the reason this deployment
-exists at all. The search query is already a second egress — prompt-derived text
-sent to a third party, which is why
-[redaction-scoping-plan.md](redaction-scoping-plan.md) has to cover a tool
-call's arguments. Handing the *rendering* to a hosted scraping API would add a
-third party that sees every page this deployment reads on a user's behalf, and
-the pages are often more revealing than the query. Rendering in-process would be
-worse still: a browser in the gateway's container is a browser sharing an
+exists at all. Handing the rendering to a hosted scraping API would add a third
+party that sees every page this deployment reads on a user's behalf, and the
+pages are often more revealing than a query would be. Rendering in-process would
+be worse still: a browser in the gateway's container is a browser sharing an
 address space with the ledger.
 
 So: deployed ahead of its consumer, so that the consumer is a client of
