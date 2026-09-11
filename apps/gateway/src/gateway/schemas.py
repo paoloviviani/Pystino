@@ -1054,7 +1054,14 @@ class LimitRuleCreateRequest(BaseModel):
     name: str = Field(default="", max_length=255)
     scope: Literal["global", "group", "user", "api_key"]
     scope_id: uuid.UUID | None = None
-    metric: Literal["requests", "tokens", "cost"]
+    # `own_search_requests` bounds **volume, not spend**: it counts calls to
+    # our own web-search backends, whose per-request prices differ by more than
+    # an order of magnitude between tiers (Exa `deep-reasoning` against
+    # `instant`, Linkup `deep` against `flash`). A caller setting one is
+    # limiting how many searches happen, not how much they cost, and every
+    # surface that offers this has to say so — see
+    # `LimitMetric.OWN_SEARCH_REQUESTS`.
+    metric: Literal["requests", "tokens", "cost", "own_search_requests"]
     # A rolling window ("EUR 1 every 6 hours") or a calendar period ("EUR 5 per
     # month", resetting at local midnight on the 1st). Exactly one, enforced below
     # as well as by ck_limit_rules_one_window_kind — a database error is correct

@@ -208,6 +208,15 @@ class RequestAccounting:
         # Set by `observe_redaction` when the *response* was the redacted half.
         self._redaction_observed = False
         self._image_size: str | None = None
+        #: Calls this gateway made to a search backend of its own, and the
+        #: labels for them. Held here rather than on ``TokenCounts`` on
+        #: purpose: that structure exists to be multiplied by a rate, and this
+        #: quantity has no rate by decision (``LimitMetric.OWN_SEARCH_REQUESTS``).
+        #: Putting a deliberately unpriced count in the priced structure is an
+        #: invitation to price it.
+        self._own_searches = 0
+        self._own_search_backend: str | None = None
+        self._own_search_tier: str | None = None
 
         self._flushed_chars = 0
         self._last_flush_at = self._started_at
@@ -374,6 +383,40 @@ class RequestAccounting:
         """
         self._images = max(0, count)
         self._image_size = size
+
+    def observe_own_search(
+        self, count: int = 1, *, backend: str | None = None, tier: str | None = None
+    ) -> None:
+        """One or more calls we made to our own search backend.
+
+        Accumulates, because a request may search more than once, and is
+        recorded on **every** outcome — including one where the upstream then
+        failed. The searches were spent whether or not the completion arrived,
+        and a ceiling that forgave them would be raisable by making the model
+        fail.
+
+        The labels are facts about the backend, not about the money: first
+        answer wins, and a *different* backend arriving later is logged rather
+        than overwritten. One row carries one backend; a request that genuinely
+        fanned out across two needs a child table, and the day that happens
+        should be findable in a log rather than inferred from a column that
+        quietly names only the first of them.
+        """
+        if count > 0:
+            self._own_searches += count
+        if backend is not None:
+            if self._own_search_backend is None:
+                self._own_search_backend = backend[:32]
+            elif self._own_search_backend != backend[:32]:
+                logger.warning(
+                    "request %s searched two backends (%s then %s); the row records "
+                    "only the first, so its label is now incomplete",
+                    self._ctx.request_id,
+                    self._own_search_backend,
+                    backend,
+                )
+        if tier is not None and self._own_search_tier is None:
+            self._own_search_tier = tier[:64]
 
     # -- persistence -------------------------------------------------------
 
@@ -667,6 +710,12 @@ class RequestAccounting:
             requests=Decimal(1),
             tokens=Decimal(counts.total),
             cost=breakdown.total,
+            # Straight from the recorder's own tally, not from `counts`: a
+            # search we ran is not in any counterparty's usage frame, and the
+            # estimation paths above return a bare `TokenCounts()` on failure,
+            # which would silently forgive every search the request had already
+            # made.
+            own_search_requests=Decimal(self._own_searches),
         )
         self._last_actuals = actuals
 
@@ -688,6 +737,12 @@ class RequestAccounting:
             # by, and an unpriced search that leaves no trace is exactly the
             # charge nobody finds until the invoice arrives (ADR 0058).
             "search_count": counts.searches,
+            # Ours, and deliberately a different column from the line above.
+            # See `UsageRecord.own_search_requests` for why conflating them
+            # would cost a report the ability to say who searched.
+            "own_search_requests": self._own_searches,
+            "own_search_backend": self._own_search_backend,
+            "own_search_tier": self._own_search_tier,
             "image_size": self._image_size,
             "usage_source": source,
             "upstream_model": self._upstream_model,

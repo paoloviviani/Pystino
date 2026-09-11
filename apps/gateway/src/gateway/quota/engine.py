@@ -96,6 +96,15 @@ class QuotaAmounts:
     requests: Decimal = Decimal(1)
     tokens: Decimal = Decimal(0)
     cost: Decimal = Decimal(0)
+    #: Calls to one of our own web-search backends, counted rather than priced
+    #: (``LimitMetric.OWN_SEARCH_REQUESTS`` carries the reasoning).
+    #:
+    #: Defaults to zero where ``requests`` defaults to one, and the asymmetry is
+    #: not an oversight: every metered call *is* one request by definition, and
+    #: almost none of them searches. A default of one here would reserve a
+    #: search against every embedding and every OCR page, and a search ceiling
+    #: would then be exhausted by traffic that never searched.
+    own_search_requests: Decimal = Decimal(0)
 
     def get(self, metric: LimitMetric) -> Decimal:
         match metric:
@@ -105,6 +114,8 @@ class QuotaAmounts:
                 return self.tokens
             case LimitMetric.COST:
                 return self.cost
+            case LimitMetric.OWN_SEARCH_REQUESTS:
+                return self.own_search_requests
 
 
 @dataclass(frozen=True, slots=True)
@@ -627,7 +638,12 @@ class QuotaEngine:
         """Undo a reservation entirely, for requests that never happened."""
         await self.settle(
             reservation,
-            QuotaAmounts(requests=Decimal(0), tokens=Decimal(0), cost=Decimal(0)),
+            QuotaAmounts(
+                requests=Decimal(0),
+                tokens=Decimal(0),
+                cost=Decimal(0),
+                own_search_requests=Decimal(0),
+            ),
             now=now,
         )
 

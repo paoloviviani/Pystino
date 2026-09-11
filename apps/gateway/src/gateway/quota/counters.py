@@ -31,9 +31,9 @@ from gateway.periods import Period
 from gateway.quota.windows import WindowSpec
 from gateway.types import utcnow
 
-# Requests and tokens are already integral. Cost is scaled by 1e9, giving
-# nano-currency resolution: ample for per-token prices around 1e-9 and far below
-# any amount anyone will ever invoice.
+# Requests, tokens and our own search calls are already integral. Cost is scaled
+# by 1e9, giving nano-currency resolution: ample for per-token prices around
+# 1e-9 and far below any amount anyone will ever invoice.
 COST_SCALE = 10**9
 
 # How long a calendar counter outlives its period, so a settlement arriving after the
@@ -44,6 +44,9 @@ _METRIC_SCALE: dict[LimitMetric, int] = {
     LimitMetric.REQUESTS: 1,
     LimitMetric.TOKENS: 1,
     LimitMetric.COST: COST_SCALE,
+    # A whole call or no call. Scaling it would let a fraction of a search
+    # accumulate, and there is no such thing.
+    LimitMetric.OWN_SEARCH_REQUESTS: 1,
 }
 
 
@@ -398,6 +401,14 @@ class DatabaseCounterStore:
             LimitMetric.REQUESTS: func.count(UsageRecord.id),
             LimitMetric.TOKENS: func.coalesce(func.sum(UsageRecord.total_tokens), 0),
             LimitMetric.COST: func.coalesce(func.sum(UsageRecord.cost), 0),
+            # `own_search_requests`, never `search_count`: this metric limits the
+            # searches *we* ran, and rebuilding it from the counterparty's
+            # server-side searches would refill a cold cache with somebody
+            # else's number — silently, and only after a Valkey restart, which
+            # is the worst moment to discover a counter means something new.
+            LimitMetric.OWN_SEARCH_REQUESTS: func.coalesce(
+                func.sum(UsageRecord.own_search_requests), 0
+            ),
         }
         column = columns[query.metric]
 

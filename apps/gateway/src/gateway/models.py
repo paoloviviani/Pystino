@@ -164,9 +164,37 @@ class RedactionScope(enum.StrEnum):
 
 
 class LimitMetric(enum.StrEnum):
+    """What a quota rule counts.
+
+    Three of these are *what a request consumed*. The fourth counts a thing the
+    gateway **did**, and it is the only one that is deliberately not money.
+
+    A value added here needs no migration: ``_enum`` stores these as VARCHAR
+    with no CHECK, precisely so that a new metric is not a locking DDL change.
+    """
+
     REQUESTS = "requests"
     TOKENS = "tokens"  # total_tokens, i.e. prompt + completion
     COST = "cost"
+    #: Calls this gateway made to a web-search backend of its own — Exa, Jina,
+    #: Staan, Linkup — counted, never priced.
+    #:
+    #: Not priced because two of the four rates cannot be established at
+    #: source: Jina publishes no per-token price at all, and Staan's higher
+    #: "for AI" tier is neither a documented request parameter nor reported
+    #: back in the response. A price table where half the rows are guesses
+    #: produces invoices that look right and are wrong — the same failure
+    #: ``own_prices_fallback`` exists to make loud. A count is never wrong, and
+    #: it is also what a vendor dashboard itemises, so it reconciles without a
+    #: currency, a rounding rule or a rate table to drift.
+    #:
+    #: **What this ceiling does not do: bound spend.** Backends charge wildly
+    #: different amounts per request — Exa ``deep-reasoning`` is $15 per 1,000
+    #: against ``instant`` at $7, and Linkup ``deep`` is ten times ``flash`` —
+    #: so 1,000 requests is a volume anyone can reason about and a bill nobody
+    #: can. Every surface that offers or reports this metric has to say so;
+    #: leaving an operator to discover it from an invoice is the failure.
+    OWN_SEARCH_REQUESTS = "own_search_requests"
 
 
 class UsageStatus(enum.StrEnum):
@@ -935,6 +963,33 @@ class UsageRecord(Base):
     # counting the tool-use blocks in a response would bill the searches that
     # errored, which Anthropic states it does not charge for.
     search_count: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+
+    # Web searches **this gateway** ran, against a search backend of its own
+    # (docs/web-search-plan.md, phase 2). A separate column from `search_count`
+    # above, and the separation is the point: that one counts searches the
+    # *counterparty* ran inside a chat request and put on its invoice, this one
+    # counts calls we made to Exa, Jina, Staan or Linkup. Summed together they
+    # would answer "how many searches happened" and nothing else — a report
+    # could no longer tell "Anthropic searched" from "we called Staan", which
+    # is the distinction the whole `cost` / `computed_cost` / `upstream_cost`
+    # family exists to preserve one table over.
+    #
+    # A count and never a cost. Half the backends' rates cannot be read at
+    # source (see `LimitMetric.OWN_SEARCH_REQUESTS`), so a money column here
+    # would be a guess wearing the same type as a measurement.
+    own_search_requests: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    # Which backend served them, and at which tier or depth — `exa` +
+    # `deep-reasoning`, `staan` + `web_for_ai`, `linkup` + `deep`. Labels only:
+    # no rate, no arithmetic, nothing reads them to decide anything.
+    #
+    # They exist now because they cannot be added later. The backend and tier
+    # are facts about a request that only that request knows; a migration that
+    # introduced these columns once the searches had already happened could
+    # backfill nothing, and reconciling a vendor's dashboard against rows that
+    # do not say which vendor they went to is not possible at any price. Cheap
+    # to carry, impossible to recover.
+    own_search_backend: Mapped[str | None] = mapped_column(String(32), default=None)
+    own_search_tier: Mapped[str | None] = mapped_column(String(64), default=None)
 
     cost: Mapped[Decimal] = mapped_column(default=Decimal(0))
     currency: Mapped[str] = mapped_column(String(3))
