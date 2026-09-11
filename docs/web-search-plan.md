@@ -54,6 +54,18 @@ order:
 Nothing above is verified beyond Staan's public pricing page; each one's API
 shape must be read at source before it is implemented, per ground rule 2.
 
+**One piece of phase 2 is already deployed: the renderer.** A backend returns
+URLs and snippets, and a snippet is not an answer — turning a result into text a
+model can read means fetching the page and running its JavaScript, because a
+growing share of the web is an empty `<div>` to an HTTP client, with no error to
+say so. `deploy/compose/docker-compose.playwright.yml` is a headless browser on
+the compose network for exactly that, opt-in and consumed by nothing yet;
+[browser.md](browser.md) has the version pin, the measured footprint, and why it
+publishes no port. Fetching the page is a *third* egress after the prompt and
+the query, and the pages read on a user's behalf are often more revealing than
+the query — which is why the rendering is in this deployment rather than at a
+hosted scraping API.
+
 ## Phase 3 — the gateway executing the search
 
 This is the expensive one, and the reason to decide rather than drift.

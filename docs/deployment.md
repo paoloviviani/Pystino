@@ -13,6 +13,7 @@ capability:
 | `docker-compose.smoke.yml` | a fake OpenAI-compatible upstream — exercise the whole topology with no provider account |
 | `docker-compose.redaction.yml` | the Presidio detection service |
 | `docker-compose.chat.yml` | *(on the `chat` branch)* chat-api and the chat SPA at `/chat` |
+| `docker-compose.playwright.yml` | a headless browser for web search phases 2 and 3 — **deployed ahead of its consumer**, nothing reads from it yet, and it publishes no port because `run-server` is unauthenticated remote code execution ([browser.md](browser.md)) |
 | `docker-compose.proxy.yml` | Caddy terminating TLS — the only route to a routable address (ADR 0035) |
 
 ```bash
