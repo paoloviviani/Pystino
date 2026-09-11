@@ -72,7 +72,7 @@ packages/ui      design tokens and primitives, shared with the console
 packages/shared-py  detection contract and the deterministic placeholder scheme
 services/redaction  Presidio behind a swappable contract, out of process
 deploy/compose   the stack: base + smoke + redaction + proxy + keycloak +
-                 chat + toolhive overlays
+                 chat overlays
 deploy/caddy     the TLS reverse proxy's one config file, for both configurations
 scripts/         live checks against a running stack (see below)
 docs/            how to run, deploy and operate this. The ADRs are not here
@@ -272,33 +272,17 @@ Inside the gateway, the pieces that carry the most weight:
   readable by everybody the moment it is shared with anybody. **Fourteen tests
   passed against that bug** — every negative one failed closed for an unrelated
   reason — so reintroduce a fault and watch the test fail before believing it.
-- **ToolHive holds a connector's OAuth credential; the chat holds one token**
-  (ADR 0063). It is to MCP connectors what the gateway is to models, and the
-  reason it is here is that the chat kept third-party bearer tokens in browser
-  `localStorage`. `docker-compose.toolhive.yml` plus
-  `deploy/caddy/conf.d-toolhive/30-toolhive.caddy`; verified by
-  `scripts/test_toolhive_live.py`. Four things will cost you time:
-  **`thv serve` refuses to start without a container runtime** even for
-  `--help` and even when only remote servers are wanted, so it gets the Docker
-  socket — root-equivalent, accepted for development, and *not* mounted `:ro`
-  because the API is spoken over the socket and read-only would only look like
-  a mitigation. **Unauthenticated it assigns every caller a synthetic
-  local-user identity**, by its own startup warning, so the `--oidc-*` flags
-  are the difference between a service and an open door; they take the same
-  issuer and `pystino-api` audience the gateway already validates, which is
-  what gives models and connectors one identity. **An internal plain-http
-  JWKS URL does not work** — measured: issuer-only and an https JWKS URL both
-  accept a token, `http://keycloak:8080/...` gives
-  `failed to lookup JWKS: resource ... is not ready` inside a 401 identical to
-  a bad token, while that URL answers 200 to curl from inside the container's
-  own netns. So there is no `--oidc-jwks-url`, and `SSL_CERT_FILE` pointed at
-  Caddy's root is what makes discovery work. Note Go **replaces** the system
-  pool with that file rather than adding to it, so the bundle is not yet
-  sufficient for a connector behind a public CA. And **dynamic client
-  registration under the `/mcp` prefix is unproven**: Stacklok name a path
-  segment in `issuer` as a common cause of failure, it needs a real upstream
-  OAuth app to settle, and the address-only deployment has no second hostname
-  to move to (SNI cannot carry an IP — ADR 0035).
+- **An MCP gateway was tried for connectors and rejected**
+  (ADR 0063). ToolHive was built into the
+  stack and taken back out, and the reason generalises past that one product:
+  a gateway of that kind exists to *run* MCP servers — container isolation, a
+  registry, policies — and our connectors are remote SaaS endpoints, so we
+  would pay for the half we do not use. The specific blocker was that its
+  per-user OAuth lives in the Kubernetes operator only: the compose path gives
+  one credential per workload, a `localhost` redirect, and no token
+  persistence without an OS keyring. The ADR carries the measurements, because
+  the next person to reach for LiteLLM's MCP gateway or anything similar
+  should read them first. Nothing of it remains in the tree.
 - **Sourcing `deploy/.env` mangles `CHAT_OPENID_CONFIG`.** It holds JSON, and
   `set -a; . deploy/.env; set +a` strips the quotes, so the value in the
   environment no longer parses. A live script that needs a token should build
@@ -467,8 +451,6 @@ docker compose --env-file deploy/.env \
 ./scripts/test_public_tls_live.py   # only with the proxy overlay: TLS, the
                                     # rotated credentials, and that nothing else
                                     # is on a routable address
-./scripts/test_toolhive_live.py     # MCP connectors: one identity with the
-                                    # gateway, and the remote-OAuth surface
 ```
 
 With the proxy overlay the live scripts need the deployment's own variables and
