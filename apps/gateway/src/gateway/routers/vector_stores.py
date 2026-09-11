@@ -43,6 +43,7 @@ from gateway.errors import BadRequestError, NotFoundError, PermissionError_
 from gateway.knowledge.pipeline import IngestionFailed, Ingestor
 from gateway.knowledge.store import store_for
 from gateway.models import (
+    EVERYONE_PRINCIPAL_ID,
     Group,
     IndexStatus,
     KnowledgeBase,
@@ -857,19 +858,38 @@ async def share_base(
     effect.
     """
     base = await session.get(KnowledgeBase, base_id)
-    if base is None or not base.is_active or base.owner_user_id != principal.user.id:
+    # `administers` rather than an owner comparison, so a base the deployment
+    # owns can be published by an administrator — and so a colleague's cannot
+    # be, by anybody (ADR 0066). 404 rather than 403 for the same reason as
+    # everywhere else here: telling the two apart confirms the base exists.
+    if (
+        base is None
+        or not base.is_active
+        or not sharing.administers(
+            owner_user_id=base.owner_user_id,
+            user_id=principal.user.id,
+            is_admin=principal.user.is_admin,
+        )
+    ):
         raise NotFoundError(f"No such vector store: {base_id}")
 
-    principal_id = await sharing.resolve_principal(
-        session,
-        kind=body.principal_kind,
-        principal_id=body.principal_id,
-        principal_email=body.principal_email,
-        group_name=body.group_name,
-        caller_id=principal.user.id,
-    )
+    if body.principal_kind is SharePrincipal.EVERYONE:
+        # Nothing to resolve: the id is a constant placeholder rather than an
+        # address, and there is no row to check exists.
+        principal_id = EVERYONE_PRINCIPAL_ID
+    else:
+        principal_id = await sharing.resolve_principal(
+            session,
+            kind=body.principal_kind,
+            principal_id=body.principal_id,
+            principal_email=body.principal_email,
+            group_name=body.group_name,
+            caller_id=principal.user.id,
+        )
 
-    if body.principal_kind is SharePrincipal.USER:
+    if body.principal_kind is SharePrincipal.EVERYONE:
+        pass
+    elif body.principal_kind is SharePrincipal.USER:
         target = await session.get(User, principal_id)
         if target is None or not target.is_active:
             raise BadRequestError("No such user.", code="unknown_principal")
@@ -914,9 +934,30 @@ async def unshare_base(
     principal: PrincipalDep,
     knowledge: KnowledgeDep,
 ) -> dict[str, object]:
-    """Withdraw one grant. Owner only, and idempotent."""
+    """Withdraw one grant. Idempotent.
+
+    The owner may withdraw any of them. An **administrator may withdraw a
+    publication and nothing else** (ADR 0066) — removing reach is not granting
+    it, and an operator must be able to pull something from the whole
+    deployment without deleting somebody's work to do it. Every other grant on
+    a base they do not own stays out of reach, including the personal share
+    sitting beside the publication they just withdrew.
+    """
     base = await session.get(KnowledgeBase, base_id)
-    if base is None or not base.is_active or base.owner_user_id != principal.user.id:
+    permitted = base is not None and (
+        sharing.may_unpublish(
+            owner_user_id=base.owner_user_id,
+            user_id=principal.user.id,
+            is_admin=principal.user.is_admin,
+        )
+        if principal_kind is SharePrincipal.EVERYONE
+        else sharing.administers(
+            owner_user_id=base.owner_user_id,
+            user_id=principal.user.id,
+            is_admin=principal.user.is_admin,
+        )
+    )
+    if base is None or not base.is_active or not permitted:
         raise NotFoundError(f"No such vector store: {base_id}")
     removed = await sharing.revoke(
         session,

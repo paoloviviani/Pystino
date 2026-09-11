@@ -129,17 +129,40 @@ def _grant_exists(
             )
             .exists()
         )
+    # Published to the whole deployment (ADR 0066). **Unconditional**, and that
+    # is its trap: it is the only clause here gated on nothing about the
+    # caller, so it is the easiest to forget and the only one whose absence is
+    # silent — a published resource would simply stay invisible, with no error
+    # and nobody obviously wronged.
+    #
+    # `resource_id` and `role` are in the predicate for the same reason they
+    # are in the two above. Dropping `resource_id` makes one publication
+    # publish everything of that kind; dropping `role` makes a viewer grant
+    # confer editing. Both are tested by reintroducing exactly those faults.
+    clauses.append(
+        select(literal(1))
+        .where(
+            ResourceShare.resource_kind == kind,
+            ResourceShare.resource_id == resource_id_column,
+            ResourceShare.principal_kind == SharePrincipal.EVERYONE,
+            ResourceShare.role.in_(role_values),
+        )
+        .exists()
+    )
     return clauses
 
 
 def reachable(
     *,
     kind: ResourceKind,
-    owner_column: SQLColumnExpression[uuid.UUID],
+    # Nullable since ADR 0066: null is a resource the deployment owns. Files
+    # keep a NOT NULL owner and pass one of those, which this still accepts.
+    owner_column: SQLColumnExpression[uuid.UUID | None],
     resource_id_column: SQLColumnExpression[uuid.UUID],
     user_id: uuid.UUID | None,
     group_ids: Iterable[uuid.UUID],
     role: ShareRole = ShareRole.VIEWER,
+    is_admin: bool = False,
 ) -> ColumnElement[bool]:
     """The predicate "this caller may reach this resource, in this role".
 
@@ -167,11 +190,19 @@ def reachable(
         # than a relationship to it. Same reasoning as `is_public` in
         # `access.py`.
         clauses.append(owner_column == user_id)
-    if not clauses:
-        # Nothing can match. `false` spelled as a comparison that is always
-        # false, so the caller still receives a predicate and this function
-        # never returns None.
-        return owner_column.is_(None)
+    if is_admin:
+        # The *only* thing administration buys in this predicate: resources the
+        # deployment owns (ADR 0066). Not "administrators see everything" — a
+        # colleague's private base stays exactly as invisible as it was before
+        # this ADR, and there is no administrator read path to one anywhere in
+        # this gateway.
+        clauses.append(owner_column.is_(None))
+    # No empty-case fallback any more, and its removal is deliberate. It used
+    # to be `return owner_column.is_(None)`, meaning "nothing can match" —
+    # which was true only because the column was NOT NULL. Making it nullable
+    # turned that same expression from *no rows* into *every platform
+    # resource*: the exact opposite, silently. The clause list can no longer be
+    # empty in any case, because the `everyone` EXISTS above is unconditional.
     return or_(*clauses)
 
 
@@ -180,9 +211,10 @@ async def may_reach(
     *,
     kind: ResourceKind,
     resource_id: uuid.UUID,
-    owner_user_id: uuid.UUID,
+    owner_user_id: uuid.UUID | None,
     user_id: uuid.UUID,
     role: ShareRole = ShareRole.VIEWER,
+    is_admin: bool = False,
 ) -> bool:
     """The same question for one resource already in hand.
 
@@ -190,7 +222,13 @@ async def may_reach(
     through `reachable` would be a second round trip. Short-circuits on
     ownership, which is the common case and needs no query at all.
     """
-    if owner_user_id == user_id:
+    if owner_user_id is not None and owner_user_id == user_id:
+        return True
+    # A platform resource (ADR 0066), reachable by an administrator and by
+    # nobody else unless it has been published. `is not None` rather than a
+    # bare falsy test: `owner_user_id` is a UUID or None and nothing else, and
+    # a truthiness check here is how the nil UUID would sneak through.
+    if owner_user_id is None and is_admin:
         return True
     group_ids = await effective_group_ids(session, user_id)
     # Both halves of a principal have to match together: the kind says which id
@@ -209,6 +247,19 @@ async def may_reach(
                 ResourceShare.principal_id.in_(group_ids),
             ),
         )
+    # Published to everybody. Unconditional, like its counterpart in
+    # `_grant_exists`, and it has to be here too: these two functions answer
+    # the same question by different routes, and a resource reachable through
+    # the listing but not through this one is a 404 on a row the caller can
+    # plainly see.
+    #
+    # No `principal_id` comparison, because for this kind the id is a constant
+    # placeholder rather than an address. Comparing it would work and would
+    # invite somebody to "fix" the id later.
+    principal_match = or_(
+        principal_match,
+        ResourceShare.principal_kind == SharePrincipal.EVERYONE,
+    )
     found = await session.execute(
         select(literal(1))
         .where(
@@ -421,3 +472,58 @@ async def resolve_principal(
             code="unknown_principal",
         )
     return mine.id
+
+
+def administers(
+    *,
+    owner_user_id: uuid.UUID | None,
+    user_id: uuid.UUID,
+    is_admin: bool,
+) -> bool:
+    """May this caller publish, unpublish or delete this resource?
+
+    The single place either router asks, and deliberately **not** the same
+    question as `may_reach`. Reaching a resource is about seeing it; this is
+    about changing who else can.
+
+    Two rules, and the second is the one worth reading (ADR 0066).
+
+    **You administer what you own.** Unchanged.
+
+    **An administrator administers only what the deployment owns.** Not a
+    colleague's base — and the reason is sharper than least privilege. There is
+    no administrator read path to a private knowledge base anywhere in this
+    gateway, so a publish right over one would let an administrator disclose a
+    colleague's documents *without ever being able to see what they were
+    disclosing*. That is strictly worse than a read backdoor, and it would have
+    been invented by the sharing surface rather than decided anywhere.
+
+    Taking a publication *down* is the deliberate asymmetry and does not go
+    through here — see `may_unpublish`.
+    """
+    if owner_user_id is not None:
+        return owner_user_id == user_id
+    return is_admin
+
+
+def may_unpublish(
+    *,
+    owner_user_id: uuid.UUID | None,
+    user_id: uuid.UUID,
+    is_admin: bool,
+) -> bool:
+    """May this caller withdraw an ``everyone`` grant?
+
+    Wider than `administers` by exactly one case, and only for this one act: an
+    administrator may unpublish anything. Removing reach is not granting it, an
+    operator must be able to pull something from the whole deployment without
+    deleting somebody's work to do it, and a published resource is in their
+    listing to act on.
+
+    Every *other* grant on a resource they do not own stays out of reach —
+    including the personal share sitting beside the publication they just
+    withdrew. That is why this is a separate function rather than a flag on the
+    one above: a flag would have been read as "administrators may edit shares",
+    which is a different and much larger permission.
+    """
+    return administers(owner_user_id=owner_user_id, user_id=user_id, is_admin=is_admin) or is_admin
