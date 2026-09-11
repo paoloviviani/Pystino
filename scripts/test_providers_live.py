@@ -80,6 +80,21 @@ def sql(query: str) -> str:
         cwd=str(Path(__file__).resolve().parent.parent),
         check=False,
     )
+    if result.returncode != 0:
+        # Loudly, because the alternative is what this used to do: return an
+        # empty string and let the caller read it as "the table is empty".
+        # Three checks then failed with "no rows" and a fourth — "the plaintext
+        # key is not in the database" — *passed*, since nothing contains a
+        # plaintext key. A credential check that goes green when it cannot
+        # reach the database is worse than one that is absent.
+        #
+        # The way this is normally hit: running from a git worktree, where
+        # `deploy/.env` does not exist because it is gitignored and lives only
+        # in the main checkout.
+        raise SystemExit(
+            "psql failed, so nothing below could be checked against the database:\n"
+            f"{(result.stderr or result.stdout).strip()[:400]}"
+        )
     return result.stdout.strip()
 
 
