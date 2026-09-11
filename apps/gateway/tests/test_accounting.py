@@ -11,12 +11,14 @@ import uuid
 from decimal import Decimal
 
 import orjson
+import pytest
 from conftest import Seeded
 from gateway.accounting import DEFAULT_ESTIMATOR, RequestAccounting, RequestContext
 from gateway.config import Settings
 from gateway.models import ModelDef, UsageRecord, UsageSource, UsageStatus
 from gateway.sse.events import SSEEvent
 from helpers import chunk, usage_only_frame, usage_payload
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
@@ -457,3 +459,76 @@ class TestAccumulation:
         counts, source = accounting.resolve_counts()
         assert counts.total == 0
         assert source is UsageSource.UNAVAILABLE
+
+
+class TestUnmetered:
+    """A deployment that keeps no ledger (``accounting.enabled=false``).
+
+    The shape exists for somebody who wants routing, keys and redaction and has
+    no interest in what anything cost. What these pin is that "off" means *no
+    row*, never a row full of zeros — once written the two are
+    indistinguishable, and this project's posture on money is that a gap stays
+    visible as a gap.
+    """
+
+    async def test_begin_writes_no_row(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        seeded: Seeded,
+    ) -> None:
+        unmetered = settings.model_copy(deep=True)
+        unmetered.accounting.enabled = False
+        unmetered.quota.enabled = False
+
+        accounting = accounting_for(
+            session_factory=session_factory,
+            settings=unmetered,
+            seeded=seeded,
+            model=None,
+        )
+        assert await accounting.begin() is None
+        assert accounting.record_id is None
+
+        async with session_factory() as check:
+            assert (await check.execute(select(UsageRecord))).scalars().all() == []
+
+    async def test_finalise_costs_nothing_and_still_writes_nothing(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        seeded: Seeded,
+    ) -> None:
+        # Not merely "does not crash". `finalise` must return before the
+        # `record_id is None` branch, which logs an error on the assumption
+        # that `begin` was skipped by mistake — unmetered, that would be an
+        # error line per request for something entirely expected.
+        unmetered = settings.model_copy(deep=True)
+        unmetered.accounting.enabled = False
+        unmetered.quota.enabled = False
+
+        accounting = accounting_for(
+            session_factory=session_factory,
+            settings=unmetered,
+            seeded=seeded,
+            model=None,
+        )
+        await accounting.begin()
+        actuals = await accounting.finalise(status=UsageStatus.COMPLETED)
+
+        assert actuals.tokens == Decimal(0)
+        assert actuals.cost == Decimal(0)
+        async with session_factory() as check:
+            assert (await check.execute(select(UsageRecord))).scalars().all() == []
+
+    def test_quotas_without_a_ledger_are_refused_at_startup(self) -> None:
+        """Counters rebuild from ``usage_records``; with none they stay at zero
+        and every ceiling silently passes. A quota that refuses nobody is worse
+        than no quota, because somebody configured it and believes in it."""
+        with pytest.raises(ValidationError, match=r"quota\.enabled requires accounting\.enabled"):
+            Settings(quota={"enabled": True}, accounting={"enabled": False})
+
+    def test_both_off_together_is_the_supported_shape(self) -> None:
+        settings = Settings(quota={"enabled": False}, accounting={"enabled": False})
+        assert settings.accounting.enabled is False
+        assert settings.quota.enabled is False

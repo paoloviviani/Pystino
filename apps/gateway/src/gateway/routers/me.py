@@ -343,6 +343,7 @@ async def my_usage_report(
         ),
         currency=settings.billing_currency,
         timezone=settings.billing_timezone,
+        metering_enabled=settings.accounting.enabled,
     )
 
 

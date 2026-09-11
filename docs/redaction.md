@@ -68,6 +68,44 @@ row is append-only, so the history of that decision survives.
 The shipped default is `noop`, which redacts nothing. Redaction being **on**
 must be a choice somebody made, never a default someone forgot about.
 
+## Deploying less of it
+
+Three shapes, and all three already work. Written down here because the pieces
+were scattered across a compose overlay, a build argument and an environment
+variable, and "can we run this without Presidio" is a question that should not
+require reading three files to answer.
+
+| You want | How | What you get |
+|---|---|---|
+| **No redaction, no sidecar** | Leave the engine at `noop` and omit `docker-compose.redaction.yml` | The default. The base compose file names no redaction service, and `noop` needs none |
+| **Pattern matching only, no NER** | Build the image with `SPACY_MODELS=` empty, run it with `REDACTION_NLP_ENGINE=disabled`, engine `http` | Presidio's pattern recognisers — cards, IBANs, emails, phone numbers, the Italian identifiers — at about 150MB and without the CPU cost that scales with prompt length |
+| **Everything** | The redaction overlay as shipped | NER for the configured languages on top of the patterns |
+
+Two things to know before choosing the middle row.
+
+**"Pattern only" is not "without Presidio".** The regex recognisers *are*
+Presidio's, so the sidecar is still deployed and still called per request —
+what goes away is spaCy, the language models and the inference cost. There is
+no in-gateway regex engine, and deliberately so: a detector in the request path
+is what ADR 0012 rejected, and the reasons (CPU-bound, synchronous, crash
+isolation) do not change because the detector got simpler.
+
+**It is a deploy-time choice, unlike the engine.** `REDACTION_NLP_ENGINE` is
+read by the sidecar at startup, so moving between NER and pattern-only means
+restarting that service — whereas switching engine, or switching redaction off
+entirely, is a console decision that reaches every worker in ten seconds. The
+asymmetry is worth knowing when planning a change: one is a config edit, the
+other is a deployment.
+
+What keeps the middle row honest is that the service reports what it can
+actually find. With NER off, `capabilities()` returns no models, marks the
+language degraded, and drops `PERSON`, `LOCATION`, `NRP` and `ORGANIZATION`
+from its entity list rather than advertising types it will never return —
+including the compensation for phone numbers described in
+`test_detector.py`, where a bare pattern match scores 0.4 and would otherwise
+sit permanently under the gateway's default threshold while the entity was
+still advertised.
+
 ## What happens to a detected entity: the policy model
 
 For each entity type, a policy names a **mode**

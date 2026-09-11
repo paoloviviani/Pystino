@@ -682,6 +682,28 @@ class RedactionSettings(BaseModel):
         return self
 
 
+class AccountingSettings(BaseModel):
+    """Whether this deployment keeps a ledger at all.
+
+    Off, the gateway is a plain proxy with model discovery, access control and
+    redaction, and it writes no ``usage_records``. That is a real deployment
+    shape — somebody who wants routing and key management and has no interest
+    in what anything cost — and pretending otherwise meant they paid for two
+    writes per request to fill a table nobody would read.
+
+    **Off is not "record zero".** No row is written, because a row saying a
+    request cost nothing is indistinguishable from one where the arithmetic
+    failed, and this project's whole posture on money is that a gap must be
+    visible as a gap. Reports say metering is off rather than showing an empty
+    table that looks like an idle week.
+
+    The one thing it cannot coexist with is quotas — see
+    :meth:`Settings._check_accounting`.
+    """
+
+    enabled: bool = True
+
+
 class QuotaSettings(BaseModel):
     enabled: bool = True
 
@@ -792,6 +814,31 @@ class Settings(BaseSettings):
     extractor: ExtractorSettings = Field(default_factory=ExtractorSettings)
     knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
+    accounting: AccountingSettings = Field(default_factory=AccountingSettings)
+
+    @model_validator(mode="after")
+    def _check_accounting(self) -> Settings:
+        """Quotas without a ledger are limits that can never fire.
+
+        The counter store is a cache, not the record: it is rebuilt from
+        ``usage_records`` (which is why flushing Valkey alone does not reset a
+        limit). With accounting off there is nothing to rebuild from, so every
+        counter would come back at zero and every ceiling would silently pass —
+        a quota that refuses nobody, which is worse than no quota at all
+        because somebody configured it and believes it works.
+
+        Refused at startup rather than warned about, for the reason ground rule
+        3 exists: this is the accounting path, and a wrong answer here is a
+        wrong invoice or an unenforced limit rather than a stack trace.
+        """
+        if self.quota.enabled and not self.accounting.enabled:
+            raise ValueError(
+                "quota.enabled requires accounting.enabled: quota counters are rebuilt "
+                "from usage_records, so with no ledger every limit would silently "
+                "never fire. Set GATEWAY_QUOTA__ENABLED=false as well to run "
+                "unmetered."
+            )
+        return self
 
     @field_validator("billing_currency")
     @classmethod

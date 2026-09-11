@@ -33,6 +33,43 @@ terminal frame — tokens are counted locally and stamped `estimated`),
 zero tokens, zero cost, but counted, because "this deployment refused 400
 prompts last month" is a number a data-protection review asks for).
 
+## Running without a ledger
+
+A deployment that wants routing, keys, model access control and redaction — and
+does not care what anything cost — can turn the ledger off
+(ADR 0065):
+
+```bash
+GATEWAY_ACCOUNTING__ENABLED=false
+GATEWAY_QUOTA__ENABLED=false     # required; see below
+```
+
+Three things to know.
+
+**Off means no row, not a row of zeros.** Nothing is written, because a row
+saying a request cost nothing cannot be told apart from one where the
+arithmetic failed — and keeping those distinguishable is what
+`usage_source`, `cost_source` and `own_prices_fallback` exist for. `finalise`
+returns before the price arithmetic as well, since every figure it computed
+would be discarded.
+
+**The report says so.** An empty usage report is otherwise indistinguishable
+from an idle week, so `_disclosures` leads with a line stating that metering is
+off, that the report covers nothing, and that requests are still served and
+access still enforced.
+
+**Quotas without a ledger are refused at startup**, and the error names the
+other flag. Counters are a cache rebuilt from `usage_records` — which is why
+flushing Valkey alone does not reset a limit — so with no ledger every counter
+comes back at zero and *every ceiling silently passes*. A quota that refuses
+nobody is worse than no quota, because somebody configured it and believes in
+it. The asymmetry is deliberate: metering without quotas is fine, quotas
+without metering is incoherent.
+
+The consequence most likely to surprise: knowledge-base ingestion bills through
+the same path, so an unmetered deployment records no indexing spend either — and
+a large ingestion run can cost more than the chat traffic it serves.
+
 ## Three cost figures, one meaning each
 
 | Column | Meaning |

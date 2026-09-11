@@ -221,8 +221,18 @@ class RequestAccounting:
 
     # -- lifecycle ---------------------------------------------------------
 
-    async def begin(self) -> uuid.UUID:
-        """Insert the in-progress row. Call before touching the upstream."""
+    async def begin(self) -> uuid.UUID | None:
+        """Insert the in-progress row. Call before touching the upstream.
+
+        Returns ``None`` on an unmetered deployment
+        (``GATEWAY_ACCOUNTING__ENABLED=false``), which is the one place that
+        switch is read on the request path. Everything downstream already
+        tolerates a missing ``record_id`` because a row can fail to insert;
+        here it is simply never attempted.
+        """
+        if not self._settings.accounting.enabled:
+            return None
+
         record = UsageRecord(
             request_id=self._ctx.request_id,
             status=UsageStatus.IN_PROGRESS,
@@ -518,6 +528,14 @@ class RequestAccounting:
         if self._finalised:
             return self._last_actuals
         self._finalised = True
+
+        if not self._settings.accounting.enabled:
+            # Before `resolve_counts` and the price arithmetic, not after: with
+            # no row to write and no reservation to settle — quotas cannot be
+            # on, the settings refuse that combination — every figure computed
+            # here would be discarded. This is the point of running unmetered.
+            self._last_actuals = QuotaAmounts(tokens=Decimal(0), cost=Decimal(0))
+            return self._last_actuals
 
         counts, source = self.resolve_counts(failed=status in (UsageStatus.UPSTREAM_ERROR,))
 
