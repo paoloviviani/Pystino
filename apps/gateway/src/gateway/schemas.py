@@ -1163,6 +1163,13 @@ class UsageReportRow(BaseModel):
     # not tokens, and a reader reconciling against a provider's invoice needs
     # the count the invoice is itemised by.
     searches: int = 0
+    # Searches *we* made, against a backend of our own (Exa, Jina, Staan,
+    # Linkup). A separate figure from `searches` above and never folded into
+    # it: one is the counterparty searching while serving a chat request, the
+    # other is this deployment calling a search API, and a reader reconciling
+    # against either invoice needs to know which they are looking at. Counted,
+    # never priced — the decision recorded on `LimitMetric.OWN_SEARCH_REQUESTS`.
+    own_searches: int = 0
     cost: Money
     # The native figure — what the model's price table produced, in its own
     # currency (ADR 0054). Present on model rows only: a model's rows share one

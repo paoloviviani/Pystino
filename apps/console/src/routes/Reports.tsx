@@ -86,6 +86,22 @@ export function Reports() {
         row.searches ? row.searches.toLocaleString() : <span className={MUTED}>—</span>,
     },
     {
+      key: "own_searches",
+      header: "Own searches",
+      numeric: true,
+      // Beside that column rather than folded into it, and the header says
+      // "own" for the same reason: one is the provider searching while it
+      // serves a request, the other is this deployment calling a search API.
+      // Added together they reconcile against neither invoice.
+      //
+      // Unlike every other column here it contributes *nothing* to Cost — our
+      // backends are counted and never priced. The disclosures say that in
+      // words, which is where it belongs; a number cannot say it.
+      hideBelow: "md",
+      render: (row) =>
+        row.own_searches ? row.own_searches.toLocaleString() : <span className={MUTED}>—</span>,
+    },
+    {
       key: "cost",
       header: "Spend",
       numeric: true,
