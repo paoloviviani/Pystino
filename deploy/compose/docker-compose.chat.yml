@@ -118,6 +118,13 @@ services:
 
         OPENID_CONFIG=${CHAT_OPENID_CONFIG:?run deploy/keycloak/setup.sh and copy its OPENID_CONFIG line into deploy/.env as CHAT_OPENID_CONFIG}
 
+        # Encrypts MCP connector credentials at rest (ADR 0064) — OAuth tokens
+        # and static API tokens, which used to live in browser localStorage.
+        # Required rather than defaulted: a default would mean every deployment
+        # that forgot shared a key, which is indistinguishable from no
+        # encryption while looking like encryption.
+        CHAT_SECRET_KEY=${CHAT_SECRET_KEY:?generate a long random value and set CHAT_SECRET_KEY in deploy/.env}
+
         PUBLIC_APP_NAME=${CHAT_APP_NAME:-Pystino Chat}
         PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
         ORIGIN=${PUBLIC_ORIGIN}/chat
