@@ -180,6 +180,16 @@ def main() -> int:
             # identities the gateway then trusts.
             8080: "the development Keycloak",
             9000: "Keycloak's management port",
+            # The Playwright server (docker-compose.playwright.yml, docs/browser.md).
+            # Listed for the same reason as Keycloak: it publishes nothing today,
+            # so this skips, and it becomes a real check the moment somebody adds
+            # a `ports:` line. It is the worst thing in this stack to expose —
+            # `run-server` has no authentication of any kind, so reaching it is
+            # arbitrary JavaScript in a real browser *inside* the compose network,
+            # with `file://` reads of its container and a clear path to
+            # PostgreSQL, Valkey and the gateway. TLS in front of it would not
+            # help: there is no credential for a proxy to check.
+            3000: "the Playwright browser server",
         }
         for number, what in sorted(private.items()):
             if not port_open("127.0.0.1", number):
