@@ -24,6 +24,7 @@ import {
   useResets,
   useUsers,
 } from "../lib/admin";
+import { unitFor } from "../lib/metrics";
 import { usePaginated } from "../lib/paging";
 import type { LimitRule } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
@@ -85,7 +86,7 @@ export function AdminQuotas() {
           <div>
             {rule.metric === "cost"
               ? formatMoney(rule.limit_value, "EUR", { exact })
-              : `${Number(rule.limit_value).toLocaleString()} ${rule.metric}`}
+              : `${Number(rule.limit_value).toLocaleString()} ${unitFor(rule.metric)}`}
           </div>
           <div className={`${MUTED} ${NOWRAP}`}>per {describeWindow(rule)}</div>
         </>
@@ -316,6 +317,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
           <option value="cost">Cost</option>
           <option value="tokens">Tokens</option>
           <option value="requests">Requests</option>
+          <option value="own_search_requests">Web searches (ours)</option>
         </Select>
 
         <Select
@@ -349,7 +351,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
       </div>
 
       <Input
-        label={metric === "cost" ? "Limit (EUR)" : `Limit (${metric})`}
+        label={metric === "cost" ? "Limit (EUR)" : `Limit (${unitFor(metric)})`}
         type="number"
         min="0"
         step="0.01"
@@ -361,6 +363,18 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
             : "Counted over the rolling window."
         }
       />
+
+      {/* Said here rather than left to be discovered from an invoice. Our
+          search backends charge per request at rates that differ by more than
+          ten times between tiers, so this ceiling is a count of searches and
+          says nothing about what they cost. */}
+      {metric === "own_search_requests" && (
+        <Notice tone="warn" title="This limits volume, not spend">
+          Counts calls to our own web-search backends. Their per-request prices
+          differ by more than ten times between tiers, so a search budget does
+          not bound what searches cost. Use a cost rule for that.
+        </Notice>
+      )}
     </Dialog>
   );
 }

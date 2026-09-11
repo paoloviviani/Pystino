@@ -30,6 +30,7 @@ import {
   SECRET_ROW,
   STATS,
 } from "../lib/layout";
+import { unitFor } from "../lib/metrics";
 import { recentPeriods } from "../lib/periods";
 import {
   useDeleteKey,
@@ -333,7 +334,7 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
                 <Money amount={rule.limit_value} currency={currency} />
               </>
             ) : (
-              `${used.toLocaleString()} of ${limit.toLocaleString()} ${rule.metric}`
+              `${used.toLocaleString()} of ${limit.toLocaleString()} ${unitFor(rule.metric)}`
             )}{" "}
             · {rule.window_label}
           </p>

@@ -37,8 +37,39 @@ ADR 0058 has the whole of it.
 
 A `SearchPlugin` beside `gateway/plugins/`, under ADR 0032's rule: **returns
 facts, never computes money**. A search provider becomes a third `kind`
-alongside provider and router, with its key encrypted at rest (ADR 0027) and
-its rate in the same per-request unit phase 1 introduced.
+alongside provider and router, with its key encrypted at rest (ADR 0027).
+
+**Not a rate. A count.** An earlier version of this paragraph said the backend
+would carry "its rate in the same per-request unit phase 1 introduced"; that is
+now decided the other way, and the metering half of it is built. Two of the
+four vendors' prices cannot be established at source — Jina publishes no
+per-token figure publicly at all, and Staan's dearer "for AI" tier is neither a
+documented request parameter nor reported back in the response — so a rate
+table here would be a guess in half its rows, wearing the same type as a
+measurement. Request counts also reconcile *better* against a vendor
+dashboard than money does: no currency, no rounding, no rate that drifts out of
+date while the table says otherwise.
+
+What that buys, and what it costs:
+
+* `LimitMetric.OWN_SEARCH_REQUESTS` is a quota metric across the same scopes as
+  cost and tokens, all rules must pass, and it flows through the one
+  reserve → record → settle path in `routers/_metered.py`.
+* `usage_records.own_search_requests` is the count, **separate from
+  `search_count`**, which is the counterparty's server-side searches from phase
+  1. Merging them would leave no report able to tell "Anthropic searched" from
+  "we called Staan".
+* `own_search_backend` and `own_search_tier` are plain label columns with no
+  rate attached. They land now because they cannot be backfilled later, and
+  because a money layer — if one is ever wanted — would have to look a rate up
+  by exactly those two.
+* **The limitation, which every screen that offers this has to state:** a
+  request quota bounds *volume, not spend*. Exa `deep-reasoning` is $15 per
+  1,000 against `instant` at $7, and Linkup `deep` is ten times `flash`, so a
+  thousand searches is a number anyone can reason about and a bill nobody can.
+
+The backends themselves, the `SearchPlugin` and a `/v1/search` route are still
+not started. What exists is the dimension they will meter through.
 
 All four candidates are plain REST over HTTPS, so this adopts no SDK and needs
 no licence review (ADR 0001 is satisfied without a decision). In the requested

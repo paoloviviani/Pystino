@@ -403,6 +403,17 @@ async def begin(
     surface: ApiSurface,
     request_id: str,
     worst_case: TokenCounts,
+    # The most searches this request may run against a backend of our own
+    # (docs/web-search-plan.md, phase 2). A separate argument rather than a
+    # field on `worst_case`, because `TokenCounts` is the structure
+    # `compute_cost` multiplies by a rate and this quantity deliberately has
+    # none — see `LimitMetric.OWN_SEARCH_REQUESTS`.
+    #
+    # Zero by default, and every surface passes zero today: the search backends
+    # are not built. The path is here so that the surface which does build them
+    # reserves through *this* function, rather than discovering at that point
+    # that the shared pipeline cannot carry its unit and writing a second one.
+    worst_case_own_searches: int = 0,
     outcome: RedactionOutcome | None = None,
     streamed: bool = False,
 ) -> Metered | JSONResponse:
@@ -425,7 +436,11 @@ async def begin(
         reservation = await quota.check_and_reserve(
             session,
             principal.quota_subject,
-            QuotaAmounts(tokens=Decimal(worst_case.total), cost=worst_case_cost.total),
+            QuotaAmounts(
+                tokens=Decimal(worst_case.total),
+                cost=worst_case_cost.total,
+                own_search_requests=Decimal(worst_case_own_searches),
+            ),
         )
     except QuotaExceeded as exc:
         logger.info("quota refusal for user=%s: %s", principal.user.id, exc)

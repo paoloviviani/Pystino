@@ -175,6 +175,28 @@ Inside the gateway, the pieces that carry the most weight:
   `search_context_size`. Phases 2 and 3 — our own search backends, and a loop
   that executes them — are in
   [docs/web-search-plan.md](docs/web-search-plan.md), not started.
+- **There are two search counts, and adding them together destroys a
+  distinction.** `usage_records.search_count` is the **counterparty's**
+  server-side search, billed per search as a surcharge (ADR 0058, the bullet
+  above). `usage_records.own_search_requests` is **ours** — a call this gateway
+  made to Exa, Jina, Staan or Linkup — and it is **counted, never priced**.
+  Half the four vendors' rates cannot be read at source (Jina publishes no
+  per-token figure publicly; Staan's dearer "for AI" tier is neither a request
+  parameter nor reported back), so a rate table here would be a guess in half
+  its rows; a count is never wrong and reconciles against a vendor dashboard
+  with no currency and no rounding. Three things follow.
+  `LimitMetric.OWN_SEARCH_REQUESTS` is a quota metric across the same scopes as
+  cost, and it **defaults to zero** where `QuotaAmounts.requests` defaults to
+  one — a default of one would put a search on every embedding and a search
+  budget would become a request budget. The count is held on the **recorder**,
+  not inside `TokenCounts`: that structure is what `compute_cost` multiplies by
+  a rate, and its failure paths return a bare `TokenCounts()`, which would
+  silently forgive searches a request had already spent. And a request ceiling
+  bounds **volume, not spend** — Exa `deep-reasoning` is $15/1k against
+  `instant` at $7, Linkup `deep` is 10x `flash` — which is why the quota form
+  says so on the screen.
+  `own_search_backend` and `own_search_tier` are label columns with no rate;
+  they exist because they cannot be backfilled.
 - **Restoring a placeholder moves every offset after it**
   (ADR 0059). A real name is rarely the
   same length as the placeholder that stood in for it, and a provider's
