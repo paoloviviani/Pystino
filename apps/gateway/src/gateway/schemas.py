@@ -328,6 +328,56 @@ class OcrRequest(BaseModel):
         return payload
 
 
+class SearchRequest(BaseModel):
+    """``POST /v1/search`` — a web search this gateway runs itself.
+
+    **The one ``/v1`` request model that forbids unknown fields.** Every other
+    one allows them, because every other one *forwards* the body it was given
+    and a gateway that validated a counterparty's whole option set would refuse
+    valid requests each time the counterparty added a field. Nothing is
+    forwarded here: the body is rebuilt in the backend's own shape by its
+    plugin, because Linkup wants ``q``/``depth`` and Exa wants
+    ``query``/``type``/``numResults`` and no passthrough can be both. An
+    unrecognised field would therefore be *dropped*, silently, and a caller who
+    asked for a date range and did not get one deserves a refusal rather than
+    results they will trust. (A 400, not FastAPI's 422: this app rewrites
+    validation errors into the OpenAI error shape every ``/v1`` client parses.)
+
+    ``backend_options`` is where a vendor-specific option goes instead. It is
+    merged underneath the fields the plugin controls, so nothing in it can
+    change the tier that was reserved against or the output shape the reader
+    expects.
+
+    There is no ``depth``, ``type`` or ``tier`` field, and that is the design.
+    The tier lives on the model row (``upstream_model``), so *which* depth a
+    caller may run is a grant an administrator makes — Linkup ``deep`` costs
+    ten times ``flash`` and Exa's dearest tier is twice its cheapest, and a
+    ceiling counted in requests bounds volume, not spend. A caller who may run
+    both is granted two models.
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    model: str
+    query: str = Field(min_length=1, max_length=2000)
+    #: How many results to ask for. Bounded at Exa's own documented public
+    #: maximum, which is the lower of the two: Linkup's schema sets a minimum
+    #: of 1 and no maximum at all. A ceiling here rather than none because the
+    #: number is a multiplier on a vendor's bill in a way this gateway's own
+    #: ledger cannot see — Exa is reported to charge per result above ten,
+    #: which is from their pricing page rather than from the schema, so the
+    #: bound is prudence rather than a rule read at source.
+    max_results: int | None = Field(default=None, ge=1, le=100)
+    #: Ask the backend for page text, not only a snippet. Off by default: on
+    #: Exa it is a separate charge on the same call, and Linkup does not offer
+    #: it at all.
+    include_content: bool = False
+    include_domains: list[str] = Field(default_factory=list, max_length=50)
+    exclude_domains: list[str] = Field(default_factory=list, max_length=50)
+    #: Vendor-specific options, merged under the fields the plugin controls.
+    backend_options: dict[str, Any] = Field(default_factory=dict)
+
+
 class ImageGenerationRequest(BaseModel):
     """``POST /v1/images/generations``.
 
@@ -616,7 +666,7 @@ class ProviderCreateRequest(BaseModel):
     # replaced `auth_scheme`, `forward_stream_options` and `upstream_cost_unit`,
     # each of which was a column added for one counterparty's habit.
     plugin: PluginName = None
-    kind: Literal["provider", "router"] = "provider"
+    kind: Literal["provider", "router", "search"] = "provider"
     # Whose figure is the charge (ADR 0032 decision 6). Validated against the
     # named plugin below: pass-through needs a plugin that asserts its figure is
     # the counterparty's actual charge.
@@ -648,7 +698,7 @@ class ProviderUpdateRequest(BaseModel):
     extra_headers: dict[str, str] | None = None
     is_active: bool | None = None
     plugin: PluginName = None
-    kind: Literal["provider", "router"] | None = None
+    kind: Literal["provider", "router", "search"] | None = None
     billing_mode: Literal["own_prices", "provider_reported"] | None = None
 
     @model_validator(mode="after")
@@ -728,7 +778,7 @@ class ModelCreateRequest(BaseModel):
     # Which endpoint serves it. Required: a model with no provider cannot be
     # routed, and defaulting one would guess at spending money (ADR 0027).
     provider_id: uuid.UUID
-    kind: Literal["chat", "embedding", "image", "ocr"] = "chat"
+    kind: Literal["chat", "embedding", "image", "ocr", "search"] = "chat"
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -758,7 +808,7 @@ class ModelUpdateRequest(BaseModel):
     # and a mis-inferred kind takes a model off the only route that would serve
     # it. Historical usage rows record the surface they actually went through,
     # so correcting this does not make past spend unreadable (ADR 0030).
-    kind: Literal["chat", "embedding", "image", "ocr"] | None = None
+    kind: Literal["chat", "embedding", "image", "ocr", "search"] | None = None
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)

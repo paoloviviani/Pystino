@@ -5,9 +5,10 @@ provider support…)", against
 <https://openrouter.ai/docs/guides/features/server-tools/web-search>.
 
 The answer is yes, in three pieces of very different size. **Phase 1 is built**
-(ADR 0058). Phases 2 and 3 are recorded here
-rather than started, because the second one asks a question about what this
-gateway *is* that should be answered deliberately.
+(ADR 0058), and so is **phase 2** for two of the four backends — Linkup and
+Exa, with `POST /v1/search` behind them. Phase 3 is recorded here rather than
+started, because it asks a question about what this gateway *is* that should be
+answered deliberately.
 
 ## What OpenRouter actually offers
 
@@ -33,7 +34,7 @@ from the counterparty's reported usage, and `max_uses` written into the
 outgoing tool so a request's search spend is bounded by the provider itself.
 ADR 0058 has the whole of it.
 
-## Phase 2 — search backends of our own
+## Phase 2 — search backends of our own (built, for two of four)
 
 A `SearchPlugin` beside `gateway/plugins/`, under ADR 0032's rule: **returns
 facts, never computes money**. A search provider becomes a third `kind`
@@ -68,22 +69,63 @@ What that buys, and what it costs:
   1,000 against `instant` at $7, and Linkup `deep` is ten times `flash`, so a
   thousand searches is a number anyone can reason about and a bill nobody can.
 
-The backends themselves, the `SearchPlugin` and a `/v1/search` route are still
-not started. What exists is the dimension they will meter through.
+### What is built
 
-All four candidates are plain REST over HTTPS, so this adopts no SDK and needs
-no licence review (ADR 0001 is satisfied without a decision). In the requested
-order:
+`gateway/plugins/search.py` is the protocol, and **Linkup and Exa** implement
+it. A search backend is a `Provider` row like any other — its key encrypted at
+rest, its client cached and rebuilt on edit — with `kind = search` and a plugin
+that can also run a search. The decision that made this small rather than large
+is that a search backend is **not a second kind of configuration**: it reuses
+the provider registry, the credential path, the access grants and the ledger,
+and the only thing it adds is two methods.
 
-| Backend | Notes |
+Five things about the shape, each of which was a choice with an alternative:
+
+* **A "model" is a backend at a tier.** `upstream_model` carries Linkup's
+  `depth` or Exa's `type`, `ModelKind.SEARCH` is the kind, and `POST /v1/search`
+  names a model like every other surface. That is what makes *which depth a
+  caller may run* a grant an administrator makes through the machinery that
+  already exists, which matters precisely because a request ceiling bounds
+  volume and not spend. The alternative — a `depth` parameter on the request —
+  would have made the bullet above unenforceable.
+* **The route goes through `_metered`**, reserving `worst_case_own_searches=1`
+  and `TokenCounts()`. Nothing else. There is no token cost to bound and no
+  rate to multiply.
+* **The search is counted before the call and never refunded.** A vendor
+  error, a timeout and an unreadable 2xx all leave the count in the ledger:
+  vendors bill requests received, and a ceiling that forgave a failure would be
+  raisable by making the search fail. What it costs is that a misconfigured
+  backend burns a caller's budget — visible, because the row names the backend.
+* **The query is redacted**, because it is a second egress. The consequence is
+  real and is not worked around: under a policy that protects `PERSON`, a
+  search for a person by name searches for `<PERSON_…>`. Redaction is scoped
+  per provider (ADR 0038), so the escape hatch is to turn the entity off *for
+  the search provider*.
+* **Exa's `costDollars` is read and logged, never stored.** Putting a vendor's
+  dollar figure in `upstream_cost` would have the reconciliation report treat
+  it as a counterparty charge against a price table that does not exist. Exa's
+  own schema agrees: the field says it "is not an invoice record".
+
+Both vendors' contracts were read from their live OpenAPI documents on
+2026-09-11 rather than from their prose, and in both cases it mattered:
+
+| Backend | Read at source | What the document changed |
+|---|---|---|
+| **Linkup** | `https://api.linkup.so/v1/openapi.json` | `POST /v1/search`, bearer. Required `q`, `depth` (`deep`/`fast`/`flash`/`standard`), `outputType`. Text hits are `{name, url, content, favicon, type}` — `name`, not `title`. Their own quickstart shows `curl -G`, which would be a GET with a query string; the schema says POST-only with a required body, and the schema wins. **No cost or usage field on a search response at all** — the balance is a separate endpoint returning a bare number. And the "10 QPS org-wide" recorded earlier in this project is **not** in the document: it describes a 429 and defines no numeric limit, so nothing depends on it. |
+| **Exa** | `https://api.exa.ai/openapi.json` (`info.version` 2.0.0) | `POST /search`, `x-api-key`. `type` is `instant`/`fast`/`auto`/`deep-lite`/`deep`/`deep-reasoning` — **not** the `neural`/`keyword`/`auto` that a documentation-rendering fetch still serves from a stale copy. A result has **no relevance score**; `resolvedSearchType` is deprecated and may be an empty string, which is why the ledger records the tier we asked for. `costDollars` is `{total, search:{neural,keyword}, summary, contents:{text,highlights,summary}}`. |
+
+All candidates are plain REST over HTTPS, so this adopts no SDK and needs no
+licence review (ADR 0001 is satisfied without a decision).
+
+### What is deliberately not built, and why
+
+| Backend | Why not |
 |---|---|
-| **Exa** | OpenRouter's default; embeddings-and-keyword hybrid. Prices per request with per-result overage above 10. |
-| **Jina** | Reader/search APIs; commonly paired with an embedding step. |
-| **Staan** | <https://staan.ai> — "the first European Search API", GDPR-framed, **priced in EUR** (€2 per 1,000 web-search requests, €4 for the AI variant, first 1,000 a month free, 20 QPS). The currency matters here: a EUR-native rate needs none of ADR 0054's conversion machinery, and European data residency is the reason this deployment exists at all. |
-| **Linkup** | Fourth by request. Not yet examined at source. |
+| **Jina** | Reader/search APIs; commonly paired with an embedding step. No per-token figure is published publicly. Not a blocker for a *count*, but it was never established at source what a request to their search endpoint is and is not, and a plugin written from memory is the thing ground rule 2 forbids. |
+| **Staan** | <https://staan.ai> — "the first European Search API", GDPR-framed, **priced in EUR** (€2 per 1,000 web-search requests, €4 for the AI variant, first 1,000 a month free, 20 QPS). The blocker is specific: the dearer "for AI" tier is **neither a documented request parameter nor reported back**, so `own_search_tier` could not be filled honestly, and a tier column that silently names the cheap tier on a dear request is worse than no backend. Settling it needs a real key. |
 
-Nothing above is verified beyond Staan's public pricing page; each one's API
-shape must be read at source before it is implemented, per ground rule 2.
+Both are a plugin module and one line in `plugins/registry.py` when somebody
+has a key; the protocol is the hook, and nothing else has to move.
 
 **A renderer is deployed, and it is not really ours.** A backend returns
 URLs and snippets, and a snippet is not an answer — turning a result into text a

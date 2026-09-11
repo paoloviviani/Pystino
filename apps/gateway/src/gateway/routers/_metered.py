@@ -78,6 +78,7 @@ _SURFACE_KINDS: dict[ApiSurface, tuple[ModelKind, ...]] = {
     ApiSurface.EMBEDDINGS: (ModelKind.EMBEDDING,),
     ApiSurface.IMAGES: (ModelKind.IMAGE,),
     ApiSurface.OCR: (ModelKind.OCR,),
+    ApiSurface.SEARCH: (ModelKind.SEARCH,),
 }
 
 _KIND_ROUTES: dict[ModelKind, str] = {
@@ -85,6 +86,7 @@ _KIND_ROUTES: dict[ModelKind, str] = {
     ModelKind.EMBEDDING: "/v1/embeddings",
     ModelKind.IMAGE: "/v1/images/generations",
     ModelKind.OCR: "/v1/ocr",
+    ModelKind.SEARCH: "/v1/search",
 }
 
 
@@ -213,17 +215,32 @@ class Metered:
         return UpstreamUnavailableError("The upstream provider could not be reached.")
 
     async def upstream_refused(
-        self, *, status_code: int, message: str | None, content: Any
+        self,
+        *,
+        status_code: int,
+        message: str | None,
+        content: Any,
+        upstream_status: int | None = None,
     ) -> JSONResponse:
         """Record a non-2xx, settle, and pass the provider's error through.
 
         Passed through rather than rewritten because clients act on these: a
         provider's own "context length exceeded" is more useful than any
         summary of it this gateway could invent.
+
+        ``upstream_status`` separates the two numbers for the one case where
+        they differ: the counterparty answered **2xx** with a body this
+        deployment cannot read, so the caller gets a 502 and the ledger must
+        still record what the counterparty actually did. Defaulting it to
+        ``status_code`` keeps every other caller — where the two genuinely are
+        the same number — unchanged. Writing 502 into ``upstream_status`` there
+        would send whoever reconciles the bill looking for a failure on the
+        vendor's side that never happened, which is the same class of mistake
+        as the estimated-usage disclosure recorded in CLAUDE.md.
         """
         actuals = await self.accounting.finalise(
             status=UsageStatus.UPSTREAM_ERROR,
-            upstream_status=status_code,
+            upstream_status=status_code if upstream_status is None else upstream_status,
             error_code="upstream_error",
             error_message=message,
         )

@@ -1,4 +1,4 @@
-"""Counterparty plugins: providers and routers.
+"""Counterparty plugins: providers, routers and search backends.
 
 See ADR 0032. The rule worth
 repeating at the door: **a plugin returns facts and never computes money.**
@@ -16,13 +16,24 @@ from gateway.plugins.base import (
     bearer_headers,
 )
 from gateway.plugins.cortecs import CortecsRouterPlugin
+from gateway.plugins.exa import ExaSearchPlugin
 from gateway.plugins.generic import GenericOpenAIPlugin
+from gateway.plugins.linkup import LinkupSearchPlugin
 from gateway.plugins.registry import (
     DEFAULT_PLUGIN,
     ENTRY_POINT_GROUP,
     UnknownPluginError,
     available,
     resolve,
+)
+from gateway.plugins.search import (
+    SearchConfigurationError,
+    SearchOutcome,
+    SearchPlugin,
+    SearchQuery,
+    SearchResult,
+    SearchUnreadableError,
+    normalise_tier,
 )
 
 __all__ = [
@@ -31,13 +42,22 @@ __all__ = [
     "AnthropicPlugin",
     "CataloguePrice",
     "CortecsRouterPlugin",
+    "ExaSearchPlugin",
     "GenericOpenAIPlugin",
+    "LinkupSearchPlugin",
     "ProviderKind",
     "ProviderPlugin",
     "ReportedCost",
+    "SearchConfigurationError",
+    "SearchOutcome",
+    "SearchPlugin",
+    "SearchQuery",
+    "SearchResult",
+    "SearchUnreadableError",
     "ServedBy",
     "UnknownPluginError",
     "available",
     "bearer_headers",
+    "normalise_tier",
     "resolve",
 ]

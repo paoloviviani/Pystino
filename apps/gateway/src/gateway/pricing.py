@@ -510,8 +510,21 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
     # carry the `Document` tag) and mislabelling one would take it off the chat
     # route entirely.
     tags = entry.get("tags")
-    if isinstance(tags, list) and any(str(tag).strip().lower() == "ocr" for tag in tags):
-        return ModelKind.OCR
+    if isinstance(tags, list):
+        lowered_tags = {str(tag).strip().lower() for tag in tags}
+        if "ocr" in lowered_tags:
+            return ModelKind.OCR
+        # The same trap, one step worse: a search backend's tiers report text
+        # in and text out, so nothing about their modalities distinguishes one
+        # from a chat model. The tag is written by a search plugin's own
+        # `tier_catalogue` (`plugins/search.py`) — but this parser also reads
+        # catalogues fetched from counterparties, so an inference provider that
+        # tagged a model "Search" would have it labelled this way and refused
+        # on the chat route. That is the same recoverable failure the OCR
+        # branch above accepts, with the same fix: `kind` is editable, and the
+        # 400 names the route that would have worked.
+        if "search" in lowered_tags:
+            return ModelKind.SEARCH
 
     modalities = entry.get("output_modalities")
     if isinstance(modalities, list):

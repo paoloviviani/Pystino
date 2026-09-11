@@ -654,6 +654,61 @@ class OcrReader:
         raise NotImplementedError("the ocr route does not stream")
 
 
+class SearchReader:
+    """``POST /v1/search``: the one surface with nothing to read.
+
+    Every other reader here exists to find a number in a response. This one
+    finds none, and that is the surface rather than a gap in it: a search is
+    metered as a **count of requests we made**, held on the recorder by
+    ``observe_own_search`` and never derived from what came back
+    (``LimitMetric.OWN_SEARCH_REQUESTS``). There is no usage object, no token
+    count to estimate, and no rate for one to be multiplied by.
+
+    So every method answers nothing, deliberately:
+
+    * ``counts`` returns an empty ``TokenCounts``. Counting the returned
+      snippets as completion tokens would put a token figure on a row whose
+      model has no token price, and make an exactly-known quantity — one
+      request — sit beside an invented one.
+    * ``deltas`` returns nothing, so ``usage_source`` stays ``unavailable``
+      rather than ``estimated``: nothing was estimated, because nothing is
+      counted in tokens here.
+    * ``rewrite_whole`` returns ``False``. Placeholders are **not** restored
+      into results: the vendor never saw our real text, so it cannot have
+      returned a placeholder, and running a restore over untrusted web text to
+      find nothing would be theatre. See ``routers/search.py``.
+    """
+
+    accumulates_usage = False
+
+    def frame(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        return payload
+
+    def counts(self, usage: dict[str, Any] | None) -> TokenCounts:
+        return TokenCounts()
+
+    def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
+        return False
+
+    def deltas(self, payload: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+        return []
+
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
+        return []
+
+    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None:
+        return None
+
+    def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        return False
+
+    def is_terminal(self, payload: dict[str, Any]) -> bool:
+        return True
+
+    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
+        raise NotImplementedError("the search route does not stream")
+
+
 _READERS: dict[ApiSurface, SurfaceProtocol] = {
     ApiSurface.CHAT_COMPLETIONS: ChatCompletionsReader(),
     ApiSurface.EMBEDDINGS: ChatCompletionsReader(),
@@ -661,6 +716,7 @@ _READERS: dict[ApiSurface, SurfaceProtocol] = {
     ApiSurface.MESSAGES: MessagesReader(),
     ApiSurface.IMAGES: ImagesReader(),
     ApiSurface.OCR: OcrReader(),
+    ApiSurface.SEARCH: SearchReader(),
 }
 
 
