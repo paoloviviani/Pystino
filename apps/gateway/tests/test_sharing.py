@@ -15,6 +15,7 @@ import uuid
 
 import pytest
 from gateway.models import (
+    EVERYONE_PRINCIPAL_ID,
     Group,
     KnowledgeBase,
     Membership,
@@ -26,11 +27,13 @@ from gateway.models import (
     User,
 )
 from gateway.sharing import (
+    administers,
     delete_shares,
     effective_group_ids,
     grant,
     list_shares,
     may_reach,
+    may_unpublish,
     reachable,
     revoke,
 )
@@ -59,15 +62,39 @@ async def _group(db: AsyncSession, name: str) -> Group:
     return group
 
 
-async def _base(db: AsyncSession, owner: User, name: str = "base") -> KnowledgeBase:
-    base = KnowledgeBase(name=name, owner_user_id=owner.id)
+async def _base(
+    db: AsyncSession, owner: User | None, name: str = "base"
+) -> KnowledgeBase:
+    """A base, or — with `owner=None` — one the deployment owns (ADR 0066)."""
+    base = KnowledgeBase(name=name, owner_user_id=owner.id if owner else None)
     db.add(base)
     await db.flush()
     return base
 
 
+async def _publish(db: AsyncSession, base: KnowledgeBase, by: User) -> None:
+    """Share with everybody, the way the router does."""
+    await grant(
+        db,
+        kind=KIND,
+        resource_id=base.id,
+        principal_kind=SharePrincipal.EVERYONE,
+        principal_id=EVERYONE_PRINCIPAL_ID,
+        role=ShareRole.VIEWER,
+        granted_by=by.id,
+    )
+    # `autoflush=False` on this session factory, so a pending grant is invisible
+    # to the very next SELECT without this. Worth knowing: it is how a test can
+    # appear to prove that publishing does nothing.
+    await db.flush()
+
+
 async def _reachable_ids(
-    db: AsyncSession, user: User, *, role: ShareRole = ShareRole.VIEWER
+    db: AsyncSession,
+    user: User,
+    *,
+    role: ShareRole = ShareRole.VIEWER,
+    is_admin: bool = False,
 ) -> set[uuid.UUID]:
     """Every base this user can reach, through the composable predicate."""
     groups = await effective_group_ids(db, user.id)
@@ -80,6 +107,7 @@ async def _reachable_ids(
                 user_id=user.id,
                 group_ids=groups,
                 role=role,
+                is_admin=is_admin,
             )
         )
     )
@@ -597,3 +625,250 @@ async def test_a_share_to_a_group_the_caller_left_stops_reaching(
         await db.delete(membership)
         await db.flush()
         assert await _reachable_ids(db, member) == set()
+
+
+# -- publishing and platform ownership (ADR 0066) -----------------------------
+#
+# Every negative assertion below is paired with a positive one **on the same
+# data**, because that is the specific way this file was fooled before: ADR
+# 0062 records fourteen tests passing against an `or_` where an `and_` belonged,
+# since every negative one failed closed for an unrelated reason. A test that
+# only proves a stranger sees nothing proves nothing at all.
+
+
+@pytest.mark.asyncio
+async def test_publishing_one_base_publishes_exactly_that_base(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The `everyone` clause is unconditional, so a missing `resource_id` in it
+    would publish every base of that kind at once — and nothing in the happy
+    path would look wrong."""
+    async with session_factory() as db:
+        owner = await _user(db, "owner")
+        stranger = await _user(db, "stranger")
+        published = await _base(db, owner, "published")
+        private = await _base(db, owner, "private")
+
+        await _publish(db, published, owner)
+
+        # The pairing: one reachable, the other not, in the same result.
+        assert await _reachable_ids(db, stranger) == {published.id}
+        assert await may_reach(
+            db,
+            kind=KIND,
+            resource_id=published.id,
+            owner_user_id=owner.id,
+            user_id=stranger.id,
+        )
+        assert not await may_reach(
+            db, kind=KIND, resource_id=private.id, owner_user_id=owner.id, user_id=stranger.id
+        )
+
+
+@pytest.mark.asyncio
+async def test_publishing_as_a_viewer_does_not_hand_out_editing(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as db:
+        owner = await _user(db, "owner")
+        stranger = await _user(db, "stranger")
+        base = await _base(db, owner)
+        await _publish(db, base, owner)
+
+        assert await _reachable_ids(db, stranger, role=ShareRole.VIEWER) == {base.id}
+        assert await _reachable_ids(db, stranger, role=ShareRole.EDITOR) == set()
+
+
+@pytest.mark.asyncio
+async def test_publishing_keeps_the_owner(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The half of the request that a boolean flag would have got wrong:
+    publishing is a grant, so nothing about the resource changes."""
+    async with session_factory() as db:
+        owner = await _user(db, "owner")
+        base = await _base(db, owner)
+        await _publish(db, base, owner)
+
+        await db.refresh(base)
+        assert base.owner_user_id == owner.id
+        assert administers(owner_user_id=base.owner_user_id, user_id=owner.id, is_admin=False)
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_reaches_the_platforms_base_and_not_a_persons(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """`is_admin` buys exactly one thing in the predicate: `owner_user_id IS
+    NULL`. A colleague's private base stays as invisible as it was before this
+    ADR, and this test's whole job is to keep that true."""
+    async with session_factory() as db:
+        somebody = await _user(db, "somebody")
+        admin = await _user(db, "admin")
+        theirs = await _base(db, somebody, "theirs")
+        platform = await _base(db, None, "platform")
+
+        assert await _reachable_ids(db, admin, is_admin=True) == {platform.id}
+        assert await may_reach(
+            db,
+            kind=KIND,
+            resource_id=platform.id,
+            owner_user_id=None,
+            user_id=admin.id,
+            is_admin=True,
+        )
+        assert not await may_reach(
+            db,
+            kind=KIND,
+            resource_id=theirs.id,
+            owner_user_id=somebody.id,
+            user_id=admin.id,
+            is_admin=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_platform_base_is_not_everybodys_until_it_is_published(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Platform ownership and publishing are independent. Conflating them is the
+    half-answer ADR 0066 was written to correct."""
+    async with session_factory() as db:
+        admin = await _user(db, "admin")
+        ordinary = await _user(db, "ordinary")
+        platform = await _base(db, None, "platform")
+
+        assert await _reachable_ids(db, ordinary) == set()
+
+        await _publish(db, platform, admin)
+        assert await _reachable_ids(db, ordinary) == {platform.id}
+
+
+@pytest.mark.asyncio
+async def test_administering_is_ownership_or_the_platform_and_nothing_else(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """An administrator may not publish a colleague's base.
+
+    There is no administrator read path to a private base anywhere in this
+    gateway, so a publish right over one would disclose documents its holder
+    could never see. That is strictly worse than a read backdoor.
+    """
+    async with session_factory() as db:
+        somebody = await _user(db, "somebody")
+        admin = await _user(db, "admin")
+
+        assert administers(owner_user_id=somebody.id, user_id=somebody.id, is_admin=False)
+        assert not administers(owner_user_id=somebody.id, user_id=admin.id, is_admin=True)
+        assert administers(owner_user_id=None, user_id=admin.id, is_admin=True)
+        assert not administers(owner_user_id=None, user_id=somebody.id, is_admin=False)
+
+
+@pytest.mark.asyncio
+async def test_an_administrator_may_take_a_publication_down_and_nothing_else(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The deliberate asymmetry: removing reach is not granting it."""
+    async with session_factory() as db:
+        somebody = await _user(db, "somebody")
+        admin = await _user(db, "admin")
+
+        # May unpublish somebody else's,
+        assert may_unpublish(owner_user_id=somebody.id, user_id=admin.id, is_admin=True)
+        # but may not publish it in the first place.
+        assert not administers(owner_user_id=somebody.id, user_id=admin.id, is_admin=True)
+        # And an ordinary user may do neither to somebody else's.
+        assert not may_unpublish(owner_user_id=somebody.id, user_id=admin.id, is_admin=False)
+
+
+@pytest.mark.asyncio
+async def test_a_platform_base_is_not_reachable_by_an_ordinary_caller(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The hole a mutation found, which nothing else here covered.
+
+    `reachable()` gates the platform clause on `is_admin`; `may_reach()` has to
+    as well, and the two are written separately. Dropping the check in
+    `may_reach` alone left every test green while handing every signed-in
+    person read access to every unpublished platform base — reachable through
+    the single-resource path that `GET /v1/knowledge/bases/{id}` uses, while
+    the listing correctly showed nothing. A resource invisible in the list and
+    openable by id is the worst shape this bug could take.
+    """
+    async with session_factory() as db:
+        ordinary = await _user(db, "ordinary")
+        admin = await _user(db, "admin")
+        platform = await _base(db, None, "platform")
+
+        assert not await may_reach(
+            db,
+            kind=KIND,
+            resource_id=platform.id,
+            owner_user_id=None,
+            user_id=ordinary.id,
+            is_admin=False,
+        )
+        # Paired, so this cannot pass by failing closed for another reason.
+        assert await may_reach(
+            db,
+            kind=KIND,
+            resource_id=platform.id,
+            owner_user_id=None,
+            user_id=admin.id,
+            is_admin=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_erasure_names_what_is_published_rather_than_counting_it(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The guard on `DELETE /api/admin/users/{id}` (ADR 0066).
+
+    Not a block on erasure — unpublishing takes one call and then it succeeds —
+    but a refusal that says *which* resource, because "2 resources" sends an
+    administrator hunting through a listing where somebody else's published
+    base appears under its own name with nothing marking it as theirs.
+    """
+    from gateway.routers.admin import _published_by
+
+    async with session_factory() as db:
+        owner = await _user(db, "owner")
+        published = await _base(db, owner, "the handbook")
+        await _base(db, owner, "private notes")
+        await _publish(db, published, owner)
+
+        names = await _published_by(db, owner.id)
+        assert names == ["the knowledge base 'the handbook'"]
+
+
+@pytest.mark.asyncio
+async def test_a_privately_shared_base_does_not_block_erasure(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The line is deliberately where it is.
+
+    A base shared with three *named* colleagues still cascades away: those
+    people are identifiable and can be told, so only the unbounded case is
+    refused. Widening this to "any share blocks erasure" would leave an
+    administrator unable to complete an erasure request at all — a compliance
+    bug wearing a safeguard's clothes.
+    """
+    from gateway.routers.admin import _published_by
+
+    async with session_factory() as db:
+        owner = await _user(db, "owner")
+        colleague = await _user(db, "colleague")
+        base = await _base(db, owner, "shared privately")
+        await grant(
+            db,
+            kind=KIND,
+            resource_id=base.id,
+            principal_kind=SharePrincipal.USER,
+            principal_id=colleague.id,
+            role=ShareRole.VIEWER,
+            granted_by=owner.id,
+        )
+        await db.flush()
+
+        assert await _published_by(db, owner.id) == []

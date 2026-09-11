@@ -32,7 +32,7 @@ from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from llmp_shared import EntitySpan, PlaceholderMap
 from pydantic import SecretStr
-from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select
+from sqlalchemy import ColumnElement, Row, case, delete, func, literal, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
@@ -63,6 +63,7 @@ from gateway.identity_registry import (
 )
 from gateway.mail import MailDeliveryError, send_mail_async
 from gateway.models import (
+    Agent,
     ApiKey,
     BillingMode,
     EmailSettings,
@@ -71,6 +72,7 @@ from gateway.models import (
     GroupSource,
     GroupSync,
     IdentityProvider,
+    KnowledgeBase,
     LimitMetric,
     LimitRule,
     LimitScope,
@@ -88,6 +90,9 @@ from gateway.models import (
     RedactionConfig,
     RedactionRule,
     RedactionScope,
+    ResourceKind,
+    ResourceShare,
+    SharePrincipal,
     UsageRecord,
     UsageSource,
     UsageStatus,
@@ -2322,8 +2327,65 @@ async def delete_user(
     # deleting one admin always leaves at least one — the account making the
     # request. A guard counting "admins other than the target" could never
     # fire, and a check that cannot fire is a lie in the code.
+    published = await _published_by(session, user_id)
+    if published:
+        # Not a block on erasure — that would be a compliance bug rather than a
+        # safeguard — but a refusal that names what is in the way (ADR 0066).
+        # Their bases and agents CASCADE, correctly, since they are that
+        # person's content. A *published* one is different: an unbounded and
+        # unknowable set of people rely on it, and removing it as a side effect
+        # of an unrelated administrative act is how a deployment loses a corpus
+        # nobody realised was one person's.
+        #
+        # Named rather than counted, deliberately. "2 resources" sends an
+        # administrator hunting through a listing where somebody else's
+        # published base appears under its own name with nothing marking it as
+        # theirs.
+        raise BadRequestError(
+            "This account has published "
+            + ", ".join(published)
+            + " to everyone. Unpublish or transfer to the deployment first, then "
+            "delete the account — erasing it now would take them away from "
+            "everybody using them."
+        )
+
     await session.delete(user)
     await session.commit()
+
+
+async def _published_by(session: AsyncSession, user_id: uuid.UUID) -> list[str]:
+    """Resources this account owns that are shared with everyone, by name.
+
+    Only the `everyone` grants. A base shared with three *named* colleagues
+    still cascades away: those people are identifiable and can be told, so only
+    the unbounded case is refused. That line is where it is on purpose —
+    widening this to "any share blocks erasure" would leave an administrator
+    unable to complete an erasure request at all, which is the failure this
+    guard must not become.
+    """
+    names: list[str] = []
+    for model, kind, label in (
+        (KnowledgeBase, ResourceKind.KNOWLEDGE_BASE, "the knowledge base"),
+        (Agent, ResourceKind.AGENT, "the agent"),
+    ):
+        rows = (
+            await session.execute(
+                select(model.name)
+                .where(
+                    model.owner_user_id == user_id,
+                    select(literal(1))
+                    .where(
+                        ResourceShare.resource_kind == kind,
+                        ResourceShare.resource_id == model.id,
+                        ResourceShare.principal_kind == SharePrincipal.EVERYONE,
+                    )
+                    .exists(),
+                )
+                .order_by(model.name)
+            )
+        ).scalars()
+        names.extend(f"{label} {name!r}" for name in rows)
+    return names
 
 
 # -- identity policy (ADR 0048) ------------------------------------------------

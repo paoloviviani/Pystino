@@ -1608,6 +1608,23 @@ class ResourceKind(enum.StrEnum):
 class SharePrincipal(enum.StrEnum):
     USER = "user"
     GROUP = "group"
+    #: Everybody signed in to this deployment (ADR 0066). Publishing is a
+    #: *grant* rather than a flag on the resource, so the publisher keeps
+    #: ownership, the grant keeps its role, and `granted_by`/`created_at`
+    #: answer "who published this, and when" — which is the question asked
+    #: about something the whole deployment can suddenly read.
+    EVERYONE = "everyone"
+
+
+#: `principal_id` for an `everyone` grant.
+#:
+#: The column is part of the composite primary key and cannot be null, so the
+#: kind needs an id it will never share with a real principal. `uuid4` cannot
+#: produce the nil UUID, so this can never collide with a user or group — which
+#: is the thing a magic value in a foreign-key-shaped column normally gets
+#: wrong. `resource_shares` has no foreign keys (ADR 0062), so nothing has to
+#: pretend this addresses a row.
+EVERYONE_PRINCIPAL_ID = uuid.UUID(int=0)
 
 
 class ShareRole(enum.StrEnum):
@@ -1808,7 +1825,19 @@ class KnowledgeBase(Base):
     #: CASCADE: see `StoredFile.owner_user_id`. A shared base owned by someone
     #: who leaves is a real operational problem and the answer is to transfer
     #: ownership before erasing them, not to keep an ownerless base alive.
-    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    #: **Null means the deployment owns it** (ADR 0066) — a corpus that does not
+    #: leave when the administrator who built it does.
+    #:
+    #: The foreign key stays `CASCADE` and that is the load-bearing part.
+    #: `SET NULL` is the natural spelling once a column becomes nullable, and
+    #: here it is a data-protection bug: it would silently promote an erased
+    #: person's private corpus into a platform resource administrators can
+    #: read, at the exact moment that person exercised their right to be
+    #: forgotten. Kept `CASCADE`, null is only ever written deliberately, so
+    #: "ownerless" and "erased" can never be confused.
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), default=None
+    )
     billing_group_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("groups.id", ondelete="SET NULL"), default=None
     )
@@ -2067,7 +2096,19 @@ class Agent(Base):
     #: identity and a lookup that has to strip before it compares.
     name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     description: Mapped[str] = mapped_column(String(500), default="")
-    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    #: **Null means the deployment owns it** (ADR 0066) — a corpus that does not
+    #: leave when the administrator who built it does.
+    #:
+    #: The foreign key stays `CASCADE` and that is the load-bearing part.
+    #: `SET NULL` is the natural spelling once a column becomes nullable, and
+    #: here it is a data-protection bug: it would silently promote an erased
+    #: person's private corpus into a platform resource administrators can
+    #: read, at the exact moment that person exercised their right to be
+    #: forgotten. Kept `CASCADE`, null is only ever written deliberately, so
+    #: "ownerless" and "erased" can never be confused.
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), default=None
+    )
     billing_group_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("groups.id", ondelete="SET NULL"), default=None
     )
