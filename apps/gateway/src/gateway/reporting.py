@@ -373,8 +373,20 @@ def _disclosures(
     substituted: int = 0,
     reconciliation: Sequence[BillingDrift] | None = None,
     fell_back: int = 0,
+    metering_enabled: bool = True,
 ) -> list[str]:
     notes: list[str] = []
+    if not metering_enabled:
+        # First, and on its own terms. An unmetered deployment writes no rows
+        # at all, so the table below is empty for a reason that has nothing to
+        # do with traffic — and "no usage this week" is precisely what an empty
+        # report otherwise means. Saying it here is the same principle as
+        # `own_prices_fallback` never being silent: a gap is reported as a gap.
+        notes.append(
+            "Metering is off for this deployment, so no usage is recorded and this "
+            "report covers nothing. Requests are served and access is still "
+            "enforced; only the ledger is absent."
+        )
     if totals.estimated_requests:
         notes.append(
             f"{totals.estimated_requests} of {totals.requests} requests have estimated "
@@ -468,6 +480,7 @@ async def build_report(
     *,
     currency: str,
     timezone: str,
+    metering_enabled: bool = True,
 ) -> UsageReport:
     """Aggregate the ledger over one period."""
     dialect = session.bind.dialect.name if session.bind is not None else "postgresql"
@@ -545,6 +558,7 @@ async def build_report(
             int(substituted or 0),
             reconciliation,
             int(fell_back or 0),
+            metering_enabled,
         ),
     )
 
