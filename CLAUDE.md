@@ -79,6 +79,8 @@ deploy/caddy     the TLS reverse proxy's one config file, for both configuration
 scripts/         live checks against a running stack (see below)
 docs/            how to run, deploy and operate this. The ADRs are not here
                  and are not linked — cite them by number; see below.
+                 handoff-2026-09-11.md is the short version of what is half
+                 done and what is wrong; delete it once those are closed
 ```
 
 Inside the gateway, the pieces that carry the most weight:
@@ -282,6 +284,22 @@ Inside the gateway, the pieces that carry the most weight:
   knowledge configuration is at `/v1/knowledge/config`, and **an API key is
   refused there even when its owner is an admin** — a key is what a program
   holds, an access token is evidence a person just signed in.
+
+  Since 2026-09-11 the chat's console is a real panel at `/admin` with a nav,
+  and it has three sections: Knowledge (as above), **Fetching** (what reads a
+  URL somebody pastes — `direct`, the local Playwright renderer, or a Pystino
+  endpoint that is deliberately stubbed) and **Connectors** (MCP servers
+  offered to everybody). Who may be there is `GET /v1/me`, never the chat's own
+  `user.isAdmin`, which is a HuggingFace organisation claim and means nothing
+  here.
+
+  The bug that shape invites, found live and fixed, is worth knowing because
+  the next section added will invite it again: the gate checked only *that* the
+  gateway answered, not what it said, so a signed-in non-administrator got the
+  whole panel and every button in it then 403'd. The routes were never the
+  problem — each calls `requireAdmin` itself, because **a page that renders is
+  not a permission**. `scripts/test_admin_panel_live.py` is what covers it, and
+  its assertions are negative ones each paired with a positive.
 - **A pgvector type modifier cannot be a bind parameter.** `::halfvec(:dims)`
   fails with `type modifiers must be simple constants or identifiers` — a
   *syntax* error raised when the statement is prepared, so it is invisible to
@@ -517,7 +535,36 @@ check on the same address.
 **Run the live scripts.** More than half the serious bugs in this project's
 history were only findable against the running stack: a counter seeded at zero,
 a migration given the wrong environment, a 500 on `/v1/models` that every unit
-test passed through.
+test passed through. Three more on 2026-09-11, in one afternoon: an admin panel
+that rendered for non-administrators, a live script that passed while unable to
+reach the database, and a renderer pinned to a version the only client that
+calls it would have refused.
+
+**The chat has its own, in `pystino-chat/scripts/`** — `test_connectors_live.py`
+(MCP connector OAuth, including a real discovery-and-registration round trip
+against Notion), `test_admin_panel_live.py`, `test_projects_live.py`,
+`test_nav_live.py`, `test_attachments_live.py`. Run them the same way, sourcing
+`deploy/.env` from this repository.
+
+Four traps that will waste an hour each, all hit on 2026-09-11:
+
+- **Include every overlay the deployment actually runs.** Rebuilding without
+  `docker-compose.keycloak.yml` re-renders Caddy without the `/idp` route, and
+  every chat page then answers 500 with `OPError: expected 200 OK, got: 404 Not
+  Found` from OIDC discovery. It looks exactly like a code regression.
+- **Do not `source deploy/.env` before `docker compose`.** `CHAT_OPENID_CONFIG`
+  is JSON, bash's quote removal turns `{"PROVIDER_URL":"https://…"}` into
+  `{PROVIDER_URL:https://…}`, and compose prefers the shell environment over
+  `--env-file`. The chat crash-loops on `JSON5: invalid character 'h' at 1:15`
+  — the `h` of `https`. The *scripts* do want it sourced; they never read that
+  variable.
+- **Running a whole suite exhausts the group's daily cost ceiling** (€10/day
+  against a fake upstream that bills 1M tokens per request). The gateway
+  scripts report that as skipped; the chat ones report it as failures, which
+  looks alarming and is not. Raise the rule temporarily and put it back.
+- **From a git worktree, `deploy/.env` does not exist** — it is gitignored and
+  lives only in the main checkout. Symlink it, or scripts that shell out to
+  `docker compose --env-file deploy/.env` silently do nothing.
 
 The `130.192.84.52` host has 3 GB of RAM and 2 cores. The compose stack plus a
 `pnpm test` will swap there, and the symptom is tests that fail having done
@@ -618,6 +665,84 @@ rediscovered — one being built, one not started:
   are *all rules must pass*, redaction is *any applicable scope requiring it
   wins* — so adding a scope can only tighten. The doc carries the table shape,
   where it plugs into `_metered`, and why the first version has no exemptions.
+
+Three things landed on 2026-09-11 that change what is true above, and each has
+a trap worth reading before touching it:
+
+- **A deployment may keep no ledger** (ADR 0065).
+  `GATEWAY_ACCOUNTING__ENABLED=false` writes no `usage_records` at all — the
+  shape for somebody who wants routing, keys and redaction and does not care
+  what anything cost. Two things about it. **Off means no row, never a row of
+  zeros**: a zero-cost row cannot be told apart from one where the arithmetic
+  failed, which is what `usage_source`, `cost_source` and
+  `own_prices_fallback` exist to keep separate — so the report *announces*
+  that metering is off, because an empty table otherwise reads as an idle
+  week. And **quotas without a ledger are refused at startup**: counters
+  rebuild from `usage_records`, so with none every counter returns zero and
+  every ceiling silently passes. Metering without quotas is fine; the reverse
+  is incoherent.
+
+- **A bearer caller can ask who it is**: `GET /v1/me`. It exists because `/api`
+  reads a session cookie and nothing else, so the chat could not ask the
+  gateway whether somebody is an administrator — it used to call
+  `/v1/knowledge/config` and read the 403, which made "can you see the
+  knowledge configuration" the definition of administrator. `is_admin` comes
+  from **effective memberships, never the token's claim** (ADR 0057's trap),
+  and an API key gets identity and groups but **never `is_admin: true`** — a
+  leaked `gwk_` key must not open an admin panel, so `credential` is returned
+  beside it so a client can tell "not an admin" from "ask again with a token".
+
+- **Publishing, and resources the platform owns** (ADR 0066).
+  `SharePrincipal.EVERYONE` (nil-UUID `principal_id`) is a grant, so a
+  publisher keeps ownership; a **null** `owner_user_id` on a base or agent
+  means the deployment owns it. Four things to know. The foreign key stays
+  **CASCADE** — `SET NULL` would promote an erased person's private corpus
+  into a platform resource at the moment they exercised their right to be
+  forgotten. `reachable()`'s old empty-case fallback, `owner_column.is_(None)`,
+  meant "nothing can match" only while the column was NOT NULL and is deleted
+  rather than left beside its own negation. **An administrator may unpublish
+  anything and publish nothing of anybody else's** — there is no admin read
+  path to a private base, so a publish right over one would disclose documents
+  its holder could never see. And erasing an account that has published is
+  refused *by name*, while a base shared with named colleagues still cascades
+  away.
+
+  **Read this before changing `sharing.py`**: `reachable()` and `may_reach()`
+  answer the same question by different routes and are written separately, so
+  a check added to one is not added to the other. That is not hypothetical — a
+  mutation removing `is_admin` from `may_reach` alone **survived the whole
+  suite**, handing every signed-in person read access to every unpublished
+  platform base: invisible in the listing, openable by id. Seven faults were
+  reintroduced; six were caught; that one produced the test that now covers it.
+
+**Unsettled, and the first thing to resolve — where agents live.**
+This branch has agents in the *gateway*: an `agents` table, and `agent:<name>`
+cards synthesised into `/v1/models` so any OpenAI-compatible client can use one
+by picking it from a list (ADR 0062's reasoning, and it is good reasoning). That
+is deployed and running on this stack.
+
+The user has since said the opposite, on 2026-09-11: *"there is no trace of
+agents in the gateway and it couldn't be otherwise. it's only within the
+chat."* What they have asked another session for is one overlay with Models and
+Agents as two sections, agents created and stored **chat-side only**, shareable
+if the reader can reach the base model, and a default spanning both.
+
+Both cannot be true. **Do not treat either as settled**, and do not quietly
+build on the gateway side because it is what exists — read ADR 0062's argument
+for the `agent:` prefix first (it is the case *for* the gateway, and the
+strongest one available), then ask. Two questions were still open with the user
+when this was written: whether an agent is shared to groups or to individuals
+by email, and whether the existing gateway `agents` rows get migrated into the
+chat or everyone starts clean. The answer decides whether a migration is needed
+and whether `/v1/models` stops synthesising those cards.
+
+Related and *known broken* in the chat, reported by the user and not yet fixed:
+`GET /api/v2/models` intersects the caller's `/v1/models` with a superset built
+at boot using the **deployment** credential. A user's own agent is in their
+per-caller list but not in that superset, so the intersection drops it — one
+model shown where there should be two. The fix is to make the caller's
+catalogue the source rather than a filter, which also means the chat's
+`validModelIdSchema` can no longer be built from the superset alone.
 
 Known open items, none of them blocking:
 
