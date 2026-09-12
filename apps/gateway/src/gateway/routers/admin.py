@@ -1122,17 +1122,35 @@ async def import_models(
     existing = (await session.execute(select(ModelDef))).scalars().all()
     taken_names = {model.name for model in existing}
     taken_upstream = {model.upstream_model for model in existing}
+    taken_upstream_by_provider = {(model.provider_id, model.upstream_model) for model in existing}
 
     results: list[ModelImportResult] = []
     for item in payload.models:
         name = item.name or _suggested_name(item.upstream_model)
 
-        # Duplicate checks run before anything else, including the search-tier
-        # branch below: a name is unique across the whole catalogue (two
-        # providers both call a tier "deep"), and an import that hit the
-        # database's constraint instead of this report was a 500 where the
-        # response owed the operator a per-item reason.
-        if item.upstream_model in taken_upstream:
+        # Duplicate checks run before any insert — an import that reached the
+        # database's constraint instead of these reports was a 500 where the
+        # response owed the operator a per-item reason. The *upstream* check
+        # comes first (it names the resource rather than a clashing label):
+        # global for a priced model, whose upstream id the drift reports key
+        # on; per provider for a search tier, whose upstream id is the tier's
+        # own name — "fast", "deep" — which two vendors legitimately share.
+        # The name check is universal and last.
+        price = by_upstream.get(item.upstream_model)
+        is_search = price is None and kinds.get(item.upstream_model) == ModelKind.SEARCH
+        if is_search:
+            if (provider.id, item.upstream_model) in taken_upstream_by_provider:
+                results.append(
+                    ModelImportResult(
+                        upstream_model=item.upstream_model,
+                        name=name,
+                        imported=False,
+                        priced=False,
+                        reason="already in the catalogue",
+                    )
+                )
+                continue
+        elif item.upstream_model in taken_upstream:
             results.append(
                 ModelImportResult(
                     upstream_model=item.upstream_model,
@@ -1155,10 +1173,8 @@ async def import_models(
             )
             continue
 
-        price = by_upstream.get(item.upstream_model)
-
         if price is None:
-            if kinds.get(item.upstream_model) == ModelKind.SEARCH:
+            if is_search:
                 # A search tier has no token price *by design*: its meter is a
                 # request count (`LimitMetric.OWN_SEARCH_REQUESTS`), the
                 # reservation is one request and no token counts, so a price
@@ -1179,7 +1195,7 @@ async def import_models(
                 )
                 session.add(model)
                 taken_names.add(name)
-                taken_upstream.add(item.upstream_model)
+                taken_upstream_by_provider.add((provider.id, item.upstream_model))
                 results.append(
                     ModelImportResult(
                         upstream_model=item.upstream_model,

@@ -668,6 +668,74 @@ class TestSearchTierImport:
         assert prices == []
 
     @pytest.mark.asyncio
+    async def test_two_vendors_may_share_a_tier_name(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Linkup's "fast" must not block Exa's "fast".
+
+        A search tier's upstream id is the tier's own name — a word, not an id
+        space — so two vendors legitimately offer the same one, and what is
+        unique is the pair (provider, tier). The routed name is this
+        catalogue's, so the second import just needs its own name. An
+        implementation that checked upstream ids globally would let one
+        vendor's vocabulary annex another's.
+        """
+        from gateway.secrets import SecretBox, hint_for
+
+        as_user(app, await make_admin(session_factory, seeded))
+        async with session_factory() as session:
+            linkup = Provider(
+                name="linkup",
+                base_url=UPSTREAM_BASE,
+                api_key_encrypted=SecretBox(
+                    ["test-encryption-key-not-for-production"]
+                ).encrypt("k"),
+                api_key_hint=hint_for("k"),
+                plugin="linkup",
+                kind=ProviderKind.SEARCH,
+            )
+            exa = Provider(
+                name="exa",
+                base_url=UPSTREAM_BASE,
+                api_key_encrypted=SecretBox(
+                    ["test-encryption-key-not-for-production"]
+                ).encrypt("k"),
+                api_key_hint=hint_for("k"),
+                plugin="exa",
+                kind=ProviderKind.SEARCH,
+            )
+            session.add_all([linkup, exa])
+            await session.commit()
+            linkup_id, exa_id = linkup.id, exa.id
+
+        first = await client.post(
+            "/api/admin/models/import?provider_id=" + str(linkup_id),
+            json={"models": [{"upstream_model": "fast"}]},
+        )
+        assert first.status_code == 201, first.text
+        assert first.json()["results"][0]["imported"] is True
+
+        second = await client.post(
+            "/api/admin/models/import?provider_id=" + str(exa_id),
+            json={"models": [{"upstream_model": "fast", "name": "exa-fast"}]},
+        )
+        assert second.status_code == 201, second.text
+        result = second.json()["results"][0]
+        assert result["imported"] is True, result
+        # And the same provider a second time is still refused, per provider.
+        again = await client.post(
+            "/api/admin/models/import?provider_id=" + str(exa_id),
+            json={"models": [{"upstream_model": "fast", "name": "exa-fast-2"}]},
+        )
+        result = again.json()["results"][0]
+        assert result["imported"] is False
+        assert result["reason"] == "already in the catalogue"
+
+    @pytest.mark.asyncio
     async def test_an_unpriced_chat_model_still_cannot_import(
         self,
         app: object,
