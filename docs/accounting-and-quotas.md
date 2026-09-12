@@ -66,7 +66,8 @@ nobody is worse than no quota, because somebody configured it and believes in
 it. The asymmetry is deliberate: metering without quotas is fine, quotas
 without metering is incoherent.
 
-The consequence most likely to surprise: knowledge-base ingestion bills through
+(Since ADR 0070 knowledge ingestion runs in the chat, metered through the
+embedding endpoint.) The consequence this section is here for: ingestion bills through
 the same path, so an unmetered deployment records no indexing spend either — and
 a large ingestion run can cost more than the chat traffic it serves.
 

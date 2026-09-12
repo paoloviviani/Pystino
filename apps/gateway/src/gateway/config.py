@@ -659,57 +659,6 @@ class ExtractorSettings(BaseModel):
     endpoint: str = "http://extractor:8080"
 
 
-class KnowledgeSettings(BaseModel):
-    """Defaults for knowledge-base ingestion and retrieval.
-
-    Every value here is what the deployment does **when the console has said
-    nothing** — ``knowledge_config`` is an append-only row that overrides these,
-    exactly as ``redaction_config`` overrides ``RedactionSettings``
-    (ADR 0033). A deployment that never opens the
-    new screen behaves as though the table did not exist, which is what keeps
-    the upgrade silent.
-
-    Note which things are *not* here, and why they cannot be. The embedding and
-    extraction **models** are rows in this database, chosen by an administrator
-    from what the deployment actually has, so naming them in the environment
-    would mean an operator maintaining a name in two places and a typo becoming
-    a runtime failure rather than a validation error. They live only in the
-    config row.
-    """
-
-    #: Off by default, and this is the whole feature flag. A deployment that
-    #: does not want durable storage of user documents does not get tables
-    #: filling up because somebody found the endpoint: `/v1/files` and
-    #: `/v1/vector_stores` answer 404 until this is on.
-    enabled: bool = False
-
-    #: Characters per chunk, and the overlap between neighbours. Snapshotted
-    #: onto each base at creation, so changing these never silently changes
-    #: what an existing index means (see `KnowledgeBase`).
-    chunk_chars: int = 1200
-    chunk_overlap: int = 150
-
-    #: How many passages a search returns by default, and the floor a passage
-    #: must clear to be returned at all. The floor is a cosine *similarity*, so
-    #: higher is stricter; 0 returns the nearest whatever they are, which is
-    #: the right default because a threshold tuned for one embedding model is
-    #: wrong for the next.
-    search_limit: int = 8
-    min_score: float = 0.0
-
-    #: The ceiling on one upload, in bytes. Below the extractor's own 25 MiB
-    #: refusal on purpose: the gateway should decline a file it knows the
-    #: extractor will reject, rather than buffering it first (see `ocr.py`,
-    #: which records that the gateway imposes no body limit of its own).
-    max_upload_bytes: int = 20 * 1024 * 1024
-
-    #: How many chunks go to the embedding surface in one call. Batched
-    #: because an embedding request has real per-call latency and a document
-    #: is hundreds of chunks; bounded because a provider will refuse a payload
-    #: that is too large, and a refusal mid-document leaves half an index.
-    embed_batch: int = 32
-
-
 class RedactionSettings(BaseModel):
     """Redaction/guardrail layer.
 
@@ -921,7 +870,6 @@ class Settings(BaseSettings):
     idp: IdPSettings = Field(default_factory=IdPSettings)
     redaction: RedactionSettings = Field(default_factory=RedactionSettings)
     extractor: ExtractorSettings = Field(default_factory=ExtractorSettings)
-    knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
     accounting: AccountingSettings = Field(default_factory=AccountingSettings)
 

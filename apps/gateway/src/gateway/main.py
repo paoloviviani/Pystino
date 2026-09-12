@@ -20,8 +20,6 @@ from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.fx import FXService
 from gateway.identity_registry import OIDCProviderRegistry, seed_from_env
 from gateway.idp import IdpSigner
-from gateway.knowledge.pipeline import Ingestor
-from gateway.knowledge.resolver import KnowledgeResolver
 from gateway.logging_config import configure_logging
 from gateway.login_throttle import LoginThrottle
 from gateway.oidc_policy import OIDCPolicyResolver
@@ -42,19 +40,16 @@ from gateway.routers import (
     chat,
     console,
     embeddings,
-    files,
     health,
     identity,
     idp,
     images,
-    knowledge_admin,
     me,
     messages,
     models,
     ocr,
     search,
     tokens,
-    vector_stores,
 )
 from gateway.routers import responses as responses_router
 from gateway.routers.auth import ResetRequestThrottle
@@ -195,36 +190,6 @@ async def init_app_state(
     except Exception:
         logger.warning("could not read the oidc policy at startup", exc_info=True)
     oidc_policy_resolver.start()
-    # The knowledge pipeline's settings (ADR 0062): the same
-    # console-decided, environment-baselined, polled arrangement as the two
-    # above. Read once before serving so a worker never ingests a document
-    # with the environment's chunk geometry when the console has already
-    # overridden it — the base snapshots what it was built with, so getting
-    # this wrong writes an index nobody can reproduce. Non-fatal by
-    # construction, like every startup read here.
-    knowledge_resolver = KnowledgeResolver(settings, session_factory)
-    app.state.knowledge = knowledge_resolver
-    try:
-        await knowledge_resolver.refresh()
-    except Exception:
-        logger.warning("could not read the knowledge configuration at startup", exc_info=True)
-    knowledge_resolver.start()
-    # Ingestion runs detached, so it cannot reach for a request's `app.state`
-    # and has to be handed the same services up front. It shares
-    # `background_tasks` with chat.py's detached settlement for the same reason
-    # that set exists: asyncio keeps only a weak reference to a task, and a
-    # collected task abandons a document mid-index.
-    app.state.ingestor = Ingestor(
-        session_factory=session_factory,
-        settings=settings,
-        quota=app.state.quota_engine,
-        estimator=DEFAULT_ESTIMATOR,
-        fx=fx_service,
-        providers=app.state.providers,
-        control_http=control_http,
-        redactor=resolver.redactor,
-        background_tasks=background_tasks,
-    )
     # The reset-email cooldown, armed only when the feature is: an absent
     # throttle means POST /auth/password-reset answers 503, the same switch
     # the login throttle is.
@@ -334,8 +299,6 @@ async def shutdown_app_state(app: FastAPI) -> None:
     # after a console change.
     if (resolver := getattr(app.state, "redaction", None)) is not None:
         await resolver.aclose()
-    if (knowledge := getattr(app.state, "knowledge", None)) is not None:
-        await knowledge.aclose()
     if (policy := getattr(app.state, "oidc_policy", None)) is not None:
         await policy.stop()
     if (notifier := getattr(app.state, "quota_notifier", None)) is not None:
@@ -406,16 +369,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(models.router)
     app.include_router(billing.router)
     app.include_router(identity.router)
-    # Before the vector stores, because `/v1/files` is where a document enters
-    # and the store is what indexes it — and because `vector_stores` imports
-    # this module's feature-switch dependency.
-    app.include_router(files.router)
-    app.include_router(vector_stores.router)
-    # The knowledge pipeline's configuration. On `/v1` rather than
-    # `/api/admin` because the screen that drives it lives in the chat's
-    # admin console, and no bearer-authenticated client can reach a
-    # management route (ADR 0062).
-    app.include_router(knowledge_admin.router)
     app.include_router(auth.router)
     app.include_router(tokens.router)
     app.include_router(me.router)

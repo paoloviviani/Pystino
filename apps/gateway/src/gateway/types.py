@@ -16,9 +16,8 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from pgvector.sqlalchemy import VECTOR
-from sqlalchemy import JSON, DateTime, Dialect, Numeric
-from sqlalchemy.types import TypeDecorator, TypeEngine
+from sqlalchemy import DateTime, Dialect, Numeric
+from sqlalchemy.types import TypeDecorator
 
 # 24 digits total, 12 after the point. Per-token prices run to ~1e-9 per token
 # and a single request's cost to ~1e0, so 12 decimal places leaves headroom
@@ -67,45 +66,6 @@ class TZDateTime(TypeDecorator[datetime]):
         if value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value.astimezone(UTC)
-
-
-class Embedding(TypeDecorator[list[float]]):
-    """One embedding vector, of whatever length the model that made it returns.
-
-    **Unconstrained on purpose.** pgvector permits ``vector`` with no dimension
-    modifier, and rows of different lengths then coexist in one table — verified
-    against 0.8.6 rather than assumed. That is what makes the embedding model an
-    administrative setting instead of a migration: a knowledge base pins the
-    model it was indexed with, and changing the deployment's default leaves every
-    existing base working on its own vectors until somebody reindexes it.
-
-    The alternative — one fixed ``vector(1536)`` column — would mean that
-    choosing a model with different output size is a schema change, and that two
-    models cannot coexist even briefly, which is exactly the window a reindex
-    needs.
-
-    Two consequences to know. An approximate index *does* need a fixed
-    dimensionality, so the HNSW indexes are **partial expression indexes** —
-    ``((embedding::vector(1024)) vector_cosine_ops) WHERE dimensions = 1024`` —
-    created per dimension in the migration; a length with no index still
-    searches, exactly and more slowly. And comparing vectors of different
-    lengths raises ``DataError`` rather than returning a number, so a query that
-    forgets to filter by dimension fails loudly. That is the good outcome:
-    ADR 0020 anticipated a mismatch silently returning nonsense, and PostgreSQL
-    refuses instead.
-
-    On SQLite, where the unit suite runs, this is a JSON array. Distance is not
-    expressible there at all, which is why retrieval lives behind a contract with
-    a PostgreSQL implementation and is verified by a live script.
-    """
-
-    impl = JSON
-    cache_ok = True
-
-    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
-        if dialect.name == "postgresql":
-            return dialect.type_descriptor(VECTOR())
-        return dialect.type_descriptor(JSON())
 
 
 def as_decimal(value: Any) -> Decimal:

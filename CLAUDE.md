@@ -87,13 +87,12 @@ Inside the gateway, the pieces that carry the most weight:
 
 | Path | What it owns |
 |---|---|
-| `routers/_metered.py` | resolve → reserve → record → settle, shared by every metered `/v1` route **and by knowledge-base ingestion** |
+| `routers/_metered.py` | resolve → reserve → record → settle, shared by every metered `/v1` route  |
 | `protocols.py` | per API surface: where usage, the served model and assistant text live in a frame |
 | `accounting/cost.py` | the money arithmetic, and the three prompt slices |
 | `quota/engine.py` | admission; `counters.py` has the three stores |
 | `access.py` | one predicate for "may this caller use this model" |
 | `sharing.py` | its sibling: "may this caller reach this shared resource" (ADR 0062) |
-| `knowledge/` | extract → chunk → embed → store, and the retrieval contract |
 | `idp.py` + `routers/idp.py` | the house issuer (ADR 0068): discovery, authorize + PKCE, token, JWKS, userinfo, end_session. Opaque access keys and the `/v1` path are untouched by it; the issuer is configured, never sniffed; `sub` is the local row's subject |
 | `pagination.py` | the listing envelope every management route returns |
 
@@ -261,30 +260,23 @@ Inside the gateway, the pieces that carry the most weight:
   transport awaits background tasks, so through the client deferred and awaited
   look identical — `test_deferred_settlement.py` drives raw ASGI to assert the
   body goes out first.
-- **A knowledge base pins its own embedding model, and that is the whole
-  design** (ADR 0062). ADR 0020 said a fixed
-  `vector(N)` column made changing the embedding model *a migration*; measured
-  against pgvector 0.8.6 that is false — `vector` takes **no dimension
-  modifier** and rows of differing length coexist in one column, and comparing
-  two lengths **raises** rather than mis-ranking. So changing the deployment
-  default is safe: existing bases keep answering from their own vectors until
-  somebody reindexes. `dimensions` is *learned* from the first vector, never
-  typed. Three more measured facts you cannot guess: HNSW refuses `vector`
-  above **2000** dimensions and `halfvec` above **4000**, so the common
-  3072-dimension model is only indexable through a halfvec cast; the planner
-  does use a halfvec-cast index for a halfvec-cast `ORDER BY`; and ranking
-  therefore happens in half precision while storage stays full.
+- **The knowledge pipeline lives in the chat now** (ADR 0070): the vector
+  store, documents, sharing and reindexing are the chat's, backed by its own
+  pgvector database. What stayed here is what the pipeline consumes —
+  `POST /v1/embeddings` (catalogue-managed, metered to the caller's token)
+  and the document-reading service. The halfvec/HNSW facts below are the
+  chat's problem now, and its store keeps the same shape: ranking in half
+  precision through partial expression indexes, storage at full precision,
+  HNSW refusing `vector` above 2000 dimensions and `halfvec` above 4000.
 - **There are two admin consoles, split by whose decision it is.** The
   gateway's own console owns providers, models, prices, quotas, redaction and
-  users. The **chat's** admin console owns the knowledge pipeline — which
-  embedding model, which extractor, the chunk geometry — because that is a
-  product decision rather than an operational one (ADR 0062, corrected on
-  request after being built the wrong way round first). The consequence to know
-  before moving anything else: `/api` reads a **session cookie and nothing
-  else**, so nothing a bearer-authenticated client needs can live there. The
-  knowledge configuration is at `/v1/knowledge/config`, and **an API key is
-  refused there even when its owner is an admin** — a key is what a program
-  holds, an access token is evidence a person just signed in.
+  users. The **chat's** admin console owns what its users experience — the
+  knowledge pipeline (ADR 0070: which embedding model, the chunk geometry),
+  fetching and connectors. The consequence worth keeping: `/api` reads a
+  **session cookie and nothing else**, so nothing a bearer-authenticated
+  client needs can live there — which is why the knowledge configuration, now
+  chat-side, is gated the same way its admin panel is (the gateway's own
+  `is_admin` answer, never the chat's `user.isAdmin`).
 
   Since 2026-09-11 the chat's console is a real panel at `/admin` with a nav,
   and it has three sections: Knowledge (as above), **Fetching** (what reads a
@@ -304,12 +296,12 @@ Inside the gateway, the pieces that carry the most weight:
 - **A pgvector type modifier cannot be a bind parameter.** `::halfvec(:dims)`
   fails with `type modifiers must be simple constants or identifiers` — a
   *syntax* error raised when the statement is prepared, so it is invisible to
-  any test on another dialect. The first version of `PgVectorStore.search`
-  bound it, passed all 24 SQLite tests, and answered 500 on the first real
-  search. The width is formatted into `_SEARCH_SQL` instead (an `int()` in a
-  checked range; every caller-influenced value stays bound), and
-  `scripts/test_knowledge_live.py` is what stops it coming back. This is the
-  sharpest example yet of the SQLite/PostgreSQL note above.
+  any test on another dialect. The gateway's first store bound it, passed all
+  24 SQLite tests, and answered 500 on the first real search. The width is
+  formatted into the SQL instead (an `int()` in a checked range; every
+  caller-influenced value stays bound) — and the chat's store, which inherited
+  the shape, keeps that discipline. This is the sharpest example yet of the
+  SQLite/PostgreSQL note above.
 - **Indexing is billed, and it goes through `_metered` rather than beside it.**
   `_metered.begin` takes `fx` and `session_factory` instead of a `Request` for
   exactly this reason: ingestion runs in a detached task (ADR 0019 — OCR
@@ -319,7 +311,9 @@ Inside the gateway, the pieces that carry the most weight:
   traffic it serves. Ingestion bills the **base's owner and group**, not
   whoever triggered it, so an admin pressing "reindex" does not move someone
   else's spend onto their own budget.
-- **Redaction on a knowledge base is asymmetric, deliberately.** The text sent
+- **Redaction on egress is asymmetric, deliberately.** (The knowledge base
+  moved to the chat in ADR 0070; this paragraph is about the redaction
+  policy shape it used and the chat's pipeline inherits.) The text sent
   to the embedding provider is **redacted** (it is an egress, and deterministic
   placeholders are what let an indexed document and a later query still match —
   that is what the note in `embeddings.py` was for). The text **stored** in the
@@ -510,8 +504,6 @@ docker compose --env-file deploy/.env \
                                     # redaction; needs an active redaction rule
 ./scripts/test_bill_to_live.py      # x-bill-to against a real OIDC token, and
                                     # that it refuses a group you do not hold
-./scripts/test_knowledge_live.py    # the pgvector query, the real extractor and
-                                    # the ledger — none of which SQLite can reach
 ./scripts/benchmark_live.py         # per-layer cost; see docs/performance.md
 ./scripts/test_public_tls_live.py   # only with the proxy overlay: TLS, the
                                     # rotated credentials, and that nothing else
