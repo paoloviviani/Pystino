@@ -19,17 +19,21 @@ actually issued.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from conftest import Seeded, make_token
 from conftest import bearer_auth as auth
 from fastapi import FastAPI
 from gateway.models import (
+    ApiKey,
     Group,
     Membership,
     MembershipSource,
     User,
 )
+from gateway.security import generate_api_key
+from gateway.types import utcnow
 from joserfc.jwk import RSAKey
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -247,6 +251,47 @@ class TestApiKeys:
         assert body["credential"] == "api_key", (
             "false must be distinguishable from 'this person is not an admin'"
         )
+
+    async def test_a_minted_session_credential_answers_as_its_person(
+        self,
+        client: Any,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The house IdP's access tokens are keys in the table — and answer.
+
+        The IdP keeps its access tokens opaque, so a signed-in chat session
+        presents an ``ApiKey`` row minted at login. It is not a program's
+        credential: it is the proof of who just signed in, short-lived and
+        rotated by the login that made it, and it answers with the person's
+        own flag. The chat's admin gate reads exactly this answer — an
+        implementation that suppressed it for every row in the table would
+        lock the administrator out of their own panel.
+        """
+        async with session_factory() as db:
+            user = await db.get(type(seeded.user), seeded.user.id)
+            assert user is not None
+            user.is_admin = True
+            minted = generate_api_key(environment_prefix="gwa")
+            db.add(
+                ApiKey(
+                    user_id=user.id,
+                    prefix=minted.prefix,
+                    key_hash=minted.key_hash,
+                    name="idp:cerea",
+                    minted_by="idp-cerea",
+                    expires_at=utcnow() + timedelta(minutes=15),
+                )
+            )
+            await db.commit()
+
+        response = await client.get(
+            "/v1/me", headers={"authorization": f"Bearer {minted.secret}"}
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["is_admin"] is True
+        assert body["credential"] == "access_token"
 
     async def test_a_key_still_learns_its_own_identity(
         self, client: Any, seeded: Seeded

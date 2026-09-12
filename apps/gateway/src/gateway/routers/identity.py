@@ -23,21 +23,32 @@ administrator by hand — the escape hatch from the lockout ADR 0056 warns about
 bearer path has already reconciled memberships and recomputed ``is_admin``
 against ``admin_groups`` by the time a principal exists.
 
-**An API key never learns that its owner is an administrator.** A key is what a
-program holds; an access token is evidence a person just signed in. Every
-administrative surface in this deployment already acts on that distinction —
-``/api`` needs a session cookie, and the knowledge configuration refuses a key
-even when its owner is an admin — so reporting ``is_admin: true`` to a key
-would promise access the credential cannot exercise: a client would open an
-admin panel whose every action is then refused. The worse failure is the one
-that decides it: a leaked ``gwk_`` key would be enough to open that panel in
-any client trusting the flag, turning a credential a program was handed into
-the administrative decision a person is supposed to make by signing in.
+**A key never learns that its owner is an administrator.** An issued key is
+what a program holds; an access token is evidence a person just signed in.
+Every administrative surface in this deployment already acts on that
+distinction — ``/api`` needs a session cookie, and the knowledge configuration
+refuses a key even when its owner is an admin — so reporting ``is_admin: true``
+to a key would promise access the credential cannot exercise: a client would
+open an admin panel whose every action is then refused. The worse failure is
+the one that decides it: a leaked ``gwk_`` key would be enough to open that
+panel in any client trusting the flag, turning a credential a program was
+handed into the administrative decision a person is supposed to make by
+signing in.
 
-So the flag answers for the credential: **false for a key, whoever owns it**.
-It is not *silently* false — ``credential`` names which credential answered, so
-a client seeing ``api_key`` knows to ask again with an access token rather than
-concluding the person is not an administrator.
+**Which credential is which is provenance, not shape.** The house IdP keeps
+its access tokens opaque — ``gwa`` rows in the same ``api_keys`` table, minted
+at login (``minted_by`` set, ADR 0046) — so "a key" and "an access token"
+cannot be told apart by looking at the bearer. They are told apart by where
+the row came from: a *minted* credential is the session's proof and answers
+as the signed-in person it stands in for; an *issued* key (``minted_by IS
+NULL``) answers as a program's credential, and its flag is false for its
+owner's own safety.
+
+So the flag answers for the credential: **false for an issued key, whoever
+owns it; the person's own answer for a minted credential**. It is not
+*silently* false in the key case — ``credential`` names which credential
+answered, so a client seeing ``api_key`` knows to ask again with an access
+token rather than concluding the person is not an administrator.
 
 Refusing the key outright was the alternative, and was rejected: it would make
 this stricter than `/v1/billing/groups`, which answers for a key today, and
@@ -62,7 +73,12 @@ async def whoami(principal: PrincipalDep) -> CallerIdentity:
     # membership's group comes with it (`lazy="joined"`), so this route adds
     # nothing to the round-trip budget `test_query_counts.py` pins.
     user = principal.user
-    by_key = principal.api_key is not None
+    # Provenance, not shape (see the module docstring): a minted credential is
+    # a session's proof and answers as its person; an issued key is a program's
+    # credential and its owner's admin flag stays theirs to exercise by
+    # signing in.
+    minted = principal.api_key is not None and principal.api_key.minted_by is not None
+    by_key = principal.api_key is not None and not minted
 
     # Every effective membership, including groups that are disabled. The
     # billable subset is `/v1/billing/groups`' question and it filters them for
