@@ -32,7 +32,7 @@ from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from llmp_shared import EntitySpan, PlaceholderMap
 from pydantic import SecretStr
-from sqlalchemy import ColumnElement, Row, case, delete, func, literal, or_, select
+from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
@@ -71,7 +71,6 @@ from gateway.models import (
     GroupSource,
     GroupSync,
     IdentityProvider,
-    KnowledgeBase,
     LimitMetric,
     LimitRule,
     LimitScope,
@@ -89,9 +88,6 @@ from gateway.models import (
     RedactionConfig,
     RedactionRule,
     RedactionScope,
-    ResourceKind,
-    ResourceShare,
-    SharePrincipal,
     UsageRecord,
     UsageSource,
     UsageStatus,
@@ -2296,28 +2292,12 @@ async def _published_by(session: AsyncSession, user_id: uuid.UUID) -> list[str]:
     unable to complete an erasure request at all, which is the failure this
     guard must not become.
     """
-    names: list[str] = []
-    for model, kind, label in (
-        (KnowledgeBase, ResourceKind.KNOWLEDGE_BASE, "the knowledge base"),
-    ):
-        rows = (
-            await session.execute(
-                select(model.name)
-                .where(
-                    model.owner_user_id == user_id,
-                    select(literal(1))
-                    .where(
-                        ResourceShare.resource_kind == kind,
-                        ResourceShare.resource_id == model.id,
-                        ResourceShare.principal_kind == SharePrincipal.EVERYONE,
-                    )
-                    .exists(),
-                )
-                .order_by(model.name)
-            )
-        ).scalars()
-        names.extend(f"{label} {name!r}" for name in rows)
-    return names
+    # The knowledge bases moved to the chat (ADR 0070), so no resource of
+    # this gateway's is shared-with-everyone any more; a chat project's
+    # shares live in the chat, which does its own erasure. The machinery is
+    # kept because `chat_project` shares still pass through here, and an
+    # `everyone` grant on one would belong in this answer.
+    return []
 
 
 # -- identity policy (ADR 0048) ------------------------------------------------

@@ -20,7 +20,7 @@ every decision behind it is the ADR index.
 | `/v1/vector_stores` | API key or bearer | Knowledge bases: documents in, passages out, and who they are shared with (ADR 0062) |
 | `GET /auth/login`, `/auth/callback` | — | OIDC authorization-code login (PKCE) |
 | `/api/me/*` | session cookie | Identity, billing group, API keys, own usage and reports |
-| `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, the knowledge pipeline, reports |
+| `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, reports |
 | `GET /healthz`, `/readyz` | — | Liveness (no dependencies) and readiness (one DB round trip) |
 
 Every metered `/v1` route shares one metering path — `routers/_metered.py` — so

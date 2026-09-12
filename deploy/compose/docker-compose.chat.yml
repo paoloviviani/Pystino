@@ -121,6 +121,12 @@ services:
         OPENAI_BASE_URL=http://gateway:8000/v1
         OPENAI_API_KEY=${CHAT_CATALOGUE_KEY:?mint a gwk_ key and set CHAT_CATALOGUE_KEY in deploy/.env}
 
+        # The chat's own Postgres (ADR 0070): where the knowledge pipeline's
+        # passages and vectors live. A separate database from the gateway's,
+        # with the chat's own credentials — the store is the chat's, and
+        # neither component can read the other's. Set in deploy/.env.
+        CHAT_PG_URL=${CHAT_PG_URL:?set CHAT_PG_URL in deploy/.env}
+
         # Every inference call carries the signed-in person's own access token,
         # so the gateway bills that person (ADR 0040).
         USE_USER_TOKEN=true
