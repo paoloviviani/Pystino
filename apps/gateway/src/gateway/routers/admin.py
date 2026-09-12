@@ -1126,6 +1126,35 @@ async def import_models(
     results: list[ModelImportResult] = []
     for item in payload.models:
         name = item.name or _suggested_name(item.upstream_model)
+
+        # Duplicate checks run before anything else, including the search-tier
+        # branch below: a name is unique across the whole catalogue (two
+        # providers both call a tier "deep"), and an import that hit the
+        # database's constraint instead of this report was a 500 where the
+        # response owed the operator a per-item reason.
+        if item.upstream_model in taken_upstream:
+            results.append(
+                ModelImportResult(
+                    upstream_model=item.upstream_model,
+                    name=name,
+                    imported=False,
+                    priced=False,
+                    reason="already in the catalogue",
+                )
+            )
+            continue
+        if name in taken_names:
+            results.append(
+                ModelImportResult(
+                    upstream_model=item.upstream_model,
+                    name=name,
+                    imported=False,
+                    priced=False,
+                    reason=f"the name {name!r} is already taken; choose another",
+                )
+            )
+            continue
+
         price = by_upstream.get(item.upstream_model)
 
         if price is None:
@@ -1170,28 +1199,6 @@ async def import_models(
                     imported=False,
                     priced=False,
                     reason="not offered by the provider",
-                )
-            )
-            continue
-        if item.upstream_model in taken_upstream:
-            results.append(
-                ModelImportResult(
-                    upstream_model=item.upstream_model,
-                    name=name,
-                    imported=False,
-                    priced=False,
-                    reason="already in the catalogue",
-                )
-            )
-            continue
-        if name in taken_names:
-            results.append(
-                ModelImportResult(
-                    upstream_model=item.upstream_model,
-                    name=name,
-                    imported=False,
-                    priced=False,
-                    reason=f"the name {name!r} is already taken; choose another",
                 )
             )
             continue
