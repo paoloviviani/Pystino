@@ -53,7 +53,12 @@ from gateway.idp import (
 from gateway.models import ApiKey, IdpAuthorizationCode, RefreshCredential, User
 from gateway.oidc import OIDCError, verify_session_token
 from gateway.routers.auth import _HINT_COOKIE
-from gateway.security import extract_prefix, generate_api_key, verify_api_key
+from gateway.security import (
+    extract_prefix,
+    generate_api_key,
+    parse_authorization_header,
+    verify_api_key,
+)
 from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
@@ -464,7 +469,13 @@ async def userinfo(request: Request, session: SessionDep) -> JSONResponse:
     document for the *client* to read, not a credential for this endpoint.
     """
     header = request.headers.get("authorization", "")
-    token = header[7:].strip() if header.startswith("Bearer ") else ""
+    # Through `parse_authorization_header`, not a hand-rolled prefix test:
+    # the scheme's case is the client's choice, and openid-client echoes back
+    # the token_type *we* sent — "bearer gwa_..." in exactly the casing this
+    # file minted. A case-sensitive `startswith("Bearer ")` answered 400 to
+    # the standard client's userinfo on every login, and a hand-rolled second
+    # parser here is how it got in. One parser, one behaviour.
+    token = parse_authorization_header(header) or ""
     if not token:
         raise BadRequestError("invalid_token: a bearer access token is required.")
     if token.count(".") == 2:
@@ -478,6 +489,14 @@ async def userinfo(request: Request, session: SessionDep) -> JSONResponse:
             await session.execute(select(ApiKey).where(ApiKey.prefix == prefix))
         ).scalar_one_or_none()
     if api_key is None or not verify_api_key(token, api_key.key_hash) or not api_key.is_usable():
+        # The same shape tokens.py's _reject logs: the reason is a map of the
+        # validator for whoever holds a forged one; the caller gets one word.
+        logger.info(
+            "userinfo refused: prefix=%s present=%s usable=%s",
+            prefix,
+            api_key is not None,
+            bool(api_key and api_key.is_usable()),
+        )
         raise BadRequestError("invalid_token: the access token is not valid.")
     user = await _load_user_with_groups(session, api_key.user_id)
     if user is None:
