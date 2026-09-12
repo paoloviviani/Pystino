@@ -71,10 +71,10 @@ apps/console     React admin SPA, served by the gateway at /console
 packages/ui      design tokens and primitives, shared with the console
 packages/shared-py  detection contract and the deterministic placeholder scheme
 services/redaction  Presidio behind a swappable contract, out of process
-deploy/compose   the stack: base + smoke + redaction + playwright + proxy +
-                 keycloak + chat overlays. The playwright one is a headless
-                 browser for fetching a URL somebody named — publishing no
-                 port, and docs/browser.md says why it never can
+deploy/compose   the stack: base + smoke + redaction + proxy + keycloak +
+                 chat overlays. The headless-browser overlay moved to the
+                 chat repository with its consumer; it publishes no port,
+                 and the chat's docs/browser.md says why it never can
 deploy/caddy     the TLS reverse proxy's one config file, for both configurations
 scripts/         live checks against a running stack (see below)
 docs/            how to run, deploy and operate this. The ADRs are not here
@@ -94,6 +94,7 @@ Inside the gateway, the pieces that carry the most weight:
 | `access.py` | one predicate for "may this caller use this model" |
 | `sharing.py` | its sibling: "may this caller reach this shared resource" (ADR 0062) |
 | `knowledge/` | extract → chunk → embed → store, and the retrieval contract |
+| `idp.py` + `routers/idp.py` | the house issuer (ADR 0068): discovery, authorize + PKCE, token, JWKS, userinfo, end_session. Opaque access keys and the `/v1` path are untouched by it; the issuer is configured, never sniffed; `sub` is the local row's subject |
 | `pagination.py` | the listing envelope every management route returns |
 
 ## Non-obvious things that will bite you

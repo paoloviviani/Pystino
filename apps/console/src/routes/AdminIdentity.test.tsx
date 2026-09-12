@@ -22,7 +22,6 @@ function policyFixture(overrides: Partial<OidcPolicy> = {}): OidcPolicy {
     auto_provision: true,
     unknown_user_policy: "refuse",
     groups_claim: "groups",
-    admin_groups: [],
     group_mappings: [],
     source: "environment",
     sources: {},
@@ -136,32 +135,6 @@ describe("AdminIdentity", () => {
     // which is what the per-field rows in the policy history mean.
     expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
       auto_provision: false,
-    });
-  });
-
-  it("saves the administrator groups when they change", async () => {
-    const user = userEvent.setup({ delay: null });
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify(policyFixture()), { status: 200 }),
-    );
-    mockGet(policyFixture({ admin_groups: ["admins"] }));
-    renderScreen(<AdminIdentity />);
-    await screen.findByLabelText(/administrator groups/i);
-
-    const input = screen.getByLabelText(/administrator groups/i);
-    await user.clear(input);
-    await user.type(input, "admins, platform-admins");
-    await user.click(screen.getByRole("button", { name: /save administrator groups/i }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/oidc/policy",
-      expect.objectContaining({ method: "PUT" }),
-    ));
-    const call = fetchMock.mock.calls.find(
-      ([url, init]) => String(url).includes("/oidc/policy") && (init as RequestInit).method === "PUT",
-    );
-    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
-      admin_groups: ["admins", "platform-admins"],
     });
   });
 });

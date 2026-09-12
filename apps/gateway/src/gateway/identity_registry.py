@@ -55,9 +55,7 @@ class ProviderRecord:
     source: str  # "console" | "environment"
     updated_at: object = None
 
-    def as_oidc_settings(
-        self, redirect_uri: str, access_token_audience: str = ""
-    ) -> OIDCSettings:
+    def as_oidc_settings(self, redirect_uri: str, access_token_audience: str = "") -> OIDCSettings:
         """The OIDCSettings one login against this provider needs.
 
         ``access_token_audience`` comes from the deployment, not the row: it is
@@ -122,9 +120,11 @@ def record_from_env(settings: Settings) -> ProviderRecord | None:
         # that fallback into a row on first startup, so turning linking on is
         # one edit away in the console.
         link_local_by_email=False,
-        # What the environment fallback has always done, and the only answer
-        # that keeps an upgrade invisible.
-        group_sync=GroupSync.EVERY_LOGIN,
+        # The sync stance of ADR 0069, applied where a provider is created:
+        # the directory answers once, at provisioning. For an *upgrading*
+        # deployment this row already exists with its old mode, and provenance
+        # means the change is a default, not a retrofit.
+        group_sync=GroupSync.FIRST_LOGIN,
         is_enabled=True,
         source="environment",
     )
@@ -185,9 +185,7 @@ class OIDCProviderRegistry:
         client = self._clients.get(key)
         if client is None:
             client = OIDCClient(
-                record.as_oidc_settings(
-                    f"{origin}/auth/callback/{record.name}", self._audience
-                ),
+                record.as_oidc_settings(f"{origin}/auth/callback/{record.name}", self._audience),
                 self._control_http,
             )
             self._clients[key] = client
@@ -199,9 +197,7 @@ class OIDCProviderRegistry:
         return client
 
 
-async def seed_from_env(
-    session: AsyncSession, settings: Settings, secrets: SecretBox
-) -> None:
+async def seed_from_env(session: AsyncSession, settings: Settings, secrets: SecretBox) -> None:
     """Insert the environment's provider as the first row, when there is none.
 
     Runs at startup beside the other idempotent seeds. The table being

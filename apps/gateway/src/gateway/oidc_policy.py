@@ -7,9 +7,11 @@ configuration.** The issuer, client secret and redirect URI are read once at
 startup and are not hot-reloadable (discovery is fetched once by design, and
 making the IdP connection hot would put its reachability on the request path).
 The *policy* — may a stranger become a user, which claim names their groups,
-what an IdP group means here, which local group confers admin — is what an
-operator changes, so it lives in the append-only ``oidc_config`` table and is
-polled like the redaction configuration it is modelled on (ADR 0033).
+what an IdP group means here — is what an operator changes, so it lives in the
+append-only ``oidc_config`` table and is polled like the redaction
+configuration it is modelled on (ADR 0033). Roles are not part of it: an
+administrator is made in the console or by ``gateway passwd --admin``, never
+by a claim (ADR 0069).
 
 A row never has to answer everything: each column is nullable, and a null
 defers to the environment for that one field. Effective policy is therefore a
@@ -45,9 +47,6 @@ class OIDCPolicy:
     auto_provision: bool
     unknown_user_policy: str
     groups_claim: str
-    #: Local group names that confer ``is_admin``. Compared against *mapped*
-    #: names — what a group is called here, not what the IdP calls it.
-    admin_groups: list[str] = field(default_factory=list)
     #: IdP group name -> local group name. Unmapped groups keep their own name.
     group_mappings: dict[str, str] = field(default_factory=dict)
     #: Where each value came from — "environment" until a row carries one, and
@@ -61,7 +60,7 @@ class OIDCPolicy:
 
     @property
     def source(self) -> str:
-        """"console" when any field is a row decision, else "environment"."""
+        """ "console" when any field is a row decision, else "environment"."""
         return "console" if self.sources else "environment"
 
     def map_group_names(self, idp_names: list[str]) -> list[str]:
@@ -85,7 +84,6 @@ def environment_policy(settings: OIDCSettings) -> OIDCPolicy:
         auto_provision=True,
         unknown_user_policy="refuse",
         groups_claim=settings.groups_claim,
-        admin_groups=list(settings.admin_groups),
         group_mappings={},
     )
 
@@ -122,10 +120,10 @@ def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OI
     if row.groups_claim:
         groups_claim = row.groups_claim
         sources["groups_claim"] = "console"
-    admin_groups = base.admin_groups
-    if row.admin_groups is not None:
-        admin_groups = [str(name) for name in row.admin_groups]
-        sources["admin_groups"] = "console"
+    # `row.admin_groups` is read by nothing any more (ADR 0069): authorisation
+    # is a gateway fact, so the column a deployment may still carry is dead
+    # weight the fold declines to resurrect. An administrator is made in the
+    # console or by `gateway passwd --admin`, never by a group claim.
     mappings = base.group_mappings
     if row.group_mappings is not None:
         mappings = {}
@@ -139,7 +137,6 @@ def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OI
         auto_provision=auto_provision,
         unknown_user_policy=base_unknown,
         groups_claim=groups_claim,
-        admin_groups=admin_groups,
         group_mappings=mappings,
         sources=sources,
         config_id=row.id,
@@ -184,9 +181,7 @@ class OIDCPolicyResolver:
         async with self._session_factory() as session:
             row = (
                 await session.execute(
-                    select(OIDCPolicyConfig)
-                    .order_by(OIDCPolicyConfig.created_at.desc())
-                    .limit(1)
+                    select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc()).limit(1)
                 )
             ).scalar_one_or_none()
         self._policy = effective_policy(self._settings, row)

@@ -87,29 +87,24 @@ class OIDCSettings(BaseModel):
     # membership purely an admin decision.
     auto_create_groups: bool = True
 
-    # Membership of any of these groups grants `is_admin`, and it defaults to
-    # `platform-admins` rather than to nothing.
-    #
-    # It used to default to empty, meaning "login never touches the flag". That
-    # made admin a database fact with no visible cause, and it made the one
-    # knob that decides who administers a deployment something an operator had
-    # to know to set. One well-known name, and a directory's own group names
-    # reach it through the provider's `group_mappings` (ADR 0048) — mapping is
-    # what a directory-specific name is *for*, so nothing here has to know it.
-    #
-    # This is still overridable, because a deployment whose directory cannot be
-    # made to produce this name needs somewhere to say so. What changed is the
-    # default.
-    #
-    # Two consequences to know. Admin follows membership **in both
-    # directions**, so a directory account that is not in the group loses the
-    # flag at its next login — an upgrade from an empty setting will revoke
-    # admin from any directory user who was granted it by hand *and is not in
-    # an admin group*, which is why the console now grants the group rather
-    # than the flag (`_set_admin_by_membership`). And local accounts are
-    # untouched: this derivation runs only on the OIDC provisioning path, so
-    # `gateway seed`'s admin keeps working.
-    admin_groups: list[str] = Field(default_factory=lambda: ["platform-admins"])
+    # Removed as a setting by ADR 0069 and kept only as a tripwire: the field
+    # exists so that a deployment still setting GATEWAY_OIDC__ADMIN_GROUPS gets
+    # a startup error naming the removal instead of a silent no-op. An
+    # administrator is made in the console or by `gateway passwd --admin`,
+    # never by a group claim — the directory authenticates and never
+    # administers.
+    admin_groups: list[str] = Field(default_factory=list)
+
+    @field_validator("admin_groups")
+    @classmethod
+    def _admin_groups_was_removed(cls, value: list[str]) -> list[str]:
+        if value:
+            raise ValueError(
+                "GATEWAY_OIDC__ADMIN_GROUPS was removed (ADR 0069): authorisation is a "
+                "gateway fact. Make an administrator in the console or with "
+                "`gateway passwd --admin`, and delete the variable."
+            )
+        return value
 
     # Naming an audience is what enables OIDC access tokens on `/v1`; empty means
     # API keys only, which is the behaviour every deployment had before this
@@ -136,7 +131,6 @@ class OIDCSettings(BaseModel):
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
-
 
 
 class PasswordResetSettings(BaseModel):
@@ -204,9 +198,123 @@ class LocalAuthSettings(BaseModel):
     # Self-service password reset (ADR 0049): disabled until the deployment
     # names a mail server and says so. Nested because a reset is a local-auth
     # concern — it exists to recover exactly the credential local auth mints.
-    password_reset: PasswordResetSettings = Field(
-        default_factory=PasswordResetSettings
+    password_reset: PasswordResetSettings = Field(default_factory=PasswordResetSettings)
+
+
+class IdPClientSettings(BaseModel):
+    """A first-party client the house issuer will answer (ADR 0068).
+
+    Registered server-side on purpose: a public registry is how client
+    squatting starts, and every client here is software this deployment ships.
+    The redirect is a *path* on this origin rather than an absolute URL — the
+    origin is the issuer's, and one deployment serves one origin, so the full
+    URL is derived at authorize time and cannot be made to name another host.
+    """
+
+    client_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
+    # e.g. "/chat/login/callback" — validated below.
+    redirect_path: str
+    # Empty means a PKCE-only public client: acceptable because the token
+    # endpoint is advertised at the compose-internal base URL and PKCE is
+    # mandatory, so a stolen code is worthless without the verifier. A secret,
+    # when set, is checked (Basic or post) and makes the client confidential.
+    secret: SecretStr = SecretStr("")
+
+    @field_validator("redirect_path")
+    @classmethod
+    def _is_a_path_here(cls, value: str) -> str:
+        # The same shape `_safe_next` refuses in the login flow: anything not
+        # obviously a path on this origin is rejected rather than repaired,
+        # because a redirect URI we had to fix up is a redirect we did not
+        # understand — and the code lands on whoever controls the URL.
+        if not value.startswith("/") or value.startswith("//") or value.startswith("/\\"):
+            raise ValueError("redirect_path must be an absolute path on this origin")
+        if any(character in value for character in "\r\n\t") or any(
+            ord(character) < 0x20 or ord(character) == 0x7F for character in value
+        ):
+            raise ValueError("redirect_path contains control characters")
+        return value
+
+
+class IdPSettings(BaseModel):
+    """The house issuer: a minimal IdP for browser-facing clients (ADR 0068).
+
+    Discovery, authorization-code + PKCE, an ``id_token``, JWKS, userinfo and
+    ``end_session`` — built on the credential machinery ADR 0046 left as the
+    substrate, whose browser-facing flow this supersedes. Access tokens stay
+    opaque key rows: no JWT is ever validated on the ``/v1`` hot path.
+
+    Off by default, and off means *absent*: the routes are not registered and
+    discovery does not resolve. The management doors — console login, API
+    keys, external OIDC — are not part of the IdP and do not answer to this
+    switch (ADR 0068).
+    """
+
+    enabled: bool = False
+
+    # The URL clients see — the public origin. Every id_token's ``iss`` and
+    # every browser-facing endpoint URL in discovery is built from it, never
+    # from the request: behind a plain-HTTP edge the request arrives as http
+    # while every client knows the deployment as https, and an issuer that
+    # changed with the vantage point would fail validation on one side or the
+    # other. Required when enabled.
+    issuer: str = ""
+
+    # Where the server-to-server endpoints live: token, JWKS, userinfo — the
+    # half of discovery only another backend fetches. Defaults to ``issuer``.
+    # The compose deployment sets it to the gateway's internal address so the
+    # chat's token exchanges, JWKS fetches and userinfo calls never leave the
+    # host and never meet the edge; a caller outside the network that trusted
+    # discovery would simply be unable to reach them. Browser-facing endpoints
+    # (authorize, end_session) are always built from ``issuer``.
+    internal_base_url: str = ""
+
+    # ES256 private key, PEM. The only asymmetric material the gateway holds:
+    # it signs ``id_token``s at login and nothing else, so the JOSE machinery
+    # never approaches the request path (ADR 0068). Required when enabled.
+    signing_key: SecretStr = SecretStr("")
+
+    # Guards the legacy minting endpoints (``POST /auth/token``, ``POST
+    # /auth/revoke``) when the IdP is enabled: a credential only the compose
+    # network's services hold. The IdP's own token endpoint is guarded by
+    # client authentication instead, because it is called by a standard OAuth
+    # client that cannot be taught a custom header. Required when enabled.
+    internal_token: SecretStr = SecretStr("")
+
+    code_ttl_seconds: int = Field(default=60, gt=0, le=600)
+    id_token_ttl_seconds: int = Field(default=600, gt=0)
+
+    clients: list[IdPClientSettings] = Field(
+        default_factory=lambda: [
+            IdPClientSettings(client_id="cerea", redirect_path="/chat/login/callback")
+        ]
     )
+
+    @field_validator("issuer", "internal_base_url")
+    @classmethod
+    def _absolute_and_stripped(cls, value: str) -> str:
+        return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def _enabled_requires_a_working_issuer(self) -> IdPSettings:
+        if not self.enabled:
+            return self
+        missing = [
+            name
+            for name, value in (
+                ("GATEWAY_IDP__ISSUER", self.issuer),
+                ("GATEWAY_IDP__SIGNING_KEY", self.signing_key.get_secret_value()),
+                ("GATEWAY_IDP__INTERNAL_TOKEN", self.internal_token.get_secret_value()),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError("idp.enabled requires: " + ", ".join(missing))
+        if not self.issuer.startswith(("http://", "https://")):
+            raise ValueError("GATEWAY_IDP__ISSUER must be an absolute http(s) URL")
+        if not self.clients:
+            raise ValueError("idp.enabled requires at least one registered client")
+        return self
 
 
 class EntityMode(StrEnum):
@@ -810,6 +918,7 @@ class Settings(BaseSettings):
     upstream: UpstreamSettings = Field(default_factory=UpstreamSettings)
     oidc: OIDCSettings = Field(default_factory=OIDCSettings)
     local_auth: LocalAuthSettings = Field(default_factory=LocalAuthSettings)
+    idp: IdPSettings = Field(default_factory=IdPSettings)
     redaction: RedactionSettings = Field(default_factory=RedactionSettings)
     extractor: ExtractorSettings = Field(default_factory=ExtractorSettings)
     knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)

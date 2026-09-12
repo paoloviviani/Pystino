@@ -1,6 +1,6 @@
 /**
  * The identity policy (ADR 0048): who may come to exist, which claim names
- * their groups, what an IdP group means here, which local group confers admin.
+ * their groups, what an IdP group means here.
  *
  * This is the console-editable half of OIDC. The connection — issuer, client
  * secret, redirect — stays in the environment on purpose: it is read once at
@@ -8,9 +8,15 @@
  * request path. The policy is what an operator actually changes, so it lives
  * in the append-only `oidc_config` table and lands on every worker within the
  * poll interval the API reports.
+ *
+ * Roles are not part of it (ADR 0069): authorisation is a gateway fact, so an
+ * administrator is made on the Users screen — never by a group claim, and no
+ * longer by naming an admin group here either. That input existed while the
+ * flag was derived from membership; the derivation is gone and the input went
+ * with it.
  */
 
-import { Button, Card, Input, Notice, Select, Spinner } from "@llmp/ui";
+import { Card, Notice, Select, Spinner } from "@llmp/ui";
 import { useEffect, useState } from "react";
 import { useOidcPolicy, useUpdateOidcPolicy } from "../lib/admin";
 import type { OidcPolicyInput } from "../lib/types";
@@ -27,15 +33,11 @@ export function ProvisioningPolicySection() {
   // submitted as a whole.
   const [autoProvision, setAutoProvision] = useState(true);
   const [unknownPolicy, setUnknownPolicy] = useState<"refuse" | "create_inactive">("refuse");
-  const [adminGroups, setAdminGroups] = useState("");
-  const [adminGroupsSaved, setAdminGroupsSaved] = useState("");
 
   useEffect(() => {
     if (!policy.data) return;
     setAutoProvision(policy.data.auto_provision);
     setUnknownPolicy(policy.data.unknown_user_policy);
-    setAdminGroups(policy.data.admin_groups.join(", "));
-    setAdminGroupsSaved(policy.data.admin_groups.join(", "));
   }, [policy.data]);
 
   const put = (body: OidcPolicyInput, ok: string) =>
@@ -106,33 +108,6 @@ export function ProvisioningPolicySection() {
           <option value="create_inactive">Create disabled, awaiting approval</option>
         </Select>
       )}
-
-      <Input
-        label="Administrator groups"
-        value={adminGroups}
-        onChange={(event) => setAdminGroups(event.target.value)}
-        hint="Local group names, comma-separated. Membership of any of them grants
-          admin, in both directions: leaving the group removes it."
-      />
-      <div>
-        <Button
-          variant="primary"
-          disabled={adminGroups === adminGroupsSaved}
-          onClick={() =>
-            put(
-              {
-                admin_groups: adminGroups
-                  .split(",")
-                  .map((name) => name.trim())
-                  .filter((name) => name !== ""),
-              },
-              "Administrator groups updated",
-            )
-          }
-        >
-          Save administrator groups
-        </Button>
-      </div>
     </div>
   );
 }

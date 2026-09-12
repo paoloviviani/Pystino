@@ -28,7 +28,7 @@ from gateway.models import (
     Group,
     Membership,
     MembershipSource,
-    OIDCPolicyConfig,
+    User,
 )
 from joserfc.jwk import RSAKey
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -55,21 +55,6 @@ async def _granted_by_hand(
         await db.commit()
         await db.refresh(group)
         return group
-
-
-async def _admin_groups(
-    app: FastAPI, session_factory: async_sessionmaker[AsyncSession], *names: str
-) -> None:
-    """Name the local groups that confer admin, the way the console does.
-
-    Through the ``oidc_config`` row and the resolver's own poll rather than by
-    reaching into the policy object, so the test exercises the path an operator
-    actually uses (ADR 0048).
-    """
-    async with session_factory() as db:
-        db.add(OIDCPolicyConfig(admin_groups=list(names), reason="test"))
-        await db.commit()
-    await app.state.oidc_policy.refresh_once()
 
 
 class TestIdentity:
@@ -150,8 +135,17 @@ class TestIdentity:
         assert response.json()["groups"] == ["dormant", "research"]
 
 
-class TestAdminComesFromMemberships:
-    async def test_a_hand_granted_admin_group_confers_admin(
+class TestAdminIsAFlagNotADerivation:
+    """The flag is a console fact on the `/v1` surface too (ADR 0069).
+
+    This class was `TestAdminComesFromMemberships`, and asserted the opposite:
+    that membership of a named admin group *was* the flag, computed from
+    effective membership so a hand grant survived a login. ADR 0069 removed
+    the derivation instead of extending it — no claim, group or setting moves
+    `is_admin`, and what the console set stays set.
+    """
+
+    async def test_a_console_granted_admin_is_reported_with_their_groups(
         self,
         bearer_app: FastAPI,
         client: Any,
@@ -159,19 +153,22 @@ class TestAdminComesFromMemberships:
         signing_key: RSAKey,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """The token names only "research"; the admin group was granted here.
+        """The flag and the memberships are read from the same row, independently.
 
-        This is the ADR 0057 fault reintroduced on purpose: an implementation
-        that answers from the directory's groups — the claim, or equivalently
-        the memberships whose source is ``oidc`` — reports ``is_admin: false``
-        for an administrator, and locks out exactly the person ADR 0056's
-        escape hatch exists for.
+        The token names only "research"; the extra group was granted here and
+        still shows in `groups` (effective membership, not the claim), while
+        `is_admin` reads the flag the console set. The old test needed these
+        to be *one* derivation; they never needed to be.
         """
-        await _admin_groups(bearer_app, session_factory, "platform-admins")
+        async with session_factory() as db:
+            row = await db.get(User, seeded.user.id)
+            assert row is not None
+            row.is_admin = True
+            await db.commit()
 
         before = await client.get("/v1/me", headers=auth(make_token(signing_key)))
         assert before.status_code == 200, before.text
-        assert before.json()["is_admin"] is False, "not an admin until granted"
+        assert before.json()["is_admin"] is True, "the console's flag is the answer"
 
         await _granted_by_hand(session_factory, seeded, "platform-admins")
 
@@ -184,7 +181,7 @@ class TestAdminComesFromMemberships:
         assert body["is_admin"] is True
         assert body["groups"] == ["platform-admins", "research"]
 
-    async def test_the_directory_still_revokes_the_admin_it_granted(
+    async def test_a_claim_never_grants_or_revokes_admin(
         self,
         bearer_app: FastAPI,
         client: Any,
@@ -192,27 +189,32 @@ class TestAdminComesFromMemberships:
         signing_key: RSAKey,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """Effective memberships are not "whatever was ever true".
+        """The directory naming an admin group says nothing about this deployment.
 
-        A group the directory granted and then withdrew is gone from the set,
-        so the flag follows it down — otherwise reading memberships instead of
-        the claim would turn an admin grant into a permanent one.
+        Before ADR 0069 the same token below reported `is_admin: true`, then
+        `false` when the group was withdrawn — the flag following the claim in
+        both directions. The claim now moves nothing, which is also what makes
+        the console's grant durable rather than a cache of the directory's.
         """
-        await _admin_groups(bearer_app, session_factory, "platform-admins")
-
         granted = await client.get(
             "/v1/me",
             headers=auth(make_token(signing_key, groups=["research", "platform-admins"])),
         )
         assert granted.status_code == 200, granted.text
-        assert granted.json()["is_admin"] is True
+        assert granted.json()["is_admin"] is False, "no claim confers admin"
+
+        async with session_factory() as db:
+            row = await db.get(User, seeded.user.id)
+            assert row is not None
+            row.is_admin = True
+            await db.commit()
 
         withdrawn = await client.get(
             "/v1/me", headers=auth(make_token(signing_key, groups=["research"]))
         )
         assert withdrawn.status_code == 200, withdrawn.text
         body = withdrawn.json()
-        assert body["is_admin"] is False
+        assert body["is_admin"] is True
         assert body["groups"] == ["research"]
 
 

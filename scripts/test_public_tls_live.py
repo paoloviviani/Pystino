@@ -180,7 +180,7 @@ def main() -> int:
             # identities the gateway then trusts.
             8080: "the development Keycloak",
             9000: "Keycloak's management port",
-            # The Playwright server (docker-compose.playwright.yml, docs/browser.md).
+            # The Playwright server (the chat repository's docker-compose.playwright.yml).
             # Listed for the same reason as Keycloak: it publishes nothing today,
             # so this skips, and it becomes a real check the moment somebody adds
             # a `ports:` line. It is the worst thing in this stack to expose —

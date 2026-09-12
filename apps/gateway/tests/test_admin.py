@@ -19,10 +19,8 @@ from gateway.deps import get_management_user
 from gateway.models import (
     Group,
     GroupModelAccess,
-    GroupSource,
     LimitRule,
     Membership,
-    MembershipSource,
     ModelPrice,
     UsageRecord,
     UsageStatus,
@@ -31,7 +29,6 @@ from gateway.models import (
 from gateway.types import utcnow
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import selectinload
 
 
 def as_user(app: object, user: User) -> None:
@@ -702,10 +699,31 @@ class TestUsersAndUsage:
         assert (await client.get("/api/admin/usage?window_seconds=5")).status_code == 400
 
 
-class TestAdminGroupMapping:
-    """`GATEWAY_OIDC__ADMIN_GROUPS` maps an IdP group onto is_admin."""
+class TestAdminIsAConsoleFact:
+    """Authorisation is a gateway fact: no claim, group or setting moves the flag.
 
-    async def test_membership_grants_admin(self, session: AsyncSession) -> None:
+    ADR 0069 removed the last automatic admin path. Three things follow, and
+    each is a test: the removed setting refuses to start rather than doing
+    nothing; a directory group named `platform-admins` confers nothing; and
+    the console's own grant is durable, because provisioning no longer
+    derives the flag from anything.
+    """
+
+    async def test_the_removed_setting_is_refused_at_startup(self) -> None:
+        """A setting that would silently do nothing is worse than no setting.
+
+        Removed, not deprecated (ADR 0069): an operator who still sets
+        GATEWAY_OIDC__ADMIN_GROUPS is told so at startup, in terms of what to
+        do instead, rather than owning a knob that turns nothing.
+        """
+        import pytest
+        from gateway.config import OIDCSettings
+
+        with pytest.raises(ValueError, match="ADR 0069"):
+            OIDCSettings(admin_groups=["platform-admins"])
+
+    async def test_a_group_claim_never_confers_admin(self, session: AsyncSession) -> None:
+        """The directory authenticates; it never administers."""
         from gateway.config import OIDCSettings
         from gateway.oidc import provision_user
 
@@ -716,102 +734,27 @@ class TestAdminGroupMapping:
             email=None,
             display_name=None,
             group_names=["research", "platform-admins"],
-            settings=OIDCSettings(admin_groups=["platform-admins"]),
-        )
-        await session.commit()
-        assert user.is_admin is True
-
-    async def test_losing_the_group_removes_admin(self, session: AsyncSession) -> None:
-        """Authoritative in both directions, like group membership itself."""
-        from gateway.config import OIDCSettings
-        from gateway.oidc import provision_user
-
-        settings = OIDCSettings(admin_groups=["platform-admins"])
-        await provision_user(
-            session,
-            issuer="https://idp.test",
-            subject="s",
-            email=None,
-            display_name=None,
-            group_names=["platform-admins"],
-            settings=settings,
-        )
-        await session.commit()
-
-        user = await provision_user(
-            session,
-            issuer="https://idp.test",
-            subject="s",
-            email=None,
-            display_name=None,
-            group_names=["research"],
-            settings=settings,
+            settings=OIDCSettings(),
         )
         await session.commit()
         assert user.is_admin is False
 
-    async def test_unconfigured_means_the_flag_is_never_touched(
-        self, session: AsyncSession
-    ) -> None:
-        """So `gateway seed`'s local admin keeps working.
-
-        `admin_groups` has to be emptied **explicitly** now. It used to default
-        to nothing, which made "the directory does not decide admin" the
-        accidental default; it now defaults to `platform-admins`, so a
-        deployment that wants the flag left alone says so. The rule this test
-        guards is unchanged — an empty setting means login never writes
-        `is_admin` — only the way of reaching that state.
-        """
-        from gateway.config import OIDCSettings
-        from gateway.oidc import provision_user
-
-        user = await provision_user(
-            session,
-            issuer="https://idp.test",
-            subject="s",
-            email=None,
-            display_name=None,
-            group_names=["research"],
-            settings=OIDCSettings(admin_groups=[]),
-        )
-        user.is_admin = True
-        await session.commit()
-
-        again = await provision_user(
-            session,
-            issuer="https://idp.test",
-            subject="s",
-            email=None,
-            display_name=None,
-            group_names=["research"],
-            settings=OIDCSettings(admin_groups=[]),
-        )
-        await session.commit()
-        assert again.is_admin is True
-
-    async def test_the_console_grants_admin_by_granting_the_group(
+    async def test_the_console_sets_the_flag_directly(
         self,
         app: FastAPI,
         client: httpx.AsyncClient,
         seeded: Seeded,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """The console is authoritative for admin, and this is how.
+        """PATCH writes the flag, and nothing else.
 
-        This test used to assert the opposite — that the change was **refused**
-        when `admin_groups` was set, because writing the flag would be undone
-        at the next login. The observation was right and the remedy was wrong:
-        it made the console useless for the decision an administrator most
-        wants to make there, and it assumed whoever runs the gateway also
-        administers the directory its users come from.
-
-        What happens now is that the grant lands on the thing `is_admin` is
-        *derived* from — a **manual** membership of the admin group — which a
-        directory sync leaves alone (ADR 0057). So it survives the next login
-        rather than being reversed by it.
+        The old machinery granted a manual membership of the admin group so a
+        login would not undo the flag — a workaround for a derivation that no
+        longer exists. What is asserted now is the absence of the workaround
+        as much as the presence of the flag: no membership is created, because
+        no group is what made this person an administrator.
         """
         as_user(app, await make_admin(session_factory, seeded))
-        app.state.settings.oidc.admin_groups = ["platform-admins"]  # type: ignore[attr-defined]
 
         async with session_factory() as db:
             target = User(issuer="https://idp.test", subject="promote-me")
@@ -827,64 +770,75 @@ class TestAdminGroupMapping:
 
         async with session_factory() as db:
             memberships = (
-                (
-                    await db.execute(
-                        select(Membership)
-                        .where(Membership.user_id == target_id)
-                        .options(selectinload(Membership.group))
-                    )
-                )
+                (await db.execute(select(Membership).where(Membership.user_id == target_id)))
                 .scalars()
                 .all()
             )
-            admin_rows = [m for m in memberships if m.group.name == "platform-admins"]
-            assert admin_rows, "no membership of the admin group was created"
-            # The provenance is the whole point: `manual` is what makes the
-            # directory's next sync leave it alone.
-            assert admin_rows[0].source is MembershipSource.MANUAL
+            assert memberships == [], "a group grant is no longer how admin is conferred"
 
-    async def test_admin_the_directory_granted_cannot_be_withdrawn_here(
-        self,
-        app: FastAPI,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        """The asymmetry, and it is honest rather than incidental.
+    async def test_the_flag_survives_every_login(self, session: AsyncSession) -> None:
+        """The old failure this replaces: login derived the flag and undid the grant.
 
-        Granting always works. Revoking works only on a grant this console
-        made: a membership the *directory* granted comes back at the next
-        login, so removing it here would appear to work and then silently
-        undo itself.
+        `test_the_console_grants_admin_by_granting_the_group` worked around
+        that by making the grant land on what the flag was derived *from*.
+        With the derivation gone (ADR 0069), the plain flag is durable and the
+        workaround is gone with it.
         """
-        as_user(app, await make_admin(session_factory, seeded))
-        app.state.settings.oidc.admin_groups = ["platform-admins"]  # type: ignore[attr-defined]
+        from gateway.config import OIDCSettings
+        from gateway.oidc import provision_user
 
-        async with session_factory() as db:
-            group = Group(name="platform-admins", source=GroupSource.OIDC)
-            db.add(group)
-            await db.flush()
-            target = User(
-                issuer="https://idp.test", subject="theirs", email="theirs@example.org"
-            )
-            db.add(target)
-            await db.flush()
-            db.add(
-                Membership(
-                    user_id=target.id,
-                    group_id=group.id,
-                    source=MembershipSource.OIDC,
-                )
-            )
-            target.is_admin = True
-            await db.commit()
-            target_id = target.id
-
-        response = await client.patch(
-            f"/api/admin/users/{target_id}", json={"is_admin": False}
+        settings = OIDCSettings()
+        user = await provision_user(
+            session,
+            issuer="https://idp.test",
+            subject="s",
+            email=None,
+            display_name=None,
+            group_names=["research"],
+            settings=settings,
         )
-        assert response.status_code == 400, response.text
-        assert response.json()["error"]["code"] == "admin_granted_by_directory"
-        # And it names where to go instead, because "refused" alone is useless.
-        assert "platform-admins" in response.json()["error"]["message"]
+        user.is_admin = True
+        await session.commit()
 
+        again = await provision_user(
+            session,
+            issuer="https://idp.test",
+            subject="s",
+            email=None,
+            display_name=None,
+            group_names=["research", "anything-else"],
+            settings=settings,
+        )
+        await session.commit()
+        assert again.is_admin is True
+
+    async def test_unconfigured_means_the_flag_is_never_touched(
+        self, session: AsyncSession
+    ) -> None:
+        """The rule this test has always guarded, now the only behaviour."""
+        from gateway.config import OIDCSettings
+        from gateway.oidc import provision_user
+
+        user = await provision_user(
+            session,
+            issuer="https://idp.test",
+            subject="s",
+            email=None,
+            display_name=None,
+            group_names=["research"],
+            settings=OIDCSettings(),
+        )
+        user.is_admin = True
+        await session.commit()
+
+        again = await provision_user(
+            session,
+            issuer="https://idp.test",
+            subject="s",
+            email=None,
+            display_name=None,
+            group_names=["research"],
+            settings=OIDCSettings(),
+        )
+        await session.commit()
+        assert again.is_admin is True

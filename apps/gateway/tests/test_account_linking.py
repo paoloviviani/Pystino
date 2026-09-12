@@ -306,25 +306,35 @@ class TestWhatAdoptionChanges:
         user = await sign_in(session, groups=["research"])
         assert {m.group.name for m in user.memberships} == {"finance", "research"}
 
-    async def test_admin_follows_the_directory_when_admin_groups_are_configured(
+    async def test_adoption_leaves_the_admin_flag_alone(
         self, session: AsyncSession
     ) -> None:
-        """The lockout worth knowing about before turning the switch on.
+        """The lockout ADR 0056 warned about is gone, not managed.
 
-        A local admin adopted by a directory that does not put them in an
-        admin group loses the flag on that login. The recovery is the local
-        door, which is exactly what this design keeps working: ``gateway
-        passwd`` and the administrator's own edit still treat the row as local.
+        A local admin adopted by a directory used to lose the flag on that
+        login, because provisioning derived the flag from admin-group
+        membership and the directory did not name one — the recovery was the
+        local door. ADR 0069 removed the derivation: adoption changes *who
+        can sign in as this row*, never what the row may do, so the flag
+        survives every adoption and every login.
         """
         local = await make_local_user(session, is_admin=True)
-        policy = OIDCPolicy(
-            auto_provision=True,
-            unknown_user_policy="refuse",
-            groups_claim="groups",
-            admin_groups=["ops"],
-        )
-        user = await sign_in(session, groups=["research"], policy=policy)
+        user = await sign_in(session, groups=["research"])
 
+        assert user.id == local.id
+        assert user.is_admin is True
+
+    async def test_the_directory_cannot_grant_admin_by_adopting(
+        self, session: AsyncSession
+    ) -> None:
+        """The inverse of the lockout, and the reason removal is safe.
+
+        Adoption matches on a verified address, so the account a directory
+        adopts carries whatever the console gave it — and a directory group
+        named "ops" gives it nothing it did not already have.
+        """
+        local = await make_local_user(session, is_admin=False)
+        user = await sign_in(session, groups=["ops"])
         assert user.id == local.id
         assert user.is_admin is False
 

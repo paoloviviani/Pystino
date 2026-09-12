@@ -436,9 +436,6 @@ class OIDCClient:
         return payload if isinstance(payload, dict) else {}
 
 
-
-
-
 # The issuer of an account whose door is a password (ADR 0043). Spelled out
 # here because this module now has to *avoid* matching it as a directory.
 _LOCAL_ISSUER = "local"
@@ -519,11 +516,7 @@ async def _adopt_local_account(
     # Local subjects are casefolded addresses: that is what `local_login`
     # looks up, so it is what a link has to agree with.
     address = email.strip().casefold()
-    local = (
-        await session.execute(
-            _identity_select(_LOCAL_ISSUER, address)
-        )
-    ).scalar_one_or_none()
+    local = (await session.execute(_identity_select(_LOCAL_ISSUER, address))).scalar_one_or_none()
     if local is None:
         # Not a refusal. There is simply no local account by that name, and
         # the caller goes on to create the ordinary new one.
@@ -553,9 +546,7 @@ async def _adopt_local_account(
         return None
 
     session.add(
-        UserIdentity(
-            user_id=local.id, issuer=issuer, subject=subject, matched_email=address
-        )
+        UserIdentity(user_id=local.id, issuer=issuer, subject=subject, matched_email=address)
     )
     await session.flush()
     logger.info(
@@ -690,9 +681,9 @@ async def provision_user(
 
     # Everything below reads the *effective* membership set, not the token's
     # answer. They are no longer the same thing: a manual grant is a real
-    # membership, so it confers admin through `admin_groups` and it is a group
-    # the person may bill. Reading the token here would have told a
-    # manually-added user that the group they are in is not one of theirs.
+    # membership, and it is a group the person may bill. Reading the token
+    # here would have told a manually-added user that the group they are in is
+    # not one of theirs.
     await session.refresh(user, attribute_names=["memberships"])
     effective = [membership.group for membership in user.memberships]
 
@@ -701,16 +692,12 @@ async def provision_user(
     # still have. Doing it the other way round leaves a single-group user with no
     # default at all, and therefore unable to make a request until they call the
     # management API.
-    # Admin follows group membership when configured, in both directions. Left
-    # unconfigured, the flag is never touched here and stays a manual decision —
-    # which is what keeps `gateway seed`'s local admin usable.
-    # The group names arriving here are already *mapped* (IdP name to local
-    # name, ADR 0048), so admin compares against what a group is called here.
-    admin_groups = policy.admin_groups if policy is not None else settings.admin_groups
-    if admin_groups:
-        held = {group.name for group in effective}
-        user.is_admin = bool(held & set(admin_groups))
-
+    # The admin flag is never touched here (ADR 0069): authorisation is a
+    # gateway fact, the directory's sync grants no roles, and an administrator
+    # is made in the console or by `gateway passwd --admin`. Deriving the flag
+    # from an admin-group claim was the one automatic path, and it is gone —
+    # which is also what makes the console's own grant durable rather than
+    # something the next login could reverse.
     valid_group_ids = {group.id for group in effective}
     if (
         user.default_billing_group_id is not None
@@ -832,30 +819,25 @@ def _claims_diverge(
 
     When the directory does not set membership on every login there is nothing
     for a group difference to mean, so the comparison is skipped entirely.
-    ``is_admin`` is still checked, and against the *whole* held set, because
-    that flag is derived from effective membership and a manual grant into an
-    admin group has to reach it.
+    ``is_admin`` is not compared at all (ADR 0069): the flag is a console fact
+    no claim can move, so there is nothing a token could diverge from.
     """
+    if group_sync is not GroupSync.EVERY_LOGIN:
+        return False
     held = {membership.group.name for membership in user.memberships}
-    if group_sync is GroupSync.EVERY_LOGIN:
-        claimed = set(group_names)
-        granted = {
-            membership.group.name
-            for membership in user.memberships
-            if membership.source is MembershipSource.OIDC
-        }
-        # Exactly the two things a sync would do, asked separately rather than
-        # by comparing two sets for equality. Equality was wrong once
-        # provenance existed: a user with one administrator-granted group
-        # differs from their token *permanently*, so every request would have
-        # re-provisioned — a write on the hot path, and one that would then try
-        # to strip the group the administrator granted.
-        if claimed - held or granted - claimed:
-            return True
-    admin_groups = policy.admin_groups if policy is not None else settings.admin_groups
-    if admin_groups:
-        return user.is_admin != bool(held & set(admin_groups))
-    return False
+    claimed = set(group_names)
+    granted = {
+        membership.group.name
+        for membership in user.memberships
+        if membership.source is MembershipSource.OIDC
+    }
+    # Exactly the two things a sync would do, asked separately rather than
+    # by comparing two sets for equality. Equality was wrong once
+    # provenance existed: a user with one administrator-granted group
+    # differs from their token *permanently*, so every request would have
+    # re-provisioned — a write on the hot path, and one that would then try
+    # to strip the group the administrator granted.
+    return bool(claimed - held or granted - claimed)
 
 
 async def _resolve_groups(
@@ -918,9 +900,7 @@ async def _reconcile_memberships(session: AsyncSession, user: User, groups: list
     for group in groups:
         if group.id not in already_present:
             session.add(
-                Membership(
-                    user_id=user.id, group_id=group.id, source=MembershipSource.OIDC
-                )
+                Membership(user_id=user.id, group_id=group.id, source=MembershipSource.OIDC)
             )
 
     await session.flush()

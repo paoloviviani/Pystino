@@ -575,7 +575,6 @@ export interface OidcPolicy {
   auto_provision: boolean;
   unknown_user_policy: "refuse" | "create_inactive";
   groups_claim: string;
-  admin_groups: string[];
   group_mappings: { idp: string; local: string }[];
   source: "console" | "environment";
   /** Which fields a stored row decides; the rest are the environment's. */
@@ -597,7 +596,6 @@ export interface OidcPolicyInput {
   auto_provision?: boolean;
   unknown_user_policy?: "refuse" | "create_inactive";
   groups_claim?: string;
-  admin_groups?: string[];
   group_mappings?: { idp: string; local: string }[];
   reason?: string;
 }

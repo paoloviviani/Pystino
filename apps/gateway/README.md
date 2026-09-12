@@ -14,6 +14,7 @@ per-group model availability and a pluggable redaction layer.
 | `POST /v1/images/generations` | API key | Image generation, billed per picture or per token depending on the model |
 | `GET /v1/models` | API key | Models the caller may use, by group or personal grant |
 | `GET /auth/login`, `/auth/callback` | — | OIDC authorization-code login |
+| `/.well-known/openid-configuration`, `/oauth/*` | — | The house IdP (ADR 0068): discovery, authorization-code + PKCE, token, JWKS, userinfo, end_session. Only registered first-party clients; off unless `GATEWAY_IDP__ENABLED` — [docs/idp.md](../docs/idp.md) |
 | `GET /api/me` | session cookie | Identity, groups, default billing group |
 | `PUT /api/me/default-billing-group` | session cookie | Users change their own billing group |
 | `GET|POST|DELETE /api/me/keys` | session cookie | Mint and revoke API keys |

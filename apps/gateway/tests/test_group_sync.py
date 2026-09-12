@@ -251,32 +251,35 @@ class TestSyncModes:
 class TestDerivedState:
     """`is_admin` and the default billing group read what the person holds."""
 
-    async def test_a_manual_grant_into_an_admin_group_confers_admin(
-        self, session: AsyncSession
-    ) -> None:
-        """Previously it did not, because admin was computed from the token.
+    async def test_no_group_confers_admin(self, session: AsyncSession) -> None:
+        """ADR 0069: the flag is a console fact, not a derivation.
 
-        This is the escape hatch for the lockout ADR 0056 warns about: an
-        administrator can make somebody an administrator by putting them in
-        the admin group, and the next login will not undo it.
+        This test used to assert the opposite — that a manual grant into the
+        admin group *did* confer admin, as the escape hatch for the lockout
+        ADR 0056 warns about. The derivation it relied on is gone: no claim
+        names the flag, so no group carries it either, and an administrator
+        is made in the console or by `gateway passwd --admin`.
         """
-        policy = policy_with(admin_groups=["ops"])
-        user = await sign_in(session, groups=["research"], policy=policy)
+        user = await sign_in(session, groups=["research"])
         assert user.is_admin is False
 
         await add_by_hand(session, user, "ops")
-        user = await sign_in(session, groups=["research"], policy=policy)
-        assert user.is_admin is True
-
-    async def test_the_directory_still_revokes_admin_it_granted(
-        self, session: AsyncSession
-    ) -> None:
-        policy = policy_with(admin_groups=["ops"])
-        user = await sign_in(session, groups=["ops"], policy=policy)
-        assert user.is_admin is True
-
-        user = await sign_in(session, groups=["research"], policy=policy)
+        user = await sign_in(session, groups=["research", "ops"])
         assert user.is_admin is False
+
+    async def test_login_never_moves_the_admin_flag(self, session: AsyncSession) -> None:
+        """The flag set here stays set, whatever the directory says next.
+
+        This used to be "the directory still revokes admin it granted" — true
+        only while the flag was derived from membership. With derivation gone
+        the durable thing is the flag itself, in *both* directions.
+        """
+        user = await sign_in(session, groups=["ops"])
+        user.is_admin = True
+        await session.commit()
+
+        user = await sign_in(session, groups=["research"])
+        assert user.is_admin is True
 
     async def test_a_sole_manual_group_becomes_the_default_billing_group(
         self, session: AsyncSession
@@ -358,14 +361,18 @@ class TestDivergenceOnTheRequestPath:
 class TestTheApiSurface:
     """The policy through the management API — the console's half of the wiring."""
 
-    async def test_a_provider_defaults_to_every_login(
+    async def test_a_provider_defaults_to_first_login(
         self,
         app: object,
         client: httpx.AsyncClient,
         seeded: Seeded,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """What this gateway has always done, for a client that says nothing."""
+        """The sync stance of ADR 0069: the directory answers once.
+
+        A client that wants the directory to keep answering chooses
+        every_login explicitly — the stance is the default, not a monopoly.
+        """
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
             "/api/admin/identity-providers",
@@ -377,7 +384,7 @@ class TestTheApiSurface:
             },
         )
         assert response.status_code == 201
-        assert response.json()["group_sync"] == "every_login"
+        assert response.json()["group_sync"] == "first_login"
 
     async def test_it_can_be_chosen_at_creation_and_changed(
         self,
