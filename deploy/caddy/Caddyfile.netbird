@@ -2,46 +2,54 @@
 # edge's job.
 #
 #   cerea.pviviani.eu ──▶ NetBird reverse proxy (TLS, public) ──▶ this box's
-#   127.0.0.1:8443 ──▶ Caddy here ──▶ gateway:8000 or chat:3000 by path
+#   :8443 ──▶ Caddy here ──▶ gateway:8000 or chat:3000 by path
 #
-# The four things that differ from the TLS proxy shapes, and why:
+# Four things about the shape, and why:
 #
-#   * the site address has no scheme and `auto_https off` is set — Caddy
-#     must not try to obtain a certificate, because the edge already holds
-#     the one the world sees;
+#   * `auto_https disable_redirects`, not `off`: the :8443 site must stay
+#     plain (TLS is upstream's), but the second site below needs Caddy to
+#     still manage certificates. `off` would disable both; this keeps the
+#     certificates and drops only the http→https redirects.
 #   * the minting paths are refused here as defence in depth (ADR 0068's
 #     network classes: discovery advertises the compose-internal token URL
 #     to every standards client, so this file is the second layer, not the
 #     first);
-#   * /chat reaches the chat with its prefix stripped, exactly as the TLS
-#     shape's conf.d-chat file does — SvelteKit bakes the base path in at
-#     build time, so the server sees `/`;
-#   * everything else goes to the gateway with streaming flushed through.
+#   * /chat reaches the chat WITH its prefix intact. `handle`, not
+#     `handle_path`: SvelteKit bakes APP_BASE=/chat into the build, so the
+#     server genuinely serves at /chat/..., and stripping the prefix hands
+#     it `/`, which it does not have a route for — a flat 404 on the page
+#     and no error anywhere explaining why. Measured on the container
+#     directly: `/` answers 404 and `/chat/` answers the application.
+#   * the second site exists for the box's own services: this box cannot
+#     hairpin to its own public name (the edge does not answer its own
+#     address from behind the site's NAT), and the *chat's server side*
+#     must fetch discovery from the issuer URL, which is that name. The
+#     proxy therefore also answers as cerea.pviviani.eu inside the compose
+#     network (the network alias in docker-compose.edge.yml), over TLS from
+#     its own internal CA — because the issuer URL is https everywhere and
+#     a plain answer to an https scheme is a handshake failure, not a
+#     fallback. The only client of that listener is the chat, which is
+#     handed the CA root (NODE_EXTRA_CA_CERTS in the chat overlay); TLS
+#     inside the net is transport here, not trust.
 {
-	auto_https off
+	auto_https disable_redirects
 }
 
-:8443 {
+(origin-routes) {
 	@minting path /oauth/token /auth/token /auth/revoke
 
 	# Minting surface, refused at the edge (ADR 0068). 404 rather than 401:
 	# a prober learns nothing either way, and the endpoint that does exist
 	# answers on the compose network, not here. A `handle`, not a bare
-	# `respond` — Caddy sorts directives into routes, and a bare respond with
-	# a named matcher landed *after* the catch-all handle, which is a refusal
-	# nobody can reach. As the first handle block it is the first thing
-	# evaluated, and handle blocks are mutually exclusive.
+	# `respond` — Caddy sorts directives into routes, and a bare respond
+	# with a named matcher landed *after* the catch-all handle, which is a
+	# refusal nobody can reach. As the first handle block it is the first
+	# thing evaluated, and handle blocks are mutually exclusive.
 	handle @minting {
 		respond 404
 	}
 
-	# The chat, WITH its prefix intact. `handle`, not `handle_path`: the
-	# opposite of the usual "serve this under a prefix" — SvelteKit bakes
-	# APP_BASE=/chat into the build, so the server genuinely serves at
-	# /chat/..., and stripping the prefix hands it `/`, which it does not
-	# have a route for: a flat 404 on the page and no error anywhere
-	# explaining why. Measured on the container directly: `/` answers 404
-	# and `/chat/` answers the application.
+	# The chat, with its prefix intact (see above).
 	handle /chat/* {
 		reverse_proxy chat:3000 {
 			# Chat responses are server-sent events, and Caddy's own flush
@@ -52,18 +60,31 @@
 		}
 	}
 
-	# A person typing the bare `/chat` gets a 404 otherwise: `/chat/*` matches
-	# the prefix *and a slash*, and the path with no trailing slash is not that.
+	# A person typing the bare `/chat` gets a 404 otherwise.
 	redir /chat /chat/
 
 	handle {
 		reverse_proxy gateway:8000 {
-			# `-1` means flush every write straight through instead of buffering.
-			# Caddy already does this when it recognises text/event-stream, but
-			# every /v1 surface here can stream and the recogniser is a
-			# content-type match; stating it removes the question. Buffering a
-			# stream produces no error — the bytes are all correct and all late.
+			# `-1` means flush every write straight through instead of
+			# buffering. Caddy already does this when it recognises
+			# text/event-stream, but every /v1 surface here can stream and
+			# the recogniser is a content-type match; stating it removes the
+			# question. Buffering a stream produces no error — the bytes are
+			# all correct and all late.
 			flush_interval -1
 		}
 	}
+}
+
+# The edge's hop: plain HTTP, TLS already handled upstream.
+:8443 {
+	import origin-routes
+}
+
+# The compose-internal answer to the public name. Port 443 because the URLs
+# clients hold carry no port; TLS from Caddy's internal CA, whose root the
+# chat trusts by mount.
+cerea.pviviani.eu {
+	tls internal
+	import origin-routes
 }
