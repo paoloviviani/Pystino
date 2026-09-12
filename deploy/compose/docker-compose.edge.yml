@@ -43,17 +43,32 @@ services:
     image: caddy:2.11-alpine
     restart: unless-stopped
     ports:
+      # 443 is the *internal* TLS listener: the box's own services resolve
+      # the public name to this proxy (the alias below) and speak https to
+      # it, because the issuer URL is https everywhere. The certificate is
+      # Caddy's internal CA, whose root the chat trusts by mount — this is
+      # transport inside the compose network, not a second public door.
+      # 8443 is the edge's plain-HTTP hop.
+      #
       # **0.0.0.0, by the operator's decision.** The fourth ground rule says
       # loopback-only; the amendment this box adds is a fact and not an
       # exception to argue: the box holds no routable address — its LAN
       # address is behind the site's NAT and the world's only way in is the
       # NetBird edge — and the edge's reverse-proxy peers reach this box over
       # paths a loopback bind does not cover. The public act remains the
-      # edge's TLS; what is published here answers on a box the internet
-      # cannot dial. `scripts/test_public_tls_live.py` loses its teeth on a
+      # edge's TLS. `scripts/test_public_tls_live.py` loses its teeth on a
       # shape like this and is not run against it; the firewall that matters
       # is the site's, not this host's.
+      - "443:443"
       - "8443:8443"
+    networks:
+      default:
+        # This box cannot hairpin to its own public name, and services
+        # inside the network must still fetch from the issuer URL (the
+        # chat's discovery is the one that matters). The alias answers that
+        # name on the compose network, at the internal TLS listener above.
+        aliases:
+          - cerea.pviviani.eu
     environment:
       # No PUBLIC_ORIGIN here on purpose: the Caddyfile.netbird site address
       # is a bare :8443, because naming the https origin would make Caddy try

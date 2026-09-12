@@ -46,7 +46,11 @@ deploy/.env
 paseo.json
 
 # Self-signed material and Caddy state, if either is ever written outside a volume.
-deploy/tls/
+deploy/tls/*
+# The internal CA's *root certificate* is public material — clients trust by
+# mount — so it is tracked; the private material never lands in this
+directory.
+!deploy/tls/caddy-root.crt
 
 # The pnpm store, left behind when the JS toolchain is run in a container
 # (there is no node on the deployment host). Not a build output — a cache.

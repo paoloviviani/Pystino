@@ -97,9 +97,6 @@ services:
         APP_BASE: /chat
         PUBLIC_APP_NAME: ${CHAT_APP_NAME:-Cerea}
     restart: unless-stopped
-    depends_on:
-      chat-mongo:
-        condition: service_healthy
     environment:
       # Configuration arrives as one blob, not as individual variables, because
       # the image's entrypoint runs `dotenv -e /app/.env -c -- node server.js`.
@@ -162,6 +159,24 @@ services:
       # discovery fetch timed out after 3500ms while a direct TLS connection
       # on IPv4 answered instantly. IPv4 first, always, in this container.
       NODE_OPTIONS: --dns-result-order=ipv4first
+      # The issuer URL is https, and on this box the only way the container
+      # can reach it is the proxy's internal TLS listener — whose certificate
+      # comes from Caddy's own CA. This is the same arrangement the TLS-proxy
+      # deployment used: the root is trusted by mount, not by disabling
+      # verification, because a fetch that skips verification is a fetch that
+      # a compromised network element forges. The root is *copied* out of the
+      # caddy-data volume (deploy/tls/caddy-root.crt, after the proxy's first
+      # run) rather than mounted from it, for a permissions reason and a
+      # coupling one: Caddy writes it 0600, which the chat's user cannot
+      # read, and a ro mount of the whole volume would also carry root.key.
+      NODE_EXTRA_CA_CERTS: /etc/ssl/caddy/caddy-root.crt
+    volumes:
+      - ../tls/caddy-root.crt:/etc/ssl/caddy/caddy-root.crt:ro
+    depends_on:
+      chat-mongo:
+        condition: service_healthy
+      proxy:
+        condition: service_healthy
 
 volumes:
   chat-mongo-data:
