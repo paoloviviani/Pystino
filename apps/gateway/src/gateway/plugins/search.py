@@ -245,18 +245,16 @@ def tier_catalogue(plugin: SearchPlugin, descriptions: Mapping[str, str]) -> dic
     group one model rather than another is how an administrator decides which
     depths they may run.
 
-    **Deliberately unpriced, and here is exactly what that costs.** Every entry
-    omits ``pricing``, so ``parse_catalogue`` reports each as an unpriced id
-    and Discover lists it with a ``blocked_reason`` — which means the tiers can
-    be *seen* but not imported with one click; an administrator reads the names
-    off the screen and adds the models by hand. That is the same treatment the
-    local extractor already gets, and it is accepted for the same reason: a
-    plausible-looking rate is the failure this whole feature was shaped to
-    avoid, and the alternative is a number in the ledger with no source.
-
-    The blocked_reason an operator will read ("tick fill missing prices or add
-    the model by hand") is half wrong here — the community price file has no
-    row for a search vendor — and the half that is right is the half they need.
+    **Unpriced, and importable anyway.** Every entry omits ``pricing``, and
+    that is not a gap: the meter for a search is a request count
+    (``LimitMetric.OWN_SEARCH_REQUESTS``), so a rate would multiply nothing —
+    what bounds it is the request ceiling, granted per group like any other
+    access. The importer keys on the ``Search`` tag here and creates the model
+    with no price row, which is why a search tier shows in Discover with no
+    "cannot import" reason while an unpriced *chat* model — where a missing
+    rate really would be a quiet giveaway — still shows one. The two look
+    alike in the catalogue payload and are opposite in the ledger; the tag is
+    what tells them apart.
     """
     return {
         "data": [

@@ -9,8 +9,16 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from conftest import Seeded
-from gateway.models import GroupModelAccess, ModelDef, ModelPrice, PriceSource
+from conftest import UPSTREAM_BASE, Seeded
+from gateway.models import (
+    GroupModelAccess,
+    ModelDef,
+    ModelKind,
+    ModelPrice,
+    PriceSource,
+    Provider,
+    ProviderKind,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
@@ -569,3 +577,113 @@ class TestImport:
                 json={"models": []},
             )
         ).status_code == 400
+
+
+class TestSearchTierImport:
+    """A search backend's tiers, discovered and imported without a price.
+
+    A search vendor publishes no ``/models`` and no rate: the plugin answers
+    Discover from itself (``tier_catalogue``), and the tier's meter is a
+    request count, so a price row would multiply nothing. These tests hold the
+    line on both halves — the tier imports where an unpriced chat model still
+    cannot, and nothing is priced.
+    """
+
+    @pytest.fixture
+    async def search_provider(
+        self,
+        client: httpx.AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        seeded: Seeded,
+    ):
+        from gateway.secrets import SecretBox, hint_for
+
+        async with session_factory() as session:
+            key = "search-key"
+            provider = Provider(
+                name="linkup",
+                base_url=UPSTREAM_BASE,
+                api_key_encrypted=SecretBox(
+                    ["test-encryption-key-not-for-production"]
+                ).encrypt(key),
+                api_key_hint=hint_for(key),
+                plugin="linkup",
+                kind=ProviderKind.SEARCH,
+            )
+            session.add(provider)
+            await session.commit()
+            return provider.id
+
+    @pytest.mark.asyncio
+    async def test_tiers_are_listed_importable_and_unpriced(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        search_provider,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.get(
+            "/api/admin/models/discover?provider_id=" + str(search_provider)
+        )
+        assert response.status_code == 200, response.text
+        rows = response.json()["available"]
+        tiers = {row["upstream_model"]: row for row in rows}
+        assert set(tiers) == {"flash", "fast", "standard", "deep"}
+        for tier in tiers.values():
+            assert tier["kind"] == "search"
+            # Importable: the meter is a request count, so there is nothing
+            # the absence of a rate could give away.
+            assert tier["blocked_reason"] is None
+            assert tier["input_per_mtok"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_tier_imports_with_no_price_row(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        search_provider,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(search_provider),
+            json={"models": [{"upstream_model": "deep"}]},
+        )
+        assert response.status_code == 201, response.text
+        result = response.json()["results"][0]
+        assert result["imported"] is True
+        assert result["priced"] is False
+
+        async with session_factory() as session:
+            model = (
+                await session.execute(select(ModelDef).where(ModelDef.name == "deep"))
+            ).scalar_one()
+            assert model.kind == ModelKind.SEARCH
+            prices = (
+                await session.execute(select(ModelPrice).where(ModelPrice.model_id == model.id))
+            ).scalars().all()
+        assert prices == []
+
+    @pytest.mark.asyncio
+    async def test_an_unpriced_chat_model_still_cannot_import(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        search_provider,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The search exception is the meter's, not the catalogue's: a model
+        this provider lists without the Search tag and without a price is
+        still refused, because a cost of zero would be a quiet giveaway."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(search_provider),
+            json={"models": [{"upstream_model": "not-a-tier"}]},
+        )
+        result = response.json()["results"][0]
+        assert result["imported"] is False
+        assert result["reason"] == "not offered by the provider"

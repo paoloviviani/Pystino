@@ -715,10 +715,14 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
     },
     {
       key: "price",
-      header: "Price / Mtok",
+      header: "Price",
       numeric: true,
       render: (row) =>
-        row.input_per_mtok && row.currency ? (
+        row.kind === "search" ? (
+          // A search tier is metered per request, never per token — there is
+          // no rate to show, and a dash would read as "unknown".
+          <span className={MUTED}>per request</span>
+        ) : row.input_per_mtok && row.currency ? (
           <>
             {`${formatMoney(row.input_per_mtok, row.currency, { exact })} / ${formatMoney(
               row.output_per_mtok ?? "0",
@@ -739,6 +743,10 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
         ),
     },
   ];
+
+  const searchColumns: Column<DiscoveredModel>[] = columns.filter(
+    (column) => column.key !== "context",
+  );
 
   return (
     <Dialog
@@ -833,23 +841,23 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           </Notice>
         ) : null}
 
-        {importModels.data && (
-          <Notice tone="info" title="Import finished">
-            {importModels.data.results.map((result) => (
-              <div key={result.upstream_model}>
-                {result.imported
-                  ? `${result.name} imported${
-                      result.priced
-                        ? result.price_source === "community"
-                          ? " with a community price"
-                          : " with its price"
-                        : ""
-                    }`
-                  : `${result.upstream_model} skipped — ${result.reason}`}
-              </div>
-            ))}
-          </Notice>
-        )}
+            {importModels.data && (
+              <Notice tone="info" title="Import finished">
+                {importModels.data.results.map((result) => (
+                  <div key={result.upstream_model}>
+                    {result.imported
+                      ? `${result.name} imported${
+                          result.priced
+                            ? result.price_source === "community"
+                              ? " with a community price"
+                              : " with its price"
+                            : " — metered per request, no token price"
+                        }`
+                      : `${result.upstream_model} skipped — ${result.reason}`}
+                  </div>
+                ))}
+              </Notice>
+            )}
 
         {discovery.data && (
           <>
@@ -878,13 +886,45 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
               </Notice>
             )}
 
-            <Table
-              columns={columns}
-              rows={discovery.data.available}
-              rowKey={(row) => row.upstream_model}
-              empty="The provider offers nothing that is not already catalogued."
-              caption={`${discovery.data.provider_model_count} models offered by the provider.`}
-            />
+            {/* Two sections, not one list: a search tier and a chat model are
+                different things that answer the same prompt differently — one
+                is metered per request with no rate, the other priced per
+                million tokens. Mixing them made the search tiers look like
+                unpriced models nobody could import. The kind tag on each
+                discovered row is what splits them. */}
+            {(() => {
+              const chatRows = discovery.data.available.filter((row) => row.kind !== "search");
+              const searchRows = discovery.data.available.filter((row) => row.kind === "search");
+              return (
+                <>
+                  <Table
+                    columns={columns}
+                    rows={chatRows}
+                    rowKey={(row) => row.upstream_model}
+                    empty="The provider offers nothing that is not already catalogued."
+                    caption={`${chatRows.length} models offered by the provider.`}
+                  />
+                  {searchRows.length > 0 && (
+                    <div className="mt-4">
+                      <h4 className="mb-1 text-sm font-semibold">Search tiers</h4>
+                      <p className={`${MUTED} mb-2 text-sm`}>
+                        A search backend exposes no model list and no token price — what
+                        this provider calls a model is a depth (Linkup&rsquo;s{" "}
+                        <code className={CODE}>depth</code>, Exa&rsquo;s{" "}
+                        <code className={CODE}>type</code>). Metered per request; bound by
+                        the request ceiling you grant per group.
+                      </p>
+                      <Table
+                        columns={searchColumns}
+                        rows={searchRows}
+                        rowKey={(row) => row.upstream_model}
+                        caption={`${searchRows.length} search tiers offered by the provider.`}
+                      />
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </>
         )}
       </div>

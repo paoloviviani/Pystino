@@ -1009,11 +1009,17 @@ async def discover_models(
     # Listed by the provider, priced by nobody. Shown rather than hidden: with
     # the fill off, these *are* the answer to "what does this provider offer",
     # and hiding them is what made an unticked discovery against OpenAI look
-    # like an endpoint with no models at all. They cannot be imported — an
-    # unpriced model serves happily and records a cost of zero — so each says so.
+    # like an endpoint with no models at all. A search tier is importable all
+    # the same — its meter is a request count (`LimitMetric.OWN_SEARCH_REQUESTS`),
+    # not a token count, so there is nothing to price and nothing to give away:
+    # what it costs is bounded by request ceilings, not by a rate. Every other
+    # unpriced kind still says so and stays refused — an unpriced chat model
+    # serves happily and records a cost of zero, which is a quiet way to give
+    # away money.
     for upstream_id in sorted(set(unpriced) - ANONYMOUS_UNPARSABLE):
         if upstream_id in our_upstream_ids or upstream_id in by_upstream:
             continue
+        kind = kinds.get(upstream_id, ModelKind.CHAT)
         available.append(
             DiscoveredModel(
                 upstream_model=upstream_id,
@@ -1025,8 +1031,10 @@ async def discover_models(
                 # What the catalogue says it is, even with no price to read:
                 # an unpriced OCR model showed as `chat` because a row built
                 # from an id alone has no kind and the default is chat.
-                kind=kinds.get(upstream_id, ModelKind.CHAT).value,
-                blocked_reason=(
+                kind=kind.value,
+                input_modalities=["text"] if kind == ModelKind.SEARCH else [],
+                output_modalities=["text"] if kind == ModelKind.SEARCH else [],
+                blocked_reason=None if kind == ModelKind.SEARCH else (
                     "the provider publishes no price for this model"
                     if fill_missing_prices
                     else "the provider publishes no price — tick “fill missing prices” or "
@@ -1098,7 +1106,10 @@ async def import_models(
 
     A model priced in another currency is **skipped entirely** rather than created
     without a price. An unpriced model serves happily and records a cost of zero,
-    which is a quiet way to give away money.
+    which is a quiet way to give away money — with one exception the meter, not
+    the catalogue, decides: a **search tier** imports without a price, because
+    its meter counts requests and no rate multiplies it. What bounds it is the
+    request ceiling, granted per group like any other access.
 
     ``fill_missing_prices`` must match what the operator was shown: the price
     written here is stamped with who supplied it (`catalogue` or `community`),
@@ -1108,7 +1119,7 @@ async def import_models(
     provider, catalogue_url, api_key = await _catalogue_source(
         session, secrets, provider_id, url, tag
     )
-    by_upstream, _unpriced, filled, _kinds = await _catalogue_with_prices(
+    by_upstream, _unpriced, filled, kinds = await _catalogue_with_prices(
         http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
     )
 
@@ -1122,6 +1133,40 @@ async def import_models(
         price = by_upstream.get(item.upstream_model)
 
         if price is None:
+            if kinds.get(item.upstream_model) == ModelKind.SEARCH:
+                # A search tier has no token price *by design*: its meter is a
+                # request count (`LimitMetric.OWN_SEARCH_REQUESTS`), the
+                # reservation is one request and no token counts, so a price
+                # row would multiply nothing. What bounds it is the request
+                # ceiling, which is the administrator's grant to make — the
+                # same access machinery as every other model. The catalogue's
+                # "search" tag is what says this is a tier and not an
+                # unpriced chat model wearing the gap as a disguise; the
+                # modalities are `tier_catalogue`'s own — text in, text out.
+                model = ModelDef(
+                    name=name,
+                    upstream_model=item.upstream_model,
+                    provider_id=provider.id,
+                    kind=ModelKind.SEARCH,
+                    input_modalities=["text"],
+                    output_modalities=["text"],
+                    supported_features=[],
+                )
+                session.add(model)
+                taken_names.add(name)
+                taken_upstream.add(item.upstream_model)
+                results.append(
+                    ModelImportResult(
+                        upstream_model=item.upstream_model,
+                        name=name,
+                        imported=True,
+                        # Priced=False is the honest word: no rate exists to
+                        # stamp, because the meter counts requests.
+                        priced=False,
+                        price_source=None,
+                    )
+                )
+                continue
             results.append(
                 ModelImportResult(
                     upstream_model=item.upstream_model,
