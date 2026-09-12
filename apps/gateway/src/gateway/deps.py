@@ -281,23 +281,37 @@ async def get_principal(
         return await _bearer_principal(request, session, secret)
 
     api_key = await resolve_api_key(session, secret)
-    if requested_billing_group(request) is not None:
-        # Refused, not ignored, and refused for *every* key rather than only a
-        # pinned one. A key already carries its answer — the group it pins, or
-        # the user's default at request time — and that is a property of the
-        # credential an administrator issued. Letting a request override it is a
-        # separate decision with its own blast radius, and it is not the one
-        # being made here.
+    requested = requested_billing_group(request)
+    if requested is not None and api_key.is_issued_key:
+        # Refused, not ignored, and refused for *every* issued key rather than
+        # only a pinned one. A key already carries its answer — the group it
+        # pins, or the user's default at request time — and that is a property
+        # of the credential an administrator issued. Letting a request override
+        # it is a separate decision with its own blast radius, and it is not
+        # the one being made here.
         #
         # Ignoring the header instead was the alternative and is worse: a caller
         # who asked to bill one group and was quietly billed another finds out
         # from an invoice.
+        #
+        # A *minted* credential is the other kind of row in that table and the
+        # reason this is a property, not a shape test: the house IdP's access
+        # tokens are opaque gwa keys stored exactly here (`routers/idp.py`),
+        # so "authenticated with an OIDC token" and "authenticated with an API
+        # key" cannot be told apart by looking at the bearer. They are told
+        # apart by provenance — a minted credential is the proof of who is
+        # calling and steers like the JWT it stands in for (same membership
+        # check, below); a standing key bills what it was issued with.
         raise PermissionError_(
-            "'x-bill-to' applies to callers authenticated with an OIDC token. An API "
-            "key bills the group it pins, or your default; mint a key for the group "
+            "'x-bill-to' applies to callers authenticated with an OIDC token. An issued "
+            "API key bills the group it pins, or your default; mint a key for the group "
             "you mean, or change your default billing group."
         )
-    group = resolve_billing_group(api_key.user, pinned=api_key.billing_group)
+    if requested is not None:
+        pinned = _pin_from_header(api_key.user, requested)
+    else:
+        pinned = api_key.billing_group
+    group = resolve_billing_group(api_key.user, pinned=pinned)
     await _touch_last_used(session, api_key)
     return Principal(user=api_key.user, billing_group=group, api_key=api_key)
 

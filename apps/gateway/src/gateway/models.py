@@ -568,6 +568,23 @@ class ApiKey(Base):
         foreign_keys=[billing_group_id], lazy="joined"
     )
 
+    @property
+    def is_issued_key(self) -> bool:
+        """Was this key issued as a standing credential, rather than minted at login?
+
+        ADR 0046's line, which the ``x-bill-to`` rule in ``deps.py`` also
+        follows. A minted key (``minted_by`` set) is a short-lived access
+        credential for a named client — including, since the house IdP, the
+        deployment's own OIDC session token, which is opaque by design and
+        therefore lives in this very table. The two kinds are the same shape
+        and different things: a minted credential *is* the proof of who is
+        calling, while an issued key is a standing grant whose billing — the
+        group it pins, or none — was fixed when it was issued. Steering the
+        bill per request suits the first and quietly overrides the second,
+        so it is offered to exactly one of them.
+        """
+        return self.minted_by is None
+
     def is_usable(self, *, now: datetime | None = None) -> bool:
         moment = now or utcnow()
         if self.revoked_at is not None:

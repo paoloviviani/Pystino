@@ -14,13 +14,23 @@ issued rather than written from the specification.
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from typing import Any
 
 import pytest
 from conftest import Seeded, make_token
 from conftest import bearer_auth as auth
 from fastapi import FastAPI
-from gateway.models import Group, GroupModelAccess, Membership, MembershipSource, UsageRecord
+from gateway.models import (
+    ApiKey,
+    Group,
+    GroupModelAccess,
+    Membership,
+    MembershipSource,
+    UsageRecord,
+)
+from gateway.security import generate_api_key
+from gateway.types import utcnow
 from helpers import completion_body
 from joserfc.jwk import RSAKey
 from sqlalchemy import select
@@ -258,6 +268,118 @@ class TestRefused:
         )
         assert response.status_code == 403, response.text
         assert "x-bill-to" in response.json()["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_a_minted_session_credential_bills_the_named_group(
+        self,
+        client: Any,
+        seeded: Seeded,
+        fake_upstream: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The house IdP's own access tokens are keys in the table — and steer.
+
+        The IdP keeps its access tokens opaque, so a session's credential is
+        stored as an ``ApiKey`` row and reaches this endpoint through the same
+        resolution an issued key takes. It is not an issued key, though: it is
+        the proof of who is calling, minted at login and short-lived, and it
+        bills the way the JWT it stands in for bills. An implementation that
+        refused every row in the table would log this user out of web search
+        and their chat turns the moment their settings named a group.
+        """
+        other = await _second_group(session_factory, seeded)
+        minted = generate_api_key(environment_prefix="gwa")
+        async with session_factory() as db:
+            db.add(
+                ApiKey(
+                    user_id=seeded.user.id,
+                    prefix=minted.prefix,
+                    key_hash=minted.key_hash,
+                    name="idp:cerea",
+                    minted_by="idp-cerea",
+                    expires_at=utcnow() + timedelta(minutes=15),
+                )
+            )
+            await db.commit()
+        fake_upstream.set_json(completion_body())
+
+        response = await client.post(
+            "/v1/chat/completions",
+            json={"model": "test-model", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"authorization": f"Bearer {minted.secret}", BILL_TO: "finance"},
+        )
+        assert response.status_code == 200, response.text
+
+        async with session_factory() as db:
+            record = (await db.execute(select(UsageRecord))).scalars().one()
+        assert record.group_id == other
+
+    @pytest.mark.asyncio
+    async def test_a_minted_session_credential_without_the_header_bills_the_default(
+        self,
+        client: Any,
+        seeded: Seeded,
+        fake_upstream: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Steering is per request; without it, the default answers as always."""
+        fake_upstream.set_json(completion_body())
+        minted = generate_api_key(environment_prefix="gwa")
+        async with session_factory() as db:
+            db.add(
+                ApiKey(
+                    user_id=seeded.user.id,
+                    prefix=minted.prefix,
+                    key_hash=minted.key_hash,
+                    name="idp:cerea",
+                    minted_by="idp-cerea",
+                    expires_at=utcnow() + timedelta(minutes=15),
+                )
+            )
+            await db.commit()
+
+        response = await client.post(
+            "/v1/chat/completions",
+            json={"model": "test-model", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"authorization": f"Bearer {minted.secret}"},
+        )
+        assert response.status_code == 200, response.text
+
+        async with session_factory() as db:
+            record = (await db.execute(select(UsageRecord))).scalars().one()
+        assert record.group_id == seeded.group.id
+
+    @pytest.mark.asyncio
+    async def test_a_minted_session_credential_steering_outside_its_memberships_is_refused(
+        self,
+        client: Any,
+        seeded: Seeded,
+        fake_upstream: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Steering adds no capability: membership is checked exactly as for JWTs."""
+        minted = generate_api_key(environment_prefix="gwa")
+        async with session_factory() as db:
+            db.add(
+                ApiKey(
+                    user_id=seeded.user.id,
+                    prefix=minted.prefix,
+                    key_hash=minted.key_hash,
+                    name="idp:cerea",
+                    minted_by="idp-cerea",
+                    expires_at=utcnow() + timedelta(minutes=15),
+                )
+            )
+            await db.commit()
+        fake_upstream.set_json(completion_body())
+
+        response = await client.post(
+            "/v1/chat/completions",
+            json={"model": "test-model", "messages": [{"role": "user", "content": "hi"}]},
+            headers={"authorization": f"Bearer {minted.secret}", BILL_TO: "not-a-group"},
+        )
+        assert response.status_code == 403, response.text
+
 
     @pytest.mark.asyncio
     async def test_nothing_is_billed_when_the_header_is_refused(
