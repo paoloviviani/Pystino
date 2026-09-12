@@ -131,13 +131,13 @@ has a key; the protocol is the hook, and nothing else has to move.
 URLs and snippets, and a snippet is not an answer — turning a result into text a
 model can read means fetching the page and running its JavaScript, because a
 growing share of the web is an empty `<div>` to an HTTP client, with no error to
-say so. `deploy/compose/docker-compose.playwright.yml` is a headless browser on
+say so. the chat repository's `deploy/compose/docker-compose.playwright.yml` is a headless browser on
 the compose network, opt-in. Note what it is actually for, because the
 distinction matters: **fetching a URL somebody named is not searching**, and the
-browser exists for fetch first — see [browser.md](browser.md). Search is a
+browser exists for fetch first — see the chat's `docs/browser.md`. Search is a
 second consumer of it, and only for Linkup, since Exa, Jina and Staan can all
 return page content themselves;
-[browser.md](browser.md) has the version pin, the measured footprint, and why it
+the chat's `docs/browser.md` has the version pin, the measured footprint, and why it
 publishes no port. Fetching the page is a *third* egress after the prompt and
 the query, and the pages read on a user's behalf are often more revealing than
 the query — which is why the rendering is in this deployment rather than at a

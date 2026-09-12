@@ -37,11 +37,10 @@ from test_my_limits import session_cookie
 
 class TestEffectivePolicy:
     def test_no_row_means_the_environment(self) -> None:
-        settings = OIDCSettings(groups_claim="roles", admin_groups=["idp-admins"])
+        settings = OIDCSettings(groups_claim="roles")
         policy = effective_policy(settings, None)
         assert policy.auto_provision is True
         assert policy.groups_claim == "roles"
-        assert policy.admin_groups == ["idp-admins"]
         assert policy.source == "environment"
 
     def test_a_row_decides_only_what_it_names(self) -> None:
@@ -205,17 +204,22 @@ class TestProvisioningGate:
             )
             assert user.id == existing_id
 
-    async def test_admin_follows_mapped_names(
+    async def test_admin_follows_no_claim_at_all(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
-        # Admin compares local names: the IdP says "platform-admins", the
-        # mapping says that means "admins" here, and admin_groups names the
-        # local group — the platform's, not the IdP's.
+        """ADR 0069: the flag is not derived, from anything, any more.
+
+        This test used to assert the opposite — that a mapped admin group
+        conferred the flag, with the mapping applied first so the comparison
+        spoke local names. The comparison itself is what was removed: an
+        administrator is made in the console or by `gateway passwd --admin`,
+        and a directory that names a group "admins" has said nothing about
+        who administers this deployment.
+        """
         policy = OIDCPolicy(
             auto_provision=True,
             unknown_user_policy="refuse",
             groups_claim="groups",
-            admin_groups=["admins"],
             group_mappings={"platform-admins": "admins"},
         )
         async with session_factory() as session:
@@ -226,13 +230,14 @@ class TestProvisioningGate:
                 email="admin@example.org",
                 display_name=None,
                 # Map first, exactly as the callers do: provision receives
-                # local names, so admin compares what the group is called here.
+                # local names, so a group the claim names lands under its
+                # local name — and confers nothing.
                 group_names=policy.map_group_names(["platform-admins"]),
                 settings=OIDCSettings(),
                 touch_login=False,
                 policy=policy,
             )
-            assert user.is_admin is True
+            assert user.is_admin is False
             assert [m.group.name for m in user.memberships] == ["admins"]
 
 

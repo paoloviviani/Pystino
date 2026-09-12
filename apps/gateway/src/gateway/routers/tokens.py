@@ -22,10 +22,11 @@ not by a cleanup job.
 from __future__ import annotations
 
 import logging
+import secrets
 from datetime import timedelta
 from typing import Any
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, or_, select
 
@@ -38,6 +39,31 @@ from gateway.types import utcnow
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["local-credentials"])
+
+#: The header carrying ``GATEWAY_IDP__INTERNAL_TOKEN`` (ADR 0068). When the IdP
+#: is enabled these endpoints are minting surface and move off the public
+#: internet: the only intended caller is the chat's backend, on the compose
+#: network, which holds the token. Lowercase, like every header this gateway
+#: defines.
+MINT_TOKEN_HEADER = "x-mint-token"  # noqa: S105 — a header *name*, not a secret
+
+
+async def require_mint_credential(request: Request) -> None:
+    """Refuse the public internet from a minting endpoint (ADR 0068).
+
+    Active only when the IdP is enabled — a deployment running the old
+    0046 flow without the IdP keeps today's reachability. The comparison is
+    constant-time, and the refusal is the same 401 the endpoints already
+    answer with, so a prober learns nothing about which half failed.
+    """
+    settings = request.app.state.settings
+    if not settings.idp.enabled:
+        return
+    expected = settings.idp.internal_token.get_secret_value()
+    presented = request.headers.get(MINT_TOKEN_HEADER, "")
+    if not expected or not secrets.compare_digest(presented, expected):
+        raise AuthenticationError("The refresh credential is not valid.")
+
 
 #: An access key is presented on every request and minted per exchange, so its
 #: lifetime is the only bound on how long a leaked one works. Fifteen minutes
@@ -73,7 +99,11 @@ def _reject(reason: str, prefix: str | None) -> AuthenticationError:
 
 
 @router.post("/token")
-async def exchange(body: TokenExchangeRequest, session: SessionDep) -> Any:
+async def exchange(
+    body: TokenExchangeRequest,
+    session: SessionDep,
+    _mint: Any = Depends(require_mint_credential),
+) -> Any:
     """Trade a refresh credential for a short-lived access credential.
 
     Failure answers are uniform (unknown, malformed, expired, revoked, disabled
@@ -135,7 +165,11 @@ async def exchange(body: TokenExchangeRequest, session: SessionDep) -> Any:
 
 
 @router.post("/revoke", status_code=204)
-async def revoke(body: RevokeRequest, session: SessionDep) -> Response:
+async def revoke(
+    body: RevokeRequest,
+    session: SessionDep,
+    _mint: Any = Depends(require_mint_credential),
+) -> Response:
     """End the credential family: the refresh row and every access key it minted.
 
     This is what makes chat logout real — deleting the chat session row alone

@@ -493,6 +493,7 @@ class CallerIdentity(BaseModel):
 
 class MyPasswordChangeRequest(BaseModel):
     """A self-service password change: the current one proves the person."""
+
     current_password: str = Field(min_length=1, max_length=1024)
     new_password: str = Field(min_length=1, max_length=1024)
 
@@ -583,6 +584,7 @@ class MyLimitResponse(BaseModel):
 
 class MyNotificationThresholdsRequest(BaseModel):
     """Replace the caller's thresholds for one rule. Percentages 1-100."""
+
     thresholds: list[int] = Field(default_factory=list)
 
 
@@ -918,9 +920,10 @@ class IdentityProviderCreateRequest(BaseModel):
     # Off unless asked for, in the request as on the row: a client that omits
     # the field is not consenting to it (ADR 0056).
     link_local_by_email: bool = False
-    # The behaviour this gateway has always had, so a client that says nothing
-    # gets what it would have got before the field existed (ADR 0057).
-    group_sync: Literal["every_login", "first_login", "never"] = "every_login"
+    # The sync stance of ADR 0069: the directory answers once, at
+    # provisioning, and the gateway owns everything after. A client that
+    # wants the directory to keep answering chooses every_login explicitly.
+    group_sync: Literal["every_login", "first_login", "never"] = "first_login"
 
 
 class IdentityProviderUpdateRequest(BaseModel):
@@ -1069,7 +1072,6 @@ class OidcPolicyUpdateRequest(BaseModel):
     # alongside `auto_provision: true`, where it would silently never apply.
     unknown_user_policy: Literal["refuse", "create_inactive"] | None = None
     groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
-    admin_groups: list[str] | None = None
     group_mappings: list[OidcMappingRule] | None = None
     reason: str = Field(default="", max_length=500)
 
@@ -1086,7 +1088,6 @@ class OidcPolicyResponse(BaseModel):
     auto_provision: bool
     unknown_user_policy: Literal["refuse", "create_inactive"]
     groups_claim: str
-    admin_groups: list[str]
     group_mappings: list[OidcMappingRule]
     # "console" when any field is a stored decision, "environment" otherwise;
     # `sources` says which, per field — "the console says X and the
@@ -1678,4 +1679,3 @@ class ModelImportResponse(BaseModel):
     @property
     def imported_count(self) -> int:
         return sum(1 for r in self.results if r.imported)
-

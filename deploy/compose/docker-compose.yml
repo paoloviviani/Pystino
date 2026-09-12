@@ -131,6 +131,16 @@ services:
       GATEWAY_OIDC__REDIRECT_URI: ${GATEWAY_OIDC_REDIRECT_URI:-}
       GATEWAY_OIDC__GROUPS_CLAIM: ${GATEWAY_OIDC_GROUPS_CLAIM:-groups}
 
+      # The house IdP (ADR 0068): off until enabled, and off means the routes
+      # are absent rather than refused. docs/idp.md carries each variable and
+      # where the endpoints live; the chat overlay is what turns it on.
+      GATEWAY_IDP__ENABLED: ${GATEWAY_IDP_ENABLED:-false}
+      GATEWAY_IDP__ISSUER: ${GATEWAY_IDP_ISSUER:-}
+      GATEWAY_IDP__INTERNAL_BASE_URL: ${GATEWAY_IDP_INTERNAL_BASE_URL:-}
+      GATEWAY_IDP__SIGNING_KEY: ${GATEWAY_IDP_SIGNING_KEY:-}
+      GATEWAY_IDP__INTERNAL_TOKEN: ${GATEWAY_IDP_INTERNAL_TOKEN:-}
+      GATEWAY_IDP__CLIENTS: ${GATEWAY_IDP_CLIENTS:-}
+
       # Knowledge bases (ADR 0062). Off by default, and this flag is the whole
       # switch: `/v1/files` and `/v1/vector_stores` answer 404 until it is true,
       # so a deployment that does not want durable storage of user documents

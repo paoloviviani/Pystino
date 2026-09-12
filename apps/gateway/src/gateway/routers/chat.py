@@ -31,16 +31,13 @@ import orjson
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from llmp_shared import Restored
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from gateway import agents
 from gateway.accounting import (
     RequestAccounting,
     TokenCounts,
 )
 from gateway.deps import (
     EstimatorDep,
-    Principal,
     PrincipalDep,
     ProvidersDep,
     QuotaDep,
@@ -52,7 +49,6 @@ from gateway.errors import (
     BadRequestError,
     error_payload,
 )
-from gateway.knowledge.store import store_for
 from gateway.models import ApiSurface, ModelDef, UsageStatus
 from gateway.protocols import reader_for
 from gateway.quota import (
@@ -159,82 +155,6 @@ def build_upstream_payload(
 
 
 
-async def _retrieve_for_agent(
-    request: Request,
-    session: AsyncSession,
-    resolved: agents.ResolvedAgent,
-    *,
-    principal: Principal,
-    body: ChatCompletionRequest,
-) -> str | None:
-    """The passages this agent's bases offer for the latest question.
-
-    None when there is nothing to add — no bases attached, no user text to
-    retrieve on, or nothing above the agent's score floor. None rather than an
-    empty string, so `agents.apply` adds no message at all: an empty context
-    block tells a model there was material and it was blank, which is worse
-    than saying nothing.
-
-    **Failure here does not fail the request.** A retrieval that cannot run —
-    the embedding provider is down, a base has never been indexed — degrades to
-    an ordinary completion, logged. The alternative is refusing to answer a
-    chat because a knowledge base is unavailable, which trades a slightly worse
-    answer for no answer at all. That is a judgement, and it is the same one
-    ADR 0060 makes about the deferred ledger write: the caller's request is
-    worth more than the completeness of the extra.
-
-    It is *not* silent, though. `retrieval_degraded` on the log line is what an
-    operator greps for when an agent starts giving answers that ignore its
-    documents.
-    """
-    if not resolved.bases:
-        return None
-    question = agents.last_user_text(body.messages)
-    if not question.strip():
-        return None
-
-    ingestor = getattr(request.app.state, "ingestor", None)
-    if ingestor is None:  # pragma: no cover - wired at startup
-        return None
-
-    store = store_for(session.bind.dialect.name if session.bind else "sqlite")
-    passages: list[tuple[str, str]] = []
-    for base in resolved.bases:
-        if base.dimensions is None or base.embedding_model_id is None:
-            # Never indexed. Not an error: an agent may be attached to a base
-            # somebody is still filling.
-            continue
-        try:
-            owner, group = await ingestor.billing_for(session, base)
-            vector = await ingestor.embed_query(
-                session, base=base, owner=owner, group=group, text=question
-            )
-            hits = await store.search(
-                session,
-                knowledge_base_id=base.id,
-                dimensions=base.dimensions,
-                query=vector,
-                limit=resolved.agent.retrieval_limit,
-                min_score=resolved.agent.retrieval_min_score,
-            )
-        except Exception:
-            logger.warning(
-                "retrieval_degraded: agent=%s base=%s — answering without it",
-                resolved.agent.name,
-                base.id,
-                exc_info=True,
-            )
-            continue
-        passages.extend((hit.title or "untitled", hit.text) for hit in hits)
-
-    if not passages:
-        return None
-    # Bounded across every base rather than per base: an agent with four bases
-    # and a limit of six would otherwise put twenty-four passages in front of
-    # the model, and the cost of a prompt is the caller's.
-    passages = passages[: resolved.agent.retrieval_limit]
-    return agents.format_context(passages)
-
 # response_model=None because this endpoint returns either a JSONResponse or a
 # StreamingResponse, and FastAPI would otherwise try to build a Pydantic response
 # model from that union. The response body is OpenAI's schema, not ours, and is
@@ -256,39 +176,13 @@ async def chat_completions(
 
     request_id = _metered.request_id_for(request, settings)
 
-    # -- the agent, if this name is one (step 1b) ---------------------------
-    #
-    # Before redaction on purpose, and the ordering is load-bearing in both
-    # directions: the system prompt and any retrieved passages are text heading
-    # for a provider, so they must pass through the redaction layer like
-    # anything else; and they have to be in `messages` before the tokens are
-    # counted, or the reservation is taken against a smaller payload than the
-    # one actually sent (ADR 0062).
-    resolved = await agents.resolve(session, body.model, principal=principal)
-    if resolved is not None:
-        model = resolved.model
-        # The name the caller sent is what the ledger records, so a report can
-        # say "this spend was an agent" rather than showing only its model.
-        agent_context = await _retrieve_for_agent(
-            request, session, resolved, principal=principal, body=body
-        )
-        body.messages = agents.apply(body.messages, resolved, context=agent_context)
-        # Tools and sampling defaults go into the request's *extra* fields,
-        # which is where they already live: `ChatCompletionRequest` is
-        # `extra="allow"` so a provider's own parameters pass through
-        # untouched, and writing them here means everything downstream —
-        # `bound_web_search`, the payload dump, the reservation — reads one
-        # object rather than each remembering to consult the agent.
-        extra = body.__pydantic_extra__
-        if extra is not None:
-            merged = agents.merge_tools(extra.get("tools"), resolved.agent.tools)
-            if merged is not None:
-                extra["tools"] = merged
-            agents.apply_generation(extra, resolved.agent.generation)
-    else:
-        model = await _metered.resolve_model(
-            session, body.model, principal=principal, surface=SURFACE
-        )
+    # Agents used to resolve here (ADR 0062) — prompt, tools, retrieval and a
+    # model swap, all gateway-side. They moved to the chat (ADR 0067): a
+    # client's own construction, assembled before this call, and the wire name
+    # arriving here is always a plain model.
+    model = await _metered.resolve_model(
+        session, body.model, principal=principal, surface=SURFACE
+    )
     upstream = await _metered.resolve_upstream(providers, model)
 
     # -- redaction (step 2) -------------------------------------------------

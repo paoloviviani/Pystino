@@ -4,8 +4,6 @@
 #     -f deploy/compose/docker-compose.yml \
 #     -f deploy/compose/docker-compose.smoke.yml \
 #     -f deploy/compose/docker-compose.redaction.yml \
-#     -f deploy/compose/docker-compose.proxy.yml \
-#     -f deploy/compose/docker-compose.keycloak.yml \
 #     -f deploy/compose/docker-compose.chat.yml up -d
 #
 # ## It is a client, and this file is the proof
@@ -13,26 +11,31 @@
 # `pystino-chat` imports nothing from the gateway: it is built from its own
 # repository, talks over `/v1`, and authenticates with an OIDC access token.
 # Nothing below mounts gateway source, shares its database, or reads its
-# environment — the only thing it is told is a URL and a client secret.
+# environment — the only things it is told are URLs and a client credential.
+#
+# ## Where it signs in (ADR 0068)
+#
+# Against the gateway's own IdP: `OPENID_PROVIDER_URL` is the deployment's
+# public origin, which is the issuer the gateway is configured with. The chat
+# backend fetches discovery once from that URL — so the edge's certificate for
+# the public name must be one Node trusts without help, which a publicly
+# resolvable name already implies — and then follows discovery everywhere
+# else: the token endpoint, JWKS and userinfo are advertised at the gateway's
+# *internal* address, so the exchanges and the key fetches never leave the
+# compose network and never meet the edge at all. Only the browser's
+# `/oauth/authorize` round trip is public, which is inherent to the flow.
 #
 # ## Nothing new is published (the fourth ground rule)
 #
-# No `ports:`. A browser reaches it through Caddy at `/chat` on the origin that
-# is already there — the same arrangement Keycloak gets at `/idp`, and for the
-# same reason: the .103 host permits 8443 and 22, and one origin keeps the
-# session cookie same-origin.
-#
-# `CHAT_PORT` in deploy/.env is *not* a published port and this file does not
-# use it. `test_public_tls_live.py` asserts nothing answers there, and that
-# assertion is meant to keep passing.
+# No `ports:`. A browser reaches it through the origin's reverse proxy at
+# `/chat` — one origin keeps the session cookie same-origin.
 #
 # ## Why the base path is set twice
 #
 # `APP_BASE=/chat` is a **build-time** value: SvelteKit bakes `paths.base` into
 # the bundle, so it is an argument to `docker build` and not an environment
 # variable at run time. Setting it only in `environment:` builds an application
-# rooted at `/` whose every asset 404s behind the prefix. Caddy's `handle_path`
-# strips the prefix, so the server sees `/` and the browser sees `/chat`.
+# rooted at `/` whose every asset 404s behind the prefix.
 #
 # ## Its credential, and the one place a shared key remains
 #
@@ -55,12 +58,24 @@ services:
     # the application's own store and nothing else reads it; the gateway's
     # PostgreSQL is untouched, which is the boundary this deployment exists to
     # keep.
-    image: mongo:8
+    #
+    # 4.4, not 8: this box's CPU has no AVX, and MongoDB has required it since
+    # 5.0 — the 8 image dies at start with exit 132 (SIGILL). 4.4 is the last
+    # line that runs here, and chat-ui needs nothing newer: collections,
+    # indexes, GridFS. The version is the box's fact, not the application's;
+    # a machine with AVX can put 8 back.
+    image: mongo:4.4
     restart: unless-stopped
     volumes:
       - chat-mongo-data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      # `mongosh` only exists from 5.0; the 4.4 image ships `mongo`. Trying
+      # both keeps the healthcheck working whichever version the box runs.
+      test:
+        [
+          "CMD-SHELL",
+          "mongo --quiet --eval 'db.adminCommand(\"ping\").ok' || mongosh --quiet --eval 'db.adminCommand(\"ping\").ok'",
+        ]
       interval: 10s
       timeout: 5s
       retries: 20
@@ -75,12 +90,12 @@ services:
       # "path /home/.../.claude/worktrees/pystino-chat not found". The chat is
       # a sibling repository at whatever address the operator cloned it to, so
       # asking is more honest than guessing.
-      context: ${CHAT_REPO:?set CHAT_REPO in deploy/.env to the pystino-chat checkout}
+      context: ${CHAT_REPO:?set CHAT_REPO in deploy/.env to the chat checkout}
       dockerfile: Dockerfile
       args:
         # Build-time, for the reason in the header comment.
         APP_BASE: /chat
-        PUBLIC_APP_NAME: ${CHAT_APP_NAME:-Pystino Chat}
+        PUBLIC_APP_NAME: ${CHAT_APP_NAME:-Cerea}
     restart: unless-stopped
     depends_on:
       chat-mongo:
@@ -94,11 +109,11 @@ services:
       # entrypoint provides for exactly this: it writes `.env.local`, which
       # overrides `.env`.
       #
-      # SvelteKit's node adapter trusts `x-forwarded-*` only when told to, and
-      # Caddy is what terminates TLS. Without the three `*_HEADER` lines the
-      # redirect it builds is `http`, and an https-registered OIDC client
-      # refuses it *after* a login that appeared to work — the same trap
-      # ADR 0035 records for the gateway, in a second codebase.
+      # SvelteKit's node adapter trusts `x-forwarded-*` only when told to.
+      # Without the three `*_HEADER` lines the redirect it builds is `http`,
+      # and an https-registered OIDC client refuses it *after* a login that
+      # appeared to work — the same trap ADR 0035 records for the gateway, in
+      # a second codebase.
       DOTENV_LOCAL: |
         MONGODB_URL=mongodb://chat-mongo:27017
         MONGODB_DB_NAME=chat-ui
@@ -116,7 +131,16 @@ services:
         # identify, so a visitor who is not signed in would only see an error.
         AUTOMATIC_LOGIN=true
 
-        OPENID_CONFIG=${CHAT_OPENID_CONFIG:?run deploy/keycloak/setup.sh and copy its OPENID_CONFIG line into deploy/.env as CHAT_OPENID_CONFIG}
+        # Sign-in against the gateway's own IdP (ADR 0068). The issuer is the
+        # public origin — the same value GATEWAY_IDP__ISSUER was configured
+        # with, because openid-client validates the discovery document's
+        # `issuer` against this URL byte for byte. The client must appear in
+        # GATEWAY_IDP__CLIENTS with redirect_path /chat/login/callback, and
+        # the secret must match that client's.
+        OPENID_PROVIDER_URL=${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in deploy/.env — it is the IdP issuer}
+        OPENID_CLIENT_ID=cerea
+        OPENID_CLIENT_SECRET=${CHAT_IDP_CLIENT_SECRET:?set CHAT_IDP_CLIENT_SECRET in deploy/.env — the cerea client's secret}
+        OPENID_SCOPES=openid profile email
 
         # Encrypts MCP connector credentials at rest (ADR 0064) — OAuth tokens
         # and static API tokens, which used to live in browser localStorage.
@@ -125,33 +149,19 @@ services:
         # encryption while looking like encryption.
         CHAT_SECRET_KEY=${CHAT_SECRET_KEY:?generate a long random value and set CHAT_SECRET_KEY in deploy/.env}
 
-        PUBLIC_APP_NAME=${CHAT_APP_NAME:-Pystino Chat}
+        PUBLIC_APP_NAME=${CHAT_APP_NAME:-Cerea}
         PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
         ORIGIN=${PUBLIC_ORIGIN}/chat
         ADDRESS_HEADER=X-Forwarded-For
         PROTOCOL_HEADER=X-Forwarded-Proto
         HOST_HEADER=X-Forwarded-Host
 
-      # Node has to verify Caddy's internal CA, for the same reason the gateway
-      # does: OIDC discovery is fetched from the issuer, which is the public
-      # https origin, and `tls internal` means a CA nothing has heard of. The
-      # symptom without it is a 500 on the first page load whose only detail is
-      # `UNABLE_TO_GET_ISSUER_CERT_LOCALLY` — a TLS error that names no host,
-      # in a request the browser made to the chat rather than to Keycloak.
-      #
-      # `NODE_EXTRA_CA_CERTS` *adds* to the trust store rather than replacing
-      # it, which is the opposite of Python's `SSL_CERT_FILE` — so this one may
-      # safely point at a bundle that also holds the public roots, and the file
-      # ca-bundle already builds is exactly that.
-      NODE_EXTRA_CA_CERTS: /etc/ssl/caddy/caddy-root.crt
-    volumes:
-      # The directory, not the file — see docker-compose.keycloak.yml for why a
-      # bind mount of a not-yet-existing file becomes a directory.
-      - ../tls:/etc/ssl/caddy:ro
-
-  proxy:
-    volumes:
-      - ../caddy/conf.d-chat/20-chat.caddy:/etc/caddy/conf.d/20-chat.caddy:ro
+      # The public name carries both an A and an AAAA record, and the box has
+      # no IPv6 route — the container less than anyone. Node resolves the AAAA
+      # first and waits for a route that does not exist, which is why the
+      # discovery fetch timed out after 3500ms while a direct TLS connection
+      # on IPv4 answered instantly. IPv4 first, always, in this container.
+      NODE_OPTIONS: --dns-result-order=ipv4first
 
 volumes:
   chat-mongo-data:

@@ -63,7 +63,6 @@ from gateway.identity_registry import (
 )
 from gateway.mail import MailDeliveryError, send_mail_async
 from gateway.models import (
-    Agent,
     ApiKey,
     BillingMode,
     EmailSettings,
@@ -794,9 +793,7 @@ async def update_model(
 
 
 @router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_model(
-    model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
-) -> None:
+async def delete_model(model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
     """Remove a model from the catalogue outright, not merely deactivate it.
 
     Deactivation is the tool for "out of service"; it still shows the row, which
@@ -913,9 +910,7 @@ async def _catalogue_with_prices(
         try:
             payload = await fetch_catalogue(http, catalogue_url, api_key)
         except CatalogueUnavailable as exc:
-            raise UpstreamUnavailableError(
-                f"Could not read the provider catalogue: {exc}"
-            ) from exc
+            raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
 
     published, unpriced = _catalogue_parser(provider)(payload)
 
@@ -1476,9 +1471,7 @@ async def list_group_members(
         )
     total = await count_of(session, stmt)
     users = (await session.execute(page.apply(stmt))).scalars().all()
-    return page.page(
-        await _user_responses(session, list(users), membership_in=group_id), total
-    )
+    return page.page(await _user_responses(session, list(users), membership_in=group_id), total)
 
 
 @router.post(
@@ -1497,9 +1490,7 @@ async def add_group_member(
         raise NotFoundError(f"No user with id {payload.user_id}.")
 
     existing = await session.execute(
-        select(Membership).where(
-            Membership.group_id == group_id, Membership.user_id == user.id
-        )
+        select(Membership).where(Membership.group_id == group_id, Membership.user_id == user.id)
     )
     if existing.scalar_one_or_none() is not None:
         raise BadRequestError(
@@ -1508,9 +1499,7 @@ async def add_group_member(
 
     # An administrator's grant, and recorded as one: no login will undo it,
     # even for a user the directory manages (ADR 0057).
-    session.add(
-        Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL)
-    )
+    session.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL))
     await session.commit()
 
 
@@ -1528,9 +1517,7 @@ async def remove_group_member(
 
     membership = (
         await session.execute(
-            select(Membership).where(
-                Membership.group_id == group_id, Membership.user_id == user.id
-            )
+            select(Membership).where(Membership.group_id == group_id, Membership.user_id == user.id)
         )
     ).scalar_one_or_none()
     if membership is None:
@@ -1904,7 +1891,7 @@ async def _user_responses(
     # test_query_counts.py exists to prevent.
     with_password: set[uuid.UUID] = {
         user_id
-        for user_id, in (
+        for (user_id,) in (
             await session.execute(
                 select(LocalCredential.user_id).where(LocalCredential.user_id.in_(ids))
             )
@@ -1919,7 +1906,7 @@ async def _user_responses(
     if membership_in is not None:
         granted_here = {
             user_id
-            for user_id, in (
+            for (user_id,) in (
                 await session.execute(
                     select(Membership.user_id).where(
                         Membership.group_id == membership_in,
@@ -1953,9 +1940,7 @@ async def _user_responses(
             has_password=user.id in with_password,
             linked_identities=linked.get(user.id, []),
             membership_source=(
-                None
-                if membership_in is None
-                else ("manual" if user.id in granted_here else "oidc")
+                None if membership_in is None else ("manual" if user.id in granted_here else "oidc")
             ),
             groups=sorted(m.group.name for m in user.memberships),
             default_billing_group=(
@@ -2015,27 +2000,17 @@ async def update_user(
 ) -> UserAdminResponse:
     """Deactivate a user, or make one an administrator.
 
-    **The console is authoritative for admin, including for directory
-    accounts.** This used to refuse the change outright when
-    ``admin_groups`` was configured, on the correct observation that setting the
-    flag would be undone at the next login — but the remedy it offered ("change
-    it in the identity provider") was wrong twice over: it made the console
-    useless for the one decision an administrator most wants to make there, and
-    it is not even always available, since not every operator administers the
-    directory their users come from.
+    **The console is authoritative for admin, for every account** (ADR 0069):
+    the flag is written here and nothing strips it at the next login, because
+    provisioning no longer derives it from any claim or group. The machinery
+    this replaces — granting a manual membership of an admin group so a login
+    would not undo the flag — existed only because login used to *own* the
+    flag; with the directory out of the authorisation business the workaround
+    has nothing left to work around, and a group named "administrators" stops
+    being the thing that decides anything.
 
-    What it does instead is grant the thing admin is *derived from*: a
-    **manual membership of the admin group**. That survives every subsequent
-    login by the rule ADR 0057 already establishes — a directory's sync
-    revokes only what the directory granted — and `provision_user` recomputes
-    ``is_admin`` from *effective* membership, so the grant keeps taking effect
-    rather than merely persisting.
-
-    One asymmetry, and it is honest rather than incidental. **Granting always
-    works; revoking only works on a grant this console made.** If the person is
-    in the admin group because the directory says so, removing them here would
-    be undone at their next login, so it is refused with that reason named. The
-    directory owns its own grants; this owns its own.
+    A directory's revocation of *authentication* still lands — a disabled
+    account is refused on every path — but its group claims never touch roles.
     """
     user = (
         await session.execute(
@@ -2048,13 +2023,6 @@ async def update_user(
         raise NotFoundError(f"No user with id {user_id}.")
 
     fields = payload.model_dump(exclude_unset=True)
-    if "is_admin" in fields and settings.oidc.admin_groups and user.issuer != "local":
-        # Not a refusal any more: grant or withdraw the membership the flag is
-        # derived from, so the decision survives the next login instead of
-        # being quietly reversed by it.
-        await _set_admin_by_membership(
-            session, user, bool(fields.pop("is_admin")), settings.oidc.admin_groups
-        )
     for field, value in fields.items():
         setattr(user, field, value)
     await session.commit()
@@ -2063,80 +2031,6 @@ async def update_user(
     # a page now, and the user just edited may not be on the page.
     return (await _user_responses(session, [user]))[0]
 
-
-
-async def _set_admin_by_membership(
-    session: AsyncSession, user: User, admin: bool, admin_groups: list[str]
-) -> None:
-    """Make a directory account an administrator, durably.
-
-    ``is_admin`` is *derived* — `provision_user` recomputes it from effective
-    membership of ``admin_groups`` on every login — so writing the flag alone
-    is writing to a cache. What persists is a membership, and a **manual** one
-    is the kind a directory sync leaves alone (ADR 0057).
-
-    The group is created if it does not exist, for the same reason a login
-    creates the groups a token names: refusing because the admin group has
-    never been seen would make this fail on a fresh deployment, which is
-    exactly when somebody needs to appoint the first administrator.
-
-    Revoking is deliberately narrower than granting. A membership the
-    *directory* granted is not this console's to withdraw — the next login puts
-    it back — so that case is refused with the reason named rather than
-    appearing to work.
-    """
-    target = admin_groups[0]
-    group = (
-        await session.execute(select(Group).where(Group.name == target))
-    ).scalar_one_or_none()
-
-    if admin:
-        if group is None:
-            group = Group(
-                name=target,
-                description="Administrators. Membership of this group confers admin.",
-                source=GroupSource.MANUAL,
-            )
-            session.add(group)
-            await session.flush()
-        existing = await session.get(Membership, {"user_id": user.id, "group_id": group.id})
-        if existing is None:
-            session.add(
-                Membership(
-                    user_id=user.id,
-                    group_id=group.id,
-                    # The provenance is the whole point: `manual` is what makes
-                    # it survive the directory's next sync.
-                    source=MembershipSource.MANUAL,
-                )
-            )
-        elif existing.source is not MembershipSource.MANUAL:
-            # Already an administrator, by the directory's word. Adopting the
-            # row as manual would quietly take the grant away from the
-            # directory, so it is left as it is — the outcome the caller asked
-            # for is already true.
-            pass
-        user.is_admin = True
-        return
-
-    if group is None:
-        # No admin group at all, so no membership to withdraw. The flag may
-        # still be set on a row that predates this rule; clearing it is the
-        # caller's stated intent and nothing will contradict it.
-        user.is_admin = False
-        return
-
-    existing = await session.get(Membership, {"user_id": user.id, "group_id": group.id})
-    if existing is not None and existing.source is not MembershipSource.MANUAL:
-        raise BadRequestError(
-            f"{user.email or user.subject} is an administrator because the identity "
-            f"provider puts them in {target!r}. Remove them from that group there — "
-            "withdrawing it here would be undone at their next login.",
-            code="admin_granted_by_directory",
-        )
-    if existing is not None:
-        await session.delete(existing)
-    user.is_admin = False
 
 async def _load_local_user(user_id: uuid.UUID, session: SessionDep) -> User:
     """The user a password route was aimed at, or the error that stops it.
@@ -2253,9 +2147,7 @@ async def create_user(
     # sign-in attempt with "incorrect email or password" — found by the
     # end-to-end assertion in test_oidc_policy.py, not by the type checker.
     # It needs the flush above: user.id does not exist before it.
-    session.add(
-        LocalCredential(user_id=user.id, password_hash=hash_password(payload.password))
-    )
+    session.add(LocalCredential(user_id=user.id, password_hash=hash_password(payload.password)))
 
     # Group *names*, resolved or created. Created groups are "manual", not
     # "oidc": an OIDC-sourced group that the IdP stops reporting is pruned from
@@ -2277,9 +2169,7 @@ async def create_user(
             await session.flush()
         groups.append(group)
     for group in groups:
-        session.add(
-            Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL)
-        )
+        session.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL))
     # The same sole-group rule the login path applies: one group means it is
     # the default, and the account can bill without a settings detour.
     if len(groups) == 1:
@@ -2295,9 +2185,7 @@ async def create_user(
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(
-    user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
-) -> None:
+async def delete_user(user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
     """Delete an account, keeping the ledger and leaving their rules inert.
 
     What dies with the row: keys, memberships, refresh credentials and the
@@ -2366,7 +2254,6 @@ async def _published_by(session: AsyncSession, user_id: uuid.UUID) -> list[str]:
     names: list[str] = []
     for model, kind, label in (
         (KnowledgeBase, ResourceKind.KNOWLEDGE_BASE, "the knowledge base"),
-        (Agent, ResourceKind.AGENT, "the agent"),
     ):
         rows = (
             await session.execute(
@@ -2402,17 +2289,13 @@ async def _oidc_policy_response(request: Request, session: SessionDep) -> OidcPo
     stored = await _latest_oidc_config(session)
     changed_by: str | None = None
     if stored is not None and stored.created_by is not None:
-        changed_by = await session.scalar(
-            select(User.email).where(User.id == stored.created_by)
-        )
+        changed_by = await session.scalar(select(User.email).where(User.id == stored.created_by))
     return OidcPolicyResponse(
         auto_provision=policy.auto_provision,
         unknown_user_policy=policy.unknown_user_policy,
         groups_claim=policy.groups_claim,
-        admin_groups=policy.admin_groups,
         group_mappings=[
-            OidcMappingRule(idp=idp, local=local)
-            for idp, local in policy.group_mappings.items()
+            OidcMappingRule(idp=idp, local=local) for idp, local in policy.group_mappings.items()
         ],
         source=policy.source,
         sources=policy.sources,
@@ -2453,9 +2336,7 @@ async def get_email_settings(
     admin: AdminUserDep, session: SessionDep, request: Request
 ) -> EmailSettingsResponse:
     """The mail configuration in force — the row's, or the environment's."""
-    effective = await effective_smtp(
-        session, request.app.state.settings, request.app.state.secrets
-    )
+    effective = await effective_smtp(session, request.app.state.settings, request.app.state.secrets)
     return EmailSettingsResponse(
         host=effective.host,
         port=effective.port,
@@ -2507,9 +2388,7 @@ async def test_email_settings(
     The message says who asked for it, so a test mail is never mistaken for a
     real one.
     """
-    effective = await effective_smtp(
-        session, request.app.state.settings, request.app.state.secrets
-    )
+    effective = await effective_smtp(session, request.app.state.settings, request.app.state.secrets)
     if not effective.usable:
         return EmailTestResponse(
             ok=False,
@@ -2730,13 +2609,6 @@ async def set_oidc_policy(
     if groups_claim is not None and not str(groups_claim).strip():
         raise BadRequestError("groups_claim must name a claim (e.g. 'groups').")
 
-    admin_groups = fields.get("admin_groups")
-    if admin_groups is not None:
-        cleaned = [name.strip() for name in admin_groups if name.strip()]
-        if len(cleaned) != len(set(cleaned)):
-            raise BadRequestError("admin_groups contains a duplicate name.")
-        admin_groups = cleaned
-
     mappings: list[list[str]] | None = None
     if payload.group_mappings is not None:
         mappings = []
@@ -2756,7 +2628,6 @@ async def set_oidc_policy(
         auto_provision=fields.get("auto_provision"),
         unknown_user_policy=unknown,
         groups_claim=groups_claim,
-        admin_groups=admin_groups,
         group_mappings=mappings,
         reason=payload.reason,
         created_by=admin.id,
@@ -3159,8 +3030,7 @@ def _engine_options(
         blocked: str | None = None
         if info.needs_endpoint and not settings.redaction.endpoint:
             blocked = (
-                "No detection endpoint is configured. Set GATEWAY_REDACTION__ENDPOINT "
-                "and restart."
+                "No detection endpoint is configured. Set GATEWAY_REDACTION__ENDPOINT and restart."
             )
         elif info.needs_endpoint and not settings.redaction.placeholder_key.get_secret_value():
             # The stability caveat stays in the message: choosing a throwaway
@@ -3893,4 +3763,3 @@ async def preview_redaction(
         redacted_text=rewritten,
         entity_count=count,
     )
-

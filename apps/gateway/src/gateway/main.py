@@ -19,6 +19,7 @@ from gateway.db import create_engine, create_session_factory
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.fx import FXService
 from gateway.identity_registry import OIDCProviderRegistry, seed_from_env
+from gateway.idp import IdpSigner
 from gateway.knowledge.pipeline import Ingestor
 from gateway.knowledge.resolver import KnowledgeResolver
 from gateway.logging_config import configure_logging
@@ -36,7 +37,6 @@ from gateway.redaction.base import Redactor
 from gateway.redaction.resolver import RedactionResolver
 from gateway.routers import (
     admin,
-    agents,
     auth,
     billing,
     chat,
@@ -45,6 +45,7 @@ from gateway.routers import (
     files,
     health,
     identity,
+    idp,
     images,
     knowledge_admin,
     me,
@@ -278,6 +279,16 @@ async def init_app_state(
         if settings.local_auth.enabled
         else None
     )
+    # The house issuer's signing key (ADR 0068), armed only when the IdP is:
+    # built here so a malformed GATEWAY_IDP__SIGNING_KEY refuses the boot
+    # rather than the first login. The settings validator has already checked
+    # the key is present; this checks it is *readable*. Off means absent, so
+    # an unconfigured deployment builds no key material at all.
+    app.state.idp_signer = (
+        IdpSigner.from_pem(settings.idp.signing_key.get_secret_value())
+        if settings.idp.enabled
+        else None
+    )
 
     # An empty counter cache is not a failed read — it answers confidently with
     # zero, which would hand every group a fresh budget after Valkey is wiped.
@@ -298,6 +309,7 @@ async def init_app_state(
             "redaction_engine": settings.redaction.engine,
             "secret_key_configured": app.state.secrets.enabled,
             "oidc_enabled": settings.oidc.enabled,
+            "idp_enabled": settings.idp.enabled,
             "quota_enabled": settings.quota.enabled,
         },
     )
@@ -404,13 +416,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # admin console, and no bearer-authenticated client can reach a
     # management route (ADR 0062).
     app.include_router(knowledge_admin.router)
-    # Authoring agents. *Using* one goes through /v1/chat/completions with
-    # `model: agent:<name>`, which is the whole point (ADR 0062).
-    app.include_router(agents.router)
     app.include_router(auth.router)
     app.include_router(tokens.router)
     app.include_router(me.router)
     app.include_router(admin.router)
+    # The house issuer (ADR 0068). Registered only when enabled — off means
+    # the routes do not exist and discovery does not resolve, which is what
+    # "off means absent" has to mean for a federating surface. Discovery's
+    # well-known path must live at the root, so this router carries no prefix.
+    if resolved.idp.enabled:
+        app.include_router(idp.router)
 
     # Last, so a console route can never shadow an API one. Mounts only if the
     # assets are in the image and the setting allows it (ADR 0023).
