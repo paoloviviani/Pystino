@@ -39,6 +39,12 @@ export function AdminProviders() {
   const [editing, setEditing] = useState<AdminProvider | null>(null);
   const [results, setResults] = useState<Record<string, ProviderTestResult>>({});
 
+  // Search backends are a different concept and have their own screen
+  // (ADR 0071): they answer /v1/search, are metered as counts, and were
+  // presented here in the vocabulary of inference providers — which is how
+  // the confusion started.
+  const items = (providers.data?.items ?? []).filter((p) => p.kind !== "search");
+
   const runTest = (provider: AdminProvider) => {
     test.mutate(provider.id, {
       onSuccess: (result) => {
@@ -211,7 +217,7 @@ export function AdminProviders() {
         ) : (
           <Table
             columns={columns}
-            rows={providers.data?.items ?? []}
+            rows={items}
             rowKey={(provider) => provider.id}
             empty="No providers configured. Nothing can be served until one exists."
             caption="Inference endpoints, their credentials and how many models they serve."
@@ -264,14 +270,18 @@ function defaultPluginName(plugins: ProviderPlugin[] | undefined): string {
  * matching the API's three-way convention. Pre-filling it with the hint would be
  * worse than useless: saving would then store the mask as the credential.
  */
-function ProviderDialog({
+export function ProviderDialog({
   open,
   provider,
   onClose,
+  pluginFilter,
 }: {
   open: boolean;
   provider: AdminProvider | null;
   onClose: () => void;
+  /** A screen that owns one kind of provider offers only those types — the
+   * search screen is not a place to create an inference provider. */
+  pluginFilter?: (plugin: ProviderPlugin) => boolean;
 }) {
   const create = useCreateProvider();
   const update = useUpdateProvider();
@@ -285,7 +295,10 @@ function ProviderDialog({
   const [clearKey, setClearKey] = useState(false);
   // The provider *type*. Read from the API rather than hardcoded, so installing
   // a plugin makes it selectable without a console release (ADR 0032).
-  const plugins = useProviderPlugins();
+  const allPlugins = useProviderPlugins();
+  const plugins = pluginFilter
+    ? { ...allPlugins, data: allPlugins.data?.filter(pluginFilter) }
+    : allPlugins;
   const [plugin, setPlugin] = useState<string>("");
   const [billingMode, setBillingMode] = useState<"own_prices" | "provider_reported">("own_prices");
   const [prefix, setPrefix] = useState("");

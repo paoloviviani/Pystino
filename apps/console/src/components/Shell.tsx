@@ -57,6 +57,7 @@ const NAV_ADMIN: NavItem[] = [
   { to: "/admin/quotas", label: "Quotas" },
   { to: "/admin/redaction", label: "Redaction" },
   { to: "/admin/providers", label: "Providers" },
+  { to: "/admin/search", label: "Web search" },
   // No Pricing entry: a model's prices live on the model's own page, because
   // "what is this model" and "what does it cost" are one question asked in one
   // place. See routes/AdminModelDetail.tsx.

@@ -9,15 +9,13 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from conftest import UPSTREAM_BASE, Seeded
+from conftest import Seeded
 from gateway.models import (
     GroupModelAccess,
     ModelDef,
     ModelKind,
     ModelPrice,
     PriceSource,
-    Provider,
-    ProviderKind,
 )
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -579,179 +577,59 @@ class TestImport:
         ).status_code == 400
 
 
-class TestSearchTierImport:
-    """A search backend's tiers, discovered and imported without a price.
+class TestSearchBackendAnchor:
+    """A search backend's grant anchor, created with the provider.
 
-    A search vendor publishes no ``/models`` and no rate: the plugin answers
-    Discover from itself (``tier_catalogue``), and the tier's meter is a
-    request count, so a price row would multiply nothing. These tests hold the
-    line on both halves — the tier imports where an unpriced chat model still
-    cannot, and nothing is priced.
+    The passthrough (ADR 0071) grants per backend, and the anchor — one model
+    row named after it — is what the grant hangs on and what /v1/search
+    resolves. It exists the moment the provider does: there is nothing to
+    discover and nothing to import, because a tier is a body field now.
     """
 
-    @pytest.fixture
-    async def search_provider(
-        self,
-        client: httpx.AsyncClient,
-        session_factory: async_sessionmaker[AsyncSession],
-        seeded: Seeded,
-    ):
-        from gateway.secrets import SecretBox, hint_for
-
-        async with session_factory() as session:
-            key = "search-key"
-            provider = Provider(
-                name="linkup",
-                base_url=UPSTREAM_BASE,
-                api_key_encrypted=SecretBox(
-                    ["test-encryption-key-not-for-production"]
-                ).encrypt(key),
-                api_key_hint=hint_for(key),
-                plugin="linkup",
-                kind=ProviderKind.SEARCH,
-            )
-            session.add(provider)
-            await session.commit()
-            return provider.id
-
     @pytest.mark.asyncio
-    async def test_tiers_are_listed_importable_and_unpriced(
+    async def test_creating_a_search_provider_creates_its_anchor(
         self,
         app: object,
         client: httpx.AsyncClient,
         seeded: Seeded,
-        search_provider,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        as_user(app, await make_admin(session_factory, seeded))
-        response = await client.get(
-            "/api/admin/models/discover?provider_id=" + str(search_provider)
-        )
-        assert response.status_code == 200, response.text
-        rows = response.json()["available"]
-        tiers = {row["upstream_model"]: row for row in rows}
-        assert set(tiers) == {"flash", "fast", "standard", "deep"}
-        for tier in tiers.values():
-            assert tier["kind"] == "search"
-            # Importable: the meter is a request count, so there is nothing
-            # the absence of a rate could give away.
-            assert tier["blocked_reason"] is None
-            assert tier["input_per_mtok"] is None
-
-    @pytest.mark.asyncio
-    async def test_a_tier_imports_with_no_price_row(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        search_provider,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
-            "/api/admin/models/import?provider_id=" + str(search_provider),
-            json={"models": [{"upstream_model": "deep"}]},
+            "/api/admin/providers",
+            json={"name": "acme-search", "plugin": "linkup", "kind": "search"},
         )
         assert response.status_code == 201, response.text
-        result = response.json()["results"][0]
-        assert result["imported"] is True
-        assert result["priced"] is False
 
         async with session_factory() as session:
-            model = (
-                await session.execute(select(ModelDef).where(ModelDef.name == "deep"))
+            anchor = (
+                await session.execute(
+                    select(ModelDef).where(ModelDef.name == "acme-search")
+                )
             ).scalar_one()
-            assert model.kind == ModelKind.SEARCH
-            prices = (
-                await session.execute(select(ModelPrice).where(ModelPrice.model_id == model.id))
-            ).scalars().all()
-        assert prices == []
+            assert anchor.kind == ModelKind.SEARCH
+            assert anchor.upstream_model == "search"
 
     @pytest.mark.asyncio
-    async def test_two_vendors_may_share_a_tier_name(
+    async def test_a_colliding_model_name_is_reported_not_500(
         self,
         app: object,
         client: httpx.AsyncClient,
         seeded: Seeded,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """Linkup's "fast" must not block Exa's "fast".
-
-        A search tier's upstream id is the tier's own name — a word, not an id
-        space — so two vendors legitimately offer the same one, and what is
-        unique is the pair (provider, tier). The routed name is this
-        catalogue's, so the second import just needs its own name. An
-        implementation that checked upstream ids globally would let one
-        vendor's vocabulary annex another's.
-        """
-        from gateway.secrets import SecretBox, hint_for
-
         as_user(app, await make_admin(session_factory, seeded))
-        async with session_factory() as session:
-            linkup = Provider(
-                name="linkup",
-                base_url=UPSTREAM_BASE,
-                api_key_encrypted=SecretBox(
-                    ["test-encryption-key-not-for-production"]
-                ).encrypt("k"),
-                api_key_hint=hint_for("k"),
-                plugin="linkup",
-                kind=ProviderKind.SEARCH,
-            )
-            exa = Provider(
-                name="exa",
-                base_url=UPSTREAM_BASE,
-                api_key_encrypted=SecretBox(
-                    ["test-encryption-key-not-for-production"]
-                ).encrypt("k"),
-                api_key_hint=hint_for("k"),
-                plugin="exa",
-                kind=ProviderKind.SEARCH,
-            )
-            session.add_all([linkup, exa])
-            await session.commit()
-            linkup_id, exa_id = linkup.id, exa.id
-
-        first = await client.post(
-            "/api/admin/models/import?provider_id=" + str(linkup_id),
-            json={"models": [{"upstream_model": "fast"}]},
+        # A model already holds the name the anchor would take.
+        await client.post(
+            "/api/admin/models",
+            json={
+                "name": "clash",
+                "upstream_model": "x",
+                "provider_id": str(seeded.provider.id),
+            },
         )
-        assert first.status_code == 201, first.text
-        assert first.json()["results"][0]["imported"] is True
-
-        second = await client.post(
-            "/api/admin/models/import?provider_id=" + str(exa_id),
-            json={"models": [{"upstream_model": "fast", "name": "exa-fast"}]},
-        )
-        assert second.status_code == 201, second.text
-        result = second.json()["results"][0]
-        assert result["imported"] is True, result
-        # And the same provider a second time is still refused, per provider.
-        again = await client.post(
-            "/api/admin/models/import?provider_id=" + str(exa_id),
-            json={"models": [{"upstream_model": "fast", "name": "exa-fast-2"}]},
-        )
-        result = again.json()["results"][0]
-        assert result["imported"] is False
-        assert result["reason"] == "already in the catalogue"
-
-    @pytest.mark.asyncio
-    async def test_an_unpriced_chat_model_still_cannot_import(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        search_provider,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        """The search exception is the meter's, not the catalogue's: a model
-        this provider lists without the Search tag and without a price is
-        still refused, because a cost of zero would be a quiet giveaway."""
-        as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
-            "/api/admin/models/import?provider_id=" + str(search_provider),
-            json={"models": [{"upstream_model": "not-a-tier"}]},
+            "/api/admin/providers",
+            json={"name": "clash", "plugin": "linkup", "kind": "search"},
         )
-        result = response.json()["results"][0]
-        assert result["imported"] is False
-        assert result["reason"] == "not offered by the provider"
+        assert response.status_code == 409, response.text

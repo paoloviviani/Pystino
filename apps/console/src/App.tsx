@@ -7,6 +7,7 @@ import { useMe } from "./lib/queries";
 import { AdminModelDetail } from "./routes/AdminModelDetail";
 import { AdminModels } from "./routes/AdminModels";
 import { AdminProviders } from "./routes/AdminProviders";
+import { AdminSearch } from "./routes/AdminSearch";
 import { AdminQuotas } from "./routes/AdminQuotas";
 import { AdminRedaction } from "./routes/AdminRedaction";
 import { AdminRedactionRule } from "./routes/AdminRedactionRule";
@@ -64,6 +65,14 @@ export function App() {
             a bookmarked link should be told, not handed a blank 404 that reads
             as a broken deploy. The API refuses them regardless — this is
             courtesy, not enforcement. */}
+        <Route
+          path="/admin/search"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminSearch />
+            </RequireAdmin>
+          }
+        />
         <Route
           path="/admin/models"
           element={

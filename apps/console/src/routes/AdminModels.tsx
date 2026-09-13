@@ -81,6 +81,7 @@ const KIND_SECTIONS: { kind: ModelKind; title: string; description: string }[] =
 
 
 export function AdminModels() {
+
   // A rate is money too, so it follows the reader's precision preference. Read
   // by hand rather than via <Money> because these figures sit inside a phrase
   // ("0.117 in / 0.251 out").
@@ -89,6 +90,14 @@ export function AdminModels() {
   // this is one of the two screens that genuinely needs the pager.
   const paged = usePaginated();
   const models = useModels(paged.page);
+  // Search tiers are a different concept and have their own screen
+  // (ADR 0071): they answer /v1/search and were rendered here as though a
+  // model kind, which is how an operator came to manage a depth among the
+  // prices-per-million.
+  const searchTierIds = new Set(
+    (models.data?.items ?? []).filter((m) => m.kind === "search").map((m) => m.id),
+  );
+
   const update = useUpdateModel();
   const deleteModel = useDeleteModel();
   const toast = useOptionalToast();
@@ -288,8 +297,8 @@ export function AdminModels() {
         ) : (
           <>
             {(() => {
-              const rows = models.data?.items ?? [];
-              if (rows.length === 0) {
+              const all = models.data?.items ?? [];
+              if (all.length === 0) {
                 return (
                   <Table
                     columns={columns}
@@ -308,6 +317,9 @@ export function AdminModels() {
               // the gateway's enum can gain a value before this file does, and
               // a model that exists but renders nowhere is worse than one in a
               // section headed by its raw name.
+              const rows = (models.data?.items ?? []).filter(
+                (model) => !searchTierIds.has(model.id),
+              );
               const known = new Set(KIND_SECTIONS.map((section) => section.kind));
               const unknown = rows.filter((model) => !known.has(model.kind));
               const sections = [

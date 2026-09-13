@@ -495,7 +495,7 @@ export interface ProviderPlugin {
   label: string;
   description: string;
   /** `provider` implies the serving endpoint; `router` chooses it per request. */
-  kind: "provider" | "router";
+  kind: "provider" | "router" | "search";
   /** Only the modes this plugin can support, so the UI cannot offer a refusal. */
   billing_modes: ("own_prices" | "provider_reported")[];
   /**
@@ -528,7 +528,7 @@ export interface AdminProvider {
    * instead of four (ADR 0032).
    */
   plugin: string | null;
-  kind: "provider" | "router";
+  kind: "provider" | "router" | "search";
   /** What the named plugin actually is, so a mismatch with `kind` is visible. */
   plugin_kind: string | null;
   /** Whose figure is the charge. */

@@ -27,13 +27,7 @@ from gateway.plugins.registry import (
     resolve,
 )
 from gateway.plugins.search import (
-    SearchConfigurationError,
-    SearchOutcome,
     SearchPlugin,
-    SearchQuery,
-    SearchResult,
-    SearchUnreadableError,
-    normalise_tier,
 )
 
 __all__ = [
