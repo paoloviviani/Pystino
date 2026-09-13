@@ -103,6 +103,21 @@ export function login(next?: string, provider?: string): void {
   window.location.assign(`/auth/login?next=${encodeURIComponent(here)}${chosen}`);
 }
 
+/**
+ * `next` as the router wants it.
+ *
+ * The stored return path is an *origin* path — `/console/admin/quotas` —
+ * because the SSO round-trip hands it to the gateway, which redirects the
+ * whole browser. The local sign-in has no round-trip: it calls the router's
+ * `navigate`, whose basename is already `/console`, so handing it the origin
+ * path produces `/console/console` — the catch-all's "No such address",
+ * reached directly after a successful sign-in. Stripping the prefix is the
+ * difference between the two consumers.
+ */
+export function nextForRouter(next: string): string {
+  return next.replace(/^\/console(?=\/|$)/, "") || "/";
+}
+
 /** Per-provider login, named for the button that calls it (ADR 0051). */
 export function loginWith(provider: string, next?: string): void {
   login(next, provider);
