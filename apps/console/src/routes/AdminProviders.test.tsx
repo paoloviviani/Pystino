@@ -25,6 +25,7 @@ function provider(overrides: Partial<AdminProvider> = {}): AdminProvider {
     has_api_key: true,
     extra_headers: {},
     is_active: true,
+    prefix: "",
     plugin: null,
     kind: "provider",
     plugin_kind: "provider",

@@ -517,6 +517,8 @@ export interface AdminProvider {
   has_api_key: boolean;
   extra_headers: Record<string, string>;
   is_active: boolean;
+  /** Prepended to every model name this provider contributes. */
+  prefix: string;
   /**
    * Which plugin carries this counterparty's quirks. Null is the default type.
    *

@@ -288,6 +288,7 @@ function ProviderDialog({
   const plugins = useProviderPlugins();
   const [plugin, setPlugin] = useState<string>("");
   const [billingMode, setBillingMode] = useState<"own_prices" | "provider_reported">("own_prices");
+  const [prefix, setPrefix] = useState("");
   // Keyed remount: without this the fields keep the previous provider's values
   // when a different row is opened.
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -301,6 +302,7 @@ function ProviderDialog({
     setClearKey(false);
     setPlugin(provider?.plugin ?? "");
     setBillingMode(provider?.billing_mode ?? "own_prices");
+    setPrefix(provider?.prefix ?? "");
   }
 
   const chosen = (plugins.data ?? []).find(
@@ -328,6 +330,7 @@ function ProviderDialog({
           // counterparty, not an opinion an operator should have to hold.
           kind: chosen?.kind ?? "provider",
           billing_mode: effectiveMode,
+          prefix,
           // Three ways, deliberately: a typed key replaces, the explicit clear
           // removes, and neither leaves the stored credential untouched.
           ...(apiKey ? { api_key: apiKey } : clearKey ? { api_key: "" } : {}),
@@ -350,6 +353,7 @@ function ProviderDialog({
           plugin: plugin || null,
           kind: chosen?.kind ?? "provider",
           billing_mode: effectiveMode,
+          prefix,
           ...(apiKey ? { api_key: apiKey } : {}),
         },
         {
@@ -401,6 +405,18 @@ function ProviderDialog({
             ? "Letters, digits, dot, dash and underscore. Renaming is safe; it changes" +
               " owned_by on this provider's /v1/models cards."
             : "Letters, digits, dot, dash and underscore."
+        }
+      />
+
+      <Input
+        label="Model name prefix"
+        value={prefix}
+        onChange={(event) => setPrefix(event.target.value)}
+        placeholder="none"
+        hint={
+          `Prepended to every model this provider contributes — two vendors both selling a "deep"` +
+          ` become ${prefix ? `"${prefix}deep"` : `"deep"`} and a second vendor's. Saving also renames` +
+          " the models already here."
         }
       />
 

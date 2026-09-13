@@ -724,6 +724,14 @@ class Provider(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
 
+    # Prepended to every model name this provider contributes, so two vendors
+    # whose tiers share a word ("deep", "fast") do not collide in one
+    # catalogue. Empty string is no prefix. Applied at import and — via the
+    # update route — re-applied to the models already here, because a prefix
+    # added after a dozen imports that only reached future ones would leave
+    # the catalogue half-disambiguated, which is worse than either.
+    prefix: Mapped[str] = mapped_column(String(32), default="", server_default=text("''"))
+
     # Which plugin carries this counterparty's quirks, and what kind of
     # counterparty it is (ADR 0032). Null plugin means the generic
     # OpenAI-compatible behaviour, which is what every row had before plugins
