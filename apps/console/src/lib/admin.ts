@@ -117,7 +117,7 @@ export interface ProviderInput {
   extra_headers?: Record<string, string>;
   is_active?: boolean;
   plugin?: string | null;
-  kind?: "provider" | "router";
+  kind?: "provider" | "router" | "search";
   billing_mode?: "own_prices" | "provider_reported";
   /**
    * Prepended to every model name this provider contributes. Setting or

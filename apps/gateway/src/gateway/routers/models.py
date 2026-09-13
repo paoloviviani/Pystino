@@ -20,20 +20,48 @@ from fastapi import APIRouter
 
 from gateway.access import accessible_model_by_name, accessible_models
 from gateway.deps import PrincipalDep, SessionDep
-from gateway.models import ModelDef
+from gateway.errors import BadRequestError
+from gateway.models import ModelDef, ModelKind
 from gateway.schemas import ModelCard, ModelList
+
+#: The `?include=` vocabulary. Search is the odd one out — its tiers answer
+#: /v1/search and stay out of the default list for the reason in the docstring
+#: above.
+_KINDS: dict[str, ModelKind] = {kind.value: kind for kind in ModelKind}
 
 router = APIRouter(prefix="/v1", tags=["openai"])
 
 
 @router.get("/models", response_model=ModelList)
-async def list_models(principal: PrincipalDep, session: SessionDep) -> ModelList:
+async def list_models(
+    principal: PrincipalDep,
+    session: SessionDep,
+    include: str | None = None,
+) -> ModelList:
+    # Search backends are absent unless asked for by name (ADR 0071). They
+    # answer /v1/search, not /v1/chat/completions, and an OpenAI-compatible
+    # client reading this list would present a tier as a chat model — the one
+    # confusion this surface must not create. The kinds an ordinary client
+    # expects ride along; `?include=search` is the opt-in for the rest, and
+    # the caller's grants still bound whatever is shown.
+    kinds: set[ModelKind] | None = None
+    if include:
+        kinds = {kind for part in include.split(",") if (kind := _KINDS.get(part.strip()))}
+        if not kinds:
+            raise BadRequestError(
+                f"Unknown kinds in 'include'. Known: {', '.join(sorted(_KINDS))}."
+            )
+    else:
+        kinds = set(ModelKind) - {ModelKind.SEARCH}
+
     # Group grants and personal grants, unioned in one place (ADR 0027). The
     # empty case is handled there too, so there is no early return to keep in
     # step with the predicate.
-    stmt = accessible_models(
-        user_id=principal.user.id, group_ids=principal.user.group_ids()
-    ).order_by(ModelDef.name)
+    stmt = (
+        accessible_models(user_id=principal.user.id, group_ids=principal.user.group_ids())
+        .where(ModelDef.kind.in_(kinds))
+        .order_by(ModelDef.name)
+    )
     models = (await session.execute(stmt)).scalars().all()
 
     return ModelList(

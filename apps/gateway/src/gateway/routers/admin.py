@@ -513,6 +513,36 @@ async def create_provider(
         await session.rollback()
         raise ConflictError(f"A provider named {payload.name!r} already exists.") from exc
     await session.refresh(provider)
+
+    # A search backend gets its grant anchor here: one model row, named after
+    # the backend, that the access grants hang on and that /v1/search resolves
+    # (ADR 0071). Tiers are body fields now, not models, so there is nothing
+    # to import — the backend exists, therefore it may be granted.
+    if provider.kind == ProviderKind.SEARCH:
+        session.add(
+            ModelDef(
+                name=provider.name,
+                upstream_model="search",
+                provider_id=provider.id,
+                kind=ModelKind.SEARCH,
+                input_modalities=["text"],
+                output_modalities=["text"],
+                supported_features=[],
+            )
+        )
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            # The name comes from the payload, not the row: the rollback just
+            # expired every loaded instance, and an f-string that refreshed
+            # one would raise DetachedInstanceError from inside its own error
+            # handler.
+            raise ConflictError(
+                f"A model named {payload.name!r} already exists, so the "
+                "backend's grant anchor could not be created."
+            ) from exc
+
     return _provider_response(provider, 0)
 
 
@@ -1160,14 +1190,13 @@ async def import_models(
     provider, catalogue_url, api_key = await _catalogue_source(
         session, secrets, provider_id, url, tag
     )
-    by_upstream, _unpriced, filled, kinds = await _catalogue_with_prices(
+    by_upstream, _unpriced, filled, _kinds = await _catalogue_with_prices(
         http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
     )
 
     existing = (await session.execute(select(ModelDef))).scalars().all()
     taken_names = {model.name for model in existing}
     taken_upstream = {model.upstream_model for model in existing}
-    taken_upstream_by_provider = {(model.provider_id, model.upstream_model) for model in existing}
 
     results: list[ModelImportResult] = []
     for item in payload.models:
@@ -1178,27 +1207,12 @@ async def import_models(
 
         # Duplicate checks run before any insert — an import that reached the
         # database's constraint instead of these reports was a 500 where the
-        # response owed the operator a per-item reason. The *upstream* check
-        # comes first (it names the resource rather than a clashing label):
-        # global for a priced model, whose upstream id the drift reports key
-        # on; per provider for a search tier, whose upstream id is the tier's
-        # own name — "fast", "deep" — which two vendors legitimately share.
-        # The name check is universal and last.
+        # response owed the operator a per-item reason. The upstream check
+        # comes first (it names the resource rather than a clashing label),
+        # and it is global: a priced model's upstream id is what the drift
+        # reports key on. The name check is universal and last.
         price = by_upstream.get(item.upstream_model)
-        is_search = price is None and kinds.get(item.upstream_model) == ModelKind.SEARCH
-        if is_search:
-            if (provider.id, item.upstream_model) in taken_upstream_by_provider:
-                results.append(
-                    ModelImportResult(
-                        upstream_model=item.upstream_model,
-                        name=name,
-                        imported=False,
-                        priced=False,
-                        reason="already in the catalogue",
-                    )
-                )
-                continue
-        elif item.upstream_model in taken_upstream:
+        if item.upstream_model in taken_upstream:
             results.append(
                 ModelImportResult(
                     upstream_model=item.upstream_model,
@@ -1222,40 +1236,8 @@ async def import_models(
             continue
 
         if price is None:
-            if is_search:
-                # A search tier has no token price *by design*: its meter is a
-                # request count (`LimitMetric.OWN_SEARCH_REQUESTS`), the
-                # reservation is one request and no token counts, so a price
-                # row would multiply nothing. What bounds it is the request
-                # ceiling, which is the administrator's grant to make — the
-                # same access machinery as every other model. The catalogue's
-                # "search" tag is what says this is a tier and not an
-                # unpriced chat model wearing the gap as a disguise; the
-                # modalities are `tier_catalogue`'s own — text in, text out.
-                model = ModelDef(
-                    name=name,
-                    upstream_model=item.upstream_model,
-                    provider_id=provider.id,
-                    kind=ModelKind.SEARCH,
-                    input_modalities=["text"],
-                    output_modalities=["text"],
-                    supported_features=[],
-                )
-                session.add(model)
-                taken_names.add(name)
-                taken_upstream_by_provider.add((provider.id, item.upstream_model))
-                results.append(
-                    ModelImportResult(
-                        upstream_model=item.upstream_model,
-                        name=name,
-                        imported=True,
-                        # Priced=False is the honest word: no rate exists to
-                        # stamp, because the meter counts requests.
-                        priced=False,
-                        price_source=None,
-                    )
-                )
-                continue
+            # Search backends no longer import tiers: the anchor row is created
+            # with the provider, and a tier is a body field now (ADR 0071).
             results.append(
                 ModelImportResult(
                     upstream_model=item.upstream_model,
