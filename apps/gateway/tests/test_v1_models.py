@@ -12,6 +12,8 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
+from joserfc.jwk import RSAKey
 from conftest import Seeded, make_token
 from conftest import bearer_auth as auth
 from gateway.models import GroupModelAccess, ModelKind, Provider, ProviderKind
