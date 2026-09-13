@@ -468,7 +468,12 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
   // Only active providers: creating a model on a deactivated endpoint produces
   // something that cannot serve a request the moment it exists.
-  const choices = (providers.data?.items ?? []).filter((provider) => provider.is_active);
+  const choices = (providers.data?.items ?? []).filter(
+    // Search backends are not catalogue importers: their grant anchor is
+    // created with the provider, and a tier is a body field (ADR 0071). They
+    // have their own screen.
+    (provider) => provider.is_active && provider.kind !== "search",
+  );
 
   return (
     <Dialog
@@ -651,7 +656,12 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   const toast = useOptionalToast();
   const [selected, setSelected] = useState<string[]>([]);
 
-  const choices = (providers.data?.items ?? []).filter((provider) => provider.is_active);
+  const choices = (providers.data?.items ?? []).filter(
+    // Search backends are not catalogue importers: their grant anchor is
+    // created with the provider, and a tier is a body field (ADR 0071). They
+    // have their own screen.
+    (provider) => provider.is_active && provider.kind !== "search",
+  );
 
   const toggle = (id: string) =>
     setSelected((current) =>
