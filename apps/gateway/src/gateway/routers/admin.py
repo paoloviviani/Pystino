@@ -396,6 +396,7 @@ def _provider_response(provider: Provider, model_count: int, unpriced: int = 0) 
         plugin=provider.plugin,
         kind=provider.kind.value,
         billing_mode=provider.billing_mode.value,
+        prefix=provider.prefix,
         unpriced_model_count=unpriced,
         plugin_kind=_plugin_kind(provider.plugin),
         model_count=model_count,
@@ -500,6 +501,7 @@ async def create_provider(
         plugin=payload.plugin,
         kind=ProviderKind(payload.kind),
         billing_mode=BillingMode(payload.billing_mode),
+        prefix=payload.prefix,
     )
     if payload.api_key is not None:
         _store_api_key(provider, secrets, payload.api_key.get_secret_value())
@@ -548,6 +550,49 @@ async def update_provider(
         secret = payload.api_key.get_secret_value() if payload.api_key is not None else ""
         _store_api_key(provider, secrets, secret)
     fields.pop("api_key", None)
+
+    # The prefix is not a stored-and-forgotten field: whatever it now is, the
+    # provider's models must match it. A prefix that only reached future
+    # imports would leave the catalogue half-disambiguated — some rows named
+    # `deep`, some `linkup-deep` — and an operator reading that list cannot
+    # tell which rule is in force. Setting or changing renames what is here
+    # (old prefix off, new prefix on); clearing strips it. A target name that
+    # is taken refuses the whole rename, because half a rename is the one
+    # outcome worse than the old names: it would be neither the catalogue the
+    # operator asked for nor the one they had.
+    if "prefix" in fields:
+        new_prefix = fields.pop("prefix") or ""
+        models = (
+            await session.execute(select(ModelDef).where(ModelDef.provider_id == provider.id))
+        ).scalars().all()
+        renames: list[tuple[ModelDef, str]] = []
+        for model in models:
+            stripped = model.name
+            if provider.prefix and model.name.startswith(provider.prefix):
+                stripped = model.name[len(provider.prefix):]
+            renames.append((model, f"{new_prefix}{stripped}"))
+        others = (await session.execute(select(ModelDef))).scalars().all()
+        taken = {model.name for model in others if model.provider_id != provider.id}
+        collisions = sorted({target for _, target in renames if target in taken})
+        if collisions:
+            raise BadRequestError(
+                "Renaming with this prefix would collide with models of other "
+                f"providers: {', '.join(collisions)}. Choose a different prefix "
+                "or free those names."
+            )
+        # Longest first. A prefix that grows the names ("deep" ->
+        # "linkup-deep") would otherwise collide with the sibling that holds
+        # "linkup-deep" until it moves itself — and the shrink direction needs
+        # the same order, the long name stepping down before the short one
+        # claims its old place. Names are unique, so this ordering is total.
+        # Flushed per row, because the unit of work does not preserve list
+        # order: a single commit may emit the UPDATEs in any order it likes,
+        # and a unique constraint is checked the moment a row is written.
+        renames.sort(key=lambda pair: len(pair[0].name), reverse=True)
+        for model, target in renames:
+            model.name = target
+            await session.flush()
+        provider.prefix = new_prefix
 
     if (base_url := fields.pop("base_url", None)) is not None:
         provider.base_url = base_url.rstrip("/")
@@ -987,7 +1032,7 @@ async def discover_models(
         available.append(
             DiscoveredModel(
                 upstream_model=upstream_id,
-                suggested_name=_suggested_name(upstream_id),
+                suggested_name=f"{provider.prefix}{_suggested_name(upstream_id)}",
                 input_per_mtok=price.input_per_mtok,
                 output_per_mtok=price.output_per_mtok,
                 per_page=price.per_page,
@@ -1019,7 +1064,7 @@ async def discover_models(
         available.append(
             DiscoveredModel(
                 upstream_model=upstream_id,
-                suggested_name=_suggested_name(upstream_id),
+                suggested_name=f"{provider.prefix}{_suggested_name(upstream_id)}",
                 input_per_mtok=None,
                 output_per_mtok=None,
                 currency=None,
@@ -1126,7 +1171,10 @@ async def import_models(
 
     results: list[ModelImportResult] = []
     for item in payload.models:
-        name = item.name or _suggested_name(item.upstream_model)
+        # The provider's prefix is what makes "deep" from two vendors two
+        # models; the import is where it earns its keep.
+        suggested = f"{provider.prefix}{_suggested_name(item.upstream_model)}"
+        name = item.name or suggested
 
         # Duplicate checks run before any insert — an import that reached the
         # database's constraint instead of these reports was a 500 where the

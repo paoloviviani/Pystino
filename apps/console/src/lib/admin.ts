@@ -119,6 +119,12 @@ export interface ProviderInput {
   plugin?: string | null;
   kind?: "provider" | "router";
   billing_mode?: "own_prices" | "provider_reported";
+  /**
+   * Prepended to every model name this provider contributes. Setting or
+   * changing it renames the models already here — the API does that, not the
+   * console — and an empty string strips it back off.
+   */
+  prefix?: string;
 }
 
 export function useCreateProvider() {

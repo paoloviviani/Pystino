@@ -722,3 +722,154 @@ class TestUserGrantApi:
         as_user(app, seeded.user)
         response = await client.put(f"/api/admin/users/{seeded.user.id}/models/{model.id}")
         assert response.status_code == 403
+
+
+class TestProviderPrefix:
+    """A provider's prefix renames what it contributes — future and past.
+
+    Two vendors whose tiers share a word collide in one catalogue; the prefix
+    is the fix, and it is only a fix if it reaches the models already here.
+    A prefix that applied to future imports alone would leave the catalogue
+    half-disambiguated, which is the state the operator was trying to escape.
+    """
+
+    async def _seed_provider_with_model(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        name: str,
+        model_name: str,
+        *,
+        prefix: str = "",
+    ):
+        async with session_factory() as session:
+            provider = Provider(name=name, base_url="http://upstream/v1", prefix=prefix)
+            session.add(provider)
+            await session.flush()
+            model = ModelDef(
+                name=model_name,
+                upstream_model=model_name,
+                provider_id=provider.id,
+            )
+            session.add(model)
+            await session.commit()
+            return provider.id
+
+    @pytest.mark.asyncio
+    async def test_setting_a_prefix_renames_the_models_already_there(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        provider_id = await self._seed_provider_with_model(session_factory, "acme", "deep")
+        as_user(app, await make_admin(session_factory, seeded))
+
+        response = await client.patch(
+            f"/api/admin/providers/{provider_id}", json={"prefix": "acme-"}
+        )
+        assert response.status_code == 200, response.text
+
+        async with session_factory() as session:
+            names = (
+                await session.execute(
+                    select(ModelDef.name).where(ModelDef.provider_id == provider_id)
+                )
+            ).scalars().all()
+        assert names == ["acme-deep"]
+
+    @pytest.mark.asyncio
+    async def test_clearing_the_prefix_strips_it_back(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        provider_id = await self._seed_provider_with_model(
+            session_factory, "acme", "acme-deep", prefix="acme-"
+        )
+        as_user(app, await make_admin(session_factory, seeded))
+
+        response = await client.patch(
+            f"/api/admin/providers/{provider_id}", json={"prefix": ""}
+        )
+        assert response.status_code == 200, response.text
+
+        async with session_factory() as session:
+            names = (
+                await session.execute(
+                    select(ModelDef.name).where(ModelDef.provider_id == provider_id)
+                )
+            ).scalars().all()
+        assert names == ["deep"]
+
+    @pytest.mark.asyncio
+    async def test_a_rename_that_would_collide_is_refused_whole(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Half a rename is worse than the old names: neither the catalogue
+        asked for nor the one that existed."""
+        provider_id = await self._seed_provider_with_model(session_factory, "acme", "deep")
+        as_user(app, await make_admin(session_factory, seeded))
+        # Another provider already holds the target name.
+        await self._seed_provider_with_model(session_factory, "other", "acme-deep")
+
+        response = await client.patch(
+            f"/api/admin/providers/{provider_id}", json={"prefix": "acme-"}
+        )
+        assert response.status_code == 400, response.text
+
+        async with session_factory() as session:
+            names = (
+                await session.execute(
+                    select(ModelDef.name).where(ModelDef.provider_id == provider_id)
+                )
+            ).scalars().all()
+        assert names == ["deep"], "the rename must not have half-happened"
+
+    @pytest.mark.asyncio
+    async def test_a_growing_rename_steps_the_longest_first(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """One model already holds the target of another's rename.
+
+        `deep` wants to become `acme-deep`, which `acme-deep` (a mistyped
+        import) holds — and must vacate by growing first. Renaming in the
+        wrong order trips the unique constraint mid-flush and answers 500.
+        """
+        provider_id = await self._seed_provider_with_model(session_factory, "acme", "deep")
+        as_user(app, await make_admin(session_factory, seeded))
+        async with session_factory() as session:
+            provider = await session.get(Provider, provider_id)
+            session.add(
+                ModelDef(
+                    name="acme-deep",
+                    upstream_model="acme-deep",
+                    provider_id=provider.id,
+                )
+            )
+            await session.commit()
+
+        response = await client.patch(
+            f"/api/admin/providers/{provider_id}", json={"prefix": "acme-"}
+        )
+        assert response.status_code == 200, response.text
+
+        async with session_factory() as session:
+            names = sorted(
+                (
+                    await session.execute(
+                        select(ModelDef.name).where(ModelDef.provider_id == provider_id)
+                    )
+                ).scalars()
+            )
+        assert names == ["acme-acme-deep", "acme-deep"]

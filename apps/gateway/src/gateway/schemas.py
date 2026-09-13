@@ -613,6 +613,9 @@ class ProviderResponse(BaseModel):
     plugin: str | None = None
     kind: str = "provider"
     billing_mode: str = "own_prices"
+    #: Prepended to every model name this provider contributes, so two vendors
+    #: whose tiers share a word do not collide. Empty means none.
+    prefix: str = ""
     #: Active models behind this provider with no price row. Reported because a
     #: provider in `provider_reported` billing mode still needs prices: admission
     #: happens *before* the request and the counterparty's figure only exists
@@ -669,6 +672,13 @@ class ProviderCreateRequest(BaseModel):
     # each of which was a column added for one counterparty's habit.
     plugin: PluginName = None
     kind: Literal["provider", "router", "search"] = "provider"
+    # Prepended to every model name this provider contributes, so two vendors
+    # whose tiers share a word ("deep", "fast") do not collide. Optional:
+    # empty is the honest default, and a prefix is a judgement about a
+    # catalogue the operator can already see.
+    prefix: str = Field(
+        default="", max_length=32, pattern=r"^[a-zA-Z0-9._-]*$"
+    )
     # Whose figure is the charge (ADR 0032 decision 6). Validated against the
     # named plugin below: pass-through needs a plugin that asserts its figure is
     # the counterparty's actual charge.
@@ -702,6 +712,13 @@ class ProviderUpdateRequest(BaseModel):
     plugin: PluginName = None
     kind: Literal["provider", "router", "search"] | None = None
     billing_mode: Literal["own_prices", "provider_reported"] | None = None
+    # Setting or changing this re-applies it to the models already here: a
+    # prefix that only reached future imports would leave the catalogue
+    # half-disambiguated. An empty string removes the prefix and un-names the
+    # models that carry it.
+    prefix: str | None = Field(
+        default=None, max_length=32, pattern=r"^[a-zA-Z0-9._-]*$"
+    )
 
     @model_validator(mode="after")
     def _billing_mode_needs_a_plugin_that_can_claim_it(self) -> ProviderUpdateRequest:
