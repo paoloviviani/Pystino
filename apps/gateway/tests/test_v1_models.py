@@ -12,11 +12,11 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
-from joserfc.jwk import RSAKey
 from conftest import Seeded, make_token
 from conftest import bearer_auth as auth
+from fastapi import FastAPI
 from gateway.models import GroupModelAccess, ModelKind, Provider, ProviderKind
+from joserfc.jwk import RSAKey
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
 
