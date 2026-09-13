@@ -414,6 +414,9 @@ class ModelCard(BaseModel):
     # Non-standard but useful additions; OpenAI clients ignore unknown fields.
     context_window: int | None = None
     max_output_tokens: int | None = None
+    # The "in" half. Distinct from ``context_window`` because a provider can
+    # cap prompt harder than the window total implies; null means unknown.
+    max_input_tokens: int | None = None
     display_name: str | None = None
     # What the model accepts, produces and can do. Not in OpenAI's schema
     # either, and the reason a client can pick a model that does tool calling
@@ -802,6 +805,8 @@ class ModelCreateRequest(BaseModel):
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
     max_output_tokens: int | None = Field(default=None, ge=1)
+    # Set by hand: the upstream's own input cap, which no catalogue reports.
+    max_input_tokens: int | None = Field(default=None, ge=1)
     input_modalities: Capabilities = Field(default_factory=list)
     output_modalities: Capabilities = Field(default_factory=list)
     supported_features: Capabilities = Field(default_factory=list)
@@ -832,6 +837,7 @@ class ModelUpdateRequest(BaseModel):
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
     max_output_tokens: int | None = Field(default=None, ge=1)
+    max_input_tokens: int | None = Field(default=None, ge=1)
     # Editable, because the catalogue is a claim rather than a contract: an
     # operator who has found out that a model does not really do tool calling
     # needs somewhere to record it that discovery will not immediately undo.
@@ -897,6 +903,7 @@ class ModelAdminResponse(BaseModel):
     is_public: bool
     context_window: int | None
     max_output_tokens: int | None
+    max_input_tokens: int | None
     input_modalities: list[str]
     output_modalities: list[str]
     supported_features: list[str]
@@ -1623,6 +1630,7 @@ class DiscoveredModel(BaseModel):
     per_page: Money | None = None
     currency: str | None
     context_window: int | None
+    max_input_tokens: int | None = None
     # What the provider says it can do, shown before importing so the choice is
     # informed — "does this one do tool calling" is the commonest question at
     # exactly this moment (ADR 0031).

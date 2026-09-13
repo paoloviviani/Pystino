@@ -30,6 +30,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
     is_public: false,
     context_window: 8192,
     max_output_tokens: null,
+    max_input_tokens: null,
     created_at: "2026-08-01T10:00:00Z",
     current_price: {
       id: "p1",

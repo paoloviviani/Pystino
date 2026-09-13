@@ -103,6 +103,7 @@ async def create_response(
     prompt_tokens = estimator.count_messages(outcome.messages)
     # `instructions` is a system prompt by another name and is charged like one.
     prompt_tokens += estimator.count_text(body.instructions or "")
+    _metered.enforce_input_limit(model, prompt_tokens)
     max_output = body.max_output_tokens or settings.quota.default_max_output_tokens
     # Server-side web search is charged per search on top of tokens, and
     # nothing in the request bounds it unless the caller said so (ADR 0058).

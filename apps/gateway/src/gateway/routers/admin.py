@@ -308,6 +308,7 @@ def _model_response(
         is_public=model.is_public,
         context_window=model.context_window,
         max_output_tokens=model.max_output_tokens,
+        max_input_tokens=model.max_input_tokens,
         input_modalities=list(model.input_modalities or []),
         output_modalities=list(model.output_modalities or []),
         supported_features=list(model.supported_features or []),
@@ -817,6 +818,7 @@ async def create_model(
         description=payload.description,
         context_window=payload.context_window,
         max_output_tokens=payload.max_output_tokens,
+        max_input_tokens=payload.max_input_tokens,
         input_modalities=list(payload.input_modalities),
         output_modalities=list(payload.output_modalities),
         supported_features=list(payload.supported_features),
@@ -1068,6 +1070,11 @@ async def discover_models(
                 per_page=price.per_page,
                 currency=price.currency,
                 context_window=price.context_window,
+                # Deliberately not carried from the price candidate: the input
+                # cap is the operator's claim about the upstream, and no
+                # catalogue reports one — a discovered model is always imported
+                # with this null, whatever the community file says.
+                max_input_tokens=None,
                 kind=price.kind.value,
                 input_modalities=list(price.input_modalities),
                 output_modalities=list(price.output_modalities),

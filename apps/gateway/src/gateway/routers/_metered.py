@@ -125,6 +125,23 @@ async def resolve_model(
     return model
 
 
+def enforce_input_limit(model: ModelDef, prompt_tokens: int) -> None:
+    """Refuse a prompt over the operator-set input cap, before any accounting.
+
+    ``max_input_tokens`` is set by hand (no catalogue reports it), so a request
+    that exceeds it is rejected here with a 400 naming the limit — an error the
+    caller can act on — rather than forwarded to fail upstream with whatever the
+    vendor's message happens to be. Null means unknown, never zero: the check
+    must be silent exactly when the operator has not recorded a limit.
+    """
+    if model.max_input_tokens is not None and prompt_tokens > model.max_input_tokens:
+        raise BadRequestError(
+            f"This prompt is about {prompt_tokens} tokens; model "
+            f"{model.name!r} accepts at most {model.max_input_tokens} input tokens.",
+            code="prompt_too_long",
+        )
+
+
 async def resolve_upstream(
     providers: ProviderRegistry, model: ModelDef
 ) -> OpenAICompatibleUpstream:

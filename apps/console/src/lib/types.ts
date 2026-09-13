@@ -142,6 +142,8 @@ export interface AdminModel {
   is_public: boolean;
   context_window: number | null;
   max_output_tokens: number | null;
+  /** Prompt cap the gateway enforces; set by hand, null means no local limit. */
+  max_input_tokens: number | null;
   /** What it accepts, produces and can do. Empty means "nobody has said". */
   input_modalities: string[];
   output_modalities: string[];

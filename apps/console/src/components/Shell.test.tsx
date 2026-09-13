@@ -128,7 +128,7 @@ describe("Shell", () => {
     fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/auth/login"));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/console/login"));
   });
 
   it("reloads the page rather than routing, so no stale data survives", async () => {
@@ -144,7 +144,7 @@ describe("Shell", () => {
     fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/auth/login"));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/console/login"));
   });
 
   it("goes to the provider's end-session URL, not just to our login page", async () => {
@@ -192,7 +192,7 @@ describe("Shell", () => {
     fireEvent.click(screen.getByRole("button", { name: /Dave/ }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Sign out" }));
 
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/auth/login"));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/console/login"));
   });
 
   it("closes on Escape", async () => {

@@ -397,6 +397,7 @@ export interface CreateModelInput {
   kind?: ModelKind;
   context_window?: number | null;
   max_output_tokens?: number | null;
+  max_input_tokens?: number | null;
   input_modalities?: string[];
   output_modalities?: string[];
   supported_features?: string[];
@@ -421,6 +422,7 @@ export interface ModelUpdateInput {
   display_name?: string | null;
   context_window?: number | null;
   max_output_tokens?: number | null;
+  max_input_tokens?: number | null;
   input_modalities?: string[];
   output_modalities?: string[];
   supported_features?: string[];

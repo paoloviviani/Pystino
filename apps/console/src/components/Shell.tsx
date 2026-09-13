@@ -310,7 +310,14 @@ function UserMenu({
     // provider's SSO session standing, so /auth/login is answered without a
     // password prompt and they arrive back as themselves. That is what "logout
     // does nothing" looked like (found with Keycloak; any SSO provider does it).
-    let target = "/auth/login";
+    //
+    // The fallback is the console's own login page — the SPA route that asks
+    // /auth/methods and renders whichever doors exist. /auth/login, the API
+    // route, is only a door *to a provider*: on a deployment with local
+    // password auth and no identity provider it is a 503 error envelope, and
+    // landing a person who just signed out on raw JSON is how "console signout
+    // returns No identity provider is enabled" was reported.
+    let target = "/console/login";
     try {
       const result = await request<{ redirect_to: string | null }>("/auth/logout", {
         method: "POST",
