@@ -800,6 +800,14 @@ class ModelDef(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     context_window: Mapped[int | None] = mapped_column(Integer, default=None)
     max_output_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
+    # The "in" half, set separately from the window total: the vendor's nominal
+    # context is often larger than what actually works (prompt + completion must
+    # fit the window, but some providers cap input harder still), and an operator
+    # who has measured the real limit needs somewhere to record it. Null means
+    # "no local limit", not zero — absence must never read as a rejected prompt.
+    # Never overwritten by catalogue import or price refresh: this is the
+    # operator's claim about the upstream, not something the catalogue knows.
+    max_input_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
 
     # Public access (ADR 0045): any authenticated caller may use this model,
     # billed to the caller's own default billing group. Access is granted;

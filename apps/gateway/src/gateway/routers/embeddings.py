@@ -95,6 +95,7 @@ async def create_embeddings(
 
     # -- reservation --------------------------------------------------------
     prompt_tokens = sum(estimator.count_text(text) for text in redacted)
+    _metered.enforce_input_limit(model, prompt_tokens)
     metered = await _metered.begin(
         fx=request.app.state.fx,
         session_factory=request.app.state.session_factory,

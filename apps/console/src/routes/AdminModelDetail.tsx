@@ -274,6 +274,12 @@ function Describe({ model }: { model: AdminModel }) {
   const [context, setContext] = useState(
     model.context_window ? String(model.context_window) : "",
   );
+  const [maxInput, setMaxInput] = useState(
+    model.max_input_tokens ? String(model.max_input_tokens) : "",
+  );
+  const [maxOutput, setMaxOutput] = useState(
+    model.max_output_tokens ? String(model.max_output_tokens) : "",
+  );
 
   return (
     <Card
@@ -329,7 +335,23 @@ function Describe({ model }: { model: AdminModel }) {
           min="1"
           value={context}
           onChange={(event) => setContext(event.target.value)}
-          hint="Tokens. Leave empty if unknown."
+          hint="Total tokens, in and out. Leave empty if unknown."
+        />
+        <Input
+          label="Max input tokens"
+          type="number"
+          min="1"
+          value={maxInput}
+          onChange={(event) => setMaxInput(event.target.value)}
+          hint="Prompt cap the gateway enforces; set by hand, no catalogue reports it. Empty means no local limit."
+        />
+        <Input
+          label="Max output tokens"
+          type="number"
+          min="1"
+          value={maxOutput}
+          onChange={(event) => setMaxOutput(event.target.value)}
+          hint="Completion cap reported on /v1/models. Empty if unknown."
         />
 
         <div>
@@ -345,6 +367,8 @@ function Describe({ model }: { model: AdminModel }) {
                   output_modalities: outputs,
                   supported_features: features,
                   context_window: context === "" ? null : Number(context),
+                  max_input_tokens: maxInput === "" ? null : Number(maxInput),
+                  max_output_tokens: maxOutput === "" ? null : Number(maxOutput),
                 },
                 {
                   onSuccess: () =>
