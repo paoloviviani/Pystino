@@ -2,17 +2,28 @@ import {
   Badge,
   Button,
   Card,
+  Dialog,
+  Input,
   Notice,
+  Select,
   Spinner,
   Table,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
-import { useGroups, useModelAccess, useModels, useProviders } from "../lib/admin";
-import type { AdminProvider } from "../lib/types";
+import {
+  useCreateProvider,
+  useGroups,
+  useModelAccess,
+  useModels,
+  useProviderPlugins,
+  useProviders,
+  useUpdateProvider,
+} from "../lib/admin";
+import type { AdminProvider, ProviderPlugin } from "../lib/types";
+import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
 import { CHIPS, CODE, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
-import { ProviderDialog } from "./AdminProviders";
 
 /**
  * Web search, as its own screen (2026-09-13).
@@ -28,6 +39,7 @@ import { ProviderDialog } from "./AdminProviders";
 
 export function AdminSearch() {
   const providers = useProviders();
+  const plugins = useProviderPlugins();
   const models = useModels();
   const groups = useGroups();
 
@@ -38,6 +50,7 @@ export function AdminSearch() {
   // models of kind `search`. Everything else in those listings belongs to the
   // providers and models screens.
   const backends = (providers.data?.items ?? []).filter((p) => p.kind === "search");
+  const searchPlugins = (plugins.data ?? []).filter((p) => p.kind === "search");
   const tiers = (models.data?.items ?? []).filter((m) => m.kind === "search");
   const groupList = groups.data?.items ?? [];
 
@@ -189,15 +202,162 @@ export function AdminSearch() {
         )}
       </Card>
 
-      <ProviderDialog
+      <BackendDialog
         open={creating || editing !== null}
         provider={editing}
-        pluginFilter={(plugin) => plugin.kind === "search"}
+        plugins={searchPlugins}
         onClose={() => {
           setCreating(false);
           setEditing(null);
         }}
       />
     </div>
+  );
+}
+
+/**
+ * A backend is two decisions: which vendor, and the key. The endpoint, the
+ * auth header scheme and the request path are the plugin's knowledge — the
+ * gateway applies them and the operator never types a URL (ADR 0071). This is
+ * deliberately not the inference-provider dialogue: web search providers are
+ * not model providers, and half those fields mean nothing here.
+ */
+function BackendDialog({
+  open,
+  provider,
+  plugins,
+  onClose,
+}: {
+  open: boolean;
+  provider: AdminProvider | null;
+  plugins: ProviderPlugin[];
+  onClose: () => void;
+}) {
+  const create = useCreateProvider();
+  const update = useUpdateProvider();
+  const toast = useOptionalToast();
+  const editing = provider !== null;
+
+  const [plugin, setPlugin] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [clearKey, setClearKey] = useState(false);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+
+  if (open && loadedFor !== (provider?.id ?? "new")) {
+    setLoadedFor(provider?.id ?? "new");
+    setPlugin(provider?.plugin ?? "");
+    setApiKey("");
+    setClearKey(false);
+  }
+
+  const pending = create.isPending || update.isPending;
+  const error = create.error ?? update.error;
+  // One backend per vendor: the vendor's name is the handle everything else
+  // derives from — the grant anchor's name, the passthrough's path segment.
+  const chosen = plugin || "";
+
+  const submit = () => {
+    if (editing && provider) {
+      update.mutate(
+        {
+          id: provider.id,
+          // Three ways, deliberately: a typed key replaces, the explicit clear
+          // removes, and neither leaves the stored credential untouched.
+          ...(apiKey ? { api_key: apiKey } : clearKey ? { api_key: "" } : {}),
+        },
+        {
+          onSuccess: () => {
+            toast?.add({ title: "Backend updated", type: "success" });
+            onClose();
+          },
+          onError: () => toast?.add({ title: "Could not update the backend", type: "error" }),
+        },
+      );
+    } else {
+      create.mutate(
+        {
+          name: chosen,
+          plugin: chosen,
+          kind: "search",
+          ...(apiKey ? { api_key: apiKey } : {}),
+        },
+        {
+          onSuccess: () => {
+            toast?.add({ title: "Backend added", type: "success" });
+            onClose();
+          },
+          onError: () => toast?.add({ title: "Could not add the backend", type: "error" }),
+        },
+      );
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      title={editing ? `Edit ${provider?.name}` : "Add a search backend"}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            busy={pending}
+            disabled={!chosen || (!editing && !apiKey.trim()) || (editing && !apiKey.trim() && !clearKey)}
+            onClick={submit}
+          >
+            {editing ? "Save" : "Add"}
+          </Button>
+        </>
+      }
+    >
+      {error ? (
+        <Notice tone="danger">
+          {error instanceof Error ? error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      <Select
+        label="Vendor"
+        value={plugin}
+        disabled={editing}
+        onChange={(event) => setPlugin(event.target.value)}
+        hint="The endpoint and the credential scheme are the vendor's own — configured here, not typed anywhere."
+      >
+        <option value="">Choose a vendor…</option>
+        {plugins.map((entry) => (
+          <option key={entry.name} value={entry.name}>
+            {entry.label}
+          </option>
+        ))}
+      </Select>
+
+      <Input
+        label="API key"
+        type="password"
+        value={apiKey}
+        onChange={(event) => setApiKey(event.target.value)}
+        placeholder={editing ? provider?.api_key_hint || "unset" : "paste the vendor's key"}
+        hint={
+          editing
+            ? "Leave empty to keep the stored key; tick to remove it."
+            : "Stored encrypted; shown back only as a hint."
+        }
+      />
+
+      {editing && (
+        <label className="flex cursor-pointer items-baseline gap-2">
+          <input
+            type="checkbox"
+            checked={clearKey}
+            onChange={(event) => {
+              setClearKey(event.target.checked);
+              if (event.target.checked) setApiKey("");
+            }}
+          />
+          <span>Remove the stored key</span>
+        </label>
+      )}
+    </Dialog>
   );
 }
