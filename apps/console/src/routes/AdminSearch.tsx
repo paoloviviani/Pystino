@@ -12,7 +12,6 @@ import { useGroups, useModelAccess, useModels, useProviders } from "../lib/admin
 import type { AdminProvider } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import { CHIPS, CODE, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
-import { useOptionalToast } from "../lib/toast";
 import { ProviderDialog } from "./AdminProviders";
 
 /**
@@ -101,12 +100,13 @@ export function AdminSearch() {
       <PageHeader title="Web search" />
 
       <Notice tone="info">
-        A search backend answers <code>POST /v1/search</code>, and a tier — Linkup's{" "}
-        <code>depth</code>, Exa's <code>type</code> — is what a caller names there. Tiers are
-        metered as a count of requests, never priced, and are absent from <code>/v1/models</code>{" "}
-        unless a client asks for them explicitly, so no other client will mistake one for a chat
-        model (ADR 0071). What a caller may run is the grant below; how much they may run is a
-        request ceiling on Quotas.
+        A search backend answers <code>POST /v1/search/&#123;backend&#125;</code> — an
+        authenticated, metering passthrough: the gateway counts the request, attaches the
+        backend's own credential, and forwards the caller's body to the vendor verbatim, returning
+        the vendor's answer verbatim (ADR 0071). Backends are absent from{" "}
+        <code>/v1/models</code> unless a client asks for them explicitly, so no other client will
+        mistake one for a chat model. Who may search is the grant below; how much they may search
+        is a request ceiling on Quotas.
       </Notice>
 
       {/* -- backends ------------------------------------------------ */}
@@ -124,11 +124,15 @@ export function AdminSearch() {
         )}
       </Card>
 
-      {/* -- tiers ---------------------------------------------------- */}
+      {/* -- grants ---------------------------------------------------- */}
       <Card flush>
-        <div className="flex items-center justify-between p-4">
-          <h2 className="text-sm font-semibold">Tiers and grants</h2>
-          <TierImporter backends={backends} />
+        <div className="p-4">
+          <h2 className="text-sm font-semibold">Who may search</h2>
+          <p className={`${MUTED} mt-1 text-sm`}>
+            One grant per backend — creating the backend made its row. What the caller sends
+            inside the body (a depth, a result count) is the vendor's own pricing, not a decision
+            this screen makes.
+          </p>
         </div>
         {models.isPending ? (
           <div className="p-6">
@@ -139,7 +143,7 @@ export function AdminSearch() {
             columns={[
               {
                 key: "tier",
-                header: "Tier",
+                header: "Backend",
                 render: (tier) => (
                   <>
                     <div>{tier.name}</div>
@@ -180,7 +184,7 @@ export function AdminSearch() {
             ]}
             rows={tiers}
             rowKey={(row) => row.id}
-            empty="No tiers yet. Add a backend, then import its tiers."
+            empty="No backends yet. Add one above."
           />
         )}
       </Card>
@@ -194,72 +198,6 @@ export function AdminSearch() {
           setEditing(null);
         }}
       />
-    </div>
-  );
-}
-
-/** One click: ask the backend what tiers it offers, and adopt them all. */
-function TierImporter({ backends }: { backends: AdminProvider[] }) {
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const toast = useOptionalToast();
-
-  async function importTiers(backend: AdminProvider) {
-    setBusyId(backend.id);
-    try {
-      // A backend's tiers are a fixed enum its plugin already knows — built
-      // in, never fetched — so there is nothing for the operator to curate
-      // here: discover, then adopt every offered tier. The decision a search
-      // screen exists to make is which groups may run which, not which tiers
-      // exist.
-      const discovery = await fetch(
-        `/api/admin/models/discover?provider_id=${encodeURIComponent(backend.id)}`,
-      ).then((r) => {
-        if (!r.ok) throw new Error("The backend did not answer.");
-        return r.json() as Promise<{
-          available: { upstream_model: string; blocked_reason: string | null }[];
-        }>;
-      });
-      const offered = discovery.available
-        .filter((row) => row.blocked_reason === null)
-        .map((row) => ({ upstream_model: row.upstream_model }));
-      if (offered.length === 0) {
-        toast?.add({ title: "Every tier is already imported", type: "info" });
-        return;
-      }
-      await fetch(`/api/admin/models/import?provider_id=${encodeURIComponent(backend.id)}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ models: offered }),
-      }).then((r) => {
-        if (!r.ok) throw new Error("The import was refused.");
-      });
-      toast?.add({ title: "Tiers imported", type: "success" });
-    } catch (err) {
-      toast?.add({
-        title: err instanceof Error ? err.message : "Could not import the tiers",
-        type: "error",
-      });
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  if (backends.length === 0) {
-    return <Button disabled>Add a backend first</Button>;
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      {backends.map((backend) => (
-        <Button
-          key={backend.id}
-          busy={busyId === backend.id}
-          disabled={busyId !== null}
-          onClick={() => importTiers(backend)}
-        >
-          Import tiers — {backend.name}
-        </Button>
-      ))}
     </div>
   );
 }
