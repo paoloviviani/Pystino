@@ -64,6 +64,12 @@ const ADMIN_SECTIONS: Section[] = [
     description: "Who belongs together, and what each group may use.",
   },
   {
+    to: "/admin/search",
+    title: "Web search",
+    description:
+      "The search backends, who may run them, and how many searches each group has spent.",
+  },
+  {
     to: "/admin/settings",
     title: "Settings",
     description: "The mail server, the identity providers, and who may become a user.",
