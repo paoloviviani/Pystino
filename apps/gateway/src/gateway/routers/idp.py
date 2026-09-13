@@ -282,18 +282,30 @@ async def _mint_credentials(
     nonce: str,
     scope: str,
     signer: IdpSigner,
+    family_in: str | None = None,
 ) -> dict[str, Any]:
-    """The token response body: opaque access key, rotated refresh credential, id_token.
+    """The token response body: opaque access key, a per-login refresh credential, id_token.
 
-    One family per ``(user, client)``, rotated here as ADR 0046 rotates it at
-    login: the holder *just* proved themselves, so no concurrent legitimate
-    holder exists to break. On the refresh grant this is what keeps the flow
-    alive at all — the secret is stored hashed, so a refresh that returned
-    nothing would leave the client with no way to refresh again, and the
-    session would die one access TTL later.
+    **One family per login, not per ``(user, client)``** — the one-word change
+    from ADR 0046's rotation, and the reason is a browser: a person signs in
+    again on a second tab while the first tab's session is alive, and a family
+    deleted per exchange would kill the first tab's refresh credential out
+    from under it. The first tab's access token would then die one access TTL
+    later with no way to renew it, and its next background refresh would fail
+    with ``invalid_grant`` — which is exactly what a user saw as their admin
+    screen hanging. Each exchange now mints its own family; nothing is
+    deleted, because no concurrent legitimate holder exists *of that family*.
+    Rows die on their own TTL.
     """
-    family = f"idp-{client_id}"
+    # A per-login family, stable across that login's refreshes when one is
+    # handed in (the refresh grant passes the presenting credential's family,
+    # so rotation stays inside the login).
+    family = family_in or f"idp-{client_id}:{secrets.token_hex(4)}"
     now = utcnow()
+    # Rotation, inside the family: the family's previous refresh credential —
+    # at a refresh, the one just presented — dies here. Other logins' rows are
+    # not this exchange's business, and expired ones from earlier logins go
+    # with them when they go.
     await session.execute(
         delete(RefreshCredential).where(
             RefreshCredential.user_id == user.id, RefreshCredential.client == family
@@ -436,10 +448,11 @@ async def token(
             return _no_grant("invalid_grant", "the refresh token is not valid")
         if refresh_row.expires_at <= utcnow():
             return _no_grant("invalid_grant", "the refresh token has expired")
-        family = f"idp-{authenticated_id}"
-        if refresh_row.client != family:
-            # A credential minted for one client (or by a legacy direct login)
-            # does not become another's by being presented there.
+        # Per-login families: the credential's client is the family it was
+        # minted under — this client's prefix, plus the login's own suffix. A
+        # credential minted for one client (or by a legacy direct login) does
+        # not become another's by being presented there.
+        if not refresh_row.client.startswith(f"idp-{authenticated_id}"):
             return _no_grant("invalid_grant", "the refresh token is not valid for this client")
         user = await _load_user_with_groups(session, refresh_row.user_id)
         if user is None:
@@ -452,6 +465,9 @@ async def token(
             nonce="",
             scope="",
             signer=signer,
+            # The same family the presenting credential belongs to: rotation
+            # stays inside the login, and other logins keep theirs.
+            family_in=refresh_row.client,
         )
         logger.info("idp token: refreshed user=%s client=%s", user.id, authenticated_id)
         return JSONResponse(body)
