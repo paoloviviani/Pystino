@@ -29,9 +29,11 @@ which the gateway passes through verbatim like any other vendor answer.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 from gateway.plugins.base import ProviderKind
 from gateway.plugins.generic import GenericOpenAIPlugin
+from gateway.plugins.search import UnifiedSearchResult
 
 
 class ExaSearchPlugin(GenericOpenAIPlugin):
@@ -55,3 +57,47 @@ class ExaSearchPlugin(GenericOpenAIPlugin):
         header its schema names first, so a key that works with their own
         examples works here."""
         return {"x-api-key": credential}
+
+    def build_search_body(self, query: str, max_results: int) -> dict[str, Any]:
+        """``query`` and ``numResults``, and nothing else.
+
+        No ``type``: omitting it asks for Exa's default (``auto``), which is
+        what the unified route always runs — it offers no tier, so the ledger
+        records none. No ``contents`` either: page text is a separate charge
+        on the same call, and a unified answer of titles, links and snippets
+        must not smuggle one in.
+        """
+        return {"query": query, "numResults": max_results}
+
+    def read_search_results(self, payload: Any) -> list[UnifiedSearchResult]:
+        """``results[].title``/``url``/``summary``, best-effort.
+
+        The summary is preferred and the text is the fallback; without either
+        the entry still counts — a link and a title searched — with an empty
+        snippet. Entries without a usable URL are dropped, because a result
+        that cannot be fetched is not a result.
+        """
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list):
+            return []
+        out: list[UnifiedSearchResult] = []
+        for entry in results:
+            if not isinstance(entry, dict):
+                continue
+            url = entry.get("url")
+            if not isinstance(url, str) or not url:
+                continue
+            title = entry.get("title")
+            summary = entry.get("summary")
+            text = entry.get("text")
+            out.append(
+                {
+                    "title": title if isinstance(title, str) and title else "untitled",
+                    "url": url,
+                    "snippet": (
+                        (summary if isinstance(summary, str) else "")
+                        or (text if isinstance(text, str) else "")
+                    ),
+                }
+            )
+        return out

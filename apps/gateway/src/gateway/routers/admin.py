@@ -141,6 +141,7 @@ from gateway.schemas import (
     GroupAdminResponse,
     GroupCreateRequest,
     GroupMemberAddRequest,
+    GroupSearchBackendRequest,
     GroupUsageRow,
     IdentityProviderCreateRequest,
     IdentityProviderResponse,
@@ -594,13 +595,15 @@ async def update_provider(
     if "prefix" in fields:
         new_prefix = fields.pop("prefix") or ""
         models = (
-            await session.execute(select(ModelDef).where(ModelDef.provider_id == provider.id))
-        ).scalars().all()
+            (await session.execute(select(ModelDef).where(ModelDef.provider_id == provider.id)))
+            .scalars()
+            .all()
+        )
         renames: list[tuple[ModelDef, str]] = []
         for model in models:
             stripped = model.name
             if provider.prefix and model.name.startswith(provider.prefix):
-                stripped = model.name[len(provider.prefix):]
+                stripped = model.name[len(provider.prefix) :]
             renames.append((model, f"{new_prefix}{stripped}"))
         others = (await session.execute(select(ModelDef))).scalars().all()
         taken = {model.name for model in others if model.provider_id != provider.id}
@@ -878,6 +881,19 @@ async def delete_model(model_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     with the model — they are meaningless without it.
     """
     await _load_model(session, model_id)
+    # A model a search policy points at cannot go quietly either: the column
+    # is ON DELETE SET NULL, which would silently unconfigure those groups'
+    # unified search. Name them instead, so the administrator re-points or
+    # clears the policies first.
+    pointed = (
+        await session.execute(select(Group.name).where(Group.search_model_id == model_id))
+    ).all()
+    if pointed:
+        names = ", ".join(sorted(f"{name!r}" for (name,) in pointed))
+        raise ConflictError(
+            f"Groups {names} search through this backend. Point their search "
+            "policies elsewhere, or clear them, before deleting it.",
+        )
     # Explicit child deletes rather than ORM cascade: the same outcome either
     # way, but these name what goes, and the usage rows are conspicuously not
     # among them.
@@ -1112,7 +1128,9 @@ async def discover_models(
                 kind=kind.value,
                 input_modalities=["text"] if kind == ModelKind.SEARCH else [],
                 output_modalities=["text"] if kind == ModelKind.SEARCH else [],
-                blocked_reason=None if kind == ModelKind.SEARCH else (
+                blocked_reason=None
+                if kind == ModelKind.SEARCH
+                else (
                     "the provider publishes no price for this model"
                     if fill_missing_prices
                     else "the provider publishes no price — tick “fill missing prices” or "
@@ -1454,6 +1472,17 @@ async def list_groups(
     for group_id, model_name in access_rows:
         models.setdefault(group_id, []).append(model_name)
 
+    backend_ids = {group.search_model_id for group in groups if group.search_model_id is not None}
+    backends: dict[uuid.UUID, str] = {}
+    if backend_ids:
+        backends = _pairs(
+            (
+                await session.execute(
+                    select(ModelDef.id, ModelDef.name).where(ModelDef.id.in_(backend_ids))
+                )
+            ).all()
+        )
+
     return page.page(
         [
             GroupAdminResponse(
@@ -1464,6 +1493,11 @@ async def list_groups(
                 is_active=group.is_active,
                 member_count=int(counts.get(group.id, 0)),
                 models=sorted(models.get(group.id, [])),
+                search_backend=(
+                    backends.get(group.search_model_id)
+                    if group.search_model_id is not None
+                    else None
+                ),
             )
             for group in groups
         ],
@@ -1502,6 +1536,7 @@ async def create_group(
         is_active=group.is_active,
         member_count=0,
         models=[],
+        search_backend=None,
     )
 
 
@@ -1667,12 +1702,72 @@ async def revoke_model_access(
     group_id: uuid.UUID, model_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
 ) -> None:
     """Take the model away from a group. Idempotent, and immediate."""
+    # A grant that a search policy points at cannot go quietly: the group's
+    # unified searches would start 404ing with no administrator action
+    # recording why. Point the policy elsewhere — or clear it — first.
+    policy = (
+        await session.execute(
+            select(Group.id, Group.name).where(
+                Group.id == group_id, Group.search_model_id == model_id
+            )
+        )
+    ).first()
+    if policy is not None:
+        raise ConflictError(
+            f"Group {policy.name!r} searches through this backend. Point its "
+            "search policy at another backend, or clear it, before revoking "
+            "access.",
+        )
     await session.execute(
         delete(GroupModelAccess).where(
             GroupModelAccess.group_id == group_id,
             GroupModelAccess.model_id == model_id,
         )
     )
+    await session.commit()
+
+
+@router.put("/groups/{group_id}/search-backend", status_code=status.HTTP_204_NO_CONTENT)
+async def set_group_search_backend(
+    group_id: uuid.UUID,
+    payload: GroupSearchBackendRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+) -> None:
+    """Point a group's unified-search policy at a backend, or clear it.
+
+    Setting requires the group to already be granted the backend: a policy
+    the group may not use would 404 every unified search, which is a
+    misconfiguration, not a permission. The grant is made on the Models
+    screen first; this screen only chooses among granted backends.
+    """
+    group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
+    if group is None:
+        raise NotFoundError(f"No group with id {group_id}.")
+    if payload.model_id is None:
+        group.search_model_id = None
+        await session.commit()
+        return
+    model = await _load_model(session, payload.model_id)
+    if model.kind != ModelKind.SEARCH:
+        raise BadRequestError(
+            f"{model.name!r} is a {model.kind.value} model, not a search backend.",
+            code="wrong_model_kind",
+        )
+    granted = (
+        await session.execute(
+            select(GroupModelAccess).where(
+                GroupModelAccess.group_id == group_id,
+                GroupModelAccess.model_id == model.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if granted is None:
+        raise ConflictError(
+            f"Group {group.name!r} is not granted {model.name!r}. Grant the "
+            "backend to the group on the Models screen first.",
+        )
+    group.search_model_id = model.id
     await session.commit()
 
 

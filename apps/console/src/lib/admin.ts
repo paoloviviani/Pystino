@@ -508,6 +508,26 @@ export function useModelAccess() {
   });
 }
 
+/**
+ * Point a group's unified-search policy at a backend, or clear it. The
+ * server refuses a backend the group is not granted (409) and a non-search
+ * model (400) with sentences the screen shows verbatim — both are states the
+ * administrator resolves, not failures to retry.
+ */
+export function useSetGroupSearchBackend() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ groupId, modelId }: { groupId: string; modelId: string | null }) =>
+      request<void>(`/api/admin/groups/${groupId}/search-backend`, {
+        method: "PUT",
+        body: { model_id: modelId },
+      }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.groups });
+    },
+  });
+}
+
 /** Personal model grants, unioned with group grants at request time. */
 export function useUserModelAccess() {
   const client = useQueryClient();

@@ -18,6 +18,7 @@ import {
   useModels,
   useProviderPlugins,
   useProviders,
+  useSetGroupSearchBackend,
   useUpdateProvider,
 } from "../lib/admin";
 import type { AdminProvider, ProviderPlugin } from "../lib/types";
@@ -55,6 +56,7 @@ export function AdminSearch() {
   const groupList = groups.data?.items ?? [];
 
   const access = useModelAccess();
+  const setPolicy = useSetGroupSearchBackend();
 
   function toggleGrant(groupId: string, modelId: string, grant: boolean) {
     access.mutate({ groupId, modelId, grant });
@@ -198,6 +200,71 @@ export function AdminSearch() {
             rows={tiers}
             rowKey={(row) => row.id}
             empty="No backends yet. Add one above."
+          />
+        )}
+      </Card>
+
+      {/* -- one backend per group ------------------------------------- */}
+      <Card flush>
+        <div className="p-4">
+          <h2 className="text-sm font-semibold">Which backend each group searches through</h2>
+          <p className={`${MUTED} mt-1 text-sm`}>
+            The policy behind <code>POST /v1/search</code> (no backend in the path): one
+            request shape in, one answer shape out, through exactly this backend at its
+            default depth. Only backends the group is granted above are offered — a group
+            with none set cannot use the unified route at all.
+          </p>
+        </div>
+        {setPolicy.error ? (
+          <div className="px-4 pb-2">
+            <Notice tone="danger" title="Could not set the search backend">
+              {setPolicy.error instanceof Error ? setPolicy.error.message : "Unknown error."}
+            </Notice>
+          </div>
+        ) : null}
+        {groups.isPending || models.isPending ? (
+          <div className="p-6">
+            <Spinner label="Loading groups" />
+          </div>
+        ) : (
+          <Table
+            columns={[
+              {
+                key: "group",
+                header: "Group",
+                render: (group) => <div>{group.name}</div>,
+              },
+              {
+                key: "backend",
+                header: "Searches through",
+                render: (group) => {
+                  const granted = tiers.filter((tier) => tier.granted_to.includes(group.name));
+                  const current = granted.find((tier) => tier.name === group.search_backend);
+                  return (
+                    <Select
+                      label={`Search backend for ${group.name}`}
+                      value={current?.id ?? ""}
+                      onChange={(event) =>
+                        setPolicy.mutate({
+                          groupId: group.id,
+                          modelId: event.target.value === "" ? null : event.target.value,
+                        })
+                      }
+                    >
+                      <option value="">Unset — no unified search</option>
+                      {granted.map((tier) => (
+                        <option key={tier.id} value={tier.id}>
+                          {tier.name}
+                        </option>
+                      ))}
+                    </Select>
+                  );
+                },
+              },
+            ]}
+            rows={groupList}
+            rowKey={(row) => row.id}
+            empty="No groups yet."
           />
         )}
       </Card>

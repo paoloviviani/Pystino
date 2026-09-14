@@ -163,6 +163,10 @@ export interface AdminGroup {
   is_active: boolean;
   member_count: number;
   models: string[];
+  /** The search backend this group searches through on POST /v1/search, by
+      model-row name — null when the group has no policy and cannot use the
+      unified route. */
+  search_backend: string | null;
 }
 
 export interface AdminUser {
