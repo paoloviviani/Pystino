@@ -1,7 +1,8 @@
-import { Badge, Button, Input, Select } from "@llmp/ui";
+import { Badge, Button, Dialog, Input, Select } from "@llmp/ui";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { MODES, entityLabel, entitySource, modeRank } from "../lib/entities";
+import { REDACTION_PATTERN_TEMPLATES } from "../lib/redactionTemplates";
 import type { EntityMode, EntityPolicy, RedactionPolicy } from "../lib/types";
 import { CODE, FIELD_LABEL, FORM, MUTED } from "../lib/layout";
 
@@ -49,6 +50,7 @@ export function PolicyFields({
   // it from the screen would silently delete it on the next save.
   const known = [...new Set([...entityTypes, ...Object.keys(policy.entities)])].sort();
   const patternNames = policy.patterns.map((pattern) => pattern.name);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
 
   const modeOf = (entity: string): EntityMode =>
     policy.entities[entity]?.mode ?? policy.default_mode;
@@ -214,7 +216,7 @@ export function PolicyFields({
             </Button>
           </div>
         ))}
-        <div>
+        <div className="flex flex-wrap gap-2">
           <Button
             onClick={() =>
               onChange({
@@ -227,6 +229,9 @@ export function PolicyFields({
           >
             Add pattern
           </Button>
+          <Button variant="secondary" onClick={() => setTemplatesOpen(true)}>
+            Add pattern from template
+          </Button>
         </div>
         <p className="text-sm text-ink-muted">
           The name becomes the entity label. RE2 syntax: no backreferences, no lookaround.
@@ -236,14 +241,20 @@ export function PolicyFields({
             deployment's detector and none was found. Two produced *wrong* hits —
             AWS_SECRET_ACCESS_KEY as a LOCATION, the word "token" as a PERSON.
 
-            So the patterns above are seeded with the published prefixes rather
-            than offered behind a button. An operator who has just configured
-            thirty entity types would otherwise be entitled to assume the list
-            covers credentials. It does not. */}
+            Those shapes are therefore offered as templates rather than seeded
+            into every new rule. An empty pattern list is a deliberate choice;
+            a seeded list would make it impossible to tell that choice from an
+            omission. */}
         <p className="text-sm text-ink-muted">
-          The engine detects no credentials. The seeded patterns above cover the
-          published prefixes; a bespoke format needs its own.
+          The engine detects no credentials. The templates cover the published
+          prefixes; a bespoke format needs its own pattern.
         </p>
+        <PatternTemplatesDialog
+          open={templatesOpen}
+          policy={policy}
+          onClose={() => setTemplatesOpen(false)}
+          onChange={onChange}
+        />
       </fieldset>
 
       {/* For values a detector is right about the shape of and wrong about the
@@ -259,57 +270,90 @@ export function PolicyFields({
 }
 
 /**
- * Patterns for the credential shapes the detector cannot see.
+ * The template catalogue, offered rather than seeded.
  *
- * Deliberately few and deliberately boring. Each one matches a published,
- * documented prefix rather than trying to be clever about entropy: a regex that
- * guesses at "looks secret" fires on git hashes and base64 payloads, and a
- * redaction rule that cries wolf is turned off within the week.
- *
- * `block` rather than `redact`, alone among the defaults offered anywhere in
- * this console. A leaked key is not a privacy problem to be papered over with a
- * placeholder — sending it at all is the incident, and the request should not
- * reach a provider. The operator can weaken it in the row above; the default
- * should not be the weak one.
- *
- * RE2, so no backreferences and no lookaround — see the note above the field.
+ * A dialog lists the shapes the detector cannot see, grouped into credentials
+ * and identifiers. Each credential template blocks because sending a key is
+ * itself the incident; identifier templates redact because the surrounding
+ * request is still useful without the value. Added rows remain editable.
  */
-const SECRET_PATTERNS = [
-  { name: "OPENAI_KEY", regex: "sk-[A-Za-z0-9_-]{16,}", mode: "block" as const },
-  { name: "AWS_ACCESS_KEY_ID", regex: "A(KIA|SIA)[0-9A-Z]{16}", mode: "block" as const },
-  {
-    name: "GITHUB_TOKEN",
-    regex: "gh[pousr]_[A-Za-z0-9]{36,}",
-    mode: "block" as const,
-  },
-  { name: "SLACK_TOKEN", regex: "xox[baprs]-[A-Za-z0-9-]{10,}", mode: "block" as const },
-  {
-    name: "PRIVATE_KEY",
-    regex: "-----BEGIN [A-Z ]*PRIVATE KEY-----",
-    mode: "block" as const,
-  },
-  {
-    name: "BEARER_TOKEN",
-    // A JWT by shape: three dot-separated base64url segments, the header
-    // beginning with the encoding of `{"alg"`.
-    regex: "eyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}",
-    mode: "block" as const,
-  },
-];
+function PatternTemplatesDialog({
+  open,
+  policy,
+  onClose,
+  onChange,
+}: {
+  open: boolean;
+  policy: RedactionPolicy;
+  onClose: () => void;
+  onChange: (policy: RedactionPolicy) => void;
+}) {
+  return (
+    <Dialog
+      open={open}
+      title="Add pattern from template"
+      onClose={onClose}
+      footer={
+        <Button variant="secondary" onClick={onClose}>
+          Done
+        </Button>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        {REDACTION_PATTERN_TEMPLATES.map((template) => {
+          const added = policy.patterns.some(
+            (pattern) => pattern.name === template.name && pattern.regex === template.regex,
+          );
+          return (
+            <div
+              key={template.name}
+              className="flex items-start justify-between gap-4 border-b border-line-quiet pb-3"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <strong>{template.name}</strong>
+                  <Badge>{template.kind === "credential" ? "Credential" : "Identifier"}</Badge>
+                  <Badge>{template.mode === "block" ? "Block" : "Redact"}</Badge>
+                </div>
+                <p className={`m-0 text-sm ${MUTED}`}>{template.description}</p>
+                <code className={CODE}>{template.regex}</code>
+              </div>
+              <Button
+                variant="secondary"
+                aria-label={`Add ${template.name} pattern`}
+                disabled={added}
+                onClick={() =>
+                  onChange({
+                    ...policy,
+                    patterns: [
+                      ...policy.patterns,
+                      { name: template.name, regex: template.regex, mode: template.mode },
+                    ],
+                  })
+                }
+              >
+                {added ? "Added" : "Add"}
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+    </Dialog>
+  );
+}
 
 /**
- * A new policy, carrying the secret patterns from the start.
+ * A new policy starts empty.
  *
- * Seeded rather than offered: the detector finds no credentials at all, so a
- * blank pattern list is a policy that silently does not cover them. An operator
- * can delete any of these in the rows above — that is a decision — but it should
- * not be one taken by default and by omission.
+ * Empty is now a deliberate starting point rather than an omission: the
+ * credential shapes live in the template dialogue above, where adding one is
+ * explicit and remains visible as a row that can be edited or removed.
  */
 export function seededPolicy(): RedactionPolicy {
   return {
     default_mode: "off",
     entities: {},
-    patterns: [...SECRET_PATTERNS],
+    patterns: [],
     allow_list: [],
   };
 }

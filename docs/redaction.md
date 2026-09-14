@@ -68,6 +68,30 @@ row is append-only, so the history of that decision survives.
 The shipped default is `noop`, which redacts nothing. Redaction being **on**
 must be a choice somebody made, never a default someone forgot about.
 
+## Detection families
+
+The HTTP detector has two independent Presidio families: pattern matching for
+structured and checksum identifiers, and NER for names and places. Either
+family can be on while the other is off, and rule building lists only the
+entity types belonging to families that are actually enabled. Gateway custom
+patterns are separate policy and are unaffected by the pattern-matching switch.
+
+The switch lives in the console's Detection families card. It is stored on the
+same append-only engine row as the engine choice and reaches other workers on
+the resolver's poll, so turning NER off has the same audit trail as changing
+engines. Unset means the detector deployment's default. Deployment defaults
+can also be set with `GATEWAY_REDACTION__PRESIDIO_PATTERN_MATCHING` and
+`GATEWAY_REDACTION__PRESIDIO_NER`; a non-null console choice overrides them.
+Turning both families off is reported as a warning because the detector then
+returns no findings.
+
+The console cannot conjure a recognizer the sidecar was not built to run. In
+particular, a `REDACTION_NLP_ENGINE=disabled` deployment has no NER weights, so
+enabling NER in the console does not make `PERSON` detectable; the service still
+reports no model-backed entities. Use the console switch to choose among
+installed capabilities, and the image/build setting to choose which
+capabilities are installed.
+
 ## Deploying less of it
 
 Three shapes, and all three already work. Written down here because the pieces
@@ -135,6 +159,12 @@ RE2 cannot backtrack. One pattern of that shape, written by accident, hangs a
 worker; RE2 makes the hang structurally impossible. The cost: no backreferences
 and no lookaround — a pattern using them is refused at save time with RE2's own
 message.
+
+New rules start with no custom patterns. The pattern editor offers
+**Add pattern from template** for credential shapes the detector cannot see and
+for common structured identifiers; choosing a template adds an editable row.
+Credential templates block the request, while identifier templates redact the
+matched value.
 
 ## Rules, not a deployment policy
 

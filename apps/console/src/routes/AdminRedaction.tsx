@@ -116,6 +116,12 @@ function Detail({ status }: { status: RedactionStatus }) {
       ))}
 
       <EngineList status={status} />
+      {status.installed_engines.includes("http") && (
+        <DetectorFamilies
+          key={`${status.engine}-${status.presidio_pattern_matching ?? "default"}-${status.presidio_ner ?? "default"}`}
+          status={status}
+        />
+      )}
       <RulesList />
       <PreviewBox />
 
@@ -569,6 +575,107 @@ function PreviewBox() {
   );
 }
 
+
+/**
+ * Which Presidio recognizer families the HTTP engine may use.
+ *
+ * Pattern matching finds structured identifiers; named-entity recognition
+ * reads names and places. The choices are saved on the same append-only engine
+ * row as the engine itself, so the report of who changed redaction stays in
+ * one place. Rule building reads the detector's effective entity list, which
+ * is why a family switched off here removes its entity types from a new rule.
+ */
+function DetectorFamilies({ status }: { status: RedactionStatus }) {
+  const setEngine = useSetRedactionEngine();
+  const toast = useOptionalToast();
+  const [patterns, setPatterns] = useState<boolean | null>(
+    status.presidio_pattern_matching ?? null,
+  );
+  const [ner, setNer] = useState<boolean | null>(status.presidio_ner ?? null);
+
+  const unchanged =
+    patterns === (status.presidio_pattern_matching ?? null) &&
+    ner === (status.presidio_ner ?? null);
+
+  const save = () => {
+    setEngine.mutate(
+      {
+        engine: status.engine,
+        reason: status.configured?.reason ?? "",
+        presidio_pattern_matching: patterns,
+        presidio_ner: ner,
+      },
+      {
+        onSuccess: () => toast?.add({ title: "Detection families saved.", type: "success" }),
+        onError: (error) =>
+          toast?.add({
+            title: "Detection families were not changed",
+            description: error instanceof Error ? error.message : "Unknown error.",
+            type: "error",
+          }),
+      },
+    );
+  };
+
+  return (
+    <Card
+      title="Presidio detection families"
+      description="These switches control the detection service's recognizer families, not custom gateway patterns."
+    >
+      {setEngine.error ? (
+        <Notice tone="danger" title="Detection families were not changed">
+          {setEngine.error instanceof Error ? setEngine.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      <div className={FORM_ROW}>
+        <Select
+          label="Pattern matching"
+          value={patterns === null ? "default" : patterns ? "on" : "off"}
+          onChange={(event) =>
+            setPatterns(
+              event.target.value === "default" ? null : event.target.value === "on",
+            )
+          }
+        >
+          <option value="default">Deployment default</option>
+          <option value="on">On for this detector</option>
+          <option value="off">Off for this detector</option>
+        </Select>
+        <Select
+          label="Named-entity recognition"
+          value={ner === null ? "default" : ner ? "on" : "off"}
+          onChange={(event) =>
+            setNer(event.target.value === "default" ? null : event.target.value === "on")
+          }
+        >
+          <option value="default">Deployment default</option>
+          <option value="on">On for this detector</option>
+          <option value="off">Off for this detector</option>
+        </Select>
+      </div>
+
+      <p className={MUTED}>
+        Pattern matching finds structured identifiers; named-entity recognition
+        reads names and places. Rule building lists only entity types from the
+        families enabled here. Custom gateway patterns are policy rather than
+        detector families, so a rule&apos;s own patterns still run.
+        Deployment default leaves the detection service&apos;s build unchanged.
+      </p>
+
+      <div>
+        <Button
+          variant="primary"
+          busy={setEngine.isPending}
+          disabled={unchanged || setEngine.isPending}
+          onClick={save}
+        >
+          Save detection families
+        </Button>
+      </div>
+    </Card>
+  );
+}
 
 /**
  * The installed engines, and which one is in force.

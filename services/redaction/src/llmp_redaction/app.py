@@ -27,7 +27,7 @@ from llmp_shared import (
     ExtractionResponse,
     TextFindings,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from llmp_redaction.detector import Detector
 from llmp_redaction.documents import extract
@@ -288,6 +288,13 @@ class HealthResponse(BaseModel):
     # thing an operator must be able to discover without reading the Dockerfile.
     degraded_languages: list[str]
     entities: list[str]
+    # Installed entities partitioned by recognizer family, so a gateway can show
+    # only the entity types its enabled families can actually detect.
+    pattern_entities: list[str] = Field(default_factory=list)
+    model_entities: list[str] = Field(default_factory=list)
+    # False on detectors that predate family selection. The gateway must not
+    # treat an unpartitioned entity list as narrowed support.
+    family_partition: bool = False
 
 
 def create_app(detector: Detector | None = None) -> FastAPI:
@@ -317,6 +324,9 @@ def create_app(detector: Detector | None = None) -> FastAPI:
             models=capabilities.models,
             degraded_languages=capabilities.degraded,
             entities=capabilities.entities,
+            pattern_entities=capabilities.pattern_entities,
+            model_entities=capabilities.model_entities,
+            family_partition=True,
         )
 
     @app.post("/extract", response_model=ExtractionResponse)
@@ -371,17 +381,31 @@ def create_app(detector: Detector | None = None) -> FastAPI:
         # fact-returning behaviour the contract asks for; the caller decides
         # whether a partial detection is acceptable (it is, and the gateway
         # logs it loudly every time the set changes).
-        supported = set(engine.capabilities().entities)
-        requested = request.entity_types
-        unsupported = sorted({t.upper() for t in (requested or [])} - supported)
-        servable = (
-            None
-            if requested is None
-            else [t for t in requested if t.upper() in supported]
+        capabilities = engine.capabilities()
+        effective = set(
+            Detector.family_entities(
+                capabilities,
+                request.presidio_pattern_matching,
+                request.presidio_ner,
+            )
         )
+        requested = request.entity_types
+        unsupported = sorted({t.upper() for t in (requested or [])} - effective)
+        if requested is None:
+            # Preserve Presidio's historical all-recognizers call only when no
+            # family is disabled. A narrowed request must name the family subset
+            # explicitly, because an empty `entities` list raises.
+            servable = (
+                None
+                if request.presidio_pattern_matching is not False
+                and request.presidio_ner is not False
+                else sorted(effective)
+            )
+        else:
+            servable = [t for t in requested if t.upper() in effective]
         # An entirely unservable enumeration skips the engine: handing Presidio
         # an empty `entities` list raises the same way an unknown type does.
-        if requested is not None and not servable:
+        if not effective or (requested is not None and not servable):
             found: list[list[Any]] = [[] for _ in request.texts]
         else:
             found = await engine.analyse(

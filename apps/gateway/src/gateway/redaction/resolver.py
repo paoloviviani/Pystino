@@ -105,15 +105,20 @@ async def current_engine(session: AsyncSession) -> RedactionConfig | None:
 
 
 def build_for(
-    settings: RedactionSettings, engine: str, policy: RedactionPolicy | None = None
+    settings: RedactionSettings,
+    engine: str,
+    policy: RedactionPolicy | None = None,
+    presidio_pattern_matching: bool | None = None,
+    presidio_ner: bool | None = None,
 ) -> Redactor:
     """Construct *engine* using the environment's other redaction settings.
 
-    Two things the console can change — the engine and the per-entity policy —
-    and everything else still comes from the environment: the endpoint, the
-    placeholder key, the timeouts. So this is a settings copy with those fields
-    replaced, and the engine's own constructor is what refuses a combination that
-    cannot work — a missing endpoint, an unset placeholder key.
+    Three things the console can change — the engine, the Presidio detector
+    families and the per-entity policy — and everything else still comes from
+    the environment: the endpoint, the placeholder key, the timeouts. So this
+    is a settings copy with those fields replaced, and the engine's own
+    constructor is what refuses a combination that cannot work — a missing
+    endpoint, an unset placeholder key.
 
     ``policy=None`` means the row said nothing about it, which is not "redact
     nothing": the deployment's own policy stands.
@@ -121,6 +126,12 @@ def build_for(
     update: dict[str, object] = {"engine": engine}
     if policy is not None:
         update["policy"] = policy
+    # Null in an append-only console row means the environment remains in force,
+    # rather than becoming a third, implicit detector setting.
+    if presidio_pattern_matching is not None:
+        update["presidio_pattern_matching"] = presidio_pattern_matching
+    if presidio_ner is not None:
+        update["presidio_ner"] = presidio_ner
     return resolve(engine)(settings.model_copy(update=update))
 
 
@@ -291,7 +302,20 @@ class RedactionResolver:
             return False
 
         try:
-            replacement = build_for(self._settings, engine)
+            replacement = build_for(
+                self._settings,
+                engine,
+                presidio_pattern_matching=(
+                    row.presidio_pattern_matching
+                    if row is not None and row.presidio_pattern_matching is not None
+                    else self._settings.presidio_pattern_matching
+                ),
+                presidio_ner=(
+                    row.presidio_ner
+                    if row is not None and row.presidio_ner is not None
+                    else self._settings.presidio_ner
+                ),
+            )
         except (UnknownEngineError, ValueError):
             # The engine was validated when it was saved, so reaching here means
             # the deployment changed underneath it — a plugin uninstalled, or an

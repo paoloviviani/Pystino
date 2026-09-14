@@ -195,6 +195,8 @@ class TestContractModels:
         assert request.language == "en"
         assert request.score_threshold == 0.5
         assert request.entity_types is None
+        assert request.presidio_pattern_matching is None
+        assert request.presidio_ner is None
 
     def test_detection_response_records_the_engine(self) -> None:
         """Auditors need to know which engine version produced a redaction."""

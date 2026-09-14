@@ -225,6 +225,29 @@ class TestTheRoute:
         assert body["engine"] == "noop"
         assert body["enabled"] is False
 
+    async def test_presidio_families_are_independently_recorded_and_reported(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: object,
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
+        response = await client.put(
+            ENGINE_URL,
+            json={"engine": "noop", "presidio_pattern_matching": False, "presidio_ner": True},
+        )
+        assert response.status_code == 200
+        row = (await session.execute(select(RedactionConfig))).scalar_one()
+        assert row.presidio_pattern_matching is False
+        assert row.presidio_ner is True
+        body = response.json()
+        assert body["presidio_pattern_matching"] is False
+        assert body["presidio_ner"] is True
+        assert body["configured"]["presidio_pattern_matching"] is False
+        assert body["configured"]["presidio_ner"] is True
+
     async def test_the_response_says_how_long_other_workers_may_lag(
         self, app: object, client: httpx.AsyncClient, seeded: Seeded, session_factory: object
     ) -> None:

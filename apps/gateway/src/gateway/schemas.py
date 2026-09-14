@@ -1321,6 +1321,13 @@ class RedactionServiceHealth(BaseModel):
     #: Every entity type it can detect, which is the superset any scope can ask
     #: for.
     entities: list[str] = Field(default_factory=list)
+    #: The installed entities partitioned by recognizer family. Older detection
+    #: services do not report these; the gateway then leaves `entities` alone.
+    pattern_entities: list[str] = Field(default_factory=list)
+    model_entities: list[str] = Field(default_factory=list)
+    #: False on detection services that predate family selection. The gateway
+    #: must not treat their unpartitioned entity list as narrowed support.
+    family_partition: bool = False
 
 
 class RedactionActivity(BaseModel):
@@ -1377,6 +1384,9 @@ class RedactionConfigChange(BaseModel):
     """
 
     engine: str
+    #: Null leaves the Presidio sidecar's deployment default unchanged.
+    presidio_pattern_matching: bool | None = None
+    presidio_ner: bool | None = None
     reason: str
     changed_at: datetime
     #: Null once a user has been erased. The record of the change survives them,
@@ -1387,13 +1397,20 @@ class RedactionConfigChange(BaseModel):
 class RedactionEngineRequest(BaseModel):
     """Enable one engine, or switch the layer off by naming ``noop``.
 
-    One field plus a reason, deliberately. The endpoint, the placeholder key and
-    the detection parameters stay in the environment: the key is a secret whose
-    rotation re-labels every transcript it ever labelled, and an endpoint that
-    can be typed here is an endpoint that can be pointed at a logger.
+    One engine plus a reason and its Presidio family switches, deliberately. The
+    endpoint, the placeholder key and the other detection parameters stay in the
+    environment: the key is a secret whose rotation re-labels every transcript
+    it ever labelled, and an endpoint that can be typed here is an endpoint that
+    can be pointed at a logger.
     """
 
     engine: str = Field(min_length=1, max_length=64)
+    #: Independently enable Presidio's regex/checksum recognizers. Null preserves
+    #: the detector deployment's default for compatibility.
+    presidio_pattern_matching: bool | None = None
+    #: Independently enable Presidio named-entity recognition. Null preserves the
+    #: detector deployment's default for compatibility.
+    presidio_ner: bool | None = None
     #: Required when the chosen engine redacts nothing, optional otherwise.
     #: Checked in the route rather than here, because the rule depends on the
     #: registry — which engines redact — and a schema that had to consult the
@@ -1404,11 +1421,12 @@ class RedactionEngineRequest(BaseModel):
 class RedactionStatusResponse(BaseModel):
     """The redaction layer as it is actually running.
 
-    Everything except ``engine`` still comes from process configuration read at
-    startup (ADR 0012). ``engine`` is now an admin decision that may override it
-    (ADR 0033), which is why ``source`` exists: "the console says one thing and
-    the environment says another" is otherwise invisible, and it is exactly the
-    confusion a database override introduces.
+    Everything except ``engine`` and the Presidio detector families still comes
+    from process configuration read at startup (ADR 0012). ``engine`` is now an
+    admin decision that may override it (ADR 0033), which is why ``source``
+    exists: "the console says one thing and the environment says another" is
+    otherwise invisible, and it is exactly the confusion a database override
+    introduces.
     """
 
     #: The engine in force, taken from the constructed redactor rather than from
@@ -1438,6 +1456,8 @@ class RedactionStatusResponse(BaseModel):
     restore_in_response: bool
     language: str
     score_threshold: float
+    presidio_pattern_matching: bool | None = None
+    presidio_ner: bool | None = None
     #: Null means "everything the engine offers" rather than "none". Superseded
     #: by ``policy`` and still reported, because a deployment that sets it is
     #: entitled to see the value it set.

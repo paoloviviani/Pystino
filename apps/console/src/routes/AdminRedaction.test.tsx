@@ -71,6 +71,9 @@ function status(overrides: Partial<RedactionStatus> = {}): RedactionStatus {
       models: { en: "en_core_web_lg" },
       degraded_languages: [],
       entities: ["PERSON", "EMAIL_ADDRESS"],
+      pattern_entities: ["EMAIL_ADDRESS"],
+      model_entities: ["PERSON"],
+      family_partition: true,
     },
     activity: {
       window_seconds: 86400,
@@ -318,6 +321,39 @@ describe("AdminRedaction", () => {
     await waitFor(() => expect(captured.puts.length).toBe(1));
     expect(captured.puts[0]!.url).toContain("/api/admin/redaction/engine");
     expect(captured.puts[0]!.body).toEqual({ engine: "http", reason: "" });
+  });
+
+  it("saves pattern matching and named-entity recognition separately", async () => {
+    // The detector families are independent console decisions, not a rebuild:
+    // patterns can stay on while NER is switched off, and rule building then
+    // offers only the effective entity types returned by the API.
+    const before = status({ presidio_pattern_matching: null, presidio_ner: null });
+    const after = status({ presidio_pattern_matching: false, presidio_ner: true });
+    const { fetch, captured } = withEngineChange(before, after);
+    vi.stubGlobal("fetch", fetch);
+    const user = userEvent.setup({ delay: null });
+    renderScreen(<AdminRedaction />);
+
+    const patterns = await screen.findByLabelText("Pattern matching");
+    const entities = screen.getByLabelText("Named-entity recognition");
+    const save = screen.getByRole("button", { name: "Save detection families" });
+    expect(patterns).toHaveValue("default");
+    expect(entities).toHaveValue("default");
+    expect(save).toBeDisabled();
+
+    await user.selectOptions(patterns, "off");
+    await user.selectOptions(entities, "on");
+    await user.click(save);
+
+    await waitFor(() => expect(captured.puts).toHaveLength(1));
+    expect(captured.puts[0]!.body).toEqual({
+      engine: "http",
+      reason: "",
+      presidio_pattern_matching: false,
+      presidio_ner: true,
+    });
+    await waitFor(() => expect(patterns).toHaveValue("off"));
+    expect(entities).toHaveValue("on");
   });
 
   it("stops and asks before turning redaction off, and asks for nothing", async () => {
