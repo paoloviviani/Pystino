@@ -122,7 +122,11 @@ function Detail({ status }: { status: RedactionStatus }) {
           status={status}
         />
       )}
-      <RulesList />
+      <RulesList
+        service={service}
+        patterns={status.presidio_pattern_matching ?? null}
+        ner={status.presidio_ner ?? null}
+      />
       <PreviewBox />
 
       <Card>
@@ -294,11 +298,26 @@ function Detail({ status }: { status: RedactionStatus }) {
  * Configuration is a page per rule, not a dialog: a policy is thirty entity
  * types, a set of patterns and an allow-list.
  */
-function RulesList() {
+function RulesList({
+  service,
+  patterns,
+  ner,
+}: {
+  service: RedactionStatus["service"];
+  patterns: boolean | null;
+  ner: boolean | null;
+}) {
   const rules = useRedactionRules({ limit: 200 });
   const update = useUpdateRedactionRule();
   const remove = useDeleteRedactionRule();
   const navigate = useNavigate();
+  // The detector's effective entity list, already narrowed to the enabled
+  // families by the API. Null when the service cannot be asked, in which case
+  // no per-rule warning is drawn rather than a guessed one.
+  const supported =
+    service !== null && service.reachable
+      ? new Set(service.entities.map((entity) => entity.toUpperCase()))
+      : null;
 
   // The catch-all first, then the narrower scopes in the order they are folded.
   // Reading order is fold order, so the screen matches how a request is decided.
@@ -326,7 +345,16 @@ function RulesList() {
         </>
       ),
     },
-    { key: "policy", header: "Policy", render: (rule) => summarisePolicy(rule.policy) },
+    {
+      key: "policy",
+      header: "Policy",
+      render: (rule) => (
+        <>
+          <div>{summarisePolicy(rule.policy)}</div>
+          <RuleCoverageWarning rule={rule} supported={supported} patterns={patterns} ner={ner} />
+        </>
+      ),
+    },
     {
       key: "state",
       header: "State",
@@ -398,6 +426,60 @@ function RulesList() {
   );
 }
 
+
+/**
+ * The warning sign beside a rule that names something no longer detected.
+ *
+ * Disabling a detector family does not refuse, deactivate or rewrite rules —
+ * everything keeps working, and a rule whose types cannot be found is inert
+ * rather than dangerous. But "inert" looks exactly like "working" on this
+ * screen, so the affected rule carries the warning instead: the named types
+ * below are protected by this rule and undetectable while their family is off,
+ * meaning matching values reach providers unprotected.
+ *
+ * Only explicitly named types with a mode other than off are listed. A rule
+ * whose default mode is on gets the generic form instead, since its covered
+ * set cannot be enumerated here.
+ */
+function RuleCoverageWarning({
+  rule,
+  supported,
+  patterns,
+  ner,
+}: {
+  rule: RedactionRule;
+  supported: Set<string> | null;
+  patterns: boolean | null;
+  ner: boolean | null;
+}) {
+  if (!rule.is_active || supported === null) return null;
+  const unserved = Object.entries(rule.policy.entities)
+    .filter(([type, entry]) => entry.mode !== "off" && !supported.has(type.toUpperCase()))
+    .map(([type]) => type);
+  if (unserved.length > 0) {
+    return (
+      <div className="mt-1">
+        <span
+          title={`These types are protected by this rule but cannot be detected while their family is off, so matching values reach providers unprotected. The rule stays in force.`}
+        >
+          <Badge tone="warn">Detection off: {unserved.join(", ")}</Badge>
+        </span>
+      </div>
+    );
+  }
+  if (rule.policy.default_mode !== "off" && (patterns === false || ner === false)) {
+    return (
+      <div className="mt-1">
+        <span
+          title={`This rule protects unnamed types by default, and a detector family is switched off, so some of what it covers cannot be detected. The rule stays in force.`}
+        >
+          <Badge tone="warn">Default covers a disabled family</Badge>
+        </span>
+      </div>
+    );
+  }
+  return null;
+}
 
 /**
  * What the provider would actually receive.
@@ -577,42 +659,72 @@ function PreviewBox() {
 
 
 /**
- * Which Presidio recognizer families the HTTP engine may use.
+ * The two Presidio recognizer families as big on/off switches.
  *
  * Pattern matching finds structured identifiers; named-entity recognition
- * reads names and places. The choices are saved on the same append-only engine
- * row as the engine itself, so the report of who changed redaction stays in
- * one place. Rule building reads the detector's effective entity list, which
- * is why a family switched off here removes its entity types from a new rule.
+ * reads names and places. Each switch starts from the deployment default —
+ * the explicit console choice when one was saved, otherwise whether the
+ * detector build actually offers that family — and flipping one saves
+ * immediately to the same append-only engine row as the engine itself, so the
+ * report of who changed redaction stays in one place. There is no third
+ * "default" state to pick: the default is only the starting position.
+ *
+ * Custom gateway patterns are policy rather than detector families, so a
+ * rule's own patterns still run whatever these say. Rule building reads the
+ * detector's effective entity list, which is why a family switched off here
+ * removes its entity types from a new rule — and why a rule that still names
+ * one carries a warning instead of failing.
  */
 function DetectorFamilies({ status }: { status: RedactionStatus }) {
   const setEngine = useSetRedactionEngine();
   const toast = useOptionalToast();
-  const [patterns, setPatterns] = useState<boolean | null>(
-    status.presidio_pattern_matching ?? null,
+  const service = status.service;
+  // Whether the detector build offers each family at all. Only consulted when
+  // no explicit choice was saved: a slim no-NER build then starts its model
+  // switch off rather than pretending names are detected.
+  const offersPatterns =
+    service === null || !service.reachable || !service.family_partition
+      ? null
+      : service.pattern_entities.length > 0;
+  const offersNer =
+    service === null || !service.reachable || !service.family_partition
+      ? null
+      : service.model_entities.length > 0;
+  const [patterns, setPatterns] = useState<boolean>(
+    status.presidio_pattern_matching ?? offersPatterns ?? true,
   );
-  const [ner, setNer] = useState<boolean | null>(status.presidio_ner ?? null);
+  const [ner, setNer] = useState<boolean>(
+    status.presidio_ner ?? offersNer ?? true,
+  );
 
-  const unchanged =
-    patterns === (status.presidio_pattern_matching ?? null) &&
-    ner === (status.presidio_ner ?? null);
-
-  const save = () => {
+  const toggle = (which: "patterns" | "ner", next: boolean) => {
+    const prevPatterns = patterns;
+    const prevNer = ner;
+    const nextPatterns = which === "patterns" ? next : patterns;
+    const nextNer = which === "ner" ? next : ner;
+    setPatterns(nextPatterns);
+    setNer(nextNer);
     setEngine.mutate(
       {
         engine: status.engine,
         reason: status.configured?.reason ?? "",
-        presidio_pattern_matching: patterns,
-        presidio_ner: ner,
+        presidio_pattern_matching: nextPatterns,
+        presidio_ner: nextNer,
       },
       {
-        onSuccess: () => toast?.add({ title: "Detection families saved.", type: "success" }),
-        onError: (error) =>
+        onSuccess: () =>
+          toast?.add({ title: "Detection families saved.", type: "success" }),
+        onError: (error) => {
+          // Back to what the server still holds: an optimistic switch that
+          // failed must not sit showing a state that is not in force.
+          setPatterns(prevPatterns);
+          setNer(prevNer);
           toast?.add({
             title: "Detection families were not changed",
             description: error instanceof Error ? error.message : "Unknown error.",
             type: "error",
-          }),
+          });
+        },
       },
     );
   };
@@ -628,52 +740,75 @@ function DetectorFamilies({ status }: { status: RedactionStatus }) {
         </Notice>
       ) : null}
 
-      <div className={FORM_ROW}>
-        <Select
+      <div className="flex flex-col gap-4">
+        <FamilySwitch
           label="Pattern matching"
-          value={patterns === null ? "default" : patterns ? "on" : "off"}
-          onChange={(event) =>
-            setPatterns(
-              event.target.value === "default" ? null : event.target.value === "on",
-            )
-          }
-        >
-          <option value="default">Deployment default</option>
-          <option value="on">On for this detector</option>
-          <option value="off">Off for this detector</option>
-        </Select>
-        <Select
+          description="Structured identifiers: cards, accounts, emails, phones, national IDs."
+          checked={patterns}
+          pending={setEngine.isPending}
+          onToggle={(next) => toggle("patterns", next)}
+        />
+        <FamilySwitch
           label="Named-entity recognition"
-          value={ner === null ? "default" : ner ? "on" : "off"}
-          onChange={(event) =>
-            setNer(event.target.value === "default" ? null : event.target.value === "on")
-          }
-        >
-          <option value="default">Deployment default</option>
-          <option value="on">On for this detector</option>
-          <option value="off">Off for this detector</option>
-        </Select>
+          description="Names and places read by the language model."
+          checked={ner}
+          pending={setEngine.isPending}
+          onToggle={(next) => toggle("ner", next)}
+        />
       </div>
 
-      <p className={MUTED}>
-        Pattern matching finds structured identifiers; named-entity recognition
-        reads names and places. Rule building lists only entity types from the
-        families enabled here. Custom gateway patterns are policy rather than
-        detector families, so a rule&apos;s own patterns still run.
-        Deployment default leaves the detection service&apos;s build unchanged.
-      </p>
-
-      <div>
-        <Button
-          variant="primary"
-          busy={setEngine.isPending}
-          disabled={unchanged || setEngine.isPending}
-          onClick={save}
-        >
-          Save detection families
-        </Button>
-      </div>
+      {setEngine.isPending && <p className={MUTED}>Saving…</p>}
     </Card>
+  );
+}
+
+/**
+ * One big on/off switch.
+ *
+ * A `role="switch"` button rather than a checkbox: the control reads as the
+ * thing it is — a state flip that saves immediately — and the visible On/Off
+ * text is hidden from assistive tech because `aria-checked` already says it.
+ */
+function FamilySwitch({
+  label,
+  description,
+  checked,
+  pending,
+  onToggle,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  pending: boolean;
+  onToggle: (next: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="min-w-0">
+        <div className="font-semibold">{label}</div>
+        <div className={MUTED}>{description}</div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <span aria-hidden className={`text-sm ${MUTED}`}>
+          {checked ? "On" : "Off"}
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          aria-label={label}
+          disabled={pending}
+          onClick={() => onToggle(!checked)}
+          className="relative h-9 w-16 shrink-0 cursor-pointer rounded-full border border-line-strong bg-sunken transition-colors data-[checked=true]:border-accent data-[checked=true]:bg-accent disabled:cursor-wait disabled:opacity-60 focus-visible:outline-none focus-visible:shadow-focus"
+          data-checked={checked}
+        >
+          <span
+            aria-hidden
+            className={`absolute top-1 left-1 size-7 rounded-full border border-line-strong bg-surface transition-transform ${checked ? "translate-x-7" : "translate-x-0"}`}
+          />
+        </button>
+      </div>
+    </div>
   );
 }
 
