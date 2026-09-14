@@ -74,6 +74,13 @@ async def idp_app(
         IdPClientSettings(client_id="desktop", redirect_path="/desktop/callback"),
     ]
 
+    # No console in this app, by construction rather than by checkout: the
+    # end_session tests assert the console-less answers (a refused foreign
+    # landing is an honest 200 with nowhere to fall back to), and the source
+    # tree's build-artifact directory must not get a vote. Same
+    # never-a-real-directory as test_console.py uses for the same purpose.
+    settings = settings.model_copy(update={"console_dir": "/nonexistent"})
+
     application = create_app(settings)
     # Schema first, wiring second — the reverse of the shared app fixture.
     # init_app_state starts the FX poller, whose *first* refresh runs

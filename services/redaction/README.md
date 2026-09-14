@@ -10,14 +10,28 @@ transcript.
 
 ```
 POST /detect
-  { "texts": [...], "language": "en", "score_threshold": 0.5, "entity_types": null }
+  {
+    "texts": [...],
+    "language": "en",
+    "score_threshold": 0.5,
+    "entity_types": null,
+    "presidio_pattern_matching": null,
+    "presidio_ner": null
+  }
   -> { "findings": [ { "index": 0, "spans": [ {start, end, entity_type, score} ] } ],
        "engine": "presidio", "engine_version": "2.2.363" }
 
 GET /healthz
   -> { "status", "engine", "engine_version", "languages", "models",
-       "degraded_languages", "entities" }
+       "degraded_languages", "entities", "pattern_entities", "model_entities" }
 ```
+
+`presidio_pattern_matching` and `presidio_ner` independently select the
+recognizer families used for that request. Null means the deployment default.
+A disabled family is excluded before analysis, and a requested type belonging
+only to a disabled family is reported in `unsupported_types`. Health sets
+`family_partition` once it reports those partitions; older detectors leave it
+false, and the gateway then does not narrow their entity lists.
 
 Both sides have Pydantic models for this in `llmp_shared.redaction`.
 
