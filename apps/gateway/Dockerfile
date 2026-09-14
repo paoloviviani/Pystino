@@ -68,7 +68,14 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 COPY packages/ui packages/ui
 COPY apps/console apps/console
-RUN pnpm --filter @llmp/console build \
+# Which source tree this UI was built from, shown muted on the Overview page
+# so a stale deploy is visible where administrators look rather than
+# debuggable from symptoms. Plain environment, not a secret: Vite exposes
+# VITE_* names to the bundle, and the value defaults to "unknown" when the
+# build is run by hand without it.
+ARG CONSOLE_BUILD_SHA=unknown
+RUN VITE_CONSOLE_BUILD_SHA=${CONSOLE_BUILD_SHA} \
+    pnpm --filter @llmp/console build \
     && cp -r apps/console/dist /out
 
 

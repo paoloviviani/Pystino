@@ -194,5 +194,20 @@ def mount_console(app: FastAPI, settings: Settings) -> bool:
         name="console-assets",
     )
     app.include_router(build_router(directory))
-    logger.info("console mounted at %s from %s", MOUNT_PATH, directory)
+    # What is served, not just where from: the entry document's mtime and the
+    # content-hashed asset names identify the build exactly, so a stale deploy
+    # — yesterday's bundle served by today's image, or vice versa — is visible
+    # in the startup log rather than debuggable from symptoms.
+    try:
+        entry_mtime = (directory / "index.html").stat().st_mtime
+        assets = sorted(path.name for path in (directory / "assets").iterdir())
+    except OSError:
+        entry_mtime, assets = 0.0, []
+    logger.info(
+        "console mounted at %s from %s (index.html mtime %d, assets %s)",
+        MOUNT_PATH,
+        directory,
+        int(entry_mtime),
+        ",".join(assets),
+    )
     return True
