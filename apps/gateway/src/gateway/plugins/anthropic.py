@@ -61,6 +61,8 @@ class AnthropicPlugin:
     # versioning, served by a different surface than the OpenAI-shaped one this
     # field configures. Typing it is a decision, not a recap.
     default_base_url: str | None = None
+    # One documented host, so the console offers no endpoint choice.
+    base_url_options: tuple[tuple[str, str], ...] = ()
     # It reports tokens, not a charge. Nothing to assert, so pass-through
     # billing is not selectable for it.
     reports_authoritative_cost = False

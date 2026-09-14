@@ -144,6 +144,13 @@ def describe() -> list[dict[str, object]]:
                 # console pre-fills it and creating a Cortecs provider is typing
                 # a name and a key. Null for a type whose endpoints vary.
                 "default_base_url": getattr(plugin, "default_base_url", None),
+                # The endpoints the plugin documents, when there is more than
+                # one, so the console can offer the choice as a select instead
+                # of a free-text URL. Pairs on the plugin, objects on the wire.
+                "base_url_options": [
+                    {"url": url, "label": label}
+                    for url, label in getattr(plugin, "base_url_options", ())
+                ],
                 "is_default": plugin.name == DEFAULT_PLUGIN,
             }
         )

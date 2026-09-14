@@ -769,6 +769,19 @@ def _check_billing_mode(plugin: str | None, mode: str | None) -> None:
         )
 
 
+class PluginBaseURLOption(BaseModel):
+    """One endpoint a provider type documents: the URL and what it is.
+
+    The label is the plugin's knowledge — which host is the EU-only one is a
+    fact about the counterparty, not a sentence the console should have to
+    hold — which is why the pair travels together instead of the console
+    styling URLs it cannot vouch for.
+    """
+
+    url: str
+    label: str
+
+
 class ProviderPluginResponse(BaseModel):
     """An installed provider type, for the console's selector.
 
@@ -790,6 +803,13 @@ class ProviderPluginResponse(BaseModel):
     #: console pre-fills it, and a create that omits the URL gets it here too.
     #: Null for a type whose endpoints vary.
     default_base_url: str | None
+    #: The endpoints the plugin documents, when there is more than one, so the
+    #: console offers them as a choice rather than free-text URL entry — for a
+    #: decision with exactly two documented values, free text is a typo waiting
+    #: to happen. Empty means the default above is the whole of the answer; the
+    #: API itself keeps accepting any base URL, because a hand-set one is the
+    #: operator's own (a private gateway, a proxy) and stays legitimate.
+    base_url_options: list[PluginBaseURLOption] = []
     #: What a provider row with no plugin named resolves to.
     is_default: bool
 

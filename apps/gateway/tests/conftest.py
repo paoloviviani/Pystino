@@ -75,6 +75,10 @@ class FakeUpstream:
     def __init__(self) -> None:
         self.bodies: list[dict] = []
         self.headers: list[httpx.Headers] = []
+        # The full URL of every request, because where a request went is a fact
+        # a test sometimes holds — a provider row pointed at a documented
+        # regional host is the case that matters.
+        self.urls: list[str] = []
         self._responder: Callable[[httpx.Request], httpx.Response] | None = None
 
     @property
@@ -122,6 +126,7 @@ class FakeUpstream:
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
         self.headers.append(request.headers)
+        self.urls.append(str(request.url))
         self.bodies.append(orjson.loads(request.content) if request.content else {})
         assert self._responder is not None, "no upstream response configured"
         return self._responder(request)

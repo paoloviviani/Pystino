@@ -299,6 +299,86 @@ class TestProviderApi:
         assert response.status_code == 201
         assert response.json()["base_url"] == "https://cortecs.internal.test/v1"
 
+    async def test_the_jina_type_brings_its_own_endpoint(
+        self, admin_client: httpx.AsyncClient
+    ) -> None:
+        """Choosing the type is choosing the endpoint, as with Cortecs."""
+        response = await admin_client.post(
+            "/api/admin/providers",
+            json={"name": "jina", "plugin": "jina", "kind": "search", "api_key": "jina-key-1"},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["base_url"] == "https://s.jina.ai"
+
+    async def test_a_jina_backend_can_be_created_on_the_eu_host(
+        self, admin_client: httpx.AsyncClient
+    ) -> None:
+        """The EU host is one of the two the plugin documents, and the
+        trailing slash the vendor writes it with is not stored — the select
+        sends and the row stores the same spelling."""
+        response = await admin_client.post(
+            "/api/admin/providers",
+            json={
+                "name": "jina",
+                "plugin": "jina",
+                "kind": "search",
+                "base_url": "https://eu.s.jina.ai/",
+                "api_key": "jina-key-1",
+            },
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["base_url"] == "https://eu.s.jina.ai"
+
+    async def test_a_jina_backend_can_be_switched_between_the_documented_hosts(
+        self, admin_client: httpx.AsyncClient
+    ) -> None:
+        """The endpoint is a patchable configuration, not a create-time-only
+        choice: an operator who learns a search must stay in the EU moves the
+        backend without recreating it (which would also recreate the grant
+        anchor and lose every group's access)."""
+        created = (
+            await admin_client.post(
+                "/api/admin/providers",
+                json={"name": "jina", "plugin": "jina", "kind": "search", "api_key": "jina-key-1"},
+            )
+        ).json()
+        assert created["base_url"] == "https://s.jina.ai"
+
+        moved = await admin_client.patch(
+            f"/api/admin/providers/{created['id']}",
+            json={"base_url": "https://eu.s.jina.ai"},
+        )
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["base_url"] == "https://eu.s.jina.ai"
+
+        moved_back = await admin_client.patch(
+            f"/api/admin/providers/{created['id']}",
+            json={"base_url": "https://s.jina.ai"},
+        )
+        assert moved_back.status_code == 200, moved_back.text
+        assert moved_back.json()["base_url"] == "https://s.jina.ai"
+
+    async def test_the_plugin_listing_names_jinas_documented_endpoints(
+        self, admin_client: httpx.AsyncClient
+    ) -> None:
+        """The console's constrained endpoint choice reads from here, so the
+        two hosts and their labels are the API's contract — and a backend
+        with a single documented endpoint (Linkup, Exa) offers none, because
+        a select with one option is not a choice."""
+        response = await admin_client.get("/api/admin/provider-plugins")
+        assert response.status_code == 200, response.text
+        plugins = {entry["name"]: entry for entry in response.json()}
+
+        assert plugins["jina"]["base_url_options"] == [
+            {"url": "https://s.jina.ai", "label": "s.jina.ai — global (default)"},
+            {
+                "url": "https://eu.s.jina.ai",
+                "label": "eu.s.jina.ai — all processing stays in the EU",
+            },
+        ]
+        assert plugins["linkup"]["base_url_options"] == []
+        assert plugins["exa"]["base_url_options"] == []
+
     async def test_a_type_without_a_default_still_requires_the_url(
         self, admin_client: httpx.AsyncClient
     ) -> None:

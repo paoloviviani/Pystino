@@ -41,6 +41,9 @@ class GenericOpenAIPlugin:
     # Endpoints answering to this type range from a cloud API to a laptop's
     # Ollama; there is no URL worth guessing.
     default_base_url: str | None = None
+    # No documented endpoint pairs, so the console offers no endpoint choice:
+    # the type's endpoint, if any, is `default_base_url` alone.
+    base_url_options: tuple[tuple[str, str], ...] = ()
 
     # -- shaping a request --------------------------------------------------
 

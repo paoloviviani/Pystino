@@ -365,6 +365,34 @@ class TestNewBuiltins:
         assert plugin.kind == ProviderKind.PROVIDER
 
 
+class TestSearchBackendEndpoints:
+    """What a search backend documents about its own hosts.
+
+    The console offers a backend's endpoints as a constrained choice rather
+    than a free-text URL, which is only honest if the choice is exactly the
+    vendor's documented set — so that set is pinned here, per plugin.
+    """
+
+    def test_jina_documents_exactly_two_hosts_and_the_default_is_first(self) -> None:
+        """Both read at source on 2026-09-14 from docs.jina.ai's Search API
+        page, which documents the EU host with the EU-residency sentence the
+        plugin's label paraphrases. The default is one of the options, so a
+        create that omits the URL lands on the same host the select shows."""
+        plugin = resolve("jina")
+        assert plugin.base_url_options == (
+            ("https://s.jina.ai", "s.jina.ai — global (default)"),
+            ("https://eu.s.jina.ai", "eu.s.jina.ai — all processing stays in the EU"),
+        )
+        assert plugin.default_base_url == plugin.base_url_options[0][0]
+
+    def test_the_single_host_backends_declare_no_choice(self) -> None:
+        # Linkup and Exa each document one endpoint; a select with one option
+        # is not a choice, and the default is the whole of the answer.
+        for name in ("linkup", "exa"):
+            plugin = resolve(name)
+            assert plugin.base_url_options == (), name
+
+
 class TestOpenRouter:
     def test_it_is_a_router_with_pass_through_billing(self) -> None:
         plugin = resolve("openrouter")
