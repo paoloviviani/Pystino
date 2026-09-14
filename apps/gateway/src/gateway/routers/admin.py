@@ -3062,7 +3062,39 @@ async def _redaction_service_health(
         models={str(k): str(v) for k, v in (body.get("models") or {}).items()},
         degraded_languages=[str(item) for item in body.get("degraded_languages") or []],
         entities=[str(item) for item in body.get("entities") or []],
+        pattern_entities=[str(item) for item in body.get("pattern_entities") or []],
+        model_entities=[str(item) for item in body.get("model_entities") or []],
+        family_partition=bool(body.get("family_partition", False)),
     )
+
+
+def _effective_detector_entities(
+    service: RedactionServiceHealth | None,
+    *,
+    pattern_matching: bool | None,
+    ner: bool | None,
+) -> RedactionServiceHealth | None:
+    """Narrow a reachable detector report to its enabled recognizer families.
+
+    The service reports every installed label; the gateway knows which families
+    its console configuration enabled. Rule building reads `entities`, so
+    returning the installed superset here would offer PERSON while NER is off.
+    Detection services that predate the family partition leave the report alone.
+    """
+    if service is None or not service.reachable:
+        return service
+    if not service.family_partition:
+        return service
+    patterns_enabled = pattern_matching is not False
+    ner_enabled = ner is not False
+    if patterns_enabled and ner_enabled:
+        return service
+    selected: list[str] = []
+    if patterns_enabled:
+        selected.extend(service.pattern_entities)
+    if ner_enabled:
+        selected.extend(service.model_entities)
+    return service.model_copy(update={"entities": sorted(set(selected))})
 
 
 async def _redaction_activity(session: SessionDep, window_seconds: int) -> RedactionActivity:
@@ -3113,6 +3145,8 @@ def _redaction_warnings(
     service: RedactionServiceHealth | None,
     *,
     policy_types: list[str] | None = None,
+    presidio_pattern_matching: bool | None = None,
+    presidio_ner: bool | None = None,
 ) -> list[str]:
     """What is wrong with this configuration, in words.
 
@@ -3134,6 +3168,27 @@ def _redaction_warnings(
             "provider exactly as the caller sent them."
         )
         return notes
+
+    if presidio_pattern_matching is False and presidio_ner is False:
+        notes.append(
+            "Both Presidio pattern matching and named-entity recognition are off, so the "
+            "detection service returns no findings."
+        )
+
+    if (
+        service is not None
+        and service.reachable
+        and not service.family_partition
+        and (presidio_pattern_matching is False or presidio_ner is False)
+    ):
+        # A pre-partition detector ignores the request flags. Leaving the
+        # entity list unfiltered is the safe direction, but the switches would
+        # otherwise look effective while changing nothing.
+        notes.append(
+            "The detection service predates independently selectable families, so a "
+            "switched-off family is still running. Update the detector before "
+            "relying on these switches."
+        )
 
     if config.fail_open:
         # Worth a warning at all because a redaction layer that silently stops
@@ -3280,6 +3335,20 @@ async def _redaction_response(
             await session.execute(select(User.email).where(User.id == stored.created_by))
         ).scalar_one_or_none()
 
+    # A stored null leaves the deployment default in force. Resolved once so the
+    # status, the narrowed detector report and the warnings cannot disagree.
+    pattern_matching = (
+        stored.presidio_pattern_matching
+        if stored is not None and stored.presidio_pattern_matching is not None
+        else config.presidio_pattern_matching
+    )
+    ner = (
+        stored.presidio_ner
+        if stored is not None and stored.presidio_ner is not None
+        else config.presidio_ner
+    )
+    service = _effective_detector_entities(service, pattern_matching=pattern_matching, ner=ner)
+
     return RedactionStatusResponse(
         engine=engine,
         enabled=_engine_redacts(engine),
@@ -3290,6 +3359,8 @@ async def _redaction_response(
         configured=(
             RedactionConfigChange(
                 engine=stored.engine,
+                presidio_pattern_matching=stored.presidio_pattern_matching,
+                presidio_ner=stored.presidio_ner,
                 reason=stored.reason,
                 changed_at=stored.created_at,
                 changed_by=changed_by,
@@ -3302,6 +3373,8 @@ async def _redaction_response(
         restore_in_response=config.restore_in_response,
         language=config.language,
         score_threshold=config.score_threshold,
+        presidio_pattern_matching=pattern_matching,
+        presidio_ner=ner,
         entity_types=list(config.entity_types) if config.entity_types else None,
         # From the resolver, not from the environment: the policy in force may be
         # a stored one, and reporting the setting instead would describe a
@@ -3322,6 +3395,8 @@ async def _redaction_response(
             engine,
             service,
             policy_types=resolver.policy.detected_types() if resolver else None,
+            presidio_pattern_matching=pattern_matching,
+            presidio_ner=ner,
         ),
     )
 
@@ -3410,7 +3485,12 @@ async def set_redaction_engine(
     # code path the resolver will use. Refusing here is the difference between an
     # error the operator sees and a construction failure in a log they do not.
     try:
-        candidate = build_for(settings.redaction, engine)
+        candidate = build_for(
+            settings.redaction,
+            engine,
+            presidio_pattern_matching=payload.presidio_pattern_matching,
+            presidio_ner=payload.presidio_ner,
+        )
     except (redaction_registry.UnknownEngineError, ValueError) as exc:
         raise BadRequestError(
             f"{engine!r} cannot run with this deployment's configuration: {exc}"
@@ -3429,7 +3509,15 @@ async def set_redaction_engine(
                 f"enabled: {probe.detail}."
             )
 
-    session.add(RedactionConfig(engine=engine, reason=reason, created_by=admin.id))
+    session.add(
+        RedactionConfig(
+            engine=engine,
+            presidio_pattern_matching=payload.presidio_pattern_matching,
+            presidio_ner=payload.presidio_ner,
+            reason=reason,
+            created_by=admin.id,
+        )
+    )
     await session.commit()
 
     # This worker, immediately. The resolver would get there within its poll

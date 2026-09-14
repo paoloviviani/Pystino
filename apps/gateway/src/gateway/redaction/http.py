@@ -77,8 +77,18 @@ class _Cache:
         self._entries: OrderedDict[str, list[EntitySpan]] = OrderedDict()
 
     @staticmethod
-    def key(text: str, language: str, threshold: float, types: list[str] | None) -> str:
-        parts = f"{language}\x1f{threshold}\x1f{','.join(types or [])}\x1f{text}"
+    def key(
+        text: str,
+        language: str,
+        threshold: float,
+        types: list[str] | None,
+        pattern_matching: bool | None,
+        ner: bool | None,
+    ) -> str:
+        parts = (
+            f"{language}\x1f{threshold}\x1f{','.join(types or [])}\x1f"
+            f"{pattern_matching}\x1f{ner}\x1f{text}"
+        )
         return hashlib.sha256(parts.encode()).hexdigest()
 
     def get(self, key: str) -> list[EntitySpan] | None:
@@ -151,9 +161,7 @@ def pattern_spans(text: str, policy: RedactionPolicy) -> list[EntitySpan]:
         for match in _compiled(pattern.regex).finditer(text):
             start, end = match.span()
             if end > start:
-                spans.append(
-                    EntitySpan(start=start, end=end, entity_type=pattern.name, score=1.0)
-                )
+                spans.append(EntitySpan(start=start, end=end, entity_type=pattern.name, score=1.0))
     return spans
 
 
@@ -216,9 +224,7 @@ def apply_spans(
     # Before any rewriting: a blocked request produces no redacted text at all,
     # and deciding this after substitution would mean building a placeholder map
     # for a request that is about to be refused.
-    blocked = [
-        span for span in eligible if policy.mode_for(span.entity_type) is EntityMode.BLOCK
-    ]
+    blocked = [span for span in eligible if policy.mode_for(span.entity_type) is EntityMode.BLOCK]
     if blocked:
         kinds = sorted({span.entity_type for span in blocked})
         where = f" by the {scope} policy" if scope else ""
@@ -346,7 +352,17 @@ class HttpDetectionRedactor:
                 if entry.threshold is not None and entry.mode is not EntityMode.OFF
             ]
         )
-        keys = [_Cache.key(text, settings.language, floor, wanted) for text in texts]
+        keys = [
+            _Cache.key(
+                text,
+                settings.language,
+                floor,
+                wanted,
+                settings.presidio_pattern_matching,
+                settings.presidio_ner,
+            )
+            for text in texts
+        ]
         results: list[list[EntitySpan] | None] = [self._cache.get(key) for key in keys]
 
         pending = [index for index, spans in enumerate(results) if spans is None]
@@ -358,6 +374,8 @@ class HttpDetectionRedactor:
             language=settings.language,
             score_threshold=floor,
             entity_types=wanted,
+            presidio_pattern_matching=settings.presidio_pattern_matching,
+            presidio_ner=settings.presidio_ner,
         )
         found = await self._post(request)
 

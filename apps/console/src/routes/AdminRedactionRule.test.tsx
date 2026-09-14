@@ -67,6 +67,9 @@ const STATUS = {
     models: { en: "en_core_web_lg" },
     degraded_languages: [],
     entities: ["PERSON", "EMAIL_ADDRESS", "URL"],
+    pattern_entities: ["EMAIL_ADDRESS", "URL"],
+    model_entities: ["PERSON"],
+    family_partition: true,
   },
   activity: {
     window_seconds: 86400,
@@ -87,6 +90,7 @@ function routes(
   rules: RedactionRule[],
   captured: Captured = { posts: [], patches: [] },
   onWrite?: () => Response,
+  statusPayload = STATUS,
 ) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -103,7 +107,7 @@ function routes(
     const payload = url.includes("/redaction/rules")
       ? { items: rules, total: rules.length, limit: 200, offset: 0 }
       : url.includes("/redaction")
-        ? STATUS
+        ? statusPayload
         : { items: [], total: 0, limit: 200, offset: 0 };
     return new Response(JSON.stringify(payload), {
       status: 200,
@@ -148,6 +152,23 @@ describe("AdminRedactionRule", () => {
     ]);
   });
 
+  it("lists only the detector's effective entity types", async () => {
+    // The API narrows `service.entities` to the enabled recognizer families.
+    // A rule editor that merged in a hardcoded NER list would offer PERSON
+    // after NER was switched off, and the resulting rule could never fire.
+    vi.stubGlobal(
+      "fetch",
+      routes([], { posts: [], patches: [] }, undefined, {
+        ...STATUS,
+        service: { ...STATUS.service, entities: ["EMAIL_ADDRESS"] },
+      }),
+    );
+    renderPage("/admin/redaction/rules/new");
+
+    await screen.findByRole("group", { name: /EMAIL_ADDRESS/ });
+    expect(screen.queryByRole("group", { name: /PERSON/ })).not.toBeInTheDocument();
+  });
+
   it("creates a catch-all rule with no subject", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
@@ -174,27 +195,45 @@ describe("AdminRedactionRule", () => {
     expect(body.scope_id).toBeNull();
   });
 
-  it("seeds a new rule with the credential patterns", async () => {
-    // The detector finds no credentials at all, so an empty pattern list is not
-    // a neutral starting point — it is a policy that silently does not cover
-    // them. They can be deleted, which is a decision; their absence would not
-    // have been.
+  it("starts a new rule with no patterns", async () => {
+    // Templates are offered, not seeded: an empty pattern list is now an
+    // explicit starting point, while adding a credential shape remains an
+    // explicit choice in the template dialogue.
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { posts: [], patches: [] };
     vi.stubGlobal("fetch", routes([], captured));
     renderPage("/admin/redaction/rules/new");
 
     await screen.findByLabelText("Scope");
+    expect(screen.queryByLabelText("Pattern 1 name")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Create rule" }));
 
     await waitFor(() => expect(captured.posts).toHaveLength(1));
     const policy = (captured.posts[0] as { policy: RedactionPolicy }).policy;
-    const names = policy.patterns.map((pattern) => pattern.name);
-    expect(names).toContain("OPENAI_KEY");
-    expect(names).toContain("PRIVATE_KEY");
-    // Block, not redact: a leaked key is not a privacy problem to paper over
-    // with a placeholder. Sending it at all is the incident.
-    expect(policy.patterns.every((pattern) => pattern.mode === "block")).toBe(true);
+    expect(policy.patterns).toEqual([]);
+  });
+
+  it("adds a credential pattern from a template", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { posts: [], patches: [] };
+    vi.stubGlobal("fetch", routes([], captured));
+    renderPage("/admin/redaction/rules/new");
+
+    await screen.findByLabelText("Scope");
+    await user.click(screen.getByRole("button", { name: "Add pattern from template" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Add OPENAI_KEY pattern" }));
+    expect(
+      within(dialog).getByRole("button", { name: "Add OPENAI_KEY pattern" }),
+    ).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Done" }));
+
+    await user.click(screen.getByRole("button", { name: "Create rule" }));
+    await waitFor(() => expect(captured.posts).toHaveLength(1));
+    const policy = (captured.posts[0] as { policy: RedactionPolicy }).policy;
+    expect(policy.patterns).toEqual([
+      { name: "OPENAI_KEY", regex: "sk-[A-Za-z0-9_-]{16,}", mode: "block" },
+    ]);
   });
 
   it("will not create a scoped rule without a subject", async () => {

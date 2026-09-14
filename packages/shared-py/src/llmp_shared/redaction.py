@@ -175,6 +175,10 @@ class DetectionRequest(BaseModel):
     score_threshold: float = Field(ge=0.0, le=1.0, default=0.5)
     # None means "whatever the engine is configured to look for".
     entity_types: list[str] | None = None
+    # Null preserves the detector's deployment default, which keeps existing
+    # clients and direct detector users on the historical all-recognizers path.
+    presidio_pattern_matching: bool | None = None
+    presidio_ner: bool | None = None
 
 
 class DetectionResponse(BaseModel):

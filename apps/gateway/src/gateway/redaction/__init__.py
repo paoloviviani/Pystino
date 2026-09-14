@@ -44,9 +44,7 @@ register(
     label="Off (noop)",
     # Still recorded on every request as the 'noop' engine, so a past request
     # cannot later be mistaken for one that was screened.
-    description=(
-        "Nothing is removed: prompts reach the provider exactly as the caller sent them."
-    ),
+    description=("Nothing is removed: prompts reach the provider exactly as the caller sent them."),
     redacts=False,
 )
 register(

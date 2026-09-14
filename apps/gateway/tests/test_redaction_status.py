@@ -16,8 +16,12 @@ from __future__ import annotations
 import httpx
 import pytest
 from conftest import Seeded
-from gateway.config import RedactionSettings
-from gateway.routers.admin import _redaction_warnings, _sanitised_endpoint
+from gateway.config import RedactionSettings, Settings
+from gateway.routers.admin import (
+    _effective_detector_entities,
+    _redaction_warnings,
+    _sanitised_endpoint,
+)
 from gateway.schemas import RedactionServiceHealth
 from pydantic import SecretStr
 from test_admin import as_user, make_admin
@@ -48,6 +52,21 @@ def healthy(**overrides: object) -> RedactionServiceHealth:
     return RedactionServiceHealth(**base)  # type: ignore[arg-type]
 
 
+class TestDetectorFamilyConfiguration:
+    def test_families_can_be_set_from_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Deployment defaults use the nested redaction setting names, so an
+        operator can choose a family without opening the console."""
+        monkeypatch.setenv("GATEWAY_REDACTION__PRESIDIO_PATTERN_MATCHING", "false")
+        monkeypatch.setenv("GATEWAY_REDACTION__PRESIDIO_NER", "true")
+
+        redaction = Settings().redaction
+
+        assert redaction.presidio_pattern_matching is False
+        assert redaction.presidio_ner is True
+
+
 class TestWarnings:
     def test_a_healthy_deployment_says_nothing(self) -> None:
         assert _redaction_warnings(settings(), "http", healthy()) == []
@@ -66,6 +85,56 @@ class TestWarnings:
     def test_fail_open_is_flagged(self) -> None:
         notes = _redaction_warnings(settings(fail_open=True), "http", healthy())
         assert any("fail_open" in note for note in notes)
+
+    def test_disabling_both_presidio_families_is_flagged(self) -> None:
+        notes = _redaction_warnings(
+            settings(),
+            "http",
+            healthy(),
+            presidio_pattern_matching=False,
+            presidio_ner=False,
+        )
+        assert any("no findings" in note for note in notes)
+
+    def test_a_disabled_family_is_removed_from_the_supported_types(self) -> None:
+        """Rule building reads `service.entities`, so it must be the effective set.
+
+        Offering PERSON after NER is switched off would let an admin write a rule
+        that can never fire.
+        """
+        service = healthy(
+            entities=["PERSON", "EMAIL_ADDRESS"],
+            pattern_entities=["EMAIL_ADDRESS"],
+            model_entities=["PERSON"],
+            family_partition=True,
+        )
+        filtered = _effective_detector_entities(
+            service, pattern_matching=True, ner=False
+        )
+        assert filtered is not None
+        assert filtered.entities == ["EMAIL_ADDRESS"]
+        assert _effective_detector_entities(service, pattern_matching=None, ner=None) is service
+
+        notes = _redaction_warnings(
+            settings(), "http", filtered, policy_types=["PERSON"]
+        )
+        assert any("PERSON" in note and "inert" in note for note in notes)
+
+    def test_a_detector_without_a_family_partition_is_not_narrowed(self) -> None:
+        """A pre-partition detector ignores the request flags, so narrowing its
+        report would invent support information. It is left alone, loudly: the
+        switches would otherwise look effective while changing nothing."""
+        service = healthy()
+        assert service.family_partition is False
+        assert (
+            _effective_detector_entities(service, pattern_matching=True, ner=False)
+            is service
+        )
+
+        notes = _redaction_warnings(
+            settings(), "http", service, presidio_pattern_matching=True, presidio_ner=False
+        )
+        assert any("predates independently selectable families" in note for note in notes)
 
     def test_an_unreachable_service_says_what_that_means_now(self) -> None:
         """Fail-closed and fail-open are different emergencies."""
