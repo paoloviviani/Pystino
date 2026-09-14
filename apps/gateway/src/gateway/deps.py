@@ -307,6 +307,12 @@ async def get_principal(
             "API key bills the group it pins, or your default; mint a key for the group "
             "you mean, or change your default billing group."
         )
+    # Annotated because mypy reads the variable's type from the first branch:
+    # a standing key may pin nothing (`billing_group` is nullable), and
+    # `resolve_billing_group` takes None as "fall back to the default". Found
+    # while verifying the Jina backend against a cold mypy cache — the live
+    # checkout's warm one had been answering green.
+    pinned: Group | None
     if requested is not None:
         pinned = _pin_from_header(api_key.user, requested)
     else:

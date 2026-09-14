@@ -30,6 +30,7 @@ from gateway.plugins.cortecs import CortecsRouterPlugin
 from gateway.plugins.exa import ExaSearchPlugin
 from gateway.plugins.extractor import LocalExtractorPlugin
 from gateway.plugins.generic import GenericOpenAIPlugin
+from gateway.plugins.jina import JinaSearchPlugin
 from gateway.plugins.linkup import LinkupSearchPlugin
 from gateway.plugins.mistral import MistralPlugin
 from gateway.plugins.nebius import NebiusPlugin
@@ -72,15 +73,17 @@ _BUILTIN: dict[str, PluginFactory] = {
     # thing is behind this row", and a second registry would be a second thing
     # to keep in step, with a second credential path to get wrong.
     #
-    # **Staan and Jina are deliberately absent.** Both were asked for and
-    # neither can be implemented honestly yet: Staan's dearer "for AI" tier is
-    # neither a documented request parameter nor reported back, so nothing
-    # here could record which tier a search ran at, and Jina publishes no
-    # per-token figure publicly. What they need is `SearchPlugin` and a live
-    # key, not a change to this file — the protocol is the hook, and adding
-    # either is a plugin module and one line here.
+    # **Staan is deliberately absent.** It was asked for and cannot be
+    # implemented honestly yet: its dearer "for AI" tier is neither a
+    # documented request parameter nor reported back, so nothing here could
+    # record which tier a search ran at. (Jina stood in this paragraph until
+    # its live API guide settled the endpoint shape; it is registered below.)
+    # What Staan needs is `SearchPlugin` and a live key, not a change to this
+    # file — the protocol is the hook, and adding it is a plugin module and
+    # one line here.
     "linkup": LinkupSearchPlugin,
     "exa": ExaSearchPlugin,
+    "jina": JinaSearchPlugin,
 }
 
 

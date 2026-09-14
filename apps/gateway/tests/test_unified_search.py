@@ -32,7 +32,7 @@ from gateway.redaction import RedactionOutcome
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from test_oidc_policy import admin_session as admin_session
-from test_search_surface import add_backend, exa_body, latest_record, linkup_body
+from test_search_surface import add_backend, exa_body, jina_body, latest_record, linkup_body
 
 SEARCH = LimitMetric.OWN_SEARCH_REQUESTS
 
@@ -114,6 +114,48 @@ class TestPolicyResolution:
         )
         assert response.status_code == 200, response.text
         assert fake_upstream.last_body == {"query": "capital of france", "numResults": 5}
+
+    async def test_jina_runs_as_a_post_with_a_json_body_not_a_get(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """Jina's documented search shape is ``POST`` with ``q``/``num`` —
+        not the GET with ``?q=`` the motivating example showed — so the query
+        travels as data and never reaches a URL, like every other backend."""
+        anchor = await add_backend(session, seeded, plugin="jina")
+        await set_policy(session, seeded.group.id, anchor)
+        fake_upstream.set_json(jina_body())
+
+        response = await client.post(
+            "/v1/search",
+            json={"query": "Jina AI", "max_results": 7},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200, response.text
+        assert fake_upstream.last_body == {"q": "Jina AI", "num": 7}
+
+    async def test_jina_excludes_page_content_and_authenticates_as_bearer(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """The unified call carries ``X-Respond-With: no-content`` so Jina
+        answers with titles and URLs rather than whole pages — plus the
+        backend's own bearer credential."""
+        anchor = await add_backend(session, seeded, plugin="jina", key="jina-key-1")
+        await set_policy(session, seeded.group.id, anchor)
+        fake_upstream.set_json(jina_body())
+
+        response = await client.post("/v1/search", json={"query": "anything"}, headers=seeded.auth)
+        assert response.status_code == 200, response.text
+        sent = fake_upstream.headers[-1]
+        assert sent.get("x-respond-with") == "no-content"
+        assert sent.get("authorization") == "Bearer jina-key-1"
 
     async def test_a_policy_pointing_nowhere_granted_is_a_404(
         self,
@@ -242,6 +284,71 @@ class TestNormalisedAnswer:
             "backend": "exa",
         }
 
+    async def test_jina_answers_come_back_in_the_same_shape(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """Jina's ``data[].title``/``description`` arrive as title/snippet —
+        with the page text as the fallback for an answer that carried content
+        despite the header, and an empty snippet where there is neither."""
+        anchor = await add_backend(session, seeded, plugin="jina")
+        await set_policy(session, seeded.group.id, anchor)
+        fake_upstream.set_json(
+            {
+                "code": 200,
+                "status": 20000,
+                "data": [
+                    {
+                        "title": "Described",
+                        "url": "https://example.org/a",
+                        "description": "Short.",
+                        "content": "Longer.",
+                    },
+                    {
+                        "title": "Texty",
+                        "url": "https://example.org/b",
+                        "content": "Longer.",
+                    },
+                    {"title": "Bare", "url": "https://example.org/c"},
+                    {"title": "Nowhere", "description": "No URL."},
+                ],
+            }
+        )
+
+        response = await client.post("/v1/search", json={"query": "anything"}, headers=seeded.auth)
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "results": [
+                {"title": "Described", "url": "https://example.org/a", "snippet": "Short."},
+                {"title": "Texty", "url": "https://example.org/b", "snippet": "Longer."},
+                {"title": "Bare", "url": "https://example.org/c", "snippet": ""},
+            ],
+            "backend": "jina",
+        }
+
+    async def test_a_jina_envelope_that_is_not_a_list_is_an_empty_answer(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """A 2xx whose ``data`` is not a list still counts — the vendor
+        received the request — but answers nothing rather than failing."""
+        anchor = await add_backend(session, seeded, plugin="jina")
+        await set_policy(session, seeded.group.id, anchor)
+        fake_upstream.set_json({"code": 200, "status": 20000, "data": "not a list"})
+
+        response = await client.post("/v1/search", json={"query": "anything"}, headers=seeded.auth)
+        assert response.status_code == 200, response.text
+        assert response.json() == {"results": [], "backend": "jina"}
+        record = await latest_record(session)
+        assert record.own_search_requests == 1
+        assert record.status is UsageStatus.COMPLETED
+
     async def test_entries_without_a_url_are_dropped_not_repaired(
         self,
         client: httpx.AsyncClient,
@@ -319,6 +426,31 @@ class TestMetering:
         assert record.cost == Decimal(0)
         assert record.total_tokens == 0
 
+    async def test_a_jina_search_is_one_count_with_no_cost(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """The same ledger shape through Jina: one request counted, no price —
+        Jina bills its own key in tokens, which is the vendor's business."""
+        anchor = await add_backend(session, seeded, plugin="jina")
+        await set_policy(session, seeded.group.id, anchor)
+        fake_upstream.set_json(jina_body())
+
+        response = await client.post("/v1/search", json={"query": "anything"}, headers=seeded.auth)
+        assert response.status_code == 200
+
+        record = await latest_record(session)
+        assert record.api_surface is ApiSurface.SEARCH
+        assert record.status is UsageStatus.COMPLETED
+        assert record.own_search_requests == 1
+        assert record.own_search_backend == "jina"
+        assert record.own_search_tier is None
+        assert record.cost == Decimal(0)
+        assert record.total_tokens == 0
+
     async def test_a_refused_search_keeps_its_row_and_its_count(
         self,
         client: httpx.AsyncClient,
@@ -338,6 +470,29 @@ class TestMetering:
 
         record = await latest_record(session)
         assert record.own_search_requests == 1
+        assert record.status is not UsageStatus.COMPLETED
+
+    async def test_a_refused_jina_search_keeps_its_count(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """Counted before the call and never unwound — a vendor error still
+        leaves the count, because a ceiling that forgave a failure would be
+        raisable by making the search fail."""
+        anchor = await add_backend(session, seeded, plugin="jina")
+        await set_policy(session, seeded.group.id, anchor)
+        fake_upstream.set_json({"error": {"message": "insufficient balance"}}, status=402)
+
+        response = await client.post("/v1/search", json={"query": "anything"}, headers=seeded.auth)
+        assert response.status_code == 402
+        assert response.json() == {"error": {"message": "insufficient balance"}}
+
+        record = await latest_record(session)
+        assert record.own_search_requests == 1
+        assert record.own_search_backend == "jina"
         assert record.status is not UsageStatus.COMPLETED
 
     async def test_a_search_rule_refuses_before_the_backend_is_called(
@@ -393,6 +548,27 @@ class TestQueryRedaction:
         )
         assert response.status_code == 200, response.text
         assert fake_upstream.last_body["q"] == "contact <PERSON_X>"
+
+    async def test_the_query_is_screened_before_jina_sees_it(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """Jina's ``q`` carries the redacted query too — the route screens the
+        one field it reads, whichever dialect the policy backend speaks."""
+        anchor = await add_backend(session, seeded, plugin="jina")
+        await set_policy(session, seeded.group.id, anchor)
+        fake_upstream.set_json(jina_body())
+        app.state.redactor = _ShoutyRedactor()  # type: ignore[attr-defined]
+
+        response = await client.post(
+            "/v1/search", json={"query": "contact Mario Rossi"}, headers=seeded.auth
+        )
+        assert response.status_code == 200, response.text
+        assert fake_upstream.last_body == {"q": "contact <PERSON_X>", "num": 5}
 
 
 class _ShoutyRedactor:

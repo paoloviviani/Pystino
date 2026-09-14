@@ -130,6 +130,28 @@ def exa_body(count: int = 2) -> dict[str, Any]:
     }
 
 
+def jina_body(count: int = 2) -> dict[str, Any]:
+    """Jina's search envelope, as its API guide documents it.
+
+    Note ``data`` rather than ``results``, and ``description`` rather than a
+    snippet field — the entry the unified reader turns into title/URL/snippet.
+    """
+    return {
+        "code": 200,
+        "status": 20000,
+        "data": [
+            {
+                "title": f"Result {index}",
+                "description": f"An extract from result {index}.",
+                "url": f"https://example.org/{index}",
+                "content": "",
+                "usage": {"tokens": 10475},
+            }
+            for index in range(count)
+        ],
+    }
+
+
 async def latest_record(session: AsyncSession) -> UsageRecord:
     return (
         (
@@ -211,6 +233,28 @@ class TestPassthrough:
         )
         assert fake_upstream.last_body == exa_request("capital of france")
         assert fake_upstream.headers[-1].get("x-api-key") == "vendor-key-2"
+
+    async def test_jina_passes_through_without_the_unified_content_header(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """Jina's ``X-Respond-With: no-content`` belongs to the unified route
+        only. The passthrough forwards the caller's body verbatim and returns
+        the vendor's answer verbatim — narrowing it here would silently
+        reshape what the caller asked for."""
+        await add_backend(session, seeded, plugin="jina", key="vendor-key-3")
+        fake_upstream.set_json(jina_body())
+        body = {"q": "capital of france", "num": 5}
+
+        response = await client.post("/v1/search/jina", json=body, headers=seeded.auth)
+        assert response.status_code == 200, response.text
+        assert fake_upstream.last_body == body
+        assert response.json() == jina_body()
+        assert fake_upstream.headers[-1].get("authorization") == "Bearer vendor-key-3"
+        assert "x-respond-with" not in fake_upstream.headers[-1]
 
 
 # --------------------------------------------------------------------------
