@@ -4,7 +4,12 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RedactionEngineOption, RedactionPreview, RedactionStatus } from "../lib/types";
+import type {
+  RedactionEngineOption,
+  RedactionPreview,
+  RedactionRule,
+  RedactionStatus,
+} from "../lib/types";
 import { AdminRedaction } from "./AdminRedaction";
 
 /**
@@ -235,8 +240,11 @@ describe("AdminRedaction", () => {
     vi.stubGlobal("fetch", respondWith(status()));
     renderScreen(<AdminRedaction />);
 
-    await waitFor(() => expect(screen.getByText("On")).toBeInTheDocument());
-    expect(screen.getByText("http engine")).toBeInTheDocument();
+    // Scoped to the stat block: the detector-family switches elsewhere on
+    // the page now also render visible On/Off text.
+    await waitFor(() => expect(screen.getByText("http engine")).toBeInTheDocument());
+    const stat = screen.getByText("http engine").closest("div.flex") as HTMLElement;
+    expect(within(stat).getByText("On")).toBeInTheDocument();
   });
 
   it("says plainly when nothing is being redacted", async () => {
@@ -254,8 +262,13 @@ describe("AdminRedaction", () => {
     );
     renderScreen(<AdminRedaction />);
 
-    await waitFor(() => expect(screen.getByText("Off")).toBeInTheDocument());
-    expect(screen.getByText("prompts reach the provider unchanged")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("prompts reach the provider unchanged")).toBeInTheDocument(),
+    );
+    const stat = screen
+      .getByText("prompts reach the provider unchanged")
+      .closest("div.flex") as HTMLElement;
+    expect(within(stat).getByText("Off")).toBeInTheDocument();
     expect(screen.getByText(/is not enabled/)).toBeInTheDocument();
   });
 
@@ -323,37 +336,236 @@ describe("AdminRedaction", () => {
     expect(captured.puts[0]!.body).toEqual({ engine: "http", reason: "" });
   });
 
-  it("saves pattern matching and named-entity recognition separately", async () => {
+  it("saves each detector family with a big switch, immediately", async () => {
     // The detector families are independent console decisions, not a rebuild:
-    // patterns can stay on while NER is switched off, and rule building then
-    // offers only the effective entity types returned by the API.
+    // flipping a switch writes the row at once, with no separate save step and
+    // no third "default" state to pick.
     const before = status({ presidio_pattern_matching: null, presidio_ner: null });
-    const after = status({ presidio_pattern_matching: false, presidio_ner: true });
+    const after = status({ presidio_pattern_matching: true, presidio_ner: false });
     const { fetch, captured } = withEngineChange(before, after);
     vi.stubGlobal("fetch", fetch);
     const user = userEvent.setup({ delay: null });
     renderScreen(<AdminRedaction />);
 
-    const patterns = await screen.findByLabelText("Pattern matching");
-    const entities = screen.getByLabelText("Named-entity recognition");
-    const save = screen.getByRole("button", { name: "Save detection families" });
-    expect(patterns).toHaveValue("default");
-    expect(entities).toHaveValue("default");
-    expect(save).toBeDisabled();
+    const patterns = await screen.findByRole("switch", { name: "Pattern matching" });
+    const entities = screen.getByRole("switch", { name: "Named-entity recognition" });
+    expect(patterns).toHaveAttribute("aria-checked", "true");
+    expect(entities).toHaveAttribute("aria-checked", "true");
 
-    await user.selectOptions(patterns, "off");
-    await user.selectOptions(entities, "on");
-    await user.click(save);
+    await user.click(entities);
 
     await waitFor(() => expect(captured.puts).toHaveLength(1));
     expect(captured.puts[0]!.body).toEqual({
       engine: "http",
       reason: "",
-      presidio_pattern_matching: false,
-      presidio_ner: true,
+      presidio_pattern_matching: true,
+      presidio_ner: false,
     });
-    await waitFor(() => expect(patterns).toHaveValue("off"));
-    expect(entities).toHaveValue("on");
+    // The response becomes the new starting position.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("switch", { name: "Named-entity recognition" }),
+      ).toHaveAttribute("aria-checked", "false"),
+    );
+  });
+
+  it("starts the switches from the deployment default", async () => {
+    // No console choice saved yet, and the detector build offers no NER model:
+    // the model switch starts off rather than pretending names are detected.
+    // The pattern switch starts on, because patterns are installed.
+    vi.stubGlobal(
+      "fetch",
+      respondWith(
+        status({
+          presidio_pattern_matching: null,
+          presidio_ner: null,
+          service: {
+            ...status().service!,
+            entities: ["EMAIL_ADDRESS"],
+            pattern_entities: ["EMAIL_ADDRESS"],
+            model_entities: [],
+          },
+        }),
+      ),
+    );
+    renderScreen(<AdminRedaction />);
+
+    expect(
+      await screen.findByRole("switch", { name: "Pattern matching" }),
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("switch", { name: "Named-entity recognition" }),
+    ).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("reverts a switch when the save fails", async () => {
+    // An optimistic flip that the API refuses must not sit showing a state
+    // that is not in force.
+    const stub = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        return new Response(JSON.stringify({ error: { message: "nope" } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify(status()), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", stub as unknown as typeof fetch);
+    const user = userEvent.setup({ delay: null });
+    renderScreen(<AdminRedaction />);
+
+    const entities = await screen.findByRole("switch", { name: "Named-entity recognition" });
+    await user.click(entities);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("switch", { name: "Named-entity recognition" }),
+      ).toHaveAttribute("aria-checked", "true"),
+    );
+  });
+
+  it("warns beside a rule that names a type its disabled family cannot find", async () => {
+    // Disabling a family never refuses, deactivates or rewrites rules — the
+    // rule keeps working, and the types it can no longer detect are flagged
+    // beside it instead. A rule about an undetectable type is inert, and
+    // "inert" looks exactly like "working" without the sign.
+    const narrowed = status({
+      presidio_pattern_matching: true,
+      presidio_ner: false,
+      service: {
+        ...status().service!,
+        entities: ["EMAIL_ADDRESS"],
+        pattern_entities: ["EMAIL_ADDRESS"],
+        model_entities: ["PERSON"],
+      },
+    });
+    const named: RedactionRule = {
+      id: "r1",
+      name: "research handles patient data",
+      scope: "group",
+      scope_id: "g1",
+      subject_label: "research",
+      policy: {
+        default_mode: "off",
+        entities: {
+          PERSON: { mode: "redact", threshold: null },
+          EMAIL_ADDRESS: { mode: "anonymise_restore", threshold: null },
+        },
+        patterns: [],
+        allow_list: [],
+      },
+      is_active: true,
+      reason: "",
+      created_by: null,
+      created_by_email: null,
+      created_at: "2026-08-27T10:00:00Z",
+      updated_at: "2026-08-27T10:00:00Z",
+    };
+    const stub = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const payload = url.includes("/redaction/rules")
+        ? { items: [named], total: 1, limit: 200, offset: 0 }
+        : narrowed;
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", stub as unknown as typeof fetch);
+    renderScreen(<AdminRedaction />);
+
+    // PERSON is protected by the rule and undetectable with NER off;
+    // EMAIL_ADDRESS is still served, so it must not be listed.
+    await waitFor(() =>
+      expect(screen.getByText("Detection off: PERSON")).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/EMAIL_ADDRESS/)).not.toBeInTheDocument();
+  });
+
+  it("says nothing when every named type is still detected", async () => {
+    const named: RedactionRule = {
+      id: "r1",
+      name: "",
+      scope: "all",
+      scope_id: null,
+      subject_label: null,
+      policy: {
+        default_mode: "off",
+        entities: { EMAIL_ADDRESS: { mode: "redact", threshold: null } },
+        patterns: [],
+        allow_list: [],
+      },
+      is_active: true,
+      reason: "",
+      created_by: null,
+      created_by_email: null,
+      created_at: "2026-08-27T10:00:00Z",
+      updated_at: "2026-08-27T10:00:00Z",
+    };
+    const stub = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const payload = url.includes("/redaction/rules")
+        ? { items: [named], total: 1, limit: 200, offset: 0 }
+        : status();
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", stub as unknown as typeof fetch);
+    renderScreen(<AdminRedaction />);
+
+    // The subject cell renders "Every request" twice (link and scope noun),
+    // so this only waits for the rules table itself.
+    await waitFor(() =>
+      expect(screen.getAllByText("Every request").length).toBeGreaterThan(0),
+    );
+    expect(screen.queryByText(/Detection off:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/disabled family/)).not.toBeInTheDocument();
+  });
+
+  it("warns a default-on rule when a family is switched off, without touching it", async () => {
+    // A default mode of on protects unnamed types too, and those cannot be
+    // enumerated — so the warning is generic, and the rule is still left
+    // exactly as the admin wrote it.
+    const named: RedactionRule = {
+      id: "r1",
+      name: "",
+      scope: "all",
+      scope_id: null,
+      subject_label: null,
+      policy: {
+        default_mode: "anonymise_restore",
+        entities: {},
+        patterns: [],
+        allow_list: [],
+      },
+      is_active: true,
+      reason: "",
+      created_by: null,
+      created_by_email: null,
+      created_at: "2026-08-27T10:00:00Z",
+      updated_at: "2026-08-27T10:00:00Z",
+    };
+    const stub = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const payload = url.includes("/redaction/rules")
+        ? { items: [named], total: 1, limit: 200, offset: 0 }
+        : status({ presidio_pattern_matching: true, presidio_ner: false });
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", stub as unknown as typeof fetch);
+    renderScreen(<AdminRedaction />);
+
+    await waitFor(() =>
+      expect(screen.getByText("Default covers a disabled family")).toBeInTheDocument(),
+    );
   });
 
   it("stops and asks before turning redaction off, and asks for nothing", async () => {

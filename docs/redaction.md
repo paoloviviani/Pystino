@@ -76,14 +76,23 @@ family can be on while the other is off, and rule building lists only the
 entity types belonging to families that are actually enabled. Gateway custom
 patterns are separate policy and are unaffected by the pattern-matching switch.
 
-The switch lives in the console's Detection families card. It is stored on the
-same append-only engine row as the engine choice and reaches other workers on
-the resolver's poll, so turning NER off has the same audit trail as changing
-engines. Unset means the detector deployment's default. Deployment defaults
-can also be set with `GATEWAY_REDACTION__PRESIDIO_PATTERN_MATCHING` and
-`GATEWAY_REDACTION__PRESIDIO_NER`; a non-null console choice overrides them.
+The switches live in the console's Presidio detection families card: one big
+switch per family, saved immediately. Each switch starts from the deployment
+default — the explicit console choice when one was saved, otherwise whether
+the detector build actually offers that family — and flipping one writes an
+explicit on/off choice. There is no third state to pick; the default is only
+the starting position. Choices are stored on the same append-only engine row
+as the engine choice and reach other workers on the resolver's poll, so
+turning NER off has the same audit trail as changing engines. Deployment
+defaults can also be set with `GATEWAY_REDACTION__PRESIDIO_PATTERN_MATCHING`
+and `GATEWAY_REDACTION__PRESIDIO_NER`; a console choice overrides them.
 Turning both families off is reported as a warning because the detector then
 returns no findings.
+
+Disabling a family never refuses, deactivates or rewrites rules. A rule that
+names a now-undetectable type stays in force and carries a warning beside it,
+naming the types whose values would reach providers unprotected; a rule whose
+default mode is on gets a generic form of the same warning.
 
 The console cannot conjure a recognizer the sidecar was not built to run. In
 particular, a `REDACTION_NLP_ENGINE=disabled` deployment has no NER weights, so
