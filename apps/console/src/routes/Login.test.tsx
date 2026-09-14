@@ -94,7 +94,7 @@ describe("Login", () => {
         });
       }),
     );
-    renderLogin("/?next=/admin/quotas", "/admin/quotas");
+    renderLogin("/?next=/console/admin/quotas", "/admin/quotas");
     const user = userEvent.setup({ delay: null });
     await waitFor(() => expect(screen.getByLabelText("Email")).toBeInTheDocument());
     await user.type(screen.getByLabelText("Email"), "root@local");
@@ -105,6 +105,58 @@ describe("Login", () => {
     // for the one `next` named, not for the overview.
     await waitFor(() => expect(screen.getByText("the next page")).toBeInTheDocument());
     expect(screen.queryByLabelText("Email")).not.toBeInTheDocument();
+  });
+
+  it("sends the browser itself when `next` belongs to the gateway, not the console", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith("/auth/methods")) return METHODS(true, false);
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    // The house IdP's round trip for a browser-facing client: the reader
+    // signed in to the console while on their way back to `/oauth/authorize`.
+    // The router can only render "No such page" for that address; the browser
+    // must go there itself, carrying the cookie the sign-in just set.
+    const authorize = "/oauth/authorize?client_id=cerea&redirect_uri=https%3A%2F%2Fcerea.test%2Fchat%2Flogin%2Fcallback";
+    renderLogin(`/?next=${encodeURIComponent(authorize)}`);
+    const user = userEvent.setup({ delay: null });
+    await waitFor(() => expect(screen.getByLabelText("Email")).toBeInTheDocument());
+    await user.type(screen.getByLabelText("Email"), "root@local");
+    await user.type(screen.getByLabelText("Password"), "correct horse battery staple");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith(authorize));
+  });
+
+  it("refuses a `next` that is not a path on this origin rather than following it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith("/auth/methods")) return METHODS(true, false);
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    // An open redirect: the victim signs in for real, the browser would be
+    // sent to the attacker's host holding a fresh session cookie. The page
+    // refuses instead of repairing — the console keeps the reader.
+    renderLogin("/?next=%2F%2Fevil.test%2Fsteal");
+    const user = userEvent.setup({ delay: null });
+    await waitFor(() => expect(screen.getByLabelText("Email")).toBeInTheDocument());
+    await user.type(screen.getByLabelText("Email"), "root@local");
+    await user.type(screen.getByLabelText("Password"), "correct horse battery staple");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    await waitFor(() => expect(assign).not.toHaveBeenCalled());
+    // Back on the console's front door, not somewhere the value pointed.
+    expect(screen.getByLabelText("Email")).toBeInTheDocument();
   });
 
   it("shows the gateway's message on a refusal instead of a generic one", async () => {

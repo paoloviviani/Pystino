@@ -118,6 +118,29 @@ export function nextForRouter(next: string): string {
   return next.replace(/^\/console(?=\/|$)/, "") || "/";
 }
 
+/**
+ * A `next` this page may send the browser to, or null when it is not obviously
+ * ours.
+ *
+ * Needed the moment a local sign-in can end in `window.location.assign` rather
+ * than a router navigation: a full navigation follows the value verbatim, so a
+ * permissive check here is an open redirect — an attacker mails
+ * `/console/login?next=//evil.test`, the victim signs in for real, and lands
+ * on a page of the attacker's choosing *holding a fresh session cookie*, which
+ * is exactly the shape the gateway's own `_safe_next` documents. Same rule
+ * here, for the same reason: a path on this origin and nothing else, rejected
+ * rather than repaired — `//host` and `/\host` are protocol-relative URLs that
+ * browsers resolve to another host despite the leading slash, and a value we
+ * had to fix is a value we did not understand.
+ */
+export function safeNextPath(next: string): string | null {
+  if (!next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) return null;
+  // Anything outside printable ASCII — CR, LF, tabs, control characters that
+  // some parsers strip before resolving — is not a path anybody typed.
+  if (/[^\x20-\x7e]/.test(next)) return null;
+  return next;
+}
+
 /** Per-provider login, named for the button that calls it (ADR 0051). */
 export function loginWith(provider: string, next?: string): void {
   login(next, provider);
