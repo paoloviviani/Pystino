@@ -77,8 +77,18 @@ class _Cache:
         self._entries: OrderedDict[str, list[EntitySpan]] = OrderedDict()
 
     @staticmethod
-    def key(text: str, language: str, threshold: float, types: list[str] | None) -> str:
-        parts = f"{language}\x1f{threshold}\x1f{','.join(types or [])}\x1f{text}"
+    def key(
+        text: str,
+        language: str,
+        threshold: float,
+        types: list[str] | None,
+        pattern_matching: bool | None,
+        ner: bool | None,
+    ) -> str:
+        parts = (
+            f"{language}\x1f{threshold}\x1f{','.join(types or [])}\x1f"
+            f"{pattern_matching}\x1f{ner}\x1f{text}"
+        )
         return hashlib.sha256(parts.encode()).hexdigest()
 
     def get(self, key: str) -> list[EntitySpan] | None:
@@ -346,7 +356,17 @@ class HttpDetectionRedactor:
                 if entry.threshold is not None and entry.mode is not EntityMode.OFF
             ]
         )
-        keys = [_Cache.key(text, settings.language, floor, wanted) for text in texts]
+        keys = [
+            _Cache.key(
+                text,
+                settings.language,
+                floor,
+                wanted,
+                settings.presidio_pattern_matching,
+                settings.presidio_ner,
+            )
+            for text in texts
+        ]
         results: list[list[EntitySpan] | None] = [self._cache.get(key) for key in keys]
 
         pending = [index for index, spans in enumerate(results) if spans is None]
@@ -358,6 +378,8 @@ class HttpDetectionRedactor:
             language=settings.language,
             score_threshold=floor,
             entity_types=wanted,
+            presidio_pattern_matching=settings.presidio_pattern_matching,
+            presidio_ner=settings.presidio_ner,
         )
         found = await self._post(request)
 

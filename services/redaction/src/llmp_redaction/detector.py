@@ -65,6 +65,7 @@ PATTERN_ONLY_ENTITIES = frozenset(
 
 # Entity types that come from the NLP engine and therefore need a language model.
 MODEL_BACKED_ENTITIES = frozenset({"PERSON", "LOCATION", "NRP", "ORGANIZATION"})
+MODEL_BACKED_UPPER = frozenset(entity.upper() for entity in MODEL_BACKED_ENTITIES)
 
 
 class Analyzer(Protocol):
@@ -86,6 +87,12 @@ class Capabilities:
     languages: list[str]
     models: dict[str, str] = field(default_factory=dict)
     entities: list[str] = field(default_factory=list)
+    # The installed entities partitioned by recognizer family. A model-backed
+    # label absent from MODEL_BACKED_ENTITIES is treated as a pattern until it
+    # is registered there: the alternative is to exclude an entity the analyzer
+    # can actually find.
+    pattern_entities: list[str] = field(default_factory=list)
+    model_entities: list[str] = field(default_factory=list)
     # Languages whose identifiers work but whose names will be missed.
     degraded: list[str] = field(default_factory=list)
 
@@ -123,12 +130,44 @@ class Detector:
             logger.warning("could not read supported entities from the analyzer", exc_info=True)
             entities = []
         degraded = [language for language in self._languages if language not in self._models]
+        model_entities = sorted(
+            entity for entity in entities if entity.upper() in MODEL_BACKED_UPPER
+        )
+        pattern_entities = sorted(
+            entity for entity in entities if entity.upper() not in MODEL_BACKED_UPPER
+        )
         return Capabilities(
             languages=list(self._languages),
             models=dict(self._models),
             entities=entities,
+            pattern_entities=pattern_entities,
+            model_entities=model_entities,
             degraded=degraded,
         )
+
+    @staticmethod
+    def family_entities(
+        capabilities: Capabilities,
+        pattern_matching: bool | None,
+        ner: bool | None,
+    ) -> list[str]:
+        """Installed entity labels belonging to the enabled recognizer families."""
+        patterns_enabled = pattern_matching is not False
+        ner_enabled = ner is not False
+        if patterns_enabled and ner_enabled:
+            return list(capabilities.entities)
+        selected: list[str] = []
+        if patterns_enabled:
+            selected.extend(capabilities.pattern_entities)
+        if ner_enabled:
+            selected.extend(capabilities.model_entities)
+        return sorted(set(selected))
+
+    def effective_entities(
+        self, pattern_matching: bool | None, ner: bool | None
+    ) -> list[str]:
+        """Installed entity labels after applying the requested family toggles."""
+        return self.family_entities(self.capabilities(), pattern_matching, ner)
 
     def resolve_language(self, requested: str) -> str:
         """The language to analyse in.

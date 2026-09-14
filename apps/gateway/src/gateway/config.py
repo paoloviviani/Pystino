@@ -687,6 +687,10 @@ class RedactionSettings(BaseModel):
 
     language: str = "en"
     score_threshold: float = 0.5
+    # Nullable because the detector's deployment default remains authoritative
+    # until an administrator makes an explicit console decision.
+    presidio_pattern_matching: bool | None = None
+    presidio_ner: bool | None = None
     #: Superseded by ``policy`` and kept because deployments set it. When
     #: present it *is* the policy: exactly these types, anonymised and restored,
     #: everything else off. One rule rather than two mechanisms that can

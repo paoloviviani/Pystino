@@ -178,6 +178,24 @@ class TestFiltering:
         await detector.analyse(["Rossi"], language="en", score_threshold=0.5, entity_types=[])
         assert analyzer.calls[0]["entities"] is None
 
+    def test_recognizer_families_are_partitioned_from_the_registry(self) -> None:
+        """Family filtering must not rest on a hardcoded pattern allow-list.
+
+        The analyzer reports every installed label; only the small model-backed
+        vocabulary is categorized as NER. Otherwise a pattern recognizer added
+        by a later Presidio release would be dropped when NER is switched off.
+        """
+        detector, _ = detector_for({"x": ("SOME_FUTURE_PATTERN", 0.9)})
+        capabilities = detector.capabilities()
+
+        assert capabilities.pattern_entities == ["SOME_FUTURE_PATTERN"]
+        assert capabilities.model_entities == []
+        assert Detector.family_entities(capabilities, True, False) == [
+            "SOME_FUTURE_PATTERN"
+        ]
+        assert Detector.family_entities(capabilities, False, True) == []
+        assert Detector.family_entities(capabilities, False, False) == []
+
 
 class TestLanguage:
     async def test_a_loaded_language_is_used(self) -> None:
@@ -388,6 +406,40 @@ class TestHttpSurface:
         assert body["findings"][0]["spans"] == []
         assert body["unsupported_types"] == ["IT_FISCAL_CODE"]
 
+    async def test_a_disabled_family_is_filtered_and_named(self, client: Any) -> None:
+        """A console NER-only choice must not run the pattern recognizers, and a
+        rule naming a disabled pattern type is inert rather than silently clean."""
+        response = await client.post(
+            "/detect",
+            json={
+                "texts": ["Ask Mario Rossi at a@b.test."],
+                "language": "en",
+                "entity_types": ["PERSON", "EMAIL_ADDRESS"],
+                "presidio_pattern_matching": False,
+                "presidio_ner": True,
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert [span["entity_type"] for span in body["findings"][0]["spans"]] == ["PERSON"]
+        assert body["unsupported_types"] == ["EMAIL_ADDRESS"]
+
+    async def test_disabling_both_families_skips_analysis(self, client: Any) -> None:
+        response = await client.post(
+            "/detect",
+            json={
+                "texts": ["Ask Mario Rossi."],
+                "language": "en",
+                "entity_types": ["PERSON"],
+                "presidio_pattern_matching": False,
+                "presidio_ner": False,
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["findings"][0]["spans"] == []
+        assert body["unsupported_types"] == ["PERSON"]
+
     async def test_healthz_reports_what_is_loaded(self, client: Any) -> None:
         body = (await client.get("/healthz")).json()
         assert body["status"] == "ok"
@@ -396,6 +448,9 @@ class TestHttpSurface:
         # Read from the analyzer, not a hardcoded list: the service must not be
         # able to advertise an entity its registry has quietly dropped.
         assert body["entities"] == ["EMAIL_ADDRESS", "PERSON"]
+        assert body["pattern_entities"] == ["EMAIL_ADDRESS"]
+        assert body["model_entities"] == ["PERSON"]
+        assert body["family_partition"] is True
 
     async def test_healthz_declares_a_degraded_language(self) -> None:
         detector, _ = detector_for(languages=["en", "it"], models={"en": "en_core_web_lg"})
@@ -491,9 +546,12 @@ class TestBuildWithoutNer:
 
         assert detector.capabilities().models == {}
         assert detector.capabilities().degraded == ["en"]
-        entities = set(detector.capabilities().entities)
+        capabilities = detector.capabilities()
+        entities = set(capabilities.entities)
         assert "CREDIT_CARD" in entities  # pattern recognisers survive
         assert not entities & {"PERSON", "LOCATION", "NRP", "ORGANIZATION"}
+        assert capabilities.model_entities == []
+        assert "CREDIT_CARD" in capabilities.pattern_entities
 
     def test_disabled_mode_still_finds_phones_at_the_default_threshold(
         self, monkeypatch: pytest.MonkeyPatch

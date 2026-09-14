@@ -229,6 +229,21 @@ class TestRequestRedaction:
         assert outcome.entity_count == 1
         assert outcome.changed
 
+    async def test_presidio_family_options_are_sent_and_partition_the_cache(self) -> None:
+        detector = FakeDetector({"Mario Rossi": "PERSON"})
+        redactor = detector.redactor(presidio_pattern_matching=False, presidio_ner=True)
+        messages = [{"role": "user", "content": "Mario Rossi"}]
+
+        await redactor.redact_request(messages)
+        assert detector.requests[0]["presidio_pattern_matching"] is False
+        assert detector.requests[0]["presidio_ner"] is True
+
+        redactor._settings = redactor._settings.model_copy(  # type: ignore[attr-defined]
+            update={"presidio_pattern_matching": True}
+        )
+        await redactor.redact_request(messages)
+        assert detector.call_count == 2
+
     async def test_unsupported_types_are_logged_once_per_change(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

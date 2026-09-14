@@ -289,6 +289,9 @@ export interface RedactionServiceHealth {
   /** Served without an NER model, so fewer entities are found. */
   degraded_languages: string[];
   entities: string[];
+  pattern_entities: string[];
+  model_entities: string[];
+  family_partition: boolean;
 }
 
 export interface RedactionActivity {
@@ -326,6 +329,10 @@ export interface RedactionEngineOption {
 /** Who last changed the engine, when, and why. Null when the environment decides. */
 export interface RedactionConfigChange {
   engine: string;
+  /** Null preserves the detector deployment default. */
+  presidio_pattern_matching?: boolean | null;
+  /** Null preserves the detector deployment default. */
+  presidio_ner?: boolean | null;
   reason: string;
   changed_at: string;
   /** Null once the user has been erased — the record of the change outlives them. */
@@ -389,6 +396,8 @@ export interface RedactionStatus {
   restore_in_response: boolean;
   language: string;
   score_threshold: number;
+  presidio_pattern_matching?: boolean | null;
+  presidio_ner?: boolean | null;
   /** Null means every type the engine offers, not none. Superseded by `policy`. */
   entity_types: string[] | null;
   /** What is acted on and how, per entity type. */
@@ -696,4 +705,3 @@ export interface AuthMethods {
 export interface MyNotificationThresholdsInput {
   thresholds: number[];
 }
-

@@ -1501,11 +1501,13 @@ class RedactionConfig(Base):
     because "the console says http and the environment says noop" is otherwise
     invisible and is precisely the confusion this table introduces.
 
-    What is deliberately *not* here: the endpoint, the placeholder key, the
-    detection parameters. Those stay in the environment for now — the key
+    What is deliberately *not* here: the endpoint, the placeholder key, and the
+    other detection parameters. Those stay in the environment for now — the key
     especially, because it is a secret and because rotating it re-labels every
-    transcript it ever labelled. Enabling an engine that needs an endpoint is
-    refused when the environment has not provided one, rather than saved into a
+    transcript it ever labelled. The Presidio pattern-matching and NER switches
+    are the exception: they are independent console decisions rather than
+    connection secrets. Enabling an engine that needs an endpoint is refused
+    when the environment has not provided one, rather than saved into a
     configuration that cannot run.
     """
 
@@ -1519,6 +1521,10 @@ class RedactionConfig(Base):
     #: written, which is stricter than an enum would be — it also proves the
     #: engine is *installed*, not merely spelled correctly.
     engine: Mapped[str] = mapped_column(String(64))
+    #: Null preserves the detector deployment's historic all-recognizers
+    #: behaviour; non-null values are independent console decisions.
+    presidio_pattern_matching: Mapped[bool | None] = mapped_column(Boolean, default=None)
+    presidio_ner: Mapped[bool | None] = mapped_column(Boolean, default=None)
     #: Why. Required by the API when switching to an engine that redacts nothing,
     #: optional otherwise: turning the layer off is the change that needs
     #: explaining, and demanding a sentence for every change trains people to

@@ -178,8 +178,12 @@ export function useRedactionStatus() {
 export function useSetRedactionEngine() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (body: { engine: string; reason: string }) =>
-      request<RedactionStatus>("/api/admin/redaction/engine", { method: "PUT", body }),
+    mutationFn: (body: {
+      engine: string;
+      reason: string;
+      presidio_pattern_matching?: boolean | null;
+      presidio_ner?: boolean | null;
+    }) => request<RedactionStatus>("/api/admin/redaction/engine", { method: "PUT", body }),
     onSuccess: (status) => {
       client.setQueryData(adminKeys.redaction, status);
     },
