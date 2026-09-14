@@ -90,6 +90,11 @@ services:
         # dev stack includes it. Set INCLUDE_CONSOLE=false for a headless image
         # (ADR 0023). Reachable at http://localhost:8000/console
         INCLUDE_CONSOLE: ${INCLUDE_CONSOLE:-true}
+        # Which source tree the baked console was built from, shown muted on
+        # the Overview page. Pass the checkout's SHA at build time
+        # (CONSOLE_BUILD_SHA=$(git rev-parse --short HEAD)); "unknown" means
+        # built by hand, and the startup log still says which files are served.
+        CONSOLE_BUILD_SHA: ${CONSOLE_BUILD_SHA:-unknown}
     restart: unless-stopped
     ports:
       # Loopback only. Docker's default is 0.0.0.0, which puts the whole

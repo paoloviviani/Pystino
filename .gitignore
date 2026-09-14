@@ -11,6 +11,13 @@ dist/
 build/
 *.egg-info/
 
+# A hand-maintained copy of the built console. Nothing reads it: the image
+# bakes `apps/console/dist` at build time, and the dev overlay serves that
+# same directory through GATEWAY_CONSOLE_DIR. A copy here is served by
+# nothing and confuses every future reconcile — and its mere presence used
+# to flip a console-sensitive test by mounting the console in it.
+apps/gateway/src/gateway/console_static/
+
 node_modules/
 .next/
 out/

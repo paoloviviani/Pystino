@@ -18,6 +18,7 @@ import { PageHeader } from "../components/PageHeader";
 import { downloadCsv } from "../lib/api";
 import {
   CODE,
+  MUTED,
   PAGE,
   QUOTA,
   QUOTA_DETAIL,
@@ -109,8 +110,7 @@ export function Overview({ me }: OverviewProps) {
 
   return (
     <div className={PAGE}>
-      <PageHeader
-        title="Overview"
+      <PageHeader        title="Overview"
         subtitle="Where you stand this period, and the keys you spend with."
         /* "Overview", not "Your usage" — that name now belongs to the reports
             page next to it in the header, and two screens wearing it is worse
@@ -130,6 +130,14 @@ export function Overview({ me }: OverviewProps) {
           </Select>
         }
       />
+      {/* Which source tree this UI was built from, muted under the header so a
+          stale deploy is visible where administrators look. Baked at build
+          time (Dockerfile CONSOLE_BUILD_SHA); "unknown" means built by hand
+          without it, and the gateway's startup log still says which files are
+          actually served. */}
+      <p className={`${MUTED} -mt-2 text-xs`}>
+        Console build {import.meta.env.VITE_CONSOLE_BUILD_SHA ?? "unknown"}
+      </p>
 
       <Card>
         {report.isPending && <Spinner label="Loading your usage" />}
