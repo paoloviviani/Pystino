@@ -2,7 +2,7 @@ import { Button, Input, Notice, Spinner } from "@llmp/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { fetchAuthMethods, localLogin, loginWith, nextForRouter, NotAuthenticatedError } from "../lib/api";
+import { fetchAuthMethods, localLogin, loginWith, nextForRouter, safeNextPath, NotAuthenticatedError } from "../lib/api";
 import { FORM_STACK, LOGIN_CARD, LOGIN_CENTRE } from "../lib/layout";
 
 /**
@@ -120,9 +120,24 @@ function LocalLoginForm({
       // The cookie is set; the cached failure from before it was must not be
       // what the next screen reads.
       await queryClient.invalidateQueries();
-      // `next` is an origin path; the router's basename already contains
-      // `/console` (see `nextForRouter`).
-      navigate(nextForRouter(next), { replace: true });
+      // Two different things hand `next` here, and they want different rides:
+      //
+      // - the console's own pages store `/console/...` — the SPA's to render,
+      //   and the router already carries that basename;
+      // - the house IdP stores `/oauth/authorize?...` when a browser-facing
+      //   client (the chat) started a sign-in and found no session — a round
+      //   trip only the *browser* can finish, because it is the gateway's own
+      //   address that the fresh session cookie must be carried to, and the
+      //   router's answer to an address that is not its own is "No such page",
+      //   which is where this flow used to die.
+      const target = safeNextPath(next);
+      if (target === null || target === "/") {
+        navigate("/", { replace: true });
+      } else if (target === "/console" || target.startsWith("/console/")) {
+        navigate(nextForRouter(target), { replace: true });
+      } else {
+        window.location.assign(target);
+      }
     } catch (caught) {
       // The gateway's message is specific by design ("Too many failed
       // sign-in attempts" versus "Incorrect email or password") and safe to
