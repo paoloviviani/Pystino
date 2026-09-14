@@ -9,7 +9,8 @@ reason a passthrough cannot serve: a billing group's search policy
 (``groups.search_model_id``) names *which* backend runs, and a backend the
 gateway picks is one whose dialect the caller cannot be expected to speak.
 ``POST /v1/search`` therefore sends one shape and receives one shape, and
-these two methods are the whole of the translation:
+the body and answer translations plus the call's own headers are the whole
+of what a backend contributes beyond the passthrough:
 
 * ``build_search_body`` — the vendor's own request for a query and a count.
   Always the vendor's default depth: the unified route offers no tier, so the
@@ -30,6 +31,12 @@ What a backend must still tell the gateway for the passthrough is unchanged:
 * ``auth_headers`` — how the stored credential is presented. Linkup takes a
   bearer; Exa names an ``x-api-key`` header. Both accept the other, and each
   sends the one its own schema names first.
+* ``search_headers`` — what else the unified call carries besides the
+  credential. Jina needs ``X-Respond-With: no-content`` there so its answer
+  arrives as titles and URLs rather than whole pages; Linkup and Exa need
+  nothing. It is separate from ``auth_headers`` because those travel on the
+  passthrough too, and a header that reshapes the answer must never leak into
+  a route that promises the vendor's answer verbatim.
 
 Everything fancier — date ranges, domain filters, page text — stays on the
 passthrough, where the vendor's own shape survives verbatim.
@@ -76,6 +83,15 @@ class SearchPlugin(Protocol):
 
     def auth_headers(self, credential: str) -> Mapping[str, str]:
         """How the stored credential is presented to this vendor."""
+        ...
+
+    def search_headers(self) -> Mapping[str, str]:
+        """What else the unified search call carries besides the credential.
+
+        Sent only by the unified route, never by the passthrough: a header
+        here may reshape the vendor's answer, and a verbatim route must not
+        narrow what the caller asked for.
+        """
         ...
 
     def build_search_body(self, query: str, max_results: int) -> dict[str, Any]:

@@ -372,8 +372,9 @@ class SearchResultItem(BaseModel):
 
     Title, URL and snippet are the intersection every backend can supply:
     Linkup answers ``name``/``url``/``content``, Exa answers
-    ``title``/``url``/``summary``. Anything richer — scores, dates, favicons —
-    stays on the passthrough, where the vendor's own shape survives verbatim.
+    ``title``/``url``/``summary``, Jina answers ``title``/``url``/``description``.
+    Anything richer — scores, dates, favicons — stays on the passthrough,
+    where the vendor's own shape survives verbatim.
     """
 
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
@@ -386,7 +387,7 @@ class SearchResultItem(BaseModel):
 class SearchResponse(BaseModel):
     """The unified answer: normalised results, and which backend ran.
 
-    ``backend`` names the plugin that ran (``linkup``, ``exa``), not the model
+    ``backend`` names the plugin that ran (``linkup``, ``exa``, ``jina``), not the model
     row: it is what the ledger's ``own_search_backend`` column carries, and a
     single search never mixes backends, so one name is the whole story.
     """

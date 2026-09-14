@@ -64,6 +64,11 @@ class LinkupSearchPlugin(GenericOpenAIPlugin):
         """Bearer, which is the only security scheme on the operation."""
         return {"authorization": f"Bearer {credential}"}
 
+    def search_headers(self) -> Mapping[str, str]:
+        """Nothing beyond the credential: the unified body already selects
+        the ``searchResults`` shape, so no header has to."""
+        return {}
+
     def build_search_body(self, query: str, max_results: int) -> dict[str, Any]:
         """``q``/``depth``/``outputType``/``maxResults``, at the default depth.
 

@@ -5,8 +5,8 @@ provider support…)", against
 <https://openrouter.ai/docs/guides/features/server-tools/web-search>.
 
 The answer is yes, in three pieces of very different size. **Phase 1 is built**
-(ADR 0058), and so is **phase 2** for two of the four backends — Linkup and
-Exa, with `POST /v1/search` behind them. Phase 3 is recorded here rather than
+(ADR 0058), and so is **phase 2** for three of the four backends — Linkup, Exa
+and Jina, with `POST /v1/search` behind them. Phase 3 is recorded here rather than
 started, because it asks a question about what this gateway *is* that should be
 answered deliberately.
 
@@ -34,7 +34,7 @@ from the counterparty's reported usage, and `max_uses` written into the
 outgoing tool so a request's search spend is bounded by the provider itself.
 ADR 0058 has the whole of it.
 
-## Phase 2 — search backends of our own (built, for two of four)
+## Phase 2 — search backends of our own (built, for three of four)
 
 A `SearchPlugin` beside `gateway/plugins/`, under ADR 0032's rule: **returns
 facts, never computes money**. A search provider becomes a third `kind`
@@ -71,13 +71,13 @@ What that buys, and what it costs:
 
 ### What is built
 
-`gateway/plugins/search.py` is the protocol, and **Linkup and Exa** implement
-it. A search backend is a `Provider` row like any other — its key encrypted at
+`gateway/plugins/search.py` is the protocol, and **Linkup, Exa and Jina**
+implement it. A search backend is a `Provider` row like any other — its key encrypted at
 rest, its client cached and rebuilt on edit — with `kind = search` and a plugin
 that can also run a search. The decision that made this small rather than large
 is that a search backend is **not a second kind of configuration**: it reuses
 the provider registry, the credential path, the access grants and the ledger,
-and the only thing it adds is two methods.
+and the only thing it adds is two methods plus the call's own headers.
 
 Five things about the shape, each of which was a choice with an alternative:
 
@@ -107,12 +107,16 @@ Five things about the shape, each of which was a choice with an alternative:
   own schema agrees: the field says it "is not an invoice record".
 
 Both vendors' contracts were read from their live OpenAPI documents on
-2026-09-11 rather than from their prose, and in both cases it mattered:
+2026-09-11 rather than from their prose, and in both cases it mattered. Jina's
+was read on 2026-09-14 from its API guide rather than from an OpenAPI
+document — which mattered more, because the motivating example was a GET and
+the documented shape is a POST:
 
 | Backend | Read at source | What the document changed |
 |---|---|---|
 | **Linkup** | `https://api.linkup.so/v1/openapi.json` | `POST /v1/search`, bearer. Required `q`, `depth` (`deep`/`fast`/`flash`/`standard`), `outputType`. Text hits are `{name, url, content, favicon, type}` — `name`, not `title`. Their own quickstart shows `curl -G`, which would be a GET with a query string; the schema says POST-only with a required body, and the schema wins. **No cost or usage field on a search response at all** — the balance is a separate endpoint returning a bare number. And the "10 QPS org-wide" recorded earlier in this project is **not** in the document: it describes a 429 and defines no numeric limit, so nothing depends on it. |
 | **Exa** | `https://api.exa.ai/openapi.json` (`info.version` 2.0.0) | `POST /search`, `x-api-key`. `type` is `instant`/`fast`/`auto`/`deep-lite`/`deep`/`deep-reasoning` — **not** the `neural`/`keyword`/`auto` that a documentation-rendering fetch still serves from a stale copy. A result has **no relevance score**; `resolvedSearchType` is deprecated and may be an empty string, which is why the ledger records the tier we asked for. `costDollars` is `{total, search:{neural,keyword}, summary, contents:{text,highlights,summary}}`. |
+| **Jina** | `https://docs.jina.ai/` (Search API section), corroborated by `https://github.com/jina-ai/cli/blob/main/jina_cli/api.py` (`search_web`) and the rate table on `https://jina.ai/reader` — read 2026-09-14 | `POST https://s.jina.ai/`, bearer, `Accept: application/json`. Body `{"q", "num"}` (`q` required) — **not** the `GET ?q=` form the motivating example and the open-source README show; GET puts the query in the URL, which the unified route promises never to do, and documents no count. Answer `{"code", "status", "data": [{title, url, description, content}]}` where `content` is whole pages, so the unified call sends `X-Respond-With: no-content` and reads `description`. Keyless calls 401; each search bills the Jina key a fixed token amount from 10,000 — the vendor's business, never the ledger's. |
 
 All candidates are plain REST over HTTPS, so this adopts no SDK and needs no
 licence review (ADR 0001 is satisfied without a decision).
@@ -121,11 +125,12 @@ licence review (ADR 0001 is satisfied without a decision).
 
 | Backend | Why not |
 |---|---|
-| **Jina** | Reader/search APIs; commonly paired with an embedding step. No per-token figure is published publicly. Not a blocker for a *count*, but it was never established at source what a request to their search endpoint is and is not, and a plugin written from memory is the thing ground rule 2 forbids. |
 | **Staan** | <https://staan.ai> — "the first European Search API", GDPR-framed, **priced in EUR** (€2 per 1,000 web-search requests, €4 for the AI variant, first 1,000 a month free, 20 QPS). The blocker is specific: the dearer "for AI" tier is **neither a documented request parameter nor reported back**, so `own_search_tier` could not be filled honestly, and a tier column that silently names the cheap tier on a dear request is worse than no backend. Settling it needs a real key. |
 
-Both are a plugin module and one line in `plugins/registry.py` when somebody
-has a key; the protocol is the hook, and nothing else has to move.
+Staan is a plugin module and one line in `plugins/registry.py` when somebody
+has a key; the protocol is the hook, and nothing else has to move. (Jina stood
+in this table until 2026-09-14, when its live API guide settled the endpoint
+shape; see the contracts table above.)
 
 **A renderer is deployed, and it is not really ours.** A backend returns
 URLs and snippets, and a snippet is not an answer — turning a result into text a

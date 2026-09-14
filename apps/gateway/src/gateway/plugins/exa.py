@@ -58,6 +58,11 @@ class ExaSearchPlugin(GenericOpenAIPlugin):
         examples works here."""
         return {"x-api-key": credential}
 
+    def search_headers(self) -> Mapping[str, str]:
+        """Nothing beyond the credential: omitting ``contents`` already keeps
+        page text — a separate charge — out of the answer."""
+        return {}
+
     def build_search_body(self, query: str, max_results: int) -> dict[str, Any]:
         """``query`` and ``numResults``, and nothing else.
 

@@ -229,14 +229,19 @@ async def unified_search(
             ) from exc
 
     # The vendor's own request, rebuilt by its plugin at the vendor's default
-    # depth — the only depth this route offers.
+    # depth — the only depth this route offers — plus whatever headers the
+    # plugin needs beyond the credential (Jina's content-excluding header is
+    # the case that matters; the passthrough never sends them, because a
+    # verbatim answer must stay the caller's own shape).
     vendor_body = plugin.build_search_body(query, payload.max_results)
+    call_headers = dict(plugin.auth_headers(credential)) if credential else {}
+    call_headers.update(plugin.search_headers())
     try:
         response = await upstream.post_json(
             plugin.search_path,
             vendor_body,
             request_id=request_id,
-            extra_headers=plugin.auth_headers(credential) if credential else None,
+            extra_headers=call_headers or None,
         )
     except Exception as exc:
         raise await metered.upstream_unreachable(exc) from exc
