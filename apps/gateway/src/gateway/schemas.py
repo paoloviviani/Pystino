@@ -329,7 +329,7 @@ class OcrRequest(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    """``POST /v1/search`` — a web search this gateway runs itself.
+    """``POST /v1/search`` — one search through the caller's billing-group policy.
 
     **The one ``/v1`` request model that forbids unknown fields.** Every other
     one allows them, because every other one *forwards* the body it was given
@@ -337,45 +337,64 @@ class SearchRequest(BaseModel):
     valid requests each time the counterparty added a field. Nothing is
     forwarded here: the body is rebuilt in the backend's own shape by its
     plugin, because Linkup wants ``q``/``depth`` and Exa wants
-    ``query``/``type``/``numResults`` and no passthrough can be both. An
-    unrecognised field would therefore be *dropped*, silently, and a caller who
-    asked for a date range and did not get one deserves a refusal rather than
-    results they will trust. (A 400, not FastAPI's 422: this app rewrites
-    validation errors into the OpenAI error shape every ``/v1`` client parses.)
+    ``query``/``numResults`` and no passthrough can be both. An unrecognised
+    field would therefore be *dropped*, silently, and a caller who asked for a
+    date range and did not get one deserves a refusal rather than results they
+    will trust. (A 400, not FastAPI's 422: this app rewrites validation errors
+    into the OpenAI error shape every ``/v1`` client parses.)
 
-    ``backend_options`` is where a vendor-specific option goes instead. It is
-    merged underneath the fields the plugin controls, so nothing in it can
-    change the tier that was reserved against or the output shape the reader
-    expects.
+    There is no ``backend``, ``depth``, ``type`` or ``tier`` field, and that is
+    the design. Which backend runs is the billing group's policy
+    (``groups.search_model_id``) — one endpoint per group, resolved
+    server-side, never a request parameter — and it always runs at the
+    vendor's default depth: the ledger records no tier because none was asked
+    for, and a ceiling counted in requests bounds volume, not spend. A caller
+    that needs a dearer tier names the backend directly on the passthrough.
 
-    There is no ``depth``, ``type`` or ``tier`` field, and that is the design.
-    The tier lives on the model row (``upstream_model``), so *which* depth a
-    caller may run is a grant an administrator makes — Linkup ``deep`` costs
-    ten times ``flash`` and Exa's dearest tier is twice its cheapest, and a
-    ceiling counted in requests bounds volume, not spend. A caller who may run
-    both is granted two models.
+    This revisits ADR 0071's refusal to translate, narrowly and for a reason
+    that did not exist then: a group policy is unenforceable while the vendor
+    dialect lives in the caller. The translation surface is three fields in
+    and three fields out, and anything fancier stays on the passthrough.
     """
 
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
-    model: str
     query: str = Field(min_length=1, max_length=2000)
-    #: How many results to ask for. Bounded at Exa's own documented public
-    #: maximum, which is the lower of the two: Linkup's schema sets a minimum
-    #: of 1 and no maximum at all. A ceiling here rather than none because the
-    #: number is a multiplier on a vendor's bill in a way this gateway's own
-    #: ledger cannot see — Exa is reported to charge per result above ten,
-    #: which is from their pricing page rather than from the schema, so the
-    #: bound is prudence rather than a rule read at source.
-    max_results: int | None = Field(default=None, ge=1, le=100)
-    #: Ask the backend for page text, not only a snippet. Off by default: on
-    #: Exa it is a separate charge on the same call, and Linkup does not offer
-    #: it at all.
-    include_content: bool = False
-    include_domains: list[str] = Field(default_factory=list, max_length=50)
-    exclude_domains: list[str] = Field(default_factory=list, max_length=50)
-    #: Vendor-specific options, merged under the fields the plugin controls.
-    backend_options: dict[str, Any] = Field(default_factory=dict)
+    #: How many results to ask for. Ten is the most a rendered answer can use,
+    #: and Exa's per-result charge above ten is invisible to this ledger — a
+    #: bound here rather than none because the number multiplies a vendor's
+    #: bill in a way no row here can see.
+    max_results: int = Field(default=5, ge=1, le=10)
+
+
+class SearchResultItem(BaseModel):
+    """One result of ``POST /v1/search``, in the gateway's own shape.
+
+    Title, URL and snippet are the intersection every backend can supply:
+    Linkup answers ``name``/``url``/``content``, Exa answers
+    ``title``/``url``/``summary``. Anything richer — scores, dates, favicons —
+    stays on the passthrough, where the vendor's own shape survives verbatim.
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    title: str
+    url: str
+    snippet: str = ""
+
+
+class SearchResponse(BaseModel):
+    """The unified answer: normalised results, and which backend ran.
+
+    ``backend`` names the plugin that ran (``linkup``, ``exa``), not the model
+    row: it is what the ledger's ``own_search_backend`` column carries, and a
+    single search never mixes backends, so one name is the whole story.
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    results: list[SearchResultItem] = Field(default_factory=list)
+    backend: str
 
 
 class ImageGenerationRequest(BaseModel):
@@ -679,9 +698,7 @@ class ProviderCreateRequest(BaseModel):
     # whose tiers share a word ("deep", "fast") do not collide. Optional:
     # empty is the honest default, and a prefix is a judgement about a
     # catalogue the operator can already see.
-    prefix: str = Field(
-        default="", max_length=32, pattern=r"^[a-zA-Z0-9._-]*$"
-    )
+    prefix: str = Field(default="", max_length=32, pattern=r"^[a-zA-Z0-9._-]*$")
     # Whose figure is the charge (ADR 0032 decision 6). Validated against the
     # named plugin below: pass-through needs a plugin that asserts its figure is
     # the counterparty's actual charge.
@@ -719,9 +736,7 @@ class ProviderUpdateRequest(BaseModel):
     # prefix that only reached future imports would leave the catalogue
     # half-disambiguated. An empty string removes the prefix and un-names the
     # models that carry it.
-    prefix: str | None = Field(
-        default=None, max_length=32, pattern=r"^[a-zA-Z0-9._-]*$"
-    )
+    prefix: str | None = Field(default=None, max_length=32, pattern=r"^[a-zA-Z0-9._-]*$")
 
     @model_validator(mode="after")
     def _billing_mode_needs_a_plugin_that_can_claim_it(self) -> ProviderUpdateRequest:
@@ -1011,6 +1026,25 @@ class GroupAdminResponse(BaseModel):
     is_active: bool
     member_count: int
     models: list[str]
+    #: The search backend this group searches through on ``POST /v1/search``,
+    #: by model-row name. Null means no policy: the group cannot use the
+    #: unified route at all.
+    search_backend: str | None = None
+
+
+class GroupSearchBackendRequest(BaseModel):
+    """Point a group's unified-search policy at a backend, or clear it.
+
+    ``model_id`` is the backend's anchor row. Setting it requires the group to
+    already be granted that backend — a policy the group may not use would
+    resolve to a 404 on every search, which is a misconfiguration, not a
+    permission. Null clears the policy: the group loses the unified route,
+    and keeps the passthrough exactly as granted.
+    """
+
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    model_id: uuid.UUID | None = None
 
 
 class UserAdminResponse(BaseModel):

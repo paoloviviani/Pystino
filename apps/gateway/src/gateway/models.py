@@ -331,6 +331,16 @@ class Group(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
+    # The one search backend this group searches through on the unified
+    # ``POST /v1/search`` route. Null means no policy: the group cannot use
+    # that route at all, instead of searching through whatever backend happens
+    # to be granted. Validated where it is written — the admin route refuses a
+    # backend the group is not granted — so a stale value cannot send a search
+    # somewhere the group may not go.
+    search_model_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("models.id", ondelete="SET NULL"), default=None
+    )
+
     memberships: Mapped[list[Membership]] = relationship(
         back_populates="group", cascade="all, delete-orphan"
     )

@@ -32,9 +32,11 @@ currency. Nothing here depends on it, and nothing should.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 from gateway.plugins.base import ProviderKind
 from gateway.plugins.generic import GenericOpenAIPlugin
+from gateway.plugins.search import UnifiedSearchResult
 
 
 class LinkupSearchPlugin(GenericOpenAIPlugin):
@@ -61,3 +63,44 @@ class LinkupSearchPlugin(GenericOpenAIPlugin):
     def auth_headers(self, credential: str) -> Mapping[str, str]:
         """Bearer, which is the only security scheme on the operation."""
         return {"authorization": f"Bearer {credential}"}
+
+    def build_search_body(self, query: str, max_results: int) -> dict[str, Any]:
+        """``q``/``depth``/``outputType``/``maxResults``, at the default depth.
+
+        ``depth`` is required and ``standard`` is the vendor's recommended
+        default; ``outputType`` is forced to ``searchResults`` because the
+        other two modes are a second model's output arriving through a route
+        that meters searches, with no tokens counted and nothing in the ledger
+        to say a generation happened.
+        """
+        return {
+            "q": query,
+            "depth": "standard",
+            "outputType": "searchResults",
+            "maxResults": max_results,
+        }
+
+    def read_search_results(self, payload: Any) -> list[UnifiedSearchResult]:
+        """``results[].name``/``url``/``content``, best-effort — note ``name``,
+        not ``title``. Entries without a usable URL are dropped, because a
+        result that cannot be fetched is not a result."""
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list):
+            return []
+        out: list[UnifiedSearchResult] = []
+        for entry in results:
+            if not isinstance(entry, dict):
+                continue
+            url = entry.get("url")
+            if not isinstance(url, str) or not url:
+                continue
+            name = entry.get("name")
+            content = entry.get("content")
+            out.append(
+                {
+                    "title": name if isinstance(name, str) and name else "untitled",
+                    "url": url,
+                    "snippet": content if isinstance(content, str) else "",
+                }
+            )
+        return out
