@@ -31,9 +31,15 @@ rule that settled Linkup's ``curl -G`` against its OpenAPI document):
   because a verbatim answer must stay the caller's own shape.
 * Jina bills its own key per request in tokens; like every other backend here
   that is the vendor's business, not the ledger's. Searches are metered as a
-  count of requests and are never priced. An operator on the EU-only
-  deployment remotes this by pointing the base URL at ``https://eu.s.jina.ai/``;
-  the path is configuration either way.
+  count of requests and are never priced. The vendor documents exactly two
+  hosts for this API on the same Search API page, read at source on
+  2026-09-14 from ``https://docs.jina.ai/``: the standard ``https://s.jina.ai``
+  and — in its own words — "Use ``https://eu.s.jina.ai/`` to reside all
+  infrastructure and data processing operations entirely within EU
+  jurisdiction", which is what makes the EU host a fact of the vendor's
+  offering rather than folklore about one. Which of the two a backend uses is
+  configuration: ``base_url_options`` names both so the console offers the
+  choice instead of a free-text URL, and the path stays ``/`` either way.
 """
 
 from __future__ import annotations
@@ -59,6 +65,14 @@ class JinaSearchPlugin(GenericOpenAIPlugin):
     kind = ProviderKind.SEARCH
     default_base_url: str | None = "https://s.jina.ai"
     reports_authoritative_cost = False
+
+    #: The two hosts the vendor documents for this API, the default first
+    #: (plugins/base.py carries the reasoning). Trailing-slashless so the
+    #: values match what a provider row stores — the gateway rstrips them.
+    base_url_options: tuple[tuple[str, str], ...] = (
+        ("https://s.jina.ai", "s.jina.ai — global (default)"),
+        ("https://eu.s.jina.ai", "eu.s.jina.ai — all processing stays in the EU"),
+    )
 
     #: The endpoint is the base URL itself: the CLI posts to it with a
     #: trailing slash, so the path the gateway appends is just ``/``.

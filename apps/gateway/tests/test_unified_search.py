@@ -157,6 +157,35 @@ class TestPolicyResolution:
         assert sent.get("x-respond-with") == "no-content"
         assert sent.get("authorization") == "Bearer jina-key-1"
 
+    async def test_a_jina_backend_pointed_at_the_eu_host_searches_through_it(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """The unified route resolves the upstream from the provider row's
+        base URL, so switching a backend to the vendor's documented EU host
+        moves the request and nothing else about the call — same body, same
+        headers, same count. The whole path is exercised because a base URL
+        that looked honoured while a cached client still pointed at the old
+        host would be exactly the failure this shape can hide."""
+        anchor = await add_backend(
+            session, seeded, plugin="jina", base_url="https://eu.s.jina.ai"
+        )
+        await set_policy(session, seeded.group.id, anchor)
+        fake_upstream.set_json(jina_body())
+
+        response = await client.post("/v1/search", json={"query": "anything"}, headers=seeded.auth)
+        assert response.status_code == 200, response.text
+        assert fake_upstream.urls[-1] == "https://eu.s.jina.ai/"
+        assert fake_upstream.last_body == {"q": "anything", "num": 5}
+        sent = fake_upstream.headers[-1]
+        assert sent.get("x-respond-with") == "no-content"
+        record = await latest_record(session)
+        assert record.own_search_requests == 1
+        assert record.own_search_backend == "jina"
+
     async def test_a_policy_pointing_nowhere_granted_is_a_404(
         self,
         client: httpx.AsyncClient,

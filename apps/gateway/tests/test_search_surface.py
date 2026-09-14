@@ -49,19 +49,22 @@ async def add_backend(
     name: str | None = None,
     key: str = "search-key",
     granted: bool = True,
+    base_url: str | None = None,
 ) -> ModelDef:
     """A search backend: the provider, its credential, and its grant anchor.
 
     The anchor is the one model row a backend owns — named after it — built
     the way the admin API builds it, so the decrypt-and-send path and the
-    access grant are both exercised.
+    access grant are both exercised. ``base_url`` overrides the fake upstream
+    for a backend pointed somewhere else — a vendor's documented regional host
+    is the case that matters; the transport answers whatever the row says.
     """
     box = SecretBox(["test-encryption-key-not-for-production"])
     provider = Provider(
         name=name or plugin,
         # The fake upstream, standing in for the vendor's host. The plugin's
         # `search_path` is appended to it exactly as it would be in production.
-        base_url=UPSTREAM_BASE,
+        base_url=base_url or UPSTREAM_BASE,
         api_key_encrypted=box.encrypt(key),
         api_key_hint=hint_for(key),
         plugin=plugin,

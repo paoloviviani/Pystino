@@ -174,6 +174,16 @@ class ProviderPlugin(Protocol):
     #: the call sites, so an installed plugin omitting the attribute entirely
     #: behaves the same as one declaring ``None``.
     default_base_url: str | None
+    #: The endpoints the counterparty documents for this API, when there is
+    #: more than one: ``(url, label)`` pairs, the default first, each stored
+    #: without a trailing slash. The console offers them as a constrained
+    #: choice instead of a free-text URL field — for a decision with exactly
+    #: two documented values, free text is a typo waiting to happen. Where
+    #: the choice exists is vendor knowledge, so it lives here rather than in
+    #: the console, the same way ``default_base_url`` does. Optional, read
+    #: with ``getattr``: a plugin omitting it offers no choice, and its
+    #: ``default_base_url`` is the whole of the answer.
+    base_url_options: tuple[tuple[str, str], ...]
     #: Whether this plugin's ``read_reported_cost`` asserts the counterparty's
     #: *actual charge* rather than an indicative number. Declared rather than
     #: probed, so a deployment can be stopped from selecting pass-through

@@ -76,6 +76,8 @@ class CortecsRouterPlugin:
     #: The counterparty's public endpoint. Where a provider row starts when this
     #: type is chosen, so configuring Cortecs is typing a name and a key.
     default_base_url: str | None = "https://api.cortecs.ai/v1"
+    # One documented host, so the console offers no endpoint choice.
+    base_url_options: tuple[tuple[str, str], ...] = ()
 
     # -- shaping a request --------------------------------------------------
 
