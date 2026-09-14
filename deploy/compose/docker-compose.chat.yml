@@ -121,6 +121,13 @@ services:
         OPENAI_BASE_URL=http://gateway:8000/v1
         OPENAI_API_KEY=${CHAT_CATALOGUE_KEY:?mint a gwk_ key and set CHAT_CATALOGUE_KEY in deploy/.env}
 
+        # A model-facing web fetch uses Cerea's configured fetch seam. The
+        # Playwright overlay supplies the renderer on this private network;
+        # keeping its address here (rather than in the chat image) means an
+        # operator may still choose direct HTTPS fetch without rebuilding.
+        FETCH_BACKEND=${FETCH_BACKEND:-playwright}
+        PLAYWRIGHT_WS_ENDPOINT=${PLAYWRIGHT_WS_ENDPOINT:-ws://playwright:3000/}
+
         # The chat's own Postgres (ADR 0070): where the knowledge pipeline's
         # passages and vectors live. A separate database from the gateway's,
         # with the chat's own credentials — the store is the chat's, and
