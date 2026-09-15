@@ -583,6 +583,16 @@ export interface ProviderTestResult {
 }
 
 /**
+ * What deleting a search backend took with it (the gateway's cascade for
+ * `kind=search` providers, ADR 0071). The cleared groups are names, not ids:
+ * they are for a notice, and a notice speaks the group's name.
+ */
+export interface SearchBackendDeleteResult {
+  tiers_deleted: number;
+  cleared_groups: string[];
+}
+
+/**
  * Minting a local account from the console (ADR 0048). Local only: an
  * identity-provider account is the IdP's to create, and one made here would
  * be overwritten or orphaned at the next login.

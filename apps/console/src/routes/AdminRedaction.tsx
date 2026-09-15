@@ -375,6 +375,7 @@ function RulesList({
           </Button>
           <Button
             variant="ghost"
+            className="text-danger"
             busy={remove.isPending && remove.variables === rule.id}
             onClick={() => remove.mutate(rule.id)}
           >

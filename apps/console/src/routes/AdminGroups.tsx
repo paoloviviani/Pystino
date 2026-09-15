@@ -80,7 +80,7 @@ export function AdminGroups() {
           <Button variant="ghost" onClick={() => setManaging(group)}>
             Members
           </Button>
-          <Button variant="ghost" onClick={() => setDeleting(group)}>
+          <Button variant="ghost" className="text-danger" onClick={() => setDeleting(group)}>
             Delete
           </Button>
         </div>
@@ -345,6 +345,7 @@ function GroupMembersDialog({ group, onClose }: { group: AdminGroup | null; onCl
                 </div>
                 <Button
                   variant="ghost"
+                  className="text-danger"
                   busy={remove.isPending && remove.variables === user.id}
                   onClick={() =>
                     remove.mutate(user.id, {
