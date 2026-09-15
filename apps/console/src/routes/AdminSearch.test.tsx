@@ -47,6 +47,7 @@ function tier(overrides: Partial<AdminModel> = {}): AdminModel {
     provider_id: "p1",
     provider_name: "linkup",
     provider_is_active: true,
+    provider_kind: "search",
     kind: "search",
     display_name: null,
     description: null,

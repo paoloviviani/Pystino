@@ -244,11 +244,26 @@ async def _unpriced_counts(session: SessionDep) -> dict[uuid.UUID, int]:
     cost ceiling never trips for it. That is a hole in any billing mode, and a
     sharp one in `provider_reported`, where the counterparty's figure arrives too
     late to admit on.
+
+    Models behind an internal provider are excluded, deliberately: their
+    unpricedness is the design, not an oversight — the deployment's own
+    extractor charges nothing because there is no counterparty to pay, and
+    `plugins/extractor.py` says so at source. Warning about it would put the
+    one chip on the providers screen that looks exactly like a billing hole
+    while being the opposite, which is how the row came to be noticed as
+    clutter in the first place. `_model_counts` stays complete on purpose: it
+    is the blast radius of deactivating or deleting a provider, and the
+    extractor's single model is blast radius all the same.
     """
     stmt = (
         select(ModelDef.provider_id, func.count(ModelDef.id))
+        .join(Provider, Provider.id == ModelDef.provider_id)
         .outerjoin(ModelPrice, ModelPrice.model_id == ModelDef.id)
-        .where(ModelDef.is_active.is_(True), ModelPrice.id.is_(None))
+        .where(
+            ModelDef.is_active.is_(True),
+            ModelPrice.id.is_(None),
+            Provider.kind != ProviderKind.INTERNAL,
+        )
         .group_by(ModelDef.provider_id)
     )
     return _pairs((await session.execute(stmt)).all())
@@ -302,6 +317,10 @@ def _model_response(
         # model behind it out of service, and the catalogue is where that is
         # noticed.
         provider_is_active=model.provider.is_active,
+        # Same fact, second use: screens that present models as choices read
+        # the kind to leave infrastructure out of the catalogue, exactly as
+        # `kind` lets them set search tiers aside.
+        provider_kind=model.provider.kind.value,
         kind=model.kind.value,
         display_name=model.display_name,
         description=model.description,
