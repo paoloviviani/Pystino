@@ -45,15 +45,26 @@ function user(index: number, overrides: Partial<AdminUser> = {}): AdminUser {
 
 interface Seen {
   users: URLSearchParams[];
+  patches: { id: string; body: Record<string, unknown> }[];
 }
 
 /**
  * A fake directory of `total` accounts that honours limit, offset and q, so a
  * test can assert on what came back rather than only on what was asked for.
+ *
+ * The PATCH route merges into the stored row and answers with it, the way the
+ * gateway does, so an edit-then-refetch cycle shows the change rather than
+ * silently keeping the stale one.
  */
-function routes(total: number, seen: Seen = { users: [] }) {
-  const everyone = Array.from({ length: total }, (_, index) => user(index));
-  return vi.fn(async (input: RequestInfo | URL) => {
+function routes(
+  total: number,
+  seen: Seen = { users: [], patches: [] },
+  firstOverrides: Partial<AdminUser> = {},
+) {
+  const everyone = Array.from({ length: total }, (_, index) =>
+    user(index, index === 0 ? firstOverrides : {}),
+  );
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), "http://console.test");
     if (url.pathname === "/api/admin/users") {
       seen.users.push(url.searchParams);
@@ -72,6 +83,18 @@ function routes(total: number, seen: Seen = { users: [] }) {
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
+    }
+    const patched = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
+    if (init?.method === "PATCH" && patched) {
+      const body = JSON.parse(String(init.body ?? "{}")) as Partial<AdminUser>;
+      const row = everyone.find((entry) => entry.id === patched[1]);
+      if (!row) return new Response(null, { status: 404 });
+      Object.assign(row, body);
+      seen.patches.push({ id: patched[1]!, body: body as Record<string, unknown> });
+      return new Response(JSON.stringify(row), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     }
     return jsonResponse([]);
   });
@@ -107,7 +130,7 @@ function lastUsersCall(seen: Seen): URLSearchParams {
 
 describe("AdminUsers", () => {
   it("asks for one page, not the whole directory", async () => {
-    const seen: Seen = { users: [] };
+    const seen: Seen = { users: [], patches: [] };
     vi.stubGlobal("fetch", routes(400, seen));
     renderScreen(<AdminUsers />);
 
@@ -126,7 +149,7 @@ describe("AdminUsers", () => {
 
   it("sends the search to the server rather than filtering the page", async () => {
     const user_ = userEvent.setup({ delay: null });
-    const seen: Seen = { users: [] };
+    const seen: Seen = { users: [], patches: [] };
     vi.stubGlobal("fetch", routes(400, seen));
     renderScreen(<AdminUsers />);
 
@@ -143,7 +166,7 @@ describe("AdminUsers", () => {
 
   it("debounces rather than querying every keystroke", async () => {
     const user_ = userEvent.setup({ delay: null });
-    const seen: Seen = { users: [] };
+    const seen: Seen = { users: [], patches: [] };
     vi.stubGlobal("fetch", routes(400, seen));
     renderScreen(<AdminUsers />);
 
@@ -158,7 +181,7 @@ describe("AdminUsers", () => {
 
   it("returns to the first page when a search is typed", async () => {
     const user_ = userEvent.setup({ delay: null });
-    const seen: Seen = { users: [] };
+    const seen: Seen = { users: [], patches: [] };
     vi.stubGlobal("fetch", routes(400, seen));
     renderScreen(<AdminUsers />);
 
@@ -176,7 +199,7 @@ describe("AdminUsers", () => {
 
   it("pages forwards and back", async () => {
     const user_ = userEvent.setup({ delay: null });
-    const seen: Seen = { users: [] };
+    const seen: Seen = { users: [], patches: [] };
     vi.stubGlobal("fetch", routes(120, seen));
     renderScreen(<AdminUsers />);
 
@@ -220,5 +243,112 @@ describe("AdminUsers", () => {
     await user_.type(screen.getByLabelText("Search"), "nobody");
 
     await waitFor(() => expect(screen.getByText("No user matches that.")).toBeInTheDocument());
+  });
+});
+
+/**
+ * The edit dialog is where an administrator's decisions are made, so what is
+ * pinned here is what used to be impossible or dishonest: the profile fields
+ * are editable at all; a save sends only what changed (the gateway records a
+ * sent profile field as administrator-edited, which stops sign-in refreshing
+ * it from the directory — sending an untouched field would detach it under
+ * the guise of "no change"); clearing writes null rather than pretending;
+ * and the identity pair is shown but named as not editable, because a value
+ * that looks like a form field invites exactly the edit that cannot work.
+ */
+describe("AdminUsers edit dialog", () => {
+  it("saves a changed profile field and shows the result", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    const seen: Seen = { users: [], patches: [] };
+    vi.stubGlobal("fetch", routes(5, seen));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[0]!!);
+    const dialog = screen.getByRole("dialog");
+
+    await user_.clear(within(dialog).getByLabelText("Display name"));
+    await user_.type(within(dialog).getByLabelText("Display name"), "Renamed Person");
+    await user_.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(seen.patches).toHaveLength(1));
+    const body = seen.patches[0]!.body;
+    expect(body.display_name).toBe("Renamed Person");
+    // Untouched fields do not travel: sending one would record it as
+    // administrator-edited and detach it from the directory.
+    expect(body).not.toHaveProperty("email");
+    expect(body).not.toHaveProperty("username");
+    // The flags keep their shape: the dialog has always sent both.
+    expect(body.is_active).toBe(true);
+    expect(body.is_admin).toBe(false);
+
+    // The row reflects the save, not the cache's stale copy.
+    await waitFor(() => expect(screen.getByText("Renamed Person")).toBeInTheDocument());
+  });
+
+  it("clears a field with null rather than an empty string", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    const seen: Seen = { users: [], patches: [] };
+    vi.stubGlobal("fetch", routes(5, seen, { username: "person-0@local" }));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@local")).toBeInTheDocument());
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[0]!!);
+    const dialog = screen.getByRole("dialog");
+
+    await user_.clear(within(dialog).getByLabelText("Username"));
+    await user_.click(within(dialog).getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(seen.patches).toHaveLength(1));
+    expect(seen.patches[0]!.body.username).toBeNull();
+  });
+
+  it("re-seeds the fields when another user opens", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes(5));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[0]!!);
+    const dialog = screen.getByRole("dialog");
+    await waitFor(() =>
+      expect(screen.getByLabelText("Display name")).toHaveValue("Person 0"),
+    );
+    // Both closers — the corner X and the footer button — share the name.
+    await user_.click(within(dialog).getAllByRole("button", { name: "Close" })[0]!);
+
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[1]!);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Display name")).toHaveValue("Person 1"),
+    );
+  });
+
+  it("shows the identity pair read-only", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes(5));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[0]!!);
+
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("https://idp.test / subject-0")).toBeInTheDocument();
+    expect(within(dialog).getByText(/the login identity/i)).toBeInTheDocument();
+  });
+
+  it("annotates a directory account's profile fields with the sign-in refresh", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes(5));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[0]!!);
+
+    const dialog = screen.getByRole("dialog");
+    // Says what actually happens, not a half of it: editing pins the value
+    // against the directory's refresh.
+    expect(
+      within(dialog).getByText(/Editing it records your value, and sign-in stops changing it/),
+    ).toBeInTheDocument();
   });
 });
