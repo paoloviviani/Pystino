@@ -1625,16 +1625,28 @@ class RedactionRuleCreateRequest(BaseModel):
 
 
 class RedactionRuleUpdateRequest(BaseModel):
-    """No scope changes.
+    """Everything about a rule may change, its subject included.
 
-    A rule *is* a decision about one subject; re-pointing it at another is a
-    different decision that happens to reuse a row, and it would silently make
-    the two subjects' histories read as one. Delete it and write the one you
-    want. (The same argument as ``LimitRuleUpdateRequest``, for a different
-    reason: there is no counter here to abandon, only a record to confuse.)
+    The subject was frozen once, on the argument that a rule *is* a decision
+    about one subject and re-pointing it would silently make two subjects'
+    histories read as one. That argument does not survive contact with the
+    ledger: ``usage_records`` stamps the scope and the rule id onto every
+    request at request time, so the past explains itself no matter what the row
+    says now — and freezing had a real cost the argument ignored. ``scope_id``
+    is not a foreign key, so a deleted group leaves its rule pointing at
+    nothing: inert, labelled "deleted subject", and unrepairable — delete it and
+    retype a whole policy, or live with a rule that matches nothing. Re-pointing
+    is therefore accepted, validated exactly as creation is, and a subject that
+    already has a rule stays a 409: one rule per subject is the database's
+    promise and this endpoint does not get to merge two policies quietly.
     """
 
     name: str | None = Field(default=None, max_length=255)
+    #: Together with ``scope_id`` or in place of it: a new scope without a
+    #: subject is legal only for the catch-all, which names none. Omitted
+    #: entirely, the subject is untouched — an absent field is not a null one.
+    scope: RedactionScopeName | None = None
+    scope_id: uuid.UUID | None = None
     policy: RedactionPolicy | None = None
     is_active: bool | None = None
     reason: str | None = Field(default=None, max_length=500)

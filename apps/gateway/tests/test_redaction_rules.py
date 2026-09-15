@@ -35,7 +35,7 @@ from gateway.config import (
     RedactionSettings,
     Settings,
 )
-from gateway.models import RedactionRule, RedactionScope
+from gateway.models import Group, RedactionRule, RedactionScope
 from gateway.redaction.resolver import RedactionResolver
 from pydantic import SecretStr
 from sqlalchemy import select
@@ -287,6 +287,217 @@ class TestRuleCrud:
         assert deleted.status_code == 204
         assert (await session.execute(select(RedactionRule))).scalars().all() == []
         assert (await client.delete(f"/api/admin/redaction/rules/{rule_id}")).status_code == 404
+
+    async def test_patch_can_repoint_a_rule_at_another_subject(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The freeze is lifted: the subject changes like any other field, and
+        the rule ends up in force for the new subject and not the old one."""
+        await admin_client(app, session_factory, seeded)
+        created = await client.post(
+            "/api/admin/redaction/rules",
+            json={
+                "scope": "provider",
+                "scope_id": str(seeded.provider.id),
+                "policy": policy(entities={"URL": EntityPolicy(mode=EntityMode.REDACT)}),
+            },
+        )
+        rule_id = created.json()["id"]
+
+        with caplog.at_level(logging.WARNING):
+            moved = await client.patch(
+                f"/api/admin/redaction/rules/{rule_id}",
+                json={"scope": "group", "scope_id": str(seeded.group.id)},
+            )
+
+        assert moved.status_code == 200, moved.text
+        body = moved.json()
+        assert body["scope"] == "group"
+        assert body["scope_id"] == str(seeded.group.id)
+        assert body["subject_label"] == "research"
+        # The edit is an auditable act about *who* is redacted, so the log says
+        # what moved, not merely that something did.
+        assert "re-pointed" in caplog.text
+        assert "provider" in caplog.text and "group" in caplog.text
+
+        resolver: RedactionResolver = app.state.redaction
+        in_force = resolver.policy_for(group_id=seeded.group.id).policy
+        assert in_force.mode_for("URL") is EntityMode.REDACT
+        left_behind = resolver.policy_for(provider_id=seeded.provider.id).policy
+        assert left_behind.mode_for("URL") is EntityMode.OFF
+
+    async def test_patch_can_repoint_a_rule_within_its_scope(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """One half of the pair alone re-points within the scope it already
+        names — the commonest repair, and the mildest kind of move."""
+        await admin_client(app, session_factory, seeded)
+        clinical = Group(name="clinical")
+        session.add(clinical)
+        await session.commit()
+        created = await client.post(
+            "/api/admin/redaction/rules",
+            json={"scope": "group", "scope_id": str(seeded.group.id), "policy": policy()},
+        )
+
+        moved = await client.patch(
+            f"/api/admin/redaction/rules/{created.json()['id']}",
+            json={"scope_id": str(clinical.id)},
+        )
+
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["subject_label"] == "clinical"
+
+    async def test_repointing_onto_an_occupied_subject_is_a_conflict_naming_the_rule(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """One rule per subject is the database's promise; the route keeps it
+        rather than merging two policies quietly. Named, so the console can say
+        which rule holds the subject."""
+        await admin_client(app, session_factory, seeded)
+        await client.post(
+            "/api/admin/redaction/rules",
+            json={
+                "name": "research handles patient data",
+                "scope": "group",
+                "scope_id": str(seeded.group.id),
+                "policy": policy(),
+            },
+        )
+        second = await client.post(
+            "/api/admin/redaction/rules",
+            json={"scope": "provider", "scope_id": str(seeded.provider.id), "policy": policy()},
+        )
+
+        moved = await client.patch(
+            f"/api/admin/redaction/rules/{second.json()['id']}",
+            json={"scope": "group", "scope_id": str(seeded.group.id)},
+        )
+
+        assert moved.status_code == 409, moved.text
+        message = moved.json()["error"]["message"]
+        assert "research" in message
+        assert "research handles patient data" in message
+        # Nothing was moved: both rules sit exactly where they were.
+        listed = await client.get("/api/admin/redaction/rules")
+        places = {(item["scope"], item["subject_label"]) for item in listed.json()["items"]}
+        assert places == {("group", "research"), ("provider", "fake")}
+
+    async def test_a_subject_change_is_validated_like_creation(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Every refusal the create route makes, the update route makes too —
+        a move that would write a rule matching nothing is refused identically."""
+        await admin_client(app, session_factory, seeded)
+        created = await client.post(
+            "/api/admin/redaction/rules",
+            json={"scope": "provider", "scope_id": str(seeded.provider.id), "policy": policy()},
+        )
+        rule_id = created.json()["id"]
+
+        missing = await client.patch(
+            f"/api/admin/redaction/rules/{rule_id}", json={"scope": "group"}
+        )
+        assert missing.status_code == 400, missing.text
+        assert "needs the id" in missing.json()["error"]["message"]
+
+        unexpected = await client.patch(
+            f"/api/admin/redaction/rules/{rule_id}",
+            json={"scope": "all", "scope_id": str(seeded.group.id)},
+        )
+        assert unexpected.status_code == 400, unexpected.text
+        assert "takes no subject" in unexpected.json()["error"]["message"]
+
+        ghost = await client.patch(
+            f"/api/admin/redaction/rules/{rule_id}",
+            json={"scope": "group", "scope_id": str(uuid.uuid4())},
+        )
+        assert ghost.status_code == 404, ghost.text
+        assert "No group with id" in ghost.json()["error"]["message"]
+
+        cleared = await client.patch(
+            f"/api/admin/redaction/rules/{rule_id}", json={"scope_id": None}
+        )
+        assert cleared.status_code == 400, cleared.text
+        assert "needs the id" in cleared.json()["error"]["message"]
+
+    async def test_a_dangling_rule_can_be_repaired_or_widened(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The reason the freeze was lifted. ``scope_id`` is not a foreign key,
+        so a deleted subject left its rule inert and unrepairable: delete it and
+        retype a whole policy, or leave a rule that matches nothing. Now it can
+        be re-pointed at a real subject — or widened to every request."""
+        await admin_client(app, session_factory, seeded)
+        session.add(
+            RedactionRule(scope=RedactionScope.GROUP, scope_id=uuid.uuid4(), policy=policy())
+        )
+        await session.commit()
+        listed = await client.get("/api/admin/redaction/rules")
+        rule = listed.json()["items"][0]
+        assert rule["subject_label"] is None
+
+        repaired = await client.patch(
+            f"/api/admin/redaction/rules/{rule['id']}",
+            json={"scope": "group", "scope_id": str(seeded.group.id)},
+        )
+        assert repaired.status_code == 200, repaired.text
+        assert repaired.json()["subject_label"] == "research"
+
+        widened = await client.patch(
+            f"/api/admin/redaction/rules/{rule['id']}", json={"scope": "all"}
+        )
+        assert widened.status_code == 200, widened.text
+        assert widened.json()["scope_id"] is None
+        assert widened.json()["subject_label"] == "Every request"
+
+    async def test_an_unchanged_subject_is_not_revalidated(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Echoing the subject back with an edit of something else must not
+        404 on a subject that no longer exists. Absent means unchanged — and
+        so does present-and-identical."""
+        await admin_client(app, session_factory, seeded)
+        dangling = uuid.uuid4()
+        session.add(RedactionRule(scope=RedactionScope.GROUP, scope_id=dangling, policy=policy()))
+        await session.commit()
+        listed = await client.get("/api/admin/redaction/rules")
+        rule_id = listed.json()["items"][0]["id"]
+
+        edited = await client.patch(
+            f"/api/admin/redaction/rules/{rule_id}",
+            json={"name": "still here", "scope": "group", "scope_id": str(dangling)},
+        )
+
+        assert edited.status_code == 200, edited.text
 
     async def test_a_write_reaches_this_workers_resolver_immediately(
         self,
