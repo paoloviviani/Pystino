@@ -332,7 +332,7 @@ function CreateUserDialog({
           type="password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
-          hint="Handed to the person once, by you. Reset here later if it leaks."
+          hint="Given to the user directly. Reset here later if it leaks."
         />
         <Input
           label="Display name"
@@ -602,7 +602,7 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
                   type="password"
                   value={newPassword}
                   onChange={(event) => setNewPassword(event.target.value)}
-                  placeholder="typed once, by you, for them"
+                  placeholder="New password"
                 />
               </div>
               <Button
