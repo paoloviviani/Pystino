@@ -21,13 +21,21 @@ from fastapi import APIRouter
 from gateway.access import accessible_model_by_name, accessible_models
 from gateway.deps import PrincipalDep, SessionDep
 from gateway.errors import BadRequestError
-from gateway.models import ModelDef, ModelKind
+from gateway.models import ModelDef, ModelKind, Provider, ProviderKind
 from gateway.schemas import ModelCard, ModelList
 
 #: The `?include=` vocabulary. Search is the odd one out — its tiers answer
 #: /v1/search and stay out of the default list for the reason in the docstring
 #: above.
 _KINDS: dict[str, ModelKind] = {kind.value: kind for kind in ModelKind}
+
+#: Models behind this kind of provider are plumbing, not catalogue entries:
+#: the deployment's own extractor reads documents on `/v1/ocr`, and a caller
+#: picking "markitdown" from a model list is picking plumbing as if it were a
+#: choice. The listing is the only place they are hidden — a caller whose
+#: grants reach one may still ask for it by name (retrieval and resolution are
+#: unchanged), which is the same line the search tiers walk.
+_NOT_CALLER_FACING = ProviderKind.INTERNAL
 
 router = APIRouter(prefix="/v1", tags=["openai"])
 
@@ -59,7 +67,7 @@ async def list_models(
     # step with the predicate.
     stmt = (
         accessible_models(user_id=principal.user.id, group_ids=principal.user.group_ids())
-        .where(ModelDef.kind.in_(kinds))
+        .where(ModelDef.kind.in_(kinds), Provider.kind != _NOT_CALLER_FACING)
         .order_by(ModelDef.name)
     )
     models = (await session.execute(stmt)).scalars().all()

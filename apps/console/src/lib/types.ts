@@ -133,6 +133,11 @@ export interface AdminModel {
   provider_name: string;
   /** A model behind a deactivated provider is unreachable, and says so. */
   provider_is_active: boolean;
+  /** What kind of counterparty stands behind the provider (router, search,
+   *  internal — this deployment's own infrastructure). Screens that list
+   *  models as things a caller could pick read it to leave infrastructure
+   *  out, the way the model's own kind sets search tiers aside. */
+  provider_kind: string;
   /** Which /v1 route may serve it. */
   kind: ModelKind;
   display_name: string | null;

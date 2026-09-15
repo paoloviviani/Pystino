@@ -11,6 +11,15 @@ grants, prices and the ledger all work on a model whose provider happens to be
 local. What changes is the *route's* dispatch — `/v1/ocr` sends the document to
 the extraction service instead of an upstream `/ocr` — and nothing else.
 
+The kind is `internal`, and that is the row's visibility contract. A model
+served here is plumbing the deployment stands up by default (migration 0041
+seeds the provider and its model, in the shape the manual path used), not a
+catalogue entry a caller picks: `/v1/models` leaves it out and the console's
+model list does not render it, the way search tiers are left out for the same
+reason. It is hidden, not unaccounted — usage meters to the ledger, an
+administrator can still grant, price or delete the row, and a caller whose
+grants reach it may ask for it by name.
+
 Two claims it makes, both true by construction rather than by configuration:
 
 * **It reports no cost.** There is no counterparty to charge us, so
@@ -28,6 +37,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from gateway.plugins.base import ProviderKind
 from gateway.plugins.generic import GenericOpenAIPlugin
 
 
@@ -42,6 +52,10 @@ class LocalExtractorPlugin(GenericOpenAIPlugin):
         "deployment, and scanned pages are refused rather than guessed at — "
         "reading those needs an OCR model."
     )
+    #: The compose service is infrastructure, not a counterparty. Its model
+    #: row exists so grants, prices and the ledger have something to hang on;
+    #: `ProviderKind.INTERNAL` is what listings read to leave it out.
+    kind = ProviderKind.INTERNAL
     #: The service on the compose network. A default rather than a requirement:
     #: a deployment that scales the extractor separately points the provider row
     #: at wherever it put it.

@@ -90,12 +90,27 @@ export function AdminModels() {
   // this is one of the two screens that genuinely needs the pager.
   const paged = usePaginated();
   const models = useModels(paged.page);
+  // Rows this screen must not render as a catalogue entry.
+  //
   // Search tiers are a different concept and have their own screen
   // (ADR 0071): they answer /v1/search and were rendered here as though a
   // model kind, which is how an operator came to manage a depth among the
   // prices-per-million.
-  const searchTierIds = new Set(
-    (models.data?.items ?? []).filter((m) => m.kind === "search").map((m) => m.id),
+  //
+  // The deployment's own infrastructure is the other: the extractor's
+  // `markitdown` row exists so grants, prices and the ledger have something
+  // to hang on, and it is seeded by default (migration 0041) — rendering it
+  // beside the catalogue made the screen present plumbing as a choice, with
+  // a "no price" warning attached that is the design and not an oversight.
+  // Hidden here, not gone: the row is still served by `/api/admin/models`,
+  // so the API stays complete and a future management screen can filter the
+  // other way, exactly as the search screen does.
+  const hiddenRowIds = new Set(
+    (models.data?.items ?? [])
+      .filter(
+        (model) => model.kind === "search" || model.provider_kind === "internal",
+      )
+      .map((model) => model.id),
   );
 
   const update = useUpdateModel();
@@ -318,7 +333,7 @@ export function AdminModels() {
               // a model that exists but renders nowhere is worse than one in a
               // section headed by its raw name.
               const rows = (models.data?.items ?? []).filter(
-                (model) => !searchTierIds.has(model.id),
+                (model) => !hiddenRowIds.has(model.id),
               );
               const known = new Set(KIND_SECTIONS.map((section) => section.kind));
               const unknown = rows.filter((model) => !known.has(model.kind));

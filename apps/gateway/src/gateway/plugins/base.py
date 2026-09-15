@@ -44,7 +44,19 @@ from gateway.models import ApiSurface
 
 
 class ProviderKind(enum.StrEnum):
-    """Whether the serving endpoint is implied by the model or chosen per request."""
+    """What kind of counterparty stands behind a provider row.
+
+    The original two were distinguished by a single question: is the endpoint
+    that serves a request determined by the model asked for, or chosen per
+    request by the counterparty? Fixed is a provider; chosen is a router.
+    Search and internal are not answers to that question — they are the
+    discovery that the counterparty axis has more than inference on it — and
+    they stay kinds rather than becoming a second discriminator beside
+    ``providers.plugin``, because everything a row of this kind needs (an
+    address, a credential, grants, a place in the ledger) is what a provider
+    row already is. Mirrored in ``gateway.models`` so the model layer need not
+    import the plugin package.
+    """
 
     PROVIDER = "provider"
     ROUTER = "router"
@@ -56,6 +68,17 @@ class ProviderKind(enum.StrEnum):
     #: What differs is the one thing a row cannot express: the plugin runs a
     #: search instead of a completion, which is `plugins/search.py`.
     SEARCH = "search"
+    #: Not a counterparty at all: this deployment's own service, reached over
+    #: the compose network. The document extractor is the case
+    #: (`plugins/extractor.py`) — a provider row naming it is infrastructure
+    #: with a model row so grants, prices and the ledger have something to hang
+    #: on, not a catalogue entry a caller picks. Listings therefore hide these
+    #: models the way they hide search tiers, and for the same reason: a client
+    #: presenting "markitdown" beside the chat models would present plumbing as
+    #: a choice. Hiding is presentation, not access — a caller whose grants
+    #: reach the model may still ask for it by name, and usage meters to the
+    #: ledger exactly as any other model's does.
+    INTERNAL = "internal"
 
 
 @dataclass(frozen=True, slots=True)

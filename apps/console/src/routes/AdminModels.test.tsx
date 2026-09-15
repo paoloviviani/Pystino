@@ -23,6 +23,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
     provider_id: "pr1",
     provider_name: "acme",
     provider_is_active: true,
+    provider_kind: "provider",
     kind: "chat",
     display_name: null,
     description: null,
@@ -288,6 +289,35 @@ describe("AdminModels", () => {
 
     await waitFor(() => expect(screen.getByText("future-thing")).toBeInTheDocument());
     expect(screen.getByRole("heading", { name: /^Other/ })).toBeInTheDocument();
+  });
+
+  it("does not render the deployment's own infrastructure as a catalogue row", async () => {
+    // The extractor's `markitdown` row is seeded by default (migration 0041)
+    // and exists so grants, prices and the ledger have something to hang on;
+    // rendering it beside the catalogue presents plumbing as a choice, with a
+    // "no price" warning that is the design and not an oversight. The admin
+    // API still returns the row, and marks it `provider_kind: "internal"` —
+    // hidden here is presentation, exactly as the search tiers above.
+    vi.stubGlobal(
+      "fetch",
+      routes([
+        model(),
+        model({
+          id: "m7",
+          name: "markitdown",
+          upstream_model: "markitdown",
+          provider_name: "extractor",
+          provider_kind: "internal",
+          kind: "ocr",
+          current_price: null,
+          granted_to: [],
+        }),
+      ]),
+    );
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("fast-summariser")).toBeInTheDocument());
+    expect(screen.queryByText("markitdown")).not.toBeInTheDocument();
   });
 
   it("lists a model with its current price", async () => {

@@ -272,7 +272,7 @@ class CostSource(enum.StrEnum):
 
 
 class ProviderKind(enum.StrEnum):
-    """Whether the serving endpoint is implied by the model or chosen per request.
+    """What kind of counterparty stands behind a provider row.
 
     Mirrors `gateway.plugins.base.ProviderKind`, deliberately duplicated so the
     model layer does not depend on the plugin package — the plugins import the
@@ -285,6 +285,12 @@ class ProviderKind(enum.StrEnum):
     #: `gateway.plugins.base.ProviderKind.SEARCH` for why this is a kind of
     #: provider and not a table of its own.
     SEARCH = "search"
+    #: This deployment's own infrastructure, not a counterparty on the
+    #: internet. See `gateway.plugins.base.ProviderKind.INTERNAL`: the same
+    #: reasoning carried by a row the console can see, because listings hide
+    #: the models behind such a provider and an operator is owed the reason on
+    #: the row itself.
+    INTERNAL = "internal"
 
 
 class PriceSource(enum.StrEnum):

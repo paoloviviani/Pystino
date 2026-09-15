@@ -911,6 +911,11 @@ class ModelAdminResponse(BaseModel):
     provider_id: uuid.UUID
     provider_name: str
     provider_is_active: bool
+    # What kind of counterparty the provider names. Screens that list models
+    # as things a caller could pick read this to leave infrastructure out
+    # (`internal`, the extractor) the way they already leave search tiers out
+    # by the model's own kind.
+    provider_kind: str
     # "chat" or "embedding": which /v1 route may use it (ADR 0028).
     kind: str
     display_name: str | None

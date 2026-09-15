@@ -45,6 +45,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
     provider_id: "pr1",
     provider_name: "acme",
     provider_is_active: true,
+    provider_kind: "provider",
     kind: "chat",
     display_name: null,
     description: null,
