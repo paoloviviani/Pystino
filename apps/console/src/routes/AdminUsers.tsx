@@ -437,7 +437,7 @@ function formatDate(iso: string): string {
  * Everything an administrator may change about one account, in one place
  * instead of a scattered Enable button and a password endpoint with no door.
  *
- * Three facts shape it:
+ * Four facts shape it:
  *
  * - **The issuer decides the offers.** A local account can have its password
  *   set, cleared, and re-set here; a directory account's credentials belong
@@ -451,6 +451,13 @@ function formatDate(iso: string): string {
  * - **Password changes take effect immediately** and separately from the
  *   status toggle: an administrator resetting a locked-out account should
  *   not have to also review flags to do it.
+ * - **The profile fields the account carries are editable here, and an edit
+ *   pins them.** Sign-in used to refresh email, display name and username
+ *   from the directory's claims, silently reverting whatever was corrected.
+ *   Now a field edited here is recorded server-side and sign-in stops
+ *   touching it — which is what the hint on a directory account's fields
+ *   says, because a note that promises less than the behaviour delivers is
+ *   how an operator stops reading the notes.
  */
 function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
   const update = useUpdateUser();
@@ -460,9 +467,12 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
 
   const [isActive, setIsActive] = useState(user?.is_active ?? true);
   const [isAdmin, setIsAdmin] = useState(user?.is_admin ?? false);
+  const [email, setEmail] = useState(user?.email ?? "");
+  const [displayName, setDisplayName] = useState(user?.display_name ?? "");
+  const [username, setUsername] = useState(user?.username ?? "");
   const [newPassword, setNewPassword] = useState("");
 
-  // Re-seed the toggles when a different user opens: the dialog is keyed by
+  // Re-seed the fields when a different user opens: the dialog is keyed by
   // remount at the call site in spirit, but state here must follow the row.
   const userKey = user?.id ?? "none";
   const [seededFor, setSeededFor] = useState(userKey);
@@ -470,6 +480,9 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
     setSeededFor(userKey);
     setIsActive(user?.is_active ?? true);
     setIsAdmin(user?.is_admin ?? false);
+    setEmail(user?.email ?? "");
+    setDisplayName(user?.display_name ?? "");
+    setUsername(user?.username ?? "");
     setNewPassword("");
   }
 
@@ -481,12 +494,29 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
     onClose();
   };
 
-  const dirty = user !== null && (isActive !== user.is_active || isAdmin !== user.is_admin);
+  // Only what changed travels. The gateway records a sent profile field as
+  // administrator-edited and stops refreshing it from the directory — sending
+  // an untouched field under a "no change" save would silently detach it.
+  const profileChanges: {
+    email?: string | null;
+    display_name?: string | null;
+    username?: string | null;
+  } = {};
+  if (user !== null) {
+    if (email !== (user.email ?? "")) profileChanges.email = email.trim() || null;
+    if (displayName !== (user.display_name ?? ""))
+      profileChanges.display_name = displayName.trim() || null;
+    if (username !== (user.username ?? "")) profileChanges.username = username.trim() || null;
+  }
+  const profileDirty = Object.keys(profileChanges).length > 0;
+  const dirty =
+    user !== null &&
+    (isActive !== user.is_active || isAdmin !== user.is_admin || profileDirty);
 
-  const saveFlags = () =>
+  const save = () =>
     user &&
     update.mutate(
-      { id: user.id, is_active: isActive, is_admin: isAdmin },
+      { id: user.id, is_active: isActive, is_admin: isAdmin, ...profileChanges },
       {
         onSuccess: () => toast?.add({ title: "User updated", type: "success" }),
         onError: (caught: unknown) =>
@@ -527,7 +557,7 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
       footer={
         <>
           <Button onClick={close}>Close</Button>
-          <Button variant="primary" disabled={!dirty} busy={update.isPending} onClick={saveFlags}>
+          <Button variant="primary" disabled={!dirty} busy={update.isPending} onClick={save}>
             Save changes
           </Button>
         </>
@@ -550,7 +580,59 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
               <Badge tone="danger">Disabled</Badge>
             )}
             <Badge tone={isLocal ? "neutral" : "warn"}>{isLocal ? "local" : "IdP"}</Badge>
-            {!isLocal && user && <span className={CODE}>{user.issuer}</span>}
+          </div>
+          {/* Read-only, and named as what it is: (issuer, subject) is the
+              login identity — the pair every key, session and ledger row keys
+              on. It looks editable-adjacent sitting in a form, so the line
+              says it is not, rather than letting somebody find out from a
+              silent no-op. */}
+          <p className="mt-1 text-xs text-ink-faint">
+            {user && (
+              <span className={CODE}>
+                {user.issuer} / {user.subject}
+              </span>
+            )}{" "}
+            — the login identity. Not editable here.
+          </p>
+        </div>
+
+        <div>
+          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">Profile</div>
+          <div className="mt-1 space-y-3">
+            <Input
+              label="Email"
+              type="email"
+              value={email}
+              disabled={!user}
+              onChange={(event) => setEmail(event.target.value)}
+              hint={
+                isLocal
+                  ? "Where mail about the account goes. A local account signs in with its identity, not this address."
+                  : "The identity provider refreshes this at sign-in. Editing it records your value, and sign-in stops changing it."
+              }
+            />
+            <Input
+              label="Display name"
+              value={displayName}
+              disabled={!user}
+              onChange={(event) => setDisplayName(event.target.value)}
+              hint={
+                isLocal
+                  ? undefined
+                  : "Refreshed at sign-in from the identity provider, unless edited here."
+              }
+            />
+            <Input
+              label="Username"
+              value={username}
+              disabled={!user}
+              onChange={(event) => setUsername(event.target.value)}
+              hint={
+                isLocal
+                  ? undefined
+                  : "The directory's own name for the person (`preferred_username`). Follows the directory unless edited here."
+              }
+            />
           </div>
         </div>
 

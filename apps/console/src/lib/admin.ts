@@ -771,11 +771,28 @@ export function useRemoveGroupMember(groupId: string | null) {
   });
 }
 
+/**
+ * Everything the edit dialog may change, in one PATCH: the flags, and — since
+ * the profile editors landed — the three fields the account says about
+ * itself. Only the fields that actually changed travel: the gateway records a
+ * sent profile field as administrator-edited, which stops sign-in refreshing
+ * it from the identity provider, so sending an untouched field would silently
+ * detach it from the directory under the guise of "no change".
+ */
 export function useUpdateUser() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; is_active?: boolean; is_admin?: boolean }) =>
-      request<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body }),
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string;
+      is_active?: boolean;
+      is_admin?: boolean;
+      email?: string | null;
+      display_name?: string | null;
+      username?: string | null;
+    }) => request<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
   });
 }
