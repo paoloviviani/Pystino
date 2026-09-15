@@ -141,6 +141,13 @@ services:
         # identify, so a visitor who is not signed in would only see an error.
         AUTOMATIC_LOGIN=true
 
+        # The execute_code tool: models run Python autonomously in the signed-in
+        # person's own browser sandbox (park-and-resume over the stream), and
+        # the results feed back into the turn so the model can iterate. Per-user
+        # isolation by construction — the code never leaves the client. Off (or
+        # absent) means code fences only, the manual channel.
+        CHAT_CODE_TOOL_ENABLED=true
+
         # Sign-in against the gateway's own IdP (ADR 0068). The issuer is the
         # public origin — the same value GATEWAY_IDP__ISSUER was configured
         # with, because openid-client validates the discovery document's
