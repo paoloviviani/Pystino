@@ -128,6 +128,13 @@ interface Writes {
   captured: { url: string; method: string; body: unknown }[];
 }
 
+/** GET counters, for asserting that a mutation invalidates what it changed. */
+interface Counts {
+  providers: number;
+  models: number;
+  groups: number;
+}
+
 function searchRoutes(
   calls: PolicyCalls = { set: [] },
   options: {
@@ -135,9 +142,20 @@ function searchRoutes(
     cereaBackend?: string | null;
     writes?: Writes;
     providers?: AdminProvider[];
+    counts?: Counts;
+    deleteResult?: unknown;
+    failDeleteWith?: { status: number; message: string };
   } = {},
 ) {
-  const { failPolicyWith, cereaBackend = "linkup", writes, providers } = options;
+  const {
+    failPolicyWith,
+    cereaBackend = "linkup",
+    writes,
+    providers,
+    counts,
+    deleteResult,
+    failDeleteWith,
+  } = options;
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -148,10 +166,21 @@ function searchRoutes(
         headers: { "content-type": "application/json" },
       });
     if (url.includes("/api/admin/providers")) {
+      if (method === "DELETE") {
+        writes?.captured.push({ url, method, body: null });
+        if (failDeleteWith) {
+          return new Response(
+            JSON.stringify({ error: { message: failDeleteWith.message } }),
+            { status: failDeleteWith.status },
+          );
+        }
+        return jsonResponse(deleteResult ?? { tiers_deleted: 1, cleared_groups: ["cerea"] });
+      }
       if (method === "POST" || method === "PATCH") {
         writes?.captured.push({ url, method, body: JSON.parse(String(init?.body)) });
         return jsonResponse({ id: "p-new" });
       }
+      if (counts) counts.providers += 1;
       return jsonResponse({
         items: providers ?? [
           backend(),
@@ -163,6 +192,7 @@ function searchRoutes(
       });
     }
     if (url.includes("/api/admin/models")) {
+      if (counts) counts.models += 1;
       return jsonResponse({
         items: [
           tier(),
@@ -185,6 +215,7 @@ function searchRoutes(
       return new Response(null, { status: 204 });
     }
     if (url.includes("/api/admin/groups")) {
+      if (counts) counts.groups += 1;
       return jsonResponse({
         items: [
           group({ search_backend: cereaBackend }),
@@ -425,5 +456,110 @@ describe("AdminSearch backend dialog", () => {
     expect(save).toBeEnabled();
     await user.selectOptions(endpoint, "https://jina.internal.test");
     expect(save).toBeDisabled();
+  });
+});
+
+describe("AdminSearch backend deletion", () => {
+  it("the confirm dialog says what the cascade takes with it", async () => {
+    // One tier behind the mock backend: the copy must name the count, the
+    // groups' lost policy, and the ledger's immunity — the three facts an
+    // administrator needs before committing to an irreversible delete.
+    // A single-backend listing, so the row buttons are unambiguous.
+    vi.stubGlobal("fetch", searchRoutes({ set: [] }, { providers: [backend()] }));
+    const user = userEvent.setup({ delay: null });
+    renderScreen(<AdminSearch />);
+
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(dialog.getByText("Delete linkup")).toBeInTheDocument();
+    expect(dialog.getByText(/Removes the backend and its 1 tier/)).toBeInTheDocument();
+    expect(dialog.getByText(/lose their unified-search policy/)).toBeInTheDocument();
+    expect(dialog.getByText(/Recorded spend is unaffected/)).toBeInTheDocument();
+  });
+
+  it("cancelling deletes nothing", async () => {
+    // The dialog is the safety, so the test holds that the safety works:
+    // no DELETE leaves the browser unless "Delete permanently" is pressed.
+    const writes: Writes = { captured: [] };
+    vi.stubGlobal("fetch", searchRoutes({ set: [] }, { writes, providers: [backend()] }));
+    const user = userEvent.setup({ delay: null });
+    renderScreen(<AdminSearch />);
+
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Cancel" }));
+
+    expect(writes.captured).toEqual([]);
+  });
+
+  it("confirming sends DELETE to the backend and closes the dialog", async () => {
+    const writes: Writes = { captured: [] };
+    vi.stubGlobal("fetch", searchRoutes({ set: [] }, { writes, providers: [backend()] }));
+    const user = userEvent.setup({ delay: null });
+    renderScreen(<AdminSearch />);
+
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Delete permanently" }));
+
+    await waitFor(() => {
+      const deletion = writes.captured.find((entry) => entry.method === "DELETE");
+      expect(deletion?.url).toContain("/api/admin/providers/p1");
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("a successful delete refetches the backends, the tiers and the groups", async () => {
+    // The cascade changes three listings at once — the backend row, the tiers
+    // it took, and the groups whose policy it cleared — so the hook
+    // invalidates all three; if one were missed its screen would show a
+    // backend that no longer exists, which reads as a gateway bug.
+    const writes: Writes = { captured: [] };
+    const counts: Counts = { providers: 0, models: 0, groups: 0 };
+    vi.stubGlobal(
+      "fetch",
+      searchRoutes({ set: [] }, { writes, counts, providers: [backend()] }),
+    );
+    const user = userEvent.setup({ delay: null });
+    renderScreen(<AdminSearch />);
+
+    // Loaded, so the initial fetches are counted before the mutation runs.
+    await screen.findByRole("button", { name: "Delete" });
+    const providersBefore = counts.providers;
+    const modelsBefore = counts.models;
+    const groupsBefore = counts.groups;
+    expect(providersBefore).toBeGreaterThan(0);
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Delete permanently" }));
+
+    await waitFor(() => expect(counts.providers).toBeGreaterThan(providersBefore));
+    await waitFor(() => expect(counts.models).toBeGreaterThan(modelsBefore));
+    await waitFor(() => expect(counts.groups).toBeGreaterThan(groupsBefore));
+  });
+
+  it("a failed delete keeps the dialog open with the server's sentence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      searchRoutes(
+        { set: [] },
+        {
+          providers: [backend()],
+          failDeleteWith: { status: 404, message: "No provider with id p1." },
+        },
+      ),
+    );
+    const user = userEvent.setup({ delay: null });
+    renderScreen(<AdminSearch />);
+
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(dialog.getByRole("button", { name: "Delete permanently" }));
+
+    await screen.findByText("No provider with id p1.");
+    // The dialog stays open: the delete did not happen, and closing it would
+    // read as if it had.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });

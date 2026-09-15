@@ -13,6 +13,7 @@ import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import {
   useCreateProvider,
+  useDeleteSearchBackend,
   useGroups,
   useModelAccess,
   useModels,
@@ -24,7 +25,7 @@ import {
 import type { AdminProvider, ProviderPlugin } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
-import { CHIPS, CODE, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
+import { CHIPS, CODE, FORM, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
 
 /**
  * Web search, as its own screen (2026-09-13).
@@ -46,6 +47,7 @@ export function AdminSearch() {
 
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<AdminProvider | null>(null);
+  const [deleting, setDeleting] = useState<AdminProvider | null>(null);
 
   // The screen's own vocabulary: backends are the search providers, tiers the
   // models of kind `search`. Everything else in those listings belongs to the
@@ -104,7 +106,19 @@ export function AdminSearch() {
       header: "",
       render: (backend) => (
         <div className={ROW_ACTIONS}>
-          <Button onClick={() => setEditing(backend)}>Edit</Button>
+          {/* Explicit, not inherited: the row's actions read as one system
+              across the console — Edit is always the light outline, never a
+              colour that could be mistaken for the primary action of the row. */}
+          <Button variant="secondary" onClick={() => setEditing(backend)}>
+            Edit
+          </Button>
+          {/* Thin red text, never filled: at row level a filled red button
+              outweighs every other element in the table, and deletion here is
+              confirmable, not accidental — the confirm dialog is where the
+              filled danger belongs. */}
+          <Button variant="ghost" className="text-danger" onClick={() => setDeleting(backend)}>
+            Delete
+          </Button>
         </div>
       ),
     },
@@ -277,6 +291,11 @@ export function AdminSearch() {
           setCreating(false);
           setEditing(null);
         }}
+      />
+      <DeleteBackendDialog
+        backend={deleting}
+        tierCount={deleting ? tiers.filter((tier) => tier.provider_id === deleting.id).length : 0}
+        onClose={() => setDeleting(null)}
       />
     </div>
   );
@@ -492,6 +511,88 @@ function BackendDialog({
           <span>Remove the stored key</span>
         </label>
       )}
+    </Dialog>
+  );
+}
+
+/**
+ * Deleting a backend, with the consequences said in place rather than left for
+ * the operator to meet later. The gateway cascades here on purpose (ADR 0071)
+ * — a backend and its tiers are one concept, and a half-deleted backend is
+ * worse than an atomic delete — so the dialog says what goes with it: the
+ * tiers, the grants, and the groups' unified-search policy. What it also says,
+ * because "delete" beside money has to answer it before the click: the ledger
+ * is untouched, the same guarantee the model delete makes.
+ */
+function DeleteBackendDialog({
+  backend,
+  tierCount,
+  onClose,
+}: {
+  backend: AdminProvider | null;
+  tierCount: number;
+  onClose: () => void;
+}) {
+  const del = useDeleteSearchBackend();
+  const toast = useOptionalToast();
+
+  return (
+    <Dialog
+      open={backend !== null}
+      title={`Delete ${backend?.name ?? "this backend"}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="danger"
+            busy={del.isPending}
+            onClick={() =>
+              backend &&
+              del.mutate(backend.id, {
+                onSuccess: (result) => {
+                  // The gateway names the groups whose unified-search policy
+                  // the cascade cleared; the toast repeats them, so the
+                  // administrator hears who was affected without going to
+                  // look — and hears nothing extra when nobody was.
+                  const who = result.cleared_groups.map((name) => `'${name}'`).join(", ");
+                  toast?.add({
+                    title:
+                      who.length > 0
+                        ? `Backend deleted — ${who} lost ${
+                            result.cleared_groups.length === 1 ? "its" : "their"
+                          } unified-search policy`
+                        : "Backend deleted",
+                    type: "success",
+                  });
+                  onClose();
+                },
+                onError: () =>
+                  toast?.add({ title: "Could not delete the backend", type: "error" }),
+              })
+            }
+          >
+            Delete permanently
+          </Button>
+        </>
+      }
+    >
+      <div className={FORM}>
+        {del.error ? (
+          <Notice tone="danger">
+            {del.error instanceof Error ? del.error.message : "Unknown error."}
+          </Notice>
+        ) : null}
+        <p>
+          Removes the backend and its {tierCount} {tierCount === 1 ? "tier" : "tiers"} from the
+          gateway outright. Callers of <code className={CODE}>POST /v1/search/&#123;backend&#125;</code>{" "}
+          get "unknown backend" from the next request on, and groups searching through it lose
+          their unified-search policy. This cannot be undone.
+        </p>
+        <p className={MUTED}>
+          Recorded spend is unaffected: past searches keep their attribution in the ledger.
+        </p>
+      </div>
     </Dialog>
   );
 }

@@ -246,7 +246,7 @@ export function AdminModels() {
           >
             {model.is_active ? "Deactivate" : "Activate"}
           </Button>
-          <Button variant="ghost" onClick={() => setDeleting(model)}>
+          <Button variant="ghost" className="text-danger" onClick={() => setDeleting(model)}>
             Delete
           </Button>
         </div>

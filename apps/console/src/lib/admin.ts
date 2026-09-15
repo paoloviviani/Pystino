@@ -28,6 +28,7 @@ import type {
   GroupCreateInput,
   IdentityProvider,
   IdentityProviderInput,
+  SearchBackendDeleteResult,
   UsageReport,
 } from "./types";
 
@@ -301,6 +302,31 @@ export function useDeleteProvider() {
   return useMutation({
     mutationFn: (id: string) => request<void>(`/api/admin/providers/${id}`, { method: "DELETE" }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.providers }),
+  });
+}
+
+/**
+ * Delete a search backend, which the gateway answers with a cascade rather
+ * than a refusal (ADR 0071): the backend and its tiers are one concept on the
+ * search screen, so the tiers, their prices and their grants go with it, and
+ * groups whose unified-search policy named one of those tiers lose it — named
+ * in the response, so the screen can say who was affected instead of letting
+ * it surface as a 404 the next time someone searches.
+ *
+ * A distinct hook from `useDeleteProvider`, because the response shape and
+ * the blast radius differ: a tier deletion changes the group listings too,
+ * which is why three keys are invalidated here and one there.
+ */
+export function useDeleteSearchBackend() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<SearchBackendDeleteResult>(`/api/admin/providers/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.providers });
+      client.invalidateQueries({ queryKey: adminKeys.models });
+      client.invalidateQueries({ queryKey: adminKeys.groups });
+    },
   });
 }
 

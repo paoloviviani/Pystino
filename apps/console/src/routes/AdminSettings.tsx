@@ -291,7 +291,11 @@ function ProvidersCard() {
                 <Button variant="ghost" onClick={() => setEditing(provider)}>
                   Edit
                 </Button>
-                <Button variant="ghost" onClick={() => setDeleting(provider)}>
+                <Button
+                  variant="ghost"
+                  className="text-danger"
+                  onClick={() => setDeleting(provider)}
+                >
                   Delete
                 </Button>
               </div>

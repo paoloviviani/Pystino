@@ -137,11 +137,15 @@ export function AdminUsers() {
       header: "",
       render: (user) => (
         <div className={ROW_ACTIONS}>
-          <Button variant="primary" onClick={() => setEditing(user)}>
+          <Button variant="secondary" onClick={() => setEditing(user)}>
             Edit
           </Button>
+          {/* Thin red text, never filled: the same row-level delete as every
+              other screen — filled red belongs to the confirm dialog, not to
+              a control that sits beside Edit all day. */}
           <Button
-            variant="danger"
+            variant="ghost"
+            className="text-danger"
             busy={remove.isPending && remove.variables === user.id}
             onClick={() => setDeleting(user)}
           >

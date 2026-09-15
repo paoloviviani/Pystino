@@ -161,6 +161,7 @@ export function AdminProviders() {
           </Button>
           <Button
             variant="ghost"
+            className="text-danger"
             busy={remove.isPending && remove.variables === provider.id}
             onClick={() =>
               remove.mutate(provider.id, {

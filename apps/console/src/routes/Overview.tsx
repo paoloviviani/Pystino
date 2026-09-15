@@ -744,11 +744,11 @@ const keyColumns = (
     render: (key) => (
       <div className={ROW_ACTIONS}>
         {key.revoked_at ? null : (
-          <Button variant="ghost" onClick={() => onRevoke(key)}>
+          <Button variant="ghost" className="text-danger" onClick={() => onRevoke(key)}>
             Revoke
           </Button>
         )}
-        <Button variant="ghost" onClick={() => onDelete(key)}>
+        <Button variant="ghost" className="text-danger" onClick={() => onDelete(key)}>
           Delete
         </Button>
       </div>
