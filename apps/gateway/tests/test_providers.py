@@ -13,10 +13,21 @@ import uuid
 
 import httpx
 import pytest
-from conftest import FakeUpstream, Seeded
+from conftest import UPSTREAM_BASE, FakeUpstream, Seeded
 from gateway.access import accessible_models
 from gateway.config import UpstreamSettings
-from gateway.models import GroupModelAccess, ModelDef, Provider, User, UserModelAccess
+from gateway.models import (
+    Group,
+    GroupModelAccess,
+    ModelDef,
+    ModelKind,
+    ModelPrice,
+    Provider,
+    ProviderKind,
+    UsageRecord,
+    User,
+    UserModelAccess,
+)
 from gateway.providers import ProviderConfigurationError, ProviderRegistry
 from gateway.secrets import (
     SecretBox,
@@ -852,10 +863,14 @@ class TestProviderPrefix:
 
         async with session_factory() as session:
             names = (
-                await session.execute(
-                    select(ModelDef.name).where(ModelDef.provider_id == provider_id)
+                (
+                    await session.execute(
+                        select(ModelDef.name).where(ModelDef.provider_id == provider_id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert names == ["acme-deep"]
 
     @pytest.mark.asyncio
@@ -871,17 +886,19 @@ class TestProviderPrefix:
         )
         as_user(app, await make_admin(session_factory, seeded))
 
-        response = await client.patch(
-            f"/api/admin/providers/{provider_id}", json={"prefix": ""}
-        )
+        response = await client.patch(f"/api/admin/providers/{provider_id}", json={"prefix": ""})
         assert response.status_code == 200, response.text
 
         async with session_factory() as session:
             names = (
-                await session.execute(
-                    select(ModelDef.name).where(ModelDef.provider_id == provider_id)
+                (
+                    await session.execute(
+                        select(ModelDef.name).where(ModelDef.provider_id == provider_id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert names == ["deep"]
 
     @pytest.mark.asyncio
@@ -906,10 +923,14 @@ class TestProviderPrefix:
 
         async with session_factory() as session:
             names = (
-                await session.execute(
-                    select(ModelDef.name).where(ModelDef.provider_id == provider_id)
+                (
+                    await session.execute(
+                        select(ModelDef.name).where(ModelDef.provider_id == provider_id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
         assert names == ["deep"], "the rename must not have half-happened"
 
     @pytest.mark.asyncio
@@ -953,3 +974,209 @@ class TestProviderPrefix:
                 ).scalars()
             )
         assert names == ["acme-acme-deep", "acme-deep"]
+
+
+# --------------------------------------------------------------------------
+# search backend deletion: the atomic cascade (ADR 0071)
+# --------------------------------------------------------------------------
+
+
+class TestSearchBackendDeletion:
+    """Deleting a search backend cascades; deleting an inference provider refuses.
+
+    Every search backend has tiers — the grant anchor at minimum — so the
+    inference rule ("refuse while any model points at it") would have refused
+    *every* search backend forever, leaving deletion dead on its own screen.
+    The product decision is the opposite of the inference one (ADR 0071): a
+    backend and its tiers are one concept there, and a half-deleted backend —
+    tiers orphaned, group policies pointing at a row that no longer resolves —
+    is worse than an atomic delete. What the tests hold is that the cascade is
+    total and in one transaction, that the groups it touches are named in the
+    response rather than discovered as 404s later, and that the spend ledger is
+    untouched throughout.
+    """
+
+    async def _seed_backend(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        seeded: Seeded,
+        *,
+        tiers: int = 2,
+    ) -> uuid.UUID:
+        """A search backend the way the console builds one: anchor plus tiers.
+
+        The group's policy points at the *second* tier, not the anchor, so the
+        test proves the cascade reaches every model row of the backend rather
+        than only the first one.
+        """
+        box = SecretBox([KEY])
+        async with session_factory() as session:
+            provider = Provider(
+                name="linkup",
+                base_url=UPSTREAM_BASE,
+                api_key_encrypted=box.encrypt("search-key"),
+                api_key_hint=hint_for("search-key"),
+                plugin="linkup",
+                kind=ProviderKind.SEARCH,
+            )
+            session.add(provider)
+            await session.flush()
+            anchor = ModelDef(
+                name="linkup",
+                upstream_model="search",
+                provider_id=provider.id,
+                kind=ModelKind.SEARCH,
+            )
+            session.add(anchor)
+            await session.flush()
+            session.add(GroupModelAccess(group_id=seeded.group.id, model_id=anchor.id))
+            for index in range(tiers - 1):
+                tier = ModelDef(
+                    name=f"linkup-depth-{index}",
+                    upstream_model=f"depth-{index}",
+                    provider_id=provider.id,
+                    kind=ModelKind.SEARCH,
+                )
+                session.add(tier)
+                await session.flush()
+                # The policy points at the last tier added, so the cascade must
+                # clear it wherever it sat in the backend's model list.
+                group = await session.get(Group, seeded.group.id)
+                group.search_model_id = tier.id
+            # A recorded search through the backend — the spend the cascade
+            # must leave exactly as it is, attribution included.
+            session.add(
+                UsageRecord(
+                    request_id="search-cascade-1",
+                    user_id=seeded.user.id,
+                    group_id=seeded.group.id,
+                    api_key_id=seeded.api_key.id,
+                    model_id=anchor.id,
+                    model_name="linkup",
+                    currency="EUR",
+                )
+            )
+            await session.commit()
+            return provider.id
+
+    async def test_deleting_a_backend_takes_its_tiers_and_names_the_groups(
+        self,
+        admin_client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        provider_id = await self._seed_backend(session_factory, seeded)
+        async with session_factory() as session:
+            tier_ids = (
+                (
+                    await session.execute(
+                        select(ModelDef.id).where(ModelDef.provider_id == provider_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(tier_ids) == 2
+
+        response = await admin_client.delete(f"/api/admin/providers/{provider_id}")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["tiers_deleted"] == 2
+        # The group is named the way a *refusal* would have named it — the
+        # console repeats this in its notice, so the administrator hears which
+        # groups lost their unified-search policy without going to look.
+        assert body["cleared_groups"] == ["research"]
+
+        async with session_factory() as session:
+            assert (await session.get(Provider, provider_id)) is None
+            backend_models = (
+                await session.execute(
+                    select(ModelDef.id).where(ModelDef.provider_id == provider_id)
+                )
+            ).all()
+            assert backend_models == []
+            # Nothing half-deleted: the tiers' prices and grants went with them
+            # (the inference fixture's price row for *its* model is not ours to
+            # touch, so the assertion is scoped to the deleted tiers).
+            assert (
+                await session.execute(select(ModelPrice).where(ModelPrice.model_id.in_(tier_ids)))
+            ).all() == []
+            grants = (
+                await session.execute(
+                    select(GroupModelAccess.group_id).where(
+                        GroupModelAccess.group_id == seeded.group.id,
+                        GroupModelAccess.model_id.in_(tier_ids),
+                    )
+                )
+            ).all()
+            # The inference fixture's own grant for *its* model is not ours to
+            # touch, so the assertion is scoped to the deleted tiers, as above.
+            assert grants == []
+            # The policy that named one of the deleted tiers is cleared, not
+            # left dangling on a row that no longer exists.
+            group = await session.get(Group, seeded.group.id)
+            assert group.search_model_id is None
+
+            # The ledger is untouched by construction: the row survives with
+            # its denormalised name, its attribution, and a model_id the
+            # database itself set to null.
+            record = (
+                await session.execute(
+                    select(UsageRecord).where(UsageRecord.request_id == "search-cascade-1")
+                )
+            ).scalar_one()
+            assert record.model_name == "linkup"
+            assert record.model_id is None
+            assert record.user_id == seeded.user.id
+            assert record.group_id == seeded.group.id
+
+    async def test_a_backend_without_policies_reports_an_empty_clearing(
+        self,
+        admin_client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """No policy pointed at it: the response says so with an empty list,
+        not a placeholder, so the console has nothing to announce."""
+        box = SecretBox([KEY])
+        async with session_factory() as session:
+            provider = Provider(
+                name="exa",
+                base_url=UPSTREAM_BASE,
+                api_key_encrypted=box.encrypt("search-key"),
+                plugin="exa",
+                kind=ProviderKind.SEARCH,
+            )
+            session.add(provider)
+            await session.flush()
+            session.add(
+                ModelDef(
+                    name="exa",
+                    upstream_model="search",
+                    provider_id=provider.id,
+                    kind=ModelKind.SEARCH,
+                )
+            )
+            await session.commit()
+            provider_id = provider.id
+
+        response = await admin_client.delete(f"/api/admin/providers/{provider_id}")
+        assert response.status_code == 200, response.text
+        assert response.json() == {"tiers_deleted": 1, "cleared_groups": []}
+
+    async def test_a_non_search_provider_is_still_refused_with_the_count(
+        self,
+        admin_client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The cascade is scoped to search backends on purpose: an inference
+        provider's models are catalogue entries whose historical spend is only
+        explainable while the model exists, so the refusal stays."""
+        response = await admin_client.delete(f"/api/admin/providers/{seeded.provider.id}")
+        assert response.status_code == 409
+        assert "1 model(s) still use this provider" in response.json()["error"]["message"]
+
+        async with session_factory() as session:
+            assert await session.get(Provider, seeded.provider.id) is not None
+            assert await session.get(ModelDef, seeded.model.id) is not None

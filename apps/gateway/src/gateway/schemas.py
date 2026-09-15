@@ -769,6 +769,24 @@ def _check_billing_mode(plugin: str | None, mode: str | None) -> None:
         )
 
 
+class SearchBackendDeleteResponse(BaseModel):
+    """What deleting a search backend took down with it.
+
+    A search backend and its tiers are one concept on the console's search
+    screen (ADR 0071), so deleting the backend cascades instead of refusing —
+    and the answer names what the cascade touched, the way a *refusal* names
+    what blocked it elsewhere. The console repeats the cleared groups in its
+    notice: a policy that silently vanished would otherwise be discovered the
+    first time a group's unified search 404s, which is the wrong moment.
+    """
+
+    #: How many model rows (the anchor and its tiers) went with the backend.
+    tiers_deleted: int
+    #: Names of the groups whose unified-search policy pointed at one of the
+    #: deleted tiers, and now point at nothing.
+    cleared_groups: list[str]
+
+
 class PluginBaseURLOption(BaseModel):
     """One endpoint a provider type documents: the URL and what it is.
 
