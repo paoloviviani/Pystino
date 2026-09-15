@@ -657,12 +657,20 @@ async def provision_user(
         session.add(user)
         await session.flush()
     else:
-        # Refresh mutable profile fields on every login.
-        if email is not None:
+        # Refresh mutable profile fields on every login — except the ones an
+        # administrator has set from the console. A field in
+        # `admin_edited_fields` is the console's now: refreshing it would
+        # silently revert the administrator's edit at this login (and, for
+        # `username`, again on the next /v1 request via the backfill clause in
+        # `sync_user_from_claims`). Fields not listed keep following the
+        # directory, so a rename or address change the console never touched
+        # still arrives.
+        edited = set(user.admin_edited_fields or [])
+        if email is not None and "email" not in edited:
             user.email = email
-        if display_name is not None:
+        if display_name is not None and "display_name" not in edited:
             user.display_name = display_name
-        if username is not None:
+        if username is not None and "username" not in edited:
             user.username = username
 
     # A `/v1` call made with an access token is not a login, and recording it as
@@ -776,7 +784,18 @@ async def sync_user_from_claims(
         # first request after a login writes it, and every one after that
         # takes the early return again. `_claims_diverge` exists precisely
         # because equality checks here once meant a write per `/v1` request.
-        and (username is None or user.username == username)
+        #
+        # An administrator-edited username is settled by definition, not a
+        # divergence: provisioning would refuse to write it (the override in
+        # `provision_user`), so counting it here would route *every* request
+        # through full provisioning forever — the divergence that can never
+        # resolve, which is the exact failure `_claims_diverge` was written
+        # to keep off the hot path.
+        and (
+            username is None
+            or user.username == username
+            or "username" in (user.admin_edited_fields or [])
+        )
         and not _claims_diverge(user, group_names, settings, policy, group_sync)
     ):
         return user

@@ -389,6 +389,24 @@ class User(Base):
     #: is mutable and two directories may use the same one for two people.
     username: Mapped[str | None] = mapped_column(String(255), index=True, default=None)
 
+    #: Profile fields an administrator has set from the console: a subset of
+    #: ``email`` / ``display_name`` / ``username``, recorded when the admin
+    #: user-update route writes one.
+    #:
+    #: The reason the column exists is what login does to these three fields:
+    #: ``provision_user`` used to refresh each of them from the token's claims
+    #: on every sign-in, so an administrator's correction — a name misspelt by
+    #: the directory, an address the person no longer reads — silently reverted
+    #: at that person's next login. Recording the edit and skipping the refresh
+    #: for a listed field makes the console authoritative for exactly the fields
+    #: it has touched, while every untouched field keeps following the
+    #: directory. That is the same settlement ADR 0057 reached for group
+    #: memberships ("an administrator's grant survives a sign-in") applied one
+    #: level up: the directory keeps syncing what nobody here has claimed.
+    admin_edited_fields: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'")
+    )
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 

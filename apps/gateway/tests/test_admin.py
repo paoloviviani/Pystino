@@ -699,6 +699,173 @@ class TestUsersAndUsage:
         assert (await client.get("/api/admin/usage?window_seconds=5")).status_code == 400
 
 
+class TestUserProfileEdits:
+    """The console edits what the account says, not just what it may do.
+
+    Two shape facts pin the design. Identity is ``(issuer, subject)`` and is
+    not on the request model at all, so a client that sends it gets its other
+    fields edited and its identity untouched — the route never re-keys a
+    person out from under their ledger. And the schema's lengths mirror the
+    columns (email 320, the names 255) while the *shape* check on email stays
+    in the route, so the console gets the same sentence ``create_user``
+    produces rather than a pydantic field list.
+    """
+
+    async def _admin(self, app: object, session_factory, seeded: Seeded) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+
+    async def test_profile_fields_update_and_are_recorded_as_edited(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await self._admin(app, session_factory, seeded)
+        response = await client.patch(
+            f"/api/admin/users/{seeded.user.id}",
+            json={
+                "email": "renamed@example.org",
+                "display_name": "Renamed Member",
+                "username": "renamed@local",
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["email"] == "renamed@example.org"
+        assert body["display_name"] == "Renamed Member"
+        assert body["username"] == "renamed@local"
+
+        async with session_factory() as db:
+            user = (
+                await db.execute(select(User).where(User.id == seeded.user.id))
+            ).scalar_one()
+            assert user.email == "renamed@example.org"
+            # The record is what makes the edit durable: provisioning reads it
+            # and leaves a listed field alone (test_oidc.py pins that half).
+            assert sorted(user.admin_edited_fields) == ["display_name", "email", "username"]
+
+    async def test_a_field_left_out_stays_and_is_not_recorded(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """PATCH semantics: absent means untouched, here and in the ledger.
+
+        Recording an unedited field as administrator-edited would quietly
+        detach it from the directory — the opposite of what the operator asked,
+        which was to change nothing about it.
+        """
+        await self._admin(app, session_factory, seeded)
+        response = await client.patch(
+            f"/api/admin/users/{seeded.user.id}", json={"display_name": "Only A Name"}
+        )
+        assert response.status_code == 200
+        assert response.json()["email"] == "member@example.org"
+
+        async with session_factory() as db:
+            user = (
+                await db.execute(select(User).where(User.id == seeded.user.id))
+            ).scalar_one()
+            assert user.admin_edited_fields == ["display_name"]
+
+    async def test_an_explicit_null_clears_the_field(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await self._admin(app, session_factory, seeded)
+        response = await client.patch(
+            f"/api/admin/users/{seeded.user.id}", json={"username": None}
+        )
+        assert response.status_code == 200
+        assert response.json()["username"] is None
+
+    async def test_a_blank_value_clears_rather_than_storing_whitespace(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await self._admin(app, session_factory, seeded)
+        response = await client.patch(
+            f"/api/admin/users/{seeded.user.id}", json={"display_name": "   "}
+        )
+        assert response.status_code == 200
+        assert response.json()["display_name"] is None
+
+    async def test_a_malformed_email_is_refused_with_the_create_route_sentence(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await self._admin(app, session_factory, seeded)
+        response = await client.patch(
+            f"/api/admin/users/{seeded.user.id}", json={"email": "not-an-address"}
+        )
+        assert response.status_code == 400
+        assert "valid email" in response.json()["error"]["message"]
+
+    async def test_an_overlong_value_is_refused_at_the_column_width(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """255 is what the column holds; the schema is where the API says so.
+
+        A refusal rather than a silent truncation: an account whose stored
+        name is not the name anybody typed is a bug that surfaces weeks later,
+        from a screenshot, without the request that caused it. The app rewrites
+        FastAPI's 422s into its error envelope (main.py), so the status the
+        client sees is 400 — the same as every other refusal on this surface.
+        """
+        await self._admin(app, session_factory, seeded)
+        response = await client.patch(
+            f"/api/admin/users/{seeded.user.id}", json={"display_name": "x" * 256}
+        )
+        assert response.status_code == 400
+        assert "display_name" in response.json()["error"]["message"]
+
+    async def test_identity_fields_are_not_editable(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """``issuer`` + ``subject`` are the login identity and stay out of reach.
+
+        The pair is UNIQUE together and *is* the account's key everywhere —
+        the session cookie, every key's owner, every ledger row. A PATCH that
+        moved it would not rename the person; it would strand the old row's
+        memberships and keys on a stranger. Sent, they are ignored rather than
+        refused: the client's other fields still edit, and identity was never
+        on offer to begin with.
+        """
+        await self._admin(app, session_factory, seeded)
+        response = await client.patch(
+            f"/api/admin/users/{seeded.user.id}",
+            json={"issuer": "https://evil.test", "subject": "taken-over", "is_active": True},
+        )
+        assert response.status_code == 200, response.text
+
+        async with session_factory() as db:
+            user = (
+                await db.execute(select(User).where(User.id == seeded.user.id))
+            ).scalar_one()
+            assert user.issuer == "https://idp.test"
+            assert user.subject == "subject-1"
+
+
 class TestAdminIsAConsoleFact:
     """Authorisation is a gateway fact: no claim, group or setting moves the flag.
 

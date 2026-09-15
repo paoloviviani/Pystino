@@ -161,6 +161,45 @@ async def test_a_username_change_in_the_directory_is_picked_up(
 
 
 @pytest.mark.asyncio
+async def test_an_admin_edited_username_is_left_alone_on_every_request(
+    bearer_app: FastAPI,
+    client: httpx.AsyncClient,
+    signing_key: object,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The console's username survives the token that used to overwrite it.
+
+    Two failures are guarded here, and the second is the expensive one. The
+    obvious one: provisioning used to refresh the username from
+    `preferred_username` on every pass, reverting the edit. The expensive one:
+    the backfill clause treats a stored username that differs from the token
+    as a divergence, so the edit would have made the two disagree *permanently*
+    — full provisioning on every /v1 request, forever, which is precisely the
+    never-settling divergence `_claims_diverge` exists to keep off the hot
+    path. A listed field must read as settled instead.
+    """
+    token = make_token(signing_key, sub="kc-6", preferred_username="directory@local")
+    assert (await client.get("/v1/models", headers=bearer_auth(token))).status_code == 200
+
+    # The console edit, written the way the admin user-update route writes it:
+    # the field and the record of the edit, together.
+    async with session_factory() as db:
+        user = (
+            await db.execute(select(User).where(User.subject == "kc-6"))
+        ).scalars().one()
+        user.username = "edited@local"
+        user.admin_edited_fields = ["username"]
+        await db.commit()
+
+    assert (await client.get("/v1/models", headers=bearer_auth(token))).status_code == 200
+    async with session_factory() as db:
+        user = (
+            await db.execute(select(User).where(User.subject == "kc-6"))
+        ).scalars().one()
+        assert user.username == "edited@local"
+
+
+@pytest.mark.asyncio
 async def test_the_admin_listing_finds_an_account_by_its_username(
     app: FastAPI,
     client: httpx.AsyncClient,

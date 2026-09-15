@@ -151,6 +151,97 @@ class TestProvisioning:
         assert user.display_name == "New"
         assert len((await session.execute(select(User))).scalars().all()) == 1
 
+    async def test_second_login_leaves_an_admin_edited_profile_alone(
+        self, session: AsyncSession
+    ) -> None:
+        """The console's correction survives the sign-in that used to revert it.
+
+        ``provision_user`` used to refresh all three profile fields from the
+        claims on every login, so an administrator's fix — a misspelt name, an
+        address the person no longer reads — silently reverted the next time
+        the person signed in. The edit is now recorded on the row (what the
+        admin user-update route writes) and a listed field is skipped.
+
+        The row is edited the way the route does it — fields set, the field
+        names appended — because the contract under test is between login and
+        *whatever the console wrote*, not between login and a fixture spelling.
+        """
+        user = await provision_user(
+            session,
+            issuer="https://idp.test",
+            subject="edited-subject",
+            email="old@example.org",
+            display_name="Old Name",
+            username="old@local",
+            group_names=["research"],
+            settings=OIDCSettings(),
+        )
+        await session.commit()
+        user.email = "corrected@example.org"
+        user.display_name = "Corrected Name"
+        user.username = "corrected@local"
+        user.admin_edited_fields = ["email", "display_name", "username"]
+        await session.commit()
+
+        again = await provision_user(
+            session,
+            issuer="https://idp.test",
+            subject="edited-subject",
+            email="directory@example.org",
+            display_name="Directory Name",
+            username="directory@local",
+            group_names=["research"],
+            settings=OIDCSettings(),
+        )
+        await session.commit()
+
+        assert again.email == "corrected@example.org"
+        assert again.display_name == "Corrected Name"
+        assert again.username == "corrected@local"
+        # The account is still one row, still in the group: the override is
+        # about the profile, not about the rest of the sync.
+        groups = {membership.group.name for membership in again.memberships}
+        assert groups == {"research"}
+
+    async def test_only_the_edited_field_is_frozen(
+        self, session: AsyncSession
+    ) -> None:
+        """A field the console never touched keeps following the directory.
+
+        Freezing all three on any edit would be the heavy half of "the console
+        is authoritative": a directory rename of a display name nobody here
+        corrected would then never arrive, and the console would show a stale
+        name with nothing anywhere saying why.
+        """
+        user = await provision_user(
+            session,
+            issuer="https://idp.test",
+            subject="half-edited",
+            email="old@example.org",
+            display_name="Old Name",
+            group_names=["research"],
+            settings=OIDCSettings(),
+        )
+        await session.commit()
+        user.email = "corrected@example.org"
+        user.admin_edited_fields = ["email"]
+        await session.commit()
+
+        again = await provision_user(
+            session,
+            issuer="https://idp.test",
+            subject="half-edited",
+            email="directory@example.org",
+            display_name="Directory Name",
+            group_names=["research"],
+            settings=OIDCSettings(),
+        )
+        await session.commit()
+
+        # The edited field holds; the untouched one moved.
+        assert again.email == "corrected@example.org"
+        assert again.display_name == "Directory Name"
+
     async def test_membership_is_replaced_so_revocation_takes_effect(
         self, session: AsyncSession
     ) -> None:
