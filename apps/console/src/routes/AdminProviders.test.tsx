@@ -57,6 +57,7 @@ const PLUGINS = [
     kind: "provider",
     billing_modes: ["own_prices"],
     default_base_url: null,
+    base_url_options: [],
     is_default: true,
   },
   {
@@ -66,6 +67,7 @@ const PLUGINS = [
     kind: "router",
     billing_modes: ["own_prices", "provider_reported"],
     default_base_url: "https://api.cortecs.ai/v1",
+    base_url_options: [],
     is_default: false,
   },
 ];

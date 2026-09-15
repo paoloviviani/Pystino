@@ -37,13 +37,27 @@ ergonomic, not a validation rule).
 
 - [x] Worktree created; hosts verified at source
 - [x] Read CLAUDE.md / AGENTS.md first
+- [x] Gateway: plugin `base_url_options` (protocol + generic default +
+      anthropic/cortecs standalone declarations), jina.py docstring citation +
+      options, registry.describe() passthrough, `PluginBaseURLOption` +
+      `base_url_options` on `ProviderPluginResponse`
+- [x] Gateway tests: provider-plugins listing contract + jina create/switch
+      (test_providers.py), plugin-level host pinning (test_provider_plugins.py),
+      unified route end-to-end EU host via FakeUpstream.urls (test_unified_search.py
+      + conftest + add_backend base_url param)
+- [x] ruff clean; mypy clean (93 files); 153 targeted tests pass
+- [x] Commit 1: 9c2ec37 (gateway side)
+- [x] Console: types.ts `base_url_options`, BackendDialog Endpoint select
+      (create pre-fills plugin default; edit preselects stored host; undocumented
+      stored URL offered alongside so it is never silently moved), Save guard
+      treats a host switch as a change
+- [x] Console tests: 201 pass (195 + 6 new dialog tests); typecheck green both
+      workspaces
 
 ## Next
 
-- [ ] plugin + registry + schema changes
-- [ ] gateway tests (test_providers, test_unified_search + conftest urls,
-      test_provider_plugins)
-- [ ] ruff + mypy + pytest green
-- [ ] console: types.ts, AdminSearch.tsx BackendDialog select + tests
-- [ ] console typecheck + tests green (was 195 passing)
-- [ ] commit (one-shot identity; reasoning-style message)
+- [ ] full `uv run pytest -q` green (running, log at
+      /tmp/opencode/pystino-jina-pytest.log)
+- [ ] `pnpm -r test` full (packages/ui + console)
+- [ ] final commit (console side)
+- [ ] report
