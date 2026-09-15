@@ -32,7 +32,7 @@ from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from llmp_shared import EntitySpan, PlaceholderMap
 from pydantic import SecretStr
-from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select
+from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
@@ -181,6 +181,7 @@ from gateway.schemas import (
     RedactionScopeName,
     RedactionServiceHealth,
     RedactionStatusResponse,
+    SearchBackendDeleteResponse,
     UsageReport,
     UserAdminResponse,
     UserCreateRequest,
@@ -677,31 +678,92 @@ async def update_provider(
     )
 
 
-@router.delete("/providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/providers/{provider_id}", response_model=SearchBackendDeleteResponse)
 async def delete_provider(
     provider_id: uuid.UUID,
     admin: AdminUserDep,
     session: SessionDep,
     providers: ProvidersDep,
-) -> None:
-    """Remove a provider that nothing uses.
+) -> Response | SearchBackendDeleteResponse:
+    """Remove a provider.
 
-    Refused while any model points at it. The database would refuse anyway —
-    the foreign key is ON DELETE RESTRICT — but a 409 naming the count is a far
-    better answer than an integrity error, and cascading would leave historical
-    spend attributed to a model that can no longer be explained.
+    For an inference provider, refused while any model points at it: the
+    database would refuse anyway — the foreign key is ON DELETE RESTRICT — but
+    a 409 naming the count is a far better answer than an integrity error, and
+    cascading would leave historical spend attributed to a model that can no
+    longer be explained.
+
+    For a **search backend** the answer is the opposite, deliberately (ADR
+    0071): a backend and its tiers are one concept on the search screen, and a
+    half-deleted backend — tiers orphaned, policies pointing at a row that no
+    longer resolves — is worse than an atomic delete. So in one transaction the
+    tiers die with the backend (prices and access grants among them, exactly as
+    ``delete_model`` does it; the usage ledger is conspicuously untouched),
+    groups whose unified-search policy named one of those tiers have the policy
+    cleared — named in the response, so the console can say so rather than
+    letting the administrator discover it as a 404 later — and the provider row
+    goes last. Historical spend stays readable the way a model delete leaves
+    it: ``usage_records.model_id`` is ON DELETE SET NULL and every row carries
+    the denormalised name.
     """
-    await _load_provider(session, provider_id)
-    counts = await _model_counts(session)
-    if (count := counts.get(provider_id, 0)) > 0:
-        raise ConflictError(
-            f"{count} model(s) still use this provider. Repoint or remove them, or "
-            "deactivate the provider instead."
-        )
+    provider = await _load_provider(session, provider_id)
 
+    if provider.kind != ProviderKind.SEARCH:
+        counts = await _model_counts(session)
+        if (count := counts.get(provider_id, 0)) > 0:
+            raise ConflictError(
+                f"{count} model(s) still use this provider. Repoint or remove them, or "
+                "deactivate the provider instead."
+            )
+
+        await session.execute(delete(Provider).where(Provider.id == provider_id))
+        await session.commit()
+        await providers.forget(provider_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    # On a search backend every model row is a tier — the grant anchor and its
+    # depth variants (ADR 0071) — so "the provider's models" and "the tiers"
+    # coincide here, which is what lets the delete be total.
+    tier_rows = (
+        await session.execute(
+            select(ModelDef.id, ModelDef.name).where(ModelDef.provider_id == provider_id)
+        )
+    ).all()
+    tier_ids = [row.id for row in tier_rows]
+    # Annotated for mypy: an inline conditional's bare-list branch gives strict
+    # mode nothing to infer a row type from.
+    pointed: Sequence[Row[tuple[uuid.UUID, str]]] = []
+    if tier_ids:
+        pointed = (
+            await session.execute(
+                select(Group.id, Group.name).where(Group.search_model_id.in_(tier_ids))
+            )
+        ).all()
+    cleared = sorted(name for (_group_id, name) in pointed)
+
+    # The cascade, in one transaction: the policy first (it names a tier that is
+    # about to stop existing), then the tiers' children, then the tiers, then
+    # the backend. Any failure rolls the whole thing back — a deletion that
+    # cleared the policy but kept the backend would be its own half-deleted
+    # state, the exact shape this route exists to prevent.
+    if pointed:
+        await session.execute(
+            update(Group)
+            .where(Group.id.in_([group_id for (group_id, _name) in pointed]))
+            .values(search_model_id=None)
+        )
+    if tier_ids:
+        await session.execute(delete(ModelPrice).where(ModelPrice.model_id.in_(tier_ids)))
+        await session.execute(
+            delete(GroupModelAccess).where(GroupModelAccess.model_id.in_(tier_ids))
+        )
+        await session.execute(delete(UserModelAccess).where(UserModelAccess.model_id.in_(tier_ids)))
+        await session.execute(delete(ModelDef).where(ModelDef.provider_id == provider_id))
     await session.execute(delete(Provider).where(Provider.id == provider_id))
     await session.commit()
     await providers.forget(provider_id)
+
+    return SearchBackendDeleteResponse(tiers_deleted=len(tier_ids), cleared_groups=cleared)
 
 
 @router.post("/providers/{provider_id}/test", response_model=ProviderTestResponse)
