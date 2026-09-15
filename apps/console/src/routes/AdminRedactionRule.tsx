@@ -1,17 +1,17 @@
 import { Button, Card, Notice, Select, Spinner } from "@llmp/ui";
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 import {
   useCreateRedactionRule,
   useRedactionRules,
   useRedactionStatus,
   useUpdateRedactionRule,
 } from "../lib/admin";
-import type { RedactionPolicy, RedactionScope } from "../lib/types";
+import type { RedactionPolicy, RedactionRule, RedactionScope } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import { PolicyFields, seededPolicy } from "../components/PolicyFields";
 import { SubjectPicker, scopeNoun } from "../components/SubjectPicker";
-import { FORM, MUTED, PAGE } from "../lib/layout";
+import { FORM, PAGE } from "../lib/layout";
 import { useOptionalToast } from "../lib/toast";
 
 //: Widest first, matching the order rules are folded in and listed.
@@ -53,9 +53,17 @@ const EMPTY_POLICY: RedactionPolicy = seededPolicy();
  * list on the Redaction screen be a list of links rather than a list of buttons
  * that open something.
  *
- * The subject is chosen here and nowhere else: a rule *is* a decision about one
- * subject, and re-pointing it at another would silently make two subjects'
- * histories read as one.
+ * The subject is editable, both to re-point a rule at a neighbour and because a
+ * rule whose subject was deleted (``scope_id`` is not a foreign key) used to be
+ * unrepairable dead weight. A move is validated server-side like a creation and
+ * a taken subject is a 409, so two rules still cannot disagree about one
+ * subject — what made the freeze safe to lift.
+ *
+ * Cloning arrives here through router state with the source rule: the policy
+ * and reason come across, the name gains "(copy)", and the subject does not —
+ * one rule per subject means the clone cannot keep the source's, and the clone
+ * is created inactive, because an active clone starts redacting for a subject
+ * nobody has reviewed.
  */
 export function AdminRedactionRule() {
   const { ruleId: param } = useParams();
@@ -63,6 +71,8 @@ export function AdminRedactionRule() {
   // route would duplicate every line of this form.
   const ruleId = param === "new" ? undefined : param;
   const navigate = useNavigate();
+  const cloneFrom =
+    (useLocation().state as { cloneFrom?: RedactionRule } | null)?.cloneFrom ?? null;
   const status = useRedactionStatus();
   // The rule comes from the same listing the previous screen renders, so
   // arriving by link costs no request that the list did not already make.
@@ -73,11 +83,15 @@ export function AdminRedactionRule() {
   const update = useUpdateRedactionRule();
   const toast = useOptionalToast();
 
-  const [name, setName] = useState("");
-  const [scope, setScope] = useState<RedactionScope>("all");
+  // Cloning seeds synchronously from router state, so plain initialisers are
+  // enough; editing seeds in the keyed block below, once the listing lands.
+  const [name, setName] = useState(cloneFrom ? `${cloneFrom.name} (copy)` : "");
+  const [scope, setScope] = useState<RedactionScope | "">(cloneFrom ? "" : "all");
   const [scopeId, setScopeId] = useState("");
-  const [policy, setPolicy] = useState<RedactionPolicy>(EMPTY_POLICY);
-  const [reason, setReason] = useState("");
+  const [policy, setPolicy] = useState<RedactionPolicy>(
+    cloneFrom ? structuredClone(cloneFrom.policy) : EMPTY_POLICY,
+  );
+  const [reason, setReason] = useState(cloneFrom ? cloneFrom.reason : "");
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
   // Keyed seeding, the same shape the model editor uses: without it the fields
@@ -96,12 +110,20 @@ export function AdminRedactionRule() {
   const entityTypes = status.data?.service?.entities ?? [];
 
   const submit = () => {
+    if (scope === "") return; // Unreachable: the button is disabled until a subject is chosen.
     const done = {
       // The toast, not the redirect, is what says the write landed: the rule
       // screen is gone the moment the navigation below runs, so a Notice there
       // could never be read.
       onSuccess: () => {
-        toast?.add({ title: existing ? "Rule saved." : "Rule created.", type: "success" });
+        toast?.add({
+          title: existing
+            ? "Rule saved."
+            : cloneFrom
+              ? "Clone created — it starts inactive."
+              : "Rule created.",
+          type: "success",
+        });
         navigate("/admin/redaction");
       },
       onError: (error: Error) =>
@@ -112,7 +134,25 @@ export function AdminRedactionRule() {
         }),
     };
     if (existing) {
-      update.mutate({ id: existing.id, name, policy, reason }, done);
+      // The subject travels only when it changed: the gateway validates what
+      // it is given, and revalidating a subject that has since been deleted
+      // would turn an edit of anything else into a 404 through no fault of
+      // the admin.
+      const subjectChanged =
+        existing.scope !== scope || (existing.scope_id ?? "") !== scopeId;
+      update.mutate(
+        {
+          id: existing.id,
+          name,
+          policy,
+          reason,
+          ...(subjectChanged && {
+            scope,
+            scope_id: scope === "all" ? null : scopeId,
+          }),
+        },
+        done,
+      );
     } else {
       create.mutate(
         {
@@ -123,6 +163,10 @@ export function AdminRedactionRule() {
           scope_id: scope === "all" ? null : scopeId,
           policy,
           reason,
+          // A clone is a draft for another subject: inactive until reviewed,
+          // because redacting is the kind of thing that must not start as a
+          // side effect of copying.
+          ...(cloneFrom && { is_active: false }),
         },
         done,
       );
@@ -149,10 +193,23 @@ export function AdminRedactionRule() {
   return (
     <div className={PAGE}>
       <PageHeader
-        title={existing ? `Rule · ${existing.subject_label ?? scopeNoun(existing.scope)}` : "New rule"}
+        title={
+          existing
+            ? `Rule · ${existing.subject_label ?? scopeNoun(existing.scope)}`
+            : cloneFrom
+              ? "Clone rule"
+              : "New rule"
+        }
         subtitle="The strictest applicable rule wins, so adding one can only protect more."
         actions={<Button onClick={() => navigate("/admin/redaction")}>Back</Button>}
       />
+
+      {cloneFrom && !existing && (
+        <Notice tone="info" title={`Cloning “${cloneFrom.name || "unnamed rule"}”`}>
+          The policy and reason are copied. A clone starts inactive — choose its
+          subject, review it, and activate it from the rules list.
+        </Notice>
+      )}
 
       {error ? (
         <Notice tone="danger" title="Could not save the rule">
@@ -161,29 +218,35 @@ export function AdminRedactionRule() {
       ) : null}
 
       <Card title="Subject">
-        {existing ? (
-          <p className={MUTED}>
-            {scopeNoun(existing.scope)} · {existing.subject_label ?? "deleted"}
-          </p>
-        ) : (
-          <>
-            <Select
-              label="Scope"
-              value={scope}
-              onChange={(event) => {
-                setScope(event.target.value as RedactionScope);
-                setScopeId("");
-              }}
-            >
-              {SCOPE_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {scopeNoun(option)}
-                </option>
-              ))}
-            </Select>
-            <SubjectPicker scope={scope} value={scopeId} onChange={setScopeId} />
-          </>
+        {existing && existing.scope !== "all" && existing.subject_label === null && (
+          // The one state a rule cannot stay in: scope_id is not a foreign key,
+          // so a deleted subject leaves the rule matching nothing. Saying so is
+          // the point of the subject_label contract; offering the repair is
+          // what an editable subject is for.
+          <Notice tone="warn" title="This rule's subject no longer exists">
+            It matches no request. Choose another {scopeNoun(existing.scope).toLowerCase()}{" "}
+            below, or scope it to every request.
+          </Notice>
         )}
+        <Select
+          label="Scope"
+          value={scope}
+          onChange={(event) => {
+            setScope(event.target.value as RedactionScope | "");
+            setScopeId("");
+          }}
+        >
+          {/* The clone's subject is deliberately unset — it cannot keep the
+              source's, and defaulting to the catch-all would make "Every
+              request" a choice nobody made. */}
+          {cloneFrom && !existing && <option value="">Choose a subject…</option>}
+          {SCOPE_OPTIONS.map((option) => (
+            <option key={option} value={option}>
+              {scopeNoun(option)}
+            </option>
+          ))}
+        </Select>
+        {scope !== "" && <SubjectPicker scope={scope} value={scopeId} onChange={setScopeId} />}
       </Card>
 
       <PolicyFields
@@ -213,7 +276,9 @@ export function AdminRedactionRule() {
             <Button
               variant="primary"
               busy={saving}
-              disabled={!existing && scope !== "all" && !scopeId}
+              // A scoped rule without a subject would match nothing, and a
+              // clone has none until one is chosen.
+              disabled={scope === "" || (scope !== "all" && !scopeId)}
               onClick={submit}
             >
               {existing ? "Save rule" : "Create rule"}

@@ -366,13 +366,31 @@ function RulesList({
       header: "",
       render: (rule) => (
         <div className={ROW_ACTIONS}>
-          <Button onClick={() => navigate(`/admin/redaction/rules/${rule.id}`)}>Edit</Button>
+          {/* Explicit, not inherited: the row's actions read as one system
+              across the console — Edit and Clone are the light outline, never
+              a colour that could be mistaken for the primary action of the
+              row. */}
+          <Button variant="secondary" onClick={() => navigate(`/admin/redaction/rules/${rule.id}`)}>
+            Edit
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() =>
+              navigate("/admin/redaction/rules/new", { state: { cloneFrom: rule } })
+            }
+          >
+            Clone
+          </Button>
           <Button
             busy={update.isPending && update.variables?.id === rule.id}
             onClick={() => update.mutate({ id: rule.id, is_active: !rule.is_active })}
           >
             {rule.is_active ? "Deactivate" : "Activate"}
           </Button>
+          {/* Thin red text, never filled: at row level a filled red button
+              outweighs every other element in the table, and deletion here is
+              confirmable, not accidental — the confirm dialog is where the
+              filled danger belongs. */}
           <Button
             variant="ghost"
             className="text-danger"

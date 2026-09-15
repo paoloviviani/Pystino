@@ -527,6 +527,41 @@ describe("AdminRedaction", () => {
     expect(screen.queryByText(/disabled family/)).not.toBeInTheDocument();
   });
 
+  it("clones a rule from its row, into a fresh rule page", async () => {
+    // Clone is a row action like Edit, and it lands on the new-rule page with
+    // the source in router state — the page, not the list, owns the prefill.
+    const source: RedactionRule = {
+      id: "r1",
+      name: "research group",
+      scope: "group",
+      scope_id: "g1",
+      subject_label: "research",
+      policy: { default_mode: "off", entities: {}, patterns: [], allow_list: [] },
+      is_active: true,
+      reason: "",
+      created_by: null,
+      created_by_email: null,
+      created_at: "2026-08-27T10:00:00Z",
+      updated_at: "2026-08-27T10:00:00Z",
+    };
+    const stub = vi.fn(async (input: RequestInfo | URL) => {
+      const payload = String(input).includes("/redaction/rules")
+        ? { items: [source], total: 1, limit: 200, offset: 0 }
+        : status();
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", stub as unknown as typeof fetch);
+    const user = userEvent.setup();
+    renderScreen(<AdminRedaction />);
+
+    await user.click(await screen.findByRole("button", { name: "Clone" }));
+
+    await waitFor(() => expect(location.pathname).toBe("/admin/redaction/rules/new"));
+  });
+
   it("warns a default-on rule when a family is switched off, without touching it", async () => {
     // A default mode of on protects unnamed types too, and those cannot be
     // enumerated — so the warning is generic, and the rule is still left

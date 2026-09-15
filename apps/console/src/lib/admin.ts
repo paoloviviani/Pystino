@@ -242,7 +242,15 @@ export function useCreateRedactionRule() {
   });
 }
 
-/** Everything but the scope: a rule is a decision about one subject (ADR 0038). */
+/**
+ * Everything about a rule can change, subject included.
+ *
+ * The subject travels only when it actually changed: the gateway validates a
+ * subject it is given, and revalidating one that has since been deleted —
+ * which the admin cannot help, since ``scope_id`` is not a foreign key — would
+ * turn an innocent name edit into a 404. Changed, it is sent whole, because
+ * the two fields decide one thing together.
+ */
 export function useUpdateRedactionRule() {
   const client = useQueryClient();
   return useMutation({
@@ -252,6 +260,8 @@ export function useUpdateRedactionRule() {
     }: {
       id: string;
       name?: string;
+      scope?: RedactionScope;
+      scope_id?: string | null;
       policy?: RedactionPolicy;
       is_active?: boolean;
       reason?: string;
