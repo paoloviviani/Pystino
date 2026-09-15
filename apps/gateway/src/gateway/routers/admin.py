@@ -3909,12 +3909,81 @@ async def update_redaction_rule(
     session: SessionDep,
     request: Request,
 ) -> RedactionRuleResponse:
-    """Change a rule's policy, name, reason or active flag. Not its subject."""
+    """Change a rule's policy, name, reason, active flag — or its subject.
+
+    A subject change runs the same checks creation does, plus one: the subject
+    must be free, with this rule itself excluded from that search. It used to be
+    refused outright, on the argument that re-pointing makes two subjects'
+    histories read as one — but those histories live in ``usage_records``, which
+    stamps the scope and rule id onto every request at request time and so does
+    not change when the row does, while the freeze left a rule whose subject had
+    been deleted permanently unrepairable. See ``RedactionRuleUpdateRequest``.
+    """
     rule = await _load_redaction_rule(session, rule_id)
     fields = payload.model_dump(exclude_unset=True, mode="json")
+
+    # The subject is a pair, so it is decided together even when only one half
+    # arrived: a new scope without a subject is legal only for the catch-all,
+    # and a new subject under the old scope re-points within it. Absent means
+    # unchanged, not null — which is what keeps a PATCH of the name alone from
+    # revalidating a subject that may since have been deleted. A scope echoed
+    # back unchanged with no subject alongside it also means unchanged: the
+    # only rule that could survive having its subject cleared is the catch-all,
+    # whose subject was already nothing.
+    has_scope, has_subject = "scope" in fields, "scope_id" in fields
+    new_scope = RedactionScope(fields.pop("scope")) if has_scope else rule.scope
+    if has_subject:
+        raw = fields.pop("scope_id")
+        new_scope_id = uuid.UUID(raw) if raw is not None else None
+    elif has_scope:
+        new_scope_id = rule.scope_id if new_scope is rule.scope else None
+    else:
+        new_scope_id = rule.scope_id
+    moved = (new_scope, new_scope_id) != (rule.scope, rule.scope_id)
+
+    label: str | None = None
+    if moved:
+        # The same two refusals creation makes — no such subject, and a
+        # catch-all carrying or lacking its subject — then the one creation
+        # cannot make: the destination is occupied by a *different* rule.
+        label = await _check_subject(session, new_scope, new_scope_id)
+        conflicting = (
+            await session.execute(
+                select(RedactionRule.id, RedactionRule.name).where(
+                    RedactionRule.scope == new_scope,
+                    RedactionRule.scope_id == new_scope_id,
+                    RedactionRule.id != rule.id,
+                )
+            )
+        ).first()
+        if conflicting is not None:
+            name = conflicting.name or "unnamed rule"
+            raise ConflictError(
+                f"A redaction rule already exists for that {_SUBJECT_NOUNS[new_scope]} "
+                f"({label}): {name}. Edit it, or choose another subject."
+            )
+
     for field, value in fields.items():
         setattr(rule, field, value)
-    await session.commit()
+    # Read before the mutation below: the log's "from" half must name where the
+    # rule was, and after ``setattr`` the ORM object only knows where it is.
+    old_scope, old_scope_id = rule.scope, rule.scope_id
+    if moved:
+        rule.scope = new_scope
+        rule.scope_id = new_scope_id
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # The pre-check above lost a race with another admin; the unique index
+        # is what caught it. Same refusal the create route gives — and
+        # ``label`` is always set here, because an identity-index violation on
+        # this table can only come from a subject move, and a move is what
+        # computed it.
+        await session.rollback()
+        raise ConflictError(
+            f"A redaction rule already exists for that {_SUBJECT_NOUNS[new_scope]} "
+            f"({label}). Edit it, or choose another subject."
+        ) from exc
     await session.refresh(rule)
     await _refresh_resolver(request)
 
@@ -3922,14 +3991,26 @@ async def update_redaction_rule(
     email = (
         await session.execute(select(User.email).where(User.id == rule.created_by))
     ).scalar_one_or_none()
-    logger.warning(
-        "redaction rule %s (%s %s) edited by %s: %s",
-        rule.id,
-        rule.scope.value,
-        rule.scope_id,
-        admin.email or admin.id,
-        ", ".join(sorted(fields)) or "nothing",
-    )
+    if moved:
+        logger.warning(
+            "redaction rule %s re-pointed from %s %s to %s %s by %s; edited: %s",
+            rule.id,
+            old_scope.value,
+            old_scope_id,
+            new_scope.value,
+            new_scope_id,
+            admin.email or admin.id,
+            ", ".join(sorted(fields)) or "nothing",
+        )
+    else:
+        logger.warning(
+            "redaction rule %s (%s %s) edited by %s: %s",
+            rule.id,
+            rule.scope.value,
+            rule.scope_id,
+            admin.email or admin.id,
+            ", ".join(sorted(fields)) or "nothing",
+        )
     return _rule_response(rule, labels.get((rule.scope, rule.scope_id)), email)
 
 
