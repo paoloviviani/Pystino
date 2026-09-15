@@ -1129,9 +1129,66 @@ class UserPasswordRequest(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
 
 
+def _clean_optional_text(value: str | None) -> str | None:
+    """Strip surrounding whitespace; an empty result clears the field.
+
+    A PATCH that means "no value here" should write ``NULL``, not an empty
+    string — the two render differently in the console (blank versus unset)
+    and only the first is honest about what the row holds.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _well_formed_email(value: str | None) -> str | None:
+    """The same shape check ``create_user`` applies, so both doors agree.
+
+    Deliberately shallow — one ``@`` with something on both sides — because a
+    stricter parser rejects real addresses (quoted local parts, IDN) that the
+    deployment's own mail path would accept. The column is indexed, not
+    unique: an address two accounts share is a data state, not a refusal.
+    """
+    if value is None:
+        return None
+    if "@" not in value or value.startswith("@") or value.endswith("@"):
+        raise ValueError("A valid email address is required.")
+    return value
+
+
 class UserUpdateRequest(BaseModel):
+    """Everything an administrator may change about one account.
+
+    What is deliberately absent: ``issuer`` and ``subject``. The pair *is* the
+    login identity (``uq_users_issuer_subject``) — rewriting it would re-key
+    the person, sever their memberships' meaning and re-provision them as a
+    stranger at the next login. Pydantic ignores unknown keys, so a client that
+    sends them gets an edit of the fields it did send and no error about the
+    ones it did not; identity is simply not on offer here.
+
+    The profile fields are optional in the PATCH sense: absent leaves the
+    column alone, an explicit ``null`` (or an empty string, which the
+    validators fold to ``null``) clears it. A cleared field is also recorded
+    as administrator-edited — "no display name" is a decision too, and the
+    directory disagreeing at the next login would undo it.
+    """
+
     is_active: bool | None = None
     is_admin: bool | None = None
+    email: Annotated[
+        str | None, AfterValidator(_clean_optional_text), AfterValidator(_well_formed_email)
+    ] = Field(default=None, max_length=320)
+    display_name: Annotated[str | None, AfterValidator(_clean_optional_text)] = Field(
+        default=None, max_length=255
+    )
+    #: The directory's own name for this person — editable here like the other
+    #: profile fields, and (uniquely among them) watched by
+    #: ``sync_user_from_claims``'s backfill clause, which must therefore treat
+    #: an edited value as settled rather than as a divergence to provision over.
+    username: Annotated[str | None, AfterValidator(_clean_optional_text)] = Field(
+        default=None, max_length=255
+    )
 
 
 class UserCreateRequest(BaseModel):

@@ -2139,6 +2139,12 @@ async def delete_limit(rule_id: uuid.UUID, admin: AdminUserDep, session: Session
 
 # -- users ------------------------------------------------------------------
 
+#: The profile fields the console may write, and the only ones whose edits
+#: are recorded in ``users.admin_edited_fields`` so sign-in stops re-asserting
+#: them. ``issuer``/``subject`` are absent on purpose: they are the login
+#: identity, and no route may re-key a person out from under their ledger.
+_PROFILE_FIELDS = ("email", "display_name", "username")
+
 
 async def _user_responses(
     session: SessionDep, users: Sequence[User], *, membership_in: uuid.UUID | None = None
@@ -2275,7 +2281,7 @@ async def update_user(
     session: SessionDep,
     settings: SettingsDep,
 ) -> UserAdminResponse:
-    """Deactivate a user, or make one an administrator.
+    """Deactivate a user, make one an administrator, or edit their profile.
 
     **The console is authoritative for admin, for every account** (ADR 0069):
     the flag is written here and nothing strips it at the next login, because
@@ -2285,6 +2291,19 @@ async def update_user(
     flag; with the directory out of the authorisation business the workaround
     has nothing left to work around, and a group named "administrators" stops
     being the thing that decides anything.
+
+    **The console becomes authoritative for any profile field it writes.**
+    ``email``, ``display_name`` and ``username`` used to be refresh-only: a
+    login re-asserted whatever the token carried, so a correction an
+    administrator made here reverted at that person's next sign-in. Each edit
+    is now recorded in ``users.admin_edited_fields``, and provisioning skips a
+    listed field — the directory keeps syncing everything the console has not
+    touched, which is the same split ADR 0057 drew for memberships. Clearing a
+    field records the edit too: "no display name" is a decision, and the
+    directory disagreeing would undo it. For a *local* account none of this
+    matters (the local door touches no profile field), but a local account a
+    directory later adopts (ADR 0056) keeps its administrator's values for
+    exactly this reason.
 
     A directory's revocation of *authentication* still lands — a disabled
     account is refused on every path — but its group claims never touch roles.
@@ -2302,6 +2321,14 @@ async def update_user(
     fields = payload.model_dump(exclude_unset=True)
     for field, value in fields.items():
         setattr(user, field, value)
+    # A new list every time: SQLAlchemy does not see in-place mutation of a
+    # JSON attribute, and an append the unit-of-work never flushes would make
+    # the override exist only until the request ended — the edit would revert
+    # at the next login exactly as if the column were not there.
+    if edited := [field for field in _PROFILE_FIELDS if field in fields]:
+        user.admin_edited_fields = list(
+            dict.fromkeys([*(user.admin_edited_fields or []), *edited])
+        )
     await session.commit()
 
     # Not by re-reading the listing and picking a row out of it: the listing is
