@@ -524,6 +524,14 @@ export interface ProviderPlugin {
    * type whose endpoints vary (generic, self-hosted).
    */
   default_base_url: string | null;
+  /**
+   * The endpoints the vendor documents, when there is more than one, so the
+   * form offers a constrained choice instead of free-text URL entry — for a
+   * decision with two documented values, free text is a typo waiting to
+   * happen. The labels travel with the URLs because which host is the
+   * EU-only one is vendor knowledge, not a sentence the console should hold.
+   */
+  base_url_options: { url: string; label: string }[];
   is_default: boolean;
 }
 

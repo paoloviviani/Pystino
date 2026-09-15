@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
@@ -13,7 +13,10 @@ import { AdminSearch } from "./AdminSearch";
  * the backends the group is granted. What the tests hold is the security
  * property the screen exists for — an ungranted backend is never offered —
  * plus that the choice is sent to the policy endpoint verbatim, and that a
- * server refusal arrives as its sentence rather than a code.
+ * server refusal arrives as its sentence rather than a code. The backend
+ * dialog is held here too: where a vendor documents more than one host, the
+ * form offers exactly those as a choice and never invents a URL, and an
+ * endpoint the vendor does not document is kept rather than silently moved.
  */
 
 function backend(overrides: Partial<AdminProvider> = {}): AdminProvider {
@@ -89,6 +92,7 @@ const PLUGINS: ProviderPlugin[] = [
     kind: "search",
     billing_modes: ["own_prices"],
     default_base_url: "https://api.linkup.so/v1",
+    base_url_options: [],
     is_default: false,
   },
   {
@@ -98,6 +102,20 @@ const PLUGINS: ProviderPlugin[] = [
     kind: "search",
     billing_modes: ["own_prices"],
     default_base_url: "https://api.exa.ai",
+    base_url_options: [],
+    is_default: false,
+  },
+  {
+    name: "jina",
+    label: "Jina (web search)",
+    description: "Jina",
+    kind: "search",
+    billing_modes: ["own_prices"],
+    default_base_url: "https://s.jina.ai",
+    base_url_options: [
+      { url: "https://s.jina.ai", label: "s.jina.ai — global (default)" },
+      { url: "https://eu.s.jina.ai", label: "eu.s.jina.ai — all processing stays in the EU" },
+    ],
     is_default: false,
   },
 ];
@@ -106,14 +124,20 @@ interface PolicyCalls {
   set: { groupId: string; body: unknown }[];
 }
 
+interface Writes {
+  captured: { url: string; method: string; body: unknown }[];
+}
+
 function searchRoutes(
   calls: PolicyCalls = { set: [] },
   options: {
     failPolicyWith?: { status: number; message: string };
     cereaBackend?: string | null;
+    writes?: Writes;
+    providers?: AdminProvider[];
   } = {},
 ) {
-  const { failPolicyWith, cereaBackend = "linkup" } = options;
+  const { failPolicyWith, cereaBackend = "linkup", writes, providers } = options;
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -124,9 +148,16 @@ function searchRoutes(
         headers: { "content-type": "application/json" },
       });
     if (url.includes("/api/admin/providers")) {
+      if (method === "POST" || method === "PATCH") {
+        writes?.captured.push({ url, method, body: JSON.parse(String(init?.body)) });
+        return jsonResponse({ id: "p-new" });
+      }
       return jsonResponse({
-        items: [backend(), backend({ id: "p2", name: "exa", base_url: "https://api.exa.ai" })],
-        total: 2,
+        items: providers ?? [
+          backend(),
+          backend({ id: "p2", name: "exa", base_url: "https://api.exa.ai" }),
+        ],
+        total: providers?.length ?? 2,
         limit: 200,
         offset: 0,
       });
@@ -243,5 +274,156 @@ describe("AdminSearch group policy", () => {
     await user.selectOptions(select, "m-linkup");
 
     await screen.findByText("Group 'cerea' is not granted 'linkup'.");
+  });
+});
+
+describe("AdminSearch backend dialog", () => {
+  it("offers a vendor's documented hosts as a choice, default first", async () => {
+    // The constrained form of the choice: two documented values, labelled —
+    // not a free-text URL field that invites a typo no listing would catch.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", searchRoutes());
+    renderScreen(<AdminSearch />);
+
+    await user.click(await screen.findByRole("button", { name: "Add backend" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.selectOptions(dialog.getByLabelText("Vendor"), "jina");
+
+    const endpoint = dialog.getByLabelText("Endpoint") as HTMLSelectElement;
+    const texts = [...endpoint.options].map((option) => option.text);
+    expect(texts).toEqual([
+      "s.jina.ai — global (default)",
+      "eu.s.jina.ai — all processing stays in the EU",
+    ]);
+    expect(endpoint.value).toBe("https://s.jina.ai");
+  });
+
+  it("sends the chosen documented host on create", async () => {
+    const user = userEvent.setup({ delay: null });
+    const writes: Writes = { captured: [] };
+    vi.stubGlobal("fetch", searchRoutes({ set: [] }, { writes }));
+    renderScreen(<AdminSearch />);
+
+    await user.click(await screen.findByRole("button", { name: "Add backend" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.selectOptions(dialog.getByLabelText("Vendor"), "jina");
+    await user.type(dialog.getByLabelText("API key"), "jina-key-1");
+    await user.selectOptions(dialog.getByLabelText("Endpoint"), "https://eu.s.jina.ai");
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+
+    await waitFor(() => expect(writes.captured.length).toBeGreaterThan(0));
+    const body = writes.captured[0]?.body as Record<string, unknown>;
+    expect(body.base_url).toBe("https://eu.s.jina.ai");
+    expect(body.plugin).toBe("jina");
+    expect(body.kind).toBe("search");
+  });
+
+  it("offers no endpoint choice where the vendor documents one host", async () => {
+    const user = userEvent.setup({ delay: null });
+    const writes: Writes = { captured: [] };
+    vi.stubGlobal("fetch", searchRoutes({ set: [] }, { writes }));
+    renderScreen(<AdminSearch />);
+
+    await user.click(await screen.findByRole("button", { name: "Add backend" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.selectOptions(dialog.getByLabelText("Vendor"), "linkup");
+    await user.type(dialog.getByLabelText("API key"), "luk-key-1");
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+
+    expect(dialog.queryByLabelText("Endpoint")).not.toBeInTheDocument();
+    await waitFor(() => expect(writes.captured.length).toBeGreaterThan(0));
+    const body = writes.captured[0]?.body as Record<string, unknown>;
+    // No URL sent: the plugin's default is the whole answer, and sending
+    // nothing is what applies it.
+    expect("base_url" in body).toBe(false);
+  });
+
+  it("does not carry the previous vendor's URL to the next one", async () => {
+    // Pick Jina, then switch to Linkup: the endpoint field empties, because a
+    // Jina host stored on a Linkup backend would be a configuration that
+    // looks right and searches the wrong vendor.
+    const user = userEvent.setup({ delay: null });
+    const writes: Writes = { captured: [] };
+    vi.stubGlobal("fetch", searchRoutes({ set: [] }, { writes }));
+    renderScreen(<AdminSearch />);
+
+    await user.click(await screen.findByRole("button", { name: "Add backend" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.selectOptions(dialog.getByLabelText("Vendor"), "jina");
+    await user.selectOptions(dialog.getByLabelText("Vendor"), "linkup");
+    await user.type(dialog.getByLabelText("API key"), "luk-key-1");
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+
+    expect(dialog.queryByLabelText("Endpoint")).not.toBeInTheDocument();
+    await waitFor(() => expect(writes.captured.length).toBeGreaterThan(0));
+    expect("base_url" in (writes.captured[0]?.body as Record<string, unknown>)).toBe(false);
+  });
+
+  it("editing preselects the stored host and sends the switch", async () => {
+    const user = userEvent.setup({ delay: null });
+    const writes: Writes = { captured: [] };
+    vi.stubGlobal(
+      "fetch",
+      searchRoutes(
+        { set: [] },
+        {
+          writes,
+          providers: [backend({ name: "jina", plugin: "jina", base_url: "https://s.jina.ai" })],
+        },
+      ),
+    );
+    renderScreen(<AdminSearch />);
+
+    await waitFor(() => expect(screen.getByText("jina")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    const endpoint = dialog.getByLabelText("Endpoint") as HTMLSelectElement;
+    expect(endpoint.value).toBe("https://s.jina.ai");
+
+    await user.selectOptions(endpoint, "https://eu.s.jina.ai");
+    await user.click(dialog.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(writes.captured.length).toBeGreaterThan(0));
+    expect(writes.captured[0]?.method).toBe("PATCH");
+    expect((writes.captured[0]?.body as Record<string, unknown>).base_url).toBe(
+      "https://eu.s.jina.ai",
+    );
+  });
+
+  it("keeps an endpoint the vendor does not document rather than moving it", async () => {
+    // A URL the operator set by hand — a proxy — is not the plugin's choice
+    // to overwrite: it stays on the screen, preselected, and an edit that
+    // changes nothing stays unsavable, so no unrelated save can silently
+    // move the host either way.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal(
+      "fetch",
+      searchRoutes(
+        { set: [] },
+        {
+          providers: [
+            backend({
+              name: "jina",
+              plugin: "jina",
+              base_url: "https://jina.internal.test",
+            }),
+          ],
+        },
+      ),
+    );
+    renderScreen(<AdminSearch />);
+
+    await waitFor(() => expect(screen.getByText("jina")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    const endpoint = dialog.getByLabelText("Endpoint") as HTMLSelectElement;
+    expect(endpoint.value).toBe("https://jina.internal.test");
+    expect(screen.getByRole("option", { name: "https://jina.internal.test" })).toBeTruthy();
+
+    const save = dialog.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    await user.selectOptions(endpoint, "https://eu.s.jina.ai");
+    expect(save).toBeEnabled();
+    await user.selectOptions(endpoint, "https://jina.internal.test");
+    expect(save).toBeDisabled();
   });
 });

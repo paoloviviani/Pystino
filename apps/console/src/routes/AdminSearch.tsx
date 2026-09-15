@@ -283,11 +283,14 @@ export function AdminSearch() {
 }
 
 /**
- * A backend is two decisions: which vendor, and the key. The endpoint, the
- * auth header scheme and the request path are the plugin's knowledge — the
- * gateway applies them and the operator never types a URL (ADR 0071). This is
- * deliberately not the inference-provider dialogue: web search providers are
- * not model providers, and half those fields mean nothing here.
+ * A backend is two decisions: which vendor, and the key. The auth header
+ * scheme and the request path are the plugin's knowledge — the gateway applies
+ * them and the operator never types a URL (ADR 0071). The endpoint is the one
+ * partial exception: where a vendor documents more than one host, the plugin
+ * names them and the dialog offers that choice as a select, because free-text
+ * URL entry for a decision with two documented values is a typo waiting to
+ * happen. This is deliberately not the inference-provider dialogue: web search
+ * providers are not model providers, and half those fields mean nothing here.
  */
 function BackendDialog({
   open,
@@ -306,6 +309,7 @@ function BackendDialog({
   const editing = provider !== null;
 
   const [plugin, setPlugin] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -313,6 +317,7 @@ function BackendDialog({
   if (open && loadedFor !== (provider?.id ?? "new")) {
     setLoadedFor(provider?.id ?? "new");
     setPlugin(provider?.plugin ?? "");
+    setBaseUrl(provider?.base_url ?? "");
     setApiKey("");
     setClearKey(false);
   }
@@ -322,12 +327,36 @@ function BackendDialog({
   // One backend per vendor: the vendor's name is the handle everything else
   // derives from — the grant anchor's name, the passthrough's path segment.
   const chosen = plugin || "";
+  const chosenPlugin = plugins.find((entry) => entry.name === chosen);
+
+  // The vendor's documented hosts, when there is more than one. A stored URL
+  // the plugin does not document — an operator's own proxy, or a value set
+  // before the plugin listed its hosts — is offered alongside, preselected:
+  // an unrelated save must not silently move the host, and it cannot unless
+  // keeping the current one is itself a choice on the screen.
+  const documented = chosenPlugin?.base_url_options ?? [];
+  const endpointOptions =
+    documented.length > 1
+      ? editing && provider && !documented.some((entry) => entry.url === provider.base_url)
+        ? [{ url: provider.base_url, label: provider.base_url }, ...documented]
+        : documented
+      : null;
+  // A host switch is a change even when no key was typed: the Save guard used
+  // to refuse every edit that touched nothing, which was right when the key
+  // was the only thing here and would have made the endpoint choice
+  // unsaveable on its own.
+  const hostChanged =
+    endpointOptions !== null && editing && provider !== null && baseUrl !== provider.base_url;
 
   const submit = () => {
     if (editing && provider) {
       update.mutate(
         {
           id: provider.id,
+          // Where the vendor documents a choice, what the select shows is
+          // what is sent; elsewhere the URL is omitted and the patch leaves
+          // the stored one untouched.
+          ...(endpointOptions && baseUrl ? { base_url: baseUrl } : {}),
           // Three ways, deliberately: a typed key replaces, the explicit clear
           // removes, and neither leaves the stored credential untouched.
           ...(apiKey ? { api_key: apiKey } : clearKey ? { api_key: "" } : {}),
@@ -346,6 +375,10 @@ function BackendDialog({
           name: chosen,
           plugin: chosen,
           kind: "search",
+          // Sent only where the vendor documents a choice: a single-host
+          // backend's plugin default is the whole answer, and sending
+          // nothing is what applies it.
+          ...(endpointOptions && baseUrl ? { base_url: baseUrl } : {}),
           ...(apiKey ? { api_key: apiKey } : {}),
         },
         {
@@ -370,7 +403,11 @@ function BackendDialog({
           <Button
             variant="primary"
             busy={pending}
-            disabled={!chosen || (!editing && !apiKey.trim()) || (editing && !apiKey.trim() && !clearKey)}
+            disabled={
+              !chosen
+              || (!editing && !apiKey.trim())
+              || (editing && !apiKey.trim() && !clearKey && !hostChanged)
+            }
             onClick={submit}
           >
             {editing ? "Save" : "Add"}
@@ -388,7 +425,22 @@ function BackendDialog({
         label="Vendor"
         value={plugin}
         disabled={editing}
-        onChange={(event) => setPlugin(event.target.value)}
+        onChange={(event) => {
+          // Choosing a vendor is choosing its endpoint, when it documents
+          // more than one: pre-fill the host the plugin names as default. A
+          // single-host vendor leaves the field empty — its default is the
+          // whole answer — and a URL chosen for a *previous* vendor must
+          // never ride along to this one.
+          const next = plugins.find((entry) => entry.name === event.target.value);
+          const hosts = next?.base_url_options ?? [];
+          if (hosts.length > 1) {
+            const fallback = hosts.find((entry) => entry.url === next?.default_base_url);
+            setBaseUrl(fallback?.url ?? hosts[0]?.url ?? "");
+          } else {
+            setBaseUrl("");
+          }
+          setPlugin(event.target.value);
+        }}
         hint="The endpoint and the credential scheme are the vendor's own — configured here, not typed anywhere."
       >
         <option value="">Choose a vendor…</option>
@@ -398,6 +450,21 @@ function BackendDialog({
           </option>
         ))}
       </Select>
+
+      {endpointOptions && (
+        <Select
+          label="Endpoint"
+          value={baseUrl}
+          onChange={(event) => setBaseUrl(event.target.value)}
+          hint="Which of the vendor's documented hosts the searches go to."
+        >
+          {endpointOptions.map((entry) => (
+            <option key={entry.url} value={entry.url}>
+              {entry.label}
+            </option>
+          ))}
+        </Select>
+      )}
 
       <Input
         label="API key"
