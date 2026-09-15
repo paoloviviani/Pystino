@@ -11,8 +11,9 @@ import { AdminRedactionRule } from "./AdminRedactionRule";
  *
  * The properties here are the ones a wrong answer makes invisible: a policy that
  * silently drops a capability the engine reported, a pattern whose refusal is
- * the browser's opinion rather than the server's, and a subject that can be
- * changed after the fact — which would make two subjects' histories read as one.
+ * the browser's opinion rather than the server's, a subject that travels with
+ * an edit only when it actually changed, and a clone that arrives as a draft —
+ * policy copied, subject unset, inactive until a person has looked at it.
  */
 
 function rule(overrides: Partial<RedactionRule> = {}): RedactionRule {
@@ -37,6 +38,11 @@ function rule(overrides: Partial<RedactionRule> = {}): RedactionRule {
     ...overrides,
   };
 }
+
+const GROUPS = [
+  { id: "g1", name: "research" },
+  { id: "g2", name: "clinical" },
+];
 
 const STATUS = {
   engine: "http",
@@ -91,6 +97,7 @@ function routes(
   captured: Captured = { posts: [], patches: [] },
   onWrite?: () => Response,
   statusPayload = STATUS,
+  groups: { id: string; name: string }[] = GROUPS,
 ) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -104,11 +111,13 @@ function routes(
         headers: { "content-type": "application/json" },
       });
     }
-    const payload = url.includes("/redaction/rules")
-      ? { items: rules, total: rules.length, limit: 200, offset: 0 }
-      : url.includes("/redaction")
-        ? statusPayload
-        : { items: [], total: 0, limit: 200, offset: 0 };
+    const payload = url.includes("/api/admin/groups")
+      ? { items: groups, total: groups.length, limit: 50, offset: 0 }
+      : url.includes("/redaction/rules")
+        ? { items: rules, total: rules.length, limit: 200, offset: 0 }
+        : url.includes("/redaction")
+          ? statusPayload
+          : { items: [], total: 0, limit: 200, offset: 0 };
     return new Response(JSON.stringify(payload), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -116,11 +125,11 @@ function routes(
   });
 }
 
-function renderPage(path: string) {
+function renderPage(path: string, state?: unknown) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[path]}>
+      <MemoryRouter initialEntries={[state === undefined ? path : { pathname: path, state }]}>
         <Routes>
           <Route path="/admin/redaction/rules/:ruleId" element={<AdminRedactionRule />} />
           <Route path="/admin/redaction" element={<div>redaction screen</div>} />
@@ -246,10 +255,23 @@ describe("AdminRedactionRule", () => {
     expect(screen.getByRole("button", { name: "Create rule" })).toBeDisabled();
   });
 
-  it("loads an existing rule and cannot repoint it", async () => {
-    // A rule *is* a decision about one subject. Repointing it would silently
-    // merge two subjects' histories into one row.
+  it("loads an existing rule with its subject editable and seeded", async () => {
+    // The freeze is gone: the subject is editable, and the picker arrives
+    // already naming the rule's subject rather than blank.
     vi.stubGlobal("fetch", routes([rule()]));
+    renderPage("/admin/redaction/rules/r1");
+
+    await waitFor(() => expect(screen.getByLabelText("Scope")).toHaveValue("group"));
+    await waitFor(() => expect(screen.getByLabelText("Group")).toHaveValue("g1"));
+  });
+
+  it("sends no subject on a save that does not touch it", async () => {
+    // The gateway validates a subject it is sent, and a subject may have been
+    // deleted since the rule was written. An edit of the policy must not turn
+    // into a 404 about a group nobody meant to change.
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { posts: [], patches: [] };
+    vi.stubGlobal("fetch", routes([rule()], captured));
     renderPage("/admin/redaction/rules/r1");
 
     await waitFor(() =>
@@ -259,9 +281,131 @@ describe("AdminRedactionRule", () => {
         }),
       ).toBeChecked(),
     );
-    // No scope control at all on an existing rule, which is stronger than a
-    // disabled one: there is nothing to attempt.
-    expect(screen.queryByLabelText("Scope")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save rule" }));
+
+    await waitFor(() => expect(captured.patches).toHaveLength(1));
+    const body = captured.patches[0] as Record<string, unknown>;
+    expect(body.scope).toBeUndefined();
+    expect(body.scope_id).toBeUndefined();
+  });
+
+  it("re-points a rule at another subject of the same kind", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { posts: [], patches: [] };
+    vi.stubGlobal("fetch", routes([rule()], captured));
+    renderPage("/admin/redaction/rules/r1");
+
+    await waitFor(() => expect(screen.getByLabelText("Group")).toHaveValue("g1"));
+    await user.selectOptions(screen.getByLabelText("Group"), "g2");
+    await user.click(screen.getByRole("button", { name: "Save rule" }));
+
+    await waitFor(() => expect(captured.patches).toHaveLength(1));
+    const body = captured.patches[0] as Record<string, unknown>;
+    expect(body.scope).toBe("group");
+    expect(body.scope_id).toBe("g2");
+  });
+
+  it("re-scopes a rule to every request", async () => {
+    // The repair a dangling rule needs when its subject is gone for good: the
+    // catch-all names no row, so it cannot dangle.
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { posts: [], patches: [] };
+    vi.stubGlobal("fetch", routes([rule()], captured));
+    renderPage("/admin/redaction/rules/r1");
+
+    await waitFor(() => expect(screen.getByLabelText("Scope")).toHaveValue("group"));
+    await user.selectOptions(screen.getByLabelText("Scope"), "all");
+    await user.click(screen.getByRole("button", { name: "Save rule" }));
+
+    await waitFor(() => expect(captured.patches).toHaveLength(1));
+    const body = captured.patches[0] as Record<string, unknown>;
+    expect(body.scope).toBe("all");
+    expect(body.scope_id).toBeNull();
+  });
+
+  it("names the rule that holds the subject when the move is refused", async () => {
+    // The 409 is the server's opinion and names the conflicting rule; the
+    // console renders it verbatim instead of guessing at one.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal(
+      "fetch",
+      routes(
+        [rule()],
+        { posts: [], patches: [] },
+        () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                message:
+                  "A redaction rule already exists for that group (clinical): clinical guard. Edit it, or choose another subject.",
+              },
+            }),
+            { status: 409, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+    renderPage("/admin/redaction/rules/r1");
+
+    await waitFor(() => expect(screen.getByLabelText("Group")).toHaveValue("g1"));
+    await user.selectOptions(screen.getByLabelText("Group"), "g2");
+    await user.click(screen.getByRole("button", { name: "Save rule" }));
+
+    await waitFor(() => expect(screen.getByText(/clinical guard/)).toBeInTheDocument());
+    expect(screen.getByText(/already exists for that group/)).toBeInTheDocument();
+  });
+
+  it("warns beside a rule whose subject is gone, and offers the repair", async () => {
+    // scope_id is not a foreign key, so this rule matches nothing and used to
+    // be unrepairable — dead weight with a "deleted subject" label. The warning
+    // says so; the editable subject is what makes the warning actionable.
+    vi.stubGlobal("fetch", routes([rule({ subject_label: null })]));
+    renderPage("/admin/redaction/rules/r1");
+
+    expect(await screen.findByText("This rule's subject no longer exists")).toBeInTheDocument();
+    expect(screen.getByText(/scope it to every request/)).toBeInTheDocument();
+    // The rule's own subject is still seeded, dangling id and all: the admin
+    // may know something the listing does not.
+    expect(screen.getByLabelText("Scope")).toHaveValue("group");
+  });
+
+  it("clones a rule: policy and reason copied, name gains (copy), subject unset", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { posts: [], patches: [] };
+    vi.stubGlobal("fetch", routes([], captured));
+    renderPage("/admin/redaction/rules/new", { cloneFrom: rule({ reason: "handles patient data" }) });
+
+    // Says what a clone is before anything is sent.
+    expect(await screen.findByText(/Cloning “research group”/)).toBeInTheDocument();
+    expect(screen.getByText(/starts inactive/)).toBeInTheDocument();
+
+    expect(screen.getByLabelText("Rule name")).toHaveValue("research group (copy)");
+    expect(screen.getByLabelText("Reason")).toHaveValue("handles patient data");
+    expect(
+      await within(screen.getByRole("group", { name: /PERSON/ })).findByRole("radio", {
+        name: "Restore",
+      }),
+    ).toBeChecked();
+
+    // The subject is the one thing that does not come across — the source's is
+    // taken, and the catch-all is a choice nobody made by default.
+    expect(screen.getByLabelText("Scope")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Create rule" })).toBeDisabled();
+
+    await user.selectOptions(screen.getByLabelText("Scope"), "group");
+    await waitFor(() => expect(screen.getByLabelText("Group")).toBeInTheDocument());
+    await user.selectOptions(screen.getByLabelText("Group"), "g2");
+    await user.click(screen.getByRole("button", { name: "Create rule" }));
+
+    await waitFor(() => expect(captured.posts).toHaveLength(1));
+    const body = captured.posts[0] as Record<string, unknown>;
+    // A clone is a draft: inactive until a person has reviewed it, because a
+    // redaction rule that switches itself on for an unreviewed subject is a
+    // surprise running the wrong way.
+    expect(body.is_active).toBe(false);
+    expect(body.name).toBe("research group (copy)");
+    expect(body.scope).toBe("group");
+    expect(body.scope_id).toBe("g2");
+    expect((body.policy as RedactionPolicy).entities).toHaveProperty("PERSON");
   });
 
   it("sends the whole policy on save", async () => {
