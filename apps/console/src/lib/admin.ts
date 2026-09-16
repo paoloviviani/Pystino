@@ -7,6 +7,7 @@ import type {
   AdminProvider,
   AdminUser,
   CatalogueDiscovery,
+  CatalogueTags,
   LimitRule,
   ModelImportResponse,
   OidcPolicy,
@@ -50,6 +51,7 @@ export const adminKeys = {
   model: (modelId: string) => ["admin", "models", modelId] as const,
   prices: (modelId: string) => ["admin", "models", modelId, "prices"] as const,
   discovery: ["admin", "models", "discover"] as const,
+  tags: ["admin", "models", "tags"] as const,
   groups: ["admin", "groups"] as const,
   groupMembers: (groupId: string) => ["admin", "groups", groupId, "members"] as const,
   limits: ["admin", "limits"] as const,
@@ -118,7 +120,7 @@ export interface ProviderInput {
   extra_headers?: Record<string, string>;
   is_active?: boolean;
   plugin?: string | null;
-  kind?: "provider" | "router" | "search";
+  kind?: "provider" | "router" | "search" | "internal";
   billing_mode?: "own_prices" | "provider_reported";
   /**
    * Prepended to every model name this provider contributes. Setting or
@@ -426,6 +428,28 @@ export function useDiscovery(
     enabled: providerId !== null,
     retry: false,
     staleTime: 60_000,
+  });
+}
+
+/**
+ * The tag vocabulary a provider slices its catalogue by — the discovery
+ * dialog's dropdown options.
+ *
+ * Also not fetched on mount, for the same reason discovery is not: it calls
+ * the provider over the network. Cached longer than discovery, because the
+ * vocabulary changes when the counterparty changes their catalogue, not when
+ * the operator picks a different slice of it.
+ */
+export function useCatalogueTags(providerId: string | null) {
+  return useQuery({
+    queryKey: [...adminKeys.tags, providerId],
+    queryFn: () =>
+      request<CatalogueTags>(
+        `/api/admin/models/tags?provider_id=${encodeURIComponent(providerId ?? "")}`,
+      ),
+    enabled: providerId !== null,
+    retry: false,
+    staleTime: 300_000,
   });
 }
 

@@ -272,6 +272,18 @@ export interface CatalogueDiscovery {
   unparsable: string[];
 }
 
+export interface CatalogueTags {
+  provider_url: string;
+  /**
+   * False for a provider whose plugin knows no way to ask for the whole
+   * catalogue — free text stays for those, rather than a dropdown of one
+   * default option presented as a complete vocabulary.
+   */
+  supported: boolean;
+  /** Sorted, the counterparty's spelling kept: the values go back as `tag=…`. */
+  tags: string[];
+}
+
 export interface ModelImportResult {
   upstream_model: string;
   name: string | null;
@@ -514,8 +526,10 @@ export interface ProviderPlugin {
   name: string;
   label: string;
   description: string;
-  /** `provider` implies the serving endpoint; `router` chooses it per request. */
-  kind: "provider" | "router" | "search";
+  /** `provider` implies the serving endpoint; `router` chooses it per request.
+   * `search` is a web-search backend; `internal` is the deployment's own
+   * service (the extractor) — plumbing, never an LLM-provider picker choice. */
+  kind: "provider" | "router" | "search" | "internal";
   /** Only the modes this plugin can support, so the UI cannot offer a refusal. */
   billing_modes: ("own_prices" | "provider_reported")[];
   /**
@@ -556,7 +570,9 @@ export interface AdminProvider {
    * instead of four (ADR 0032).
    */
   plugin: string | null;
-  kind: "provider" | "router" | "search";
+  /** `internal` is the deployment's own service (the extractor): shown on the
+   * Providers page for management, hidden from the LLM-provider pickers. */
+  kind: "provider" | "router" | "search" | "internal";
   /** What the named plugin actually is, so a mismatch with `kind` is visible. */
   plugin_kind: string | null;
   /** Whose figure is the charge. */

@@ -45,7 +45,13 @@ export function Dialog({ open, title, onClose, footer, children }: DialogProps) 
         />
         <BaseDialog.Popup
           className={cx(
-            "fixed top-1/2 left-1/2 z-50 w-[min(32rem,calc(100vw-2rem))]",
+            // Wide by default, because the narrowest overlay here — the
+            // catalogue discovery dialog — carries a table of candidates
+            // across eight columns, and a 32rem popup turned it into a
+            // scrollbar with context. Forms that want less can always be
+            // narrower; a width every dialog had to opt into was a prop nobody
+            // would find until the fourth dialog had the same bug.
+            "fixed top-1/2 left-1/2 z-50 w-[min(60rem,calc(100vw-2rem))]",
             "max-h-[85dvh] -translate-x-1/2 -translate-y-1/2 overflow-y-auto",
             "rounded-lg bg-surface shadow-md outline-none transition-opacity duration-150",
             "data-[ending-style]:opacity-0 data-[starting-style]:opacity-0",

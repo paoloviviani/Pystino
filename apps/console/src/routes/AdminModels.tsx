@@ -24,6 +24,7 @@ import {
 } from "../components/CapabilityPicker";
 import { PageHeader } from "../components/PageHeader";
 import {
+  useCatalogueTags,
   useCreateModel,
   useDeleteModel,
   useDiscovery,
@@ -486,8 +487,11 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
   const choices = (providers.data?.items ?? []).filter(
     // Search backends are not catalogue importers: their grant anchor is
     // created with the provider, and a tier is a body field (ADR 0071). They
-    // have their own screen.
-    (provider) => provider.is_active && provider.kind !== "search",
+    // have their own screen. Internal rows are the deployment's own plumbing
+    // (the extractor's markitdown row): a fixed builtin catalogue, nothing to
+    // adopt from and nothing a hand-made model could route to — the model
+    // list hides those rows for the same reason.
+    (provider) => provider.is_active && provider.kind !== "search" && provider.kind !== "internal",
   );
 
   return (
@@ -541,6 +545,30 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
             {create.error instanceof Error ? create.error.message : "Unknown error."}
           </Notice>
         ) : null}
+
+        {/* First question first, the same order discovery asks in: a model is
+            routed through one endpoint (ADR 0027), so nothing after this —
+            not the name's shape, not what the upstream id will even look
+            like — is answerable before it. Sitting last, below fields the
+            answer constrains, it read as an afterthought rather than the
+            decision the rest hangs on. */}
+        <Select
+          label="Provider"
+          value={providerId}
+          onChange={(e) => setProviderId(e.target.value)}
+        >
+          <option value="">Choose an endpoint…</option>
+          {choices.map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.name} — {provider.base_url}
+            </option>
+          ))}
+        </Select>
+        {choices.length === 0 && !providers.isPending && (
+          <Notice tone="warn">
+            No active provider. Add one on the Providers page first.
+          </Notice>
+        )}
 
         <Input
           label="Name"
@@ -598,24 +626,6 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
           onChange={setFeatures}
         />
 
-        <Select
-          label="Provider"
-          value={providerId}
-          onChange={(e) => setProviderId(e.target.value)}
-        >
-          <option value="">Choose an endpoint…</option>
-          {choices.map((provider) => (
-            <option key={provider.id} value={provider.id}>
-              {provider.name} — {provider.base_url}
-            </option>
-          ))}
-        </Select>
-        {choices.length === 0 && !providers.isPending && (
-          <Notice tone="warn">
-            No active provider. Add one on the Providers page first.
-          </Notice>
-        )}
-
         {/* Both are deliberate: a new model is invisible until someone chooses to
             expose it, and an unpriced model would record a cost of zero. */}
         <Notice tone="info">No group is granted access, and no price is set.</Notice>
@@ -667,6 +677,10 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   // add to it.
   const [tag, setTag] = useState("");
   const discovery = useDiscovery(open && providerId ? providerId : null, fillMissing, tag);
+  // The words the dropdown offers, read live from the provider when its plugin
+  // knows how to ask for the whole catalogue (`supported`); free text stays
+  // for the providers that do not.
+  const tags = useCatalogueTags(open && providerId ? providerId : null);
   const importModels = useImportModels();
   const toast = useOptionalToast();
   const [selected, setSelected] = useState<string[]>([]);
@@ -674,8 +688,9 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   const choices = (providers.data?.items ?? []).filter(
     // Search backends are not catalogue importers: their grant anchor is
     // created with the provider, and a tier is a body field (ADR 0071). They
-    // have their own screen.
-    (provider) => provider.is_active && provider.kind !== "search",
+    // have their own screen. Internal rows are the deployment's own plumbing,
+    // not endpoints to adopt a catalogue from.
+    (provider) => provider.is_active && provider.kind !== "search" && provider.kind !== "internal",
   );
 
   const toggle = (id: string) =>
@@ -827,6 +842,11 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           value={providerId}
           onChange={(event) => {
             setProviderId(event.target.value);
+            // A tag is the counterparty's vocabulary — the one that meant
+            // something to the endpoint just left. Carrying it here would ask
+            // this provider for a slice it may not have, and read as an
+            // empty catalogue rather than the mismatch it is.
+            setTag("");
             setSelected([]);
           }}
         >
@@ -838,16 +858,39 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           ))}
         </Select>
 
-        <Input
-          label="Catalogue tag"
-          value={tag}
-          onChange={(event) => {
-            setTag(event.target.value);
-            setSelected([]);
-          }}
-          placeholder="Instruct"
-          hint="Cortecs filters its catalogue by tag and defaults to Instruct — ask for Embedding or OCR to see those."
-        />
+        {tags.data?.supported ? (
+          <Select
+            label="Catalogue tag"
+            value={tag}
+            onChange={(event) => {
+              setTag(event.target.value);
+              setSelected([]);
+            }}
+            hint="Cortecs filters its catalogue by tag and defaults to Instruct — the words above are read live from its catalogue, so a tag added there appears here."
+          >
+            {/* The empty choice is not "no tag": it is the provider's own
+                default slice, which for Cortecs is Instruct without saying
+                so. Naming it "default" rather than "none" kept the dropdown
+                honest about what an untagged fetch actually returns. */}
+            <option value="">Provider default</option>
+            {tags.data.tags.map((choice) => (
+              <option key={choice} value={choice}>
+                {choice}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <Input
+            label="Catalogue tag"
+            value={tag}
+            onChange={(event) => {
+              setTag(event.target.value);
+              setSelected([]);
+            }}
+            placeholder="Instruct"
+            hint="Cortecs filters its catalogue by tag and defaults to Instruct — ask for Embedding or OCR to see those."
+          />
+        )}
 
         {/* Off by default: a provider's own catalogue is the authority where one
             exists, and this is only needed for the APIs that publish nothing.

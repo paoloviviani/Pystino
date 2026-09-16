@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AdminModel, CatalogueDiscovery } from "../lib/types";
+import type { AdminModel, CatalogueDiscovery, CatalogueTags } from "../lib/types";
 import { jsonResponse } from "../test-helpers";
 import { AdminModels } from "./AdminModels";
 
@@ -142,10 +142,28 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
   ],
 };
 
+/** What `/models/tags` answers for a provider whose plugin knows the fetch.
+ *
+ * The counterparty's spelling is kept — the values go back as `tag=…`.
+ */
+const TAGS: CatalogueTags = {
+  provider_url: "https://cortecs.test/v1/models?tag=all",
+  supported: true,
+  tags: ["Embedding", "Instruct", "OCR"],
+};
+
 function routes(
   models: AdminModel[],
-  calls: { imported?: string[]; discoverUrls?: string[]; importUrls?: string[] } = {},
+  calls: {
+    imported?: string[];
+    discoverUrls?: string[];
+    importUrls?: string[];
+    tagUrls?: string[];
+  } = {},
   captured: { bodies: unknown[] } = { bodies: [] },
+  /** What `/models/tags` answers. Null means the provider reports no known
+   * vocabulary, which is every provider in the older tests. */
+  tags: CatalogueTags | null = null,
 ) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -190,6 +208,12 @@ function routes(
           price_source: url.includes("fill_missing_prices=true") ? "community" : "provider",
         })),
       };
+    } else if (url.includes("/models/tags")) {
+      (calls.tagUrls ??= []).push(url);
+      // Checked before the bare `/api/admin/models` branch: the tags URL
+      // contains that prefix too, and an array is not an answer a
+      // `CatalogueTags` reader can look at.
+      payload = tags ?? { provider_url: "", supported: false, tags: [] };
     } else if (url.includes("/api/admin/models")) payload = models;
     else if (url.includes("/api/admin/users")) payload = [];
     else if (url.includes("/api/admin/groups")) {
@@ -602,5 +626,141 @@ describe("AdminModels", () => {
     await waitFor(() =>
       expect(seen.some((url) => url.includes("/models/import?provider_id=pr1"))).toBe(true),
     );
+  });
+
+  it("offers the provider's tag words as a dropdown, read live from them", async () => {
+    // The vocabulary is the counterparty's, and free text assumed the operator
+    // already knew it — the same blindness that hid the embedding and OCR
+    // models behind Cortecs' Instruct default. Whatever the provider answers
+    // an "everything" fetch with is what the dropdown offers.
+    const user = userEvent.setup();
+    const calls: { discoverUrls?: string[]; tagUrls?: string[] } = {};
+    vi.stubGlobal("fetch", routes([model()], calls, undefined, TAGS));
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+
+    const tagSelect = await screen.findByRole("combobox", { name: "Catalogue tag" });
+    expect(
+      within(tagSelect)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Provider default", "Embedding", "Instruct", "OCR"]);
+    expect(calls.tagUrls?.[0]).toContain("provider_id=pr1");
+
+    // Asking for a slice re-asks the provider with that slice named.
+    await user.selectOptions(tagSelect, "Embedding");
+    await waitFor(() =>
+      expect(calls.discoverUrls?.some((url) => url.includes("tag=Embedding"))).toBe(true),
+    );
+  });
+
+  it("imports under the tag the candidates were read with", async () => {
+    // With the wrong tag the model would not be in the catalogue the import
+    // reads at all — the same question, so the same answer travels with it.
+    const user = userEvent.setup();
+    const calls: { importUrls?: string[] } = {};
+    vi.stubGlobal("fetch", routes([model()], calls, undefined, TAGS));
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Catalogue tag" }), "OCR");
+    await user.click(await screen.findByLabelText("Import new-1"));
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: /^Import/ }),
+    );
+
+    await waitFor(() => expect(calls.importUrls?.[0]).toContain("tag=OCR"));
+  });
+
+  it("keeps free text for a provider with no known tag vocabulary", async () => {
+    // A dropdown of one default option would be a worse version of the box it
+    // replaced, and pretend the vocabulary it does not have. The default mock
+    // answers unsupported, which is every generic endpoint's case.
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", routes([model()]));
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+
+    expect(await screen.findByRole("textbox", { name: "Catalogue tag" })).toBeInTheDocument();
+  });
+
+  it("asks for the provider before anything else when adding a model by hand", async () => {    // Position, not existence: a model is routed through one endpoint
+    // (ADR 0027), so the provider is the decision the rest of the form hangs
+    // on. It sat below fields its answer constrains, and read as an
+    // afterthought — the order here is what keeps it first.
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", routes([model()]));
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Add model" }));
+    const dialog = await screen.findByRole("dialog");
+
+    const provider = within(dialog).getByLabelText("Provider");
+    const name = within(dialog).getByLabelText("Name");
+    const upstream = within(dialog).getByLabelText("Upstream model");
+    expect(provider.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      provider.compareDocumentPosition(upstream) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("leaves the deployment's own plumbing out of the provider pickers", async () => {
+    // The extractor's row is infrastructure with a fixed builtin catalogue —
+    // the model list already hides its rows, and offering it in the pickers
+    // would re-present the same plumbing as a choice one screen later. Search
+    // backends stay out for the older reason (ADR 0071: they have their own
+    // screen); both pickers share the verdict.
+    const user = userEvent.setup();
+    const base = routes([model()]);
+    const row = (id: string, name: string, kind: string) => ({
+      id,
+      name,
+      description: null,
+      base_url: `https://${id}.test/v1`,
+      api_key_hint: null,
+      has_api_key: false,
+      extra_headers: {},
+      is_active: true,
+      kind,
+      model_count: 1,
+      created_at: "2026-08-01T10:00:00Z",
+      updated_at: "2026-08-01T10:00:00Z",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes("/api/admin/providers")) {
+          return jsonResponse([
+            row("pr1", "acme", "provider"),
+            row("prx", "extractor", "internal"),
+            row("prs", "exa", "search"),
+          ]);
+        }
+        return base(input, init);
+      }),
+    );
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Add model" }));
+    const createDialog = await screen.findByRole("dialog");
+    expect(
+      within(within(createDialog).getByLabelText("Provider"))
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Choose an endpoint…", "acme — https://pr1.test/v1"]);
+    await user.click(within(createDialog).getByRole("button", { name: "Cancel" }));
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    const discoveryDialog = await screen.findByRole("dialog");
+    expect(
+      within(within(discoveryDialog).getByLabelText("Provider"))
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Choose an endpoint…", "acme"]);
   });
 });

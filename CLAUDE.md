@@ -796,7 +796,14 @@ Known open items, none of them blocking:
   three, `tag=Embedding` eleven. Their prices are published too —
   `pricing.ocr_cost` is per **1,000** processed pages, not per million of
   anything, which is why `_kind_of` reads the tag and the parser divides by a
-  thousand.
+  thousand. As of 2026-09-14 there is also an enumeration:
+  `tag=all` — lower-case, and matched case-sensitively, since `tag=All`
+  returns **zero** — answers with the whole catalogue and its full tag
+  vocabulary (measured by `scripts/check_cortecs_catalogue_tags.py`, 87
+  models against the default fetch's 61 on 2026-09-16). `/api/admin/models/tags` reads the
+  discovery dropdown's vocabulary from it, via the plugin's
+  `catalogue_tag_all()`; a guessed spelling would have shipped a dropdown
+  offering exactly one silent failure.
 - **Usage reporting on `/v1` is deferred: passing the provider's `usage` object
   through is enough for now** (asked and answered 2026-09-04). What that leaves
   undone, so nobody re-derives it: there are no `x-ratelimit-*` headers (only
