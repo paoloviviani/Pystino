@@ -128,3 +128,13 @@ class GenericOpenAIPlugin:
         which is about replacing the import script — and not that feature.
         """
         return None
+
+    def catalogue_tag_all(self) -> str | None:
+        """No tag filter here, so no "everything" spelling is measured.
+
+        Inherited by every OpenAI-compatible counterparty (Exa, Jina, Linkup,
+        Mistral, Nebius, OpenAI, OpenRouter, Tensorix): one shared ``None``
+        rather than nine identical copies, so a future tag-filtering
+        counterparty overrides in exactly one place per plugin.
+        """
+        return None

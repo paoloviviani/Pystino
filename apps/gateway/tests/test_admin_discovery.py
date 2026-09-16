@@ -377,6 +377,141 @@ class TestDiscovery:
         ).status_code == 403
 
 
+#: What an "everything" fetch answers, in the shape the tag vocabulary is
+#: read from. An entry the pricing parser would skip still says what slices
+#: exist, and the counterparty's casing is kept — the live API matches it.
+TAGGED_CATALOGUE = {
+    "data": [
+        {
+            "id": "vendor/instruct-1",
+            "tags": ["Instruct", "Tools"],
+            "pricing": {"input_token": "1", "output_token": "2", "currency": "EUR"},
+        },
+        {
+            "id": "vendor/embed-1",
+            "tags": ["Embedding", "Tools"],
+            "pricing": {"currency": "EUR", "input_token": 0.03, "output_token": 0.0},
+            "output_modalities": ["embeddings"],
+        },
+        {
+            "id": "vendor/ocr-1",
+            "tags": ["OCR"],
+            "pricing": {
+                "currency": "EUR",
+                "input_token": 0.0,
+                "output_token": 0.0,
+                "ocr_cost": 3.5904,
+            },
+            "input_modalities": ["file", "image"],
+            "output_modalities": ["text"],
+        },
+        {
+            "id": "vendor/tagless",
+            "pricing": {"input_token": "1", "output_token": "2", "currency": "EUR"},
+        },
+    ]
+}
+
+
+@pytest.fixture
+def catalogue_by_tag(app: object) -> None:
+    """A counterparty that slices by tag, in Cortecs' measured manner: the
+    lower-case sentinel answers with everything, an unknown tag with nothing."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        tag = request.url.params.get("tag")
+        if tag == "all":
+            return httpx.Response(200, json=TAGGED_CATALOGUE)
+        if tag is None:
+            return httpx.Response(200, json=CATALOGUE)
+        return httpx.Response(200, json={"data": []})
+
+    app.state.control_http = httpx.AsyncClient(  # type: ignore[attr-defined]
+        transport=httpx.MockTransport(handler)
+    )
+
+
+class TestTagVocabulary:
+    """The discovery dialog's tag dropdown is fed from a live fetch.
+
+    Never from a list compiled here: the vocabulary is the counterparty's, and
+    whoever compiles one owns its staleness — free text was only ever the
+    answer to "nobody here knows the words". What these tests pin is that the
+    gateway reads the words from the counterparty's own "everything" answer,
+    and admits rather than hides when its plugin knows no such fetch.
+    """
+
+    async def _cortecs_provider(self, client: httpx.AsyncClient) -> str:
+        response = await client.post(
+            "/api/admin/providers", json={"name": "cortecs-live", "plugin": "cortecs"}
+        )
+        assert response.status_code == 201, response.text
+        return response.json()["id"]
+
+    async def test_the_vocabulary_is_read_from_an_everything_fetch(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_by_tag: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        provider_id = await self._cortecs_provider(client)
+        body = (await client.get("/api/admin/models/tags?provider_id=" + provider_id)).json()
+
+        assert body["supported"] is True
+        # The answer says where it came from, and the fetch named the sentinel
+        # the plugin measured — not a spelling a reviewer "corrected".
+        assert body["provider_url"] == "https://api.cortecs.ai/v1/models?tag=all"
+        # Sorted, deduplicated across entries, casing kept: these strings go
+        # back as `tag=…`, and the live API matches `all` while returning
+        # nothing for `All`.
+        assert body["tags"] == ["Embedding", "Instruct", "OCR", "Tools"]
+
+    async def test_a_provider_without_a_measured_sentinel_is_unsupported(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The generic plugin names no "everything" spelling — so unsupported,
+        not a fetch. Guessing a sentinel against a live API is exactly how
+        `tag=All` returns an empty catalogue: an unmeasured vocabulary would
+        be a dropdown of one option presented as the whole story. (No catalogue
+        fixture here: reaching the network at all fails this test.)"""
+        as_user(app, await make_admin(session_factory, seeded))
+        body = (
+            await client.get("/api/admin/models/tags?provider_id=" + str(seeded.provider.id))
+        ).json()
+
+        assert body == {
+            "provider_url": f"{seeded.provider.base_url}/models",
+            "supported": False,
+            "tags": [],
+        }
+
+    async def test_an_unreachable_provider_is_502_not_500(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        provider_id = await self._cortecs_provider(client)
+
+        def broken(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("no route to host")
+
+        app.state.control_http = httpx.AsyncClient(  # type: ignore[attr-defined]
+            transport=httpx.MockTransport(broken)
+        )
+        response = await client.get("/api/admin/models/tags?provider_id=" + provider_id)
+        assert response.status_code == 502
+
+
 class TestImport:
     async def test_imports_with_the_published_price(
         self,

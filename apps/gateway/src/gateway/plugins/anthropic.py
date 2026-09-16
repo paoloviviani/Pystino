@@ -116,3 +116,7 @@ class AnthropicPlugin:
     def builtin_catalogue(self) -> dict[str, Any] | None:
         """Nothing: ask the counterparty what it serves."""
         return None
+
+    def catalogue_tag_all(self) -> str | None:
+        """No tag filter here, so no "everything" spelling is measured."""
+        return None
