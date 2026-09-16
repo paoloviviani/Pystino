@@ -61,12 +61,62 @@ const PLUGINS = [
     is_default: true,
   },
   {
+    name: "openai",
+    label: "OpenAI",
+    description: "OpenAI's own API.",
+    kind: "provider",
+    billing_modes: ["own_prices"],
+    default_base_url: "https://api.openai.com/v1",
+    base_url_options: [],
+    is_default: false,
+  },
+  {
     name: "cortecs",
     label: "Cortecs (router)",
     description: "Chooses a sub-provider per request and reports its own cost.",
     kind: "router",
     billing_modes: ["own_prices", "provider_reported"],
     default_base_url: "https://api.cortecs.ai/v1",
+    base_url_options: [],
+    is_default: false,
+  },
+  {
+    name: "exa",
+    label: "Exa (web search)",
+    description: "Exa web search.",
+    kind: "search",
+    billing_modes: ["own_prices"],
+    default_base_url: "https://api.exa.ai",
+    base_url_options: [],
+    is_default: false,
+  },
+  {
+    name: "jina",
+    label: "Jina (web search)",
+    description: "Jina web search.",
+    kind: "search",
+    billing_modes: ["own_prices"],
+    default_base_url: "https://s.jina.ai",
+    base_url_options: [],
+    is_default: false,
+  },
+  {
+    name: "linkup",
+    label: "Linkup (web search)",
+    description: "Linkup web search.",
+    kind: "search",
+    billing_modes: ["own_prices"],
+    default_base_url: "https://api.linkup.so/v1",
+    base_url_options: [],
+    is_default: false,
+  },
+  {
+    name: "extractor",
+    label: "Extractor",
+    description: "The deployment's own document extractor.",
+    kind: "internal",
+    billing_modes: ["own_prices"],
+    default_base_url: null,
     base_url_options: [],
     is_default: false,
   },
@@ -271,6 +321,47 @@ describe("AdminProviders: choosing a type", () => {
     const type = dialog.getByLabelText("Type");
     expect(within(type).getByRole("option", { name: /OpenAI-compatible/ })).toBeInTheDocument();
     expect(within(type).getByRole("option", { name: /Cortecs/ })).toBeInTheDocument();
+  });
+
+  it("offers only LLM-provider kinds when creating — no search, no plumbing", async () => {
+    // Search backends are created on the Search screen (ADR 0071) and the
+    // extractor is the deployment's own plumbing: neither belongs in an
+    // inference-provider picker.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes([provider()]));
+    renderScreen(<AdminProviders />);
+
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    const type = dialog.getByLabelText("Type");
+    const options = within(type).getAllByRole("option");
+    const names = options.map((option) => option.textContent ?? "");
+    expect(names.some((text) => /OpenAI-compatible/.test(text))).toBe(true);
+    expect(names.some((text) => /OpenAI/.test(text))).toBe(true);
+    expect(names.some((text) => /Cortecs/.test(text))).toBe(true);
+    expect(names.some((text) => /Exa/.test(text))).toBe(false);
+    expect(names.some((text) => /Jina/.test(text))).toBe(false);
+    expect(names.some((text) => /Linkup/.test(text))).toBe(false);
+    expect(names.some((text) => /Extractor/.test(text))).toBe(false);
+  });
+
+  it("keeps the row's own type selectable when editing past the filter", async () => {
+    // The extractor row is managed here but its kind is not offered on
+    // create: opening it must not blank its Type.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal(
+      "fetch",
+      routes([provider({ id: "px", name: "extract", plugin: "extractor", kind: "internal", plugin_kind: "internal" })]),
+    );
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("extract")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    const type = dialog.getByLabelText("Type") as HTMLSelectElement;
+    const names = [...type.options].map((option) => option.text);
+    expect(names.some((text) => /Extractor/.test(text))).toBe(true);
+    expect(type.value).toBe("extractor");
   });
 
   it("explains what the chosen type means for billing", async () => {
