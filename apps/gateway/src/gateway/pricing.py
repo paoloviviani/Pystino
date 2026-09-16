@@ -540,6 +540,44 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
     return ModelKind.EMBEDDING if "embed" in identifier else ModelKind.CHAT
 
 
+def _catalogue_entries(payload: Any) -> Iterable[Any]:
+    """The list of entries a catalogue payload carries, however it is wrapped.
+
+    Some counterparties answer with a bare list, most wrap one in a dict under
+    a name of their choosing. Everything that reads a payload *wider* than its
+    prices — kinds, tags — walks it through here, so the two answers stay in
+    agreement about what an entry even is.
+    """
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        found = _first(payload, _LIST_KEYS)
+        return found if isinstance(found, list) else []
+    return []
+
+
+def tags_in_payload(payload: Any) -> list[str]:
+    """Every distinct tag the entries declare, sorted.
+
+    The vocabulary a counterparty slices its catalogue by, read from the same
+    payload the prices come out of: an entry the pricing code skips still says
+    what slices exist, and the discovery dialog's dropdown wants the whole
+    vocabulary rather than a list compiled by hand — a compiled list goes stale
+    the first time the counterparty adds one.
+
+    Case is preserved where ``_string_list`` lower-cases, and on purpose: these
+    strings go back to the counterparty as a ``tag=`` filter, and the live API
+    matches case-sensitively — ``tag=all`` returns every model while ``tag=All``
+    returns none (measured 2026-09-14,
+    ``scripts/check_cortecs_catalogue_tags.py``). A normalisation here would
+    turn a working filter into an empty catalogue.
+    """
+    tags: set[str] = set()
+    for entry in _catalogue_entries(payload):
+        if isinstance(entry, dict) and isinstance(entry.get("tags"), list):
+            tags.update(str(tag).strip() for tag in entry["tags"] if str(tag).strip())
+    return sorted(tags)
+
 
 def kinds_by_id(payload: Any) -> dict[str, ModelKind]:
     """What kind each entry in a catalogue declares, whether or not it is priced.
@@ -553,14 +591,7 @@ def kinds_by_id(payload: Any) -> dict[str, ModelKind]:
     Only entries with a usable id appear: a kind for a model nobody can name is
     not usable by anything.
     """
-    entries: Iterable[Any]
-    if isinstance(payload, list):
-        entries = payload
-    elif isinstance(payload, dict):
-        found = _first(payload, _LIST_KEYS)
-        entries = found if isinstance(found, list) else []
-    else:
-        entries = []
+    entries = _catalogue_entries(payload)
 
     kinds: dict[str, ModelKind] = {}
     for entry in entries:

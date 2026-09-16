@@ -165,3 +165,19 @@ class CortecsRouterPlugin:
     def builtin_catalogue(self) -> dict[str, Any] | None:
         """Nothing: ask the counterparty what it serves."""
         return None
+
+    def catalogue_tag_all(self) -> str | None:
+        """``all``, lower-case — the one spelling that lifts the default filter.
+
+        Measured 2026-09-14 against the live API
+        (``scripts/check_cortecs_catalogue_tags.py``), re-verified 2026-09-16
+        (87 models against the default fetch's 61): the endpoint answers an
+        untagged request with the ``Instruct`` slice, ``tag=all`` returns the
+        whole catalogue and carries the full vocabulary — and ``tag=All``
+        returns **zero**, so the sentinel is matched case-sensitively while
+        real tags are not arrived at by guesswork. A tag the catalogue does
+        not know answers an empty list rather than an error, which is why the
+        spelling lives here, measured, instead of in a constant somebody
+        "fixes" to title case one day.
+        """
+        return "all"

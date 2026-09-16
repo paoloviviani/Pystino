@@ -18,6 +18,7 @@ from gateway.pricing import (
     parse_catalogue,
     parse_litellm_catalogue,
     parse_openrouter_catalogue,
+    tags_in_payload,
 )
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -517,6 +518,42 @@ class TestFillMissingPrices:
         assert prices[0].input_per_mtok == Decimal("1.00")
         assert filled == set()
         assert still_unpriced == ["dup-1"]
+
+
+class TestTagsInPayload:
+    """The vocabulary behind the discovery dialog's tag dropdown.
+
+    Deriving it from the catalogue beats compiling it: a compiled list is
+    owned by whoever wrote it and goes stale the first time the counterparty
+    adds a tag. What the function must get right is reading every entry —
+    priced or not — and keeping the casing, because the tags go back to the
+    counterparty as a `tag=` filter the live API matches case-sensitively.
+    """
+
+    def test_every_distinct_tag_across_entries_sorted_and_deduplicated(self) -> None:
+        payload = {
+            "data": [
+                {"id": "a", "tags": ["Tools", "Instruct"]},
+                {"id": "b", "tags": ["Instruct", "Tools"]},
+                {"id": "c"},
+                "not-a-dict",
+            ]
+        }
+        assert tags_in_payload(payload) == ["Instruct", "Tools"]
+
+    def test_the_counterpartys_casing_is_kept(self) -> None:
+        """`tag=all` works on the live API while `tag=All` returns nothing;
+        lower-casing here would hand the dialog a filter that returns air."""
+        payload = {"data": [{"id": "a", "tags": ["OCR", "Safety-guard"]}]}
+        assert tags_in_payload(payload) == ["OCR", "Safety-guard"]
+
+    def test_a_bare_list_payload(self) -> None:
+        assert tags_in_payload([{"id": "a", "tags": ["Embedding"]}]) == ["Embedding"]
+
+    def test_a_payload_with_no_entries_has_no_tags(self) -> None:
+        assert tags_in_payload({"data": []}) == []
+        assert tags_in_payload(None) == []
+        assert tags_in_payload("nonsense") == []
 
 
 class TestOcrCatalogueEntries:

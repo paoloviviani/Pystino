@@ -246,6 +246,7 @@ class ProviderPlugin(Protocol):
     def read_reported_cost(self, usage: dict[str, Any] | None) -> ReportedCost | None:
         """What the counterparty says it charged, or None if it does not say."""
         ...
+
     def builtin_catalogue(self) -> dict[str, Any] | None:
         """A catalogue this plugin can answer from itself, or ``None``.
 
@@ -259,5 +260,27 @@ class ProviderPlugin(Protocol):
         plugin is for (ADR 0032). The payload is in the shape
         ``parse_catalogue`` reads, so a built-in answer is parsed, priced and
         kind-detected by exactly the code a fetched one is.
+        """
+        ...
+
+    def catalogue_tag_all(self) -> str | None:
+        """The tag value that asks this counterparty for its whole catalogue.
+
+        Some counterparties slice their catalogue by a tag and *default* the
+        filter when none is sent — the reference router ships ``tag=Instruct``
+        unless told otherwise, which is how whole kinds of model sat unseen
+        (CLAUDE.md). Where such a counterparty also recognises a value meaning
+        "everything", this returns it, so the tag vocabulary the discovery
+        dialog offers can be read from one live fetch instead of a list
+        compiled by hand — a compiled list goes stale the first time the
+        counterparty adds a tag.
+
+        ``None`` — the default — for a counterparty with no tag filter and for
+        one whose "everything" spelling is unmeasured: guessing a sentinel
+        against a live API is how ``tag=All`` returns an empty catalogue while
+        ``tag=all`` does not (2026-09-14,
+        ``scripts/check_cortecs_catalogue_tags.py``). Read with ``getattr`` at
+        the call site, so an installed plugin omitting the method entirely
+        behaves the same as one declaring ``None``.
         """
         ...

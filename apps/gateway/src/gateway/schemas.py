@@ -1842,6 +1842,22 @@ class CatalogueDiscoveryResponse(BaseModel):
     unparsable: list[str]
 
 
+class CatalogueTagsResponse(BaseModel):
+    """The tag vocabulary a provider slices its catalogue by.
+
+    Feeds the discovery dialog's dropdown, read live from the counterparty so
+    the list is theirs rather than one compiled here that goes stale. A
+    provider whose plugin knows no way to ask for the whole catalogue reports
+    ``supported: false`` with an empty list — the dialog keeps free text for
+    those rather than offering a dropdown of one default option and pretending
+    it is the vocabulary.
+    """
+
+    provider_url: str
+    supported: bool
+    tags: list[str] = Field(default_factory=list)
+
+
 class ModelImportItem(BaseModel):
     upstream_model: str
     # Defaults to the upstream id with any provider prefix stripped.

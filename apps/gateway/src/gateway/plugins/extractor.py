@@ -96,3 +96,7 @@ class LocalExtractorPlugin(GenericOpenAIPlugin):
                 }
             ]
         }
+
+    def catalogue_tag_all(self) -> str | None:
+        """No tag filter here — the catalogue is one row and all of it."""
+        return None

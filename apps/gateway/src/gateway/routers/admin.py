@@ -110,6 +110,7 @@ from gateway.pricing import (
     parse_catalogue,
     parse_litellm_catalogue,
     parse_openrouter_catalogue,
+    tags_in_payload,
 )
 from gateway.pricing import (
     # Aliased: the two routes below take a `fill_missing_prices` query parameter,
@@ -133,6 +134,7 @@ from gateway.reporting import (
 from gateway.schemas import (
     CatalogueDiscoveryResponse,
     CatalogueDriftRow,
+    CatalogueTagsResponse,
     DiscoveredModel,
     EmailSettingsResponse,
     EmailSettingsUpdateRequest,
@@ -1252,6 +1254,61 @@ async def discover_models(
         # Only the entries with no id at all remain genuinely unparsable; the
         # rest are now reported as rows an operator can see and act on.
         unparsable=[entry for entry in unpriced if entry in ANONYMOUS_UNPARSABLE],
+    )
+
+
+@router.get("/models/tags", response_model=CatalogueTagsResponse)
+async def list_catalogue_tags(
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+    http: ControlHttpDep,
+    provider_id: uuid.UUID,
+) -> CatalogueTagsResponse:
+    """The tags this provider slices its catalogue by, for a dropdown.
+
+    Ask the counterparty live rather than compile a list here: the vocabulary
+    is theirs, and whoever compiles owns the staleness — the whole reason the
+    discovery dialog's tag field is per-provider at all. The fetch is an
+    ``everything`` request named by the plugin (``catalogue_tag_all``), because
+    the spelling of "everything" is measured counterparty knowledge: Cortecs
+    answers ``tag=all`` with its whole catalogue and ``tag=All`` with an empty
+    one, so a guessed spelling would report a vocabulary of none.
+
+    ``supported: false`` for a provider whose plugin names no such fetch. The
+    console keeps free text for those — a dropdown of one default option would
+    be a worse version of the box it replaced.
+    """
+    provider = await _load_provider(session, provider_id)
+    plugin = plugin_registry.resolve(provider.plugin)
+    catalogue_url = f"{provider.base_url}/models"
+
+    catalogue_tag_all = getattr(plugin, "catalogue_tag_all", None)
+    sentinel = catalogue_tag_all() if callable(catalogue_tag_all) else None
+    if sentinel is None:
+        return CatalogueTagsResponse(provider_url=catalogue_url, supported=False, tags=[])
+
+    catalogue_url = f"{catalogue_url}?tag={quote(sentinel)}"
+    api_key: str | None = None
+    if provider.api_key_encrypted:
+        try:
+            api_key = secrets.decrypt(provider.api_key_encrypted)
+        except Exception as exc:
+            raise BadRequestError(
+                f"provider {provider.name!r}: {exc}", code="provider_key_unreadable"
+            ) from exc
+
+    # Same order as `_catalogue_with_prices`: a plugin that *is* the thing
+    # being served answers from itself, and asking the network would mean
+    # asking a service with no such endpoint.
+    payload = plugin.builtin_catalogue()
+    if payload is None:
+        try:
+            payload = await fetch_catalogue(http, catalogue_url, api_key)
+        except CatalogueUnavailable as exc:
+            raise UpstreamUnavailableError(f"Could not read the provider catalogue: {exc}") from exc
+    return CatalogueTagsResponse(
+        provider_url=catalogue_url, supported=True, tags=tags_in_payload(payload)
     )
 
 
