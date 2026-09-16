@@ -40,6 +40,24 @@ What a backend must still tell the gateway for the passthrough is unchanged:
 
 Everything fancier — date ranges, domain filters, page text — stays on the
 passthrough, where the vendor's own shape survives verbatim.
+
+One backend does not speak JSON at all. DuckDuckGo's ``/html/`` takes a
+form-encoded POST and answers HTML, so the JSON body / parsed-payload pair
+above cannot carry it, and teaching the route a second media type for one
+vendor is the extension this module records. A plugin opts into the form
+path by offering three duck-typed members beside the protocol ones —
+``build_search_form(query, max_results)``, ``read_search_results_text(text,
+max_results)`` and ``is_search_challenge(text)`` — which the unified route
+honors per plugin while ``post_json`` serves the existing three unchanged.
+Duck-typed rather than protocol members on purpose: ``SearchPlugin`` is
+checked with ``isinstance``, and a new required member would unmake every
+installed third-party search plugin a search backend at import time. The
+transport (``upstream.post_form``) is generic; the media type is vendor
+knowledge, so the decision lives on the plugin (ADR 0032). The route's
+invariants hold on both paths: the address is base URL plus ``search_path``
+from configuration, the shared client never follows redirects, the query is
+redacted before either body is built, and the count is taken before the call
+and kept on failure.
 """
 
 from __future__ import annotations

@@ -118,6 +118,20 @@ const PLUGINS: ProviderPlugin[] = [
     ],
     is_default: false,
   },
+  {
+    name: "duckduckgo",
+    label: "DuckDuckGo (web search)",
+    description:
+      "A keyless web-search backend. Experimental: scrapes DuckDuckGo's non-JS HTML page, " +
+      "whose structure can change without notice, and automated or datacenter use can be " +
+      "answered with a bot challenge instead of results.",
+    kind: "search",
+    billing_modes: ["own_prices"],
+    default_base_url: "https://html.duckduckgo.com",
+    base_url_options: [],
+    requires_api_key: false,
+    is_default: false,
+  },
 ];
 
 interface PolicyCalls {
@@ -388,6 +402,69 @@ describe("AdminSearch backend dialog", () => {
     expect(dialog.queryByLabelText("Endpoint")).not.toBeInTheDocument();
     await waitFor(() => expect(writes.captured.length).toBeGreaterThan(0));
     expect("base_url" in (writes.captured[0]?.body as Record<string, unknown>)).toBe(false);
+  });
+
+  it("a keyless vendor shows no key field and creates without a credential", async () => {
+    // Keyless means no key UI, not an optional one: for DuckDuckGo the field
+    // is absent from the screen, no validation mentions a key, and the create
+    // body carries no api_key at all.
+    const user = userEvent.setup({ delay: null });
+    const writes: Writes = { captured: [] };
+    vi.stubGlobal("fetch", searchRoutes({ set: [] }, { writes }));
+    renderScreen(<AdminSearch />);
+
+    await user.click(await screen.findByRole("button", { name: "Add backend" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.selectOptions(dialog.getByLabelText("Vendor"), "duckduckgo");
+
+    expect(dialog.queryByLabelText("API key")).not.toBeInTheDocument();
+    const add = dialog.getByRole("button", { name: "Add" });
+    expect(add).toBeEnabled();
+    await user.click(add);
+
+    await waitFor(() => expect(writes.captured.length).toBeGreaterThan(0));
+    const body = writes.captured[0]?.body as Record<string, unknown>;
+    expect("api_key" in body).toBe(false);
+    expect(body.plugin).toBe("duckduckgo");
+    expect(body.kind).toBe("search");
+    expect("base_url" in body).toBe(false);
+  });
+
+  it("the key field returns when a keyed vendor is chosen after a keyless one", async () => {
+    // The absence is per-vendor, not per-dialog: switching DuckDuckGo → Jina
+    // renders the field again and it is required before Add enables.
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", searchRoutes());
+    renderScreen(<AdminSearch />);
+
+    await user.click(await screen.findByRole("button", { name: "Add backend" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.selectOptions(dialog.getByLabelText("Vendor"), "duckduckgo");
+    expect(dialog.queryByLabelText("API key")).not.toBeInTheDocument();
+
+    await user.selectOptions(dialog.getByLabelText("Vendor"), "jina");
+    expect(dialog.getByLabelText("API key")).toBeInTheDocument();
+    expect(dialog.getByRole("button", { name: "Add" })).toBeDisabled();
+  });
+
+  it("a key typed for one vendor never reaches the next", async () => {
+    // Type a Jina key, switch to DuckDuckGo, submit: the create body carries
+    // no api_key, because a credential sent to a vendor that never asked for
+    // one would leak a secret to a third party.
+    const user = userEvent.setup({ delay: null });
+    const writes: Writes = { captured: [] };
+    vi.stubGlobal("fetch", searchRoutes({ set: [] }, { writes }));
+    renderScreen(<AdminSearch />);
+
+    await user.click(await screen.findByRole("button", { name: "Add backend" }));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.selectOptions(dialog.getByLabelText("Vendor"), "jina");
+    await user.type(dialog.getByLabelText("API key"), "jina-key-1");
+    await user.selectOptions(dialog.getByLabelText("Vendor"), "duckduckgo");
+    await user.click(dialog.getByRole("button", { name: "Add" }));
+
+    await waitFor(() => expect(writes.captured.length).toBeGreaterThan(0));
+    expect("api_key" in (writes.captured[0]?.body as Record<string, unknown>)).toBe(false);
   });
 
   it("editing preselects the stored host and sends the switch", async () => {
