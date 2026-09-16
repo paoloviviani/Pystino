@@ -229,11 +229,13 @@ export function AdminProviders() {
       <ProviderDialog
         open={creating}
         provider={null}
+        pluginFilter={isLlmProviderPlugin}
         onClose={() => setCreating(false)}
       />
       <ProviderDialog
         open={editing !== null}
         provider={editing}
+        pluginFilter={isLlmProviderPlugin}
         onClose={() => setEditing(null)}
       />
     </div>
@@ -261,6 +263,20 @@ function pluginLabel(plugins: ProviderPlugin[] | undefined, name: string | null)
 /** The default type's name, whose value in the selector is the empty string. */
 function defaultPluginName(plugins: ProviderPlugin[] | undefined): string {
   return plugins?.find((entry) => entry.is_default)?.name ?? "generic";
+}
+
+/**
+ * The kinds the Providers screen owns: inference providers and routers.
+ *
+ * Search backends live on the Search screen (ADR 0071) and the extractor is
+ * the deployment's own plumbing — the ProviderPlugin doc comment says it
+ * never belongs in an LLM-provider picker, mirroring the AdminModels
+ * treatment. Kept at the call site rather than in the shared dialog because
+ * the dialog is kind-agnostic by design: each screen owns its kinds, and the
+ * search screen passes the opposite rule.
+ */
+function isLlmProviderPlugin(plugin: ProviderPlugin): boolean {
+  return plugin.kind === "provider" || plugin.kind === "router";
 }
 
 /**
@@ -297,8 +313,21 @@ export function ProviderDialog({
   // The provider *type*. Read from the API rather than hardcoded, so installing
   // a plugin makes it selectable without a console release (ADR 0032).
   const allPlugins = useProviderPlugins();
+  // The filtered list, plus the row's own type when editing: a provider whose
+  // plugin the filter would hide (the extractor row opened here) must keep
+  // its Type selectable rather than blanking it. Creation needs no such
+  // exception — there is no current value to preserve.
   const plugins = pluginFilter
-    ? { ...allPlugins, data: allPlugins.data?.filter(pluginFilter) }
+    ? {
+        ...allPlugins,
+        data: allPlugins.data?.filter(
+          (entry) =>
+            pluginFilter(entry) ||
+            (editing &&
+              (provider?.plugin === entry.name ||
+                (provider?.plugin == null && entry.is_default))),
+        ),
+      }
     : allPlugins;
   const [plugin, setPlugin] = useState<string>("");
   const [billingMode, setBillingMode] = useState<"own_prices" | "provider_reported">("own_prices");
