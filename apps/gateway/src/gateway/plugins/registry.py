@@ -27,6 +27,7 @@ from importlib.metadata import entry_points
 from gateway.plugins.anthropic import AnthropicPlugin
 from gateway.plugins.base import ProviderPlugin
 from gateway.plugins.cortecs import CortecsRouterPlugin
+from gateway.plugins.duckduckgo import DuckDuckGoSearchPlugin
 from gateway.plugins.exa import ExaSearchPlugin
 from gateway.plugins.extractor import LocalExtractorPlugin
 from gateway.plugins.generic import GenericOpenAIPlugin
@@ -84,6 +85,10 @@ _BUILTIN: dict[str, PluginFactory] = {
     "linkup": LinkupSearchPlugin,
     "exa": ExaSearchPlugin,
     "jina": JinaSearchPlugin,
+    # Keyless form+HTML search (`plugins/duckduckgo.py`): the first backend
+    # on the form path the search protocol documents, creatable with no
+    # credential and metered exactly like the JSON three.
+    "duckduckgo": DuckDuckGoSearchPlugin,
 }
 
 
@@ -151,6 +156,10 @@ def describe() -> list[dict[str, object]]:
                     {"url": url, "label": label}
                     for url, label in getattr(plugin, "base_url_options", ())
                 ],
+                # Keyless unless the plugin says otherwise: a backend with no
+                # credential to store must be creatable without one, or the
+                # console can only offer it behind a dummy key.
+                "requires_api_key": bool(getattr(plugin, "requires_api_key", True)),
                 "is_default": plugin.name == DEFAULT_PLUGIN,
             }
         )

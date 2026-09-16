@@ -60,6 +60,18 @@ policy before any vendor sees it.
 rebuilt body travels as data. Redirects are not followed
 (``build_http_client`` sets ``follow_redirects=False``), so a vendor
 answering 302 to a link-local address does not make this gateway fetch it.
+
+**A form/HTML backend runs here and not on the passthrough.** DuckDuckGo's
+``/html/`` takes a form-encoded POST and answers HTML, so the unified route
+honors the form capability the search protocol documents (``build_search_form``
+/ ``read_search_results_text`` / ``is_search_challenge``) while ``post_json``
+serves the JSON three unchanged. The passthrough refuses such a backend with
+a 400: its promise is the vendor's answer verbatim as JSON, and there is no
+verbatim JSON in an HTML page. A non-2xx from a form backend is summarised —
+the HTML error cannot travel as JSON, so the status and the backend are named
+instead — and a bot challenge (a 2xx carrying ``anomaly-modal`` rather than
+results) degrades to a named 502 rather than an empty answer, because zero
+results for a blocked search states the wrong fact. Both keep the count.
 """
 
 from __future__ import annotations
@@ -233,9 +245,70 @@ async def unified_search(
     # plugin needs beyond the credential (Jina's content-excluding header is
     # the case that matters; the passthrough never sends them, because a
     # verbatim answer must stay the caller's own shape).
-    vendor_body = plugin.build_search_body(query, payload.max_results)
     call_headers = dict(plugin.auth_headers(credential)) if credential else {}
     call_headers.update(plugin.search_headers())
+
+    # The form path, taken per plugin: a backend offering `build_search_form`
+    # speaks form-encoded POST and answers HTML (`plugins/search.py` records
+    # why the capability is duck-typed). The query below is the redacted one
+    # — redaction ran before either body is built — and the address is the
+    # same configured base URL plus `search_path` the JSON path uses, sent
+    # through the same never-redirecting client.
+    build_form = getattr(plugin, "build_search_form", None)
+    read_text = getattr(plugin, "read_search_results_text", None)
+    if callable(build_form) and callable(read_text):
+        form_body: dict[str, str] = build_form(query, payload.max_results)
+        try:
+            response = await upstream.post_form(
+                plugin.search_path,
+                form_body,
+                request_id=request_id,
+                extra_headers=call_headers or None,
+            )
+        except Exception as exc:
+            raise await metered.upstream_unreachable(exc) from exc
+
+        if response.status_code >= 400:
+            # Summarised rather than verbatim: the vendor's error is HTML and
+            # cannot travel as JSON, so the answer names the backend and the
+            # status instead of inventing a vendor message.
+            form_error = f"{plugin.name} answered {response.status_code}."
+            return await metered.upstream_refused(
+                status_code=response.status_code,
+                message=form_error,
+                content={"error": {"message": form_error}},
+            )
+
+        html = response.raw.decode("utf-8", errors="replace")
+        is_challenge = getattr(plugin, "is_search_challenge", None)
+        if callable(is_challenge) and is_challenge(html):
+            # A block is not "no results": answering zero hits would state a
+            # fact the vendor never gave. A named 502, counted like every
+            # other vendor failure — the ledger keeps `upstream_status` as
+            # what the vendor actually did (often a 202 carrying the
+            # challenge), while the caller gets the number it can act on.
+            challenged = (
+                f"{plugin.name} answered a bot challenge instead of results "
+                f"(HTTP {response.status_code}); the search was counted."
+            )
+            return await metered.upstream_refused(
+                status_code=502,
+                message=challenged,
+                content={"error": {"message": challenged}},
+                upstream_status=response.status_code,
+            )
+
+        answer = SearchResponse(
+            results=read_text(html, payload.max_results),
+            backend=plugin.name,
+        )
+        return JSONResponse(
+            status_code=200,
+            content=answer.model_dump(),
+            background=metered.completed_after_response(upstream_status=response.status_code),
+        )
+
+    vendor_body = plugin.build_search_body(query, payload.max_results)
     try:
         response = await upstream.post_json(
             plugin.search_path,
@@ -316,6 +389,17 @@ async def search(
     secrets: SecretsDep,
 ) -> JSONResponse:
     model, plugin = await _backend(backend_name, principal, session)
+    if callable(getattr(plugin, "build_search_form", None)):
+        # No verbatim JSON exists for a form/HTML backend: its answer is a
+        # page, and the passthrough's promise is the vendor's answer as JSON.
+        # Refused before metering — nothing ran, so nothing is counted — with
+        # the route that does serve it named.
+        raise BadRequestError(
+            f"The {plugin.name!r} backend answers HTML to a form POST and has no "
+            "JSON API to pass through. Use POST /v1/search, which serves it "
+            "through your billing group's search policy.",
+            code="form_backend_has_no_passthrough",
+        )
     upstream = await _metered.resolve_upstream(providers, model)
 
     body = await request.body()

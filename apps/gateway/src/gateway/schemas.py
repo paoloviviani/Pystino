@@ -372,7 +372,8 @@ class SearchResultItem(BaseModel):
 
     Title, URL and snippet are the intersection every backend can supply:
     Linkup answers ``name``/``url``/``content``, Exa answers
-    ``title``/``url``/``summary``, Jina answers ``title``/``url``/``description``.
+    ``title``/``url``/``summary``, Jina answers ``title``/``url``/``description``,
+    DuckDuckGo answers ``result__a``/``result__snippet`` HTML.
     Anything richer — scores, dates, favicons — stays on the passthrough,
     where the vendor's own shape survives verbatim.
     """
@@ -387,9 +388,10 @@ class SearchResultItem(BaseModel):
 class SearchResponse(BaseModel):
     """The unified answer: normalised results, and which backend ran.
 
-    ``backend`` names the plugin that ran (``linkup``, ``exa``, ``jina``), not the model
-    row: it is what the ledger's ``own_search_backend`` column carries, and a
-    single search never mixes backends, so one name is the whole story.
+    ``backend`` names the plugin that ran (``linkup``, ``exa``, ``jina``,
+    ``duckduckgo``), not the model row: it is what the ledger's
+    ``own_search_backend`` column carries, and a single search never mixes
+    backends, so one name is the whole story.
     """
 
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
@@ -828,6 +830,11 @@ class ProviderPluginResponse(BaseModel):
     #: API itself keeps accepting any base URL, because a hand-set one is the
     #: operator's own (a private gateway, a proxy) and stays legitimate.
     base_url_options: list[PluginBaseURLOption] = []
+    #: Whether creating a provider of this type needs a credential. False for
+    #: the keyless search backend, so the console offers creation without one
+    #: instead of demanding a dummy key. True for everything else, which is
+    #: also what an installed third-party plugin reports by saying nothing.
+    requires_api_key: bool = True
     #: What a provider row with no plugin named resolves to.
     is_default: bool
 

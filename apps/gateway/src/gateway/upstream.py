@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import urlencode
 
 import httpx
 import orjson
@@ -180,6 +181,50 @@ class OpenAICompatibleUpstream:
         return UpstreamResponse(
             status_code=response.status_code,
             payload=parsed,
+            raw=raw,
+            headers=dict(response.headers),
+        )
+
+    async def post_form(
+        self,
+        path: str,
+        form: Mapping[str, str],
+        *,
+        request_id: str | None = None,
+        extra_headers: Mapping[str, str] | None = None,
+    ) -> UpstreamResponse:
+        """POST a form-encoded body to one of the provider's routes.
+
+        The one non-JSON POST in the gateway, for the one counterparty whose
+        search endpoint speaks ``application/x-www-form-urlencoded`` and
+        answers HTML (DuckDuckGo's ``/html/``). Same client and therefore the
+        same ``follow_redirects=False`` as every JSON call — a vendor
+        answering 302 to a link-local address does not make this gateway
+        fetch it — and the same auth/timeout shape, so the search route's
+        invariants hold on this path exactly as they do on the JSON one.
+
+        The reply is kept whole in ``raw`` with ``payload`` left ``None``: an
+        HTML page is not JSON, and parsing it into a dict-shaped absence
+        would lose the vendor's own diagnostics. The plugin reads ``raw``.
+        """
+        headers = self._headers(request_id=request_id)
+        headers["content-type"] = "application/x-www-form-urlencoded"
+        headers["accept"] = "text/html"
+        if extra_headers:
+            headers.update(extra_headers)
+        try:
+            response = await self._client.post(
+                f"{self._settings.base_url}{path}",
+                content=urlencode(dict(form)).encode(),
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"upstream request failed: {exc}", cause=exc) from exc
+
+        raw = response.content
+        return UpstreamResponse(
+            status_code=response.status_code,
+            payload=None,
             raw=raw,
             headers=dict(response.headers),
         )

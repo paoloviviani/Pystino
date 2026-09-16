@@ -60,7 +60,8 @@ class ProviderKind(enum.StrEnum):
 
     PROVIDER = "provider"
     ROUTER = "router"
-    #: Not an inference endpoint at all: a web-search backend (Linkup, Exa, Jina).
+    #: Not an inference endpoint at all: a web-search backend (Linkup, Exa,
+    #: Jina, DuckDuckGo).
     #: The third kind docs/web-search-plan.md asked for, and it is a *kind*
     #: rather than a separate table because everything a search backend needs —
     #: an address, a credential encrypted at rest, an activation switch, models

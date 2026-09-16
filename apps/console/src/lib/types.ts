@@ -546,6 +546,13 @@ export interface ProviderPlugin {
    * EU-only one is vendor knowledge, not a sentence the console should hold.
    */
   base_url_options: { url: string; label: string }[];
+  /**
+   * Whether creating a provider of this type needs a credential. False for
+   * the keyless search backend, so the form offers creation without one
+   * instead of demanding a dummy key. Absent means a key is required, which
+   * is every other installed type.
+   */
+  requires_api_key?: boolean;
   is_default: boolean;
 }
 

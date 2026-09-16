@@ -347,6 +347,13 @@ function BackendDialog({
   // derives from — the grant anchor's name, the passthrough's path segment.
   const chosen = plugin || "";
   const chosenPlugin = plugins.find((entry) => entry.name === chosen);
+  // Keyless means no key UI, not an optional one (DuckDuckGo): the field is
+  // not rendered, no validation mentions a key, and the create succeeds with
+  // no credential. Demanding a key would force a dummy one, which then looks
+  // like a secret worth rotating; offering it as optional invites exactly
+  // that. True (the field shows) for every vendor that does not say
+  // otherwise — an installed plugin that says nothing needs a key.
+  const needsKey = chosenPlugin?.requires_api_key ?? true;
 
   // The vendor's documented hosts, when there is more than one. A stored URL
   // the plugin does not document — an operator's own proxy, or a value set
@@ -424,8 +431,8 @@ function BackendDialog({
             busy={pending}
             disabled={
               !chosen
-              || (!editing && !apiKey.trim())
-              || (editing && !apiKey.trim() && !clearKey && !hostChanged)
+              || (needsKey && !editing && !apiKey.trim())
+              || (needsKey && editing && !apiKey.trim() && !clearKey && !hostChanged)
             }
             onClick={submit}
           >
@@ -458,6 +465,10 @@ function BackendDialog({
           } else {
             setBaseUrl("");
           }
+          // A key typed for the previous vendor never rides to the next one —
+          // and for a keyless vendor there is nothing on the screen to carry.
+          setApiKey("");
+          setClearKey(false);
           setPlugin(event.target.value);
         }}
         hint="The endpoint and the credential scheme are the vendor's own — configured here, not typed anywhere."
@@ -485,20 +496,26 @@ function BackendDialog({
         </Select>
       )}
 
-      <Input
-        label="API key"
-        type="password"
-        value={apiKey}
-        onChange={(event) => setApiKey(event.target.value)}
-        placeholder={editing ? provider?.api_key_hint || "unset" : "paste the vendor's key"}
-        hint={
-          editing
-            ? "Leave empty to keep the stored key; tick to remove it."
-            : "Stored encrypted; shown back only as a hint."
-        }
-      />
+      {/* Rendered only for vendors that take a credential. For a keyless
+          vendor the option is absent from the screen entirely — no field, no
+          placeholder, no validation — because a credential here would be
+          theatre: the gateway sends nothing to a vendor that never asked. */}
+      {needsKey && (
+        <Input
+          label="API key"
+          type="password"
+          value={apiKey}
+          onChange={(event) => setApiKey(event.target.value)}
+          placeholder={editing ? provider?.api_key_hint || "unset" : "paste the vendor's key"}
+          hint={
+            editing
+              ? "Leave empty to keep the stored key; tick to remove it."
+              : "Stored encrypted; shown back only as a hint."
+          }
+        />
+      )}
 
-      {editing && (
+      {needsKey && editing && (
         <label className="flex cursor-pointer items-baseline gap-2">
           <input
             type="checkbox"

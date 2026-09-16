@@ -125,9 +125,19 @@ class FakeUpstream:
         self._responder = responder
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
+        from urllib.parse import parse_qsl
+
         self.headers.append(request.headers)
         self.urls.append(str(request.url))
-        self.bodies.append(orjson.loads(request.content) if request.content else {})
+        if not request.content:
+            self.bodies.append({})
+        else:
+            try:
+                self.bodies.append(orjson.loads(request.content))
+            except orjson.JSONDecodeError:
+                # A form-encoded POST (the DuckDuckGo backend): the fields,
+                # not JSON, which is exactly what the vendor speaks.
+                self.bodies.append(dict(parse_qsl(request.content.decode())))
         assert self._responder is not None, "no upstream response configured"
         return self._responder(request)
 
