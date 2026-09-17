@@ -607,6 +607,26 @@ class MyLimitResponse(BaseModel):
     notification_thresholds: list[int] = []
 
 
+class PystinoUsageResponse(BaseModel):
+    """``GET /v1/pystino/usage`` (ADR 0074): a bearer caller's own quotas and spend.
+
+    The gateway's own shape under a clearly-custom path, not a mimicry of
+    OpenAI's usage endpoints — the ``/v1`` usage surface was deferred
+    specifically because *that* shape does not fit five-scope, cost-and-token
+    quotas, and this does not reopen that question. It exists because
+    ``/api/me/limits``, ``/api/me/usage`` and ``/api/me/usage/groups`` are
+    behind a session cookie: unreachable from a cross-origin client and from
+    any bearer-only program. One document rather than three round trips, built
+    from the exact same models those routes return — a client already parsing
+    the console's numbers parses this without a second shape to learn.
+    """
+
+    limits: list[MyLimitResponse]
+    usage: UsageSummaryResponse
+    #: Per-group spend, keyed by group name — as `/api/me/usage/groups` keys it.
+    groups: dict[str, UsageSummaryResponse]
+
+
 class MyNotificationThresholdsRequest(BaseModel):
     """Replace the caller's thresholds for one rule. Percentages 1-100."""
 
