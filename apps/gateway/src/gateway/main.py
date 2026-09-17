@@ -48,6 +48,7 @@ from gateway.routers import (
     messages,
     models,
     ocr,
+    pystino,
     search,
     tokens,
 )
@@ -369,6 +370,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(models.router)
     app.include_router(billing.router)
     app.include_router(identity.router)
+    app.include_router(pystino.router)
     app.include_router(auth.router)
     app.include_router(tokens.router)
     app.include_router(me.router)

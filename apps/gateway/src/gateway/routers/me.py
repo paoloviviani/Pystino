@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Response, status
 from fastapi.responses import PlainTextResponse
-from sqlalchemy import and_, case, false, func, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import selectinload
 
+from gateway.caller_usage import caller_group_usage, caller_limits, caller_usage
 from gateway.deps import ManagementUserDep, QuotaDep, SessionDep, SettingsDep
 from gateway.errors import BadRequestError, NotFoundError, PermissionError_
 from gateway.models import (
@@ -29,13 +29,10 @@ from gateway.models import (
     LimitRule,
     LimitScope,
     LocalCredential,
-    UsageRecord,
-    UsageSource,
-    UsageStatus,
 )
 from gateway.pagination import Page, PageDep, count_of
 from gateway.passwords import hash_password, validate_password, verify_password
-from gateway.quota.notifications import replace_thresholds, thresholds_for_user
+from gateway.quota.notifications import replace_thresholds
 from gateway.reporting import (
     GroupBy,
     ReportFilter,
@@ -286,31 +283,8 @@ async def my_usage(
     if not 60 <= window_seconds <= 366 * 86_400:
         raise BadRequestError("window_seconds must be between 60 and one year.")
 
-    since = utcnow() - timedelta(seconds=window_seconds)
-    stmt = select(
-        func.count(UsageRecord.id),
-        func.coalesce(func.sum(UsageRecord.total_tokens), 0),
-        func.coalesce(func.sum(UsageRecord.cost), 0),
-        # Surfaced so a reader can see how much of this figure is inferred rather
-        # than measured.
-        func.coalesce(
-            func.sum(case((UsageRecord.usage_source == UsageSource.ESTIMATED, 1), else_=0)),
-            0,
-        ),
-    ).where(
-        UsageRecord.user_id == user.id,
-        UsageRecord.created_at >= since,
-        UsageRecord.status != UsageStatus.IN_PROGRESS,
-    )
-    requests, tokens, cost, estimated = (await session.execute(stmt)).one()
-
-    return UsageSummaryResponse(
-        window_seconds=window_seconds,
-        requests=int(requests or 0),
-        total_tokens=int(tokens or 0),
-        cost=Decimal(str(cost or 0)),
-        currency=settings.billing_currency,
-        estimated_requests=int(estimated or 0),
+    return await caller_usage(
+        session, user_id=user.id, settings=settings, window_seconds=window_seconds
     )
 
 
@@ -418,43 +392,9 @@ async def my_group_usage(
     window_seconds: int = 86_400,
 ) -> dict[str, UsageSummaryResponse]:
     """Spend per group the user belongs to, so they can see what they are charging."""
-    group_ids = user.group_ids()
-    if not group_ids:
-        return {}
-
-    since = utcnow() - timedelta(seconds=window_seconds)
-    stmt = (
-        select(
-            UsageRecord.group_id,
-            func.count(UsageRecord.id),
-            func.coalesce(func.sum(UsageRecord.total_tokens), 0),
-            func.coalesce(func.sum(UsageRecord.cost), 0),
-        )
-        .where(
-            UsageRecord.group_id.in_(group_ids),
-            UsageRecord.created_at >= since,
-            UsageRecord.status != UsageStatus.IN_PROGRESS,
-        )
-        .group_by(UsageRecord.group_id)
+    return await caller_group_usage(
+        session, group_ids=user.group_ids(), settings=settings, window_seconds=window_seconds
     )
-    rows = (await session.execute(stmt)).all()
-    names = {
-        group.id: group.name
-        for group in (await session.execute(select(Group).where(Group.id.in_(group_ids))))
-        .scalars()
-        .all()
-    }
-
-    return {
-        names.get(group_id, str(group_id)): UsageSummaryResponse(
-            window_seconds=window_seconds,
-            requests=int(requests or 0),
-            total_tokens=int(tokens or 0),
-            cost=Decimal(str(cost or 0)),
-            currency=settings.billing_currency,
-        )
-        for group_id, requests, tokens, cost in rows
-    }
 
 
 # -- the quota rules that apply to you ---------------------------------------
@@ -482,50 +422,14 @@ async def my_limits(
     reader rather than computed here: "nearest" across different metrics —
     euros, tokens, requests — is not a comparison this route can make honestly.
     """
-    group_ids = user.group_ids()
-    stmt = (
-        select(LimitRule)
-        # `resets` is not decoration: `current_values` reads it to discount
-        # consumption from before a reset, and touching it unloaded raises
-        # MissingGreenlet under asyncio rather than quietly emitting a query.
-        .options(selectinload(LimitRule.resets))
-        .where(
-            LimitRule.is_active.is_(True),
-            or_(
-                LimitRule.scope == LimitScope.GLOBAL,
-                and_(LimitRule.scope == LimitScope.USER, LimitRule.scope_id == user.id),
-                and_(
-                    LimitRule.scope == LimitScope.GROUP,
-                    LimitRule.scope_id.in_(group_ids) if group_ids else false(),
-                ),
-            ),
-        )
-        .order_by(LimitRule.scope, LimitRule.metric)
-    )
-    rules = list((await session.execute(stmt)).scalars().all())
-
-    # Absent, not zero, when the counter store cannot be reached — the same
-    # distinction the admin listing makes. A budget shown as 0% used because
-    # Valkey is down is worse than one shown as unknown.
-    current = await quota.current_values(rules)
-    my_thresholds = await thresholds_for_user(session, user.id)
-
     # The same envelope every other listing returns, though a person has a
     # handful of rules at most. Consistency is the point: a client that has to
     # remember which listings are wrapped and which are bare will get it wrong,
     # and the failure is a screen that renders nothing with no error.
-    return page.slice(
-        [
-            MyLimitResponse(
-                id=rule.id,
-                name=rule.name,
-                scope=rule.scope.value,
-                metric=rule.metric.value,
-                window_label=rule.window_label,
-                limit_value=rule.limit_value,
-                current_value=current.get(rule.id),
-                notification_thresholds=my_thresholds.get(rule.id, []),
-            )
-            for rule in rules
-        ]
-    )
+    #
+    # The query itself lives in `caller_usage.py` (ADR 0074): `GET
+    # /v1/pystino/usage` needs the same rules for a bearer caller, and a second
+    # copy of "which scopes constrain you" is a second place for that answer to
+    # drift from this one.
+    limits = await caller_limits(session, quota, user_id=user.id, group_ids=user.group_ids())
+    return page.slice(limits)
