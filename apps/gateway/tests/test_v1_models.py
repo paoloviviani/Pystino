@@ -60,6 +60,106 @@ async def _seed_search_tier(
         await session.commit()
 
 
+class TestUnauthenticatedListing:
+    """ADR 0081: the list is public, a card's detail is not."""
+
+    async def test_no_credential_gets_the_full_catalogue(
+        self, client: Any, seeded: Seeded
+    ) -> None:
+        """No group, no key at all — still 200, still the seeded model."""
+        response = await client.get("/v1/models")
+        assert response.status_code == 200, response.text
+        names = [entry["id"] for entry in response.json()["data"]]
+        assert names == ["test-model"]
+
+    async def test_the_card_carries_no_price_or_grant_information(
+        self, client: Any, seeded: Seeded
+    ) -> None:
+        response = await client.get("/v1/models")
+        assert response.status_code == 200, response.text
+        card = response.json()["data"][0]
+        assert set(card) == {
+            "id",
+            "object",
+            "created",
+            "owned_by",
+            "context_window",
+            "max_output_tokens",
+            "max_input_tokens",
+            "display_name",
+            "kind",
+            "input_modalities",
+            "output_modalities",
+            "supported_features",
+        }
+
+    async def test_a_caller_with_no_grant_sees_nothing_once_authenticated(
+        self,
+        client: Any,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The narrowing is real: authenticated-with-no-grant is not the same
+        request as no principal at all, and must not become the same response."""
+        from gateway.models import ApiKey, Group, Membership, User
+        from gateway.security import generate_api_key
+
+        async with session_factory() as db:
+            group = Group(name="ungranted", description="no grants on purpose")
+            user = User(issuer="https://idp.test", subject="ungranted-lister")
+            db.add_all([group, user])
+            await db.flush()
+            db.add(Membership(user_id=user.id, group_id=group.id))
+            user.default_billing_group_id = group.id
+            generated = generate_api_key()
+            db.add(
+                ApiKey(
+                    user_id=user.id,
+                    prefix=generated.prefix,
+                    key_hash=generated.key_hash,
+                    name="ungranted lister key",
+                    billing_group_id=group.id,
+                )
+            )
+            await db.commit()
+            secret = generated.secret
+
+        response = await client.get(
+            "/v1/models", headers={"authorization": f"Bearer {secret}"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["data"] == []
+
+    async def test_an_invalid_credential_still_401s(
+        self, client: Any, seeded: Seeded
+    ) -> None:
+        """Presenting a bad key is not the same as presenting none."""
+        response = await client.get(
+            "/v1/models", headers={"authorization": "Bearer gwk_deadbeef_nope"}
+        )
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "invalid_api_key"
+
+    async def test_the_authenticated_listing_is_still_grant_filtered(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+    ) -> None:
+        """The exemption widens the anonymous case; it must not widen this one."""
+        response = await client.get("/v1/models", headers=auth(make_token(signing_key)))
+        assert response.status_code == 200, response.text
+        names = [entry["id"] for entry in response.json()["data"]]
+        assert names == ["test-model"]
+
+    async def test_the_detail_route_stays_authenticated(
+        self, client: Any, seeded: Seeded
+    ) -> None:
+        response = await client.get("/v1/models/test-model")
+        assert response.status_code == 401
+
+
 class TestSearchStaysOffTheList:
     @pytest.mark.asyncio
     async def test_a_tier_does_not_ride_the_default_list(

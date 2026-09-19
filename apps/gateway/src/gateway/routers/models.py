@@ -12,14 +12,26 @@ proxied from the upstream. Two reasons:
 The union across *all* the user's groups is returned, not just the current billing
 group, because a client discovering models should see everything it could reach
 after switching group.
+
+**The list is public; a card's detail is not** (ADR 0081). An unauthenticated
+``GET /v1/models`` answers with the full, unfiltered catalogue rather than 401ing
+— brochure-level fields only (ids, names, context/token limits, modalities,
+features; no prices, no grants, no usage), the same shape an authenticated caller
+already sees per model. Grant filtering only ever *narrows* what a real caller may
+reach; skipping it for a caller who does not exist is not the same operation as
+running it against one with no grants, which is why this is a branch here rather
+than a call to `accessible_models` with an empty principal. `GET
+/v1/models/{name}` stays authenticated — resolving one named model is what a
+caller does once it already has a credential to spend, and that is exactly the
+step the exemption does not cover.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
-from gateway.access import accessible_model_by_name, accessible_models
-from gateway.deps import PrincipalDep, SessionDep
+from gateway.access import accessible_model_by_name, accessible_models, all_active_models
+from gateway.deps import OptionalPrincipalDep, PrincipalDep, SessionDep
 from gateway.errors import BadRequestError
 from gateway.models import ModelDef, ModelKind, Provider, ProviderKind
 from gateway.schemas import ModelCard, ModelList
@@ -42,7 +54,7 @@ router = APIRouter(prefix="/v1", tags=["openai"])
 
 @router.get("/models", response_model=ModelList)
 async def list_models(
-    principal: PrincipalDep,
+    principal: OptionalPrincipalDep,
     session: SessionDep,
     include: str | None = None,
 ) -> ModelList:
@@ -64,12 +76,17 @@ async def list_models(
 
     # Group grants and personal grants, unioned in one place (ADR 0027). The
     # empty case is handled there too, so there is no early return to keep in
-    # step with the predicate.
-    stmt = (
+    # step with the predicate. No principal at all (ADR 0081) skips grant
+    # filtering entirely rather than running it against nothing — the full
+    # catalogue, not the subset a groupless caller would see.
+    base = (
         accessible_models(user_id=principal.user.id, group_ids=principal.user.group_ids())
-        .where(ModelDef.kind.in_(kinds), Provider.kind != _NOT_CALLER_FACING)
-        .order_by(ModelDef.name)
+        if principal is not None
+        else all_active_models()
     )
+    stmt = base.where(
+        ModelDef.kind.in_(kinds), Provider.kind != _NOT_CALLER_FACING
+    ).order_by(ModelDef.name)
     models = (await session.execute(stmt)).scalars().all()
 
     return ModelList(

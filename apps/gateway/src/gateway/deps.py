@@ -322,6 +322,29 @@ async def get_principal(
     return Principal(user=api_key.user, billing_group=group, api_key=api_key)
 
 
+async def get_optional_principal(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Principal | None:
+    """Authenticate a ``/v1`` caller if it presented a credential; ``None`` if not.
+
+    Exists for the one route that stays reachable with no credential at all —
+    ``GET /v1/models`` (ADR 0081) — so an anonymous client can see the catalogue
+    before it has a key. Everywhere else keeps using :func:`get_principal`, which
+    refuses a missing credential outright. A credential that *is* presented and
+    does not check out still 401s here, by falling through to the same function:
+    presenting a bad key is not the same as presenting none, and silently
+    downgrading a rejected key to "anonymous" would hide the failure from a
+    caller who thinks they are authenticated.
+    """
+    secret = parse_authorization_header(request.headers.get("authorization"))
+    if not secret:
+        secret = request.headers.get("api-key")
+    if not secret:
+        return None
+    return await get_principal(request, session)
+
+
 async def _bearer_principal(
     request: Request, session: AsyncSession, token: str
 ) -> Principal:
@@ -483,6 +506,7 @@ ManagementUserDep = Annotated[User, Depends(get_management_user)]
 AdminUserDep = Annotated[User, Depends(get_admin_user)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
+OptionalPrincipalDep = Annotated[Principal | None, Depends(get_optional_principal)]
 QuotaDep = Annotated[QuotaEngine, Depends(get_quota_engine)]
 RedactorDep = Annotated[Redactor, Depends(get_redactor)]
 ProvidersDep = Annotated[ProviderRegistry, Depends(get_providers)]
