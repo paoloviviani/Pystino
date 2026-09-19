@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cx } from "../cx";
+import { EmptyState } from "./EmptyState";
 
 export interface Column<Row> {
   key: string;
@@ -56,7 +57,19 @@ export function Table<Row>({
   caption,
 }: TableProps<Row>) {
   if (rows.length === 0 && !footer) {
-    return <div className="px-5 py-6 text-center text-ink-muted">{empty}</div>;
+    // A bare sentence becomes the dashed empty state rather than a centred
+    // line of muted text: every listing with nothing to show says so the same
+    // way (ADR 0077, stages 2 and 3). The sentence itself is kept verbatim as
+    // the title — screens word their empties deliberately ("No quota rules.
+    // Nothing is capped."), and the route tests pin several of them, so the
+    // primitive takes the words it is given rather than rewriting them. A
+    // caller that wants a detail line or a call to action passes an
+    // `EmptyState` (or anything else) explicitly instead of a string.
+    return (
+      <div className="p-5">
+        {typeof empty === "string" ? <EmptyState title={empty} /> : empty}
+      </div>
+    );
   }
 
   const cellTone = (numeric?: boolean) =>

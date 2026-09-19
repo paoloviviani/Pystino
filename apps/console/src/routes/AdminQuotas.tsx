@@ -9,6 +9,7 @@ import {
   Pagination,
   Select,
   Spinner,
+  SummaryStrip,
   Table,
   
 } from "@llmp/ui";
@@ -172,13 +173,26 @@ export function AdminQuotas() {
             {limits.error instanceof Error ? limits.error.message : "Unknown error."}
           </Notice>
         ) : (
-          <Table
-            columns={columns}
-            rows={limits.data?.items ?? []}
-            rowKey={(rule) => rule.id}
-            empty="No quota rules. Nothing is capped."
-            caption="Quota rules and their live consumption."
-          />
+          <>
+            {/* Count and state before the rows: how many ceilings, and whether
+                any of them is currently refusing requests. No actions — "New
+                rule" stays in the page header, and a second one here would be
+                the button duplicated rather than relocated. */}
+            <div className="p-5">
+              <SummaryStrip
+                headline={`${(limits.data?.items ?? []).length} ${(limits.data?.items ?? []).length === 1 ? "rule" : "rules"}`}
+                detail={quotaState(limits.data?.items ?? [])}
+                active={(limits.data?.items ?? []).length > 0}
+              />
+            </div>
+            <Table
+              columns={columns}
+              rows={limits.data?.items ?? []}
+              rowKey={(rule) => rule.id}
+              empty="No quota rules. Nothing is capped."
+              caption="Quota rules and their live consumption."
+            />
+          </>
         )}
       </Card>
 
@@ -199,7 +213,11 @@ export function AdminQuotas() {
 function Consumption({ rule }: { rule: LimitRule }) {
   const exact = useExactMoney();
   if (rule.current_value === null) {
-    return <span className={MUTED}>counter unavailable</span>;
+    // A status, so a pill in the warn tone — but the words stay exactly as
+    // they were ("counter unavailable", lowercase): the route tests pin that
+    // wording, and rewording it here would be behaviour change dressed as
+    // styling.
+    return <Badge tone="warn">counter unavailable</Badge>;
   }
 
   const used = Number(rule.current_value);
@@ -514,6 +532,21 @@ function describeWindow(rule: LimitRule): string {
 function exhausted(rule: LimitRule): boolean {
   if (rule.current_value === null) return false;
   return Number(rule.current_value) >= Number(rule.limit_value);
+}
+
+/**
+ * The strip's state line: whether any ceiling is currently refusing requests,
+ * else whether any is close, else the quiet fact that everything is within
+ * budget. Reuses the row's own predicates so the strip can never disagree
+ * with the badges below it about what "over" means.
+ */
+function quotaState(rules: LimitRule[]): string {
+  if (rules.length === 0) return "nothing is capped";
+  const over = rules.filter(exhausted).length;
+  if (over > 0) return `${over} over budget`;
+  const near = rules.filter(nearLimit).length;
+  if (near > 0) return `${near} nearly spent`;
+  return "all within budget";
 }
 
 function nearLimit(rule: LimitRule): boolean {
