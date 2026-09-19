@@ -115,17 +115,23 @@ async def idp_client(idp_app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
 
 
 async def _a_local_user(
-    session_factory: async_sessionmaker[AsyncSession], *, email: str | None = None
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    email: str | None = None,
+    display_name: str | None = "Person",
 ) -> User:
     """A local account, the kind the house issuer issues for.
 
     One group and a default, because a groupless caller has nothing to bill
     and `/v1` answers 403 by design. A unique address per call, because
     `(issuer, subject)` is unique and several tests need several people.
+    `display_name=None` is the shape the deployment's own bootstrap account
+    has — no display name, so nothing to put in a `name` claim without a
+    fallback.
     """
     address = email or f"person-{uuid.uuid4().hex[:8]}@example.org"
     async with session_factory() as db:
-        user = User(issuer="local", subject=address, email=address, display_name="Person")
+        user = User(issuer="local", subject=address, email=address, display_name=display_name)
         db.add(user)
         await db.flush()
         db.add(
@@ -500,6 +506,96 @@ class TestToken:
             "/oauth/userinfo", headers={"authorization": f"Bearer {body['id_token']}"}
         )
         assert refused.status_code == 400
+
+
+class TestDisplayNameFallback:
+    """Userinfo and the id_token always carry a usable `name`.
+
+    Verified live: the deployment's own bootstrap account has no display
+    name, so userinfo omitted `name` entirely and the chat's login callback
+    answered 500 on the missing claim. The fallback is the display name, else
+    the username, else the email's local part — computed once and shared, so
+    the two documents a client may read can never disagree.
+    """
+
+    async def _claims_for(
+        self,
+        idp_app: FastAPI,
+        idp_client: httpx.AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        email: str,
+        display_name: str | None,
+    ) -> tuple[dict, dict]:
+        from urllib.parse import parse_qs, urlparse
+
+        token_test = TestToken()
+        user = await _a_local_user(session_factory, email=email, display_name=display_name)
+        _sign_in(idp_app, idp_client, user)
+        response = await idp_client.get(_authorize_url())
+        assert response.status_code == 302, response.text
+        code = parse_qs(urlparse(response.headers["location"]).query)["code"][0]
+        body = (await token_test._exchange(idp_client, code)).json()
+        info = await idp_client.get(
+            "/oauth/userinfo", headers={"authorization": f"Bearer {body['access_token']}"}
+        )
+        assert info.status_code == 200, info.text
+        signer: IdpSigner = idp_app.state.idp_signer
+        decoded = jwt.decode(body["id_token"], signer.key_set())
+        return info.json(), dict(decoded.claims)
+
+    async def test_userinfo_names_a_user_with_no_display_name(
+        self,
+        idp_app: FastAPI,
+        idp_client: httpx.AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        info, _ = await self._claims_for(
+            idp_app, idp_client, session_factory,
+            email="noname@example.org", display_name=None,
+        )
+        assert info["name"] == "noname"
+        # preferred_username stays display-name-gated; only `name` is promised.
+        assert "preferred_username" not in info
+
+    async def test_userinfo_names_an_issuer_local_address(
+        self,
+        idp_app: FastAPI,
+        idp_client: httpx.AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The exact live shape: no display name and no dotted domain."""
+        info, _ = await self._claims_for(
+            idp_app, idp_client, session_factory,
+            email="admin@local", display_name=None,
+        )
+        assert info["name"] == "admin"
+        assert info["email"] == "admin@local"
+
+    async def test_a_display_name_still_wins(
+        self,
+        idp_app: FastAPI,
+        idp_client: httpx.AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        info, _ = await self._claims_for(
+            idp_app, idp_client, session_factory,
+            email="person@example.org", display_name="Person",
+        )
+        assert info["name"] == "Person"
+
+    async def test_the_id_token_carries_the_same_name(
+        self,
+        idp_app: FastAPI,
+        idp_client: httpx.AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A client may read either document; they must agree."""
+        info, claims = await self._claims_for(
+            idp_app, idp_client, session_factory,
+            email="admin@local", display_name=None,
+        )
+        assert claims["name"] == info["name"] == "admin"
 
 
 class TestEndSession:
