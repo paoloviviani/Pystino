@@ -7,6 +7,7 @@ import {
   Notice,
   Select,
   Spinner,
+  SummaryStrip,
   Table,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
@@ -139,17 +140,35 @@ export function AdminSearch() {
       </Notice>
 
       {/* -- backends ------------------------------------------------ */}
-      <Card flush>
-        <div className="flex items-center justify-between p-4">
-          <h2 className="text-sm font-semibold">Backends</h2>
-          <Button onClick={() => setCreating(true)}>Add backend</Button>
-        </div>
+      <Card title="Backends" flush>
         {providers.isPending ? (
           <div className="p-6">
             <Spinner label="Loading backends" />
           </div>
         ) : (
-          <Table columns={backendColumns} rows={backends} rowKey={(row) => row.id} />
+          <>
+            {/* The strip carries the count, the state and the action, so the
+                card header stays a title and the table starts with its
+                summary rather than its first row. */}
+            <div className="p-5">
+              <SummaryStrip
+                headline={`${backends.length} ${backends.length === 1 ? "backend" : "backends"}`}
+                detail={
+                  backends.length === 0
+                    ? "none yet — add the first one"
+                    : `${backends.filter((backend) => backend.is_active).length} active`
+                }
+                active={backends.length > 0}
+                actions={<Button onClick={() => setCreating(true)}>Add backend</Button>}
+              />
+            </div>
+            <Table
+              columns={backendColumns}
+              rows={backends}
+              rowKey={(row) => row.id}
+              empty="No backends yet."
+            />
+          </>
         )}
       </Card>
 
@@ -188,9 +207,17 @@ export function AdminSearch() {
                     {groupList.map((group) => {
                       const granted = tier.granted_to.includes(group.name);
                       return (
+                        // A grant made visible: the checked chip carries the accent
+                        // tint, through tokens rather than the literal blues this
+                        // used (`blue-50`/`blue-700` plus a `dark:` block) — the
+                        // `.dark` block in tokens.css is the whole dark-mode
+                        // mechanism, and a second one here would diverge from it
+                        // on the next palette change. Checked accent-on-subtle
+                        // clears 4.5:1 in both themes (5.5:1 light, 5.8:1 dark),
+                        // which the old pairing managed in light only.
                         <label
                           key={group.id}
-                          className="flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors has-[:checked]:border-blue-600/30 has-[:checked]:bg-blue-50 has-[:checked]:text-blue-700 dark:has-[:checked]:border-blue-700/60 dark:has-[:checked]:bg-blue-900/30 dark:has-[:checked]:text-blue-300"
+                          className="flex cursor-pointer items-center gap-1.5 rounded-full border border-line px-2.5 py-1 text-xs font-medium transition-colors has-[:checked]:border-accent/25 has-[:checked]:bg-accent-subtle has-[:checked]:text-accent"
                         >
                           <input
                             type="checkbox"

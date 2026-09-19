@@ -7,6 +7,7 @@ import {
   Select,
   Spinner,
   Stat,
+  SummaryStrip,
   Table,
   
 } from "@llmp/ui";
@@ -419,11 +420,6 @@ function RulesList({
         title="Rules"
         description="The strictest applicable rule wins, so adding one can only protect more."
         flush
-        actions={
-          <Button variant="primary" onClick={() => navigate("/admin/redaction/rules/new")}>
-            New rule
-          </Button>
-        }
       >
         {rules.isPending ? (
           <Spinner label="Loading rules" />
@@ -432,13 +428,39 @@ function RulesList({
             {rules.error instanceof Error ? rules.error.message : "Unknown error."}
           </Notice>
         ) : (
-          <Table
-            columns={columns}
-            rows={items}
-            rowKey={(rule) => rule.id}
-            empty="No rules, so nothing is redacted."
-            caption="Redaction rules and the subject each one applies to."
-          />
+          <>
+            {/* Count, coverage state and the creation action in one strip: the
+                catch-all is the fact this table exists to establish, so it
+                sits above the rows rather than three screens away in prose.
+                The button moves here from the card header rather than
+                duplicating it. */}
+            <div className="p-5">
+              <SummaryStrip
+                headline={`${items.length} ${items.length === 1 ? "rule" : "rules"}`}
+                detail={
+                  hasCatchAll
+                    ? "every request is covered"
+                    : "no catch-all — some requests pass unredacted"
+                }
+                active={items.length > 0}
+                actions={
+                  <Button
+                    variant="primary"
+                    onClick={() => navigate("/admin/redaction/rules/new")}
+                  >
+                    New rule
+                  </Button>
+                }
+              />
+            </div>
+            <Table
+              columns={columns}
+              rows={items}
+              rowKey={(rule) => rule.id}
+              empty="No rules, so nothing is redacted."
+              caption="Redaction rules and the subject each one applies to."
+            />
+          </>
         )}
       </Card>
     </>

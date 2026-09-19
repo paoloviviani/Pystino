@@ -8,7 +8,7 @@
  * provisioning rule.
  */
 
-import { Badge, Button, Card, Dialog, Input, Notice, Select, Spinner } from "@llmp/ui";
+import { Badge, Button, Card, Dialog, EmptyState, Input, Notice, Select, Spinner } from "@llmp/ui";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
@@ -248,9 +248,15 @@ function ProvidersCard() {
       description="One button per enabled provider on the sign-in page. Users from
         different providers are different accounts — identity is (issuer, subject)."
       actions={
-        <Button variant="primary" onClick={() => setCreating(true)}>
-          Add provider
-        </Button>
+        // Hidden once the empty state below shows its own: two "Add provider"
+        // buttons on one screen is how the wrong one gets pressed in a test
+        // and the right one missed by a reader. While loading the header keeps
+        // its button, so the action never vanishes mid-flight.
+        providers.data !== undefined && providers.data.length === 0 ? undefined : (
+          <Button variant="primary" onClick={() => setCreating(true)}>
+            Add provider
+          </Button>
+        )
       }
     >
       {providers.isPending ? (
@@ -260,9 +266,15 @@ function ProvidersCard() {
           {providers.error instanceof Error ? providers.error.message : "Unknown error."}
         </Notice>
       ) : (providers.data ?? []).length === 0 ? (
-        <Notice tone="info" title="No identity provider is configured">
-          Sign-in is local accounts only. Add a provider to offer SSO.
-        </Notice>
+        <EmptyState
+          title="No identity provider is configured"
+          detail="Sign-in is local accounts only. Add a provider to offer SSO."
+          action={
+            <Button variant="primary" onClick={() => setCreating(true)}>
+              Add provider
+            </Button>
+          }
+        />
       ) : (
         <div className="flex flex-col gap-2">
           {(providers.data ?? []).map((provider) => (

@@ -7,6 +7,7 @@ import {
   Notice,
   Select,
   Spinner,
+  SummaryStrip,
   Table,
   
 } from "@llmp/ui";
@@ -216,13 +217,22 @@ export function AdminProviders() {
             {providers.error instanceof Error ? providers.error.message : "Unknown error."}
           </Notice>
         ) : (
-          <Table
-            columns={columns}
-            rows={items}
-            rowKey={(provider) => provider.id}
-            empty="No providers configured. Nothing can be served until one exists."
-            caption="Inference endpoints, their credentials and how many models they serve."
-          />
+          <>
+            <div className="p-5">
+              <SummaryStrip
+                headline={`${items.length} ${items.length === 1 ? "provider" : "providers"}`}
+                detail={providerState(items)}
+                active={items.length > 0}
+              />
+            </div>
+            <Table
+              columns={columns}
+              rows={items}
+              rowKey={(provider) => provider.id}
+              empty="No providers configured. Nothing can be served until one exists."
+              caption="Inference endpoints, their credentials and how many models they serve."
+            />
+          </>
         )}
       </Card>
 
@@ -250,6 +260,21 @@ function TestBadge({ result }: { result: ProviderTestResult | undefined }) {
       {result.model_count ?? 0} models{result.latency_ms ? ` · ${result.latency_ms}ms` : ""}
     </Badge>
   );
+}
+
+/**
+ * The strip's state line, drawn from the same facts the rows badge: how many
+ * are switched off, and how many models across them have no price (which is
+ * what "reserves nothing" looks like from this screen).
+ */
+function providerState(items: AdminProvider[]): string {
+  if (items.length === 0) return "nothing can be served until one exists";
+  const off = items.filter((provider) => !provider.is_active).length;
+  const unpriced = items.reduce((sum, provider) => sum + provider.unpriced_model_count, 0);
+  const parts: string[] = [];
+  parts.push(off === 0 ? "all active" : `${off} deactivated`);
+  if (unpriced > 0) parts.push(`${unpriced} unpriced`);
+  return parts.join(" · ");
 }
 
 /** A provider type's human label, falling back to its name if it is not installed. */

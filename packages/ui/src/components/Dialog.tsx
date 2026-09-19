@@ -64,7 +64,11 @@ export function Dialog({ open, title, onClose, footer, children }: DialogProps) 
             <BaseDialog.Close
               aria-label="Close"
               className={cx(
-                "flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-full text-lg text-ink-faint",
+                // `rounded-lg`, not the `rounded-full` this used to be: ADR 0077
+                // reserves the pill for status pills (`Badge`), and a round
+                // close button on a rectangular dialog read as one more of
+                // them. Buttons keep the shared rectangle-with-soft-corners.
+                "flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-lg text-lg text-ink-faint",
                 "transition-colors hover:bg-sunken hover:text-ink",
                 "focus-visible:outline-none focus-visible:shadow-focus",
               )}

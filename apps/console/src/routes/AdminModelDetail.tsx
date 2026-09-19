@@ -8,10 +8,12 @@ import {
   Notice,
   Select,
   Spinner,
+  SummaryStrip,
   Table,
   
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
+import { formatMoney, useExactMoney } from "@llmp/ui";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
@@ -397,6 +399,14 @@ function Describe({ model }: { model: AdminModel }) {
 function Pricing({ model }: { model: AdminModel }) {
   const prices = usePrices(model.id);
   const now = new Date();
+  // A rate is money too, so the strip's current-rate line follows the reader's
+  // precision preference — read by hand rather than via <Money> because it
+  // sits inside a sentence.
+  const exact = useExactMoney();
+  const items = prices.data?.items ?? [];
+  // Newest first, so the head of the list is what requests are charged now
+  // (or scheduled to be, when its date is in the future).
+  const current = items[0];
 
   const columns: Column<Price>[] = [
     {
@@ -488,13 +498,26 @@ function Pricing({ model }: { model: AdminModel }) {
             {prices.error instanceof Error ? prices.error.message : "Unknown error."}
           </Notice>
         ) : (
-          <Table
-            columns={columns}
-            rows={prices.data?.items ?? []}
-            rowKey={(price) => price.id}
-            empty="No price set. This model records a cost of zero."
-            caption={`Price history for ${model.name}.`}
-          />
+          <>
+            <div className="p-5">
+              <SummaryStrip
+                headline={`${items.length} ${items.length === 1 ? "price" : "prices"}`}
+                detail={
+                  current
+                    ? `current: ${formatMoney(current.input_per_mtok, current.currency, { exact })} in / ${formatMoney(current.output_per_mtok, current.currency, { exact })} out`
+                    : "this model records a cost of zero"
+                }
+                active={items.length > 0}
+              />
+            </div>
+            <Table
+              columns={columns}
+              rows={items}
+              rowKey={(price) => price.id}
+              empty="No price set. This model records a cost of zero."
+              caption={`Price history for ${model.name}.`}
+            />
+          </>
         )}
       </Card>
       <AppendPrice model={model} />

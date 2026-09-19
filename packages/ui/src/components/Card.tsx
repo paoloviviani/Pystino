@@ -25,7 +25,20 @@ export function Card({ title, actions, description, flush = false, children }: C
   return (
     <section
       className={cx(
+        // The gradient wash is the chat's card vocabulary (`overlay/styles.ts`'s
+        // `card(false)`): a `bg-linear-to-br` wash from a whisper of ink to
+        // nothing, over the flat surface. `bg-gradient-to-br` is Tailwind 3's
+        // spelling and silently does nothing under v4, which is why this reads
+        // `linear`. The wash uses an opacity modifier on the ink token rather
+        // than a fixed grey, so it follows the theme the same way the grounds
+        // do — 5% of ink on white in the light theme, 5% of near-white on the
+        // dark card. No accent tint here: the chat tints cards that are
+        // *selected*, and nothing the console renders is selectable in that
+        // sense, so an accent wash would be decoration (the tinted strip and
+        // the section-link hover already spend that meaning where selection
+        // actually happens).
         "overflow-hidden rounded-lg border border-line-quiet bg-surface shadow-sm",
+        "bg-linear-to-br from-ink/5 to-transparent",
       )}
     >
       {(title || actions) && (

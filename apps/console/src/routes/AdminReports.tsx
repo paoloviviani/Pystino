@@ -1,4 +1,4 @@
-import { Button, Card, Money, Notice, Select, Spinner, Stat, Table } from "@llmp/ui";
+import { Button, Card, Money, Notice, Select, Spinner, Stat, SummaryStrip, Table } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import { downloadCsv } from "../lib/api";
@@ -170,27 +170,38 @@ export function AdminReports() {
       <Card
         title="Breakdown"
         flush
-        actions={
-          <Button
-            onClick={() => downloadCsv(`/api/admin/reports/usage.csv?${reportQueryString(query)}`)}
-          >
-            Export CSV
-          </Button>
-        }
       >
         {report.isPending ? (
           <Spinner />
         ) : (
-          <Table
-            columns={columns}
-            rows={report.data?.rows ?? []}
-            rowKey={(row, index) => row.key ?? `row-${index}`}
-            footer={report.data?.totals}
-            empty="No usage in this period."
-            caption={`Spend for ${report.data?.period.label ?? "the period"}, ${headingFor(
-              groupBy,
-            ).toLowerCase()}.`}
-          />
+          <>
+            {report.data && (
+              <div className="p-5">
+                <SummaryStrip
+                  headline={`${report.data.rows.length} ${report.data.rows.length === 1 ? "row" : "rows"}`}
+                  detail={`${report.data.period.label} · ${headingFor(groupBy).toLowerCase()}`}
+                  active={report.data.rows.length > 0}
+                  actions={
+                    <Button
+                      onClick={() => downloadCsv(`/api/admin/reports/usage.csv?${reportQueryString(query)}`)}
+                    >
+                      Export CSV
+                    </Button>
+                  }
+                />
+              </div>
+            )}
+            <Table
+              columns={columns}
+              rows={report.data?.rows ?? []}
+              rowKey={(row, index) => row.key ?? `row-${index}`}
+              footer={report.data?.totals}
+              empty="No usage in this period."
+              caption={`Spend for ${report.data?.period.label ?? "the period"}, ${headingFor(
+                groupBy,
+              ).toLowerCase()}.`}
+            />
+          </>
         )}
       </Card>
     </div>

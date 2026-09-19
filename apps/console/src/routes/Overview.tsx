@@ -10,6 +10,7 @@ import {
   Select,
   Spinner,
   Stat,
+  SummaryStrip,
   Table,
   } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
@@ -186,43 +187,58 @@ export function Overview({ me }: OverviewProps) {
         title="Breakdown"
         flush
         actions={
-          <>
-            <Select
-              label="Breakdown"
-              hideLabel
-              value={groupBy}
-              onChange={(event) => setGroupBy(event.target.value)}
-            >
-              {BREAKDOWNS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
-            <Button
-              onClick={() =>
-                downloadCsv(
-                  `/api/me/reports/usage.csv?period=${encodeURIComponent(period)}` +
-                    `&group_by=${encodeURIComponent(groupBy)}`,
-                )
-              }
-            >
-              Export CSV
-            </Button>
-          </>
+          <Select
+            label="Breakdown"
+            hideLabel
+            value={groupBy}
+            onChange={(event) => setGroupBy(event.target.value)}
+          >
+            {BREAKDOWNS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </Select>
         }
       >
         {report.isPending ? (
           <Spinner />
         ) : (
-          <Table
-            columns={columns}
-            rows={report.data?.rows ?? []}
-            rowKey={(row, index) => row.key ?? `row-${index}`}
-            footer={report.data?.totals}
-            empty="No usage in this period."
-            caption={`Your spend ${describePeriod(report.data?.period.label)}, ${labelFor(groupBy)}.`}
-          />
+          <>
+            {/* The strip summarises the rows before they start — a count, the
+                period, and the export that used to sit in the header. Moving
+                it here rather than duplicating it: two "Export CSV" buttons is
+                how one of them ends up working while the table loads. */}
+            {report.data && (
+              <div className="p-5">
+                <SummaryStrip
+                  headline={`${report.data.rows.length} ${report.data.rows.length === 1 ? "row" : "rows"}`}
+                  detail={`${report.data.period.label} · ${labelFor(groupBy)}`}
+                  active={report.data.rows.length > 0}
+                  actions={
+                    <Button
+                      onClick={() =>
+                        downloadCsv(
+                          `/api/me/reports/usage.csv?period=${encodeURIComponent(period)}` +
+                            `&group_by=${encodeURIComponent(groupBy)}`,
+                        )
+                      }
+                    >
+                      Export CSV
+                    </Button>
+                  }
+                />
+              </div>
+            )}
+            <Table
+              columns={columns}
+              rows={report.data?.rows ?? []}
+              rowKey={(row, index) => row.key ?? `row-${index}`}
+              footer={report.data?.totals}
+              empty="No usage in this period."
+              caption={`Your spend ${describePeriod(report.data?.period.label)}, ${labelFor(groupBy)}.`}
+            />
+          </>
         )}
       </Card>
 
@@ -230,21 +246,34 @@ export function Overview({ me }: OverviewProps) {
         title="API keys"
         flush
         description="The secret is shown once, at creation."
-        actions={
-          <Button variant="primary" onClick={() => setMinting(true)}>
-            New key
-          </Button>
-        }
       >
         {keys.isPending ? (
           <Spinner />
         ) : (
-          <Table
-            columns={keyColumns(setRevoking, setDeleting)}
-            rows={keys.data?.items ?? []}
-            rowKey={(key) => key.id}
-            empty="No API keys."
-          />
+          <>
+            <div className="p-5">
+              <SummaryStrip
+                headline={`${(keys.data?.items ?? []).length} ${(keys.data?.items ?? []).length === 1 ? "key" : "keys"}`}
+                detail={
+                  (keys.data?.items ?? []).length === 0
+                    ? "none yet — mint the first one"
+                    : `${(keys.data?.items ?? []).filter((key) => !key.revoked_at && !isExpired(key)).length} working`
+                }
+                active={(keys.data?.items ?? []).length > 0}
+                actions={
+                  <Button variant="primary" onClick={() => setMinting(true)}>
+                    New key
+                  </Button>
+                }
+              />
+            </div>
+            <Table
+              columns={keyColumns(setRevoking, setDeleting)}
+              rows={keys.data?.items ?? []}
+              rowKey={(key) => key.id}
+              empty="No API keys."
+            />
+          </>
         )}
       </Card>
 

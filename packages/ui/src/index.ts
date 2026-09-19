@@ -28,6 +28,9 @@ export type { CardProps } from "./components/Card";
 export { Dialog } from "./components/Dialog";
 export type { DialogProps } from "./components/Dialog";
 
+export { EmptyState } from "./components/EmptyState";
+export type { EmptyStateProps } from "./components/EmptyState";
+
 export { Select } from "./components/Field";
 export type { SelectProps } from "./components/Field";
 
@@ -73,6 +76,9 @@ export type { SpinnerProps } from "./components/Spinner";
 
 export { Stat } from "./components/Stat";
 export type { StatProps } from "./components/Stat";
+
+export { SummaryStrip } from "./components/SummaryStrip";
+export type { SummaryStripProps } from "./components/SummaryStrip";
 
 export { Table } from "./components/Table";
 export type { Column, TableProps } from "./components/Table";
