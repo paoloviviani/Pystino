@@ -16,7 +16,8 @@
 #   ./deploy/teardown.sh                 # containers, network, named volumes
 #   ./deploy/teardown.sh --backup        # save deploy/.env + profiles first
 #   ./deploy/teardown.sh --images        # also remove the images we built
-#   ./deploy/teardown.sh --backup --images --yes
+#   ./deploy/teardown.sh --env           # also delete deploy/.env itself
+#   ./deploy/teardown.sh --backup --images --env --yes
 #
 # There is deliberately no --all. In a teardown it reads as "destroy all" while
 # the only thing it could sensibly mean is "take every optional step", and one
@@ -41,11 +42,12 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 env_file="$here/.env"
 project="llm-platform"
 
-do_backup=false do_images=false assume_yes=false
+do_backup=false do_images=false do_env=false assume_yes=false
 for arg in "$@"; do
 	case "$arg" in
 	--backup) do_backup=true ;;
 	--images) do_images=true ;;
+	--env) do_env=true ;;
 	--yes | -y) assume_yes=true ;;
 	--help | -h) sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	*) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
@@ -58,7 +60,10 @@ vols="$(docker volume ls -q --filter "name=^${project}_" || true)"
 echo "project:    $project"
 echo "containers: $([ -n "$containers" ] && echo "$containers" | wc -l || echo 0)"
 echo "volumes:    $(echo "$vols" | tr '\n' ' ')"
-$do_images && echo "images:   will be removed"
+$do_images && echo "images:     will be removed"
+$do_env && echo "deploy/.env: will be DELETED — it is gitignored and exists"
+$do_env && echo "             nowhere else; CHAT_SECRET_KEY in it decrypts the"
+$do_env && echo "             stored connector credentials. Pair with --backup."
 
 if ! $assume_yes; then
 	printf 'This destroys data. Type the project name to continue: '
@@ -104,6 +109,21 @@ docker volume ls -q --filter "name=^${project}_" | xargs -r docker volume rm >/d
 
 echo "==> removing networks"
 docker network ls -q --filter "name=^${project}_" | xargs -r docker network rm >/dev/null 2>&1 || true
+
+if $do_env; then
+	# Only deploy/.env. Deliberately NOT deploy/profiles/*.env: those are the
+	# fragments the installer builds a new .env *from*, they are gitignored too,
+	# and a fresh clone does not carry them — deleting them here would leave a
+	# checkout the installer refuses to run against, with nothing to restore
+	# from. This flag exists to make the next install start from nothing; it
+	# would defeat itself by removing the thing that install needs.
+	if [ -f "$env_file" ]; then
+		rm -f "$env_file"
+		echo "==> deleted $env_file"
+	else
+		echo "==> no $env_file to delete"
+	fi
+fi
 
 if $do_images; then
 	echo "==> removing built images"
