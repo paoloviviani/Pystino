@@ -152,7 +152,10 @@ function LocalLoginForm({
   return (
     <div className={LOGIN_CENTRE}>
       <section className={LOGIN_CARD}>
-        <h1 className="m-0 text-lg font-medium">Sign in</h1>
+        <div>
+          <h1 className="m-0 text-xl font-semibold text-ink">Sign in</h1>
+          <p className="m-0 mt-1 text-sm text-ink-muted">Sign in to continue.</p>
+        </div>
         {error ? (
           <Notice tone="danger" title="Sign-in failed">
             {error}

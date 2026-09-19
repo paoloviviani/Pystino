@@ -153,6 +153,15 @@ export const QUOTA_DETAIL = "m-0 text-sm text-ink-muted";
 
 /* -- Login ------------------------------------------------------------------ */
 
+/**
+ * The sign-in door both products send people to (the chat's OAuth flow lands
+ * here when there is no session). Drawn as a card in the chat's idiom —
+ * rounded-2xl, quiet border, raised surface — rather than bare form fields on
+ * the page ground, so the first screen a chat user ever sees already reads as
+ * the same product. Shared with the password-reset screens, which are the
+ * same door from the other side.
+ */
 export const LOGIN_CENTRE = "flex min-h-[60vh] items-center justify-center p-5";
-export const LOGIN_CARD = "flex w-96 max-w-full flex-col gap-4";
+export const LOGIN_CARD =
+  "flex w-96 max-w-full flex-col gap-4 rounded-2xl border border-line-quiet bg-surface p-6 shadow-sm";
 export const FORM_STACK = "flex flex-col gap-4";
