@@ -8,6 +8,7 @@ import type {
   MyLimit,
   MyNotificationThresholdsInput,
   MyPasswordChangeInput,
+  SetDefaultBillingGroupInput,
   UsageReport,
 } from "./types";
 
@@ -154,6 +155,23 @@ export function useChangeMyPassword() {
     mutationFn: (body: MyPasswordChangeInput) =>
       request<void>("/api/me/password", { method: "PUT", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: keys.me }),
+  });
+}
+
+/**
+ * Choose the account's own default billing group, from its own groups.
+ *
+ * `PUT /api/me/default-billing-group` refuses a group the caller does not
+ * belong to (ADR 0061's membership re-check, applied here too), so the picker
+ * this feeds needs no server round trip to validate its options first — it
+ * offers exactly `me.groups` and lets the server be the last word.
+ */
+export function useSetDefaultBillingGroup() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: SetDefaultBillingGroupInput) =>
+      request<Me>("/api/me/default-billing-group", { method: "PUT", body }),
+    onSuccess: (me) => client.setQueryData(keys.me, me),
   });
 }
 

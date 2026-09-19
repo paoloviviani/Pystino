@@ -321,3 +321,122 @@ describe("Shell: exact figures", () => {
     expect(screen.queryByRole("menuitemcheckbox", { name: /Exact figures/ })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Choosing a default billing group from the identity menu (ADR 0078).
+ *
+ * Until now this sentence was the whole feature: a person with no default
+ * learned they had none and had no way, anywhere in the console, to fix it —
+ * the gateway's own 403 named `PUT /api/me/default-billing-group` as the
+ * remedy, and nothing in the UI called it. These tests are the picker that
+ * closes that gap, and the refusal path, so a group the server rejects still
+ * shows the reason rather than closing quietly.
+ */
+describe("Shell: default billing group", () => {
+  it("offers to set one when there is none and the user has groups", () => {
+    renderShell(me({ default_billing_group: null }));
+
+    clickMenuTrigger();
+    expect(screen.getByText("No default billing group")).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Set default billing group…" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers to change one that is already set", () => {
+    renderShell();
+
+    clickMenuTrigger();
+    expect(screen.getByText("Billing to platform-admins")).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Change default billing group…" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers nothing to pick from when the user belongs to no group", () => {
+    // A picker with zero options is worse than the plain sentence it would
+    // replace.
+    renderShell(me({ groups: [], default_billing_group: null }));
+
+    clickMenuTrigger();
+    expect(screen.getByText("No default billing group")).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /billing group…/ })).not.toBeInTheDocument();
+  });
+
+  it("saves the chosen group through the self-service endpoint", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(me()), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderShell(
+      me({
+        groups: [
+          { id: "g1", name: "platform-admins", description: null },
+          { id: "g2", name: "finance", description: null },
+        ],
+      }),
+    );
+    clickMenuTrigger();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Change default billing group…" }));
+    fireEvent.change(screen.getByLabelText("Group"), { target: { value: "g2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(String(call[0])).toContain("/api/me/default-billing-group");
+    expect(call[1].method).toBe("PUT");
+    expect(JSON.parse(call[1].body as string)).toEqual({ group_id: "g2" });
+  });
+
+  it("shows the server's refusal rather than closing quietly", async () => {
+    // The membership check the endpoint already makes (ADR 0061) — the picker
+    // adds no copy of it, so a stale option (left another group since opening
+    // the menu) has to surface the server's own answer.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ error: { message: "You are not a member of that group." } }),
+            { status: 403, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+    renderShell();
+
+    clickMenuTrigger();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Change default billing group…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(screen.getByText("You are not a member of that group.")).toBeInTheDocument(),
+    );
+  });
+
+  it("resets to the current default each time it is reopened", () => {
+    // The dialog stays mounted behind `open` so Base UI can animate the
+    // close; a value seeded once into its own state would keep showing
+    // whatever was last picked, not the account's actual default.
+    renderShell(
+      me({
+        groups: [
+          { id: "g1", name: "platform-admins", description: null },
+          { id: "g2", name: "finance", description: null },
+        ],
+      }),
+    );
+    clickMenuTrigger();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Change default billing group…" }));
+    fireEvent.change(screen.getByLabelText("Group"), { target: { value: "g2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    clickMenuTrigger();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Change default billing group…" }));
+    expect(screen.getByLabelText("Group")).toHaveValue("g1");
+  });
+});
