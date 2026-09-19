@@ -16,7 +16,12 @@
 #   ./deploy/teardown.sh                 # containers, network, named volumes
 #   ./deploy/teardown.sh --backup        # save deploy/.env + profiles first
 #   ./deploy/teardown.sh --images        # also remove the images we built
-#   ./deploy/teardown.sh --all --yes     # backup + images, no prompt
+#   ./deploy/teardown.sh --backup --images --yes
+#
+# There is deliberately no --all. In a teardown it reads as "destroy all" while
+# the only thing it could sensibly mean is "take every optional step", and one
+# of those steps is a backup — so the flag that sounds most destructive would
+# be the one that quietly spends minutes dumping databases. Name the steps.
 #
 # Deliberately not a flag here: wiping every volume on the host. That is
 #   docker volume prune -af
@@ -41,7 +46,6 @@ for arg in "$@"; do
 	case "$arg" in
 	--backup) do_backup=true ;;
 	--images) do_images=true ;;
-	--all) do_backup=true; do_images=true ;;
 	--yes | -y) assume_yes=true ;;
 	--help | -h) sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	*) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
