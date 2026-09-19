@@ -26,6 +26,7 @@ from pydantic import (
     Field,
     PlainSerializer,
     SecretStr,
+    field_validator,
     model_validator,
 )
 
@@ -302,6 +303,28 @@ class OcrDocument(BaseModel):
             return None
 
 
+def _page_range_count(value: str) -> int:
+    """The inclusive page count of a Mistral/Cortecs range string, ``"0-5"`` -> 6.
+
+    Parsed here, at the boundary, rather than left for the reservation math to
+    do its own thing with the raw string: ``len("0-5")`` is 3, and would
+    silently reserve the wrong number of pages for every range whose printed
+    length differs from its page count — worse the wider the range gets. A
+    malformed value is refused with a plain message instead of reaching
+    admission as a confusing arithmetic result.
+    """
+    parts = value.split("-")
+    if len(parts) != 2 or not all(part.strip().isdigit() for part in parts):
+        raise ValueError(
+            f"'pages' range must look like '<start>-<end>' with non-negative "
+            f"integers, got {value!r}"
+        )
+    start, end = (int(part.strip()) for part in parts)
+    if end < start:
+        raise ValueError(f"'pages' range end must not be before its start, got {value!r}")
+    return end - start + 1
+
+
 class OcrRequest(BaseModel):
     """``POST /v1/ocr`` — the Cortecs and Mistral shape.
 
@@ -318,9 +341,38 @@ class OcrRequest(BaseModel):
 
     model: str
     document: OcrDocument
-    #: Which pages to read, when the caller wants a subset. Declared because it
-    #: bounds the bill: the page count is otherwise unknown until the response.
-    pages: list[int] | None = None
+    #: Which pages to read, when the caller wants a subset: a list of 0-based
+    #: indices, or an inclusive range string ("0-5") in the same shape Mistral
+    #: and Cortecs both document. Declared because it bounds the bill: the page
+    #: count is otherwise unknown until the response.
+    pages: list[int] | str | None = None
+    #: Ask the provider to return page images alongside markdown. Declared
+    #: rather than left to ``extra="allow"`` so it is a documented part of the
+    #: contract instead of a stray that happens to be forwarded: the local
+    #: extractor accepts it and always answers with no images, which is a
+    #: known behaviour rather than a silently ignored request.
+    include_image_base64: bool | None = None
+
+    @field_validator("pages")
+    @classmethod
+    def _valid_pages(cls, value: list[int] | str | None) -> list[int] | str | None:
+        if isinstance(value, str):
+            _page_range_count(value)  # raises ValueError on a malformed range
+        return value
+
+    def page_count(self) -> int | None:
+        """How many pages this selection reserves. ``None`` for "no selection".
+
+        The reservation floor: what admission can prove before the call is the
+        caller's own page selection, list or range, or nothing at all. A
+        malformed range never reaches here — ``_valid_pages`` above refuses it
+        at validation, before a request row is even opened.
+        """
+        if self.pages is None:
+            return None
+        if isinstance(self.pages, str):
+            return _page_range_count(self.pages)
+        return len(self.pages) or None
 
     def upstream_payload(self, *, upstream_model: str) -> dict[str, Any]:
         payload = self.model_dump(exclude_unset=True)

@@ -203,10 +203,13 @@ async def extract_document(
     upstream = None if local else await _metered.resolve_upstream(providers, model)
 
     # -- reservation --------------------------------------------------------
-    # What can be proven before the call: the caller's own page selection, or
-    # one page. See the module docstring for why this is a floor rather than a
-    # ceiling, and what that costs.
-    reserved_pages = len(body.pages) if body.pages else 1
+    # What can be proven before the call: the caller's own page selection —
+    # list or range string, both resolved to a true count by `page_count()`,
+    # never `len()` on the field itself, which would count characters instead
+    # of pages for a range like "0-100" — or one page. See the module
+    # docstring for why this is a floor rather than a ceiling, and what that
+    # costs.
+    reserved_pages = body.page_count() or 1
     metered = await _metered.begin(
         fx=request.app.state.fx,
         session_factory=request.app.state.session_factory,

@@ -19,6 +19,9 @@ from conftest import FakeUpstream, Seeded
 from gateway.models import (
     ApiSurface,
     GroupModelAccess,
+    LimitMetric,
+    LimitRule,
+    LimitScope,
     ModelDef,
     ModelKind,
     ModelPrice,
@@ -26,8 +29,10 @@ from gateway.models import (
     UsageRecord,
     UsageSource,
 )
+from gateway.routers import _metered as metered
+from gateway.schemas import OcrRequest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
 
 DOCUMENT = {"type": "document_url", "document_url": "https://example.org/invoice.pdf"}
@@ -233,6 +238,29 @@ class TestMetering:
         record = await latest_record(session)
         assert record.upstream_model == "mistral-ocr-4.1"
 
+    async def test_credits_in_usage_info_do_not_affect_cost(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """Cortecs reports `usage_info.credits` too. Credits are not money —
+        billing stays on `pages_processed` regardless of what `credits` says,
+        even when it is wildly different from the page-based charge."""
+        model = await add_ocr_model(session, seeded, name="credits-ocr", per_page="0.01")
+        fake_upstream.set_json(
+            ocr_response(pages=5, usage_info={"pages_processed": 5, "credits": 999})
+        )
+
+        response = await client.post(
+            "/v1/ocr", json={"model": model.name, "document": DOCUMENT}, headers=seeded.auth
+        )
+        assert response.status_code == 200
+        record = await latest_record(session)
+        # 5 pages at 0.01, not anything derived from 999 credits.
+        assert record.cost == Decimal("0.05")
+
     async def test_the_pages_come_back_to_the_caller(
         self,
         client: httpx.AsyncClient,
@@ -250,6 +278,282 @@ class TestMetering:
         ).json()
         assert [page["index"] for page in body["pages"]] == [0, 1]
         assert body["usage_info"]["pages_processed"] == 2
+
+
+def _ocr_request(**pages_kwargs: Any) -> OcrRequest:
+    return OcrRequest.model_validate(
+        {
+            "model": "m",
+            "document": {"type": "document_url", "document_url": "https://x/doc.pdf"},
+            **pages_kwargs,
+        }
+    )
+
+
+class TestPageCountParsing:
+    """`OcrRequest.page_count()` in isolation, away from the database — the
+    same reason `TestOcrUsageReader` in test_cost.py stays a pure-function
+    test: this is where a wrong answer becomes a wrong reservation."""
+
+    def test_no_selection_is_none(self) -> None:
+        assert _ocr_request().page_count() is None
+
+    def test_an_empty_list_is_none_not_zero(self) -> None:
+        """Matches the pre-existing `len(body.pages) if body.pages else 1`
+        behaviour for a falsy list: the route still floors it to one page."""
+        assert _ocr_request(pages=[]).page_count() is None
+
+    def test_a_list_counts_its_own_length(self) -> None:
+        assert _ocr_request(pages=[0, 1, 2, 3]).page_count() == 4
+
+    def test_a_range_string_counts_inclusively(self) -> None:
+        assert _ocr_request(pages="0-5").page_count() == 6
+        assert _ocr_request(pages="3-3").page_count() == 1
+
+    def test_a_malformed_range_raises_at_validation_time(self) -> None:
+        import pytest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            _ocr_request(pages="not-a-range")
+        with pytest.raises(ValidationError):
+            _ocr_request(pages="5-2")
+
+
+class TestPageSelection:
+    """`pages` accepts a list of indices or an inclusive range string
+    ("0-5"), the shape Mistral and Cortecs both document — and the
+    reservation must count real pages, never characters in the string."""
+
+    async def test_a_list_reserves_its_own_length(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+        monkeypatch: Any,
+    ) -> None:
+        """Captures the `worst_case` reservation `_metered.begin` actually
+        receives — the exact value the fix in `routers/ocr.py` computes —
+        rather than inferring it indirectly through quota admission. (Quota
+        here refuses on *pre-existing* window usage, not on a request's own
+        size — see the module docstring's "floor, not a ceiling" — so a
+        single request's own size cannot be observed by whether it is
+        admitted.)"""
+        model = await add_ocr_model(session, seeded, name="list-pages", per_page="0.01")
+        fake_upstream.set_json(ocr_response(pages=3))
+        captured: dict[str, Any] = {}
+        original = metered.begin
+
+        async def spy(**kwargs: Any) -> Any:
+            captured["pages"] = kwargs["worst_case"].pages
+            return await original(**kwargs)
+
+        monkeypatch.setattr(metered, "begin", spy)
+
+        response = await client.post(
+            "/v1/ocr",
+            json={"model": model.name, "document": DOCUMENT, "pages": [0, 1, 2]},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+        assert captured["pages"] == 3
+
+    async def test_a_range_string_reserves_the_true_page_count_not_its_length(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+        monkeypatch: Any,
+    ) -> None:
+        """`"0-5"` selects 6 pages (inclusive bounds) though the string is 3
+        characters long. `len("0-5")` would reserve 3; the true count is 6."""
+        model = await add_ocr_model(session, seeded, name="range-pages", per_page="0.01")
+        fake_upstream.set_json(ocr_response(pages=6))
+        captured: dict[str, Any] = {}
+        original = metered.begin
+
+        async def spy(**kwargs: Any) -> Any:
+            captured["pages"] = kwargs["worst_case"].pages
+            return await original(**kwargs)
+
+        monkeypatch.setattr(metered, "begin", spy)
+
+        response = await client.post(
+            "/v1/ocr",
+            json={"model": model.name, "document": DOCUMENT, "pages": "0-5"},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+        assert captured["pages"] == 6
+
+    async def test_a_wide_range_string_reserves_the_true_page_count(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+        monkeypatch: Any,
+    ) -> None:
+        """The case named in the brief: `"0-100"` is 101 pages, and
+        `len("0-100")` is 6 — the widest gap between the two readings."""
+        model = await add_ocr_model(session, seeded, name="wide-range-pages", per_page="0.01")
+        fake_upstream.set_json(ocr_response(pages=101))
+        captured: dict[str, Any] = {}
+        original = metered.begin
+
+        async def spy(**kwargs: Any) -> Any:
+            captured["pages"] = kwargs["worst_case"].pages
+            return await original(**kwargs)
+
+        monkeypatch.setattr(metered, "begin", spy)
+
+        response = await client.post(
+            "/v1/ocr",
+            json={"model": model.name, "document": DOCUMENT, "pages": "0-100"},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+        assert captured["pages"] == 101
+
+    async def test_usage_actually_accumulates_by_true_pages_across_requests(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """End-to-end proof the fix matters: a first request settles its real
+        cost from a range selection, and a second request is then refused
+        against a ceiling that only the *true* page count — not `len()` of
+        the range string — would actually reach."""
+        model = await add_ocr_model(session, seeded, name="accum-range", per_page="0.01")
+        async with session_factory() as rule_session:
+            rule_session.add(
+                LimitRule(
+                    name="six pages worth",
+                    scope=LimitScope.GROUP,
+                    scope_id=seeded.group.id,
+                    metric=LimitMetric.COST,
+                    window_seconds=3600,
+                    # len("0-5") is 3, worth 0.03 — under this ceiling. The
+                    # true count is 6, worth 0.06 — over it. Only the true
+                    # count settling into the ledger makes the second request
+                    # below fail.
+                    limit_value=Decimal("0.05"),
+                )
+            )
+            await rule_session.commit()
+        fake_upstream.set_json(ocr_response(pages=6))
+
+        first = await client.post(
+            "/v1/ocr",
+            json={"model": model.name, "document": DOCUMENT, "pages": "0-5"},
+            headers=seeded.auth,
+        )
+        assert first.status_code == 200
+
+        second = await client.post(
+            "/v1/ocr",
+            json={"model": model.name, "document": DOCUMENT, "pages": [0]},
+            headers=seeded.auth,
+        )
+        assert second.status_code == 429
+
+    async def test_a_malformed_range_is_refused_with_a_clear_400(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        model = await add_ocr_model(session, seeded, name="bad-range")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={"model": model.name, "document": DOCUMENT, "pages": "start-end"},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 400
+        assert "pages" in response.json()["error"]["message"]
+
+    async def test_a_backwards_range_is_refused_with_a_clear_400(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        model = await add_ocr_model(session, seeded, name="backwards-range")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={"model": model.name, "document": DOCUMENT, "pages": "5-2"},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 400
+
+
+class TestIncludeImageBase64:
+    """`include_image_base64` is a declared field now, not a stray that
+    happened to survive `extra="allow"` — the local extractor is fine
+    returning no images, but the field itself must be a known part of the
+    contract rather than silently dropped."""
+
+    def test_it_is_a_declared_field_not_an_extra(self) -> None:
+        request = OcrRequest.model_validate(
+            {
+                "model": "m",
+                "document": {"type": "document_url", "document_url": "https://x/doc.pdf"},
+                "include_image_base64": True,
+            }
+        )
+        assert request.include_image_base64 is True
+        assert "include_image_base64" not in (request.model_extra or {})
+
+    async def test_accepted_on_the_local_extractor_path_which_returns_no_images(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        extractor = FakeExtractor()
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded, name="local-images")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+                "include_image_base64": True,
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+        assert "images" not in response.json()["pages"][0]
+
+    async def test_forwarded_to_a_proxied_upstream(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        model = await add_ocr_model(session, seeded, name="images-upstream")
+        fake_upstream.set_json(ocr_response(pages=1))
+
+        await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": DOCUMENT,
+                "include_image_base64": True,
+            },
+            headers=seeded.auth,
+        )
+        assert fake_upstream.last_body["include_image_base64"] is True
 
 
 class TestRefusals:

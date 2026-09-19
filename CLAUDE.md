@@ -788,7 +788,14 @@ Known open items, none of them blocking:
   `usage_info.credits` — what Cortecs reports on an OCR *response* — is **not
   read**, because whether it is micro-EUR like their chat surface or something
   else needs one real call with a key, and a figure in an unverified unit is
-  worse than none.
+  worse than none. That is now an explicit refusal with its reasoning in the
+  cost reader rather than an absence (ADR 0083), alongside two other pieces of
+  conformance with the shape Mistral and Cortecs share: `pages` accepts an
+  inclusive range string (`"0-5"`) as well as a list, and
+  `include_image_base64` is declared rather than forwarded as a stray. The
+  range form is worth knowing about because the reservation used to call
+  `len()` on the field — `"0-100"` reserved seven pages for a hundred and one,
+  and no test on the list form could see it.
 - **Cortecs' `/v1/models` defaults to `tag=Instruct`, and that hid two whole
   kinds of model.** An earlier note here claimed OCR models were absent from
   the catalogue and had to be entered by hand; they were never absent, only
