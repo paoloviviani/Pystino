@@ -155,9 +155,28 @@ services:
       GATEWAY_IDP__ENABLED: ${GATEWAY_IDP__ENABLED:-false}
       GATEWAY_IDP__ISSUER: ${GATEWAY_IDP__ISSUER:-}
       GATEWAY_IDP__INTERNAL_BASE_URL: ${GATEWAY_IDP__INTERNAL_BASE_URL:-}
+      # The ES256 key the IdP signs id_tokens with, by path rather than by
+      # value. A PEM is several lines and deploy/.env is line-oriented, so
+      # carrying it inline made one variable the only continuation case every
+      # reader and writer of that file had to handle. The file is mounted
+      # below; the key never enters the environment, so it is absent from
+      # `docker inspect` and from any process listing too.
+      #
+      # Inline still works for a deployment that sets GATEWAY_IDP__SIGNING_KEY
+      # instead. Setting both is refused at startup rather than resolved by
+      # precedence.
       GATEWAY_IDP__SIGNING_KEY: ${GATEWAY_IDP__SIGNING_KEY:-}
+      GATEWAY_IDP__SIGNING_KEY_FILE: ${GATEWAY_IDP__SIGNING_KEY_FILE:-}
       GATEWAY_IDP__INTERNAL_TOKEN: ${GATEWAY_IDP__INTERNAL_TOKEN:-}
       GATEWAY_IDP__CLIENTS: ${GATEWAY_IDP__CLIENTS:-}
+    volumes:
+      # The IdP signing key, read-only, at the path GATEWAY_IDP__SIGNING_KEY_FILE
+      # names. `${VAR:-/dev/null}` rather than a bare interpolation because a
+      # compose volume whose source is an empty string is a parse error, and
+      # this line has to be inert for every deployment that sets the key inline
+      # or runs with the IdP off. /dev/null mounts, reads as empty, and is only
+      # ever opened when the variable above points at it — which nothing does.
+      - ${IDP_SIGNING_KEY_HOST_PATH:-/dev/null}:/run/idp/signing-key.pem:ro
     depends_on:
       postgres:
         condition: service_healthy

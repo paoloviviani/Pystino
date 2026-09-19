@@ -12,6 +12,7 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
@@ -274,6 +275,21 @@ class IdPSettings(BaseModel):
     # never approaches the request path (ADR 0068). Required when enabled.
     signing_key: SecretStr = SecretStr("")
 
+    # Where to read that key from instead, which is how the deployment does it.
+    # A PEM is several lines and an env file is a line-oriented format, so
+    # carrying the key inline makes every reader and writer of ``deploy/.env``
+    # handle a continuation case that exists for exactly one variable. A path
+    # is one line; the file is mounted into the container and never passes
+    # through the environment at all, which also keeps it out of ``docker
+    # inspect`` and out of any process listing.
+    #
+    # Inline still works and is not deprecated — a deployment that sets
+    # ``GATEWAY_IDP__SIGNING_KEY`` directly is untouched. Setting both is
+    # refused rather than resolved by precedence: two sources for one key is a
+    # question about which one is live, and the answer should not be buried in
+    # a validator.
+    signing_key_file: str = ""
+
     # Guards the legacy minting endpoints (``POST /auth/token``, ``POST
     # /auth/revoke``) when the IdP is enabled: a credential only the compose
     # network's services hold. The IdP's own token endpoint is guarded by
@@ -294,6 +310,33 @@ class IdPSettings(BaseModel):
     @classmethod
     def _absolute_and_stripped(cls, value: str) -> str:
         return value.rstrip("/")
+
+    @model_validator(mode="after")
+    def _load_signing_key_file(self) -> IdPSettings:
+        """Read the PEM off disk, once, at startup.
+
+        Done here rather than at first login so a missing or unreadable key is
+        a refusal to start — the alternative is a gateway that serves every
+        other route and fails only when somebody tries to sign in, which is
+        the shape of outage that gets diagnosed last.
+        """
+        if not self.signing_key_file:
+            return self
+        if self.signing_key.get_secret_value():
+            raise ValueError(
+                "set GATEWAY_IDP__SIGNING_KEY or GATEWAY_IDP__SIGNING_KEY_FILE, not both"
+            )
+        path = Path(self.signing_key_file)
+        try:
+            pem = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ValueError(f"GATEWAY_IDP__SIGNING_KEY_FILE: cannot read {path}: {exc}") from exc
+        if "PRIVATE KEY" not in pem:
+            raise ValueError(
+                f"GATEWAY_IDP__SIGNING_KEY_FILE: {path} does not look like a PEM private key"
+            )
+        self.signing_key = SecretStr(pem)
+        return self
 
     @model_validator(mode="after")
     def _enabled_requires_a_working_issuer(self) -> IdPSettings:

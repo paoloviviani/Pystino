@@ -17,6 +17,7 @@ import hashlib
 import uuid
 from collections.abc import AsyncIterator
 from datetime import timedelta
+from pathlib import Path
 
 import httpx
 import pytest
@@ -704,3 +705,68 @@ class TestTheSwitchAndTheInternals:
         """Enabled but unconfigured is a startup error, not a first-login one."""
         with pytest.raises(ValueError, match="GATEWAY_IDP__ISSUER"):
             Settings(idp={"enabled": True})  # type: ignore[arg-type]
+
+    async def test_the_signing_key_can_come_from_a_file(self, tmp_path: Path) -> None:
+        """A PEM is several lines and deploy/.env is line-oriented.
+
+        Carrying it by path keeps the only multi-line value out of that file,
+        and out of the environment — so it is absent from `docker inspect` and
+        from any process listing as well.
+        """
+        pem = _a_signing_key()
+        key_file = tmp_path / "signing-key.pem"
+        key_file.write_text(pem, encoding="utf-8")
+
+        settings = Settings(
+            idp={
+                "enabled": True,
+                "issuer": "https://example.org",
+                "signing_key_file": str(key_file),
+                "internal_token": "t",
+            }  # type: ignore[arg-type]
+        )
+
+        assert settings.idp.signing_key.get_secret_value() == pem.strip()
+
+    async def test_inline_and_file_together_are_refused(self, tmp_path: Path) -> None:
+        """Two sources for one key is a question about which one is live."""
+        key_file = tmp_path / "signing-key.pem"
+        key_file.write_text(_a_signing_key(), encoding="utf-8")
+
+        with pytest.raises(ValueError, match="not both"):
+            Settings(
+                idp={
+                    "enabled": True,
+                    "issuer": "https://example.org",
+                    "signing_key": _a_signing_key(),
+                    "signing_key_file": str(key_file),
+                    "internal_token": "t",
+                }  # type: ignore[arg-type]
+            )
+
+    async def test_a_missing_key_file_refuses_to_start(self, tmp_path: Path) -> None:
+        """Not a first-login failure: that outage gets diagnosed last."""
+        with pytest.raises(ValueError, match="cannot read"):
+            Settings(
+                idp={
+                    "enabled": True,
+                    "issuer": "https://example.org",
+                    "signing_key_file": str(tmp_path / "absent.pem"),
+                    "internal_token": "t",
+                }  # type: ignore[arg-type]
+            )
+
+    async def test_a_file_that_is_not_a_pem_refuses_to_start(self, tmp_path: Path) -> None:
+        """An empty or truncated file would otherwise fail at the first login."""
+        key_file = tmp_path / "signing-key.pem"
+        key_file.write_text("", encoding="utf-8")
+
+        with pytest.raises(ValueError, match="does not look like a PEM"):
+            Settings(
+                idp={
+                    "enabled": True,
+                    "issuer": "https://example.org",
+                    "signing_key_file": str(key_file),
+                    "internal_token": "t",
+                }  # type: ignore[arg-type]
+            )
