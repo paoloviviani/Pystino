@@ -145,15 +145,26 @@ services:
         # person's own browser sandbox (park-and-resume over the stream), and
         # the results feed back into the turn so the model can iterate. Per-user
         # isolation by construction — the code never leaves the client. Off (or
-        # absent) means code fences only, the manual channel.
-        CHAT_CODE_TOOL_ENABLED=true
+        # absent) means code fences only, the manual channel. Interpolated (not
+        # hardcoded) so a deployment profile can switch it per environment.
+        # `${VAR-default}` (no colon): an explicitly emptied value stays empty
+        # rather than falling back — that is how a profile switches a tab off.
+        CHAT_CODE_TOOL_ENABLED=${CHAT_CODE_TOOL_ENABLED-true}
 
         # The Usage & billing settings tab (ADR 0073 amendment / ADR 0074): the
         # signed-in person's Pystino quotas and spend, read from
         # GET /v1/pystino/usage with their own bearer token. Gated because the
         # tab is a Pystino-specific capability — a deployment against a gateway
-        # without it leaves this off and the tab never appears.
-        CHAT_USAGE_ENABLED=true
+        # without it leaves this off and the tab never appears. Interpolated so
+        # an unmetered profile can empty it without editing this file (same
+        # no-colon form as above: empty stays empty).
+        CHAT_USAGE_ENABLED=${CHAT_USAGE_ENABLED-true}
+
+        # The knowledge pipeline (chat-owned Postgres, ADR 0070). On unless
+        # "false": a deployment without that database sets it false and the
+        # Knowledge tab, the project and composer affordances and the admin
+        # section hide instead of erroring.
+        CHAT_KNOWLEDGE_ENABLED=${CHAT_KNOWLEDGE_ENABLED-true}
 
         # Sign-in against the gateway's own IdP (ADR 0068). The issuer is the
         # public origin — the same value GATEWAY_IDP__ISSUER was configured
@@ -161,10 +172,15 @@ services:
         # `issuer` against this URL byte for byte. The client must appear in
         # GATEWAY_IDP__CLIENTS with redirect_path /chat/login/callback, and
         # the secret must match that client's.
-        OPENID_PROVIDER_URL=${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in deploy/.env — it is the IdP issuer}
-        OPENID_CLIENT_ID=cerea
-        OPENID_CLIENT_SECRET=${CHAT_IDP_CLIENT_SECRET:?set CHAT_IDP_CLIENT_SECRET in deploy/.env — the cerea client's secret}
-        OPENID_SCOPES=openid profile email
+        #
+        # An enterprise deployment authenticating against an external provider
+        # instead overrides the three CHAT_OIDC_* variables (client registered
+        # at the provider with <PUBLIC_ORIGIN>/chat/login/callback exactly);
+        # the house-IdP values below are the defaults when they are unset.
+        OPENID_PROVIDER_URL=${CHAT_OIDC_PROVIDER_URL:-${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in deploy/.env — it is the IdP issuer}}
+        OPENID_CLIENT_ID=${CHAT_OIDC_CLIENT_ID:-cerea}
+        OPENID_CLIENT_SECRET=${CHAT_OIDC_CLIENT_SECRET:-${CHAT_IDP_CLIENT_SECRET:?set CHAT_IDP_CLIENT_SECRET in deploy/.env — the cerea client's secret}}
+        OPENID_SCOPES=${CHAT_OIDC_SCOPES:-openid profile email}
 
         # Encrypts MCP connector credentials at rest (ADR 0064) — OAuth tokens
         # and static API tokens, which used to live in browser localStorage.

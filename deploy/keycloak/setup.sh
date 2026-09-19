@@ -269,7 +269,12 @@ echo "GATEWAY_OIDC__CLIENT_ID=pystino-console"
 echo "GATEWAY_OIDC__CLIENT_SECRET=$(secret_of pystino-console)"
 echo "GATEWAY_OIDC__REDIRECT_URI=$PUBLIC_ORIGIN/auth/callback"
 echo "GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE=$AUDIENCE"
-echo "GATEWAY_OIDC__ADMIN_GROUPS=[\"platform-admins\"]"
+echo
+echo "# Administrators are made in the console or with"
+echo "#   docker compose ... exec gateway gateway passwd --admin <email>"
+echo "# There is deliberately no admin-group setting (ADR 0069): authorisation"
+echo "# is a gateway fact, and GATEWAY_OIDC__ADMIN_GROUPS was removed — setting"
+echo "# it refuses the gateway startup instead of granting anything."
 echo
 echo "# chat-ui (pystino-chat/.env.local)"
 echo "OPENID_CONFIG={\"PROVIDER_URL\":\"$ISSUER\",\"CLIENT_ID\":\"pystino-chat\",\"CLIENT_SECRET\":\"$(secret_of pystino-chat)\",\"SCOPES\":\"openid profile email\"}"

@@ -122,15 +122,6 @@ services:
       # shape the feature assumes.
       GATEWAY_LOCAL_AUTH__ENABLED: ${GATEWAY_LOCAL_AUTH__ENABLED:-true}
 
-  # Only present when docker-compose.redaction.yml is also passed, which is
-  # the usual combination. That file publishes the fake upstream so the
-  # redaction check can read what the gateway sent — loopback only here,
-  # which is the whole rule.
-  fake-upstream:
-    ports:
-      !override
-      - "8081:9099"
-
 volumes:
   caddy-data:
   caddy-config:

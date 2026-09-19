@@ -100,12 +100,6 @@ services:
       # No model to load, so this one is ready in seconds rather than minutes.
       start_period: 20s
 
-  # Published only under this overlay, so the redaction check can read what the
-  # gateway actually sent. A development fake; nothing else exposes it.
-  fake-upstream:
-    ports:
-      - "8081:9099"
-
   gateway:
     environment:
       GATEWAY_REDACTION__ENGINE: http

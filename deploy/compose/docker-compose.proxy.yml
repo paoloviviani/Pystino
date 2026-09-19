@@ -36,8 +36,9 @@
 # publish on an address the host does not hold, so what gets *bound*
 # (PUBLIC_BIND, every interface by default) and what gets *typed* (PUBLIC_HOST,
 # which the certificate, the Caddyfile and every OIDC URL are built from) are
-# separate variables. This is exactly where docker-compose.overlay.yml's rule —
-# "must be an address that already exists on this host" — stops applying.
+# separate variables. Binding here is deliberately every interface by default:
+# the certificate and the public URL come from PUBLIC_HOST, while Docker can
+# only publish on an address the host actually holds.
 #
 # ## OIDC is whatever deploy/.env says (docs/oidc-generic-provider.md)
 #
@@ -128,15 +129,6 @@ services:
       GATEWAY_OIDC__GROUPS_CLAIM: ${GATEWAY_OIDC__GROUPS_CLAIM:-groups}
       GATEWAY_OIDC__ADMIN_GROUPS: ${GATEWAY_OIDC__ADMIN_GROUPS:-[]}
       GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE: ${GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE:-}
-
-  # Only present when docker-compose.redaction.yml is also passed, which is the
-  # usual combination. That file publishes the fake upstream so the redaction
-  # check can read what the gateway sent — on 0.0.0.0, which is harmless behind a
-  # loopback-only stack and is a public, unauthenticated endpoint here.
-  fake-upstream:
-    ports:
-      !override
-      - "127.0.0.1:8081:9099"
 
 volumes:
   caddy-data:
