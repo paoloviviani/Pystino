@@ -16,9 +16,12 @@
 #   ./deploy/teardown.sh                 # containers, network, named volumes
 #   ./deploy/teardown.sh --backup        # save deploy/.env + profiles first
 #   ./deploy/teardown.sh --images        # also remove the images we built
-#   ./deploy/teardown.sh --zap           # also remove every unused volume on
-#                                        #   the host, including other projects'
-#   ./deploy/teardown.sh --all --yes     # everything, no prompt
+#   ./deploy/teardown.sh --all --yes     # backup + images, no prompt
+#
+# Deliberately not a flag here: wiping every volume on the host. That is
+#   docker volume prune -af
+# and it belongs in your hands, not behind an option in a per-project teardown
+# where it would one day run on a shared box.
 #
 # What dies with the named volumes, so it is never a surprise:
 #   postgres-data    every user account and password, the ledger, grants
@@ -33,13 +36,12 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 env_file="$here/.env"
 project="llm-platform"
 
-do_backup=false do_images=false do_zap=false assume_yes=false
+do_backup=false do_images=false assume_yes=false
 for arg in "$@"; do
 	case "$arg" in
 	--backup) do_backup=true ;;
 	--images) do_images=true ;;
-	--zap) do_zap=true ;;
-	--all) do_backup=true; do_images=true; do_zap=true ;;
+	--all) do_backup=true; do_images=true ;;
 	--yes | -y) assume_yes=true ;;
 	--help | -h) sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
 	*) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
@@ -53,8 +55,6 @@ echo "project:    $project"
 echo "containers: $([ -n "$containers" ] && echo "$containers" | wc -l || echo 0)"
 echo "volumes:    $(echo "$vols" | tr '\n' ' ')"
 $do_images && echo "images:   will be removed"
-$do_zap && echo "ZAP:      every unused volume on this host will be removed,"
-$do_zap && echo "          including ones belonging to other projects"
 
 if ! $assume_yes; then
 	printf 'This destroys data. Type the project name to continue: '
@@ -106,11 +106,6 @@ if $do_images; then
 	docker images --format '{{.Repository}}:{{.Tag}}' \
 		| grep -E "^${project}-" \
 		| xargs -r docker rmi -f
-fi
-
-if $do_zap; then
-	echo "==> removing every unused volume on this host"
-	docker volume prune -af
 fi
 
 echo
