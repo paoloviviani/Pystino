@@ -6,8 +6,9 @@
 # This script writes deploy/.env from a profile fragment, generating every
 # secret locally, then prints the exact commands that finish the job. It
 # offers to run the phase-1 bring-up (database + gateway) and nothing more:
-# the catalogue key, the admin password and the chat database are operator
-# steps between the phases, printed verbatim.
+# the admin password and the chat database are operator steps between the
+# phases, printed verbatim. Nothing mints the chat a key — it boots
+# anonymously against the gateway's public GET /v1/models (ADR 0081).
 #
 # POSIX sh, no dependencies beyond docker and (for secret generation) python3
 # or openssl. Usage, from the repository root:
@@ -426,8 +427,7 @@ main() {
 	# Fail closed before anything starts: read back what was actually written
 	# (shell names differ from file names here — UPSTREAM_KEY feeds
 	# GATEWAY_UPSTREAM__API_KEY — so the file is the thing to check, not the
-	# shell). The catalogue key is excluded: it is minted against the running
-	# gateway in step 4, after phase 1.
+	# shell).
 	for req in POSTGRES_PASSWORD GATEWAY_SECRET_KEY GATEWAY_SESSION_SECRET GATEWAY_UPSTREAM__API_KEY CHAT_SECRET_KEY PUBLIC_HOST PUBLIC_ORIGIN; do
 		__v=$(getval "$req" || true)
 		[ -n "$__v" ] || die "refusing to continue with $req empty in $ENV_FILE."
@@ -448,7 +448,7 @@ main() {
 	echo
 	echo "Wrote $ENV_FILE (mode 600)."
 	echo
-	echo "Next — phase 1 (database + gateway), then three operator steps, then everything:"
+	echo "Next — phase 1 (database + gateway), then two operator steps, then everything:"
 	echo "  1. env $MANAGED docker compose --env-file deploy/.env -f deploy/compose/docker-compose.yml up -d --build"
 	echo "  2. docker compose --env-file deploy/.env -f deploy/compose/docker-compose.yml exec gateway gateway passwd admin@local"
 	echo "     (prompts — nothing lands in shell history)"
@@ -457,14 +457,12 @@ main() {
 	echo "     CREATE ROLE chat WITH LOGIN PASSWORD '<from $ENV_FILE>';"
 	echo "     CREATE DATABASE chat OWNER chat;"
 	echo "SQL"
-	echo "  4. Open http://localhost:\${GATEWAY_PORT:-8000}/console, create a gwk_ key that sees every model,"
-	echo "     and write it as CHAT_CATALOGUE_KEY in $ENV_FILE"
-	echo "  5. env $MANAGED docker compose --env-file deploy/.env $FLAGS up -d --build"
+	echo "  4. env $MANAGED docker compose --env-file deploy/.env $FLAGS up -d --build"
 	echo
 	if confirm "Run step 1 now (phase-1 bring-up)?" "default-y"; then
 		# shellcheck disable=SC2086
 		run_compose "$ENV_FILE" $MANAGED -- -f deploy/compose/docker-compose.yml up -d --build
-		echo "Phase 1 is starting. Continue with steps 2-5 above when the gateway is healthy."
+		echo "Phase 1 is starting. Continue with steps 2-4 above when the gateway is healthy."
 	fi
 }
 

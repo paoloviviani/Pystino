@@ -29,6 +29,23 @@ from sqlalchemy.orm import joinedload, selectinload
 from gateway.models import GroupModelAccess, ModelDef, Provider, UserModelAccess
 
 
+def all_active_models() -> Select[tuple[ModelDef]]:
+    """Every active model behind an active provider, with no grant check at all.
+
+    The unauthenticated half of ``GET /v1/models`` (ADR 0081): a public listing
+    has no caller to check a grant against, and grant-filtering an absent caller
+    down to "public models only" would be a narrower endpoint than the one being
+    exempted from authentication, not the same one made anonymous. Factored out
+    of :func:`accessible_models` rather than duplicated, per this module's own
+    rule about one predicate written in one place.
+    """
+    return (
+        select(ModelDef)
+        .join(Provider, Provider.id == ModelDef.provider_id)
+        .where(ModelDef.is_active.is_(True), Provider.is_active.is_(True))
+    )
+
+
 def accessible_models(
     *, user_id: uuid.UUID | None, group_ids: Iterable[uuid.UUID]
 ) -> Select[tuple[ModelDef]]:
@@ -73,11 +90,7 @@ def accessible_models(
             .exists()
         )
 
-    statement = (
-        select(ModelDef)
-        .join(Provider, Provider.id == ModelDef.provider_id)
-        .where(ModelDef.is_active.is_(True), Provider.is_active.is_(True))
-    )
+    statement = all_active_models()
 
     if not reachable:
         # No groups and no personal grants — but a public model needs no grant
