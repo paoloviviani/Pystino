@@ -284,7 +284,7 @@ fetch without rebuilding.
 ## Taking it down
 
 ```sh
-./deploy/teardown.sh [--backup] [--images] [--yes]
+./deploy/teardown.sh [--backup] [--images] [--env] [--yes]
 ```
 
 Containers, named volumes and networks of the `llm-platform` project.
@@ -304,6 +304,13 @@ databases. Note what the named volumes take with them: every user account and
 password (they live in Postgres — recreate with `gateway passwd`), the ledger,
 conversations and their attachments, and Caddy's local CA, after which
 browsers warn about the new certificate until the root is re-exported.
+
+`--env` additionally deletes `deploy/.env`, for a next install that starts
+from nothing. It deliberately leaves `deploy/profiles/*.env` in place: those
+are the fragments the installer builds a new `.env` *from*, they are gitignored
+as well, and a fresh clone does not carry them — so removing them would leave a
+checkout the installer refuses to run against with nothing to restore from.
+Pair `--env` with `--backup` unless the secrets are genuinely finished with.
 
 **A deployment installed from Cerea can be removed from Cerea**, which is
 where its operator has been typing commands: `./installer/teardown.sh`
