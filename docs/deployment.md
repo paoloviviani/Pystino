@@ -306,7 +306,7 @@ conversations and their attachments, and Caddy's local CA, after which
 browsers warn about the new certificate until the root is re-exported.
 
 **A deployment installed from Cerea can be removed from Cerea**, which is
-where its operator has been typing commands: `node installer/teardown.mjs`
+where its operator has been typing commands: `./installer/teardown.sh`
 finds this checkout by asking Docker where the running containers' compose
 files came from, then runs this same script. There is one implementation, not
 two.
