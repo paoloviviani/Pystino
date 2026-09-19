@@ -281,6 +281,40 @@ repository with its consumer, publishes no port, and keeping its address in the
 overlay rather than the image means an operator may still choose direct HTTPS
 fetch without rebuilding.
 
+## Taking it down
+
+```sh
+./deploy/teardown.sh [--backup] [--images] [--all] [--yes]
+```
+
+Containers, named volumes and networks of the `llm-platform` project.
+
+It does not use compose, and that is the point. `down` removes only what the
+`-f` files it was handed describe, so tearing this stack down by hand means
+retyping six overlays correctly at the one moment when getting it wrong is
+expensive, and a forgotten one leaves orphans the next `up` then fights.
+Passing *every* overlay instead was tried and is worse:
+`docker-compose.keycloak.yml` interpolates a variable most deployments never
+set, so the superset refuses to parse. The script works from the labels Docker
+already put on the containers, which is the only description guaranteed to
+match what is actually running.
+
+`--backup` first saves `deploy/.env`, the profile fragments and dumps of both
+databases. Note what the named volumes take with them: every user account and
+password (they live in Postgres — recreate with `gateway passwd`), the ledger,
+conversations and their attachments, and Caddy's local CA, after which
+browsers warn about the new certificate until the root is re-exported.
+
+**A deployment installed from Cerea can be removed from Cerea**, which is
+where its operator has been typing commands: `node installer/teardown.mjs`
+finds this checkout by asking Docker where the running containers' compose
+files came from, then runs this same script. There is one implementation, not
+two.
+
+Wiping every unused volume on the host — other projects' included — is
+deliberately not a flag on either entry point. It is `docker volume prune -af`
+and it belongs in the operator's hands.
+
 ## Reaching the stack from another machine
 
 The default shape publishes nothing but loopback. From your laptop, forward
