@@ -8,6 +8,7 @@ revoked, and both halves of that are worse than a 400 with the reason.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 import httpx
@@ -255,6 +256,122 @@ class TestMembers:
             headers=admin_session,
         )
         assert none.json()["total"] == 0
+
+
+class TestFirstGroupBecomesDefault:
+    """ADR 0078: the rule `provision_user` and `create_user` already applied,
+    extended to the one path that lacked it — an administrator adding an
+    *existing* user to a group. This is exactly how the documented bootstrap
+    admin (`gateway passwd admin@local`, no `--group`) ended up with a
+    membership and no default: the CLI made the account, the console's "add
+    member" made the membership, and nothing along that route ever set the
+    default.
+    """
+
+    async def test_the_first_group_added_becomes_the_default_billing_group(
+        self,
+        client: httpx.AsyncClient,
+        admin_session: dict[str, str],
+        manual_group: dict[str, Any],
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        async with session_factory() as session:
+            user = User(issuer="local", subject="fresh@local", email="fresh@local")
+            session.add(user)
+            await session.commit()
+            user_id = user.id
+        assert (
+            await client.post(
+                f"/api/admin/groups/{manual_group['id']}/members",
+                json={"user_id": str(user_id)},
+                headers=admin_session,
+            )
+        ).status_code == 204
+
+        async with session_factory() as session:
+            refreshed = (
+                await session.execute(select(User).where(User.id == user_id))
+            ).scalar_one()
+            assert refreshed.default_billing_group_id == uuid.UUID(manual_group["id"])
+
+    async def test_a_second_group_added_does_not_change_the_default(
+        self,
+        client: httpx.AsyncClient,
+        admin_session: dict[str, str],
+        manual_group: dict[str, Any],
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        async with session_factory() as session:
+            first = Group(name="first-team", source=GroupSource.MANUAL)
+            session.add(first)
+            await session.flush()
+            user = User(
+                issuer="local",
+                subject="fresh2@local",
+                email="fresh2@local",
+                default_billing_group_id=first.id,
+            )
+            session.add(user)
+            await session.flush()
+            session.add(
+                Membership(user_id=user.id, group_id=first.id, source=MembershipSource.MANUAL)
+            )
+            await session.commit()
+            user_id, first_id = user.id, first.id
+
+        assert (
+            await client.post(
+                f"/api/admin/groups/{manual_group['id']}/members",
+                json={"user_id": str(user_id)},
+                headers=admin_session,
+            )
+        ).status_code == 204
+
+        async with session_factory() as session:
+            refreshed = (
+                await session.execute(select(User).where(User.id == user_id))
+            ).scalar_one()
+            assert refreshed.default_billing_group_id == first_id
+
+    async def test_a_second_group_added_before_any_default_does_not_pick_arbitrarily(
+        self,
+        client: httpx.AsyncClient,
+        admin_session: dict[str, str],
+        manual_group: dict[str, Any],
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Two groups and no default is a choice for the person, not for this
+        route to guess (ADR 0061's reasoning, applied here): the rule fires
+        only on a user's *first* group, never on their second.
+        """
+        async with session_factory() as session:
+            first = Group(name="second-team", source=GroupSource.MANUAL)
+            session.add(first)
+            await session.flush()
+            user = User(issuer="local", subject="fresh3@local", email="fresh3@local")
+            session.add(user)
+            await session.flush()
+            session.add(
+                Membership(user_id=user.id, group_id=first.id, source=MembershipSource.MANUAL)
+            )
+            # No default set — as if this user's default group was just
+            # revoked elsewhere and they still hold `first`.
+            await session.commit()
+            user_id = user.id
+
+        assert (
+            await client.post(
+                f"/api/admin/groups/{manual_group['id']}/members",
+                json={"user_id": str(user_id)},
+                headers=admin_session,
+            )
+        ).status_code == 204
+
+        async with session_factory() as session:
+            refreshed = (
+                await session.execute(select(User).where(User.id == user_id))
+            ).scalar_one()
+            assert refreshed.default_billing_group_id is None
 
 
 class TestAdminOnly:

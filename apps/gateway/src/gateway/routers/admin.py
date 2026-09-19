@@ -1771,9 +1771,20 @@ async def add_group_member(
             f"{user.email or user.subject} is already a member of {group.name!r}."
         )
 
+    # A user's first group becomes their default billing group, mirroring the
+    # same rule in provision_user (ADR 0057) and create_user — extended here to
+    # the one path that lacked it. Read before `session.add` below: `user.memberships`
+    # is `lazy="selectin"` and was loaded before this membership existed, so it
+    # still answers "did they have any group before this one" even though the
+    # new row is about to be added in the same session (ADR 0057's stale-collection
+    # trap, sidestepped rather than hit).
+    is_first_group = user.default_billing_group_id is None and not user.memberships
+
     # An administrator's grant, and recorded as one: no login will undo it,
     # even for a user the directory manages (ADR 0057).
     session.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL))
+    if is_first_group:
+        user.default_billing_group_id = group.id
     await session.commit()
 
 

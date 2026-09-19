@@ -37,6 +37,11 @@ export interface MyPasswordChangeInput {
   new_password: string;
 }
 
+/** A self-service default billing group choice, from the caller's own groups. */
+export interface SetDefaultBillingGroupInput {
+  group_id: string;
+}
+
 export interface PeriodInfo {
   label: string;
   kind: string | null;

@@ -11,13 +11,14 @@ import {
   MenuSeparator,
   MenuTrigger,
   Notice,
+  Select,
 } from "@llmp/ui";
 import { useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
 import logoUrl from "../assets/logo.png";
 import { request } from "../lib/api";
-import { useChangeMyPassword } from "../lib/queries";
+import { useChangeMyPassword, useSetDefaultBillingGroup } from "../lib/queries";
 import { useOptionalToast } from "../lib/toast";
 import { applyTheme, rememberTheme, storedTheme } from "../lib/theme";
 import type { Theme } from "../lib/theme";
@@ -301,6 +302,17 @@ function UserMenu({
 }) {
   const [busy, setBusy] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
+  const [changingBillingGroup, setChangingBillingGroup] = useState(false);
+  // Lifted here rather than into the dialog: the dialog stays mounted behind
+  // `open` (Base UI animates its close), so a value seeded in its own state
+  // would show the *previous* opening's pick the next time it opens. Seeding
+  // it at the moment the menu item is clicked is what makes it track the
+  // current default each time.
+  const [billingGroupId, setBillingGroupId] = useState("");
+  const openBillingGroupDialog = () => {
+    setBillingGroupId(me.default_billing_group?.id ?? me.groups[0]?.id ?? "");
+    setChangingBillingGroup(true);
+  };
 
   const signOut = async () => {
     setBusy(true);
@@ -377,6 +389,17 @@ function UserMenu({
         {me.issuer === "local" && (
           <MenuItem onClick={() => setChangingPassword(true)}>Change password…</MenuItem>
         )}
+        {/* Self-service, from the caller's own groups only — the endpoint
+            already refuses one the caller does not belong to (ADR 0061), so
+            this is the picker for it rather than a second copy of that rule.
+            Absent when there is nothing to pick from: a user in no group has
+            no default to choose, and a picker with zero options is worse than
+            the plain sentence above. */}
+        {me.groups.length > 0 && (
+          <MenuItem onClick={openBillingGroupDialog}>
+            {me.default_billing_group ? "Change default billing group…" : "Set default billing group…"}
+          </MenuItem>
+        )}
         <MenuSection label="Preferences">
           {me.is_admin && (
             <MenuCheckboxItem
@@ -406,6 +429,13 @@ function UserMenu({
       </MenuContent>
 
       <ChangePasswordDialog open={changingPassword} onClose={() => setChangingPassword(false)} />
+      <BillingGroupDialog
+        me={me}
+        open={changingBillingGroup}
+        groupId={billingGroupId}
+        onChangeGroupId={setBillingGroupId}
+        onClose={() => setChangingBillingGroup(false)}
+      />
     </MenuRoot>
   );
 }
@@ -494,6 +524,89 @@ function ChangePasswordDialog({ open, onClose }: { open: boolean; onClose: () =>
             calls the same submit. */}
         <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
       </form>
+    </Dialog>
+  );
+}
+
+/**
+ * Choosing your own default billing group, from your own groups.
+ *
+ * `PUT /api/me/default-billing-group` (ADR 0061) already refuses a group the
+ * caller does not belong to, so `me.groups` — the only groups the endpoint
+ * would ever accept — is offered without a second membership check here. This
+ * is the console half of the gap a bootstrap admin fell into live: the
+ * gateway's own 403 named the fix ("set a default billing group in the
+ * management API") and the console had no way to do it, only to report that
+ * it was missing.
+ */
+function BillingGroupDialog({
+  me,
+  open,
+  groupId,
+  onChangeGroupId,
+  onClose,
+}: {
+  me: Me;
+  open: boolean;
+  groupId: string;
+  onChangeGroupId: (id: string) => void;
+  onClose: () => void;
+}) {
+  const setDefault = useSetDefaultBillingGroup();
+  const toast = useOptionalToast();
+  const [error, setError] = useState<string | null>(null);
+
+  const close = () => {
+    setError(null);
+    setDefault.reset();
+    onClose();
+  };
+
+  const submit = () => {
+    setError(null);
+    setDefault.mutate(
+      { group_id: groupId },
+      {
+        onSuccess: () => {
+          toast?.add({ title: "Default billing group set", type: "success" });
+          close();
+        },
+        onError: (caught: unknown) =>
+          setError(caught instanceof Error ? caught.message : "Unknown error."),
+      },
+    );
+  };
+
+  return (
+    <Dialog
+      open={open}
+      title="Default billing group"
+      onClose={close}
+      footer={
+        <>
+          <Button onClick={close}>Cancel</Button>
+          <Button variant="primary" busy={setDefault.isPending} disabled={!groupId} onClick={submit}>
+            Save
+          </Button>
+        </>
+      }
+    >
+      {error ? (
+        <Notice tone="danger" title="Could not set the default billing group">
+          {error}
+        </Notice>
+      ) : null}
+      <Select
+        label="Group"
+        value={groupId}
+        onChange={(event) => onChangeGroupId(event.target.value)}
+      >
+        {me.groups.map((group) => (
+          <option key={group.id} value={group.id}>
+            {group.name}
+          </option>
+        ))}
+      </Select>
     </Dialog>
   );
 }
