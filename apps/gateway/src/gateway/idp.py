@@ -237,11 +237,13 @@ def id_token_claims(
         "auth_time": int(now),
         "email": user.email,
         "email_verified": True,
+        # Always present, from the same fallback userinfo uses — a client may
+        # read either document, and they must agree.
+        "name": display_name_for(user),
     }
     if nonce:
         claims["nonce"] = nonce
     if user.display_name:
-        claims["name"] = user.display_name
         claims["preferred_username"] = user.display_name
     held = [membership.group.name for membership in user.memberships if membership.group]
     if held:
@@ -301,6 +303,26 @@ def new_code_family_name(client_id: str) -> str:
     return f"idp-{client_id}"[:64]
 
 
+def display_name_for(user: Any) -> str:
+    """A usable display name for login screens: never absent.
+
+    The account's display name, else its username, else the local part of its
+    email. A missing ``name`` claim is what 500'd the chat's login callback
+    for the deployment's own bootstrap account (no display name, issuer-local
+    address) — OpenID Connect leaves the claim optional, so omitting it is
+    legal and crashing on the omission is not. Computed once, here, so
+    userinfo and the id_token — the two documents a client may read — can
+    never disagree.
+    """
+    if user.display_name:
+        return str(user.display_name)
+    if getattr(user, "username", None):
+        return str(user.username)
+    email = user.email or ""
+    local_part = email.partition("@")[0]
+    return local_part or user.subject
+
+
 def user_claims_from_key(user: Any) -> dict[str, Any]:
     """The userinfo body for a resolved access key.
 
@@ -311,9 +333,9 @@ def user_claims_from_key(user: Any) -> dict[str, Any]:
         "sub": user.subject,
         "email": user.email,
         "email_verified": True,
+        "name": display_name_for(user),
     }
     if user.display_name:
-        body["name"] = user.display_name
         body["preferred_username"] = user.display_name
     held = [membership.group.name for membership in user.memberships if membership.group]
     if held:
