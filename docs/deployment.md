@@ -284,7 +284,7 @@ fetch without rebuilding.
 ## Taking it down
 
 ```sh
-./deploy/teardown.sh [--backup] [--images] [--all] [--yes]
+./deploy/teardown.sh [--backup] [--images] [--yes]
 ```
 
 Containers, named volumes and networks of the `llm-platform` project.
