@@ -207,6 +207,15 @@ class TokenCounts:
         counterparty and therefore no reported usage: the page count comes from
         the document. Never from the length of the extracted text, which would
         be a billing figure with no source (ADR 0053's rule, one surface over).
+
+        ``usage_info.credits`` — what Cortecs also reports here — is
+        deliberately never read. Credits are not money: no published exchange
+        rate says what one is worth, so folding it into `TokenCounts` would
+        hand `compute_cost` a number it would multiply by a EUR rate anyway,
+        producing a wrong invoice that looks precise. Billing on this surface
+        stays on `pages_processed` alone; if a verified credit-to-currency rate
+        ever turns up, it is a new field on `ReportedCost`, not a value read
+        into this reader.
         """
         reported = 0
         if usage:
