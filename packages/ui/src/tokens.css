@@ -17,13 +17,16 @@
  *    and the property changes under `.dark`. Nothing but the `.dark` block
  *    below is needed to theme the entire console.
  *
- * **The design language is a neutral greyscale with one indigo accent**, in
+ * **The design language is a neutral greyscale with one blue accent**, in
  * the contemporary product-console idiom (requested 2026-09-01, ADR 0047,
- * replacing the Material Design 3 pass of ADR 0042). What carried over from it
- * are the *requirements*, not the palette: sentence-case labels, tabular
- * figures under numbers, soft ink past the 4.5:1 floor, green/red as the
- * ok/danger pair, and — still, deliberately — no blur, no glass, no glow, no
- * scale-on-hover. A console is read, not admired.
+ * replacing the Material Design 3 pass of ADR 0042; reconciled with the chat's
+ * values in ADR 0077, which partly reverses 0047's no-decoration stance). What
+ * carried over from it are the *requirements*, not the palette:
+ * sentence-case labels, tabular figures under numbers, soft ink past the
+ * 4.5:1 floor, green/red as the ok/danger pair. The accent is the chat's
+ * blue-600 family and the greys are its pure-neutral ramp; the mechanism —
+ * this file plus `@theme inline` — is unchanged, and the chat now shares it
+ * rather than the console losing it.
  */
 
 /* Tailwind v4: `dark:` means "inside .dark", not "the OS said so". The reader's
@@ -85,32 +88,44 @@
   --colour-bg: #fafafa;
   --colour-surface: #ffffff;
   --colour-surface-raised: #ffffff;
-  --colour-surface-sunken: #f4f4f5;
+  --colour-surface-sunken: #f5f5f5;
 
   /* Borders separate; they do not draw. 1px and a light grey, with a `strong`
    * step for the rare border that must be found (a focused control's edge, a
    * dragged handle). */
-  --colour-border: #e4e4e7;
-  --colour-border-strong: #a1a1aa;
-  --colour-border-quiet: #ececee;
+  --colour-border: #e5e5e5;
+  --colour-border-strong: #a3a3a3;
+  --colour-border-quiet: #f5f5f5;
 
-  /* Ink, never #000. Zinc-900 on white is ~16:1 — far past the 4.5:1 floor,
-   * without the glare pure black brings to a long column of figures. */
-  --colour-text: #18181b;
-  --colour-text-muted: #52525b;
-  --colour-text-faint: #71717a;
+  /* Ink, never #000. Gray-900 on white is ~19:1 — far past the 4.5:1 floor,
+   * without the glare pure black brings to a long column of figures. Muted and
+   * faint are the chat's gray-600/500 steps (9.6:1 and 4.7:1 on white). */
+  --colour-text: #0a0a0a;
+  --colour-text-muted: #454545;
+  --colour-text-faint: #737373;
   --colour-text-inverse: #ffffff;
 
   /* -- accent ---------------------------------------------------------------
-   * One hue, indigo, used where something is interactive or selected and
+   * One hue, blue, used where something is interactive or selected and
    * nowhere else — an accent that appears decoratively is an accent that no
-   * longer means "you can press this". Held at 500 rather than 600: the deeper
-   * step read almost navy on a pill, and the operator asked for a lighter blue.
-   * White on it is ~4.6:1, still past the floor.
+   * longer means "you can press this". The text step is held at 700 rather
+   * than the chat's 600: blue-600 on the subtle fill is 4.2:1, under the
+   * floor the console's figures require, while blue-700 on it is 5.5:1 and
+   * on white higher still. The *fill* step stays blue-600 — that is the
+   * chat's signature button, white on it is 5.2:1, and it is pinned rather
+   * than themed (see `--colour-accent-solid`): the chat's primary button is
+   * the same blue in both themes.
    */
-  --colour-accent: #6366f1;
-  --colour-accent-hover: #4f46e5;
-  --colour-accent-subtle: #eef2ff;
+  --colour-accent: #1d4ed8;
+  --colour-accent-hover: #1e40af;
+  --colour-accent-subtle: #dbeafe;
+
+  /* A fill that carries white text and must not move between themes. Buttons
+   * and other solid accents use this, never `--colour-accent`: the dark theme
+   * lifts the text step toward blue-400 for legibility on dark grounds, and a
+   * fill that followed it would drop white text under 3:1. */
+  --colour-accent-solid: #2563eb;
+  --colour-accent-solid-hover: #1d4ed8;
 
   /* Kept because components ask for them by name, and because a brand mark
    * wants a colour rather than a state. */
@@ -120,11 +135,14 @@
 
   /* -- semantic -------------------------------------------------------------
    * Green/red is the pair every reader already knows, and 0042 was right to
-   * bring green back. Text tones are dark enough to read as type on their
-   * subtle fills; both halves are re-derived for the dark theme below.
+   * bring green back. Text tones sit at the 700 step so they clear 4.5:1 on
+   * their subtle fills (green-600 on green-100 is 3.0:1, green-700 is 4.6:1;
+   * red-600 on red-100 is 4.0:1, red-700 is 5.3:1) — the chat's pills use the
+   * 600 step and are lifted to this one where they are expressed through
+   * tokens. Both halves are re-derived for the dark theme below.
    */
-  --colour-ok: #047857;
-  --colour-ok-subtle: #d1fae5;
+  --colour-ok: #15803d;
+  --colour-ok-subtle: #dcfce7;
   --colour-warn: #b45309;
   --colour-warn-subtle: #fef3c7;
   --colour-danger: #b91c1c;
@@ -144,13 +162,17 @@
     ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace;
 
   /* 1rem base — what a browser's default assumes a reader wants. The top of
-   * the scale stays down: a page title is a heading, not a shape on a poster. */
+   * the scale stays down: a page title is a heading, not a shape on a poster.
+   * `xxs` and `smd` are the chat's two extra steps, folded in so both apps
+   * share one scale rather than each extending it privately. */
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;
   --text-base: 1rem;
   --text-md: 1.125rem;
   --text-lg: 1.375rem;
   --text-xl: 1.75rem;
+  --text-xxs: 0.625rem;
+  --text-smd: 0.94rem;
 
   /* A variable font, so these are real instances rather than a synthetic bold.
    * Medium is the workhorse: headings and labels sit at 500, which reads as
@@ -221,35 +243,43 @@
  * card is raised toward the reader, which is the same rule as the light
  * theme's "figures on the cleanest ground" read from the other side.
  *
- * Contrast floors re-derived, not assumed: the accent moves from indigo-600 to
- * indigo-400 because 600 sinks under 4.5:1 on zinc-900, and every semantic
- * pair moves to its 400-weight text over a near-black subtle fill.
+ * Contrast floors re-derived, not assumed: the accent text step is blue-400
+ * because blue-700 sinks under 4.5:1 on near-black, the solid fill stays
+ * pinned to blue-600 in both themes (white on it is 5.2:1 either way), and
+ * every semantic pair moves to its 400-weight text over a near-black subtle
+ * fill. Surfaces and borders follow the chat's neutral ramp: page and cards
+ * match its dark grounds exactly, so the two apps agree ground for ground.
  */
 .dark {
-  --colour-bg: #09090b;
-  --colour-surface: #18181b;
-  --colour-surface-raised: #1e1e21;
-  --colour-surface-sunken: #101013;
+  --colour-bg: #0a0a0a;
+  --colour-surface: #1a1a1a;
+  --colour-surface-raised: #2e2e2e;
+  --colour-surface-sunken: #0a0a0a;
 
-  --colour-border: #2a2a2e;
-  --colour-border-strong: #52525b;
-  --colour-border-quiet: #222225;
+  --colour-border: #2e2e2e;
+  --colour-border-strong: #454545;
+  /* A midpoint, not a ramp step: hairlines on a card need a value between the
+   * card and the structural border, and the ramp has nothing between gray-800
+   * and gray-700. */
+  --colour-border-quiet: #262626;
 
-  --colour-text: #fafafa;
-  --colour-text-muted: #a1a1aa;
-  --colour-text-faint: #71717a;
+  --colour-text: #f5f5f5;
+  --colour-text-muted: #a3a3a3;
+  --colour-text-faint: #737373;
   --colour-text-inverse: #18181b;
 
-  --colour-accent: #818cf8;
-  --colour-accent-hover: #a5b4fc;
-  --colour-accent-subtle: #232355;
+  --colour-accent: #60a5fa;
+  --colour-accent-hover: #93c5fd;
+  --colour-accent-subtle: #172554;
+  --colour-accent-solid: #2563eb;
+  --colour-accent-solid-hover: #1d4ed8;
 
   --colour-red: #f87171;
   --colour-blue: #60a5fa;
   --colour-yellow: #fde047;
 
-  --colour-ok: #34d399;
-  --colour-ok-subtle: #0a2e22;
+  --colour-ok: #4ade80;
+  --colour-ok-subtle: #052e16;
   --colour-warn: #fbbf24;
   --colour-warn-subtle: #3a2503;
   --colour-danger: #f87171;
@@ -297,6 +327,8 @@
   --color-accent: var(--colour-accent);
   --color-accent-hover: var(--colour-accent-hover);
   --color-accent-subtle: var(--colour-accent-subtle);
+  --color-accent-solid: var(--colour-accent-solid);
+  --color-accent-solid-hover: var(--colour-accent-solid-hover);
 
   --color-ok: var(--colour-ok);
   --color-ok-subtle: var(--colour-ok-subtle);
@@ -318,6 +350,8 @@
   --text-md: var(--text-md);
   --text-lg: var(--text-lg);
   --text-xl: var(--text-xl);
+  --text-xxs: var(--text-xxs);
+  --text-smd: var(--text-smd);
   --text-sm--line-height: var(--leading-normal);
   --text-base--line-height: var(--leading-normal);
   --text-md--line-height: var(--leading-tight);

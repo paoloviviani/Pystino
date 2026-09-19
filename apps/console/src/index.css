@@ -30,3 +30,28 @@
  * line not naming its file is the first thing to check.
  */
 @source "../../../packages/ui/src";
+
+/*
+ * tokens.css's own form-control reset (`font: inherit; color: inherit;`,
+ * kept for a consumer running no Tailwind at all) is *unlayered* plain CSS,
+ * so per the Cascade Layers spec it wins over every `@layer utilities` rule
+ * regardless of specificity or source order — including a colour or weight
+ * utility written directly on a `<button>`, which is how `Button` is built.
+ * Invisible until now because no variant's colour differed from the page's
+ * own ink; `Button`'s new `primary` fill made it measurable: white-on-accent
+ * rendered `rgb(10, 10, 10)` on `rgb(37, 99, 235)`, 3.83:1 — under the 4.5:1
+ * floor. `revert-layer` un-does exactly the sub-properties tokens.css
+ * touches, falling through to whatever the (correctly layered) utility
+ * class says, and leaves the `font-family: inherit` intent — the one part
+ * Tailwind's own preflight already agrees with — untouched.
+ */
+input,
+button,
+textarea,
+select {
+  font-size: revert-layer;
+  font-weight: revert-layer;
+  font-style: revert-layer;
+  line-height: revert-layer;
+  color: revert-layer;
+}
