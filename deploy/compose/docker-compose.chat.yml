@@ -37,20 +37,24 @@
 # variable at run time. Setting it only in `environment:` builds an application
 # rooted at `/` whose every asset 404s behind the prefix.
 #
-# ## Its credential, and the one place a shared key remains
+# ## Its credential, and why none is minted for the boot fetch
 #
 # `USE_USER_TOKEN=true` makes every inference call carry the signed-in person's
 # own access token, so the gateway bills that person's group (ADR 0040) and
 # `x-bill-to` can choose which one (ADR 0061).
 #
-# `OPENAI_API_KEY` is still needed and is **not** used for inference. chat-ui
-# builds its model catalogue once at boot, before anyone has signed in, by
-# fetching `${OPENAI_BASE_URL}/models` — a request with no user to attribute.
-# Two consequences to know: the catalogue is whatever *that* key's user may
-# reach, so it should be a key whose user sees every model the deployment
-# offers; and because listing models bills nothing, the key spends nothing.
-# Making the catalogue per-user needs an upstream change — the model list is a
-# module-level singleton — and is not attempted here.
+# `OPENAI_API_KEY` is unset on purpose. chat-ui builds its model catalogue once
+# at boot, before anyone has signed in, by fetching `${OPENAI_BASE_URL}/models`
+# — a request with no user to attribute, which is exactly why a key here used
+# to have to be a *deployment-wide, spend-capable* credential minted just to
+# read a list. `GET /v1/models` now answers that fetch without authentication
+# (ADR 0081): the full catalogue, brochure-level fields only — no prices, no
+# grants, nothing a caller could not already infer from the console being
+# public marketing. Nothing gets more reachable for it: the per-caller list at
+# `GET /api/v2/models` still intersects this boot catalogue with the signed-in
+# person's own token, and the gateway still checks a real grant on every
+# `/v1/chat/completions` call regardless of what the list showed. Pystino no
+# longer mints anything for this container to boot with.
 
 services:
   chat-mongo:
@@ -119,7 +123,8 @@ services:
         # origin: a server-to-server hop that never leaves the host needs no
         # TLS and no certificate to verify, and the browser never sees this URL.
         OPENAI_BASE_URL=http://gateway:8000/v1
-        OPENAI_API_KEY=${CHAT_CATALOGUE_KEY:?mint a gwk_ key and set CHAT_CATALOGUE_KEY in deploy/.env}
+        # No OPENAI_API_KEY: GET /v1/models is public (ADR 0081), so the boot
+        # fetch above needs no credential and none is minted for it.
 
         # A model-facing web fetch uses Cerea's configured fetch seam. The
         # Playwright overlay supplies the renderer on this private network;
@@ -165,6 +170,26 @@ services:
         # Knowledge tab, the project and composer affordances and the admin
         # section hide instead of erroring.
         CHAT_KNOWLEDGE_ENABLED=${CHAT_KNOWLEDGE_ENABLED-true}
+
+        # User memory (ADR 0080): standing personal facts carried into every
+        # conversation, managed on the Memory tab. On unless "false", which
+        # withdraws the feature from the deployment — tab hidden, routes 404,
+        # remember/forget tools never offered. Interpolated for the same reason
+        # as the three flags above: without this line the operator's switch is
+        # documented in the chat's own .env but unreachable from deploy/.env,
+        # so setting it there would silently do nothing.
+        CHAT_MEMORY_ENABLED=${CHAT_MEMORY_ENABLED-true}
+
+        # Reading documents without a gateway (ADR 0083). Empty here, which is
+        # every gateway-backed profile: extraction goes through /v1/ocr with
+        # the signed-in person's own token. The generic profile — no gateway
+        # anywhere — sets a base URL and a key in deploy/.env instead, and the
+        # chat posts to {base}/ocr directly. A base URL requires a model name:
+        # there is no catalogue to discover one from, and the chat refuses to
+        # start if one is set without the other.
+        CHAT_OCR_BASE_URL=${CHAT_OCR_BASE_URL-}
+        CHAT_OCR_API_KEY=${CHAT_OCR_API_KEY-}
+        CHAT_OCR_MODEL=${CHAT_OCR_MODEL-}
 
         # Sign-in against the gateway's own IdP (ADR 0068). The issuer is the
         # public origin — the same value GATEWAY_IDP__ISSUER was configured

@@ -47,7 +47,7 @@ upstream in the base file would be one careless `-f` away from production.
 | `GATEWAY_LOCAL_AUTH__ENABLED` | local email + password sign-in beside OIDC (ADR 0043); passwords are set out-of-band with `gateway passwd` and never through the environment |
 | `GATEWAY_IDP__*` | the house identity provider for the chat (ADR 0068); off means its routes do not exist. See [the chat](#the-chat) below |
 | `PUBLIC_HOST`, `HTTPS_PORT`, `TLS_DIRECTIVE`, `PUBLIC_ORIGIN`, `ACME_EMAIL`, `PUBLIC_BIND` | only with the proxy overlay (below) |
-| `CHAT_REPO`, `CHAT_CATALOGUE_KEY`, `CHAT_PG_URL`, `CHAT_IDP_CLIENT_SECRET`, `CHAT_SECRET_KEY` | only with the chat overlay (below) |
+| `CHAT_REPO`, `CHAT_PG_URL`, `CHAT_IDP_CLIENT_SECRET`, `CHAT_SECRET_KEY` | only with the chat overlay (below) |
 
 Nested gateway settings use the double underscore (`GATEWAY_REDACTION__ENGINE`):
 that is the delimiter the gateway reads, and a single underscore is silently
@@ -78,16 +78,44 @@ breaks the house IdP just as surely as the reverse.
 
 ## Deployment profiles
 
-Three named shapes cover the range from a self-hosted box to a central
-gateway: `homelab`, `team`, `enterprise`. A profile is an **env fragment**
-plus a **derived overlay list** — never new compose topology, which would put
-a fake upstream one careless `-f` away from production.
+Five named shapes cover the range from a self-hosted box to a central
+gateway, and from there to a site with no gateway of its own: `homelab`,
+`team`, `enterprise`, and the two **standalone** profiles `satellite` and
+`generic`. A profile is an **env fragment** plus a **derived overlay list** —
+never new compose topology, which would put a fake upstream one careless `-f`
+away from production.
 
 | Profile | Fragment | Overlays (before exposure) | Footprint |
 |---|---|---|---|
 | `homelab` | `deploy/profiles/homelab.env` | base + chat | ~700 MB RSS, ~3.8 GB disk, 2 vCPU |
 | `team` | `deploy/profiles/team.env` | base + redaction (pattern-only) + chat | + ~300 MB RSS over homelab |
 | `enterprise` | `deploy/profiles/enterprise.env` | base + redaction (NER) + chat + Playwright (from Cerea) | + ~750 MB for NER, + 3.45 GB disk for the browser image |
+| `satellite` | `deploy/profiles/satellite.env` | chat + its databases + proxy — **no gateway** | less than homelab: no gateway, no Valkey, no redaction |
+| `generic` | `deploy/profiles/generic.env` | chat + its databases + proxy — **no gateway** | as satellite |
+
+The two standalone profiles are installed by **Cerea's** installer, not by
+this repository's `install.sh`, because the box they describe runs no gateway
+for `install.sh` to set up. ADR 0082 carries the reasoning; the short version:
+
+- **satellite** is Cerea against a *central* Pystino. `OPENAI_BASE_URL` is
+  central's `/v1`, OIDC is central's issuer, `USE_USER_TOKEN=true`, and **no
+  key is stored on the box at all** — the boot catalogue fetch needs none
+  (ADR 0081) and every other call carries the signed-in person's own token. One
+  directory serves every satellite, so adding a site adds no users and no
+  secrets. It also means there are no satellite-local administrators, and that
+  central's redaction and retention policy apply to that site with no way to
+  diverge.
+- **generic** is Cerea against any OpenAI-compatible third party with one
+  shared key. `USE_USER_TOKEN` is forced to `false` **in code** rather than
+  offered: user-token mode would put the signed-in person's IdP access token
+  into a bearer header sent to a third party. OIDC is still mandatory, but it
+  only establishes who somebody is — there is no gateway to bill, meter or
+  grant against. Document reading, which elsewhere is `/v1/ocr`, is a
+  configured endpoint here (`CHAT_OCR_BASE_URL`, ADR 0083) or absent.
+
+Both need the browser, not only the server, to reach their identity provider:
+a satellite whose server can see central while its users' browsers cannot will
+never complete a login.
 
 What differs between them is flags and services, not topology:
 
@@ -221,10 +249,11 @@ over its baked `.env`):
   the public origin: a server-to-server hop needs no TLS, and the browser never
   sees this URL. Every inference call carries the signed-in person's own access
   token (`USE_USER_TOKEN=true`), so the gateway bills that person's group.
-- `OPENAI_API_KEY` is still needed and is **not** used for inference. The chat
-  builds its model catalogue once at boot, before anyone has signed in — so it
-  should be a key whose user sees every model the deployment offers. Listing
-  models bills nothing, so the key spends nothing.
+- `OPENAI_API_KEY` is unset. The chat builds its model catalogue once at boot,
+  before anyone has signed in, by fetching `GET /v1/models`, and that endpoint
+  answers publicly without a key (ADR 0081) — the full catalogue,
+  brochure-level fields only. Nothing is minted for this container to boot
+  with; a real grant is still checked on every actual inference call.
 - Sign-in is against the gateway's own IdP: `OPENID_PROVIDER_URL` is
   `PUBLIC_ORIGIN`, the issuer the gateway was configured with, and the chat is
   its own client (`cerea`, with `CHAT_IDP_CLIENT_SECRET`) beside any other.
