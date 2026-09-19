@@ -101,8 +101,9 @@ services:
       # management API — and a console session cookie that is not `Secure` —
       # on every interface the host happens to have, including whatever the
       # cloud firewall permits. Reaching it from elsewhere is a deliberate act:
-      # add docker-compose.overlay.yml, which publishes on a private overlay
-      # address as well.
+      # forward one port over SSH (docs/deployment.md), or serve it behind TLS
+      # with the edge or proxy overlay — the only shapes allowed a routable
+      # address.
       - "127.0.0.1:${GATEWAY_PORT:-8000}:8000"
     environment:
       GATEWAY_ENVIRONMENT: ${GATEWAY_ENVIRONMENT:-dev}
@@ -120,41 +121,43 @@ services:
       GATEWAY_SECRET_KEY: ${GATEWAY_SECRET_KEY:?set GATEWAY_SECRET_KEY in deploy/.env}
       GATEWAY_SESSION_COOKIE_SECURE: ${GATEWAY_SESSION_COOKIE_SECURE:-false}
 
-      GATEWAY_UPSTREAM__BASE_URL: ${GATEWAY_UPSTREAM_BASE_URL:-https://api.cortecs.ai/v1}
-      GATEWAY_UPSTREAM__API_KEY: ${GATEWAY_UPSTREAM_API_KEY:-}
+      GATEWAY_UPSTREAM__BASE_URL: ${GATEWAY_UPSTREAM__BASE_URL:-https://api.cortecs.ai/v1}
+      GATEWAY_UPSTREAM__API_KEY: ${GATEWAY_UPSTREAM__API_KEY:-}
 
       # Phase 1 ships the no-op engine. Presidio arrives in Phase 2 as a separate
       # service; it is never loaded in-process, because spaCy inference would
       # block the event loop and stall every concurrent stream.
-      GATEWAY_REDACTION__ENGINE: ${GATEWAY_REDACTION_ENGINE:-noop}
-      GATEWAY_REDACTION__PLACEHOLDER_KEY: ${GATEWAY_REDACTION_PLACEHOLDER_KEY:-}
+      GATEWAY_REDACTION__ENGINE: ${GATEWAY_REDACTION__ENGINE:-noop}
+      GATEWAY_REDACTION__PLACEHOLDER_KEY: ${GATEWAY_REDACTION__PLACEHOLDER_KEY:-}
 
-      GATEWAY_OIDC__ENABLED: ${GATEWAY_OIDC_ENABLED:-false}
-      GATEWAY_OIDC__ISSUER: ${GATEWAY_OIDC_ISSUER:-}
-      GATEWAY_OIDC__CLIENT_ID: ${GATEWAY_OIDC_CLIENT_ID:-}
-      GATEWAY_OIDC__CLIENT_SECRET: ${GATEWAY_OIDC_CLIENT_SECRET:-}
-      GATEWAY_OIDC__REDIRECT_URI: ${GATEWAY_OIDC_REDIRECT_URI:-}
-      GATEWAY_OIDC__GROUPS_CLAIM: ${GATEWAY_OIDC_GROUPS_CLAIM:-groups}
+      # The ledger and its ceilings (ADR 0065). Passed through explicitly like
+      # the redaction engine above: pydantic reads process environment first,
+      # and a value sitting only in deploy/.env never reaches the container
+      # unless it is interpolated here. Defaults keep the ledger.
+      GATEWAY_ACCOUNTING__ENABLED: ${GATEWAY_ACCOUNTING__ENABLED:-true}
+      GATEWAY_QUOTA__ENABLED: ${GATEWAY_QUOTA__ENABLED:-true}
+
+      # Local email + password sign-in (ADR 0043). Off on the loopback base;
+      # the edge and proxy overlays default it on, which is the shape the
+      # feature assumes (TLS, password from deploy/.env, account out-of-band).
+      GATEWAY_LOCAL_AUTH__ENABLED: ${GATEWAY_LOCAL_AUTH__ENABLED:-false}
+
+      GATEWAY_OIDC__ENABLED: ${GATEWAY_OIDC__ENABLED:-false}
+      GATEWAY_OIDC__ISSUER: ${GATEWAY_OIDC__ISSUER:-}
+      GATEWAY_OIDC__CLIENT_ID: ${GATEWAY_OIDC__CLIENT_ID:-}
+      GATEWAY_OIDC__CLIENT_SECRET: ${GATEWAY_OIDC__CLIENT_SECRET:-}
+      GATEWAY_OIDC__REDIRECT_URI: ${GATEWAY_OIDC__REDIRECT_URI:-}
+      GATEWAY_OIDC__GROUPS_CLAIM: ${GATEWAY_OIDC__GROUPS_CLAIM:-groups}
 
       # The house IdP (ADR 0068): off until enabled, and off means the routes
       # are absent rather than refused. docs/idp.md carries each variable and
       # where the endpoints live; the chat overlay is what turns it on.
-      GATEWAY_IDP__ENABLED: ${GATEWAY_IDP_ENABLED:-false}
-      GATEWAY_IDP__ISSUER: ${GATEWAY_IDP_ISSUER:-}
-      GATEWAY_IDP__INTERNAL_BASE_URL: ${GATEWAY_IDP_INTERNAL_BASE_URL:-}
-      GATEWAY_IDP__SIGNING_KEY: ${GATEWAY_IDP_SIGNING_KEY:-}
-      GATEWAY_IDP__INTERNAL_TOKEN: ${GATEWAY_IDP_INTERNAL_TOKEN:-}
-      GATEWAY_IDP__CLIENTS: ${GATEWAY_IDP_CLIENTS:-}
-
-      # Knowledge bases (ADR 0062). Off by default, and this flag is the whole
-      # switch: `/v1/files` and `/v1/vector_stores` answer 404 until it is true,
-      # so a deployment that does not want durable storage of user documents
-      # does not grow tables because somebody found the endpoint. *Which*
-      # embedding and extraction models to use is not here — those are rows in
-      # the database, chosen from the console, because naming them in the
-      # environment would mean maintaining a model name in two places.
-      GATEWAY_KNOWLEDGE__ENABLED: ${GATEWAY_KNOWLEDGE__ENABLED:-false}
-      GATEWAY_KNOWLEDGE__MAX_UPLOAD_BYTES: ${GATEWAY_KNOWLEDGE__MAX_UPLOAD_BYTES:-20971520}
+      GATEWAY_IDP__ENABLED: ${GATEWAY_IDP__ENABLED:-false}
+      GATEWAY_IDP__ISSUER: ${GATEWAY_IDP__ISSUER:-}
+      GATEWAY_IDP__INTERNAL_BASE_URL: ${GATEWAY_IDP__INTERNAL_BASE_URL:-}
+      GATEWAY_IDP__SIGNING_KEY: ${GATEWAY_IDP__SIGNING_KEY:-}
+      GATEWAY_IDP__INTERNAL_TOKEN: ${GATEWAY_IDP__INTERNAL_TOKEN:-}
+      GATEWAY_IDP__CLIENTS: ${GATEWAY_IDP__CLIENTS:-}
     depends_on:
       postgres:
         condition: service_healthy

@@ -86,9 +86,15 @@ The four ideas that carry most of the design:
 ## Quick start
 
 ```bash
+./install.sh    # profiles plus component selection; writes deploy/.env and prints the bring-up
+```
+
+Or by hand (the script does this, with generated secrets and validation):
+
+```bash
 cp deploy/.env.example deploy/.env
 # edit deploy/.env: set POSTGRES_PASSWORD, GATEWAY_SESSION_SECRET,
-# and GATEWAY_UPSTREAM_API_KEY
+# and GATEWAY_UPSTREAM__API_KEY
 docker compose -f deploy/compose/docker-compose.yml up --build
 ```
 

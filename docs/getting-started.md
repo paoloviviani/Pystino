@@ -9,7 +9,7 @@ compose route is the one that gets you a billed completion and a console.
 ```bash
 cp deploy/.env.example deploy/.env
 # edit deploy/.env: set POSTGRES_PASSWORD, GATEWAY_SESSION_SECRET,
-# and GATEWAY_UPSTREAM_API_KEY
+# and GATEWAY_UPSTREAM__API_KEY
 docker compose -f deploy/compose/docker-compose.yml up --build
 ```
 

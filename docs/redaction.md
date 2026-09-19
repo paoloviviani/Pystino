@@ -27,7 +27,7 @@ spans; it never invents placeholder text.** The gateway performs substitution
 itself with `placeholder_for` from the shared package. That is what makes the
 placeholder scheme stable across turns — the same entity yields the same
 placeholder in turn 1 and in turn 40, keyed by an HMAC of the entity value with
-`GATEWAY_REDACTION_PLACEHOLDER_KEY`. That key must be backed up with the
+`GATEWAY_REDACTION__PLACEHOLDER_KEY`. That key must be backed up with the
 transcripts it labelled: rotating it re-labels every entity, so old
 placeholders stop matching.
 
