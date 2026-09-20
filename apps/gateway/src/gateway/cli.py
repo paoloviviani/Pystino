@@ -318,7 +318,13 @@ def main(argv: list[str] | None = None) -> int:
         # with a long memory.
         password: str = args.password
         if password == _PROMPT_SENTINEL:
-            password = getpass.getpass(f"Password for {args.email}: ")
+            try:
+                password = getpass.getpass(f"Password for {args.email}: ")
+            except KeyboardInterrupt:
+                # Same rule as passwd's prompts: an abort exits cleanly
+                # with 130, not an asyncio traceback under compose exec.
+                print("\nAborted.", file=sys.stderr)
+                return 130
         secret = asyncio.run(
             _seed(
                 group_name=args.group,
@@ -372,8 +378,19 @@ async def _passwd(
     anyone with shell access to the host can already read the database.
     """
     settings = get_settings()
-    first = getpass.getpass(f"Password for {email}: ")
-    second = getpass.getpass("Again: ")
+    try:
+        first = getpass.getpass(f"Password for {email}: ")
+        second = getpass.getpass("Again: ")
+    except KeyboardInterrupt:
+        # Ctrl+C at a password prompt is an abort, not a traceback: this
+        # command runs inside `docker compose exec` during installs (the
+        # operator's TTY is attached), and an unhandled SIGINT there
+        # surfaces as asyncio internals plus a stack the operator cannot
+        # act on — or worse, a live process holding the terminal. The
+        # installer resumes idempotently, so a clean exit 130 is the
+        # honest answer.
+        print("\nAborted.", file=sys.stderr)
+        return 130
     if first != second:
         print("The two passwords do not match.", file=sys.stderr)
         return 1
