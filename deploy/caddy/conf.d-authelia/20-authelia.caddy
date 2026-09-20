@@ -1,0 +1,27 @@
+# The bundled Authelia, on the origin already published.
+# Mounted into conf.d only by docker-compose.idp-authelia.yml.
+#
+# `handle`, **not** `handle_path` — the opposite of the Keycloak route, and
+# the difference is where the prefix lives:
+#
+#   Keycloak serves at its own root and is *told* to advertise `/idp`
+#   (KC_HOSTNAME), so Caddy strips the prefix before proxying.
+#
+#   Authelia serves under the prefix itself (`server.address`
+#   `tcp://:9091/authelia` in the generated configuration) and advertises
+#   every URL with it. Stripping the prefix hands it `/api/oidc/...` paths
+#   it does not serve — the portal's assets 404, and the failure names the
+#   asset rather than the routing.
+#
+# Getting this wrong is quiet rather than loud, same as the Keycloak route:
+# with `handle_path` the upstream sees unprefixed paths against an Authelia
+# rooted at /authelia, every path 404s, and the discovery document — the one
+# thing that would explain it — is one of the 404s.
+handle /authelia/* {
+	reverse_proxy authelia:9091
+}
+
+# Without this, a person typing the bare `/authelia` gets a 404: `/authelia/*`
+# matches the prefix *and a slash*, and the path with no trailing slash is
+# not that. Same shape as the chat route beside it.
+redir /authelia /authelia/
