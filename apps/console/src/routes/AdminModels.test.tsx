@@ -568,6 +568,67 @@ describe("AdminModels", () => {
     expect(await screen.findByText("inactive")).toBeInTheDocument();
   });
 
+  it("does not flag a model as withdrawn just because a different tag is selected", async () => {
+    // The gateway bug this pins: `missing_upstream` used to be judged against
+    // the tag-scoped fetch, so an embedding model this deployment serves
+    // turned into a false "no longer offered upstream" the moment an operator
+    // picked `tag=Instruct`. The fix moved that judgement to the whole
+    // catalogue; this only re-checks that the console renders whichever split
+    // the server sends rather than deriving its own from `available` (which
+    // stays tag-scoped) — a model reported `catalogued` must never show here,
+    // even while a tag other than its own is selected.
+    const user = userEvent.setup();
+    const discoveryUnderATag: CatalogueDiscovery = {
+      ...DISCOVERY,
+      catalogued: [
+        {
+          id: "m-embed",
+          name: "our-embedder",
+          upstream_model: "provider/embed-1",
+          is_active: true,
+        },
+      ],
+      missing_upstream: [],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/models/tags")) return jsonResponse(TAGS);
+        if (url.includes("/models/discover")) return jsonResponse(discoveryUnderATag);
+        if (url.includes("/api/admin/providers"))
+          return jsonResponse([
+            {
+              id: "pr1",
+              name: "acme",
+              description: null,
+              base_url: "https://acme.test/v1",
+              api_key_hint: "sk-a…3456",
+              has_api_key: true,
+              extra_headers: {},
+              is_active: true,
+              model_count: 1,
+              created_at: "2026-08-01T10:00:00Z",
+              updated_at: "2026-08-01T10:00:00Z",
+            },
+          ]);
+        if (url.includes("/api/admin/models")) return jsonResponse([model()]);
+        return jsonResponse([]);
+      }),
+    );
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Catalogue tag" }),
+      "Instruct",
+    );
+
+    await waitFor(() => expect(screen.getByText("new-1")).toBeInTheDocument());
+    expect(screen.queryByText(/no longer offered upstream/i)).not.toBeInTheDocument();
+  });
+
   it("imports a model priced in another currency", async () => {
     // ADR 0054: USD prices come along as published, and conversion happens
     // at admission using the day's rate.
