@@ -119,12 +119,21 @@ services:
         MONGODB_URL=mongodb://chat-mongo:27017
         MONGODB_DB_NAME=chat-ui
 
-        # The gateway, inside the compose network. Deliberately not the public
-        # origin: a server-to-server hop that never leaves the host needs no
-        # TLS and no certificate to verify, and the browser never sees this URL.
-        OPENAI_BASE_URL=http://gateway:8000/v1
-        # No OPENAI_API_KEY: GET /v1/models is public (ADR 0081), so the boot
-        # fetch above needs no credential and none is minted for it.
+        # The inference backend. On gateway profiles this is the gateway inside
+        # the compose network — deliberately not the public origin: a
+        # server-to-server hop that never leaves the host needs no TLS and no
+        # certificate to verify, and the browser never sees this URL. The
+        # standalone profiles (satellite, generic) override it from deploy/.env
+        # with the central /v1 or the third-party URL; unset, the gateway
+        # default below holds.
+        OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://gateway:8000/v1}
+        # The shared key for deployments that bill one account (generic, and
+        # satellite on a local IdP whose tokens central would not honour).
+        # Empty on gateway profiles: GET /v1/models is public (ADR 0081), so
+        # the boot fetch needs no credential and none is minted for it — and
+        # an empty value reads exactly as unset in the chat (falsy everywhere
+        # it is checked), so this line changes nothing where it is empty.
+        OPENAI_API_KEY=${OPENAI_API_KEY:-}
 
         # A model-facing web fetch uses Cerea's configured fetch seam. The
         # Playwright overlay supplies the renderer on this private network;
@@ -140,8 +149,12 @@ services:
         CHAT_PG_URL=${CHAT_PG_URL:?set CHAT_PG_URL in deploy/.env}
 
         # Every inference call carries the signed-in person's own access token,
-        # so the gateway bills that person (ADR 0040).
-        USE_USER_TOKEN=true
+        # so the gateway bills that person (ADR 0040). Interpolated, not
+        # hardcoded: the gateway-less profiles that bill a shared key
+        # (generic always, satellite on a local IdP) write false here, and
+        # the chat compares the string exactly — anything but "true" is
+        # shared-key mode.
+        USE_USER_TOKEN=${USE_USER_TOKEN:-true}
         # No anonymous mode: the gateway has nothing to bill a caller it cannot
         # identify, so a visitor who is not signed in would only see an error.
         AUTOMATIC_LOGIN=true
@@ -245,6 +258,16 @@ services:
         condition: service_healthy
       proxy:
         condition: service_healthy
+
+  # The proxy gains the /chat route. Additive, and only meaningful under the
+  # proxy overlay: the edge shape routes /chat natively (Caddyfile.netbird),
+  # and a deployment without this overlay serves no chat at all. Found live:
+  # the file's own header claimed this mount existed while the overlay carried
+  # no proxy section — every proxy-shape deployment 404'd /chat with nothing
+  # in any log, and only the edge shape ever worked.
+  proxy:
+    volumes:
+      - ../caddy/conf.d-chat/20-chat.caddy:/etc/caddy/conf.d/20-chat.caddy:ro
 
 volumes:
   chat-mongo-data:
