@@ -29,6 +29,19 @@
 #                              GATEWAY_REDACTION__ENGINE=noop on the gateway.
 #
 # See https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0026-pluggable-detection.md and services/redaction/README.md.
+#
+# ## Deliberately not profile-tagged
+#
+# Unlike the chat and the bundled IdPs, these two services carry no
+# `profiles:`. This overlay is half services and half gateway configuration —
+# engine=http, the endpoints and fail-closed are meaningless without the
+# services — so a set that included the file with the services gated off
+# would boot a gateway that refuses every /v1 request against a detector that
+# is not there. Including this file IS selecting redaction, the same way the
+# smoke overlay is (and the smoke overlay is documented as never
+# profile-selected). The profile scheme lives in the overlays whose absence
+# degrades gracefully: docker-compose.chat.yml, docker-compose.idp-authelia.yml
+# and docker-compose.idp-keycloak.yml.
 services:
   redaction:
     build:

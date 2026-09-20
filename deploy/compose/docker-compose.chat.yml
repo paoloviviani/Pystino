@@ -4,7 +4,14 @@
 #     -f deploy/compose/docker-compose.yml \
 #     -f deploy/compose/docker-compose.smoke.yml \
 #     -f deploy/compose/docker-compose.redaction.yml \
-#     -f deploy/compose/docker-compose.chat.yml up -d
+#     -f deploy/compose/docker-compose.chat.yml \
+#     -f deploy/compose/docker-compose.proxy.yml \
+#     --profile chat up -d
+#
+# (An exposure overlay — proxy or edge — is not optional in that line: the
+# chat publishes no port and depends on the proxy, so a loopback set is
+# refused by compose rather than deployed half-working. The header here used
+# to show the line without one; it never parsed.)
 #
 # ## It is a client, and this file is the proof
 #
@@ -55,6 +62,23 @@
 # person's own token, and the gateway still checks a real grant on every
 # `/v1/chat/completions` call regardless of what the list showed. Pystino no
 # longer mints anything for this container to boot with.
+#
+# ## The profile: `chat`
+#
+# Both services below carry `profiles: [chat]`: a set selects them by passing
+# `--profile chat` (or `COMPOSE_PROFILES`, which compose also reads from
+# `--env-file`) and not only by including this file. The split matters because
+# the file does two jobs. The patches — the proxy's `/chat` route, the chat's
+# environment — sit on services that run in every shape and apply whenever the
+# file is included, profile or not. The services themselves now wait for the
+# profile, which is what lets a phase-1 set include this file for its
+# configuration without starting containers nobody asked for yet. Naming a
+# service explicitly still starts it (compose activates a targeted service's
+# own profile), so `up ... chat proxy` keeps working unchanged. And a set that
+# includes this file without the profile removes nothing: services outside the
+# active model are orphans compose leaves running, so the pre-profile command
+# lines keep an existing stack alive — they only stop managing the chat until
+# `--profile chat` joins the line.
 
 services:
   chat-mongo:
@@ -68,6 +92,11 @@ services:
     # line that runs here, and chat-ui needs nothing newer: collections,
     # indexes, GridFS. The version is the box's fact, not the application's;
     # a machine with AVX can put 8 back.
+    #
+    # `profiles: [chat]` — the chat add-on is one unit: chat and its MongoDB
+    # travel together, selected by --profile chat (see the header). Untagged,
+    # this file's presence alone would start a MongoDB nothing reads.
+    profiles: [chat]
     image: mongo:4.4
     restart: unless-stopped
     volumes:
@@ -86,6 +115,12 @@ services:
       start_period: 20s
 
   chat:
+    # Selected with its MongoDB by --profile chat (see the header). The
+    # depends_on entries below are untouched by the profile: chat-mongo
+    # carries the same one, and the proxy dependency is what keeps a
+    # loopback set without an exposure overlay a validation error rather
+    # than an unreachable chat.
+    profiles: [chat]
     build:
       # An absolute path, required rather than defaulted. A relative default
       # resolves against this file's directory, which is right for a plain

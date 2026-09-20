@@ -72,6 +72,21 @@
 # its own: the audience variable the base file does not interpolate, and the
 # trust bundle the issuer fetch needs. Never set GATEWAY_OIDC__ADMIN_GROUPS
 # (removed, ADR 0069 — the gateway refuses to start with it).
+#
+# ## The profile: `authelia`
+#
+# `authelia` and `ca-bundle` carry `profiles: [authelia]`: the bundled IdP is
+# selected by `--profile authelia` (or `COMPOSE_PROFILES`, which compose also
+# reads from `--env-file`), not only by including this file. The file's other
+# half — the proxy's /authelia route, the gateway's trust and audience
+# plumbing — sits on services that run in every shape and applies whenever the
+# file is included, profile or not. Naming `authelia` explicitly still starts
+# it (compose activates a targeted service's own profile), so a service list
+# like the phase-1 `up ... authelia ca-bundle proxy` needs no change. And a
+# set that includes this file without the profile removes nothing: services
+# outside the active model are orphans compose leaves running, so the
+# pre-profile command lines keep an existing stack alive — they only stop
+# managing it until `--profile authelia` joins the line.
 
 services:
   authelia:
@@ -79,6 +94,11 @@ services:
     # provider is still officially beta — an unpinned pull is a behaviour
     # change on restart. Apache-2.0, a static Go binary (~25 MB); it downloads
     # nothing at runtime (file backend, sqlite, filesystem notifier).
+    #
+    # `profiles: [authelia]` — selected with its one-shot bundler by
+    # --profile authelia (see the header); the name is the installer's
+    # IDP_BUNDLED value, so the flag can be passed straight through.
+    profiles: [authelia]
     image: authelia/authelia:4.39.20
     restart: unless-stopped
     # No `ports:` — the fourth ground rule. A browser reaches Authelia through
@@ -120,7 +140,15 @@ services:
   # gateway -> caddy-ca cycle) — so public roots now, Caddy's authority
   # appended by the installer step, picked up by the restart OIDC needs
   # anyway.
+  #
+  # `profiles: [authelia]` — same profile as the IdP it serves: in a set
+  # where Authelia will not run, seeding the trust bundle is a one-shot
+  # container nobody needs. This is also why the gateway's depends_on below
+  # is `required: false`: with the profile inactive the bundler is out of
+  # the model, and a required dependency on it would make the whole set an
+  # invalid compose project instead of merely bundle-less.
   ca-bundle:
+    profiles: [authelia]
     image: caddy:2.11-alpine
     volumes:
       - ../tls:/out
@@ -139,8 +167,13 @@ services:
 
   gateway:
     depends_on:
+      # required:false because ca-bundle carries the authelia profile (see
+      # its comment): with the profile inactive the bundler is out of the
+      # model and a required dependency would refuse the whole set. When the
+      # profile is active the ordering holds exactly as before.
       ca-bundle:
         condition: service_completed_successfully
+        required: false
     environment:
       # Verifying Caddy's internal CA rather than skipping verification (see
       # above). The directory, not the file (same mount-shape lesson as the
