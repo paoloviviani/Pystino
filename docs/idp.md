@@ -54,6 +54,16 @@ machinery for our own issuer. An external issuer cannot claim the alias: a
 token bearing it must verify against this issuer's own JWKS to be believed at
 all.
 
+## First administrator
+
+The house IdP keeps no users of its own: the account it mints codes for is
+the ordinary `issuer="local"` row, created out-of-band with `gateway passwd`
+(it prompts twice — the password never lands in shell history or any file —
+and `--admin` defaults to yes). The chat rides the console session, so
+signing into the console is what signs the chat in; there is no separate
+chat account to create. A different address later is the same command again:
+resets never touch the admin flag unless it is passed.
+
 ## Roles stay out of it
 
 The house issuer follows ADR 0069
