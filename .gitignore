@@ -32,6 +32,13 @@ out/
 .env.*
 !*.env.example
 !.env.example
+# The deployment profile fragments are env-shaped but not secrets: every
+# credential field in them is an empty template the installer fills, and a
+# fresh clone must carry them or the Cerea installer's checkout validation
+# refuses the very repository it just cloned ("missing
+# deploy/profiles/homelab.env — wrong repository?"). Untracked, they
+# survived only in working copies that predated this ignore rule.
+!deploy/profiles/*.env
 deploy/.env
 
 *.db
