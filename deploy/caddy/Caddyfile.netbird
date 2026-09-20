@@ -65,6 +65,16 @@
 
 	handle {
 		reverse_proxy gateway:8000 {
+			# The edge hop is plain HTTP, so Caddy's automatic
+			# X-Forwarded-Proto would say 'http' — and the gateway builds
+			# its OIDC redirect_uri (and the session cookie's Secure
+			# attributes) from the forwarded request. An http-derived
+			# redirect_uri does not match the https URI registered at the
+			# issuer, and every login dies with 'redirect_uri does not
+			# match'. The TLS site imports this snippet too, where Caddy
+			# already sends https and this is a no-op — one snippet serves
+			# both shapes, same as the Authelia route.
+			header_up X-Forwarded-Proto https
 			# `-1` means flush every write straight through instead of
 			# buffering. Caddy already does this when it recognises
 			# text/event-stream, but every /v1 surface here can stream and

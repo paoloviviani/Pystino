@@ -18,7 +18,20 @@
 # rooted at /authelia, every path 404s, and the discovery document — the one
 # thing that would explain it — is one of the 404s.
 handle /authelia/* {
-	reverse_proxy authelia:9091
+	reverse_proxy authelia:9091 {
+		# The edge hop is plain HTTP, so Caddy's automatic X-Forwarded-Proto
+		# would say 'http' — which Authelia rightly refuses ('invalid
+		# X-Forwarded-Proto header value'): every URL it advertises is
+		# https, and a proxy claiming otherwise is a misconfiguration it
+		# refuses to guess around. The edge terminates TLS and forwards
+		# https to the listener, so the honest value is fixed here. Under
+		# the TLS proxy shape Caddy already sends https and `header_up`
+		# setting it again is a no-op — one snippet serves both shapes.
+		# (The Keycloak route needs no equivalent: with KC_PROXY_HEADERS
+		# the header is read when present, and KC_HOSTNAME fixes the
+		# advertised URLs regardless of what the hop says.)
+		header_up X-Forwarded-Proto https
+	}
 }
 
 # Without this, a person typing the bare `/authelia` gets a 404: `/authelia/*`
