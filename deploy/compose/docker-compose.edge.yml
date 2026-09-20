@@ -80,9 +80,12 @@ services:
       - ../caddy/Caddyfile.netbird:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on:
-      gateway:
-        condition: service_healthy
+    # No depends_on on the gateway — same reasoning as docker-compose.proxy.yml
+    # records at length: the old service_healthy edge is what forced --no-deps
+    # on every gateway-less deployment (satellite, generic), because `up proxy`
+    # drags its whole dependency closure in. Caddy answers 502, it does not
+    # crash, while the gateway is still coming up, and the installer waits for
+    # the gateway before anything configures itself against the origin.
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:2019/config/"]
       interval: 15s

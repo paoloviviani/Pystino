@@ -86,9 +86,16 @@ services:
       # the old certificate warns again.
       - caddy-data:/data
       - caddy-config:/config
-    depends_on:
-      gateway:
-        condition: service_healthy
+    # No depends_on on the gateway, deliberately. The old service_healthy
+    # edge is what forced --no-deps on every gateway-less deployment: `up
+    # proxy` drags its whole dependency closure in, and a gateway that is
+    # *defined* (the base file always defines it) is dragged even by a
+    # required:false edge. Caddy needs no ordering guarantee — an upstream
+    # that is not up yet answers 502 and recovers on the next request — and
+    # the installers already wait for the gateway (and, under the bundled
+    # IdPs, run the CA dance) before anything configures itself against the
+    # origin. Removing the edge is what lets `up -d proxy` and `up -d chat
+    # proxy` mean exactly the named set on a box that holds no gateway.
     healthcheck:
       # Proves the process is up and holding a config. Caddy's admin API is on
       # loopback inside the container and is not published.

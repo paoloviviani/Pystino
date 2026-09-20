@@ -89,6 +89,21 @@
 # No `ports:` on Keycloak. It listens on the compose network only and
 # reaches a browser through Caddy, on the origin that is already published.
 #
+# ## The profile: `keycloak`
+#
+# `keycloak` and `ca-bundle` carry `profiles: [keycloak]`: the bundled IdP is
+# selected by `--profile keycloak` (or `COMPOSE_PROFILES`, which compose also
+# reads from `--env-file`), not only by including this file. The file's other
+# half — the proxy's /idp route, the gateway's trust and audience plumbing —
+# sits on services that run in every shape and applies whenever the file is
+# included, profile or not. Naming `keycloak` explicitly still starts it
+# (compose activates a targeted service's own profile), so a service list like
+# the phase-1 `up ... keycloak ca-bundle proxy` needs no change. And a set
+# that includes this file without the profile removes nothing: services
+# outside the active model are orphans compose leaves running, so the
+# pre-profile command lines keep an existing stack alive — they only stop
+# managing it until `--profile keycloak` joins the line.
+
 services:
   keycloak:
     # Pinned, and the pin is the license verdict too: the image's own labels
@@ -98,6 +113,11 @@ services:
     # whose redistribution is permitted. Nothing is downloaded at runtime —
     # no model, no plugin, no dataset — so there is no second license to
     # clear. Re-check the label when moving the pin.
+    #
+    # `profiles: [keycloak]` — selected with its one-shot bundler by
+    # --profile keycloak (see the header); the name is the installer's
+    # IDP_BUNDLED value, so the flag can be passed straight through.
+    profiles: [keycloak]
     image: quay.io/keycloak/keycloak:26.7.3
     restart: unless-stopped
     command: ["start", "--import-realm"]
@@ -156,7 +176,15 @@ services:
   # Seeds the trust bundle the gateway reads, and exits. See the header for
   # why the file must exist before the gateway's first start, and why it is
   # the public roots first with Caddy's authority appended later.
+  #
+  # `profiles: [keycloak]` — same profile as the IdP it serves: in a set
+  # where Keycloak will not run, seeding the trust bundle is a one-shot
+  # container nobody needs. This is also why the gateway's depends_on below
+  # is `required: false`: with the profile inactive the bundler is out of
+  # the model, and a required dependency on it would make the whole set an
+  # invalid compose project instead of merely bundle-less.
   ca-bundle:
+    profiles: [keycloak]
     image: caddy:2.11-alpine
     volumes:
       - ../tls:/out
@@ -175,8 +203,13 @@ services:
 
   gateway:
     depends_on:
+      # required:false because ca-bundle carries the keycloak profile (see
+      # its comment): with the profile inactive the bundler is out of the
+      # model and a required dependency would refuse the whole set. When the
+      # profile is active the ordering holds exactly as before.
       ca-bundle:
         condition: service_completed_successfully
+        required: false
     environment:
       # Verifying Caddy's internal CA rather than skipping verification.
       SSL_CERT_FILE: /etc/ssl/caddy/caddy-root.crt
