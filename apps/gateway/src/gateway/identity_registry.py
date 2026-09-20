@@ -113,13 +113,16 @@ def record_from_env(settings: Settings) -> ProviderRecord | None:
         groups_claim=oidc.groups_claim,
         fetch_userinfo=oidc.fetch_userinfo,
         group_mappings={},
-        # Never for the environment fallback. It exists so a deployment
-        # configured through `GATEWAY_OIDC__*` keeps working across the
-        # upgrade that made providers rows, and adopting existing accounts is
-        # not a behaviour an upgrade may switch on by itself. The seed turns
-        # that fallback into a row on first startup, so turning linking on is
-        # one edit away in the console.
-        link_local_by_email=False,
+        # Off unless the operator set `GATEWAY_OIDC__LINK_LOCAL_BY_EMAIL`, which
+        # a deployment configured through `GATEWAY_OIDC__*` never has by
+        # accident: the variable is new, defaults false, so an *upgrade* still
+        # cannot switch adoption on by itself — the guarantee ADR 0056 asks for.
+        # A bundled-IdP install sets it deliberately, to make the operator's one
+        # local admin and their SSO login a single account. The seed below turns
+        # this fallback into a row on first startup and carries the same value,
+        # and the console's per-provider switch is the third way to the same
+        # fact.
+        link_local_by_email=oidc.link_local_by_email,
         # The sync stance of ADR 0069, applied where a provider is created:
         # the directory answers once, at provisioning. For an *upgrading*
         # deployment this row already exists with its old mode, and provenance
@@ -221,6 +224,10 @@ async def seed_from_env(session: AsyncSession, settings: Settings, secrets: Secr
             groups_claim=env_record.groups_claim,
             fetch_userinfo=env_record.fetch_userinfo,
             group_mappings=[],
+            # Carried onto the persisted row, or the seed would quietly defeat
+            # the env switch: the fallback honours it, but once this row exists
+            # it is authoritative and every later startup reads it instead.
+            link_local_by_email=env_record.link_local_by_email,
             is_enabled=True,
         )
     )

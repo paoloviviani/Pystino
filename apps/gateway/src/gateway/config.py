@@ -88,6 +88,18 @@ class OIDCSettings(BaseModel):
     # membership purely an admin decision.
     auto_create_groups: bool = True
 
+    # Off by default, and turning it on is always an explicit operator act —
+    # never a consequence of upgrading (ADR 0056): a deployment that had no
+    # such variable keeps two accounts, exactly as before. Set, a directory
+    # login adopts the local account sharing its *verified* email rather than
+    # provisioning a second row. This is the shape a bundled-IdP install uses so
+    # the operator's one local admin (`gateway passwd <email> --admin`) and
+    # their SSO login are a single account, with the local password left as the
+    # break-glass door. Mirrored to the seeded provider row and the pre-seed
+    # fallback in identity_registry; the console's per-provider switch is the
+    # same fact for a deployment that configures providers there instead.
+    link_local_by_email: bool = False
+
     # Removed as a setting by ADR 0069 and kept only as a tripwire: the field
     # exists so that a deployment still setting GATEWAY_OIDC__ADMIN_GROUPS gets
     # a startup error naming the removal instead of a silent no-op. An

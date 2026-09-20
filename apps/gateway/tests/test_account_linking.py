@@ -30,7 +30,7 @@ import httpx
 import pytest
 from conftest import Seeded
 from gateway.config import OIDCSettings
-from gateway.identity_registry import record_from_env, record_from_row
+from gateway.identity_registry import record_from_env, record_from_row, seed_from_env
 from gateway.models import (
     Group,
     IdentityProvider,
@@ -406,8 +406,8 @@ class TestTheSwitchIsCarried:
         )
         assert record_from_row(row, box).link_local_by_email is False
 
-    def test_the_environment_fallback_never_links(self, settings: object) -> None:
-        """An upgrade may not switch adoption on by itself."""
+    def test_the_environment_fallback_defaults_to_off(self, settings: object) -> None:
+        """An upgrade may not switch adoption on by itself: no switch, no link."""
         from gateway.config import OIDCSettings as OS
 
         settings.oidc = OS(  # type: ignore[attr-defined]
@@ -416,6 +416,42 @@ class TestTheSwitchIsCarried:
         record = record_from_env(settings)  # type: ignore[arg-type]
         assert record is not None
         assert record.link_local_by_email is False
+
+    def test_the_environment_fallback_honours_the_explicit_switch(
+        self, settings: object
+    ) -> None:
+        """Set deliberately (a bundled-IdP install), the fallback carries it."""
+        from gateway.config import OIDCSettings as OS
+
+        settings.oidc = OS(  # type: ignore[attr-defined]
+            enabled=True,
+            issuer=IDP,
+            client_id="c",
+            client_secret="s",
+            link_local_by_email=True,
+        )
+        record = record_from_env(settings)  # type: ignore[arg-type]
+        assert record is not None
+        assert record.link_local_by_email is True
+
+    async def test_the_seeded_row_carries_the_explicit_switch(
+        self, session: AsyncSession, settings: object, app: object
+    ) -> None:
+        """The persisted row is authoritative once seeded, so it must carry it —
+        or the env switch would be silently defeated on the second startup."""
+        from gateway.config import OIDCSettings as OS
+
+        box: SecretBox = app.state.secrets  # type: ignore[attr-defined]
+        settings.oidc = OS(  # type: ignore[attr-defined]
+            enabled=True,
+            issuer=IDP,
+            client_id="c",
+            client_secret="s",
+            link_local_by_email=True,
+        )
+        await seed_from_env(session, settings, box)  # type: ignore[arg-type]
+        row = (await session.execute(select(IdentityProvider))).scalar_one()
+        assert row.link_local_by_email is True
 
 
 class TestTheApiSurface:
