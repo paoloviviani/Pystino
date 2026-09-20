@@ -1,0 +1,198 @@
+# The bundled Keycloak: the installer deploys this alongside the gateway as
+# the deployment's own OIDC provider, so an enterprise install needs no
+# external directory.
+#
+#   ./installer/install.sh   # choose the bundled Keycloak in the sign-in menu
+#   docker compose --env-file deploy/.env \
+#     -f deploy/compose/docker-compose.yml \
+#     -f deploy/compose/docker-compose.proxy.yml \
+#     -f deploy/compose/docker-compose.idp-keycloak.yml up -d --build
+#
+# ## What the installer generates, and this file consumes
+#
+# `deploy/idp/` holds two generated files (never committed, never edited by
+# hand — the installer writes them from the spec in
+# `deploy/idp/keycloak-realm.json.template`, minting every secret locally):
+#
+#   deploy/idp/keycloak-realm.json       the realm import (clients, audience
+#                                        and groups mappers, first users)
+#   deploy/idp/10-idp-keycloak.caddy     the /idp route for the proxy overlay
+#
+# ## One origin, and why the path prefix is not a hack
+#
+# Same shape as the development overlay this supersedes
+# (`docker-compose.keycloak.yml`, kept for provider-path work): the gateway
+# owns `/auth/callback`, an IdP owns its own paths, and those collide at the
+# *root*. Under a prefix they do not — the gateway keeps `/`, Keycloak gets
+# `/idp`, one origin keeps the session cookie same-origin and one published
+# port stays enough.
+#
+# The prefix is done in the two halves Keycloak 26 actually wants:
+#
+#   KC_HOSTNAME carries the path (`<PUBLIC_ORIGIN>/idp`) and is what builds
+#   every URL Keycloak *advertises* — the issuer, discovery, redirects. The
+#   documentation is explicit that KC_HTTP_RELATIVE_PATH should **not** also
+#   be set for this case, which is why it is absent below.
+#
+#   Caddy's `handle_path` (in the generated snippet) strips `/idp` before
+#   proxying, so Keycloak keeps *serving* at the root it thinks it is at.
+#   Prefix applied once, in the layer that owns the routing.
+#
+# ## Production `start`, dev-file database
+#
+# `start --import-realm`, not `start-dev`: the realm import runs at first
+# boot from `deploy/idp/keycloak-realm.json`, which is how the audience
+# (`pystino-api`) and both clients exist with no Admin API call and no GUI
+# click during install. The database is Keycloak's default dev-file H2 on a
+# named volume — the leanest defensible shape: no second Postgres container,
+# no role for the installer to create in phase 1, no coupling to the
+# gateway's database. Consequence, stated plainly: **the import runs at
+# first boot only**. Later edits to the realm go through the Admin Console
+# (or a re-import against a wiped `keycloak-data` volume); regenerating the
+# JSON alone changes nothing on an existing volume.
+#
+# ## Admin bootstrap names
+#
+# Keycloak 26 renamed the bootstrap variables to `KC_BOOTSTRAP_ADMIN_*`.
+# The installer still mints `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD`
+# (the contract), and this file maps them onto the new names — so the rename
+# is absorbed here, once, rather than in every installer.
+#
+# ## The gateway has to verify Caddy's certificate to reach the issuer
+#
+# `OIDCSettings` has an `issuer` and no separate discovery URL — discovery is
+# derived from the issuer, correctly, since an issuer whose discovery lives
+# somewhere else is not a fact worth modelling. So the gateway fetches
+# `https://$PUBLIC_HOST:$HTTPS_PORT/idp/realms/...` over the public origin,
+# where `tls internal` means a CA nothing has heard of. The `ca-bundle`
+# service and `SSL_CERT_FILE` below are the same arrangement the development
+# overlay measured: without the bundle the fetch fails
+# `CERTIFICATE_VERIFY_FAILED`; with it, the handshake verifies. The bundle is
+# seeded with the public roots first (SSL_CERT_FILE *replaces* the trust
+# store), and the installer appends Caddy's local authority after the
+# proxy's first run — the OIDC restart that is always necessary (discovery
+# is read once at startup) is the one that picks it up.
+#
+# ## Edge exposure
+#
+# `Caddyfile.netbird` has no `conf.d` import, so this overlay's generated
+# snippet only routes under the proxy overlay. Behind the edge shape the
+# installer appends the equivalent `handle_path /idp/*` block to both sites
+# in `Caddyfile.netbird` (see the report's Caddy snippet) — or, equivalently,
+# teaches that file the same `import /etc/caddy/conf.d/*.caddy` line the
+# proxy Caddyfile has. Keycloak itself needs nothing different: `KC_HOSTNAME`
+# is the public origin either way, and `KC_PROXY_HEADERS=xforwarded` is what
+# both Caddy shapes send.
+#
+# ## Against the fourth ground rule: nothing new is published
+#
+# No `ports:` on Keycloak. It listens on the compose network only and
+# reaches a browser through Caddy, on the origin that is already published.
+#
+services:
+  keycloak:
+    # Pinned, and the pin is the license verdict too: the image's own labels
+    # say `org.opencontainers.image.licenses: Apache-2.0` (checked 2026-09-20
+    # against the pulled 26.7.3 manifest). What it carries: the server plus
+    # its embedded H2 (MPL-2.0/EPL-1.0, OSI-approved) on a UBI9-micro base
+    # whose redistribution is permitted. Nothing is downloaded at runtime —
+    # no model, no plugin, no dataset — so there is no second license to
+    # clear. Re-check the label when moving the pin.
+    image: quay.io/keycloak/keycloak:26.7.3
+    restart: unless-stopped
+    command: ["start", "--import-realm"]
+    environment:
+      # KC 26 names; values are the installer's KEYCLOAK_ADMIN contract.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in deploy/.env (minted by the installer)}
+      # The external URL, path included. Everything Keycloak advertises is
+      # built from this, so `iss` is this plus /realms/<realm> — the one
+      # value the gateway and the browser both have to agree on.
+      KC_HOSTNAME: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in deploy/.env}/idp
+      # Caddy terminates TLS and the hop to here is inside the compose
+      # network. `xforwarded`: both Caddy shapes send X-Forwarded-*.
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME_STRICT: "true"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      # The installer's generated realm. Mounted at the import directory
+      # Keycloak scans with --import-realm; read-only, because the running
+      # server must never be able to rewrite its own source of truth.
+      - ../idp/keycloak-realm.json:/opt/keycloak/data/import/pystino-realm.json:ro
+      # H2 lives in data/h2, so a named volume here persists the realm, its
+      # clients and their minted secrets across restarts.
+      #
+      # Mounted at `data`, not `data/h2`, and that distinction cost a
+      # debugging round upstream: Docker copies the image directory's
+      # ownership onto a fresh named volume only when that directory
+      # **exists in the image**. `/opt/keycloak/data` does, as
+      # `keycloak:root` 775; `/opt/keycloak/data/h2` does not — Keycloak
+      # creates it at runtime — so a volume mounted there arrives
+      # `root:root` 755, and uid 1000 cannot write it. The symptom is an H2
+      # stack trace ending in `TraceSystem.openWriter`, which names the
+      # tracing subsystem rather than the permission.
+      - keycloak-data:/opt/keycloak/data
+    healthcheck:
+      # KC 26 serves health on the management port (9000), not the HTTP port,
+      # and the image has no curl — hence Java's own client over /dev/tcp.
+      test:
+        [
+          "CMD-SHELL",
+          "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"status\": \"UP\"' <&3",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+
+  # Caddy gains the /idp route from the installer's generated snippet.
+  # Additive: without this overlay the conf.d glob matches only the empty
+  # placeholder and the deployment is byte-for-byte unchanged.
+  proxy:
+    volumes:
+      - ../idp/10-idp-keycloak.caddy:/etc/caddy/conf.d/10-idp-keycloak.caddy:ro
+
+  # Seeds the trust bundle the gateway reads, and exits. See the header for
+  # why the file must exist before the gateway's first start, and why it is
+  # the public roots first with Caddy's authority appended later.
+  ca-bundle:
+    image: caddy:2.11-alpine
+    volumes:
+      - ../tls:/out
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ -s /out/caddy-root.crt ]; then
+          echo "bundle exists: $$(grep -c 'BEGIN CERTIFICATE' /out/caddy-root.crt) certificates"
+          exit 0
+        fi
+        cp /etc/ssl/certs/ca-certificates.crt /out/caddy-root.crt
+        echo "seeded with $$(grep -c 'BEGIN CERTIFICATE' /out/caddy-root.crt) public roots"
+        echo "append Caddy's local authority, then restart the gateway (OIDC discovery is read once at startup)"
+    restart: "no"
+
+  gateway:
+    depends_on:
+      ca-bundle:
+        condition: service_completed_successfully
+    environment:
+      # Verifying Caddy's internal CA rather than skipping verification.
+      SSL_CERT_FILE: /etc/ssl/caddy/caddy-root.crt
+      # The base file does not interpolate this variable; the proxy overlay
+      # does, but only under that exposure. Stated here so the audience the
+      # installer writes reaches the gateway on every shape (same arrangement
+      # as the Authelia overlay). Empty means API keys only — the
+      # deployment-wide /v1 opt-in (ADR 0040).
+      GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE: ${GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE:-}
+    volumes:
+      # The *directory*, not the file. A bind mount of a path that does not
+      # yet exist makes Docker create a **directory** there, and the CA is
+      # appended after the stack is already up — so mounting the file
+      # directly turns a first run into `caddy-root.crt/` and an error that
+      # blames TLS rather than the mount.
+      - ../tls:/etc/ssl/caddy:ro
+
+volumes:
+  keycloak-data:
