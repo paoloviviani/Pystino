@@ -1226,7 +1226,41 @@ async def discover_models(
     # Offered upstream means listed, priced or not: a model the provider still
     # serves but has stopped pricing is not "no longer offered", and calling it
     # that would send someone hunting for a withdrawal that never happened.
-    offered = set(by_upstream) | (set(unpriced) - ANONYMOUS_UNPARSABLE)
+    #
+    # Drift is a whole-catalogue question even when `available` above is
+    # scoped to a tag: `tag=Instruct` narrows what is *importable*, not what
+    # the provider still serves, so judging "missing" against the tag-scoped
+    # fetch reported every embedding and OCR model this gateway serves as
+    # withdrawn the moment an operator picked a tag that was not theirs — they
+    # had not gone anywhere, they were filed under a tag nobody asked for.
+    plugin = plugin_registry.resolve(provider.plugin)
+    catalogue_tag_all = getattr(plugin, "catalogue_tag_all", None)
+    sentinel = catalogue_tag_all() if callable(catalogue_tag_all) else None
+
+    offered: set[str] | None
+    if tag is None or tag == sentinel or plugin.builtin_catalogue() is not None:
+        # No tag was asked for, the operator already asked for "everything"
+        # directly, or the plugin answers from itself (which has no tags to
+        # slice by at all): the fetch already made above is the whole
+        # catalogue, so asking again would be the same request twice.
+        offered = set(by_upstream) | (set(unpriced) - ANONYMOUS_UNPARSABLE)
+    elif sentinel is None:
+        # A free-text-tag provider: a tag-scoped fetch cannot tell "withdrawn"
+        # from "filed under a tag it does not name here", so guessing would
+        # only trade one false report (everything missing) for another (a
+        # genuine withdrawal hidden while a tag is set). Reporting no drift
+        # under a partial view is the honest answer — clearing the tag still
+        # catches a real withdrawal.
+        offered = None
+    else:
+        base_catalogue_url = url or f"{provider.base_url}/models"
+        joiner = "&" if "?" in base_catalogue_url else "?"
+        full_catalogue_url = f"{base_catalogue_url}{joiner}tag={quote(sentinel)}"
+        full_by_upstream, full_unpriced, _, _ = await _catalogue_with_prices(
+            http, provider, full_catalogue_url, api_key, fill_missing=False
+        )
+        offered = set(full_by_upstream) | (set(full_unpriced) - ANONYMOUS_UNPARSABLE)
+
     catalogued: list[CatalogueDriftRow] = []
     missing: list[CatalogueDriftRow] = []
     for model in ours:
@@ -1236,18 +1270,31 @@ async def discover_models(
             upstream_model=model.upstream_model,
             is_active=model.is_active,
         )
-        (catalogued if model.upstream_model in offered else missing).append(row)
+        # `offered is None` is "cannot judge", not "cannot find" — see above;
+        # it is not a missing-upstream row, it is a row this discovery run is
+        # simply silent about.
+        if offered is None or model.upstream_model in offered:
+            catalogued.append(row)
+        else:
+            missing.append(row)
 
     return CatalogueDiscoveryResponse(
         # What was actually read. For a provider whose plugin answers from
         # itself, naming an endpoint nothing fetched is a small lie in a field
         # whose whole job is saying where the answer came from.
         provider_url=(
-            catalogue_url
-            if plugin_registry.resolve(provider.plugin).builtin_catalogue() is None
-            else f"built in ({provider.plugin})"
+            catalogue_url if plugin.builtin_catalogue() is None else f"built in ({provider.plugin})"
         ),
-        provider_model_count=len(offered),
+        # The size of whichever set the drift judgement above was actually
+        # checked against — the provider's whole catalogue when a tag is
+        # active and `catalogue_tag_all` answered it, otherwise the same
+        # tag-scoped fetch `available` was built from. Never the tag-scoped
+        # count while claiming a whole-catalogue judgement was made.
+        provider_model_count=(
+            len(offered)
+            if offered is not None
+            else len(set(by_upstream) | (set(unpriced) - ANONYMOUS_UNPARSABLE))
+        ),
         available=available,
         catalogued=catalogued,
         missing_upstream=missing,
