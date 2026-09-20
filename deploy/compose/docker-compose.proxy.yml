@@ -42,13 +42,16 @@
 #
 # ## OIDC is whatever deploy/.env says (docs/oidc-generic-provider.md)
 #
-# There is no bundled identity provider. When GATEWAY_OIDC__ENABLED is true the
-# gateway talks to whichever issuer deploy/.env names — GitLab, Entra ID,
-# Keycloak elsewhere, anything speaking OpenID Connect discovery — and every
-# setting passes through unchanged, because the differences between providers
-# live in those settings (issuer, claim names, an audience) rather than in
-# anything this file could know. Leave it unset and the console's password form
-# is the only way in.
+# By default there is no bundled identity provider: when GATEWAY_OIDC__ENABLED
+# is true the gateway talks to whichever issuer deploy/.env names — GitLab,
+# Entra ID, Keycloak elsewhere, anything speaking OpenID Connect discovery —
+# and every setting passes through unchanged, because the differences between
+# providers live in those settings (issuer, claim names, an audience) rather
+# than in anything this file could know. Leave it unset and the console's
+# password form is the only way in. The installer can instead deploy a bundled
+# provider (Authelia or Keycloak) alongside the gateway via the matching
+# docker-compose.idp-*.yml overlay, which routes its prefix through this
+# file's conf.d import; the OIDC variables below then name the bundled issuer.
 
 services:
   proxy:
