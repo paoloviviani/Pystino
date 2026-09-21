@@ -213,6 +213,16 @@ services:
         # no-colon form as above: empty stays empty).
         CHAT_USAGE_ENABLED=${CHAT_USAGE_ENABLED-true}
 
+        # Whether this origin serves the Pystino console at /console — the
+        # chat's admin panel links to it when set (CHAT_CONSOLE_ENABLED).
+        # Default ON because the gateway profiles all serve it; the
+        # standalone profiles (satellite, generic) turn it off from
+        # deploy/.env — satellite's Pystino is central's and its console is
+        # not this origin's to serve, generic has no Pystino at all.
+        # Interpolated like the flags above so the operator's switch is
+        # reachable from deploy/.env without editing this file.
+        CHAT_CONSOLE_ENABLED=${CHAT_CONSOLE_ENABLED-true}
+
         # The knowledge pipeline (chat-owned Postgres, ADR 0070). On unless
         # "false": a deployment without that database sets it false and the
         # Knowledge tab, the project and composer affordances and the admin
