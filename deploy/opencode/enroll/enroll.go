@@ -145,7 +145,7 @@ func enroll(ctx context.Context, opts *enrollOptions) error {
 		}
 	}
 
-	shimAddr, err := pickShimAddr(opts.shimPort)
+	shimAddr, shimPort, err := pickShimAddr(opts.shimPort)
 	if err != nil {
 		return err
 	}
@@ -164,6 +164,7 @@ func enroll(ctx context.Context, opts *enrollOptions) error {
 		AccessToken:   tokens.AccessToken,
 		ExpiresIn:     tokens.ExpiresIn,
 		ObtainedAt:    time.Now().Unix(),
+		ShimPort:      shimPort,
 	}
 	if err := saveCredentials(opts.creds, creds); err != nil {
 		return err
@@ -274,7 +275,7 @@ func pickGroup(ctx context.Context, gateway, accessToken, preselect string) (str
 // preferred port when free, else the next free one up. Binding here (and
 // closing) only probes — serve binds it for real — so a fully busy range
 // errors loudly instead of writing a config at a dead address.
-func pickShimAddr(preferred int) (string, error) {
+func pickShimAddr(preferred int) (string, int, error) {
 	for port := preferred; port < preferred+100; port++ {
 		addr := fmt.Sprintf("127.0.0.1:%d", port)
 		listener, err := net.Listen("tcp", addr)
@@ -285,9 +286,9 @@ func pickShimAddr(preferred int) (string, error) {
 		if port != preferred {
 			fmt.Fprintf(os.Stderr, "note: port %d busy, using %s for the shim\n", preferred, addr)
 		}
-		return addr, nil
+		return addr, port, nil
 	}
-	return "", fmt.Errorf("no free port near %d for the serve shim", preferred)
+	return "", 0, fmt.Errorf("no free port near %d for the serve shim", preferred)
 }
 
 // confirmOverwrite guards the two files enroll writes. --yes (or a
