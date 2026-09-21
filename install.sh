@@ -153,12 +153,31 @@ choose_redaction() {
 		IFS= read -r __a || __a=""
 		: "${__a:=$1}"
 		case "$__a" in
-			1|off) REDACTION=off; return 0 ;;
-			2|pattern) REDACTION=pattern; return 0 ;;
-			3|ner) REDACTION=ner; return 0 ;;
+		1|off) REDACTION=off; return 0 ;;
+		2|pattern) REDACTION=pattern; return 0 ;;
+		3|ner) REDACTION=ner; return 0 ;;
 		esac
 	done
 	die "too many invalid answers."
+}
+
+choose_code_panel() {
+	# The /code remote-agent panel (ADR 0085): the chat surface where each
+	# person drives an opencode agent on their own machine, through the
+	# relay this installer then deploys. Off unless asked for: unlike the
+	# other optional components there is a container and a published port
+	# behind it, and a deployment that did not ask for that shape must not
+	# wake up with one.
+	echo "Coding agents (/code panel): each person drives an opencode agent on" >&2
+	echo "their own machine through a relay this box then hosts (one container," >&2
+	echo "one published port; the traffic is E2E-encrypted, the relay sees no" >&2
+	echo "plaintext). Off hides the panel entirely." >&2
+	if confirm "Enable the /code panel and host its relay?" "default-n"; then
+		CODE_PANEL=true
+	else
+		CODE_PANEL=false
+		note "The /code panel stays hidden; deploy/compose/docker-compose.code-relay.yml documents the manual path if that changes."
+	fi
 }
 
 # --- existing values ----------------------------------------------------------
@@ -266,6 +285,8 @@ main() {
 		USAGE_ENABLED=
 		note "Usage tab emptied too — with no ledger there is nothing to read."
 	fi
+
+	choose_code_panel
 
 	# The chat checkout: absolute, validated, never guessed.
 	if [ -n "${CHAT_REPO-}" ] && [ -f "$CHAT_REPO/Dockerfile" ]; then
@@ -384,6 +405,20 @@ main() {
 	putvar "$ENV_FILE" CHAT_CODE_TOOL_ENABLED "true"
 	if [ -n "$USAGE_ENABLED" ]; then putvar "$ENV_FILE" CHAT_USAGE_ENABLED "true"; else putvar "$ENV_FILE" CHAT_USAGE_ENABLED ""; fi
 	putvar "$ENV_FILE" CHAT_KNOWLEDGE_ENABLED "true"
+	# The /code panel: on only where the operator answered for it, because it
+	# deploys a container and publishes a port (the one service here that is
+	# meant to be dialled from outside — see docker-compose.code-relay.yml).
+	# The relay endpoint Cerea dials is the compose-internal one; daemons
+	# outside dial <PUBLIC_HOST>:<RELAY_PORT>, and the pairing offer they
+	# paste into the panel records that public endpoint.
+	if [ "$CODE_PANEL" = true ]; then
+		putvar "$ENV_FILE" CODE_AGENTS_ENABLED "true"
+		putvar "$ENV_FILE" CODE_RELAY_URL "relay:4000"
+		putvar "$ENV_FILE" RELAY_PORT "4000"
+	else
+		putvar "$ENV_FILE" CODE_AGENTS_ENABLED ""
+		putvar "$ENV_FILE" CODE_RELAY_URL ""
+	fi
 	putvar "$ENV_FILE" PUBLIC_HOST "$PUBLIC_HOST"
 	putvar "$ENV_FILE" HTTPS_PORT "$HTTPS_PORT"
 	putvar "$ENV_FILE" PUBLIC_ORIGIN "$PUBLIC_ORIGIN"
@@ -438,7 +473,20 @@ main() {
 	# shellcheck disable=SC1091
 	. "$PROFILES_DIR/overlays.sh"
 	FLAGS=$(CHAT_REPO="$CHAT_REPO" custom_overlays "$EXPOSURE" "$REDACTION" "$FETCH") || die "overlay derivation refused the selection."
-	note "Overlay set: $FLAGS"
+	if [ "$CODE_PANEL" = true ]; then
+		# The relay overlay joins the set, and its source arrives before
+		# anything can build it: the image is built from the pinned
+		# checkout deploy/code-relay/fetch.sh maintains (no published
+		# image exists; ADR 0085 records why building from source is the
+		# shape, not a workaround).
+		FLAGS="$FLAGS -f deploy/compose/docker-compose.code-relay.yml"
+		deploy/code-relay/fetch.sh || die "fetching the relay source failed (network?)."
+		PROFILES="chat,code-relay"
+		note "Overlay set: $FLAGS (the relay joins the set; its source is pinned by deploy/code-relay/fetch.sh)"
+	else
+		PROFILES="chat"
+		note "Overlay set: $FLAGS"
+	fi
 
 	# Managed names, for scrubbing compose children (see run_compose). Only
 	# real assignments: all-caps with =, so a base64 PEM tail (whose padding
@@ -457,7 +505,18 @@ main() {
 	echo "     CREATE ROLE chat WITH LOGIN PASSWORD '<from $ENV_FILE>';"
 	echo "     CREATE DATABASE chat OWNER chat;"
 	echo "SQL"
-	echo "  4. env $MANAGED docker compose --env-file deploy/.env $FLAGS up -d --build"
+	echo "  4. env $MANAGED docker compose --env-file deploy/.env $FLAGS --profile $PROFILES up -d --build"
+	if [ "$CODE_PANEL" = true ]; then
+		echo
+		echo "The /code panel is on: after step 4 the relay answers on <PUBLIC_HOST>:4000"
+		echo "(the port RELAY_PORT names in $ENV_FILE). Each person who wants an agent"
+		echo "runs the paseo daemon on their own machine with"
+		echo "PASEO_RELAY_ENDPOINT=<PUBLIC_HOST>:4000 and pastes the pairing link the"
+		echo "daemon prints into the panel's Pair a device dialog. The agent's LLM"
+		echo "traffic still bills through this gateway: opencode there uses the"
+		echo "enrollment CLI (deploy/opencode/) against /v1, an axis the relay is"
+		echo "never part of (ADR 0085)."
+	fi
 	echo
 	if confirm "Run step 1 now (phase-1 bring-up)?" "default-y"; then
 		# shellcheck disable=SC2086
