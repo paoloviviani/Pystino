@@ -22,6 +22,21 @@ type credentials struct {
 	AccessToken   string `json:"access_token"`
 	ExpiresIn     int    `json:"expires_in"`
 	ObtainedAt    int64  `json:"obtained_at_unix"`
+	// ShimPort is the loopback port enroll chose and wrote into
+	// opencode.json's baseURL; serve honours it so the two ends agree without
+	// the human passing --port. Omitted (0) falls back to defaultShimPort.
+	ShimPort int `json:"shim_port,omitempty"`
+}
+
+// refreshSkew makes serve refresh a little before expiry, so no proxied
+// request rides a token that dies mid-flight.
+const refreshSkew = 60 * time.Second
+
+// needsRefresh reports whether the cached access token is within the skew of
+// expiry (or already past it) — the one decision serve makes before reusing
+// it. Split out so it is unit-testable without a clock or an HTTP round trip.
+func (c *credentials) needsRefresh(now time.Time) bool {
+	return !c.accessExpiry().After(now.Add(refreshSkew))
 }
 
 // accessExpiry converts the token response's relative lifetime into the
