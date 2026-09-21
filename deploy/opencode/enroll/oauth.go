@@ -27,6 +27,29 @@ type discovery struct {
 	DeviceAuthorizationEndpoint string `json:"device_authorization_endpoint"`
 }
 
+// oauth2Error is an RFC 6749 §5.2 error body (error + error_description).
+// Typed so callers can act on the code, never parse prose.
+type oauth2Error struct {
+	Code        string
+	Description string
+	label       string
+}
+
+func (e *oauth2Error) Error() string {
+	return fmt.Sprintf("%s refused: %s (%s)", e.label, e.Code, e.Description)
+}
+
+func oauthErrorFromBody(label string, body []byte, status int) error {
+	var parsed struct {
+		Error       string `json:"error"`
+		Description string `json:"error_description"`
+	}
+	if json.Unmarshal(body, &parsed) == nil && parsed.Error != "" {
+		return &oauth2Error{Code: parsed.Error, Description: parsed.Description, label: label}
+	}
+	return fmt.Errorf("%s answered HTTP %d", label, status)
+}
+
 // tokenSet is one successful token response, both flows alike. expiresIn
 // arrives in seconds; an IdP that omits it gets the conservative default so
 // the shim refreshes early rather than serving a dead token.
@@ -37,6 +60,11 @@ type tokenSet struct {
 }
 
 const defaultExpiresIn = 300
+
+// enrollScopes is the scope string both flows request. groups is not
+// decoration: without it the ledger bills nobody (ADR 0084) and
+// /v1/billing/groups answers empty.
+const enrollScopes = "openid profile email groups"
 
 // httpClient is the one place timeouts are set: every IdP and gateway call
 // goes through here, so no flow can hang forever on a black-holed address.
@@ -94,10 +122,17 @@ func randomHex(bytes int) (string, error) {
 }
 
 // exchange posts one token request and decodes the success body. Error bodies
-// follow RFC 6749 (error/error_description), which is what the caller sees;
-// anything else is reported by status so a proxy's HTML never parses as JSON.
-func exchange(tokenEndpoint string, form url.Values) (*tokenSet, error) {
-	resp, err := httpClient.PostForm(tokenEndpoint, form)
+// follow RFC 6749 (error/error_description), returned typed as *oauth2Error
+// so callers can branch on the code — the device flow's polling loop and the
+// shim's revoked-refresh handling both do — instead of matching strings.
+func exchange(ctx context.Context, tokenEndpoint string, form url.Values) (*tokenSet, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenEndpoint,
+		strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token request: %w", err)
 	}
@@ -107,14 +142,7 @@ func exchange(tokenEndpoint string, form url.Values) (*tokenSet, error) {
 		return nil, fmt.Errorf("reading token response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		var oauthErr struct {
-			Error       string `json:"error"`
-			Description string `json:"error_description"`
-		}
-		if json.Unmarshal(body, &oauthErr) == nil && oauthErr.Error != "" {
-			return nil, fmt.Errorf("token endpoint refused: %s (%s)", oauthErr.Error, oauthErr.Description)
-		}
-		return nil, fmt.Errorf("token endpoint answered HTTP %d", resp.StatusCode)
+		return nil, oauthErrorFromBody("token endpoint", body, resp.StatusCode)
 	}
 	var tokens tokenSet
 	if err := json.Unmarshal(body, &tokens); err != nil {
@@ -229,7 +257,7 @@ func runLoopbackFlow(ctx context.Context, doc *discovery, clientID string) (*tok
 		"response_type":         {"code"},
 		"client_id":             {clientID},
 		"redirect_uri":          {redirectURI},
-		"scope":                 {"openid profile email groups"},
+		"scope":                 {enrollScopes},
 		"state":                 {state},
 		"nonce":                 {nonce},
 		"code_challenge":        {pkceChallenge(verifier)},
@@ -243,7 +271,7 @@ func runLoopbackFlow(ctx context.Context, doc *discovery, clientID string) (*tok
 	if err != nil {
 		return nil, err
 	}
-	return exchange(doc.TokenEndpoint, url.Values{
+	return exchange(ctx, doc.TokenEndpoint, url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"redirect_uri":  {redirectURI},

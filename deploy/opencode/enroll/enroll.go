@@ -118,9 +118,11 @@ func enroll(ctx context.Context, opts *enrollOptions) error {
 	}
 	var tokens *tokenSet
 	if useDevice {
-		return fmt.Errorf("device flow is not implemented yet: re-run without --device on a machine with a browser")
+		fmt.Fprintln(os.Stderr, "no usable browser here — signing in with the device code flow.")
+		tokens, err = runDeviceFlow(ctx, doc, opts.clientID)
+	} else {
+		tokens, err = runLoopbackFlow(ctx, doc, opts.clientID)
 	}
-	tokens, err = runLoopbackFlow(ctx, doc, opts.clientID)
 	if err != nil {
 		return err
 	}
