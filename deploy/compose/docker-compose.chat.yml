@@ -288,7 +288,7 @@ services:
         # load). Default ON: the plain "Cerea" is restored by setting
         # CHAT_TURIN_PHRASES=false in deploy/.env — interpolated like the
         # name above so the operator's switch needs no image rebuild.
-        PUBLIC_TURIN_PHRASES=${CHAT_TURIN_PHRASES:-"Com'è?,Va bin,Facciamo che iniziare?,Oh basta là"}
+        PUBLIC_TURIN_PHRASES=${CHAT_TURIN_PHRASES:-"Com'è?,Va bin,Facciamo che iniziare?,Oh basta là,Fuma c'anduma"}
         PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
         ORIGIN=${PUBLIC_ORIGIN}/chat
         ADDRESS_HEADER=X-Forwarded-For
