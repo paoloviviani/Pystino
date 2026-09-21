@@ -378,27 +378,42 @@ async def _passwd(
     anyone with shell access to the host can already read the database.
     """
     settings = get_settings()
-    try:
-        first = getpass.getpass(f"Password for {email}: ")
-        second = getpass.getpass("Again: ")
-    except KeyboardInterrupt:
-        # Ctrl+C at a password prompt is an abort, not a traceback: this
-        # command runs inside `docker compose exec` during installs (the
-        # operator's TTY is attached), and an unhandled SIGINT there
-        # surfaces as asyncio internals plus a stack the operator cannot
-        # act on — or worse, a live process holding the terminal. The
-        # installer resumes idempotently, so a clean exit 130 is the
-        # honest answer.
-        print("\nAborted.", file=sys.stderr)
-        return 130
-    if first != second:
-        print("The two passwords do not match.", file=sys.stderr)
-        return 1
-    try:
-        validate_password(first, settings.local_auth)
-    except ValueError as exc:
-        print(f"Refused: {exc}", file=sys.stderr)
-        return 1
+    # The policy is knowable before the operator types, so say it first: a
+    # refused password mid-install aborts a whole phase over a rule nobody
+    # stated (the exact trap the installer's phase-1 step hit live).
+    print(
+        f"Password policy: at least {settings.local_auth.min_password_length} "
+        "characters (length only, by design — NIST SP 800-63B).",
+        file=sys.stderr,
+    )
+    while True:
+        try:
+            first = getpass.getpass(f"Password for {email}: ")
+            second = getpass.getpass("Again: ")
+        except KeyboardInterrupt:
+            # Ctrl+C at a password prompt is an abort, not a traceback: this
+            # command runs inside `docker compose exec` during installs (the
+            # operator's TTY is attached), and an unhandled SIGINT there
+            # surfaces as asyncio internals plus a stack the operator cannot
+            # act on — or worse, a live process holding the terminal. The
+            # installer resumes idempotently, so a clean exit 130 is the
+            # honest answer.
+            print("\nAborted.", file=sys.stderr)
+            return 130
+        if first != second:
+            print("The two passwords do not match.", file=sys.stderr)
+            continue
+        try:
+            validate_password(first, settings.local_auth)
+        except ValueError as exc:
+            # A policy refusal is a retry, not a death: the operator is
+            # mid-install (this command is the installer's phase-1 step),
+            # and exit 1 aborts the whole install over a short password,
+            # leaving a half-installed deployment to resume. The message
+            # names the threshold so the next attempt can simply be longer.
+            print(f"Refused: {exc}. Try again (Ctrl+C to abort).", file=sys.stderr)
+            continue
+        break
 
     engine = create_engine(settings)
     factory = create_session_factory(engine)
