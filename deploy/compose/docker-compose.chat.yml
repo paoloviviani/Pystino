@@ -283,6 +283,12 @@ services:
         CHAT_SECRET_KEY=${CHAT_SECRET_KEY:?generate a long random value and set CHAT_SECRET_KEY in deploy/.env}
 
         PUBLIC_APP_NAME=${CHAT_APP_NAME:-Cerea}
+        # Rotating phrases beside the app name on the chat's new-chat screen
+        # (PUBLIC_TURIN_PHRASES, Turin dialect greetings — one per page
+        # load). Default ON: the plain "Cerea" is restored by setting
+        # CHAT_TURIN_PHRASES=false in deploy/.env — interpolated like the
+        # name above so the operator's switch needs no image rebuild.
+        PUBLIC_TURIN_PHRASES=${CHAT_TURIN_PHRASES:-"Com'è?,Va bin,Facciamo che iniziare?,Oh basta là"}
         PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
         ORIGIN=${PUBLIC_ORIGIN}/chat
         ADDRESS_HEADER=X-Forwarded-For
