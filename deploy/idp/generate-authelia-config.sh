@@ -310,7 +310,12 @@ $PEM_INDENTED
         pkce_challenge_method: 'S256'
         # Loopback only, never the public origin: the secret-less client is
         # only as safe as its redirect, and a loopback address keeps the
-        # code on the machine that started the flow.
+        # code on the machine that started the flow. The CLI binds an
+        # ephemeral port and calls back to http://127.0.0.1:<port>/callback;
+        # these portless entries rely on Authelia's RFC 8252 loopback
+        # handling matching any port on 127.0.0.1/localhost. NEEDS A LIVE
+        # CHECK on the pinned Authelia — if it demands an exact port, the
+        # CLI's per-run redirect would have to be registered another way.
         redirect_uris:
           - 'http://127.0.0.1/callback'
           - 'http://localhost/callback'
