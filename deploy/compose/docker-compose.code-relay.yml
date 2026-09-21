@@ -57,10 +57,13 @@ services:
     ports:
       - "${RELAY_PORT:-4000}:4000"
     healthcheck:
-      # The relay image ships no wget or curl (verified); bash's /dev/tcp is
-      # the one probe that needs no extra package. Liveness only — /ready
-      # also reports drain state, which would restart a draining relay.
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/4000 && printf 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      # The relay image ships no wget or curl, and /dev/tcp is a bash-ism:
+      # CMD-SHELL runs /bin/sh (dash), where /dev/tcp does not exist and
+      # the probe dies with "Directory nonexistent" (found live). Bash is
+      # present at /usr/bin/bash, so the probe says bash explicitly.
+      # Liveness only — /ready also reports drain state, which would
+      # restart a draining relay.
+      test: ["CMD-SHELL", "bash -c \"exec 3<>/dev/tcp/127.0.0.1/4000 && printf 'GET /health HTTP/1.0\\\\r\\\\n\\\\r\\\\n' >&3 && cat <&3 | grep -q '200 OK'\""]
       interval: 10s
       timeout: 5s
       retries: 6
