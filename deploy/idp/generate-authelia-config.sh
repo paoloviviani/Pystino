@@ -6,7 +6,7 @@
 # (default <repo>/deploy/idp/):
 #
 #   authelia-configuration.yml   the IdP itself: file user backend, OIDC
-#                                provider (two clients, fixed audience),
+#                                provider (three clients, fixed audience),
 #                                subpath serving under /authelia
 #   users_database.yml           the first human (installer-chosen address +
 #                                password, hashed below — never stored plain)
@@ -62,8 +62,9 @@
 #
 # Deterministic by construction, which is the whole contract: the audience
 # the gateway checks on /v1 is the literal `pystino-api` below (granted to
-# both clients implicitly, so no client ever has to request it), the two
-# client ids are fixed (`pystino-console`, `cerea`), and the issuer is
+# all clients implicitly, so no client ever has to request it), the three
+# client ids are fixed (`pystino-console`, `cerea`, `opencode-enrollment`),
+# and the issuer is
 # <IDP_PUBLIC_ORIGIN>/authelia — so the installer writes
 # GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE=pystino-api with no prompting and no
 # IdP API call.
@@ -288,6 +289,49 @@ $PEM_INDENTED
         audience: ['pystino-api']
         requested_audience_mode: 'implicit'
         claims_policy: 'pystino'
+        consent_mode: 'pre-configured'
+      # The opencode enrollment CLI (ADR 0084): one static public client, the
+      # gh/gcloud pattern — Authelia has no dynamic client registration, so
+      # the id every CLI already knows is baked in here. Public because a
+      # binary on a user's machine cannot keep a secret, hence no
+      # client_secret and token_endpoint_auth_method none; PKCE S256 stays
+      # mandatory so a stolen code is useless without the verifier.
+      # Two grants because the CLI runs in two shapes: authorization_code
+      # with a loopback redirect for laptops (a browser that can call back
+      # to 127.0.0.1), and the device code grant (RFC 8628) for headless
+      # boxes that never see a callback. The device grant needs Authelia
+      # 4.39.22 or later — 4.39.0 introduced it but later 4.39.x fixed its
+      # bugs, so the overlay pins accordingly.
+      - client_id: 'opencode-enrollment'
+        client_name: 'Opencode Enrollment'
+        public: true
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        # Loopback only, never the public origin: the secret-less client is
+        # only as safe as its redirect, and a loopback address keeps the
+        # code on the machine that started the flow.
+        redirect_uris:
+          - 'http://127.0.0.1/callback'
+          - 'http://localhost/callback'
+        # groups is what the ledger bills (without it usage lands nowhere),
+        # so it is a scope here as well as a token claim; the pystino claims
+        # policy below is what actually puts it in the access token /v1
+        # validates locally (ADR 0040).
+        scopes: ['openid', 'profile', 'email', 'groups']
+        response_types: ['code']
+        grant_types: ['authorization_code', 'urn:ietf:params:oauth:grant-type:device_code']
+        access_token_signed_response_alg: 'RS256'
+        token_endpoint_auth_method: 'none'
+        # The deterministic audience: implicitly granted like the other two
+        # clients, so the CLI never requests it and the /v1 bearer check
+        # still sees it.
+        audience: ['pystino-api']
+        requested_audience_mode: 'implicit'
+        claims_policy: 'pystino'
+        # Remembered consent: the device flow's own approval at the
+        # verification URI is the user's decision, so no second consent
+        # screen the polling CLI could not drive anyway.
         consent_mode: 'pre-configured'
 EOF
 

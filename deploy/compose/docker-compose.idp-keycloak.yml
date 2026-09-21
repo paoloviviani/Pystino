@@ -42,8 +42,10 @@
 #
 # `start --import-realm`, not `start-dev`: the realm import runs at first
 # boot from `deploy/idp/keycloak-realm.json`, which is how the audience
-# (`pystino-api`) and both clients exist with no Admin API call and no GUI
-# click during install. The database is Keycloak's default dev-file H2 on a
+# (`pystino-api`) and all three clients (pystino-console, pystino-chat,
+# opencode-enrollment) exist with no Admin API call and no GUI click during
+# install. The third client is public with the device grant enabled, so the
+# opencode CLI enrolls with the same client id on either bundled IdP. The database is Keycloak's default dev-file H2 on a
 # named volume — the leanest defensible shape: no second Postgres container,
 # no role for the installer to create in phase 1, no coupling to the
 # gateway's database. Consequence, stated plainly: **the import runs at
