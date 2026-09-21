@@ -228,6 +228,16 @@ services:
         # so setting it there would silently do nothing.
         CHAT_MEMORY_ENABLED=${CHAT_MEMORY_ENABLED-true}
 
+        # Per-model overrides (JSON array, matched by id or name): the chat's
+        # own .env documents this as MODELS, and the flags that matter here —
+        # supportsArtifacts above all — are opt-in per model, so without this
+        # line a deployment could never turn them on from deploy/.env. Empty
+        # by default (the chat treats an empty value as no overrides), set it
+        # to e.g. '[{"id":"my-model","supportsArtifacts":true}]' to teach a
+        # model the artifact protocol. A malformed value logs and is ignored
+        # rather than refusing to boot — a typo must not take the chat down.
+        MODELS=${MODELS:-}
+
         # Reading documents without a gateway (ADR 0083). Empty here, which is
         # every gateway-backed profile: extraction goes through /v1/ocr with
         # the signed-in person's own token. The generic profile — no gateway
