@@ -255,12 +255,14 @@ else
 
 	# enroll writes the global opencode.json (the daemon's opencode reads
 	# the user config, not a per-project one) and stores the refresh
-	# credential beside opencode's own state. The issuer defaults to the
-	# gateway origin: the bundled IdPs answer under it and enroll's
-	# discovery finds the endpoints (ADR 0084); an explicitly different
-	# issuer (an external provider registered from the console) is --issuer.
+	# credential beside opencode's own state. --issuer only when explicitly
+	# given: the issuer is deployment-specific (bundled Authelia answers
+	# under <origin>/authelia, Keycloak under <origin>/idp/realms/pystino),
+	# and a forced default would point discovery at the wrong document —
+	# enroll prompts for it instead, which is the honest failure.
 	mkdir -p "$OPENCODE_DIR"
-	ENROLL_ARGS=(enroll --gateway "$GATEWAY" --issuer "${ISSUER:-$GATEWAY}" --output "$OPENCODE_CONFIG")
+	ENROLL_ARGS=(enroll --gateway "$GATEWAY" --output "$OPENCODE_CONFIG")
+	if [ -n "$ISSUER" ]; then ENROLL_ARGS+=(--issuer "$ISSUER"); fi
 	if [ "$ASSUME_YES" -eq 1 ]; then ENROLL_ARGS+=(--yes); fi
 	"$ENROLL_BIN" "${ENROLL_ARGS[@]}"
 
