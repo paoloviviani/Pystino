@@ -177,7 +177,7 @@ choose_code_panel() {
 		CODE_PANEL=true
 	else
 		CODE_PANEL=false
-		note "The /code panel stays hidden; deploy/compose/docker-compose.code-relay.yml documents the manual path if that changes."
+		note "The /code panel stays hidden; the relay overlay in the chat checkout documents the manual path if that changes."
 	fi
 }
 
@@ -476,13 +476,14 @@ main() {
 	if [ "$CODE_PANEL" = true ]; then
 		# The relay overlay joins the set, and its source arrives before
 		# anything can build it: the image is built from the pinned
-		# checkout deploy/code-relay/fetch.sh maintains (no published
+		# checkout the chat's fetch script maintains (no published
 		# image exists; ADR 0085 records why building from source is the
-		# shape, not a workaround).
-		FLAGS="$FLAGS -f deploy/compose/docker-compose.code-relay.yml"
-		deploy/code-relay/fetch.sh || die "fetching the relay source failed (network?)."
+		# shape, not a workaround). Paths ride $CHAT_REPO — the overlay
+		# lives with its consumer, the chat, not in this tree.
+		FLAGS="$FLAGS -f $CHAT_REPO/deploy/compose/docker-compose.code-relay.yml"
+		"$CHAT_REPO/deploy/code-relay/fetch.sh" || die "fetching the relay source failed (network?)."
 		PROFILES="chat,code-relay"
-		note "Overlay set: $FLAGS (the relay joins the set; its source is pinned by deploy/code-relay/fetch.sh)"
+		note "Overlay set: $FLAGS (the relay joins the set; its source is pinned by the chat's fetch script)"
 	else
 		PROFILES="chat"
 		note "Overlay set: $FLAGS"

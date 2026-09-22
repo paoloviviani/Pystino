@@ -240,8 +240,9 @@ services:
 
         # The /code remote-agent panel (ADR 0085): a full-screen surface where
         # the signed-in person drives an opencode agent on their own machine,
-        # reached through the paseo-relay this deployment runs (the
-        # docker-compose.code-relay.yml overlay). Off unless "true": unlike the
+        # reached through the paseo-relay this deployment runs (the relay
+        # overlay beside the chat that carries it: $CHAT_REPO/deploy/compose/
+        # docker-compose.code-relay.yml). Off unless "true": unlike the
         # flags above there is no degraded mode to fall back to — the panel
         # without a relay is a form that cannot reach anything, so the sidebar
         # row hides and the route answers 404. `CODE_RELAY_URL` is the
