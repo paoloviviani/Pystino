@@ -165,13 +165,14 @@ choose_code_panel() {
 	# The /code remote-agent panel (ADR 0085): the chat surface where each
 	# person drives an opencode agent on their own machine, through the
 	# relay this installer then deploys. Off unless asked for: unlike the
-	# other optional components there is a container and a published port
-	# behind it, and a deployment that did not ask for that shape must not
-	# wake up with one.
+	# other optional components there is a container behind it, and a
+	# deployment that did not ask for that shape must not wake up with one.
+	# No published port either way: the relay rides the origin already
+	# published, at the /ws subpath.
 	echo "Coding agents (/code panel): each person drives an opencode agent on" >&2
 	echo "their own machine through a relay this box then hosts (one container," >&2
-	echo "one published port; the traffic is E2E-encrypted, the relay sees no" >&2
-	echo "plaintext). Off hides the panel entirely." >&2
+	echo "no new port — it rides the published origin at /ws; the traffic is" >&2
+	echo "E2E-encrypted, the relay sees no plaintext). Off hides the panel entirely." >&2
 	if confirm "Enable the /code panel and host its relay?" "default-n"; then
 		CODE_PANEL=true
 	else
@@ -406,15 +407,14 @@ main() {
 	if [ -n "$USAGE_ENABLED" ]; then putvar "$ENV_FILE" CHAT_USAGE_ENABLED "true"; else putvar "$ENV_FILE" CHAT_USAGE_ENABLED ""; fi
 	putvar "$ENV_FILE" CHAT_KNOWLEDGE_ENABLED "true"
 	# The /code panel: on only where the operator answered for it, because it
-	# deploys a container and publishes a port (the one service here that is
-	# meant to be dialled from outside — see docker-compose.code-relay.yml).
-	# The relay endpoint Cerea dials is the compose-internal one; daemons
-	# outside dial <PUBLIC_HOST>:<RELAY_PORT>, and the pairing offer they
-	# paste into the panel records that public endpoint.
+	# deploys the relay container (reachable from outside at <origin>/ws —
+	# no published port; see docker-compose.code-relay.yml). The relay
+	# endpoint Cerea dials is the compose-internal one; daemons outside dial
+	# the origin Caddy already publishes, path /ws, and the pairing offer
+	# they paste into the panel records that public endpoint.
 	if [ "$CODE_PANEL" = true ]; then
 		putvar "$ENV_FILE" CODE_AGENTS_ENABLED "true"
 		putvar "$ENV_FILE" CODE_RELAY_URL "relay:4000"
-		putvar "$ENV_FILE" RELAY_PORT "4000"
 	else
 		putvar "$ENV_FILE" CODE_AGENTS_ENABLED ""
 		putvar "$ENV_FILE" CODE_RELAY_URL ""
@@ -507,15 +507,23 @@ main() {
 	echo "SQL"
 	echo "  4. env $MANAGED docker compose --env-file deploy/.env $FLAGS --profile $PROFILES up -d --build"
 	if [ "$CODE_PANEL" = true ]; then
+		# The daemon dials the origin, not a relay port: proxy shape
+		# terminates TLS on this box at HTTPS_PORT; edge shape terminates
+		# upstream and this box's HTTPS_PORT is the plain hop behind it.
+		if [ "$EXPOSURE" = "edge" ]; then
+			RELAY_DIAL="$PUBLIC_HOST:443"
+		else
+			RELAY_DIAL="$PUBLIC_HOST:$HTTPS_PORT"
+		fi
 		echo
-		echo "The /code panel is on: after step 4 the relay answers on <PUBLIC_HOST>:4000"
-		echo "(the port RELAY_PORT names in $ENV_FILE). Each person who wants an agent"
-		echo "runs the paseo daemon on their own machine with"
-		echo "PASEO_RELAY_ENDPOINT=<PUBLIC_HOST>:4000 and pastes the pairing link the"
-		echo "daemon prints into the panel's Pair a device dialog. The agent's LLM"
-		echo "traffic still bills through this gateway: opencode there uses the"
-		echo "enrollment CLI (deploy/opencode/) against /v1, an axis the relay is"
-		echo "never part of (ADR 0085)."
+		echo "The /code panel is on: after step 4 the relay answers at <PUBLIC_ORIGIN>/ws"
+		echo "(the same origin Caddy already publishes — no new port). Each person"
+		echo "who wants an agent runs the paseo daemon on their own machine with"
+		echo "PASEO_RELAY_ENDPOINT=$RELAY_DIAL and pastes the pairing link the"
+		echo "daemon prints into the panel's Pair a device dialog. The agent's"
+		echo "LLM traffic still bills through this gateway: opencode there uses"
+		echo "the enrollment CLI (deploy/opencode/) against /v1, an axis the"
+		echo "relay is never part of (ADR 0085)."
 	fi
 	echo
 	if confirm "Run step 1 now (phase-1 bring-up)?" "default-y"; then
