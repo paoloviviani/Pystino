@@ -327,7 +327,11 @@ $PEM_INDENTED
         # reason to exist.
         scopes: ['openid', 'profile', 'email', 'groups', 'offline_access']
         response_types: ['code']
-        grant_types: ['authorization_code', 'urn:ietf:params:oauth:grant-type:device_code']
+        # refresh_token must be in the list: the token endpoint only issues
+        # a refresh token to a client whose grant_types carry the refresh
+        # token grant — offline_access alone is not enough (found live: the
+        # device flow approved, then the shim got no refresh credential).
+        grant_types: ['authorization_code', 'urn:ietf:params:oauth:grant-type:device_code', 'refresh_token']
         access_token_signed_response_alg: 'RS256'
         token_endpoint_auth_method: 'none'
         # The deterministic audience: implicitly granted like the other two
