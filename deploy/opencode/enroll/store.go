@@ -137,8 +137,22 @@ const (
 // no apiKey: opencode would send it as-is and it would expire (ADR 0040).
 // The baseURL points at the local shim, which owns the bearer instead.
 type opencodeConfig struct {
-	Schema   string                      `json:"$schema"`
-	Provider map[string]opencodeProvider `json:"provider"`
+	Schema string `json:"$schema"`
+	// EnabledProviders is opencode's own provider allowlist. Verified
+	// against opencode's config schema (https://opencode.ai/config.json,
+	// "enabled_providers": "When set, ONLY these providers will be enabled.
+	// All other providers will be ignored") and against the pinned
+	// version's source (packages/opencode/src/provider/provider.ts at
+	// v1.18.31: the final provider list keeps only ids the allowlist
+	// names, applied to built-in and config-defined providers alike).
+	// Naming just pystino is what makes the gateway's models the only ones
+	// the picker offers — and unlike enumerating disabled_providers, it
+	// stays correct when an opencode release ships a new built-in.
+	// Omitted entirely when the operator opts out with
+	// --allow-opencode-provider, so nothing about opencode's default
+	// behaviour is claimed either way.
+	EnabledProviders []string                    `json:"enabled_providers,omitempty"`
+	Provider         map[string]opencodeProvider `json:"provider"`
 }
 
 // buildOpencodeConfig renders the config around the shim address. Models
@@ -148,7 +162,19 @@ type opencodeConfig struct {
 // embedding tier in its model picker is one accidental keypress from a
 // 400. Unknown limits become defaults, never omissions — opencode's
 // schema rejects a model entry without both limit keys (found live).
-func buildOpencodeConfig(shimAddr string, models []gatewayModel) *opencodeConfig {
+//
+// allowOpencodeProviders=false names pystino in enabled_providers, so the
+// machine's opencode sees the gateway's models and nothing else: a
+// built-in provider with ambient credentials (an ANTHROPIC_API_KEY in the
+// environment, a logged-in Copilot) would otherwise offer models that
+// bypass the gateway — its spend would never land in the caller's
+// account, which the whole point of enrolling is. The flag opts out for
+// operators who want both.
+func buildOpencodeConfig(
+	shimAddr string,
+	models []gatewayModel,
+	allowOpencodeProviders bool,
+) *opencodeConfig {
 	entries := make(map[string]opencodeModel, len(models))
 	for _, m := range models {
 		if m.ID == "" {
@@ -177,18 +203,23 @@ func buildOpencodeConfig(shimAddr string, models []gatewayModel) *opencodeConfig
 			Limit: &opencodeLimit{Context: defaultContextWindow, Output: defaultMaxOutputTokens},
 		}
 	}
-	return &opencodeConfig{
-		Schema: "https://opencode.ai/config.json",
-		Provider: map[string]opencodeProvider{
-			"pystino": {
-				NPM:  "@ai-sdk/openai-compatible",
-				Name: "Pystino Gateway",
-				Options: map[string]string{
-					"baseURL": "http://" + shimAddr + "/v1",
-				},
-				Models: entries,
+	provider := map[string]opencodeProvider{
+		"pystino": {
+			NPM:  "@ai-sdk/openai-compatible",
+			Name: "Pystino Gateway",
+			Options: map[string]string{
+				"baseURL": "http://" + shimAddr + "/v1",
 			},
+			Models: entries,
 		},
+	}
+	if allowOpencodeProviders {
+		return &opencodeConfig{Schema: "https://opencode.ai/config.json", Provider: provider}
+	}
+	return &opencodeConfig{
+		Schema:           "https://opencode.ai/config.json",
+		EnabledProviders: []string{"pystino"},
+		Provider:         provider,
 	}
 }
 

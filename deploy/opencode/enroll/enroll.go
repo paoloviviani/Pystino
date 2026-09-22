@@ -14,7 +14,8 @@ const enrollUsage = `enroll enroll — sign in and write the opencode setup.
 Usage:
   enroll enroll [--issuer URL] [--gateway URL] [--client-id ID]
                 [--device | --loopback] [--group NAME] [--output PATH]
-                [--creds PATH] [--shim-port PORT] [--no-discover] [--yes]
+                [--creds PATH] [--shim-port PORT] [--no-discover]
+                [--allow-opencode-provider] [--yes]
 
   --issuer     OIDC issuer where discovery lives (prompted when missing).
   --gateway    Gateway origin or /v1 base, e.g. https://llm.example.org
@@ -30,6 +31,11 @@ Usage:
   --shim-port  Preferred local port for the serve shim (default 41871;
                bumped upward while occupied, then recorded).
   --no-discover  Skip GET /v1/models; write a placeholder models map.
+  --allow-opencode-provider  Leave opencode's built-in providers enabled.
+               By default the written config names pystino in
+               enabled_providers, so the gateway's models are the only
+               ones opencode offers; this flag omits that allowlist for
+               operators who want the built-ins too.
   --yes        Overwrite existing files without asking.
 `
 
@@ -39,17 +45,18 @@ Usage:
 const defaultShimPort = 41871
 
 type enrollOptions struct {
-	issuer   string
-	gateway  string
-	clientID string
-	device   bool
-	loopback bool
-	group    string
-	output   string
-	creds    string
-	shimPort int
-	discover bool
-	yes      bool
+	issuer                 string
+	gateway                string
+	clientID               string
+	device                 bool
+	loopback               bool
+	group                  string
+	output                 string
+	creds                  string
+	shimPort               int
+	discover               bool
+	allowOpencodeProviders bool
+	yes                    bool
 }
 
 func runEnroll(args []string) error {
@@ -68,6 +75,7 @@ func runEnroll(args []string) error {
 	// package cannot negate one bool with another name on the same variable.
 	noDiscover := fs.Bool("no-discover", false, "")
 	fs.BoolVar(&opts.discover, "discover", true, "")
+	fs.BoolVar(&opts.allowOpencodeProviders, "allow-opencode-provider", false, "")
 	fs.BoolVar(&opts.yes, "yes", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -169,7 +177,10 @@ func enroll(ctx context.Context, opts *enrollOptions) error {
 	if err := saveCredentials(opts.creds, creds); err != nil {
 		return err
 	}
-	if err := writeOpencodeConfig(opts.output, buildOpencodeConfig(shimAddr, models)); err != nil {
+	if err := writeOpencodeConfig(
+		opts.output,
+		buildOpencodeConfig(shimAddr, models, opts.allowOpencodeProviders),
+	); err != nil {
 		return err
 	}
 

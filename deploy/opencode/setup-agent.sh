@@ -13,6 +13,7 @@
 #   ./setup-agent.sh [--relay HOST:PORT] [--relay-tls|--no-relay-tls]
 #                   [--gateway ORIGIN] [--issuer ORIGIN]
 #                   [--paseo-version X] [--opencode-version X]
+#                   [--allow-opencode-provider]
 #                   [--skip-daemon] [--skip-llm] [--skip-posture] [--yes]
 #
 #   PASEO_RELAY        default for --relay (the deployment's public endpoint).
@@ -33,7 +34,11 @@
 #      starts the daemon, which dials the relay outbound — no port opened;
 #   3. runs `enroll enroll` (browser loopback PKCE, device-code fallback:
 #      RFC 8628) and leaves `enroll serve` running under nohup (the LLM
-#      axis: opencode.json points its baseURL at the shim, never at /v1);
+#      axis: opencode.json points its baseURL at the shim, never at /v1).
+#      The written config also names the gateway in enabled_providers, so
+#      the gateway's models are the only ones opencode offers — a built-in
+#      provider with ambient credentials would take spend off the account
+#      the enrollment bills (--allow-opencode-provider opts out);
 #   4. writes the permission posture into the opencode config: edit/bash
 #      ask — the daemon drops per-prompt permission rules, so the posture
 #      lives here and the panel's PermissionCard surfaces the asks;
@@ -62,6 +67,7 @@ ISSUER="${PYSTINO_ISSUER:-}"
 SKIP_DAEMON=0
 SKIP_LLM=0
 SKIP_POSTURE=0
+ALLOW_OPENCODE_PROVIDER=0
 ASSUME_YES=0
 
 usage() {
@@ -90,6 +96,13 @@ Options:
   --skip-daemon          only the LLM axis (what install.sh does, keyed).
   --skip-llm             only the control axis (bring your own provider).
   --skip-posture         leave the existing opencode permission config.
+  --allow-opencode-provider
+                         leave opencode's built-in providers enabled. By
+                         default the enrollment names the gateway in
+                         enabled_providers, so the gateway's models are
+                         the only ones opencode offers — a built-in with
+                         ambient credentials would bypass both the
+                         gateway and the billing it exists to enforce.
   --yes                  skip the overwrite confirmation for config files.
   --help                 this text.
 EOF
@@ -107,6 +120,7 @@ while [ $# -gt 0 ]; do
 	--skip-daemon) SKIP_DAEMON=1; shift ;;
 	--skip-llm) SKIP_LLM=1; shift ;;
 	--skip-posture) SKIP_POSTURE=1; shift ;;
+	--allow-opencode-provider) ALLOW_OPENCODE_PROVIDER=1; shift ;;
 	--yes) ASSUME_YES=1; shift ;;
 	--help) usage; exit 0 ;;
 	*) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
@@ -268,6 +282,7 @@ else
 	ENROLL_ARGS=(enroll --gateway "$GATEWAY" --output "$OPENCODE_CONFIG")
 	if [ -n "$ISSUER" ]; then ENROLL_ARGS+=(--issuer "$ISSUER"); fi
 	if [ "$ASSUME_YES" -eq 1 ]; then ENROLL_ARGS+=(--yes); fi
+	if [ "$ALLOW_OPENCODE_PROVIDER" -eq 1 ]; then ENROLL_ARGS+=(--allow-opencode-provider); fi
 	"$ENROLL_BIN" "${ENROLL_ARGS[@]}"
 
 	# The shim: the LLM axis's local owner of the token opencode cannot
