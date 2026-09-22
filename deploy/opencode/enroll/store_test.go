@@ -15,13 +15,18 @@ func TestBuildOpencodeConfigShape(t *testing.T) {
 	models := []gatewayModel{
 		{ID: "coder-large", DisplayName: "Coder Large", ContextWindow: 200000, MaxOutputTokens: 32000},
 		{ID: "chat-small"},
+		// Non-chat kinds never make the picker: opencode is a coding
+		// agent, and an embedding tier is one accidental keypress away
+		// from a 400. An unknown kind stays listed (older gateways).
+		{ID: "qwen3-embedding-8b", Kind: "embedding", ContextWindow: 32768},
+		{ID: "legacy-unknown-kind", Kind: ""},
 	}
 	cfg := buildOpencodeConfig("127.0.0.1:41871", models)
 	if cfg.Schema != "https://opencode.ai/config.json" {
 		t.Fatalf("wrong schema: %s", cfg.Schema)
 	}
 	provider, ok := cfg.Provider["pystino"]
-	if !ok {
+	if ok != true {
 		t.Fatal("missing pystino provider")
 	}
 	if provider.NPM != "@ai-sdk/openai-compatible" {
@@ -38,12 +43,22 @@ func TestBuildOpencodeConfigShape(t *testing.T) {
 		large.Limit.Context != 200000 || large.Limit.Output != 32000 {
 		t.Fatalf("limit hints lost: %+v", large)
 	}
+	// A model with no hints gets defaults, never an omitted limit: opencode
+	// rejects a custom-provider model entry without both keys (found live).
 	small := provider.Models["chat-small"]
-	if small.Name != "chat-small" || small.Limit != nil {
-		t.Fatalf("nameless model misrendered: %+v", small)
+	if small.Limit == nil || small.Limit.Context != defaultContextWindow ||
+		small.Limit.Output != defaultMaxOutputTokens {
+		t.Fatalf("hintless model must carry default limits: %+v", small)
+	}
+	if _, listed := provider.Models["qwen3-embedding-8b"]; listed {
+		t.Fatal("embedding kinds must not reach opencode's model picker")
+	}
+	if _, listed := provider.Models["legacy-unknown-kind"]; !listed {
+		t.Fatal("an unknown kind stays listed (back-compat with hintless gateways)")
 	}
 
-	// The file itself must parse back to the same document.
+	// The file itself must parse back to the same document, with every
+	// model carrying both limit keys on the wire.
 	path := filepath.Join(t.TempDir(), "opencode.json")
 	if err := writeOpencodeConfig(path, cfg); err != nil {
 		t.Fatal(err)
@@ -52,12 +67,25 @@ func TestBuildOpencodeConfigShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var roundTrip opencodeConfig
-	if err := json.Unmarshal(body, &roundTrip); err != nil {
+	var raw struct {
+		Provider struct {
+			Pystino struct {
+				Models map[string]struct {
+					Limit *struct {
+						Context *int `json:"context"`
+						Output  *int `json:"output"`
+					} `json:"limit"`
+				} `json:"models"`
+			} `json:"pystino"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
 		t.Fatalf("written config does not parse: %v", err)
 	}
-	if len(roundTrip.Provider["pystino"].Models) != 2 {
-		t.Fatal("models map did not survive the round trip")
+	for id, m := range raw.Provider.Pystino.Models {
+		if m.Limit == nil || m.Limit.Context == nil || m.Limit.Output == nil {
+			t.Fatalf("model %s lacks a limit block on the wire", id)
+		}
 	}
 }
 
@@ -72,5 +100,8 @@ func TestBuildOpencodeConfigPlaceholder(t *testing.T) {
 	}
 	if entry.Name == "" {
 		t.Fatal("placeholder needs a human-readable name")
+	}
+	if entry.Limit == nil || entry.Limit.Context != defaultContextWindow || entry.Limit.Output != defaultMaxOutputTokens {
+		t.Fatal("placeholder carries defaults too: opencode rejects a model without both limit keys")
 	}
 }
