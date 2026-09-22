@@ -337,7 +337,8 @@
         "basic",
         "profile",
         "email",
-        "groups"
+        "groups",
+        "offline_access"
       ],
       "protocolMappers": [
         {
