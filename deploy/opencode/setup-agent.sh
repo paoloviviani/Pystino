@@ -42,9 +42,20 @@
 #   4. writes the permission posture into the opencode config: edit/bash
 #      ask — the daemon drops per-prompt permission rules, so the posture
 #      lives here and the panel's PermissionCard surfaces the asks;
-#   5. prints the pairing link of `paseo daemon pair` — the paste into the
-#      chat's /code > Pair a device dialog is the one step that must be a
-#      human with both sides (the offer is the credential).
+#   5. pairs the daemon into the chat's /code panel via `enroll pair`: the
+#      machine POSTs the pairing offer to the chat, authenticated by the
+#      enrollment's own access token — the chat trusts the same IdP, so no
+#      second sign-in and no human paste. The manual path (`paseo daemon
+#      pair`, paste into /code > Pair a device) stays as the fallback for a
+#      machine that cannot reach the chat origin (--skip-llm has no token
+#      to pair with, so it still ends with the manual step).
+#
+# Usage:
+#   ./setup-agent.sh [--relay HOST:PORT] [--relay-tls|--no-relay-tls]
+#                   [--gateway ORIGIN] [--issuer ORIGIN]
+#                   [--paseo-version X] [--opencode-version X]
+#                   [--allow-opencode-provider] [--name NAME]
+#                   [--skip-daemon] [--skip-llm] [--skip-posture] [--yes]
 #
 # Requires: bash, node/npm, python3, go 1.24+ (only when the enroll binary
 # is not built yet — the script builds it from this directory).
@@ -68,6 +79,7 @@ SKIP_DAEMON=0
 SKIP_LLM=0
 SKIP_POSTURE=0
 ALLOW_OPENCODE_PROVIDER=0
+MACHINE_NAME="${AGENT_MACHINE_NAME:-}"
 ASSUME_YES=0
 
 usage() {
@@ -96,14 +108,16 @@ Options:
   --skip-daemon          only the LLM axis (what install.sh does, keyed).
   --skip-llm             only the control axis (bring your own provider).
   --skip-posture         leave the existing opencode permission config.
-  --allow-opencode-provider
-                         leave opencode's built-in providers enabled. By
-                         default the enrollment names the gateway in
-                         enabled_providers, so the gateway's models are
-                         the only ones opencode offers — a built-in with
-                         ambient credentials would bypass both the
-                         gateway and the billing it exists to enforce.
-  --yes                  skip the overwrite confirmation for config files.
+   --allow-opencode-provider
+                          leave opencode's built-in providers enabled. By
+                          default the enrollment names the gateway in
+                          enabled_providers, so the gateway's models are
+                          the only ones opencode offers — a built-in with
+                          ambient credentials would bypass both the
+                          gateway and the billing it exists to enforce.
+   --name NAME            display name for this machine in the chat's /code
+                          panel (default: hostname, chosen by 'enroll pair').
+   --yes                  skip the overwrite confirmation for config files.
   --help                 this text.
 EOF
 }
@@ -121,6 +135,7 @@ while [ $# -gt 0 ]; do
 	--skip-llm) SKIP_LLM=1; shift ;;
 	--skip-posture) SKIP_POSTURE=1; shift ;;
 	--allow-opencode-provider) ALLOW_OPENCODE_PROVIDER=1; shift ;;
+	--name) MACHINE_NAME="${2:?--name needs a value}"; shift 2 ;;
 	--yes) ASSUME_YES=1; shift ;;
 	--help) usage; exit 0 ;;
 	*) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
@@ -336,9 +351,35 @@ fi
 if [ "$SKIP_DAEMON" -eq 1 ]; then
 	exit 0
 fi
+
+# The pairing needs both halves: a running daemon (axis 1, above) and the
+# enrollment's bearer (axis 2). --skip-llm has no token to pair with — there
+# was no enrollment — so its last step stays what it always was: a human with
+# the link, which is also the fallback for a machine that cannot reach the
+# chat origin.
+if [ "$SKIP_LLM" -eq 1 ]; then
+	echo
+	echo "=== last step, and only yours ===" >&2
+	echo "Run:  paseo daemon pair" >&2
+	echo "Paste the link it prints into the chat's /code > Pair a device dialog." >&2
+	echo "The offer is the credential: serverId + the daemon's public key, E2EE" >&2
+	echo "from the chat server to this machine — the relay relays, it never reads." >&2
+	exit 0
+fi
+
 echo
-echo "=== last step, and only yours ===" >&2
-echo "Run:  paseo daemon pair" >&2
-echo "Paste the link it prints into the chat's /code > Pair a device dialog." >&2
-echo "The offer is the credential: serverId + the daemon's public key, E2EE" >&2
-echo "from the chat server to this machine — the relay relays, it never reads." >&2
+echo "=== pairing this machine into the chat's /code panel ===" >&2
+PAIR_ARGS=(pair)
+if [ -n "$MACHINE_NAME" ]; then PAIR_ARGS+=(--name "$MACHINE_NAME"); fi
+if "$ENROLL_BIN" "${PAIR_ARGS[@]}"; then
+	echo "paired; find the machine in the chat's /code panel." >&2
+else
+	status=$?
+	# Both axes are wired and this machine's opencode already works; only the
+	# panel entry is missing. Say so, and hand back the manual path — which
+	# needs no reachability to the chat origin at all.
+	echo "error: automatic pairing failed (exit $status); the LLM axis is unaffected." >&2
+	echo "To pair by hand:" >&2
+	echo "  paseo daemon pair   # paste the printed link into the chat's /code > Pair a device dialog" >&2
+	exit 7
+fi
