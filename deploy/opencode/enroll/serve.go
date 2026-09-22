@@ -60,37 +60,49 @@ func (s *shim) token() (string, error) {
 	if !s.creds.needsRefresh(time.Now()) {
 		return s.creds.AccessToken, nil
 	}
+	if err := refreshCredential(s.credsPath, s.creds); err != nil {
+		return "", err
+	}
+	return s.creds.AccessToken, nil
+}
+
+// refreshCredential exchanges the refresh token for a fresh access token,
+// updating creds in place and persisting the result. Shared by the shim
+// (per request) and `enroll pair` (once per run): a pairing run days after
+// enrollment still authenticates, because the credential on disk is what
+// keeps working, not the access token it was born with.
+func refreshCredential(credsPath string, creds *credentials) error {
 	// The refresh runs on its own deadline, not a triggering request's
 	// context: one caller hanging up must not abort a refresh the others are
 	// blocked on.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	tokens, err := exchange(ctx, s.creds.TokenEndpoint, url.Values{
+	tokens, err := exchange(ctx, creds.TokenEndpoint, url.Values{
 		"grant_type":    {"refresh_token"},
-		"refresh_token": {s.creds.RefreshToken},
-		"client_id":     {s.creds.ClientID},
+		"refresh_token": {creds.RefreshToken},
+		"client_id":     {creds.ClientID},
 	})
 	if err != nil {
 		var oauthErr *oauth2Error
 		if errors.As(err, &oauthErr) {
-			return "", fmt.Errorf("refresh rejected (%s): the enrollment expired or was revoked — re-run 'enroll enroll'", oauthErr.Code)
+			return fmt.Errorf("refresh rejected (%s): the enrollment expired or was revoked — re-run 'enroll enroll'", oauthErr.Code)
 		}
-		return "", err
+		return err
 	}
-	s.creds.AccessToken = tokens.AccessToken
-	s.creds.ExpiresIn = tokens.ExpiresIn
-	s.creds.ObtainedAt = time.Now().Unix()
+	creds.AccessToken = tokens.AccessToken
+	creds.ExpiresIn = tokens.ExpiresIn
+	creds.ObtainedAt = time.Now().Unix()
 	if tokens.RefreshToken != "" {
 		// Honour rotation: an IdP that returns a new refresh token has
 		// invalidated the old one, so keeping it would break the next refresh.
-		s.creds.RefreshToken = tokens.RefreshToken
+		creds.RefreshToken = tokens.RefreshToken
 	}
-	if err := saveCredentials(s.credsPath, s.creds); err != nil {
+	if err := saveCredentials(credsPath, creds); err != nil {
 		// The refresh itself worked; failing to persist only costs one extra
-		// refresh at next start. Warn, never fail the request on it.
+		// refresh at next start. Warn, never fail the caller on it.
 		fmt.Fprintf(os.Stderr, "warning: could not persist refreshed credential: %v\n", err)
 	}
-	return s.creds.AccessToken, nil
+	return nil
 }
 
 // handler proxies one request. It rewrites the loopback /v1 prefix onto the

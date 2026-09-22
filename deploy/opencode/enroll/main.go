@@ -1,11 +1,13 @@
 // Command enroll authenticates a human to the Pystino gateway through the
-// bundled IdP (ADR 0084) and writes a working opencode setup for them.
+// bundled IdP (ADR 0084) and wires up opencode and the paseo daemon pairing.
 //
-// Two subcommands, matching the two halves of the problem: an OIDC access
-// token expires in minutes (ADR 0040 contrasts API keys as "not expiring in
-// five minutes"), while opencode holds a static apiKey. So `enroll`
-// authenticates once and records how to renew, and `serve` is the local shim
-// that owns the renewal so opencode never sees it.
+// Three subcommands: an OIDC access token expires in minutes (ADR 0040
+// contrasts API keys as "not expiring in five minutes"), while opencode
+// holds a static apiKey. So `enroll` authenticates once and records how to
+// renew, `serve` is the local shim that owns the renewal so opencode never
+// sees it, and `pair` spends one of those tokens pairing the machine's daemon
+// into the chat's /code panel — the chat trusts the same issuer, so no second
+// sign-in is needed.
 package main
 
 import (
@@ -24,6 +26,8 @@ Commands:
             and store the refresh credential.
   serve     Local refreshing proxy shim: opencode points its baseURL here,
             the shim injects a fresh access token plus x-bill-to per request.
+  pair      Pair this machine's paseo daemon into the chat's /code panel,
+            authenticated by the enrollment's access token.
 
 Run 'enroll <command> -h' for that command's options.
 `
@@ -39,6 +43,8 @@ func main() {
 		err = runEnroll(os.Args[2:])
 	case "serve":
 		err = runServe(os.Args[2:])
+	case "pair":
+		err = runPair(os.Args[2:])
 	case "-h", "-help", "--help", "help":
 		fmt.Print(usage)
 		return
