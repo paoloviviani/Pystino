@@ -41,7 +41,7 @@
 #      chat's /code > Pair a device dialog is the one step that must be a
 #      human with both sides (the offer is the credential).
 #
-# Requires: bash, node/npm, python3, go 1.27+ (only when the enroll binary
+# Requires: bash, node/npm, python3, go 1.24+ (only when the enroll binary
 # is not built yet — the script builds it from this directory).
 set -euo pipefail
 
@@ -245,8 +245,12 @@ else
 	# with that name so `go build ./...` and this script agree on one.
 	ENROLL_BIN="$ENROLL_DIR/pystino-enroll"
 	if [ ! -x "$ENROLL_BIN" ]; then
-		command -v go >/dev/null || {
-			echo "error: go 1.27+ required to build the enroll CLI (or place a built binary at $ENROLL_BIN)" >&2
+		# go.mod requires 1.24; an older go would try to auto-download the
+		# toolchain and die with "toolchain not available" — check the
+		# version here so the failure names the remedy.
+		GO_MINOR="$(go version 2>/dev/null | grep -oE 'go1\.[0-9]+' | head -1 | cut -d. -f2 || true)"
+		[ -n "$GO_MINOR" ] && [ "$GO_MINOR" -ge 24 ] || {
+			echo "error: building the enroll CLI needs go 1.24+ (apt's golang is usually older — install the official tarball from https://go.dev/dl/, or place a built binary at $ENROLL_BIN)" >&2
 			exit 5
 		}
 		echo "building the enroll CLI" >&2
