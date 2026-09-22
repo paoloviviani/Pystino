@@ -63,8 +63,11 @@ const defaultExpiresIn = 300
 
 // enrollScopes is the scope string both flows request. groups is not
 // decoration: without it the ledger bills nobody (ADR 0084) and
-// /v1/billing/groups answers empty.
-const enrollScopes = "openid profile email groups"
+// /v1/billing/groups answers empty. offline_access is the whole point of
+// the serve shim: it holds a refresh credential so opencode never sees
+// a token, and without the scope requested (and the IdP consenting) no
+// refresh token is issued — enroll fails loudly on its absence.
+const enrollScopes = "openid profile email groups offline_access"
 
 // httpClient is the one place timeouts are set: every IdP and gateway call
 // goes through here, so no flow can hang forever on a black-holed address.

@@ -322,8 +322,10 @@ $PEM_INDENTED
         # groups is what the ledger bills (without it usage lands nowhere),
         # so it is a scope here as well as a token claim; the pystino claims
         # policy below is what actually puts it in the access token /v1
-        # validates locally (ADR 0040).
-        scopes: ['openid', 'profile', 'email', 'groups']
+        # validates locally (ADR 0040). offline_access lets the device
+        # flow hand the shim its refresh credential — the shim's whole
+        # reason to exist.
+        scopes: ['openid', 'profile', 'email', 'groups', 'offline_access']
         response_types: ['code']
         grant_types: ['authorization_code', 'urn:ietf:params:oauth:grant-type:device_code']
         access_token_signed_response_alg: 'RS256'
