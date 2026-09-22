@@ -53,12 +53,13 @@ func fetchGroups(ctx context.Context, gateway, accessToken string) ([]billableGr
 }
 
 // gatewayModel is one entry of GET /v1/models: the OpenAI shape plus the
-// gateway's limit hints, which become opencode's limit block.
+// gateway's limit hints and kind, which become opencode's model entries.
 type gatewayModel struct {
 	ID              string `json:"id"`
 	DisplayName     string `json:"display_name"`
 	ContextWindow   int    `json:"context_window"`
 	MaxOutputTokens int    `json:"max_output_tokens"`
+	Kind            string `json:"kind"`
 }
 
 // fetchModels discovers the caller's catalogue for the opencode models map.

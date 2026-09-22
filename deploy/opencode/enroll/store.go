@@ -101,9 +101,13 @@ func loadCredentials(path string) (*credentials, error) {
 
 // opencodeLimit carries the gateway's context/output hints into the shape
 // opencode understands, mirroring deploy/opencode/opencode.json.template.
+// Both keys are REQUIRED by opencode's config schema for custom-provider
+// models — omit either and opencode refuses the whole file ("Missing key
+// provider.pystino.models.<id>.limit.output"), which is why the zero
+// values below are never emitted (omitempty would lie about that).
 type opencodeLimit struct {
-	Context int `json:"context,omitempty"`
-	Output  int `json:"output,omitempty"`
+	Context int `json:"context"`
+	Output  int `json:"output"`
 }
 
 // opencodeModel is one entry of the provider models map: the id is the
@@ -121,6 +125,14 @@ type opencodeProvider struct {
 	Models  map[string]opencodeModel `json:"models"`
 }
 
+// The defaults cover a gateway that publishes no hints (both are nullable
+// on the wire): a flash-class output budget and a mid-size context window
+// are safer than an omitted key, which opencode treats as a broken file.
+const (
+	defaultContextWindow   = 131072
+	defaultMaxOutputTokens = 16384
+)
+
 // opencodeConfig is the whole opencode.json this tool writes. Deliberately
 // no apiKey: opencode would send it as-is and it would expire (ADR 0040).
 // The baseURL points at the local shim, which owns the bearer instead.
@@ -132,24 +144,37 @@ type opencodeConfig struct {
 // buildOpencodeConfig renders the config around the shim address. Models
 // come from discovery; an empty discovery yields the same placeholder the
 // pasted-key installer writes, replaced once the gateway is reachable.
+// Only chat models make the list: opencode is a coding agent, and an
+// embedding tier in its model picker is one accidental keypress from a
+// 400. Unknown limits become defaults, never omissions — opencode's
+// schema rejects a model entry without both limit keys (found live).
 func buildOpencodeConfig(shimAddr string, models []gatewayModel) *opencodeConfig {
 	entries := make(map[string]opencodeModel, len(models))
 	for _, m := range models {
 		if m.ID == "" {
 			continue
 		}
+		if m.Kind != "" && m.Kind != "chat" {
+			continue
+		}
 		entry := opencodeModel{Name: m.DisplayName}
 		if entry.Name == "" {
 			entry.Name = m.ID
 		}
-		if m.ContextWindow > 0 || m.MaxOutputTokens > 0 {
-			entry.Limit = &opencodeLimit{Context: m.ContextWindow, Output: m.MaxOutputTokens}
+		context, output := m.ContextWindow, m.MaxOutputTokens
+		if context <= 0 {
+			context = defaultContextWindow
 		}
+		if output <= 0 {
+			output = defaultMaxOutputTokens
+		}
+		entry.Limit = &opencodeLimit{Context: context, Output: output}
 		entries[m.ID] = entry
 	}
 	if len(entries) == 0 {
 		entries["REPLACE-WITH-MODEL-ID"] = opencodeModel{
-			Name: "Replace with a model id from GET /v1/models",
+			Name:  "Replace with a model id from GET /v1/models",
+			Limit: &opencodeLimit{Context: defaultContextWindow, Output: defaultMaxOutputTokens},
 		}
 	}
 	return &opencodeConfig{
