@@ -16,7 +16,8 @@
 #
 #   deploy/idp/authelia-configuration.yml  the IdP: file user backend, OIDC
 #                                          provider (clients pystino-console
-#                                          + cerea, audience pystino-api),
+#                                          + cerea + opencode-enrollment,
+#                                          audience pystino-api),
 #                                          served under the /authelia prefix
 #   deploy/idp/users_database.yml          the first human
 #   deploy/idp/authelia-jwks-rsa.pem       the OIDC signing key backup
@@ -99,7 +100,11 @@ services:
     # --profile authelia (see the header); the name is the installer's
     # IDP_BUNDLED value, so the flag can be passed straight through.
     profiles: [authelia]
-    image: authelia/authelia:4.39.20
+    # At least 4.39.22: the opencode-enrollment public client uses the device
+    # authorization grant (RFC 8628), which Authelia introduced in 4.39.0 but
+    # only made reliable with the device-grant bugfixes in later 4.39.x. Do
+    # not move this pin below 4.39.22 while that client exists.
+    image: authelia/authelia:4.39.22
     restart: unless-stopped
     # No `ports:` — the fourth ground rule. A browser reaches Authelia through
     # Caddy at <origin>/authelia (the snippet below); compose peers use
