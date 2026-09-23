@@ -2,12 +2,13 @@
 
 A self-hosted model gateway: an
 OpenAI-compatible gateway with accounting, quotas and redaction, and the admin
-console for it. The chat application lives on the `chat` branch, not here.
+console for it. The chat application is its own repository (Cerea), a `/v1`
+client that imports nothing from here.
 Licence is **EUPL-1.2** for all first-party code.
 
 `CLAUDE.md` is the repo's own deep-context file — ground rules, recorded bugs, and the
-traps that only show up on the live stack. Read it before changing anything;
-`the decision record indexes every design decision. This file is the fast layer.
+traps that only show up on the live stack. Read it before changing anything.
+The decision record indexes every design decision; this file is the fast layer.
 
 ## Ground rules
 
@@ -21,9 +22,9 @@ traps that only show up on the live stack. Read it before changing anything;
 - **`.gitlab-token` / `.gh-token` at the repo root are credentials: never read,
   cat or print them.** Source one (`set -a; . .gitlab-token; set +a`) and use a
   throwaway credential helper — never argv, config or logs. They define
-  `GITLAB_TOKEN` (gitlab.linksfoundation.com — the original home and the current
-  origin, `viviani/pystino`) and `GH_TOKEN` (github.com/paoloviviani/
-  Pistin-Gateway, which held the origin 2026-08-29 → 2026-09-03).
+  `GH_TOKEN` (github.com/paoloviviani/Pystino — the current origin) and
+  `GITLAB_TOKEN` (gitlab.linksfoundation.com `viviani/pystino`, the original
+  home).
 - **The stack is loopback-only by default.** Nothing may be published on a routable
   address except through `docker-compose.proxy.yml` (Caddy TLS + rotated credentials);
   `scripts/test_public_tls_live.py` enforces that by requiring every other port to be
@@ -40,6 +41,10 @@ traps that only show up on the live stack. Read it before changing anything;
 - The gateway accepts a caller-supplied `x-request-id` and never returns the one
   it uses — a caller who wants a transcript tied to cost mints it and sends it
   (the convention the chat branch lives by; ADR 0040).
+- `deploy/opencode/` is the agent-machine side: the pasted-key `install.sh`
+  (ADR 0010), the Go enrollment CLI (`enroll` / `serve` / `pair`) and
+  `setup-agent.sh`. It imports nothing from the gateway and is documented in
+  `docs/coding-agents.md`.
 - Gateway internals that carry the weight: `routers/_metered.py`
   (resolve → reserve → record → settle), `accounting/cost.py` (the only code that
   multiplies a count by a rate), `quota/engine.py`, `access.py`, `plugins/`
@@ -52,8 +57,8 @@ traps that only show up on the live stack. Read it before changing anything;
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services   # mypy is --strict
-uv run pytest -q                                               # ~950 tests, SQLite, no services
-pnpm -r test && pnpm -r typecheck                              # packages/ui + console + web
+uv run pytest -q                                               # ~1,500 tests, SQLite, no services
+pnpm -r test && pnpm -r typecheck                              # packages/ui + apps/console
 uv run mkdocs build --strict                                   # docs site (mkdocs.yml); touches docs/ or ADRs
 ```
 

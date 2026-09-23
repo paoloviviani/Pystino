@@ -52,8 +52,8 @@ what used to share the monorepo:
 
 | Repository | What | Why it is not here |
 |---|---|---|
-| the decision record (internal) | ADRs 0001–0062, the whole-stack architecture, the roadmap and the scope of unstarted work | The series spans a gateway, a chat app, a RAG pipeline and three design languages. A numbered sequence cannot be split without renumbering, which its index forbids |
-| [pystino-chat](https://gitlab.linksfoundation.com/viviani/pystino-chat) | The chat application, a `/v1` **client** | It imports nothing from the gateway: it talks over `/v1` with a key or an OIDC bearer (ADR 0040, ADR 0046). On the day of the split its monorepo branch was 56 commits behind, and every gateway change made the merge worse |
+| the decision record (internal) | ADRs 0001–0085, the whole-stack architecture, the roadmap and the scope of unstarted work | The series spans a gateway, a chat app, a RAG pipeline and three design languages. A numbered sequence cannot be split without renumbering, which its index forbids |
+| [Cerea](https://github.com/paoloviviani/Cerea) | The chat application, a `/v1` **client** (a fork of huggingface/chat-ui) | It imports nothing from the gateway: it talks over `/v1` with a key or an OIDC bearer (ADR 0040, ADR 0046). On the day of the split its monorepo branch was 56 commits behind, and every gateway change made the merge worse |
 
 **Citing a decision:** by number, in prose — `(ADR 0032)`, never as a link.
 The record is **not public and never will be**, so a URL into it promises a
@@ -533,7 +533,7 @@ that rendered for non-administrators, a live script that passed while unable to
 reach the database, and a renderer pinned to a version the only client that
 calls it would have refused.
 
-**The chat has its own, in `pystino-chat/scripts/`** — `test_connectors_live.py`
+**The chat has its own, in the Cerea checkout's `scripts/`** — `test_connectors_live.py`
 (MCP connector OAuth, including a real discovery-and-registration round trip
 against Notion), `test_admin_panel_live.py`, `test_projects_live.py`,
 `test_nav_live.py`, `test_attachments_live.py`. Run them the same way, sourcing
@@ -573,26 +573,32 @@ the proxy overlay at <https://130.192.84.103:8443/console>; note that its
 firewall permits **8443 and 22 and nothing else**, which is why that deployment
 serves one origin with a single TLS port rather than two, and why the
 Let's Encrypt configuration cannot be used there until 80 and 443 are opened.
-Git remote is GitLab again (`viviani/pystino`, since 2026-09-03; `viviani/ai-stack`
-was the original home, and GitHub `paoloviviani/Pistin-Gateway` held the origin
-2026-08-29 → 2026-09-03); the tokens are in `.gitlab-token` and `.gh-token`
-(legacy — the GitHub remote is gone), which may be sourced but should not be
-read. Both are gitignored by name and glob.
+Git remote is GitHub, `paoloviviani/Pystino` (the same repository the earlier
+`paoloviviani/Pistin-Gateway` name pointed at, renamed; GitLab
+`viviani/ai-stack` was the original home and `viviani/pystino` held the origin
+in between). The tokens are in `.gh-token` and `.gitlab-token`, which may be
+sourced but should not be read. Both are gitignored by name and glob.
 
 ## Where the project is
 
 The gateway and its console are the substance and are done through Phase 2:
-gateway, redaction, providers, quotas, reporting, five `/v1` surfaces, the admin
-console. `the decision record records what was planned and what was added
-afterwards, including the bugs each addition surfaced.
+gateway, redaction, providers, quotas, reporting, the metered `/v1` surfaces
+(chat completions, responses, Anthropic messages, embeddings, images, OCR,
+search), the admin console. The decision record records what was planned and
+what was added afterwards, including the bugs each addition surfaced.
 
-**The chat application lives on the `chat` branch**, not here: `apps/chat-api`
-and `apps/web` were moved off main so this branch is the gateway only. The
-branch carries its own plan (Phase 3, M1-foundation state), its ADRs (0015,
-0016, 0041) and its compose overlay; ADR 0046 — the local door issuing `/v1`
-credentials — is a *gateway* feature and stays here, as does ADR 0043.
-Merge order when the chat resumes: gateway features land here first, the
-`chat` branch rebases on them.
+**The chat application is its own repository**, Cerea — not a branch here.
+`apps/chat-api` and `apps/web` were moved off main in the 2026-09-08 split, and
+the chat went with them; what is left on this side is what the chat *talks to*.
+ADR 0046 — the local door issuing `/v1` credentials — is a gateway feature and
+stays here, as does ADR 0043. Merge order is unchanged in spirit: gateway
+features land here first, and the chat follows.
+
+**The agent-machine side (`deploy/opencode/`) is this repository's**, even
+though the `/code` panel that drives it is Cerea's. The split is by trust axis:
+anything that authenticates to `/v1` is a gateway concern (the enrollment CLI,
+the refreshing shim, the IdP's `opencode-enrollment` client); the relay and the
+panel are the chat's. See `docs/coding-agents.md`.
 
 Two pieces of work with their reasoning written down rather than left to be
 rediscovered — one being built, one not started:

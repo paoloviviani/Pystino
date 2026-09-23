@@ -194,7 +194,10 @@ must register is exact: `<PUBLIC_ORIGIN>/chat/login/callback`, never a
 wildcard; Authelia compares redirect URIs as strings.
 
 Verified live against `authelia/authelia:4.39.20` (discovery fetched over
-real HTTP, subpath issuer, byte-for-byte `iss` match at the gateway):
+real HTTP, subpath issuer, byte-for-byte `iss` match at the gateway). The
+overlay now pins **4.39.22**, which is the floor for the device authorization
+grant the enrollment CLI uses — 4.39.0 introduced it and later 4.39.x fixed
+its bugs:
 
 ```json
 // .../authelia/.well-known/openid-configuration (abridged)
@@ -227,18 +230,34 @@ The redirect the gateway actually sends is
 origin per provider row. Both URIs are registered on the console client, so
 the bare default and the derived one each match exactly.
 
-### The two clients, and how they differ
+### The three clients, and how they differ
 
-Both are confidential, PKCE-S256, authorization-code only, one-factor
-(password) policy, remembered consent (one click on first login, then a
-week of silence):
+The first two are confidential, PKCE-S256, authorization-code only,
+one-factor (password) policy, remembered consent (one click on first login,
+then a week of silence). The third is the odd one out, and deliberately so:
 
-| | `pystino-console` (gateway) | `cerea` (chat) |
-|---|---|---|
-| Redirect URI | `<origin>/auth/callback/default` (+ bare `/auth/callback`) | `<origin>/chat/login/callback` |
-| Token auth | `client_secret_post` — the gateway sends the secret in the POST body, never as Basic | `client_secret_basic` — openid-client's default |
-| Scopes | `openid profile email` | `openid profile email groups` |
-| Access token | JWT (`RS256`), `aud: [pystino-api]` | JWT (`RS256`), `aud: [pystino-api]` |
+| | `pystino-console` (gateway) | `cerea` (chat) | `opencode-enrollment` (the CLI) |
+|---|---|---|---|
+| Redirect URI | `<origin>/auth/callback/default` (+ bare `/auth/callback`) | `<origin>/chat/login/callback` | `http://127.0.0.1/callback`, `http://localhost/callback` — loopback, any port (RFC 8252) |
+| Token auth | `client_secret_post` — the gateway sends the secret in the POST body, never as Basic | `client_secret_basic` — openid-client's default | `none` — **public**, no secret at all |
+| Grants | `authorization_code` | `authorization_code` | `authorization_code`, device code (RFC 8628), **`refresh_token`** |
+| Scopes | `openid profile email` | `openid profile email groups` | `openid profile email groups offline_access` |
+| Access token | JWT (`RS256`), `aud: [pystino-api]` | JWT (`RS256`), `aud: [pystino-api]` | JWT (`RS256`), `aud: [pystino-api]` |
+| Consent | remembered, one week | remembered, one week | pre-configured — the device flow's own approval at the verification URI *is* the decision, and a polling CLI could not drive a second screen |
+
+`opencode-enrollment` is public because a binary on somebody's laptop cannot
+keep a secret — hence the gh/gcloud pattern of one baked-in client id (both
+bundled IdPs use the same one, so the CLI needs no per-deployment id) with
+mandatory PKCE S256 and a loopback-only redirect, which keeps the code on the
+machine that started the flow. Two grants because the CLI runs in two shapes:
+the browser flow on a laptop, the device flow on a headless box.
+
+**`offline_access` in the scopes is not enough on its own.** The token
+endpoint issues a refresh token only to a client whose `grant_types` also
+carry `refresh_token`, and without it the device flow approves cleanly and
+the local shim then finds it has no refresh credential — found live. Both
+entries are in `deploy/idp/generate-authelia-config.sh`; see
+[Coding agents](coding-agents.md) for what the CLI does with them.
 
 The `client_secret_post` row is the one to get wrong: Authelia's default is
 Basic, and with Basic configured the gateway's exchange is rejected with a
@@ -336,7 +355,10 @@ Two generated files in `deploy/idp/` (minted locally, never committed),
 from the spec in `deploy/idp/keycloak-realm.json.template`:
 
 - `keycloak-realm.json` — the realm import: realm `pystino`, two confidential
-  clients (`pystino-console`, `pystino-chat`), an audience mapper fixing
+  clients (`pystino-console`, `pystino-chat`) plus the public
+  `opencode-enrollment` client (loopback PKCE + the device grant, the same
+  client id Authelia bakes in — see [Coding agents](coding-agents.md)), an
+  audience mapper fixing
   `aud` to `pystino-api` on both, a groups mapper naming the flat claim
   `groups`, the `research` and `platform-admins` groups, and the first human
   (`owner@example.org`, password shown once at install).

@@ -21,29 +21,36 @@ Prices are append-only and effective-dated, and a new row is written only when t
 price actually changed. Running it nightly is therefore safe and does not fill the
 table with identical rows.
 
-## `opencode_bootstrap.py` — not written yet (Phase 4)
+## `check_cortecs_catalogue_tags.py`, `check_cortecs_stream_options.py`
 
-Will run the OIDC **device authorization flow** so a CLI can get a gateway API key
-without a redirect URI:
+Read-only probes against the live Cortecs API, kept because each answers a
+question no documentation does: which catalogue tags `/v1/models` accepts
+(it defaults to `tag=Instruct`, which is how fourteen models sat unseen), and
+whether sending `stream_options` changes anything there. They spend nothing.
 
-1. `POST` to the device authorization endpoint, get a user code and verification URI
-2. open a browser to the verification URI
-3. poll the token endpoint until the user approves
-4. exchange the resulting identity for a **gateway API key** via the management API
-5. write that key plus the gateway's base URL into opencode's config
+## The live checks
 
-Groundwork already in place:
+Everything named `test_*_live.py` runs against a **running stack**, not the
+unit suite: `bill_to`, `cache_accounting`, `citations`, `console`, `providers`,
+`public_tls`, `pystino_usage`, `quota_race`, `redaction`, `reporting`,
+`surfaces`, `web_search`. They sign in with local email + password through
+`live_session.py` — deliberately, so the checks work on a deployment with no
+identity provider configured at all. See
+[Operations](../docs/operations.md#the-live-checks) for what each one covers
+and the environment they need.
 
-- `gateway/oidc.py` parses `device_authorization_endpoint` out of the discovery
-  document, so the endpoint is already available.
-- API key minting exists at `POST /api/me/keys` and returns the secret exactly once.
+`benchmark_live.py` is the same shape for performance, and reproduces every
+figure in [Measured performance](../docs/performance.md).
 
-Still to do: the gateway has **no device-flow endpoints of its own** yet. The
-management API currently authenticates browser sessions via the authorization-code
-flow only, so step 4 has nothing to call. That is the actual work of Phase 4, not
-the script.
+## The opencode bootstrap that was planned here, and where it went instead
 
-One design note to settle first: the key minted for a CLI should be pinned to a
-billing group and given an expiry, rather than inheriting the user's default
-forever. A long-lived unscoped key on a developer laptop is the credential most
-likely to leak.
+An earlier plan put a device-flow script here that would mint a **gateway API
+key** for a CLI. It was not built, and it should not be: the flow now
+authenticates against the deployment's **identity provider** rather than the
+gateway, and what it keeps is a refresh credential rather than a key — which
+is what lets spend land on the signed-in person's own account instead of a
+standing secret on a laptop (ADR 0040, ADR 0061).
+
+That work lives in `deploy/opencode/` and is documented in
+[docs/coding-agents.md](../docs/coding-agents.md). The gateway still has no
+device-flow endpoints of its own, and now needs none.

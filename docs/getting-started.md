@@ -90,7 +90,7 @@ login happened on, so `localhost:8000` on both ends is what keeps it.
 
 ```bash
 uv sync
-uv run pytest -q                  # ~950 tests, SQLite, no services, no network
+uv run pytest -q                  # ~1,500 tests, SQLite, no services, no network
 uv run ruff check .
 uv run mypy apps/gateway/src services   # mypy is --strict
 ```

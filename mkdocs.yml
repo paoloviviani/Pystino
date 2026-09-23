@@ -10,9 +10,9 @@ site_name: Pystino
 site_description: >
   A self-hosted model gateway: OpenAI-compatible, with per-user and
   per-group accounting, quotas and redaction, and the console that operates it.
-repo_url: https://github.com/paoloviviani/Pistin-Gateway
-repo_name: paoloviviani/Pistin-Gateway
-copyright: Copyright &copy; LINKS Foundation — <a href="https://github.com/paoloviviani/Pistin-Gateway/blob/main/LICENCE">EUPL-1.2</a>
+repo_url: https://github.com/paoloviviani/Pystino
+repo_name: paoloviviani/Pystino
+copyright: Copyright &copy; LINKS Foundation — <a href="https://github.com/paoloviviani/Pystino/blob/main/LICENCE">EUPL-1.2</a>
 
 strict: true
 
@@ -74,6 +74,7 @@ nav:
   - Accounting and quotas: accounting-and-quotas.md
   - Redaction: redaction.md
   - Deployment: deployment.md
+  - Coding agents: coding-agents.md
   - Operations:
       - operations.md
       - "Measured performance": performance.md
@@ -85,6 +86,11 @@ nav:
       - "Redaction scoping — design": redaction-scoping-design.md
       - "Redaction scoping — plan": redaction-scoping-plan.md
       - "Web search — priced, then the rest": web-search-plan.md
+  # Dated records, kept as written. Listed because `--strict` fails the build
+  # over a page the nav omits, and an unreachable page is the same lie as a
+  # broken link — quieter.
+  - History:
+      - "Handoff, 2026-09-11": handoff-2026-09-11.md
   # No decisions page. The record is internal, so an index of links into it
   # would be a list of URLs nobody reading these docs can open. Code and
   # comments cite by number instead.
