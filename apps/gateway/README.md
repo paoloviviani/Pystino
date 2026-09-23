@@ -3,49 +3,30 @@
 OpenAI-compatible API gateway with per-user and per-group accounting, quotas,
 per-group model availability and a pluggable redaction layer.
 
-## Surfaces
+The reader-facing reference is [docs/gateway.md](../../docs/gateway.md): every
+surface, the two authentication schemes, and the streaming traps with the file
+that handles each. This file is the package's own README — what it is made of,
+how to run it, and what it does not do.
 
-| Path | Auth | Purpose |
-|---|---|---|
-| `POST /v1/chat/completions` | API key | Proxy to the configured upstream, streaming and not |
-| `POST /v1/embeddings` | API key | Embeddings, metered and redacted like a completion |
-| `POST /v1/responses` | API key | OpenAI's Responses API, streaming and not. Server-side conversation state is refused |
-| `POST /v1/messages` | API key | Anthropic's Messages API, streaming and not, over the same chat models |
-| `POST /v1/images/generations` | API key | Image generation, billed per picture or per token depending on the model |
-| `GET /v1/models` | API key | Models the caller may use, by group or personal grant |
-| `GET /auth/login`, `/auth/callback` | — | OIDC authorization-code login |
-| `/.well-known/openid-configuration`, `/oauth/*` | — | The house IdP (ADR 0068): discovery, authorization-code + PKCE, token, JWKS, userinfo, end_session. Only registered first-party clients; off unless `GATEWAY_IDP__ENABLED` — [docs/idp.md](../docs/idp.md) |
-| `GET /api/me` | session cookie | Identity, groups, default billing group |
-| `PUT /api/me/default-billing-group` | session cookie | Users change their own billing group |
-| `GET|POST|DELETE /api/me/keys` | session cookie | Mint and revoke API keys |
-| `GET /api/me/usage` | session cookie | Own spend over a rolling window |
-| `GET /api/me/reports/usage[.csv]` | session cookie | Own spend over a calendar period, by model, day, group or key |
-| `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, limits, users, usage |
-| `GET /api/admin/models/discover` | session cookie + `is_admin` | What the provider offers that we do not carry, and drift the other way |
-| `POST /api/admin/models/import` | session cookie + `is_admin` | Adopt named upstream models with their published prices |
-| `GET /api/admin/reports/usage[.csv]` | session cookie + `is_admin` | Chargeback reporting for a calendar period, `group_by` group/user/model/api_key/day/total |
-| `POST /api/admin/limits/{id}/reset` | session cookie + `is_admin` | Set a quota's consumption to zero (reason required); leaves billing untouched |
-| `GET /healthz`, `/readyz` | — | Liveness (no dependencies) and readiness |
+**ADRs are cited by number and never linked.** The decision record is internal;
+a URL into it promises a source the reader cannot open and advertises a private
+repository's address.
 
-`GET /v1/models` reports each model's `kind`, `context_window`,
-`input_modalities`, `output_modalities` and `supported_features`, so a client
-can pick a model that does tool calling or reads images without taking a 400 to
-find out. Non-standard fields, which OpenAI clients ignore
-([ADR 0031](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0031-model-capabilities.md)).
+## What it serves
 
-Every management listing answers with `{items, total, limit, offset}` and takes
-`?limit=&offset=` (ceiling 200; out of range is a 400, not a clamp). Users,
-models and groups also take `?q=` for a case-insensitive substring search.
-Reports are aggregations, not listings, and return every row they summed.
-([ADR 0029](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0029-pagination.md))
-
-There is **no HTML admin panel**. `/docs` is the operator console — Swagger, generated
-from the same schemas the endpoints validate against. Sign in at `/auth/login` first, so
-the session cookie travels with the requests. See
-[ADR 0022](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0022-administration-surface.md).
-
-Two authentication schemes on purpose: `/v1` is for programs and uses revocable
-API keys that carry a billing group; `/api` is for humans and uses OIDC.
+- `/v1` — the metered surfaces (chat completions, responses, Anthropic
+  messages, embeddings, image generation, OCR, web search), plus models, files,
+  vector stores, billing groups and `pystino/usage`. One dependency
+  authenticates all of them and takes either an API key or an OIDC access
+  token (ADR 0040).
+- `/api/me` and `/api/admin` — the management API, session cookie only.
+  `/docs` is the generated Swagger over the same schemas; the human surface is
+  the React console at `/console` (ADR 0022, ADR 0023).
+- `/oauth/*` and `/.well-known/openid-configuration` — the house IdP
+  (ADR 0068), registered first-party clients only, off unless
+  `GATEWAY_IDP__ENABLED`. See [docs/idp.md](../../docs/idp.md).
+- `/healthz`, `/readyz` — liveness with no dependencies, readiness with one DB
+  round trip.
 
 ## Layout
 
@@ -56,17 +37,21 @@ src/gateway/
   pagination.py     the listing envelope, its bounds and the count query
   protocols.py      per API surface: where usage, the served model and the
                     assistant text live in a response frame
-  routers/_metered.py  resolve, reserve, record, settle — shared by all five
-                    /v1 routes so the ordering cannot drift between them
   types.py          Money (Numeric, never float) and UTC-safe datetimes
   security.py       API key generation, SHA-256 hashing, verification
   oidc.py           discovery, PKCE, ID token validation, group claim mapping
+  idp.py            the house issuer: codes, tokens, JWKS, userinfo
+  access.py         who may reach which model, by group or personal grant
   upstream.py       the provider client, with read timeout deliberately None
   sse/              event-boundary parsing and the transform pipeline
   accounting/       token counts, cost, and the ledger writer
   quota/            rolling windows, counter stores, reserve-then-settle
-  redaction/        the interface, the buffering rewriter, and the no-op engine
-  routers/          HTTP endpoints: /v1, /auth, /api/me (me.py), /api/admin (admin.py)
+  redaction/        the interface, the buffering rewriter, the resolver
+  plugins/          provider and search-backend plugins: facts about a
+                    counterparty, never arithmetic (ADR 0032)
+  routers/          HTTP endpoints, with _metered.py the shared
+                    resolve → reserve → record → settle path every metered
+                    /v1 route goes through so the ordering cannot drift
 ```
 
 ## Running
@@ -84,15 +69,19 @@ Or `docker compose -f deploy/compose/docker-compose.yml up` for the whole stack.
 ## Testing
 
 ```bash
-uv run pytest                  # 343 tests, no services needed
+uv run pytest                  # ~1,500 tests, SQLite, no services needed
 ../../scripts/smoke_test.sh    # end-to-end over real HTTP, no Docker
-../../scripts/test_oidc_flow.py  # full OIDC login against Keycloak (needs the stack up)
 ```
 
-Tests run against SQLite by default so they need no services. Money arithmetic is
-tested as pure `Decimal` functions, because SQLite cannot store `Numeric`
+Tests run against SQLite by default so they need no services. Money arithmetic
+is tested as pure `Decimal` functions, because SQLite cannot store `Numeric`
 natively; the schema itself is exercised against PostgreSQL by the migration in
 CI and by `docker compose`.
+
+Anything touching the request path, money or SQL also wants the live checks in
+`scripts/` against a running stack — see
+[docs/operations.md](../../docs/operations.md#the-live-checks). More than half
+the serious bugs in this project's history were only findable there.
 
 ## Things that are easy to get wrong, and where they are handled
 
@@ -116,65 +105,60 @@ CI and by `docker compose`.
 
 Stated plainly, so none of these is a surprise later.
 
-**Not tested, and needs verifying against the real thing**
+**Needs verifying against the real thing**
 
-- **OIDC against providers other than Keycloak.** The full redirect flow is now verified
-  end to end against Keycloak 26.7 (`scripts/test_oidc_flow.py`), but Entra ID, Google and
-  others differ in exactly the places ADR 0011 makes configurable: where groups live,
-  whether they appear in the ID token at all, how they are named. Re-run the same checks
-  against the real provider before going live.
-  ([ADR 0011](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0011-oidc-integration.md))
-- **Load behaviour.** Nothing here has been run under concurrency at the few-hundred
-  simultaneous streams the design argues about. The arithmetic in
-  [ADR 0004](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0004-gateway-runtime.md) says Python is not the constraint;
-  that is reasoning, not a measurement. Profile before scaling.
-- **The Cortecs catalogue envelope.** The pricing *fields* were verified against the
-  documentation; the JSON shape wrapping the model list was not seen live. The parser
-  accepts several plausible shapes and reports what it cannot read.
-  ([ADR 0014](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0014-model-catalogue-and-pricing.md))
-
-**Verified against a real running stack**
-
-`docker compose up` was built and run: PostgreSQL 18, Valkey, Keycloak, migrations and the
-gateway all healthy, real requests served, quotas enforced, the database fallback confirmed
-by stopping Valkey mid-workload, and the **full OIDC login flow** driven against a real
-identity provider — including a session minting an API key that then served a billed
-completion. See ADRs [0005](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0005-persistence.md),
-[0006](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0006-counter-store.md) and
-[0011](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0011-oidc-integration.md) for what was checked and the problems it
-found.
+- **OIDC against providers other than Keycloak and Authelia.** The full
+  redirect flow is verified end to end against Keycloak 26.7 and Authelia
+  4.39.22 — the two versions the bundled overlays pin — but Entra ID, Google
+  and others differ in exactly the places ADR 0011 makes configurable: where
+  groups live, whether they appear in the ID token at all, how they are named.
+  Re-run the same checks against the real provider before going live; the
+  checklist is in [docs/oidc-generic-provider.md](../../docs/oidc-generic-provider.md).
+- **Load behaviour beyond one small box.** The measured numbers in
+  [docs/performance.md](../../docs/performance.md) cover a 2-core and a 5-core
+  host with everything co-resident. The arithmetic in ADR 0004 says Python is
+  not the constraint; profile before scaling.
+- **The Cortecs catalogue envelope.** The pricing *fields* were verified against
+  the documentation; the JSON shape wrapping the model list was not seen live.
+  The parser accepts several plausible shapes and reports what it cannot read
+  (ADR 0014).
 
 **Deliberately not implemented**
 
-- Device authorization flow endpoints, which the `opencode` bootstrap needs. See
-  `scripts/README.md`.
-- Reranking. The embedding half of [ADR 0020](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0020-embeddings-and-reranking.md)
-  is now served; `/v1/rerank` is not, and has no OpenAI-compatible shape to copy.
-- Image editing and variations (`/v1/images/edits`, `/v1/images/variations`). They
-  take multipart uploads, which the redaction layer has no story for.
-  ([ADR 0030](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0030-more-surfaces.md))
-- Server-side conversation state on `/v1/responses`. `previous_response_id` and
-  `store` are refused: a stored prefix is billed on every follow-up and this
+- **Device authorization endpoints of the gateway's own.** The coding-agent
+  enrollment that would have needed them authenticates against the deployment's
+  identity provider instead, and keeps a refresh credential rather than a
+  minted key (ADR 0040, ADR 0061) — see
+  [docs/coding-agents.md](../../docs/coding-agents.md). Nothing is waiting on
+  this.
+- **Reranking.** The embedding half of ADR 0020 is served; `/v1/rerank` is not,
+  and has no OpenAI-compatible shape to copy.
+- **Image editing and variations** (`/v1/images/edits`,
+  `/v1/images/variations`). They take multipart uploads, which the redaction
+  layer has no story for (ADR 0030).
+- **Server-side conversation state on `/v1/responses`.** `previous_response_id`
+  and `store` are refused: a stored prefix is billed on every follow-up and this
   gateway would have no record of what it contained.
-- Retrying an upstream request without `stream_options` when a provider rejects unknown
-  parameters. A provider that does gets a plugin whose `prepare_payload` never adds it,
-  which costs nothing at request time.
-  ([ADR 0028](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0028-embeddings-and-served-model.md),
-  [ADR 0032](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0032-provider-plugins.md))
-- A hard mid-stream quota ceiling via `max_tokens` clamping. The chosen policy admits the
-  request that crosses the limit. ([ADR 0009](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0009-quota-model.md))
+- **Retrying an upstream request without `stream_options`** when a provider
+  rejects unknown parameters. A provider that does gets a plugin whose
+  `prepare_payload` never adds it, which costs nothing at request time
+  (ADR 0028, ADR 0032).
+- **A hard mid-stream quota ceiling via `max_tokens` clamping.** The chosen
+  policy admits the request that crosses the limit (ADR 0009).
 
 **Known operational sharp edges**
 
-- **GDPR erasure is incomplete.** Identity foreign keys use `ON DELETE SET NULL` so the
-  financial ledger survives deleting a user — but `assistant_text` may itself contain
-  personal data and is *not* cleared by that. An erasure procedure has to blank it
-  explicitly, and no such procedure exists yet.
-- **The redaction HMAC key must be backed up with the transcripts it labelled.** Losing or
-  rotating it breaks cross-turn placeholder consistency for existing conversations.
-- **Counters rebuild from the ledger only at startup.** If Valkey is wiped while the
-  gateway keeps running, the cache reports zero and quotas are briefly too permissive until
-  the gateway restarts. An empty cache is not a failed read, so nothing detects it at
-  runtime. Restart the gateway after any cache loss.
-  ([ADR 0006](https://gitlab.linksfoundation.com/viviani/ai-stack/-/blob/main/docs/adr/0006-counter-store.md))
-- Rules are loaded per request. Cacheable if it ever shows up in a profile.
+- **GDPR erasure is incomplete.** Identity foreign keys use `ON DELETE SET NULL`
+  so the financial ledger survives deleting a user — but `assistant_text` may
+  itself contain personal data and is *not* cleared by that. An erasure
+  procedure has to blank it explicitly, and no such procedure exists yet.
+- **The redaction HMAC key must be backed up with the transcripts it labelled.**
+  Losing or rotating it breaks cross-turn placeholder consistency for existing
+  conversations.
+- **Counters rebuild from the ledger only at startup.** If Valkey is wiped while
+  the gateway keeps running, the cache reports zero and quotas are briefly too
+  permissive until the gateway restarts. An empty cache is not a failed read, so
+  nothing detects it at runtime. Restart the gateway after any cache loss
+  (ADR 0006).
+- **Redaction rules are loaded per request.** Cacheable if it ever shows up in a
+  profile.
