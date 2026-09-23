@@ -8,16 +8,18 @@ every decision behind it is the ADR index.
 
 | Path | Auth | Purpose |
 |---|---|---|
-| `POST /v1/chat/completions` | API key | Proxy to the configured upstream, streaming and not |
-| `POST /v1/responses` | API key | OpenAI's Responses API. Server-side conversation state (`previous_response_id`, `store`) is refused |
-| `POST /v1/messages` | API key | Anthropic's Messages API, over the same chat models |
-| `POST /v1/embeddings` | API key | Embeddings, metered and redacted like a completion |
-| `POST /v1/images/generations` | API key | Image generation, billed per picture or per token depending on the model |
-| `POST /v1/ocr` | API key | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor (ADR 0055) |
-| `GET /v1/models` | API key | Models the caller may use, by group or personal grant, with capabilities |
-| `GET /v1/billing/groups` | API key or bearer | Which groups this caller may bill, and which one paid for this request (ADR 0061) |
-| `/v1/files` | API key or bearer | Upload, list, download and delete the only content this gateway stores (ADR 0062) |
-| `/v1/vector_stores` | API key or bearer | Knowledge bases: documents in, passages out, and who they are shared with (ADR 0062) |
+| `POST /v1/chat/completions` | key or bearer | Proxy to the configured upstream, streaming and not |
+| `POST /v1/responses` | key or bearer | OpenAI's Responses API. Server-side conversation state (`previous_response_id`, `store`) is refused |
+| `POST /v1/messages` | key or bearer | Anthropic's Messages API, over the same chat models |
+| `POST /v1/embeddings` | key or bearer | Embeddings, metered and redacted like a completion |
+| `POST /v1/images/generations` | key or bearer | Image generation, billed per picture or per token depending on the model |
+| `POST /v1/ocr` | key or bearer | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor (ADR 0055) |
+| `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina), metered per call (ADR 0058). `POST /v1/search/{backend}` names one explicitly |
+| `GET /v1/models` | key, bearer or none | Models the caller may use, by group or personal grant, with capabilities |
+| `GET /v1/pystino/usage` | key or bearer | This caller's own spend, for a client that wants to show it without a console session |
+| `GET /v1/billing/groups` | key or bearer | Which groups this caller may bill, and which one paid for this request (ADR 0061) |
+| `/v1/files` | key or bearer | Upload, list, download and delete the only content this gateway stores (ADR 0062) |
+| `/v1/vector_stores` | key or bearer | Knowledge bases: documents in, passages out, and who they are shared with (ADR 0062) |
 | `GET /auth/login`, `/auth/callback` | — | OIDC authorization-code login (PKCE) |
 | `/api/me/*` | session cookie | Identity, billing group, API keys, own usage and reports |
 | `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, reports |
@@ -25,6 +27,8 @@ every decision behind it is the ADR index.
 
 Every metered `/v1` route shares one metering path — `routers/_metered.py` — so
 resolve → reserve → record → settle cannot drift between surfaces (ADR 0030).
+Seven routers import it today: chat, responses, messages, embeddings, images,
+ocr and search.
 Since ADR 0062 that path is also what **knowledge-base ingestion** bills
 through, which is why `_metered.begin` takes `fx` and `session_factory` rather
 than a `Request`: a background task has no request, and a second copy of the
@@ -35,12 +39,22 @@ Two things this table used to get wrong, corrected here rather than quietly:
 never existed — a user's own redaction policy is a scoped rule set by an
 administrator (ADR 0038), not something a user can weaken.
 
-**Authentication differs across `/v1`.** Every route accepts an API key. Only
-some accept an OIDC access token, and none of `/api` does — it reads a session
-cookie and nothing else. That asymmetry is why `/v1/billing/groups`,
-`/v1/files` and `/v1/vector_stores` are on `/v1` at all: a chat client holding a
-bearer token cannot reach a management route, so anything it needs has to live
-where it can be reached.
+**`/v1` and `/api` differ, and that is the whole asymmetry.** One dependency
+(`deps.get_principal`) authenticates every `/v1` route, and it takes either
+credential: a JWT in the `Authorization` header is verified against the issuer
+that minted it (ADR 0040), anything else is looked up as an API key — so
+"accepts a key" and "accepts a bearer" are the same list, not two. `/api`
+accepts neither; it reads a session cookie and nothing else. That is why
+`/v1/billing/groups`, `/v1/files` and `/v1/vector_stores` are on `/v1` at all:
+a chat client holding a bearer token cannot reach a management route, so
+anything it needs has to live where it can be reached.
+
+The one credential-shaped distinction that survives is `x-bill-to` (ADR 0061):
+a bearer caller may name the group to bill, an *issued* key may not — it
+already carries its answer, and quietly overriding it is how somebody finds
+out from an invoice. `GET /v1/models` is the other exception, in the opposite
+direction: it answers unauthenticated too, brochure-level fields only, so a
+client can build a catalogue before anyone has signed in (ADR 0081).
 
 `GET /v1/models` reports each model's `kind`, `context_window`,
 `max_input_tokens`, `max_output_tokens`, `input_modalities`,
@@ -74,8 +88,13 @@ ADR 0043).
 - **API keys** are `gwk_...` secrets, shown once, stored as SHA-256 hashes —
   a slow KDF would buy nothing on 256 bits of entropy, but revocation must be
   instant (ADR 0010).
-- **OIDC** works against any provider; there is no bundled identity provider
-  (ADR 0044). Discovery is read once at
+- **OIDC** works against any provider. The gateway itself still ships none —
+  ADR 0044 stands — but a deployment need not go find one: the installer can
+  bring up Authelia or Keycloak beside the gateway on the origin already
+  published (ADR 0084), and the gateway can act as a minimal issuer for its
+  own first-party clients (ADR 0068, [the house IdP](idp.md)). All three are
+  the same `GATEWAY_OIDC__*` configuration from the gateway's side.
+  Discovery is read once at
   startup, so changing any `GATEWAY_OIDC__*` value needs a restart. Users are
   keyed on `(issuer, subject)`: changing the issuer re-provisions every user as
   a new row with no memberships at their next login.
@@ -90,8 +109,10 @@ A provider record holds credentials (encrypted at rest,
 ADR 0027) and a **plugin** that carries its
 vendor knowledge: which header names it wants, what unit it reports cost in,
 whether it is a provider or a router (ADR 0032).
-In-tree plugins cover the generic OpenAI-compatible case, Anthropic and
-Cortecs; more can install via the `llmp.providers` entry point.
+In-tree plugins cover the generic OpenAI-compatible case (`generic`), OpenAI,
+Anthropic, Mistral, Nebius, OpenRouter, Cortecs and Tensorix, this
+deployment's own extractor, and the search backends DuckDuckGo, Exa, Jina and
+Linkup. More can install via the `llmp.providers` entry point.
 
 Two consequences worth knowing:
 
@@ -127,8 +148,8 @@ src/gateway/
   pagination.py     the listing envelope, its bounds and the count query
   protocols.py      per API surface: where usage, the served model and the
                     assistant text live in a response frame
-  routers/_metered.py  resolve, reserve, record, settle — shared by all five
-                    /v1 routes so the ordering cannot drift between them
+  routers/_metered.py  resolve, reserve, record, settle — shared by every
+                    metered /v1 route so the ordering cannot drift between them
   types.py          Money (Numeric, never float) and UTC-safe datetimes
   security.py       API key generation, SHA-256 hashing, verification
   oidc.py           discovery, PKCE, ID token validation, group claim mapping
@@ -145,8 +166,8 @@ src/gateway/
 
 Stated plainly, so none of them is a surprise later.
 
-- **OIDC is only fully verified against Keycloak 26.7** (`scripts/test_oidc_flow.py`,
-  since removed from the stack). Entra ID, Google and others differ in exactly
+- **OIDC is fully verified against Keycloak 26.7 and Authelia 4.39.22**, the
+  two versions the bundled overlays pin. Entra ID, Google and others differ in exactly
   the places ADR 0011 makes configurable — where
   groups live, whether they appear in the ID token at all, how they are named.
   Test any new provider against your instance before relying on it; see the
