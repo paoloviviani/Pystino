@@ -238,6 +238,19 @@ services:
         # so setting it there would silently do nothing.
         CHAT_MEMORY_ENABLED=${CHAT_MEMORY_ENABLED-true}
 
+        # The /code remote-agent panel (ADR 0085): a full-screen surface where
+        # the signed-in person drives an opencode agent on their own machine,
+        # reached through the paseo-relay this deployment runs (the relay
+        # overlay beside the chat that carries it: $CHAT_REPO/deploy/compose/
+        # docker-compose.code-relay.yml). Off unless "true": unlike the
+        # flags above there is no degraded mode to fall back to — the panel
+        # without a relay is a form that cannot reach anything, so the sidebar
+        # row hides and the route answers 404. `CODE_RELAY_URL` is the
+        # rendezvous Cerea dials per paired device (host:port; empty means
+        # nothing dials, and no flag should turn on without it).
+        CODE_AGENTS_ENABLED=${CODE_AGENTS_ENABLED-}
+        CODE_RELAY_URL=${CODE_RELAY_URL-}
+
         # Per-model overrides (JSON array, matched by id or name): the chat's
         # own .env documents this as MODELS, and the flags that matter here —
         # supportsArtifacts above all — are opt-in per model, so without this

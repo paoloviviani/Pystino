@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "pystino": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Pystino Gateway",
+      "options": {
+        "baseURL": "__BASE_URL__",
+        "apiKey": "__API_KEY__"
+      },
+      "models": "__MODELS__"
+    }
+  }
+}
