@@ -114,8 +114,17 @@ func runDeviceFlowWithHooks(ctx context.Context, doc *discovery, clientID string
 	interval := time.Duration(authz.Interval) * time.Second
 	deadline := hooks.now().Add(time.Duration(authz.ExpiresIn) * time.Second)
 
+	// The complete URL carries the code as a query parameter, so one paste
+	// does what open-plus-type does (Keycloak and Authelia both issue it —
+	// the IdP that omits it gets the legacy two-line form below). The code
+	// stays printed as its own line: a wrapped URL still pastes broken,
+	// and a typed code never does.
+	openURL := authz.VerificationURIComplete
+	if openURL == "" {
+		openURL = authz.VerificationURI
+	}
 	fmt.Fprintf(os.Stderr, "sign in with the device code flow:\n  open:  %s\n  enter: %s\n",
-		authz.VerificationURI, authz.UserCode)
+		openURL, authz.UserCode)
 	if hasDisplay() {
 		if authz.VerificationURIComplete != "" {
 			openBrowser(authz.VerificationURIComplete)
