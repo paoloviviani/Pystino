@@ -64,6 +64,40 @@ The default shim port is **41871**, bumped upward while occupied and then
 recorded in the config, so `enroll`'s own loopback callback listener and the
 shim never collide.
 
+### When the refresh token dies
+
+A gateway or IdP redeploy can revoke the refresh token `serve` holds. That is
+expected and recoverable — re-enroll the machine — but the failure has to be
+fast and legible, not a 502 that opencode's client quietly retries into a
+long hang. Three things make that true:
+
+- **A 401, not a 502, once the refusal is permanent.** The token endpoint's
+  `invalid_grant` (RFC 6749 §5.2) is the one code that specifically means
+  "this refresh token is invalid, expired, or revoked" — nothing a retry
+  fixes. The shim answers those with `401` and an OpenAI-shaped body
+  (`{"error":{"message","type","code":"enrollment_expired"}}`), which the
+  opencode client (built on the Vercel AI SDK) never retries — its
+  `isRetryable` is `statusCode in {408,409,429}` or `>= 500`, so 401 stops it
+  cold and surfaces the message verbatim instead of exhausting a retry
+  budget first. A transient refusal (a network error, a 5xx, any other OAuth
+  error code) still answers the old `502`, which opencode does retry.
+- **Refreshed proactively, not just on request.** `serve` refreshes once at
+  startup and then every 15 minutes, well inside the access-token lifespan
+  (see the `agent_machine` lifespan below), so the credential's state is
+  already known before opencode ever sends a request. Once a refresh comes
+  back `invalid_grant` the loop stops — nothing left to check until a human
+  re-enrolls and restarts `serve` — and every request after that is answered
+  from the cached verdict with no further IdP round trip.
+- **A status file and a health endpoint, kept in sync.** Every state change
+  (`ok` / `expired` / `unreachable`) is written atomically to
+  `<creds-dir>/pystino-status.json` (next to
+  `pystino-credentials.json`) as `{"state","checkedAt","message"}`, and the
+  same JSON is served at `GET http://127.0.0.1:<port>/pystino/health`. The
+  file exists for a reader with no loopback access — Cerea, through the
+  paseo daemon — and the endpoint for one that has it; both always agree,
+  because the endpoint reads the same in-memory status the file was last
+  written from.
+
 ### `enroll enroll`
 
 ```
@@ -168,6 +202,24 @@ The `groups` scope matters here for the same reason it matters for the chat:
 `/v1` access tokens are validated locally with no userinfo round trip, so a
 claim that is not in the token is not seen, and the enrollment would bill to
 no group (ADR 0061).
+
+### An agent machine needs a longer-lived refresh token than a browser does
+
+A browser session logs out; an agent machine sits idle over a weekend and is
+expected to still work on Monday. The two bundled IdPs' platform defaults are
+sized for the browser case, not this one:
+
+- **Authelia's** default `refresh_token` lifespan is 90 minutes —
+  `deploy/idp/generate-authelia-config.sh` defines a custom lifespan profile,
+  `agent_machine` (`access_token: 1h`, `refresh_token: 90d`), and assigns it
+  to the `opencode-enrollment` client only; the console and chat clients keep
+  the platform default, since their sessions really are browser-length.
+- **Keycloak's** realm-level offline-session idle timeout (what actually
+  governs an `offline_access` refresh token's lifetime) is left unset in
+  `deploy/idp/keycloak-realm.json.template`, which means Keycloak's own
+  default applies: **30 days**. That is already long enough for this use
+  case, so there is nothing to override — noted here so the absence reads as
+  a decision, not an oversight.
 
 ## `setup-agent.sh`
 

@@ -243,6 +243,18 @@ $PEM_INDENTED
         # token or group billing silently sees nobody.
         id_token: ['groups', 'email', 'email_verified', 'preferred_username', 'name']
         access_token: ['groups', 'email', 'email_verified', 'preferred_username', 'name']
+    lifespans:
+      custom:
+        # Authelia's built-in default refresh_token lifespan is 90 minutes
+        # (fine for a browser session, fatal for an agent machine that goes
+        # idle over a weekend: the shim finds a dead refresh token on Monday
+        # with no user watching to notice). opencode-enrollment opts into
+        # this profile below instead of narrowing the default, so the
+        # console and chat clients (short-lived browser sessions) are
+        # unaffected.
+        agent_machine:
+          access_token: '1h'
+          refresh_token: '90d'
     clients:
       # The gateway console. client_secret_post (not basic): the gateway
       # sends the secret in the token POST body (oidc.py exchange_code),
@@ -344,6 +356,11 @@ $PEM_INDENTED
         # verification URI is the user's decision, so no second consent
         # screen the polling CLI could not drive anyway.
         consent_mode: 'pre-configured'
+        # The agent_machine lifespan profile (defined above): a 90-day
+        # refresh token so a machine left idle over a weekend still has a
+        # live credential Monday, instead of the 90-minute platform default
+        # dying the first time nobody is at the keyboard.
+        lifespan: 'agent_machine'
 EOF
 
 cat >"$USERS" <<EOF

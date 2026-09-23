@@ -50,6 +50,38 @@ func oauthErrorFromBody(label string, body []byte, status int) error {
 	return fmt.Errorf("%s answered HTTP %d", label, status)
 }
 
+// permanent reports whether this refusal is the token endpoint's final word
+// on the grant, not a passing condition. invalid_grant (RFC 6749 §5.2) is
+// the one code specifically defined for "the provided authorization grant
+// ... is invalid, expired, revoked" — whether the refresh token died from
+// idle timeout, an IdP redeploy, or the enrollment being deleted server
+// side, no retry changes the answer. Every other code (server_error,
+// temporarily_unavailable, a 5xx dressed up as an OAuth body) is worth
+// retrying.
+func (e *oauth2Error) permanent() bool {
+	return e.Code == "invalid_grant"
+}
+
+// permanentRefreshError is what a refresh becomes once the token endpoint
+// has given its final word: the shim must stop pretending a retry could
+// help and tell the human what to do instead.
+//
+// Cerea classifies gateway errors by matching
+// /invalid_grant|enrollment (?:has )?expired|enrollment (?:was )?revoked/i
+// against the message text — keep the invalid_grant token and the
+// "expired or was revoked" wording if this message ever changes.
+type permanentRefreshError struct {
+	code string
+}
+
+func (e *permanentRefreshError) Error() string {
+	return fmt.Sprintf(
+		"This machine's sign-in to the gateway expired or was revoked (%s). "+
+			"Re-enroll it: re-run setup-agent.sh (or 'pystino-enroll enroll') on this machine.",
+		e.code,
+	)
+}
+
 // tokenSet is one successful token response, both flows alike. expiresIn
 // arrives in seconds; an IdP that omits it gets the conservative default so
 // the shim refreshes early rather than serving a dead token.
