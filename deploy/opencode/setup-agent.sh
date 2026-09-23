@@ -62,7 +62,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENROLL_DIR="$SCRIPT_DIR/enroll"
+# TODO(thin-agent): this whole script predates the thin machine agent
+# (deploy/agent/PROTOCOL.md) and still drives the paseo daemon; a later task
+# rewrites it around `pystino-agent run`. Only the enroll/serve references
+# below were updated to the module's new name and location.
+ENROLL_DIR="$SCRIPT_DIR/../agent"
 PASEO_HOME="${PASEO_HOME:-$HOME/.paseo}"
 PASEO_CONFIG="$PASEO_HOME/config.json"
 OPENCODE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
@@ -274,9 +278,9 @@ else
 	# the script skipped the build whenever a binary merely existed, so a
 	# box kept running last month's CLI — missing flags, missing model
 	# gating — with every run printing success. The module's own
-	# .gitignore names the artifact pystino-enroll — build with that name
+	# .gitignore names the artifact pystino-agent — build with that name
 	# so `go build ./...` and this script agree on one.
-	ENROLL_BIN="$ENROLL_DIR/pystino-enroll"
+	ENROLL_BIN="$ENROLL_DIR/pystino-agent"
 	NEED_BUILD=0
 	if [ ! -x "$ENROLL_BIN" ]; then
 		NEED_BUILD=1
@@ -298,7 +302,7 @@ else
 			exit 5
 		}
 		echo "building the enroll CLI" >&2
-		(cd "$ENROLL_DIR" && go build -o pystino-enroll .)
+		(cd "$ENROLL_DIR" && go build -o pystino-agent .)
 	fi
 
 	# A shim from a previous run owns the default port with the previous
@@ -306,9 +310,9 @@ else
 	# that no shim serves while opencode.json points at it (found live:
 	# 41872 written, nothing listening). The shim is this script's
 	# artifact, so retire it before enrollment and start a fresh one after.
-	if pgrep -f "pystino-enroll serve" >/dev/null 2>&1; then
+	if pgrep -f "pystino-agent serve" >/dev/null 2>&1; then
 		echo "stopping the previous enroll serve shim (it holds stale credentials)" >&2
-		pkill -f "pystino-enroll serve" || true
+		pkill -f "pystino-agent serve" || true
 		sleep 1
 	fi
 
@@ -330,13 +334,13 @@ else
 	# hold. nohup + disown: it must outlive this script, and the machine's
 	# process supervisor is out of scope here (a systemd unit belongs to
 	# the operator's packaging, not this setup).
-	if pgrep -f "pystino-enroll serve" >/dev/null 2>&1; then
+	if pgrep -f "pystino-agent serve" >/dev/null 2>&1; then
 		echo "an 'enroll serve' is already running — leaving it" >&2
 	else
 		nohup "$ENROLL_BIN" serve >/tmp/enroll-serve.log 2>&1 &
 		disown
 		sleep 1
-		pgrep -f "pystino-enroll serve" >/dev/null || {
+		pgrep -f "pystino-agent serve" >/dev/null || {
 			echo "error: the shim failed to start (see /tmp/enroll-serve.log)" >&2
 			exit 6
 		}
@@ -393,19 +397,12 @@ if [ "$SKIP_LLM" -eq 1 ]; then
 	exit 0
 fi
 
+# TODO(thin-agent): `pystino-agent pair` is gone — pairing is now `pystino-agent
+# run` dialing out to Cerea over WSS and the browser confirming it in the
+# /code panel (deploy/agent/PROTOCOL.md §4). The rewrite of this script picks
+# the machine name and starts `run` here; until then, do it by hand.
 echo
-echo "=== pairing this machine into the chat's /code panel ===" >&2
-PAIR_ARGS=(pair)
-if [ -n "$MACHINE_NAME" ]; then PAIR_ARGS+=(--name "$MACHINE_NAME"); fi
-if "$ENROLL_BIN" "${PAIR_ARGS[@]}"; then
-	echo "paired; find the machine in the chat's /code panel." >&2
-else
-	status=$?
-	# Both axes are wired and this machine's opencode already works; only the
-	# panel entry is missing. Say so, and hand back the manual path — which
-	# needs no reachability to the chat origin at all.
-	echo "error: automatic pairing failed (exit $status); the LLM axis is unaffected." >&2
-	echo "To pair by hand:" >&2
-	echo "  paseo daemon pair   # paste the printed link into the chat's /code > Pair a device dialog" >&2
-	exit 7
-fi
+echo "=== last step, and only yours ===" >&2
+echo "Run:  pystino-agent run --cerea <cerea-origin>" >&2
+echo "Then confirm this machine in the chat's /code panel." >&2
+exit 0
