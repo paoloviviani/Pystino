@@ -269,11 +269,26 @@ else
 		echo "opencode already on PATH — not reinstalling" >&2
 	fi
 
-	# The enrollment CLI: build from this checkout when no binary yet. The
-	# module's own .gitignore names the artifact pystino-enroll — build
-	# with that name so `go build ./...` and this script agree on one.
+	# The enrollment CLI: build from this checkout when the binary is
+	# missing OR older than any source. A stale binary is silent drift:
+	# the script skipped the build whenever a binary merely existed, so a
+	# box kept running last month's CLI — missing flags, missing model
+	# gating — with every run printing success. The module's own
+	# .gitignore names the artifact pystino-enroll — build with that name
+	# so `go build ./...` and this script agree on one.
 	ENROLL_BIN="$ENROLL_DIR/pystino-enroll"
+	NEED_BUILD=0
 	if [ ! -x "$ENROLL_BIN" ]; then
+		NEED_BUILD=1
+	else
+		for src in "$ENROLL_DIR"/*.go; do
+			if [ "$src" -nt "$ENROLL_BIN" ]; then
+				NEED_BUILD=1
+				break
+			fi
+		done
+	fi
+	if [ "$NEED_BUILD" -eq 1 ]; then
 		# go.mod requires 1.24; an older go would try to auto-download the
 		# toolchain and die with "toolchain not available" — check the
 		# version here so the failure names the remedy.
@@ -284,6 +299,17 @@ else
 		}
 		echo "building the enroll CLI" >&2
 		(cd "$ENROLL_DIR" && go build -o pystino-enroll .)
+	fi
+
+	# A shim from a previous run owns the default port with the previous
+	# run's credentials; leaving it alive makes enroll dodge to a new port
+	# that no shim serves while opencode.json points at it (found live:
+	# 41872 written, nothing listening). The shim is this script's
+	# artifact, so retire it before enrollment and start a fresh one after.
+	if pgrep -f "pystino-enroll serve" >/dev/null 2>&1; then
+		echo "stopping the previous enroll serve shim (it holds stale credentials)" >&2
+		pkill -f "pystino-enroll serve" || true
+		sleep 1
 	fi
 
 	# enroll writes the global opencode.json (the daemon's opencode reads
