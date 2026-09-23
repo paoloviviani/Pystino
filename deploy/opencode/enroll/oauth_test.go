@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -99,6 +100,47 @@ func TestSelectFlow(t *testing.T) {
 		if err == nil && got != tc.wantDevice {
 			t.Errorf("%s: device=%v, want %v", tc.name, got, tc.wantDevice)
 		}
+	}
+}
+
+// TestOAuth2ErrorPermanent pins the one classification that decides whether
+// the shim gives up (401, actionable) or keeps retrying (502): invalid_grant
+// is the RFC 6749 code for "this grant is invalid, expired, or revoked" and
+// nothing else is treated as final.
+func TestOAuth2ErrorPermanent(t *testing.T) {
+	cases := []struct {
+		code string
+		want bool
+	}{
+		{"invalid_grant", true},
+		{"server_error", false},
+		{"temporarily_unavailable", false},
+		{"invalid_client", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		err := &oauth2Error{Code: tc.code}
+		if got := err.permanent(); got != tc.want {
+			t.Errorf("oauth2Error{Code: %q}.permanent() = %v, want %v", tc.code, got, tc.want)
+		}
+	}
+}
+
+// TestPermanentRefreshErrorMessage pins the two things Cerea's classifier
+// and the human both need out of the message: the literal invalid_grant
+// token (regex: /invalid_grant|enrollment (?:has )?expired|enrollment
+// (?:was )?revoked/i) and a plain instruction naming the fix.
+func TestPermanentRefreshErrorMessage(t *testing.T) {
+	err := &permanentRefreshError{code: "invalid_grant"}
+	msg := err.Error()
+	if !strings.Contains(msg, "invalid_grant") {
+		t.Errorf("message %q does not carry the invalid_grant token Cerea matches on", msg)
+	}
+	if !strings.Contains(msg, "re-enroll") && !strings.Contains(msg, "Re-enroll") {
+		t.Errorf("message %q does not tell the human what to do", msg)
+	}
+	if !strings.Contains(msg, "setup-agent.sh") || !strings.Contains(msg, "pystino-enroll enroll") {
+		t.Errorf("message %q does not name the concrete remedy commands", msg)
 	}
 }
 
