@@ -10,9 +10,9 @@ site_name: Pystino
 site_description: >
   A self-hosted model gateway: OpenAI-compatible, with per-user and
   per-group accounting, quotas and redaction, and the console that operates it.
-repo_url: https://github.com/paoloviviani/Pistin-Gateway
-repo_name: paoloviviani/Pistin-Gateway
-copyright: Copyright &copy; Paolo Viviani — <a href="https://github.com/paoloviviani/Pistin-Gateway/blob/main/LICENCE">EUPL-1.2</a>
+repo_url: https://github.com/paoloviviani/Pystino
+repo_name: paoloviviani/Pystino
+copyright: Copyright &copy; Paolo Viviani — <a href="https://github.com/paoloviviani/Pystino/blob/main/LICENCE">EUPL-1.2</a>
 
 strict: true
 
@@ -74,6 +74,7 @@ nav:
   - Accounting and quotas: accounting-and-quotas.md
   - Redaction: redaction.md
   - Deployment: deployment.md
+  - Coding agents: coding-agents.md
   - Operations:
       - operations.md
       - "Measured performance": performance.md
