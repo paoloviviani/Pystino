@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,12 +15,12 @@ import (
 	"time"
 )
 
-const serveUsage = `enroll serve — run the local refreshing proxy shim.
+const serveUsage = `pystino-agent serve — run the local refreshing proxy shim.
 
 Usage:
-  enroll serve [--creds PATH] [--port PORT]
+  pystino-agent serve [--creds PATH] [--port PORT]
 
-  --creds  Credential file written by 'enroll enroll' (default
+  --creds  Credential file written by 'pystino-agent enroll' (default
            <config-dir>/opencode/pystino-credentials.json).
   --port   Override the loopback port recorded at enroll time.
 
@@ -47,10 +49,64 @@ type shim struct {
 	// so the request's own context (opencode's connection) is what bounds a
 	// call — a client hang-up cancels the upstream and nothing else does.
 	client *http.Client
+	// port is the loopback port the shim listens on, needed to build the
+	// Host allowlist (C3): only 127.0.0.1:<port> and localhost:<port> are
+	// ever legitimate callers of a shim that only opencode, on this same
+	// machine, should ever reach.
+	port int
 }
 
-func newShim(creds *credentials, credsPath, statusPath string) *shim {
-	return &shim{creds: creds, credsPath: credsPath, statusPath: statusPath, client: &http.Client{}}
+func newShim(creds *credentials, credsPath, statusPath string, port int) *shim {
+	return &shim{creds: creds, credsPath: credsPath, statusPath: statusPath, client: &http.Client{}, port: port}
+}
+
+// allowedHosts reports whether r.Host is one this shim should answer.
+// Anything else is refused with 403 before any credential-bearing work
+// happens — the DNS-rebinding defence C3 asks for: a page at
+// attacker.example that resolves to 127.0.0.1 sends Host: attacker.example,
+// not Host: 127.0.0.1:<port>, so it never gets this far.
+func (s *shim) allowedHost(host string) bool {
+	want := fmt.Sprintf(":%d", s.port)
+	return host == "127.0.0.1"+want || host == "localhost"+want
+}
+
+// secretMatches reports whether the bearer presented in an incoming request
+// is the per-install secret enroll wrote into opencode's apiKey (C3). Both
+// sides are hashed to a fixed-length digest before the constant-time
+// compare, so neither a length mismatch nor the comparison itself leaks
+// timing information about the secret.
+func secretMatches(want, got string) bool {
+	if want == "" {
+		// A credential file written before ShimSecret existed has nothing to
+		// check against; refuse rather than silently accepting everyone.
+		return false
+	}
+	wantHash := sha256.Sum256([]byte(want))
+	gotHash := sha256.Sum256([]byte(got))
+	return subtle.ConstantTimeCompare(wantHash[:], gotHash[:]) == 1
+}
+
+// requireLocalAuth wraps a handler with the two checks every shim route
+// needs (C3): the caller's Host must be the loopback address this shim
+// listens on, and it must present the per-install secret as a bearer. Only
+// after both pass does the wrapped handler, and therefore the real gateway
+// bearer, ever run.
+func (s *shim) requireLocalAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.allowedHost(r.Host) {
+			http.Error(w, "forbidden: unexpected Host", http.StatusForbidden)
+			return
+		}
+		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		s.mu.Lock()
+		want := s.creds.ShimSecret
+		s.mu.Unlock()
+		if !secretMatches(want, got) {
+			writeOpenAIError(w, http.StatusUnauthorized, "missing or invalid shim secret", "invalid_request_error", "invalid_api_key")
+			return
+		}
+		next(w, r)
+	}
 }
 
 // refreshInterval is how often the shim proactively refreshes ahead of any
@@ -173,15 +229,36 @@ func (s *shim) token() (string, error) {
 }
 
 // refreshCredential exchanges the refresh token for a fresh access token,
-// updating creds in place and persisting the result. Shared by the shim
-// (per request) and `enroll pair` (once per run): a pairing run days after
-// enrollment still authenticates, because the credential on disk is what
-// keeps working, not the access token it was born with.
+// updating creds in place and persisting the result. Shared by every caller
+// that needs a live token (the shim's own refresh loop, and `run`'s link
+// once it exists): a refresh days after enrollment still authenticates,
+// because the credential on disk is what keeps working, not the access
+// token it was born with.
+//
+// R7: refreshing is guarded by a cross-process file lock, and the on-disk
+// credential is re-read after taking it. Two processes on the same machine
+// (serve and a future run, or two instances of either) must not both
+// present the same refresh token to the IdP — the loser would get
+// invalid_grant on a token the winner had already rotated away. Re-reading
+// first means the loser adopts the winner's result instead of racing it.
 //
 // A permanent refusal (invalid_grant) comes back as *permanentRefreshError;
 // everything else — network errors, a 5xx, an OAuth body with some other
 // code — is worth retrying and comes back as a plain error.
 func refreshCredential(credsPath string, creds *credentials) error {
+	unlock, err := lockCredsFile(credsPath)
+	if err != nil {
+		return fmt.Errorf("locking credentials for refresh: %w", err)
+	}
+	defer unlock()
+
+	if onDisk, loadErr := loadCredentials(credsPath); loadErr == nil && onDisk.RefreshToken != creds.RefreshToken {
+		*creds = *onDisk
+		if !creds.needsRefresh(time.Now()) {
+			return nil
+		}
+	}
+
 	// The refresh runs on its own deadline, not a triggering request's
 	// context: one caller hanging up must not abort a refresh the others are
 	// blocked on.
@@ -357,7 +434,11 @@ func runServe(args []string) error {
 	}
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 
-	sh := newShim(creds, credsPath, statusPathFor(credsPath))
+	if creds.ShimSecret == "" {
+		return fmt.Errorf("creds file has no shim secret: re-run 'pystino-agent enroll' to mint one (C3: the shim now refuses unauthenticated local callers)")
+	}
+
+	sh := newShim(creds, credsPath, statusPathFor(credsPath), port)
 	// Refresh once before serving anything: know the state (ok, dead,
 	// unreachable) up front rather than discovering it on opencode's first
 	// request. The error is already logged loudly by transitionLocked; serve
@@ -367,8 +448,8 @@ func runServe(args []string) error {
 	go sh.refreshLoop()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/pystino/health", sh.healthHandler)
-	mux.HandleFunc("/", sh.handler)
+	mux.HandleFunc("/pystino/health", sh.requireLocalAuth(sh.healthHandler))
+	mux.HandleFunc("/", sh.requireLocalAuth(sh.handler))
 
 	server := &http.Server{
 		Addr:    addr,

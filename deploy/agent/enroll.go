@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-const enrollUsage = `enroll enroll — sign in and write the opencode setup.
+const enrollUsage = `pystino-agent enroll — sign in and write the opencode setup.
 
 Usage:
-  enroll enroll [--issuer URL] [--gateway URL] [--client-id ID]
+  pystino-agent enroll [--issuer URL] [--gateway URL] [--client-id ID]
                 [--device | --loopback] [--group NAME] [--output PATH]
                 [--creds PATH] [--shim-port PORT] [--no-discover]
                 [--allow-opencode-provider] [--yes]
@@ -158,6 +158,14 @@ func enroll(ctx context.Context, opts *enrollOptions) error {
 		return err
 	}
 
+	// C3: a fresh per-install secret every enroll, never reused across
+	// machines or re-enrollments — opencode's config and this one gateway
+	// bearer are the only two places it is ever written.
+	shimSecret, err := randomHex(32)
+	if err != nil {
+		return fmt.Errorf("minting shim secret: %w", err)
+	}
+
 	if err := confirmOverwrite(opts.output, opts.creds, opts.yes); err != nil {
 		return err
 	}
@@ -173,20 +181,21 @@ func enroll(ctx context.Context, opts *enrollOptions) error {
 		ExpiresIn:     tokens.ExpiresIn,
 		ObtainedAt:    time.Now().Unix(),
 		ShimPort:      shimPort,
+		ShimSecret:    shimSecret,
 	}
 	if err := saveCredentials(opts.creds, creds); err != nil {
 		return err
 	}
 	if err := writeOpencodeConfig(
 		opts.output,
-		buildOpencodeConfig(shimAddr, models, opts.allowOpencodeProviders),
+		buildOpencodeConfig(shimAddr, shimSecret, models, opts.allowOpencodeProviders),
 	); err != nil {
 		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "wrote %s (provider pystino via shim %s) and %s\n", opts.output, shimAddr, opts.creds)
 	fmt.Fprintf(os.Stderr, "billing group: %s (sent as x-bill-to by the shim)\n", group)
-	fmt.Fprintf(os.Stderr, "next: run 'enroll serve' (same machine), then point opencode at it.\n")
+	fmt.Fprintf(os.Stderr, "next: run 'pystino-agent serve' (same machine), then point opencode at it.\n")
 	fmt.Fprintf(os.Stderr, "spend is not visible to opencode — /v1 has no usage endpoint; watch it in the console.\n")
 	return nil
 }
