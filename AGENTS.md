@@ -22,9 +22,9 @@ The decision record indexes every design decision; this file is the fast layer.
 - **`.gitlab-token` / `.gh-token` at the repo root are credentials: never read,
   cat or print them.** Source one (`set -a; . .gitlab-token; set +a`) and use a
   throwaway credential helper — never argv, config or logs. They define
-  `GITLAB_TOKEN` (example.invalid — the original home and the current
-  origin, `viviani/pystino`) and `GH_TOKEN` (github.com/paoloviviani/
-  Pistin-Gateway, which held the origin 2026-08-29 → 2026-09-03).
+  `GH_TOKEN` (github.com/paoloviviani/Pystino — the current origin) and
+  `GITLAB_TOKEN` (example.invalid `viviani/pystino`, the original
+  home).
 - **The stack is loopback-only by default.** Nothing may be published on a routable
   address except through `docker-compose.proxy.yml` (Caddy TLS + rotated credentials);
   `scripts/test_public_tls_live.py` enforces that by requiring every other port to be

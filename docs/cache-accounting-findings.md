@@ -7,7 +7,7 @@
   and a provider adding a fifth name is caught by
   `scripts/test_cache_accounting_live.py`. Ground rule 3 in
   the ground rules
-  [in the repository's working notes](https://github.com/paoloviviani/Pistin-Gateway/blob/main/CLAUDE.md)
+  [in the repository's working notes](https://github.com/paoloviviani/Pystino/blob/main/CLAUDE.md)
   apply: this was a money bug.
 - Related: ADR 0028 (the two prompt
   conventions), ADR 0031 (`context_size`, the
