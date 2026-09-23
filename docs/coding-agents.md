@@ -203,6 +203,24 @@ The `groups` scope matters here for the same reason it matters for the chat:
 claim that is not in the token is not seen, and the enrollment would bill to
 no group (ADR 0061).
 
+### An agent machine needs a longer-lived refresh token than a browser does
+
+A browser session logs out; an agent machine sits idle over a weekend and is
+expected to still work on Monday. The two bundled IdPs' platform defaults are
+sized for the browser case, not this one:
+
+- **Authelia's** default `refresh_token` lifespan is 90 minutes —
+  `deploy/idp/generate-authelia-config.sh` defines a custom lifespan profile,
+  `agent_machine` (`access_token: 1h`, `refresh_token: 90d`), and assigns it
+  to the `opencode-enrollment` client only; the console and chat clients keep
+  the platform default, since their sessions really are browser-length.
+- **Keycloak's** realm-level offline-session idle timeout (what actually
+  governs an `offline_access` refresh token's lifetime) is left unset in
+  `deploy/idp/keycloak-realm.json.template`, which means Keycloak's own
+  default applies: **30 days**. That is already long enough for this use
+  case, so there is nothing to override — noted here so the absence reads as
+  a decision, not an oversight.
+
 ## `setup-agent.sh`
 
 ```
