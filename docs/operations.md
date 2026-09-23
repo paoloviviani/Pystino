@@ -4,7 +4,7 @@
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services   # mypy is --strict
-uv run pytest -q                                               # ~950 tests, SQLite, no services
+uv run pytest -q                                               # ~1,500 tests, SQLite, no services
 pnpm -r test && pnpm -r typecheck                              # packages/ui + console + web
 ```
 
