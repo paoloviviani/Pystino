@@ -1,13 +1,14 @@
-// Command enroll authenticates a human to the Pystino gateway through the
-// bundled IdP (ADR 0084) and wires up opencode and the paseo daemon pairing.
+// Command pystino-agent authenticates a human to the Pystino gateway through
+// the bundled IdP (ADR 0084), wires up opencode, and (via `run`) supervises
+// opencode and a WSS link to Cerea that drives coding sessions through this
+// machine. See PROTOCOL.md for the wire protocol `run` speaks to Cerea.
 //
-// Three subcommands: an OIDC access token expires in minutes (ADR 0040
-// contrasts API keys as "not expiring in five minutes"), while opencode
-// holds a static apiKey. So `enroll` authenticates once and records how to
-// renew, `serve` is the local shim that owns the renewal so opencode never
-// sees it, and `pair` spends one of those tokens pairing the machine's daemon
-// into the chat's /code panel — the chat trusts the same issuer, so no second
-// sign-in is needed.
+// An OIDC access token expires in minutes (ADR 0040 contrasts API keys as
+// "not expiring in five minutes"), while opencode holds a static apiKey. So
+// `enroll` authenticates once and records how to renew, and `serve` is the
+// local shim that owns the renewal so opencode never sees it. `run` grows
+// out of `serve`: it starts the shim, supervises `opencode serve`, and dials
+// out to Cerea.
 package main
 
 import (
@@ -16,20 +17,18 @@ import (
 	"os"
 )
 
-const usage = `enroll — authenticate to the Pystino gateway and wire up opencode.
+const usage = `pystino-agent — authenticate to the Pystino gateway and run opencode for Cerea.
 
 Usage:
-  enroll <command> [options]
+  pystino-agent <command> [options]
 
 Commands:
   enroll    Run the OAuth flow, pick a billing group, write opencode.json
             and store the refresh credential.
   serve     Local refreshing proxy shim: opencode points its baseURL here,
             the shim injects a fresh access token plus x-bill-to per request.
-  pair      Pair this machine's paseo daemon into the chat's /code panel,
-            authenticated by the enrollment's access token.
 
-Run 'enroll <command> -h' for that command's options.
+Run 'pystino-agent <command> -h' for that command's options.
 `
 
 func main() {
@@ -43,8 +42,6 @@ func main() {
 		err = runEnroll(os.Args[2:])
 	case "serve":
 		err = runServe(os.Args[2:])
-	case "pair":
-		err = runPair(os.Args[2:])
 	case "-h", "-help", "--help", "help":
 		fmt.Print(usage)
 		return
