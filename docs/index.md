@@ -14,11 +14,11 @@ deliberately put behind the TLS proxy
 
 | Component | State |
 |---|---|
-| `apps/gateway` | **Built and tested.** Five `/v1` surfaces (chat completions, responses, Anthropic messages, embeddings, image generation, streaming and not), models, API keys, OIDC, accounting, quotas, redaction. |
+| `apps/gateway` | **Built and tested.** Seven metered `/v1` surfaces (chat completions, responses, Anthropic messages, embeddings, image generation, document extraction, web search — streaming and not), models, files and vector stores, API keys, OIDC, accounting, quotas, redaction. |
 | `services/redaction` | **Built and tested.** Presidio behind a swappable detection contract; PII never reaches the upstream. |
 | `apps/console` | **Built.** Spend, reports, quotas, providers, models with prices and access, users, redaction rules. |
 | `packages/ui` | **Built.** Material Design 3 tokens and primitives (ADR 0042), shared by console and chat. |
-| the chat application | **Elsewhere.** [pystino-chat](https://gitlab.linksfoundation.com/viviani/pystino-chat) is a `/v1` client of this gateway and imports nothing from it. |
+| the chat application | **Elsewhere.** [Cerea](https://github.com/paoloviviani/Cerea) is a `/v1` client of this gateway and imports nothing from it. |
 | `packages/shared-py` | **Built.** The detection contract and the deterministic placeholder scheme. |
 | the desktop shell, the RAG pipeline | Not started, and not this repository's. |
 
@@ -51,14 +51,17 @@ deliberately put behind the TLS proxy
   only tighten.
 - [Deployment](deployment.md) — compose overlays, loopback-only by default, and
   what it takes to serve a real address.
+- [Coding agents](coding-agents.md) — enrolling opencode against `/v1`: the
+  three scripts in `deploy/opencode/`, the refreshing shim, and what the
+  identity provider has to grant.
 - [Operations](operations.md) — verifying a change, the live checks, measured
   performance, and the known sharp edges.
-- Design decisions — 45 ADRs with the licence, version and CVE
+- Design decisions — 85 ADRs with the licence, version and CVE
   evidence behind each, dated. Start here before changing anything.
 
 ## Licence
 
-[EUPL-1.2](https://github.com/paoloviviani/Pistin-Gateway/blob/main/LICENCE) for all
+[EUPL-1.2](https://github.com/paoloviviani/Pystino/blob/main/LICENCE) for all
 first-party code. This is a hard requirement, not a preference — every inbound
 dependency must be OSI-licensed, without a CLA and without an open-core model
 (ADR 0001).
