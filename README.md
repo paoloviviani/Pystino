@@ -5,8 +5,10 @@
 # Pystino
 
 A self-hosted OpenAI-compatible LLM gateway with per-user and per-group
-accounting, quotas, and PII redaction — plus an admin console. A web
-frontend, desktop shell and RAG are planned.
+accounting, quotas, and PII redaction — plus an admin console. The chat
+application that fronts it is [Cerea](https://github.com/paoloviviani/Cerea),
+a separate repository and a plain `/v1` client; a desktop shell is still
+planned.
 
 > The name is *pistino* — Turin dialect for a nitpicker, the person who checks
 > every last detail. Which is what an accounting gateway is for: counting
@@ -20,15 +22,20 @@ ADR 0001 for the dependency policy it implies.
 
 | | |
 |---|---|
-| `apps/gateway` | The gateway: `/v1` chat completions (streaming and not), models, API keys, OIDC, accounting, quotas, redaction; serves the console. |
+| `apps/gateway` | The gateway: the metered `/v1` surfaces (chat completions, responses, Anthropic messages, embeddings, images, OCR, search — streaming and not), models, files and vector stores, API keys, OIDC, accounting, quotas, redaction; serves the console. |
 | `packages/shared-py` | Detection contract and the deterministic placeholder scheme. |
 | `services/redaction` | Presidio detection service, out of process. |
 | `packages/ui` | Design tokens and UI primitives, shared with the console. |
 | `apps/console` | The admin console: usage reports, quotas, providers, models, users, groups, settings. |
 
 The chat application, the desktop shell and the RAG pipeline are **not here**.
-They live in [pystino-chat](https://github.com/paoloviviani/Cerea),
-which is a `/v1` *client* of this gateway and imports nothing from it.
+They live in [Cerea](https://github.com/paoloviviani/Cerea), which is a `/v1`
+*client* of this gateway and imports nothing from it.
+
+`deploy/opencode/` is the exception that proves the rule: it sets up coding
+agents on people's own machines, and everything in it speaks to the gateway
+over `/v1` like any other client — see
+[docs/coding-agents.md](docs/coding-agents.md).
 
 Code and comments here cite decisions by number — `(ADR 0032)`. The decision
 record itself is internal and deliberately not linked: a citation names the
@@ -39,9 +46,9 @@ cannot open.
 
 ```
                     ┌───────────────────────────────┐
-   any /v1 client ─▶│  pystino-chat, opencode, the  │
-                    │  OpenAI SDKs — a key or an    │
-                    │  OIDC bearer, nothing special │
+   any /v1 client ─▶│  Cerea, opencode, the OpenAI  │
+                    │  SDKs — a key or an OIDC      │
+                    │  bearer, nothing special      │
                     └───────────────┬───────────────┘
                                     ▼
   apps/console ──▶ ┌────────────────────────────────────────┐
@@ -54,8 +61,8 @@ cannot open.
                    │  ┌──────────────────────────────────┐  │
                    │  │ quota check  →  reserve          │  │
                    │  │ redact request                   │  │
-                   │  │ upstream call (forced usage)      │  │
-                   │  │ SSE pipeline → rewrite → client   │  │
+                   │  │ upstream call (forced usage)     │  │
+                   │  │ SSE pipeline → rewrite → client  │  │
                    │  │ accounting  →  settle            │  │
                    │  └──────────────────────────────────┘  │
                    └───┬─────────────┬───────────────┬──────┘
@@ -179,8 +186,9 @@ uv run mypy apps/gateway/src packages/shared-py/src
 Live checks against a running stack (`./scripts/test_console_live.py`,
 `test_reporting_live.py`, `test_redaction_live.py`, `test_providers_live.py`,
 `test_surfaces_live.py`, `test_quota_race_live.py`,
-`test_public_tls_live.py`) sign in with the local administrator; set
-`GATEWAY_LOCAL_ADMIN_PASSWORD` in `deploy/.env` first.
+`test_cache_accounting_live.py`, `test_public_tls_live.py`) sign in with the
+local administrator; set `GATEWAY_LOCAL_ADMIN_PASSWORD` in `deploy/.env`
+first.
 
 ## Documentation
 
@@ -189,10 +197,14 @@ uv run mkdocs build --strict   # output in site/; `mkdocs serve` to browse
 ```
 
 - **[docs/index.md](docs/index.md)** — start here.
-- **docs/adr/** — every significant decision, with the
-  licence, version and CVE evidence behind it.
 - **[apps/gateway/README.md](apps/gateway/README.md)** — the gateway's
   surfaces, layout, and streaming traps.
+- **[docs/coding-agents.md](docs/coding-agents.md)** — enrolling opencode
+  against `/v1`.
+- The decision record is **internal and not in this repository**. Code,
+  comments and docs cite it by number — `(ADR 0032)` — so a citation names
+  reasoning that can be asked for, rather than promising a source the reader
+  cannot open.
 
 ## Repository layout
 
@@ -204,13 +216,18 @@ services/redaction/  Presidio detection service
 packages/ui/         shared design tokens + UI primitives
 packages/shared-py/  shared Python contracts
 scripts/             live checks, fake upstream, pricing importer
-deploy/compose/      docker compose: base + smoke, redaction and proxy overlays
-docs/adr/            architecture decision records
+deploy/compose/      docker compose: base + smoke, redaction, chat, exposure
+                     and bundled-IdP overlays
+deploy/idp/          bundled Authelia / Keycloak config generators
+deploy/opencode/     coding-agent setup: pasted-key installer, enrollment CLI
+deploy/profiles/     the named deployment shapes and their overlay derivation
+docs/                the documentation site (mkdocs.yml)
 ```
 
-## What is deliberately not here yet
+## What is deliberately not here
 
-The web frontend, RAG, the code sandbox, MCP and the desktop app — each has a
-README saying what goes there and an ADR recording the decision already taken.
-The gateway's known gaps are listed in
-[apps/gateway/README.md](apps/gateway/README.md) and the ADRs.
+The chat application, the RAG pipeline, the code sandbox and MCP are Cerea's;
+the desktop shell is not started. Each has an ADR recording the decision
+already taken. The gateway's own known gaps are listed in
+[apps/gateway/README.md](apps/gateway/README.md) and in
+[docs/gateway.md](docs/gateway.md#known-gaps).

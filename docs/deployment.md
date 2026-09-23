@@ -15,7 +15,17 @@ capability:
 | `docker-compose.chat.yml` | the chat application (Cerea, a sibling checkout) at `/chat`, with its own MongoDB |
 | `docker-compose.edge.yml` | the NetBird edge shape: the origin router in plain HTTP on loopback, TLS terminated upstream at the edge — for a box that never sees a certificate |
 | `docker-compose.proxy.yml` | Caddy terminating TLS — the only route to a routable address with a locally held certificate (ADR 0035) |
-| `docker-compose.keycloak.yml` | a Keycloak to develop against — a development dependency, not a bundled identity provider (ADR 0044 stays removed) |
+| `docker-compose.keycloak.yml` | a Keycloak to develop against — a development dependency, not a deployment's identity provider |
+| `docker-compose.idp-authelia.yml` | the bundled Authelia, on the origin already published at `/authelia` (ADR 0084) |
+| `docker-compose.idp-keycloak.yml` | the bundled Keycloak, on the origin already published at `/idp` (ADR 0084) |
+
+Two more overlays live in the **Cerea checkout** and are addressed through
+`CHAT_REPO`, because their only consumer is the chat:
+
+| Overlay (in `$CHAT_REPO`) | Adds |
+|---|---|
+| `deploy/compose/docker-compose.playwright.yml` | the headless-browser fetch backend, for `FETCH_BACKEND=playwright` |
+| `deploy/compose/docker-compose.code-relay.yml` | the paseo relay behind the `/code` coding-agent panel, plus Caddy's `/ws` route (ADR 0085) |
 
 ```bash
 # the common development shape:
@@ -48,6 +58,8 @@ upstream in the base file would be one careless `-f` away from production.
 | `GATEWAY_IDP__*` | the house identity provider for the chat (ADR 0068); off means its routes do not exist. See [the chat](#the-chat) below |
 | `PUBLIC_HOST`, `HTTPS_PORT`, `TLS_DIRECTIVE`, `PUBLIC_ORIGIN`, `ACME_EMAIL`, `PUBLIC_BIND` | only with the proxy overlay (below) |
 | `CHAT_REPO`, `CHAT_PG_URL`, `CHAT_IDP_CLIENT_SECRET`, `CHAT_SECRET_KEY` | only with the chat overlay (below) |
+| `IDP_BUNDLED` | `authelia` or `keycloak` — names which bundled provider overlay this deployment runs (ADR 0084); empty means an external issuer or the house IdP |
+| `CODE_AGENTS_ENABLED`, `CODE_RELAY_URL` | only with the relay overlay from `$CHAT_REPO` — the chat's `/code` panel (ADR 0085). `CODE_RELAY_URL` is the compose-internal `relay:4000`, never the public origin |
 
 Nested gateway settings use the double underscore (`GATEWAY_REDACTION__ENGINE`):
 that is the delimiter the gateway reads, and a single underscore is silently
@@ -281,6 +293,40 @@ repository with its consumer, publishes no port, and keeping its address in the
 overlay rather than the image means an operator may still choose direct HTTPS
 fetch without rebuilding.
 
+### The `/code` coding-agent panel
+
+The chat's `/code` panel drives coding agents on people's own machines. It
+needs one more container — a **paseo relay**, the rendezvous a daemon behind
+NAT dials outward to (ADR 0085) — and that overlay, too, lives with its
+consumer in the chat checkout:
+`$CHAT_REPO/deploy/compose/docker-compose.code-relay.yml`, under the
+`code-relay` compose profile.
+
+Three things about it are worth knowing before deploying it:
+
+- **It publishes no port.** The relay must be reachable from outside the
+  compose network, but it rides the origin that is already published, at the
+  `/ws` subpath. Under the proxy overlay the route arrives as a `conf.d`
+  snippet the overlay mounts; under the edge shape the installer appends a
+  `(relay-routes)` block to `deploy/caddy/Caddyfile.netbird`, the same
+  mechanism the bundled IdP routes use. Because Caddy reads that file at
+  start and a bind-mounted change does not make compose recreate the
+  container, **restart the proxy after an append** —
+  `docker compose ... restart proxy` — or the route stays absent on a stack
+  that otherwise came up clean.
+- **The path is `/ws`, not a nested prefix.** Every paseo client builds its
+  relay URL as `<scheme>://<host>:<port>/ws` and cannot address anything
+  deeper, so `/ws` is where the relay has to live.
+- **There is no published image.** The relay is built from a git checkout
+  pinned to one commit, fetched by
+  `$CHAT_REPO/deploy/code-relay/fetch.sh` (a no-op when the commit is already
+  checked out). The upstream project warns its internal protocol may change
+  without notice, so the pin is also how that churn is managed: re-verify on
+  upgrade, never float.
+
+The gateway's side of the same feature — enrolling opencode against `/v1` — is
+[Coding agents](coding-agents.md), and needs none of this.
+
 ## Taking it down
 
 ```sh
@@ -389,13 +435,16 @@ the gateway believes the forwarded proto via `FORWARDED_ALLOW_IPS`. Do not pass
 both this and the proxy overlay: one terminates TLS locally, the other assumes
 the edge does it.
 
-### A Keycloak to develop against, not a bundled IdP
+### A Keycloak to develop against, which is not the bundled one
 
 `docker-compose.keycloak.yml` adds a Keycloak for developing the OIDC paths
 (bearer tokens on `/v1`, account linking, group sync) against a real provider.
-It does not reverse ADR 0044: the deployment still ships no identity provider
-and configures OIDC against whatever issuer `deploy/.env` names — pointing at
-a corporate directory instead needs no change here. There are deliberately no
+It is not `docker-compose.idp-keycloak.yml` and no profile selects it: that
+one is a deployment's own provider, configured and secret-minted by the
+installer (ADR 0084), while this one is a development dependency whose realm
+comes from a setup script. The gateway itself still ships no identity
+provider and configures OIDC against whatever issuer `deploy/.env` names —
+pointing at a corporate directory instead needs no change here. There are deliberately no
 `ports:`: Keycloak listens on the compose network only and reaches a browser
 through Caddy at `/idp` on the origin already published. Realm, clients and
 test user come from `deploy/keycloak/setup.sh`, which is idempotent and so is
