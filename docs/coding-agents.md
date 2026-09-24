@@ -219,15 +219,13 @@ sized for the browser case, not this one:
 
 ## Setting up a machine
 
+Building, handing out and installing the binary, the user service, and
+removing a machine: [Agent machines](agent-machines.md). In short:
+
 ```sh
-# 1. the binary (built from deploy/agent/, or copied from a release build)
-install -m 0755 pystino-agent ~/.local/bin/pystino-agent
-# 2. enrol: sign in (device flow on a headless box), pick a billing group,
-#    write opencode.json, store the refresh credential (mode 0600)
 pystino-agent enroll --issuer https://llm.example.org/authelia \
   --gateway https://llm.example.org --cerea https://llm.example.org/chat \
   --output ~/.config/opencode/opencode.json [--device] [--allow-free-models]
-# 3. run: supervise opencode and dial out to the chat
 pystino-agent run
 ```
 
@@ -243,10 +241,9 @@ backend reports fewer capabilities (no usage, compaction or subagents), and the
 chat panel hides those controls. The Changes pane works for either backend,
 because the agent reads it from git.
 
-To keep `run` alive across
-reboots, install it as a user service — a systemd user unit on Linux, a
-LaunchAgent on macOS; the deployment re-architecture report's cutover plan has
-both, verbatim.
+To keep `run` alive across reboots, install it as a user service:
+`deploy/agent/packaging/` has the systemd user unit and the LaunchAgent, and
+[Agent machines](agent-machines.md#keeping-it-running) has the commands.
 
 ### The permission posture
 

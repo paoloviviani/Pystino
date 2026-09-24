@@ -42,7 +42,7 @@ Authelia on a dotless host (browsers refuse its cookie), an `http://` origin.
 | `--preset` | `homelab` (no ledger), `team` (ledger, quotas, pattern redaction), `enterprise` (+ NER redaction built locally, headless fetch), `satellite` / `generic` (the chat alone — also `cerea init`) |
 | `--tls` | `acme` (a public name, Let's Encrypt), `internal` (Caddy's own CA; development), `upstream` (TLS ends in front — the NetBird edge) |
 | `--idp` | `authelia` (bundled) or `external` with `--oidc-issuer` and the client secrets in `PYSTINO_OIDC_*_CLIENT_SECRET` |
-| `--agents` | the coding-agent panel: machines dial `wss://<origin>/chat/api/v2/code/machine` with client `opencode-enrollment` |
+| `--agents` | the coding-agent panel: machines dial `wss://<origin>/chat/api/v2/code/machine` with client `opencode-enrollment` — installing `pystino-agent` on them is [Agent machines](agent-machines.md) |
 
 The first sign-in whose verified email is `--admin-email` becomes the
 administrator, once, on a deployment that has none. With the bundled Authelia,
@@ -70,6 +70,91 @@ Images are tagged `local/…:dev` and stamped with the checkout's revision
 version the release pins. Development fixtures, never shipped:
 `deploy/dev/smoke.yml` (a fake upstream) and `deploy/dev/keycloak/` (an
 external IdP to develop against, attached through the component hook).
+
+## Distributed mode without the registry
+
+Until the image workflows publish, a distributed install can run on images
+built on the host itself. This is how the reference deployment runs today.
+
+**Build from clean clones, never from a worktree.** Cerea's image build runs
+`git` inside the build, and a worktree's `.git` file points outside the build
+context (the build fails with exit 128). A clean clone also proves that
+everything the images need is committed: `.gitignore`'s broad `*.env` rule
+once swallowed `deploy/stack/release.env`, and every build from the working
+copy that wrote it passed while every clean clone lacked it. The file is
+re-included explicitly now; a new `.env`-suffixed file under `deploy/stack/`
+needs the same.
+
+```bash
+git clone --branch main https://github.com/paoloviviani/Pystino.git pystino
+git clone --branch main https://github.com/paoloviviani/Cerea.git cerea
+P=$(git -C pystino rev-parse --short HEAD); C=$(git -C cerea rev-parse --short HEAD)
+cd pystino
+docker build --build-arg INCLUDE_CONSOLE=true --build-arg CONSOLE_BUILD_SHA=$P \
+  -t local/pystino-gateway:g$P -f apps/gateway/Dockerfile .
+docker build -t local/pystino-proxy:g$P deploy/stack/proxy
+docker build -t local/pystino-authelia:g$P deploy/stack/authelia
+docker build --build-arg SPACY_MODELS= \
+  -t local/pystino-redaction:g$P-pattern -f services/redaction/Dockerfile .   # redaction profile only
+cd ../cerea
+docker build --build-arg APP_BASE=/chat --build-arg PUBLIC_COMMIT_SHA=$C -t local/cerea:g$C .
+cd .. && rm -rf pystino cerea
+```
+
+The images must be named `<registry>/pystino-<name>:<version>` (and
+`-pattern` for redaction), because that is how `compose.yaml` spells them.
+`APP_BASE=/chat` is compile-time in SvelteKit, so an image built without it
+cannot be served under `/chat`.
+
+Then run `init` from the local gateway image, and pin the local tags with
+`set`. The first `set` also goes through `docker run`, because the `./pystino`
+helper runs the image `.env` names, and that is GHCR until the pins change:
+
+```bash
+cd /srv/pystino
+pst() { docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/deploy" -w /deploy \
+  -e PYSTINO_DEPLOY_DIR="$PWD" local/pystino-gateway:g$P pystino "$@"; }
+pst init --mode dist --origin https://llm.example.org --admin-email you@example.org \
+  --preset team --agents > init.out; chmod 600 init.out     # the first password is in it
+pst set PYSTINO_REGISTRY=local PYSTINO_VERSION=g$P CEREA_REGISTRY=local CEREA_VERSION=g$C
+./pystino doctor && docker compose up -d --wait
+```
+
+From here on, `./pystino` runs the local image. Never run `docker compose
+pull`, because nothing is published under `local/`. To move to newer local
+images, build them with new tags, then run `./pystino set PYSTINO_VERSION=…
+CEREA_VERSION=…` and `docker compose up -d --wait`. `pystino upgrade` does not
+fit this case: it sets every pin from the release manifest and refuses an
+image that is not the release it names.
+
+## TLS ending in front: an edge
+
+When a reverse proxy in front already terminates TLS (for example a NetBird
+edge that owns the public name and its certificate), the stack serves plain
+HTTP to it:
+
+```bash
+… pystino init --tls upstream --http-port 8443 --origin https://llm.example.org …
+```
+
+`--tls upstream` makes the proxy listen for any host on plain HTTP, and
+`--http-port` is the host port it is published on. The origin stays the public
+`https://` one, since the apps build every URL from it. `--https-port` is
+still published but nothing answers behind it. Point the edge at
+`http://<this host>:8443`, and have it:
+
+- pass the original `Host` (the proxy itself sets `X-Forwarded-Proto: https`
+  on the way to the apps);
+- **forward WebSocket upgrades**, at least for `/chat/api/v2/code/machine`,
+  where every agent machine holds its link. Without them the machine logs a
+  handshake failure (`expected … 101 but got 502`) and retries forever;
+- not buffer responses, because chat and completions stream.
+
+The proxy trusts `X-Forwarded-For` only from `TRUSTED_PROXIES` (default
+`private_ranges`). An edge that reaches the host over NetBird comes from
+`100.64.0.0/10`, which is outside those ranges, so logs show the edge's
+address, not the client's. Set `TRUSTED_PROXIES` in `.env` to the edge's
+range to get the client's.
 
 ## Identity
 
