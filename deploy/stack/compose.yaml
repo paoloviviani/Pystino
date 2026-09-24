@@ -293,7 +293,16 @@ services:
       CHAT_CONSOLE_ENABLED: ${CHAT_CONSOLE_ENABLED-true}
       CHAT_KNOWLEDGE_ENABLED: ${CHAT_KNOWLEDGE_ENABLED-true}
       CHAT_MEMORY_ENABLED: ${CHAT_MEMORY_ENABLED-true}
+      # The agent-machine component (report §9): the thin machine agent dials
+      # wss://<origin>/chat/api/v2/code/machine — the /chat route the proxy
+      # already has, so no extra service, port or route — and authenticates
+      # with its enrollment's OIDC access token (client opencode-enrollment,
+      # audience pystino-api), validated locally against the same issuer as
+      # the browser login, over the same back-channel. No relay.
       CODE_AGENTS_ENABLED: ${CODE_AGENTS_ENABLED-}
+      CODE_MACHINE_ISSUER: ${CODE_MACHINE_ISSUER:-}
+      CODE_MACHINE_AUDIENCE: ${CODE_MACHINE_AUDIENCE:-pystino-api}
+      CODE_MACHINE_CLIENT_ID: ${CODE_MACHINE_CLIENT_ID:-opencode-enrollment}
       OPENID_PROVIDER_URL: ${OIDC_ISSUER:-}
       # Same back-channel rule as the gateway (needs Cerea's
       # OPENID_INTERNAL_URL support; see the report's §8.8).

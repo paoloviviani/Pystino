@@ -159,6 +159,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         upstream_api_key=os.environ.get("PYSTINO_UPSTREAM_API_KEY")
         or _ask("Upstream provider API key (empty: add providers in the console)", secret=True),
         cerea_image=args.cerea_image or "",
+        agents=args.agents,
     )
     try:
         result = build_env(options, stackfiles.release())
@@ -346,6 +347,9 @@ def _add_init_arguments(
         "--oidc-internal-base-url", help="external IdP back-channel URL, if not the issuer"
     )
     init.add_argument("--upstream-base-url", default="https://api.cortecs.ai/v1")
+    init.add_argument(
+        "--agents", action="store_true", help="enable agent machines (the /code panel)"
+    )
     init.add_argument("--force", action="store_true", help="overwrite an existing .env")
 
 

@@ -146,3 +146,12 @@ def test_no_house_idp_or_local_passwords_are_configured() -> None:
     env, _ = _env()
     assert not any(key.startswith("GATEWAY_IDP__") for key in env)
     assert "GATEWAY_LOCAL_AUTH__ENABLED" not in env  # compose defaults it to false
+
+
+def test_agent_machines_are_a_switch_not_a_service() -> None:
+    off, _ = _env()
+    on, _ = _env(agents=True)
+    assert off["CODE_AGENTS_ENABLED"] == "" and on["CODE_AGENTS_ENABLED"] == "true"
+    # No relay: nothing else changes, no profile, no port.
+    assert on["COMPOSE_PROFILES"] == off["COMPOSE_PROFILES"]
+    assert not any("RELAY" in key for key in on)

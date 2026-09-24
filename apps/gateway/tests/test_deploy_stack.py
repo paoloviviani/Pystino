@@ -224,3 +224,11 @@ def test_upgrade_can_keep_a_deliberate_cerea_override(tmp_path: Path) -> None:
     assert "CEREA_VERSION" not in kept.changes
     replaced = upgrade.plan(deploy, "9.9.9", release)
     assert replaced.changes["CEREA_VERSION"] == "8.8.8"
+
+
+def test_the_stack_has_no_relay() -> None:
+    text = re.sub(r"(?m)^\s*#.*$", "", (STACK / "compose.yaml").read_text())
+    assert "relay" not in text.lower()
+    assert "CODE_MACHINE_CLIENT_ID" in text
+    auth = (STACK / "authelia" / "configuration.yml").read_text()
+    assert "client_id: 'opencode-enrollment'" in auth
