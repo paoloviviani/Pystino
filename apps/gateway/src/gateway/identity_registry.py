@@ -242,6 +242,7 @@ async def seed_from_env(session: AsyncSession, settings: Settings, secrets: Secr
     """
     any_row = (await session.execute(select(IdentityProvider.id).limit(1))).scalar_one_or_none()
     if any_row is not None:
+        await _fill_internal_base_url(session, settings)
         return
     env_record = record_from_env(settings)
     if env_record is None:
@@ -267,3 +268,39 @@ async def seed_from_env(session: AsyncSession, settings: Settings, secrets: Secr
         )
     )
     await session.commit()
+
+
+async def _fill_internal_base_url(session: AsyncSession, settings: Settings) -> None:
+    """Give an existing row the environment's back-channel URL, once.
+
+    An install adopted from the old installers already has its provider row —
+    seeded from the environment by a gateway that had no internal_base_url —
+    and a row is authoritative once it exists, so the new environment's value
+    would never reach it: the adopted gateway would keep calling the public
+    issuer, the very hairpin the back-channel removes. So when the row for the
+    environment's issuer has no internal URL and the environment names one, it
+    is filled in. One-way and only when empty: a URL an administrator set (or
+    cleared to a different value) in the console is theirs.
+    """
+    internal = settings.oidc.internal_base_url.strip().rstrip("/")
+    issuer = settings.oidc.issuer.strip().rstrip("/")
+    if not internal or not issuer:
+        return
+    rows = (
+        (
+            await session.execute(
+                select(IdentityProvider).where(
+                    IdentityProvider.issuer == issuer, IdentityProvider.internal_base_url == ""
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        logger.info(
+            "identity provider %r: back-channel set to %s from the environment", row.name, internal
+        )
+        row.internal_base_url = internal
+    if rows:
+        await session.commit()
