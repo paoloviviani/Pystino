@@ -160,12 +160,18 @@ async def test_an_adopted_row_gets_the_environments_internal_url_once(session) -
     await session.commit()
     settings = Settings(
         oidc=OIDCSettings(
-            enabled=True, issuer=PUBLIC, client_id="pystino-console", internal_base_url=INTERNAL
+            enabled=True,
+            issuer=PUBLIC,
+            client_id="pystino-console",
+            internal_base_url=INTERNAL,
+            scopes=["openid", "profile", "email", "groups"],
         ),
     )
     await seed_from_env(session, settings, box)  # type: ignore[arg-type]
     await session.refresh(row)
     assert row.internal_base_url == INTERNAL
+    # The adopted row also gains the environment's scopes (groups), added only.
+    assert row.scopes == ["openid", "profile", "email", "groups"]
     row.internal_base_url = "http://elsewhere:9091/authelia"
     await session.commit()
     await seed_from_env(session, settings, box)  # type: ignore[arg-type]
