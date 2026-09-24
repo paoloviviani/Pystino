@@ -1,0 +1,141 @@
+# The bundled Authelia's configuration, a release artefact (ADR 0086).
+#
+# Rendered by Authelia itself at start (template filter), never by a script on
+# the host. Values come from:
+#   {{ env "X_PYSTINO_*" }}          the container environment (compose.yaml ← .env)
+#   {{ secret "/config/keys/..." }}  files `pystino bootstrap` created once
+# Nothing here is state; the users file and the signing key are, and live in
+# the authelia-config volume. Client *secrets* appear only as argon2id digests
+# (`pystino init` mints the secret and its digest together) — plaintext client
+# secrets are deprecated in 4.39 and slated for removal.
+#
+# Ported from deploy/idp/generate-authelia-config.sh (same clients, same
+# claims policy, same lifespans), so an adopted install keeps working.
+
+server:
+  address: 'tcp://:9091/authelia'
+
+log:
+  level: 'info'
+  format: 'text'
+
+authentication_backend:
+  password_reset:
+    disable: true
+  file:
+    path: '/config/users_database.yml'
+    watch: true
+    password:
+      algorithm: 'argon2'
+      argon2:
+        variant: 'argon2id'
+        iterations: 3
+        memory: 65536
+        parallelism: 4
+        key_length: 32
+        salt_length: 16
+
+access_control:
+  default_policy: 'one_factor'
+
+session:
+  name: 'authelia_session'
+  secret: '{{ env "X_PYSTINO_SESSION_SECRET" }}'
+  expiration: '1h'
+  inactivity: '5m'
+  cookies:
+    - name: 'authelia_session'
+      domain: '{{ env "X_PYSTINO_COOKIE_DOMAIN" }}'
+      authelia_url: '{{ env "X_PYSTINO_PUBLIC_ORIGIN" }}/authelia'
+      same_site: 'lax'
+      expiration: '1h'
+      inactivity: '5m'
+
+storage:
+  local:
+    path: '/data/db.sqlite3'
+  # Encrypts the sqlite store, which holds the opaque subject identifiers every
+  # user is keyed on downstream. Changing it re-keys everyone: it is copied
+  # verbatim on adoption and never rotated by `pystino rotate`.
+  encryption_key: '{{ env "X_PYSTINO_STORAGE_KEY" }}'
+
+notifier:
+  filesystem:
+    filename: '/data/notification.txt'
+
+identity_providers:
+  oidc:
+    hmac_secret: '{{ env "X_PYSTINO_HMAC_SECRET" }}'
+    jwks:
+      - key_id: 'pystino'
+        algorithm: 'RS256'
+        use: 'sig'
+        key: {{ secret "/config/keys/jwks.pem" | mindent 10 "|" | msquote }}
+    claims_policies:
+      pystino:
+        id_token: ['groups', 'email', 'email_verified', 'preferred_username', 'name']
+        access_token: ['groups', 'email', 'email_verified', 'preferred_username', 'name']
+    lifespans:
+      custom:
+        agent_machine:
+          access_token: '1h'
+          refresh_token: '90d'
+    clients:
+      - client_id: 'pystino-console'
+        client_name: 'Pystino Console'
+        client_secret: '{{ env "X_PYSTINO_CONSOLE_CLIENT_DIGEST" }}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          - '{{ env "X_PYSTINO_PUBLIC_ORIGIN" }}/auth/callback/default'
+          - '{{ env "X_PYSTINO_PUBLIC_ORIGIN" }}/auth/callback'
+        scopes: ['openid', 'profile', 'email', 'groups']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'RS256'
+        token_endpoint_auth_method: 'client_secret_post'
+        audience: ['pystino-api']
+        requested_audience_mode: 'implicit'
+        claims_policy: 'pystino'
+        consent_mode: 'pre-configured'
+      - client_id: 'cerea'
+        client_name: 'Cerea Chat'
+        client_secret: '{{ env "X_PYSTINO_CHAT_CLIENT_DIGEST" }}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          - '{{ env "X_PYSTINO_PUBLIC_ORIGIN" }}/chat/login/callback'
+        scopes: ['openid', 'profile', 'email', 'groups']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'RS256'
+        token_endpoint_auth_method: 'client_secret_basic'
+        audience: ['pystino-api']
+        requested_audience_mode: 'implicit'
+        claims_policy: 'pystino'
+        consent_mode: 'pre-configured'
+      # The agent machine's public client (report §9). Kept under its current
+      # id so enrolled machines keep refreshing across the migration.
+      - client_id: 'opencode-enrollment'
+        client_name: 'Opencode Enrollment'
+        public: true
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          - 'http://127.0.0.1/callback'
+          - 'http://localhost/callback'
+        scopes: ['openid', 'profile', 'email', 'groups', 'offline_access']
+        response_types: ['code']
+        grant_types: ['authorization_code', 'urn:ietf:params:oauth:grant-type:device_code', 'refresh_token']
+        access_token_signed_response_alg: 'RS256'
+        token_endpoint_auth_method: 'none'
+        audience: ['pystino-api']
+        requested_audience_mode: 'implicit'
+        claims_policy: 'pystino'
+        consent_mode: 'pre-configured'
+        lifespan: 'agent_machine'
