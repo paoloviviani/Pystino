@@ -36,6 +36,8 @@ dependencies = [
 
 [project.scripts]
 gateway = "gateway.cli:main"
+# Deployment: init, bootstrap, doctor (ADR 0086).
+pystino = "gateway.deploy.cli:main"
 
 [tool.uv.sources]
 llmp-shared = { workspace = true }
