@@ -54,6 +54,9 @@ class ProviderRecord:
     is_enabled: bool
     source: str  # "console" | "environment"
     updated_at: object = None
+    # Back-channel base (OIDCSettings.internal_base_url); empty for an IdP
+    # this server reaches at its public issuer.
+    internal_base_url: str = ""
 
     def as_oidc_settings(self, redirect_uri: str, access_token_audience: str = "") -> OIDCSettings:
         """The OIDCSettings one login against this provider needs.
@@ -72,6 +75,7 @@ class ProviderRecord:
             groups_claim=self.groups_claim,
             fetch_userinfo=self.fetch_userinfo,
             access_token_audience=access_token_audience,
+            internal_base_url=self.internal_base_url,
         )
 
     def mappings_dict(self) -> dict[str, str]:
@@ -95,6 +99,7 @@ def record_from_row(row: IdentityProvider, secrets: SecretBox) -> ProviderRecord
         is_enabled=row.is_enabled,
         source="console",
         updated_at=row.updated_at,
+        internal_base_url=row.internal_base_url or "",
     )
 
 
@@ -130,6 +135,7 @@ def record_from_env(settings: Settings) -> ProviderRecord | None:
         group_sync=GroupSync.FIRST_LOGIN,
         is_enabled=True,
         source="environment",
+        internal_base_url=oidc.internal_base_url,
     )
 
 
@@ -228,6 +234,7 @@ async def seed_from_env(session: AsyncSession, settings: Settings, secrets: Secr
             # the env switch: the fallback honours it, but once this row exists
             # it is authoritative and every later startup reads it instead.
             link_local_by_email=env_record.link_local_by_email,
+            internal_base_url=env_record.internal_base_url,
             is_enabled=True,
         )
     )

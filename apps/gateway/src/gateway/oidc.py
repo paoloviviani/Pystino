@@ -211,29 +211,72 @@ class OIDCClient:
         self._jwks: KeySet | None = None
         self._jwks_fetched_at: float = 0.0
 
+    def _backchannel_headers(self) -> dict[str, str]:
+        """Forwarded headers naming the public issuer, for internal-URL calls.
+
+        Authelia derives its issuer — and so every endpoint in discovery and
+        the `iss` of what it mints — from these headers; called on its internal
+        address without them it answers nothing at all (verified against
+        4.39.22). Empty when there is no internal URL, so an external IdP sees
+        exactly the requests it always did.
+        """
+        if not self._settings.internal_base_url:
+            return {}
+        public = httpx.URL(self._settings.issuer)
+        host = public.host if public.port is None else f"{public.host}:{public.port}"
+        return {"x-forwarded-proto": public.scheme, "x-forwarded-host": host}
+
+    def _backchannel_url(self, url: str | None) -> str | None:
+        """Rewrite a public endpoint onto the internal base, when one is set.
+
+        Only endpoints under the public issuer move. Anything else — an IdP
+        that serves JWKS from a CDN — is left alone, because rewriting a URL we
+        do not understand would send the request somewhere it was never meant
+        to go.
+        """
+        internal = self._settings.internal_base_url.rstrip("/")
+        public = self._settings.issuer.rstrip("/")
+        if not url or not internal or not url.startswith(public):
+            return url
+        return internal + url[len(public) :]
+
     async def metadata(self) -> OIDCMetadata:
         if self._metadata is not None:
             return self._metadata
-        url = f"{self._settings.issuer}/.well-known/openid-configuration"
+        base = (self._settings.internal_base_url or self._settings.issuer).rstrip("/")
+        url = f"{base}/.well-known/openid-configuration"
         try:
-            response = await self._http.get(url)
+            response = await self._http.get(url, headers=self._backchannel_headers())
             response.raise_for_status()
             document = response.json()
         except (httpx.HTTPError, ValueError) as exc:
             raise OIDCError(f"could not fetch OIDC discovery document from {url}: {exc}") from exc
 
         try:
+            # The browser-facing endpoints (authorization, end_session) stay as
+            # the IdP published them; only what this server calls itself moves
+            # onto the internal URL.
             self._metadata = OIDCMetadata(
                 issuer=document["issuer"],
                 authorization_endpoint=document["authorization_endpoint"],
-                token_endpoint=document["token_endpoint"],
-                jwks_uri=document["jwks_uri"],
-                userinfo_endpoint=document.get("userinfo_endpoint"),
+                token_endpoint=self._backchannel_url(document["token_endpoint"]) or "",
+                jwks_uri=self._backchannel_url(document["jwks_uri"]) or "",
+                userinfo_endpoint=self._backchannel_url(document.get("userinfo_endpoint")),
                 device_authorization_endpoint=document.get("device_authorization_endpoint"),
                 end_session_endpoint=document.get("end_session_endpoint"),
             )
         except KeyError as exc:
             raise OIDCError(f"discovery document is missing {exc}") from exc
+        published = self._metadata.issuer.rstrip("/")
+        if self._settings.internal_base_url and published != self._settings.issuer.rstrip("/"):
+            # The one misconfiguration the forwarded headers can produce: the
+            # IdP ignored them and answered as its internal self. Every token
+            # would then fail the issuer check with a message about the token,
+            # not about this, so say it here.
+            raise OIDCError(
+                f"discovery via {base} reports issuer {published!r}, not "
+                f"{self._settings.issuer!r}: the IdP did not honour X-Forwarded-Host/Proto"
+            )
         return self._metadata
 
     async def jwks(self, *, force: bool = False) -> KeySet:
@@ -249,7 +292,7 @@ class OIDCClient:
 
         metadata = await self.metadata()
         try:
-            response = await self._http.get(metadata.jwks_uri)
+            response = await self._http.get(metadata.jwks_uri, headers=self._backchannel_headers())
             response.raise_for_status()
             self._jwks = KeySet.import_key_set(response.json())
         except (httpx.HTTPError, ValueError, JoseError) as exc:
@@ -293,7 +336,9 @@ class OIDCClient:
             data["client_secret"] = secret
 
         try:
-            response = await self._http.post(metadata.token_endpoint, data=data)
+            response = await self._http.post(
+                metadata.token_endpoint, data=data, headers=self._backchannel_headers()
+            )
         except httpx.HTTPError as exc:
             raise OIDCError(f"token endpoint unreachable: {exc}") from exc
 
@@ -425,7 +470,7 @@ class OIDCClient:
         try:
             response = await self._http.get(
                 metadata.userinfo_endpoint,
-                headers={"authorization": f"Bearer {access_token}"},
+                headers={"authorization": f"Bearer {access_token}", **self._backchannel_headers()},
             )
             response.raise_for_status()
             payload = response.json()
