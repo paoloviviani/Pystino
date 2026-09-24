@@ -685,6 +685,12 @@ export interface IdentityProvider {
   /** Server-to-server base URL for the issuer (the bundled Authelia's
    * internal address); empty when the issuer URL is reachable directly. */
   internal_base_url: string;
+  /** Where signing out sends the browser to end the provider's own session;
+   * `{redirect}` is the page to come back to. Empty: discovery's
+   * end_session_endpoint, else `default_logout_url`. */
+  logout_url: string;
+  /** What an empty `logout_url` falls back to for this kind (Authelia). */
+  default_logout_url: string;
   kind: IdentityKind;
   /** Where the directory's answer about groups comes from (ADR 0088). */
   group_source: GroupSource;
@@ -773,6 +779,7 @@ export interface IdentityProviderInput {
   group_sync?: GroupSync;
   is_enabled?: boolean;
   internal_base_url?: string;
+  logout_url?: string;
   kind?: IdentityKind;
   group_source?: GroupSource;
   admin_source?: AdminSource;

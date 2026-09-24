@@ -198,6 +198,13 @@ services:
       GATEWAY_OIDC__GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-groups}
       GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE: ${OIDC_AUDIENCE:-pystino-api}
       GATEWAY_OIDC__LINK_LOCAL_BY_EMAIL: ${OIDC_LINK_LOCAL_BY_EMAIL:-false}
+      # `authelia` for the bundled IdP (init writes it): the seeded provider
+      # row then gets the users-file sync and the console's user management.
+      GATEWAY_OIDC__KIND: ${OIDC_KIND:-generic}
+      # One sign-out for both applications on this origin: signing out of the
+      # console also expires the chat's session cookie (and the chat does the
+      # same for the console's, below).
+      GATEWAY_LOGOUT_ALSO_CLEAR_COOKIES: '["hf-chat"]'
       GATEWAY_BOOTSTRAP_ADMIN_EMAIL: ${PYSTINO_BOOTSTRAP_ADMIN_EMAIL:-}
     volumes:
       # The bundled Authelia's users file, which the console manages (D10)
@@ -320,6 +327,12 @@ services:
       OPENID_CLIENT_ID: ${OIDC_CHAT_CLIENT_ID:-cerea}
       OPENID_CLIENT_SECRET: ${OIDC_CHAT_CLIENT_SECRET:-}
       OPENID_SCOPES: ${OIDC_CHAT_SCOPES:-openid profile email groups}
+      # Signing out of the chat ends the IdP's session through this URL when
+      # the IdP publishes no end_session_endpoint (the bundled Authelia);
+      # `{redirect}` is where to land. And it expires the console's cookies on
+      # this origin, so one sign-out covers both.
+      OPENID_LOGOUT_URL: ${OIDC_LOGOUT_URL:-}
+      LOGOUT_ALSO_CLEAR_COOKIES: gw_session,gw_idt:/auth
       CHAT_SECRET_KEY: ${CHAT_SECRET_KEY:-}
       PUBLIC_APP_NAME: ${CHAT_APP_NAME:-Cerea}
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN}

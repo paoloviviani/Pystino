@@ -2707,6 +2707,8 @@ def _idp_response(record: Any) -> IdentityProviderResponse:
         is_enabled=record.is_enabled,
         source=record.source,
         internal_base_url=record.internal_base_url,
+        logout_url=record.logout_url,
+        default_logout_url=identity_policy.default_logout_url(record.kind, record.issuer),
         kind=record.kind,
         group_source=record.group_source,
         admin_source=record.admin_source,
@@ -2789,6 +2791,7 @@ async def create_identity_provider(
         link_local_by_email=payload.link_local_by_email,
         group_sync=GroupSync(payload.group_sync),
         internal_base_url=payload.internal_base_url.strip().rstrip("/"),
+        logout_url=payload.logout_url.strip(),
         kind=payload.kind,
         group_source=payload.group_source,
         admin_source=payload.admin_source,
@@ -2845,6 +2848,8 @@ async def update_identity_provider(
         row.is_enabled = fields["is_enabled"]
     if "internal_base_url" in fields and fields["internal_base_url"] is not None:
         row.internal_base_url = fields["internal_base_url"].strip().rstrip("/")
+    if "logout_url" in fields and fields["logout_url"] is not None:
+        row.logout_url = fields["logout_url"].strip()
     for name in (
         "kind",
         "group_source",

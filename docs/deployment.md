@@ -122,10 +122,20 @@ pst set PYSTINO_REGISTRY=local PYSTINO_VERSION=g$P CEREA_REGISTRY=local CEREA_VE
 
 From here on, `./pystino` runs the local image. Never run `docker compose
 pull`, because nothing is published under `local/`. To move to newer local
-images, build them with new tags, then run `./pystino set PYSTINO_VERSION=…
-CEREA_VERSION=…` and `docker compose up -d --wait`. `pystino upgrade` does not
-fit this case: it sets every pin from the release manifest and refuses an
-image that is not the release it names.
+images, build them with new tags, then take the new release's `compose.yaml`
+from its gateway image, since `set` changes only `.env` and a release that adds
+a variable would otherwise never pass it to the container. Then set the new
+tags and bring the stack up:
+
+```bash
+cp compose.yaml compose.yaml.bak-$(date +%Y%m%d)
+docker run --rm local/pystino-gateway:g$P cat /app/deploy/stack/compose.yaml > compose.yaml
+./pystino set PYSTINO_VERSION=g$P CEREA_VERSION=g$C
+./pystino doctor && docker compose up -d --wait
+```
+
+`pystino upgrade` does not fit this case: it sets every pin from the release
+manifest and refuses an image that is not the release it names.
 
 ## TLS ending in front: an edge
 
@@ -171,6 +181,35 @@ Servers never call the public origin: the gateway and the chat reach the IdP
 at its internal URL (`OIDC_INTERNAL_BASE_URL`, `http://authelia:9091/authelia`
 for the bundled one), with forwarded headers naming the public issuer. There
 is no CA bundle to maintain.
+
+**Signing out** ends the session in both applications and at the identity
+provider, so the next sign-in asks for a password. The bundled Authelia
+publishes no `end_session_endpoint`, so each application sends the browser to
+Authelia's own `/logout?rd=<page>`, which ends its session and comes back
+(`rd` is honoured because the page is on the session cookie's domain). The
+console uses the provider's **Logout URL** (Settings → Identity providers),
+which is empty by default. It then falls back to the provider's
+`end_session_endpoint`, and for `kind=authelia` to `<issuer>/logout?rd={redirect}`.
+The chat uses `OIDC_LOGOUT_URL` in `.env`, which `init` writes for the bundled
+Authelia; `doctor` warns when it is missing. `{redirect}` is replaced by the
+page to come back to.
+
+The console and the chat share one origin but keep separate sessions, so each
+one's sign-out also expires the other's session cookie
+(`GATEWAY_LOGOUT_ALSO_CLEAR_COOKIES` and `LOGOUT_ALSO_CLEAR_COOKIES` in
+`compose.yaml`). Signing out of either leaves neither signed in; there is no
+state where the console is signed out while the chat is not, or the reverse.
+With the chat on another origin (satellite), only the identity provider's
+session is shared, so signing out of one leaves the other's own session until
+it expires.
+
+**The bundled Authelia's provider** is `kind=authelia` (from `OIDC_KIND`): its
+users file is on a volume the gateway mounts, so the users-file sync and the
+console's user management (People) are available. The sync starts unconfirmed:
+the first run is a dry run, and nothing is applied until an administrator
+confirms it. Installs made before this (`kind=generic`, no adapter) are
+corrected by migration 0046, which touches only a row still at those defaults
+that points at the bundled Authelia's internal URL.
 
 Break-glass, when nobody can administer:
 `docker compose exec gateway pystino admin grant you@example.org`.

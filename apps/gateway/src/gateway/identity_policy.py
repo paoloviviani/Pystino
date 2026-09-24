@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote, urlencode
 
 from gateway.oidc import normalise_groups, resolve_claim
 
@@ -137,3 +138,51 @@ def admin_rule(
         return None
     values = frozenset(v.strip() for v in admin_values if v and v.strip())
     return AdminRule(claim=admin_claim or "groups", values=values)
+
+
+def default_logout_url(kind: str, issuer: str) -> str:
+    """The logout URL a kind implies, for a provider whose discovery names none.
+
+    Authelia (4.39) publishes no ``end_session_endpoint``; its portal's own
+    ``/logout`` ends the SSO session and then follows ``rd`` when that target
+    is on the session cookie's domain — which the stack's own pages are.
+    """
+    if kind == "authelia":
+        return f"{issuer.rstrip('/')}/logout?rd={{redirect}}"
+    return ""
+
+
+def logout_redirect(
+    *,
+    override: str,
+    end_session_endpoint: str | None,
+    kind: str,
+    issuer: str,
+    landing: str,
+    id_token_hint: str | None,
+    client_id: str,
+) -> str | None:
+    """Where signing out sends the browser to end the provider's session too.
+
+    In order: the provider's configured override; the spec's RP-initiated
+    logout at the discovered ``end_session_endpoint``; the kind's default. None
+    when there is nothing — the local session still ends, and the next sign-in
+    may be answered by the provider's live session without a prompt.
+    """
+    if override.strip():
+        return _fill(override.strip(), landing)
+    if end_session_endpoint:
+        # With the hint the provider knows which session to end. Without one
+        # it must ask, and `client_id` is what makes the request resolvable.
+        parameters = {"post_logout_redirect_uri": landing}
+        if id_token_hint:
+            parameters["id_token_hint"] = id_token_hint
+        else:
+            parameters["client_id"] = client_id
+        return f"{end_session_endpoint}?{urlencode(parameters)}"
+    default = default_logout_url(kind, issuer)
+    return _fill(default, landing) if default else None
+
+
+def _fill(template: str, landing: str) -> str:
+    return template.replace("{redirect}", quote(landing, safe=""))

@@ -1062,6 +1062,9 @@ class IdentityProviderResponse(BaseModel):
     is_enabled: bool
     source: str
     internal_base_url: str = ""
+    logout_url: str = ""
+    #: What signing out will use when logout_url is empty (shown as a hint).
+    default_logout_url: str = ""
     kind: str = "generic"
     group_source: Literal["claim", "directory", "none"] = "claim"
     admin_source: Literal["console", "claim"] = "console"
@@ -1096,6 +1099,9 @@ class IdentityProviderCreateRequest(BaseModel):
     # Where the gateway reaches the issuer server-to-server, when not at the
     # issuer URL (the bundled Authelia). Empty: use the issuer.
     internal_base_url: str = Field(default="", max_length=512, pattern=r"^(|https?://\S+)$")
+    # Overrides the provider's end_session_endpoint; `{redirect}` is the page
+    # to come back to. Empty: discovery, else the kind's default.
+    logout_url: str = Field(default="", max_length=512, pattern=r"^(|https?://\S+)$")
     kind: Literal["generic", "authelia", "keycloak", "entra", "okta", "authentik", "google"] = (
         "generic"
     )
@@ -1122,6 +1128,7 @@ class IdentityProviderUpdateRequest(BaseModel):
     internal_base_url: str | None = Field(
         default=None, max_length=512, pattern=r"^(|https?://\S+)$"
     )
+    logout_url: str | None = Field(default=None, max_length=512, pattern=r"^(|https?://\S+)$")
     kind: (
         Literal["generic", "authelia", "keycloak", "entra", "okta", "authentik", "google"] | None
     ) = None
