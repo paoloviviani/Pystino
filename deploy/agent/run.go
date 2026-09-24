@@ -227,11 +227,12 @@ func runAgent(ctx context.Context, opts *runOptions) error {
 		_ = lnk.PublishCredentialState("expired", message)
 	}
 
-	eventsDone := make(chan struct{})
-	go func() {
-		defer close(eventsDone)
-		forwardEvents(ctx, mat, lnk)
-	}()
+	// The forwarder gets its own context: the link can end on its own (a
+	// revoke), and then nothing cancels the process-wide ctx, so a forwarder
+	// on ctx kept run waiting in <-eventsDone forever instead of exiting 78.
+	forwardCtx, stopForwarding := context.WithCancel(ctx)
+	defer stopForwarding()
+	eventsDone := startForwarding(forwardCtx, func(c context.Context) { forwardEvents(c, mat, lnk) })
 
 	linkErr := make(chan error, 1)
 	go func() { linkErr <- lnk.Run(ctx) }()
@@ -260,8 +261,21 @@ func runAgent(ctx context.Context, opts *runOptions) error {
 	if err := back.Stop(); err != nil {
 		logf("stopping %s: %v", back.ID(), err)
 	}
+	stopForwarding()
 	<-eventsDone
 	return runErr
+}
+
+// startForwarding runs forward on its own goroutine and returns a channel
+// closed when it returns. forward must return once c is cancelled; the
+// caller cancels c on every way out of run, which is what lets run end.
+func startForwarding(c context.Context, forward func(context.Context)) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		forward(c)
+	}()
+	return done
 }
 
 // runningBackend is backend.Backend plus the lifecycle methods every
