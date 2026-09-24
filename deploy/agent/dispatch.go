@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
 	"pystino-agent/internal/backend"
+	"pystino-agent/internal/checkout"
 	"pystino-agent/internal/link"
 	"pystino-agent/internal/policy"
 	"pystino-agent/internal/sessions"
@@ -439,6 +441,14 @@ func (mc *machine) opSessionDiff(ctx context.Context, args json.RawMessage) (any
 	dir, _, operr := mc.resolveSession(a.SessionID)
 	if operr != nil {
 		return nil, operr
+	}
+	// The checkout's uncommitted changes, from git, are what the pane shows: a
+	// backend's own session diff misses files a shell command wrote. Only a
+	// workspace outside git falls back to the backend's notion of a diff.
+	if files, err := checkout.Diff(ctx, dir); err == nil {
+		return map[string]any{"files": orEmpty(files)}, nil
+	} else if !errors.Is(err, checkout.ErrNotARepo) {
+		return nil, backendErr(err)
 	}
 	differ, ok := mc.back.(backend.Differ)
 	if !ok {
