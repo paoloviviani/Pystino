@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -50,6 +51,11 @@ func startMockLLM(t *testing.T, port int) string {
 	cmd.Env = append(os.Environ(), fmt.Sprintf("MOCK_OPENAI_PORT=%d", port))
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
+	// Belt and suspenders alongside the Kill in t.Cleanup below: if this
+	// test binary itself dies without running cleanup (e.g. `go test
+	// -timeout` firing), the kernel still reaps this child rather than
+	// leaving a mock LLM listening forever.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("starting mock LLM: %v", err)
 	}
