@@ -103,7 +103,7 @@ All ids are opaque strings. `workspaceId` is the agent's own registry id; a work
 | `session.diff` | `{sessionId}` | `{files: FileDiff[]}` (capability `diff`) |
 | `session.children` | `{sessionId}` | `{sessions: Session[]}` (capability `children`) |
 | `backend.modes` | `{backend?, workspaceId?}` | `{modes: Mode[]}` |
-| `backend.models` | `{backend?, workspaceId?}` | `{models: Model[]}` (already filtered by `allowFreeModels`) |
+| `backend.models` | `{backend?, workspaceId?}` | `{models: Model[], hidden: number}` (already filtered by `allowFreeModels`; `hidden` counts what the filter removed) |
 
 Types:
 ```
