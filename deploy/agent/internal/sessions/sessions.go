@@ -130,7 +130,11 @@ func (s *sessionState) snapshot() backend.Transcript {
 		var parts []backend.Part
 		for _, pid := range s.partOrder[mid] {
 			if p, ok := s.parts[mid][pid]; ok {
-				parts = append(parts, *p)
+				part := *p
+				if part.Role == "" {
+					part.Role = msg.Role
+				}
+				parts = append(parts, part)
 			}
 		}
 		entries = append(entries, backend.TranscriptEntry{Message: *msg, Parts: parts})
@@ -363,6 +367,9 @@ func (m *Materializer) translateLocked(st *sessionState, ev backend.Event) ([]ba
 		return m.translatePartLocked(st, ev)
 
 	case backend.EventDelta:
+		if msg, ok := st.messages[ev.MessageID]; ok && ev.Role == "" {
+			ev.Role = msg.Role
+		}
 		m.applyDeltaLocked(st, ev)
 		return []backend.Event{ev}, nil
 
@@ -444,6 +451,13 @@ func (m *Materializer) translatePartLocked(st *sessionState, ev backend.Event) (
 	incoming := *ev.Part
 	msgID, partID := incoming.MessageID, incoming.ID
 	ensureMessageLocked(st, msgID, incoming.Role)
+	// Backends like opencode keep the role on the message, not the part, but
+	// PROTOCOL.md puts it on every part and delta so Cerea can tell the
+	// person's own text from the agent's without tracking messages itself.
+	if incoming.Role == "" {
+		incoming.Role = st.messages[msgID].Role
+	}
+	ev.Part = &incoming
 
 	parts, ok := st.parts[msgID]
 	if !ok {

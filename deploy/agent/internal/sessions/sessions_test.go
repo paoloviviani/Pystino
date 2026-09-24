@@ -405,3 +405,42 @@ func TestSyncUnknownSession(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUnknownSession", err)
 	}
 }
+
+// TestPartsInheritMessageRole: opencode keeps the role on the message only;
+// the materializer must put it on every part and delta it forwards, and on
+// snapshot parts, or Cerea renders the person's prompt as agent text.
+func TestPartsInheritMessageRole(t *testing.T) {
+	m := New(newFakeBackend(), policy.Default())
+	m.Track("/ws", backend.Session{ID: "s1"})
+	ctx := context.Background()
+	apply := func(ev backend.Event) {
+		m.ApplyBackendEvent(ctx, backend.BackendEvent{WorkspaceDir: "/ws", SessionID: "s1", Event: ev})
+	}
+	apply(backend.Event{Kind: backend.EventMessage, Message: &backend.Message{ID: "m1", Role: "user"}})
+	apply(backend.Event{Kind: backend.EventPart, Part: &backend.Part{ID: "p1", MessageID: "m1", Type: backend.PartText, Text: "say"}})
+	apply(backend.Event{Kind: backend.EventDelta, MessageID: "m1", PartID: "p1", Field: "text", Delta: " hello"})
+
+	res, err := m.Sync(ctx, "s1", m.Epoch(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range res.Events {
+		switch env.Event.Kind {
+		case backend.EventPart:
+			if env.Event.Part.Role != "user" {
+				t.Errorf("forwarded part role = %q, want user", env.Event.Part.Role)
+			}
+		case backend.EventDelta:
+			if env.Event.Role != "user" {
+				t.Errorf("forwarded delta role = %q, want user", env.Event.Role)
+			}
+		}
+	}
+	snap, err := m.Sync(ctx, "s1", "another-epoch", 0)
+	if err != nil || snap.Snapshot == nil {
+		t.Fatalf("want a snapshot, got %+v, %v", snap, err)
+	}
+	if got := snap.Snapshot.Messages[0].Parts[0]; got.Role != "user" || got.Text != "say hello" {
+		t.Errorf("snapshot part = %+v, want role user and text %q", got, "say hello")
+	}
+}
