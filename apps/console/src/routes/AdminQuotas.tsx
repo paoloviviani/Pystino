@@ -11,7 +11,7 @@ import {
   Spinner,
   SummaryStrip,
   Table,
-  
+
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { formatMoney, useExactMoney } from "@llmp/ui";
