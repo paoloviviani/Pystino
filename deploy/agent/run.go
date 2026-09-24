@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"pystino-agent/internal/backend"
+	backendacp "pystino-agent/internal/backend/acp"
 	backendopencode "pystino-agent/internal/backend/opencode"
 	"pystino-agent/internal/fsutil"
 	"pystino-agent/internal/link"
@@ -42,9 +43,13 @@ Usage:
   --no-shim           Don't start the local shim; --opencode-config must
                       already point opencode at a reachable provider (used
                       by tests, e.g. a mock LLM).
+  --backend NAME      Which backend to run: "opencode" (default) or "acp"
+                      (any ACP agent — PROTOCOL.md §2).
   --opencode-bin PATH   opencode binary (default "opencode", resolved on PATH).
   --opencode-config PATH  Exported as OPENCODE_CONFIG for the spawned
                       opencode, overriding its normal config discovery.
+  --acp-command CMD   Command line for the ACP agent, only used with
+                      --backend acp (default "opencode acp").
   --machine-name NAME   Display name for this machine (default: hostname).
   --port PORT         Override the shim's port (only meaningful without
                       --no-shim; default: the port enroll recorded).
@@ -55,8 +60,10 @@ type runOptions struct {
 	credsPath      string
 	stateDir       string
 	noShim         bool
+	backendKind    string
 	opencodeBin    string
 	opencodeConfig string
+	acpCommand     string
 	machineName    string
 	port           int
 }
@@ -68,8 +75,10 @@ func runRun(args []string) error {
 	fs.StringVar(&opts.credsPath, "creds", "", "")
 	fs.StringVar(&opts.stateDir, "state-dir", "", "")
 	fs.BoolVar(&opts.noShim, "no-shim", false, "")
+	fs.StringVar(&opts.backendKind, "backend", "opencode", "")
 	fs.StringVar(&opts.opencodeBin, "opencode-bin", "opencode", "")
 	fs.StringVar(&opts.opencodeConfig, "opencode-config", "", "")
+	fs.StringVar(&opts.acpCommand, "acp-command", "opencode acp", "")
 	fs.StringVar(&opts.machineName, "machine-name", "", "")
 	fs.IntVar(&opts.port, "port", 0, "")
 	if err := fs.Parse(args); err != nil {
@@ -170,20 +179,15 @@ func runAgent(ctx context.Context, opts *runOptions) error {
 		logf("shim listening on http://%s", addr)
 	}
 
-	ocBackend := backendopencode.New(backendopencode.Config{
-		Bin:         opts.opencodeBin,
-		ConfigPath:  opts.opencodeConfig,
-		OverlayPath: filepath.Join(stateDir, "opencode-overlay.json"),
-		Logf:        func(format string, args ...any) { logf(format, args...) },
-	})
-	if err := ocBackend.Start(ctx); err != nil {
-		return fmt.Errorf("starting opencode: %w", err)
+	back, err := startBackend(ctx, opts, stateDir, logf)
+	if err != nil {
+		return err
 	}
-	logf("opencode started (backend %s %s)", ocBackend.ID(), ocBackend.Version())
+	logf("%s started (backend %s %s)", opts.backendKind, back.ID(), back.Version())
 
-	mat := sessions.New(ocBackend, pol)
+	mat := sessions.New(back, pol)
 	if err := mat.Start(ctx); err != nil {
-		return fmt.Errorf("subscribing to opencode: %w", err)
+		return fmt.Errorf("subscribing to %s: %w", back.ID(), err)
 	}
 
 	reg, err := workspaces.Load(filepath.Join(stateDir, "workspaces.json"))
@@ -191,9 +195,9 @@ func runAgent(ctx context.Context, opts *runOptions) error {
 		return err
 	}
 
-	mc := newMachine(reg, ocBackend, mat, pol)
+	mc := newMachine(reg, back, mat, pol)
 	for _, w := range reg.List(true) {
-		sessList, err := ocBackend.ListSessions(ctx, w.Path)
+		sessList, err := back.ListSessions(ctx, w.Path)
 		if err != nil {
 			logf("warning: listing sessions for workspace %q (%s): %v", w.Name, w.Path, err)
 			continue
@@ -208,7 +212,7 @@ func runAgent(ctx context.Context, opts *runOptions) error {
 		MachineID:   machineID,
 		MachineName: machineName,
 		Cred:        sh,
-		Hello:       func() link.Hello { return buildHello(ocBackend, pol) },
+		Hello:       func() link.Hello { return buildHello(back, pol) },
 		Handler:     mc,
 		Logf:        func(format string, args ...any) { logf(format, args...) },
 	})
@@ -242,11 +246,54 @@ func runAgent(ctx context.Context, opts *runOptions) error {
 	if shimServer != nil {
 		_ = shimServer.Shutdown(shutdownCtx)
 	}
-	if err := ocBackend.Stop(); err != nil {
-		logf("stopping opencode: %v", err)
+	if err := back.Stop(); err != nil {
+		logf("stopping %s: %v", back.ID(), err)
 	}
 	<-eventsDone
 	return runErr
+}
+
+// runningBackend is backend.Backend plus the lifecycle methods every
+// concrete backend implementation (opencode, acp) provides — Start/Stop
+// live outside the interface because Subscribe's caller (sessions.New)
+// only ever needs the former; run.go is the one place that needs both.
+type runningBackend interface {
+	backend.Backend
+	Stop() error
+}
+
+// startBackend builds and starts whichever concrete backend --backend
+// selects (PROTOCOL.md §2: opencode is the default, richer implementation;
+// acp is the generic adapter any ACP agent can be plugged in behind).
+func startBackend(ctx context.Context, opts *runOptions, stateDir string, logf func(string, ...any)) (runningBackend, error) {
+	switch opts.backendKind {
+	case "", "opencode":
+		ocBackend := backendopencode.New(backendopencode.Config{
+			Bin:         opts.opencodeBin,
+			ConfigPath:  opts.opencodeConfig,
+			OverlayPath: filepath.Join(stateDir, "opencode-overlay.json"),
+			Logf:        func(format string, args ...any) { logf(format, args...) },
+		})
+		if err := ocBackend.Start(ctx); err != nil {
+			return nil, fmt.Errorf("starting opencode: %w", err)
+		}
+		return ocBackend, nil
+	case "acp":
+		cmd := strings.Fields(opts.acpCommand)
+		if len(cmd) == 0 {
+			return nil, fmt.Errorf("--acp-command must not be empty")
+		}
+		acpBackend := backendacp.New(backendacp.Config{
+			Command: cmd,
+			Logf:    func(format string, args ...any) { logf(format, args...) },
+		})
+		if err := acpBackend.Start(ctx); err != nil {
+			return nil, fmt.Errorf("starting acp agent %q: %w", opts.acpCommand, err)
+		}
+		return acpBackend, nil
+	default:
+		return nil, fmt.Errorf("unknown --backend %q (want \"opencode\" or \"acp\")", opts.backendKind)
+	}
 }
 
 // forwardEvents drains the materializer's live event stream onto the link,
