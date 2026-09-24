@@ -82,7 +82,7 @@ func TestShimRefreshesAndForwards(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := newShim(creds, credsPath, statusPathFor(credsPath))
+	s := newShim(creds, credsPath, statusPathFor(credsPath), 41871)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"m"}`))
 	rec := httptest.NewRecorder()
@@ -212,7 +212,7 @@ func TestHandlerPermanentRefusalRespondsAndCaches(t *testing.T) {
 		t.Fatal(err)
 	}
 	statusPath := statusPathFor(credsPath)
-	s := newShim(creds, credsPath, statusPath)
+	s := newShim(creds, credsPath, statusPath, 41871)
 
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
@@ -273,7 +273,7 @@ func TestHandlerTransientRefusalStays502(t *testing.T) {
 	if err := saveCredentials(credsPath, creds); err != nil {
 		t.Fatal(err)
 	}
-	s := newShim(creds, credsPath, statusPathFor(credsPath))
+	s := newShim(creds, credsPath, statusPathFor(credsPath), 41871)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
 	rec := httptest.NewRecorder()
@@ -305,7 +305,7 @@ func TestHealthHandlerReflectsStatus(t *testing.T) {
 	if err := saveCredentials(credsPath, creds); err != nil {
 		t.Fatal(err)
 	}
-	s := newShim(creds, credsPath, statusPathFor(credsPath))
+	s := newShim(creds, credsPath, statusPathFor(credsPath), 41871)
 	if err := s.refresh(); err == nil {
 		t.Fatal("expected the dead credential to fail refresh")
 	}
@@ -329,5 +329,140 @@ func TestHealthHandlerReflectsStatus(t *testing.T) {
 	}
 	if status.CheckedAt.IsZero() {
 		t.Error("health checkedAt is zero")
+	}
+}
+
+// TestRequireLocalAuthHostAllowlist pins the DNS-rebinding defence (C3): a
+// request whose Host is not the loopback address this shim listens on is
+// refused with 403 before the wrapped handler — and so the credential — is
+// ever reached.
+func TestRequireLocalAuthHostAllowlist(t *testing.T) {
+	creds := &credentials{ShimSecret: "the-secret"}
+	s := newShim(creds, filepath.Join(t.TempDir(), "creds.json"), filepath.Join(t.TempDir(), "status.json"), 41871)
+	called := false
+	wrapped := s.requireLocalAuth(func(w http.ResponseWriter, r *http.Request) { called = true })
+
+	for _, tc := range []struct {
+		host string
+		want int
+	}{
+		{"127.0.0.1:41871", http.StatusUnauthorized}, // right host, no bearer yet: reaches the secret check
+		{"localhost:41871", http.StatusUnauthorized},
+		{"attacker.example", http.StatusForbidden},
+		{"127.0.0.1:9999", http.StatusForbidden}, // right loopback, wrong port
+		{"evil.example:41871", http.StatusForbidden},
+	} {
+		called = false
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Host = tc.host
+		rec := httptest.NewRecorder()
+		wrapped(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("Host %q: status = %d, want %d", tc.host, rec.Code, tc.want)
+		}
+		if tc.want == http.StatusForbidden && called {
+			t.Errorf("Host %q: wrapped handler ran despite a disallowed Host", tc.host)
+		}
+	}
+}
+
+// TestRequireLocalAuthSecret pins the per-install bearer check (C3): only
+// the exact secret enroll wrote into opencode's apiKey passes, a wrong or
+// missing one is refused, and a credential file with no secret at all
+// (predates C3) refuses everyone rather than running open.
+func TestRequireLocalAuthSecret(t *testing.T) {
+	creds := &credentials{ShimSecret: "correct-secret"}
+	s := newShim(creds, filepath.Join(t.TempDir(), "creds.json"), filepath.Join(t.TempDir(), "status.json"), 41871)
+	called := false
+	wrapped := s.requireLocalAuth(func(w http.ResponseWriter, r *http.Request) { called = true })
+
+	for _, tc := range []struct {
+		name   string
+		bearer string
+		want   int
+	}{
+		{"correct secret", "Bearer correct-secret", http.StatusOK},
+		{"wrong secret", "Bearer nope", http.StatusUnauthorized},
+		{"missing bearer", "", http.StatusUnauthorized},
+	} {
+		called = false
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Host = "127.0.0.1:41871"
+		if tc.bearer != "" {
+			req.Header.Set("Authorization", tc.bearer)
+		}
+		rec := httptest.NewRecorder()
+		wrapped(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s: status = %d, want %d", tc.name, rec.Code, tc.want)
+		}
+		if (tc.want == http.StatusOK) != called {
+			t.Errorf("%s: handler called = %v, want %v", tc.name, called, tc.want == http.StatusOK)
+		}
+	}
+
+	// A credential file with no ShimSecret (an enroll that predates C3)
+	// must refuse every caller, not run unauthenticated.
+	blank := &credentials{}
+	sBlank := newShim(blank, filepath.Join(t.TempDir(), "creds.json"), filepath.Join(t.TempDir(), "status.json"), 41871)
+	wrappedBlank := sBlank.requireLocalAuth(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler must not run when the credential carries no shim secret")
+	})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "127.0.0.1:41871"
+	req.Header.Set("Authorization", "Bearer anything")
+	rec := httptest.NewRecorder()
+	wrappedBlank(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("blank-secret shim status = %d, want 401", rec.Code)
+	}
+}
+
+// TestRefreshCredentialAdoptsConcurrentWinner pins R7: if the on-disk
+// credential already carries a different (fresher) refresh token by the
+// time refreshCredential takes the lock — as if another process had won the
+// race and rotated it — this call must adopt that result instead of
+// presenting the caller's now-stale refresh token to the IdP.
+func TestRefreshCredentialAdoptsConcurrentWinner(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		t.Error("the IdP must not be called: the on-disk credential was already fresh")
+	}))
+	defer server.Close()
+
+	credsPath := filepath.Join(t.TempDir(), "creds.json")
+	winner := &credentials{
+		TokenEndpoint: server.URL,
+		ClientID:      "opencode-enrollment",
+		Gateway:       "http://unused.example/v1",
+		RefreshToken:  "rotated-by-winner",
+		AccessToken:   "winner-access-token",
+		ExpiresIn:     300,
+		ObtainedAt:    time.Now().Unix(),
+	}
+	if err := saveCredentials(credsPath, winner); err != nil {
+		t.Fatal(err)
+	}
+
+	// This caller's in-memory copy is stale: it still holds the refresh
+	// token the (simulated) other process already rotated away.
+	loser := &credentials{
+		TokenEndpoint: server.URL,
+		ClientID:      "opencode-enrollment",
+		Gateway:       "http://unused.example/v1",
+		RefreshToken:  "stale-refresh-token",
+		AccessToken:   "stale-access-token",
+		ExpiresIn:     300,
+		ObtainedAt:    time.Now().Add(-600 * time.Second).Unix(),
+	}
+	if err := refreshCredential(credsPath, loser); err != nil {
+		t.Fatalf("refreshCredential should adopt the winner silently, got err: %v", err)
+	}
+	if loser.AccessToken != "winner-access-token" {
+		t.Errorf("loser.AccessToken = %q, want the winner's token", loser.AccessToken)
+	}
+	if atomic.LoadInt32(&calls) != 0 {
+		t.Errorf("IdP hit %d times, want 0: the on-disk credential was already fresh", calls)
 	}
 }

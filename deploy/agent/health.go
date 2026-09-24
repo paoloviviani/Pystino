@@ -43,41 +43,24 @@ func statusPathFor(credsPath string) string {
 	return filepath.Join(filepath.Dir(credsPath), statusFileName)
 }
 
-// writeStatusFile persists status atomically: a reader (the health
-// endpoint's file-based twin, or Cerea through the paseo daemon) must never
-// observe a half-written file, so the write lands in a temp file in the same
-// directory and is renamed into place, which POSIX guarantees is atomic
-// within one filesystem.
+// policyFileName and policyPathFor mirror statusPathFor: policy.json lives
+// beside the credential file, so `run` finds it from --creds alone (or
+// --state-dir, when given, takes precedence — see run.go).
+const policyFileName = "policy.json"
+
+func policyPathFor(credsPath string) string {
+	return filepath.Join(filepath.Dir(credsPath), policyFileName)
+}
+
+// writeStatusFile persists status atomically (R8, via writeFileAtomic): a
+// reader (the health endpoint's file-based twin, or Cerea through the link)
+// must never observe a half-written file.
 func writeStatusFile(path string, status healthStatus) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("creating status dir: %w", err)
-	}
 	body, err := json.MarshalIndent(status, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, ".pystino-status-*.tmp")
-	if err != nil {
-		return fmt.Errorf("writing status: %w", err)
-	}
-	tmpPath := tmp.Name()
-	if _, err := tmp.Write(append(body, '\n')); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("writing status: %w", err)
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("writing status: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("writing status: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Remove(tmpPath)
+	if err := writeFileAtomic(path, append(body, '\n'), 0o600); err != nil {
 		return fmt.Errorf("writing status: %w", err)
 	}
 	return nil
