@@ -17,7 +17,6 @@ on:
     paths-ignore:
       - "docs/**"
       - "**/*.md"
-      - "deploy/ci/github-workflows/README.md"
   workflow_dispatch:
 
 permissions:
@@ -48,17 +47,17 @@ jobs:
               - "deploy/stack/**"
               - "uv.lock"
               - "pyproject.toml"
-              - "deploy/ci/github-workflows/ci.yml"
+              - ".github/workflows/ci.yml"
             console:
               - "apps/console/**"
               - "packages/ui/**"
               - "pnpm-lock.yaml"
-              - "deploy/ci/github-workflows/ci.yml"
+              - ".github/workflows/ci.yml"
             go:
               - "deploy/**/*.go"
               - "deploy/**/go.mod"
               - "deploy/**/go.sum"
-              - "deploy/ci/github-workflows/ci.yml"
+              - ".github/workflows/ci.yml"
 
   gateway:
     needs: changes
