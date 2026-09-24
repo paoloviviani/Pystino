@@ -127,6 +127,9 @@ func (mc *machine) Handle(ctx context.Context, op string, args json.RawMessage) 
 	case "permission.reply":
 		return mc.opPermissionReply(ctx, args)
 
+	case "question.reply":
+		return mc.opQuestionReply(ctx, args)
+
 	case "backend.modes":
 		return mc.opBackendModes(ctx, args)
 	case "backend.models":
@@ -594,6 +597,44 @@ func (mc *machine) opPermissionReply(ctx context.Context, args json.RawMessage) 
 	}
 	if err := mc.back.ReplyPermission(ctx, dir, a.SessionID, a.RequestID, backend.Decision(a.Decision), a.Message); err != nil {
 		return nil, backendErr(err)
+	}
+	return map[string]any{}, nil
+}
+
+// opQuestionReply implements `question.reply` (the user-question tool
+// design): answer with `decision: "answer"` and `answers` (one slice of
+// chosen labels per question, in order), or dismiss it with `decision:
+// "reject"`. `unsupported` when the backend has no native question
+// mechanism (PROTOCOL.md/the task's "ACP reports questions: false").
+func (mc *machine) opQuestionReply(ctx context.Context, args json.RawMessage) (any, *link.OpError) {
+	var a struct {
+		SessionID string     `json:"sessionId"`
+		RequestID string     `json:"requestId"`
+		Decision  string     `json:"decision"`
+		Answers   [][]string `json:"answers,omitempty"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, invalidArgs(err)
+	}
+	dir, _, operr := mc.resolveSession(a.SessionID)
+	if operr != nil {
+		return nil, operr
+	}
+	asker, ok := mc.back.(backend.Asker)
+	if !ok {
+		return nil, opErrf("unsupported", "backend %s has no question capability", mc.back.ID())
+	}
+	switch a.Decision {
+	case "answer":
+		if err := asker.ReplyQuestion(ctx, dir, a.SessionID, a.RequestID, a.Answers); err != nil {
+			return nil, backendErr(err)
+		}
+	case "reject":
+		if err := asker.RejectQuestion(ctx, dir, a.SessionID, a.RequestID); err != nil {
+			return nil, backendErr(err)
+		}
+	default:
+		return nil, opErrf("invalid", "decision must be %q or %q, got %q", "answer", "reject", a.Decision)
 	}
 	return map[string]any{}, nil
 }

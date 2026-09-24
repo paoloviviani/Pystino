@@ -15,6 +15,11 @@ type Capabilities struct {
 	Files      bool `json:"files"`
 	Worktrees  bool `json:"worktrees"`
 	AutoAccept bool `json:"autoAccept"`
+	// Questions is the user-question tool design's own capability: whether
+	// this backend has a native multiple-choice question mechanism
+	// (opencode: the built-in "question" tool, GET/POST /question). ACP
+	// reports false — ACP has no wire message for it.
+	Questions bool `json:"questions"`
 }
 
 // CreateSessionOptions are session.create's optional fields (PROTOCOL.md
@@ -105,4 +110,14 @@ type Childrener interface {
 // compaction (opencode: POST /session/:id/summarize).
 type Compactor interface {
 	Compact(ctx context.Context, workspaceDir, sessionID string) error
+}
+
+// Asker is the optional "questions" capability (the user-question tool
+// design): answering or dismissing a pending multi-question ask (opencode:
+// POST /question/:id/reply|reject). answers is one slice per question, each
+// the labels chosen for that question, in order — the same shape opencode's
+// own reply body takes ("each answer is an array of selected labels").
+type Asker interface {
+	ReplyQuestion(ctx context.Context, workspaceDir, sessionID, requestID string, answers [][]string) error
+	RejectQuestion(ctx context.Context, workspaceDir, sessionID, requestID string) error
 }

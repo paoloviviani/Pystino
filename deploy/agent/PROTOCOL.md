@@ -77,7 +77,7 @@ JSON text frames, one object per frame, `type` discriminates.
 
 Unknown frame types and unknown event kinds are ignored by both sides (forward compatibility); unknown ops answer `unsupported`.
 
-`Backend = {"id":"opencode","version":"1.18.31","capabilities":{"diff":true,"children":true,"usage":true,"compact":true,"images":true,"files":true,"worktrees":false,"autoAccept":true}}`
+`Backend = {"id":"opencode","version":"1.18.31","capabilities":{"diff":true,"children":true,"usage":true,"compact":true,"images":true,"files":true,"worktrees":false,"autoAccept":true,"questions":true}}`
 `Policy = {"autoAccept":"denied","workspaceRoots":[],"allowFreeModels":false}`
 
 ## 6. Operations (C→M `req.op`)
@@ -102,6 +102,7 @@ All ids are opaque strings. `workspaceId` is the agent's own registry id; a work
 | `session.setModel` | `{sessionId, modelId}` (`"<provider>/<model>"`) | `{session}` |
 | `session.setAutoAccept` | `{sessionId, enabled}` | `{session}` or `forbidden` by policy |
 | `permission.reply` | `{sessionId, requestId, decision: "once"\|"always"\|"reject", message?}` | `{}` |
+| `question.reply` | `{sessionId, requestId, decision: "answer"\|"reject", answers?: string[][]}` (`answers` required when answering: one slice per question, the labels chosen for it, in order) | `{}` — `unsupported` if the backend has no question capability |
 | `session.sync` | `{sessionId, epoch?, afterSeq?}` | `{epoch, seq, events: Envelope[]}` if `epoch` matches and the ring buffer still holds `afterSeq+1…seq`; else `{epoch, seq, snapshot: Transcript}` |
 | `session.diff` | `{sessionId}` | `{files: FileDiff[]}` (capability `diff`) |
 | `session.children` | `{sessionId}` | `{sessions: Session[]}` (capability `children`) |
@@ -123,6 +124,8 @@ Usage      = {input, output, reasoning, cacheRead, cacheWrite, cost, contextUsed
 Attachment = {type:"file", mime, filename, url}   // url = data: URL for P0; later a Cerea attachment-store URL
 FileDiff   = {path, status: "added"|"modified"|"deleted", before, after, additions, deletions}
 Transcript = {messages: [{message: Message, parts: Part[]}], permissions: PermissionRequest[], status, usage|null, todos: Todo[]}
+QuestionOption = {label, description?}
+Question       = {question, header?, options: QuestionOption[], multiple?: bool}
 ```
 Times are RFC 3339 strings; everything is plain JSON.
 
@@ -143,6 +146,8 @@ Envelope: `{sessionId, epoch, seq, event}`. `epoch` is a random id minted when t
 | `session` | `session: Session` | metadata changed (title, mode, model, autoAccept, status) |
 | `error` | `message, code?` | a turn-level failure (provider error, credential dead) |
 | `todo` | `todos: [{id, content, status:"pending"|"in_progress"|"completed"|"cancelled", priority?}]` | full list |
+| `question.asked` | `request: {id, questions: Question[], callId?}` | the injected/native question tool was called (capability `questions`; opencode's own built-in "question" tool, verified live against 1.18.31 — `GET/POST /question`) |
+| `question.resolved` | `requestId, answers: string[][]` \| `requestId, rejected: true` | closes that ask either way; `answers` is one slice per question, in the same order `questions` asked them, each the labels chosen |
 
 `Part = {id, messageId, role, type, …}` by `type`:
 - `text` `{text, synthetic?: bool}` (synthetic parts are backend-injected; Cerea does not show them as user text)
@@ -154,10 +159,12 @@ Envelope: `{sessionId, epoch, seq, event}`. `epoch` is a random id minted when t
 
 The agent is subscribed to its backend from process start, so it has seen every event of every session touched since; for sessions untouched since start, the backend's persisted transcript is exact. The snapshot therefore equals "persisted transcript + everything applied since", with no gap.
 
+**Questions and the generic tool part.** A question call also rides an ordinary `tool` part (`tool:"question"`, `status: pending→running→completed|error`, `input` carrying the same `questions` array) — the same double-reporting `permission.asked` already has alongside a tool part, and for the same reason: the transcript's own tool-call rendering keeps working even for a client that does not special-case questions, while `question.asked`/`question.resolved` are what the approval card actually answers through.
+
 **Usage on `Session` (`session.get`/`session.list`).** opencode's own session object carries no usage field — only assistant messages do — so the agent caches each session's latest `Usage` as it is observed on the event stream (or when `Transcript` is fetched) and answers `session.get`/`session.list` from that cache. A session this process has not touched since it started (no event, no `Transcript` call) answers with `usage: null`; the caller's `session.sync` snapshot (which does read the persisted transcript) is what backfills that case, per the no-gap guarantee above.
 
 ## 8. Cerea side (what maps to what)
 
 - The browser-facing API stays (`/api/v2/code/v1/...?device=` + `/api/v2/code/agents/[id]/stream`), so the UI and its specs keep working; only the server behind it changes: `codeDaemon.ts` (paseo) → `machineLink` (typed ops over the socket). `@getpaseo/*` is removed.
 - SSE bridge: register a fan-out listener (buffering), `session.sync` with the browser's `Last-Event-ID` (`<epoch>:<seq>`), emit (snapshot → chat frames, or the missing events), then drain buffered live events with `seq >` the sync's `seq`. SSE `id` = `<epoch>:<seq>` of the last envelope a frame came from. Epoch change → a `reset` event that makes the client re-fold from scratch. No per-frame info logs (R6).
-- Mapping normalized → chat `AgentStreamUpdate` (replaces `codeTimeline.ts`): user `text` part (non-synthetic) → `user`; assistant `text` part/delta → `Stream`; `tool` part → Tool call / result / error (uuid = callId); `permission.asked/replied` → Elicitation request/resolved; `status busy` → TurnState running, `idle` → done (failed if the last assistant message carries `error`); `error` → TurnState failed; `todo` → Plan; `usage` → a side-channel frame (M3).
+- Mapping normalized → chat `AgentStreamUpdate` (replaces `codeTimeline.ts`): user `text` part (non-synthetic) → `user`; assistant `text` part/delta → `Stream`; `tool` part → Tool call / result / error (uuid = callId); `permission.asked/replied` → Elicitation request/resolved; `question.asked/resolved` → the same Elicitation request/resolved (the user-question tool design: normalized questions become `ElicitationField[]`, the same shape and card — `AskQuestion.svelte` — chat's own `ask_user_question` already uses); `status busy` → TurnState running, `idle` → done (failed if the last assistant message carries `error`); `error` → TurnState failed; `todo` → Plan; `usage` → a side-channel frame (M3).

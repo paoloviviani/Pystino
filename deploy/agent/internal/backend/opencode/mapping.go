@@ -99,6 +99,20 @@ func asMaps(items []any) []map[string]any {
 	return out
 }
 
+func asStrings(v any) []string {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		if s, ok := it.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // sessionFromMap builds a backend.Session from one entry of GET /session,
 // POST /session, or GET /session/:id. WorkspaceID is left empty: opencode
 // only knows a filesystem "directory", not the agent's own workspace
@@ -223,6 +237,50 @@ func permissionFromMap(m map[string]any) backend.PermissionRequest {
 		}
 	}
 	return req
+}
+
+// questionRequest is question.asked's own payload — kept unexported since
+// only events.go's translation needs it (the normalized Event carries its
+// fields flattened, per PROTOCOL.md §7's convention for every other request
+// kind).
+type questionRequest struct {
+	id        string
+	sessionID string
+	callID    string
+	questions []backend.QuestionItem
+}
+
+// questionRequestFromMap parses one question.asked event's properties,
+// verified live against opencode 1.18.31's built-in "question" tool:
+// {id, sessionID, questions: [{question, header, options, multiple}],
+// tool: {messageID, callID}}.
+func questionRequestFromMap(m map[string]any) questionRequest {
+	req := questionRequest{
+		id:        getStr(m, "id"),
+		sessionID: getStr(m, "sessionID", "sessionId"),
+	}
+	if tool := getMap(m, "tool"); tool != nil {
+		req.callID = getStr(tool, "callID", "callId")
+	}
+	for _, qm := range asMaps(getSlice(m, "questions")) {
+		req.questions = append(req.questions, questionItemFromMap(qm))
+	}
+	return req
+}
+
+func questionItemFromMap(m map[string]any) backend.QuestionItem {
+	item := backend.QuestionItem{
+		Question:    getStr(m, "question"),
+		Header:      getStr(m, "header"),
+		MultiSelect: getBool(m, "multiple"),
+	}
+	for _, om := range asMaps(getSlice(m, "options")) {
+		item.Options = append(item.Options, backend.QuestionOption{
+			Label:       getStr(om, "label"),
+			Description: getStr(om, "description"),
+		})
+	}
+	return item
 }
 
 // modeFromAgentMap converts one GET /agent entry, returning ok=false for
