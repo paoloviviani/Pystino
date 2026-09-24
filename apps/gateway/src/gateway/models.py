@@ -409,6 +409,13 @@ class User(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # Who set `is_admin` (ADR 0088): "manual" (console, CLI, bootstrap) or
+    # "oidc" (a provider whose admin_source is a claim). A directory may only
+    # revoke what it granted — the same provenance rule memberships follow.
+    admin_source: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
+    # Who deactivated the account: "manual" or "directory" (a sync saw the
+    # person gone). A directory may only reactivate what it deactivated.
+    deactivated_by: Mapped[str | None] = mapped_column(String(16), default=None)
 
     # The user's own choice of which group to bill by default. Users change this
     # themselves; the gateway validates that they are still a member of it at
@@ -1379,6 +1386,41 @@ class IdentityProvider(Base):
     # proxy. Empty for an IdP reachable at its issuer.
     internal_base_url: Mapped[str] = mapped_column(
         String(512), default="", server_default=text("''")
+    )
+    # --- identity policy (ADR 0088) -------------------------------------
+    # What kind of directory this is: decides which capabilities (claims,
+    # pull adapter, SCIM push, subject known before login) the console offers.
+    kind: Mapped[str] = mapped_column(String(32), default="generic", server_default="generic")
+    # Where the directory's answer about groups comes from: the token's claim,
+    # the directory mirror a sync adapter fills, or nowhere (console only).
+    # *How often* it is applied stays `group_sync`.
+    group_source: Mapped[str] = mapped_column(String(16), default="claim", server_default="claim")
+    # Who decides who is an administrator: this console (ADR 0069's default),
+    # or a claim/group from this directory — with provenance on the user row,
+    # so the directory can only revoke an admin flag it granted.
+    admin_source: Mapped[str] = mapped_column(
+        String(16), default="console", server_default="console"
+    )
+    admin_claim: Mapped[str] = mapped_column(String(255), default="groups", server_default="groups")
+    admin_values: Mapped[list[str]] = mapped_column(JSON, default=list, server_default=text("'[]'"))
+    # The claim that identifies a person here. `sub` everywhere except where a
+    # directory's `sub` is pairwise per application (Entra: use `oid`).
+    subject_claim: Mapped[str] = mapped_column(String(64), default="sub", server_default="sub")
+    # Batch sync (ADR 0088): the adapter, its credentials (encrypted, ADR
+    # 0027's box), its schedule, and what "gone from the directory" does.
+    sync_adapter: Mapped[str] = mapped_column(String(32), default="none", server_default="none")
+    sync_config_encrypted: Mapped[str | None] = mapped_column(Text, default=None)
+    sync_interval_minutes: Mapped[int] = mapped_column(default=60, server_default=text("60"))
+    sync_deprovision: Mapped[str] = mapped_column(
+        String(16), default="disable", server_default="disable"
+    )
+    sync_create_users: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
+    # Set when the first run of an adapter (always a dry run) has been
+    # reviewed and the adapter may apply changes.
+    sync_confirmed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
     )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)

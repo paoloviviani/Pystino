@@ -1069,6 +1069,19 @@ class IdentityProviderResponse(BaseModel):
     is_enabled: bool
     source: str
     internal_base_url: str = ""
+    kind: str = "generic"
+    group_source: Literal["claim", "directory", "none"] = "claim"
+    admin_source: Literal["console", "claim"] = "console"
+    admin_claim: str = "groups"
+    admin_values: list[str] = Field(default_factory=list)
+    subject_claim: str = "sub"
+    sync_adapter: str = "none"
+    sync_interval_minutes: int = 60
+    sync_deprovision: Literal["disable", "ignore"] = "disable"
+    sync_create_users: bool = True
+    sync_confirmed: bool = False
+    #: What this kind of directory can do; the console shows only these controls.
+    capabilities: dict[str, Any] = Field(default_factory=dict)
 
 
 class IdentityProviderCreateRequest(BaseModel):
@@ -1090,6 +1103,14 @@ class IdentityProviderCreateRequest(BaseModel):
     # Where the gateway reaches the issuer server-to-server, when not at the
     # issuer URL (the bundled Authelia). Empty: use the issuer.
     internal_base_url: str = Field(default="", max_length=512, pattern=r"^(|https?://\S+)$")
+    kind: Literal["generic", "authelia", "keycloak", "entra", "okta", "authentik", "google"] = (
+        "generic"
+    )
+    group_source: Literal["claim", "directory", "none"] = "claim"
+    admin_source: Literal["console", "claim"] = "console"
+    admin_claim: str = Field(default="groups", min_length=1, max_length=255)
+    admin_values: list[str] = Field(default_factory=list, max_length=50)
+    subject_claim: str = Field(default="sub", min_length=1, max_length=64)
 
 
 class IdentityProviderUpdateRequest(BaseModel):
@@ -1105,7 +1126,21 @@ class IdentityProviderUpdateRequest(BaseModel):
     link_local_by_email: bool | None = None
     group_sync: Literal["every_login", "first_login", "never"] | None = None
     is_enabled: bool | None = None
-    internal_base_url: str | None = Field(default=None, max_length=512, pattern=r"^(|https?://\S+)$")
+    internal_base_url: str | None = Field(
+        default=None, max_length=512, pattern=r"^(|https?://\S+)$"
+    )
+    kind: (
+        Literal["generic", "authelia", "keycloak", "entra", "okta", "authentik", "google"] | None
+    ) = None
+    group_source: Literal["claim", "directory", "none"] | None = None
+    admin_source: Literal["console", "claim"] | None = None
+    admin_claim: str | None = Field(default=None, min_length=1, max_length=255)
+    admin_values: list[str] | None = Field(default=None, max_length=50)
+    subject_claim: str | None = Field(default=None, min_length=1, max_length=64)
+    sync_adapter: Literal["none", "authelia_file", "keycloak_admin", "scim"] | None = None
+    sync_interval_minutes: int | None = Field(default=None, ge=0, le=10080)
+    sync_deprovision: Literal["disable", "ignore"] | None = None
+    sync_create_users: bool | None = None
 
 
 class EmailSettingsResponse(BaseModel):

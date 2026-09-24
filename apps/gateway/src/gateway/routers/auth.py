@@ -153,8 +153,7 @@ async def _resolve_provider_client(
             return registry.client_for(providers[0], origin), providers[0]
         if len(providers) > 1:
             raise BadRequestError(
-                "Several identity providers are configured: choose one with "
-                "?provider=<name>."
+                "Several identity providers are configured: choose one with ?provider=<name>."
             )
         raise ServiceUnavailableError("No identity provider is enabled.")
     record = await provider_by_name(session, settings, registry._secrets, provider_name)
@@ -346,7 +345,6 @@ async def login(
     return response
 
 
-
 class ResetRequestThrottle:
     """A per-address cooldown on reset emails, per worker process.
 
@@ -374,9 +372,7 @@ class ResetRequestThrottle:
 
 
 @router.get("/methods")
-async def methods(
-    request: Request, session: SessionDep, settings: SettingsDep
-) -> AuthMethods:
+async def methods(request: Request, session: SessionDep, settings: SettingsDep) -> AuthMethods:
     """Which sign-in methods this deployment offers.
 
     Unauthenticated by design: the console must ask *before* it can show a
@@ -388,9 +384,7 @@ async def methods(
     providers: list[dict[str, str]] = []
     registry: OIDCProviderRegistry | None = getattr(request.app.state, "oidc_providers", None)
     if registry is not None:
-        records = await list_providers(
-            session, settings, registry._secrets, enabled_only=True
-        )
+        records = await list_providers(session, settings, registry._secrets, enabled_only=True)
         providers = [{"name": record.name, "issuer": record.issuer} for record in records]
     return AuthMethods(
         local=bool(getattr(request.app.state, "login_throttle", None)),
@@ -523,9 +517,7 @@ async def request_password_reset(
         )
 
     email = payload.email.strip().casefold()
-    throttle: ResetRequestThrottle | None = getattr(
-        request.app.state, "reset_throttle", None
-    )
+    throttle: ResetRequestThrottle | None = getattr(request.app.state, "reset_throttle", None)
     if throttle is None or not throttle.allowed(email):
         # Same shape, same answer: throttling must not be distinguishable
         # from success, or it leaks that the address exists.
@@ -673,9 +665,7 @@ async def callback(
 
         # Groups may live only on userinfo, depending on the provider.
         merged: dict[str, Any] = dict(claims)
-        if record.fetch_userinfo and isinstance(
-            access_token := tokens.get("access_token"), str
-        ):
+        if record.fetch_userinfo and isinstance(access_token := tokens.get("access_token"), str):
             merged.update(await client.fetch_userinfo(access_token))
     except OIDCError as exc:
         logger.warning("OIDC login failed: %s", exc)
@@ -711,6 +701,11 @@ async def callback(
             email_verified=merged.get("email_verified"),
             # How far this directory's answer about groups reaches (ADR 0057).
             group_sync=record.group_sync,
+            # Where it comes from, and whether it decides admin (ADR 0088).
+            group_source=record.group_source,
+            admin_rule=record.admin_rule(),
+            claims=merged,
+            group_mappings=record.mappings_dict(),
         )
         # OIDC-only deployments have no password door to make the first
         # administrator through; the configured address, verified, is it.
@@ -735,8 +730,7 @@ async def callback(
     # here exists as a disabled row an administrator can see and enable.
     if not user.is_active:
         raise BadRequestError(
-            "This account is not enabled. Ask an administrator to enable it, "
-            "then sign in again."
+            "This account is not enabled. Ask an administrator to enable it, then sign in again."
         )
 
     logger.info("oidc login: user=%s subject=%s groups=%s", user.id, user.subject, groups)
@@ -793,9 +787,7 @@ async def callback(
     return response
 
 
-async def _logout_client(
-    request: Request, session: SessionDep
-) -> tuple[OIDCClient | None, Any]:
+async def _logout_client(request: Request, session: SessionDep) -> tuple[OIDCClient | None, Any]:
     """The provider whose session this logout should end, if any.
 
     Chosen by the ``iss`` of the id-token hint we stored at login, read
@@ -852,9 +844,7 @@ def _unverified_issuer(token: str) -> str | None:
 
 
 @router.post("/logout")
-async def logout(
-    request: Request, session: SessionDep, settings: SettingsDep
-) -> JSONResponse:
+async def logout(request: Request, session: SessionDep, settings: SettingsDep) -> JSONResponse:
     """End the session here **and** at the identity provider.
 
     Dropping our own cookie is not logging out. Keycloak keeps its own SSO

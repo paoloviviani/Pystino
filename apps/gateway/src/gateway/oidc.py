@@ -36,7 +36,7 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from joserfc import jwt
@@ -58,6 +58,9 @@ from gateway.models import (
     UserIdentity,
 )
 from gateway.oidc_policy import OIDCPolicy
+
+if TYPE_CHECKING:
+    from gateway.identity_policy import AdminRule
 from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
@@ -618,6 +621,10 @@ async def provision_user(
     allow_local_link: bool = False,
     email_verified: bool | None = None,
     group_sync: GroupSync = GroupSync.EVERY_LOGIN,
+    group_source: str = "claim",
+    admin_rule: AdminRule | None = None,
+    claims: dict[str, Any] | None = None,
+    group_mappings: dict[str, str] | None = None,
 ) -> User:
     """Create or update a user and reconcile their group memberships.
 
@@ -726,11 +733,18 @@ async def provision_user(
     # `never` does not even resolve the claim's group names: with nothing to
     # apply them to, creating groups from them would leave a directory's
     # vocabulary lying around in a deployment that decided not to use it.
-    if group_sync is GroupSync.EVERY_LOGIN or (
+    # How often the directory's answer applies (ADR 0057) — to groups and, when
+    # the provider decides admin by claim, to the admin flag (ADR 0088).
+    directory_answers = group_sync is GroupSync.EVERY_LOGIN or (
         group_sync is GroupSync.FIRST_LOGIN and first_login_here
-    ):
+    )
+    # `group_source` says *where* that answer comes from: the token here, the
+    # directory mirror (applied by a sync run, never from a token), or nowhere.
+    if directory_answers and group_source == "claim":
         groups = await _resolve_groups(session, group_names, settings)
         await _reconcile_memberships(session, user, groups)
+    if directory_answers and admin_rule is not None and claims is not None:
+        await apply_admin_answer(session, user, admin_rule.matches(claims, group_mappings))
 
     # Everything below reads the *effective* membership set, not the token's
     # answer. They are no longer the same thing: a manual grant is a real
@@ -765,6 +779,37 @@ async def provision_user(
     # than whatever was loaded before it changed.
     await session.refresh(user, attribute_names=["memberships"])
     return user
+
+
+async def apply_admin_answer(session: AsyncSession, user: User, is_admin: bool) -> str:
+    """Apply a directory's answer about the admin flag, within provenance.
+
+    Grants are recorded as ``admin_source="oidc"``. A revocation only touches
+    a flag the directory granted — a console-made administrator (``manual``)
+    is never demoted by a login or a sync — and is refused when it would leave
+    no active administrator, which is the one way a directory glitch could
+    lock everyone out of the console. Returns what happened, for sync reports.
+    """
+    if is_admin:
+        if user.is_admin:
+            return "unchanged"
+        user.is_admin = True
+        user.admin_source = "oidc"
+        return "granted"
+    if not user.is_admin or user.admin_source != "oidc":
+        return "unchanged"
+    others = await session.execute(
+        select(User.id)
+        .where(User.is_admin.is_(True), User.is_active.is_(True), User.id != user.id)
+        .limit(1)
+    )
+    if others.scalar_one_or_none() is None:
+        logger.warning(
+            "not revoking admin from %s: they are the last active administrator", user.id
+        )
+        return "kept-last-admin"
+    user.is_admin = False
+    return "revoked"
 
 
 async def promote_bootstrap_admin(
@@ -819,6 +864,9 @@ async def sync_user_from_claims(
     settings: OIDCSettings,
     policy: OIDCPolicy | None = None,
     group_sync: GroupSync = GroupSync.EVERY_LOGIN,
+    group_source: str = "claim",
+    admin_rule: AdminRule | None = None,
+    group_mappings: dict[str, str] | None = None,
 ) -> User:
     """Resolve an access token's claims to the user row it names.
 
@@ -886,7 +934,11 @@ async def sync_user_from_claims(
             or user.username == username
             or "username" in (user.admin_edited_fields or [])
         )
-        and not _claims_diverge(user, group_names, settings, policy, group_sync)
+        and (
+            group_source != "claim"
+            or not _claims_diverge(user, group_names, settings, policy, group_sync)
+        )
+        and not _admin_diverges(user, claims, group_sync, admin_rule, group_mappings)
     ):
         return user
 
@@ -902,7 +954,32 @@ async def sync_user_from_claims(
         touch_login=False,
         policy=policy,
         group_sync=group_sync,
+        group_source=group_source,
+        admin_rule=admin_rule,
+        claims=claims,
+        group_mappings=group_mappings,
     )
+
+
+def _admin_diverges(
+    user: User,
+    claims: dict[str, Any],
+    group_sync: GroupSync,
+    admin_rule: AdminRule | None,
+    mappings: dict[str, str] | None,
+) -> bool:
+    """Would this token change the admin flag? Only asked on every-login sync.
+
+    Cheap — the claims are parsed, the row loaded — and it settles: after one
+    provisioning the flag agrees with the token (or provenance forbids the
+    change), so the hot path returns early again.
+    """
+    if admin_rule is None or group_sync is not GroupSync.EVERY_LOGIN:
+        return False
+    wanted = admin_rule.matches(claims, mappings)
+    if wanted:
+        return not user.is_admin
+    return user.is_admin and user.admin_source == "oidc"
 
 
 def _claims_diverge(
