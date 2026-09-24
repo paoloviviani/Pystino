@@ -1,5 +1,5 @@
 # The one PR workflow for Pystino (it folds in the checks thin-agent/main
-# parked here as ci.yml: pytest, ruff, mypy, Go gofmt/vet/test).
+# parked here as ci.yml: pytest, ruff, mypy; the Go job moved to the chat repository with galopin).
 #
 # Sized for the GitHub free plan's Action minutes:
 #   - PRs and manual runs only — no push-to-main run (what merges was checked
@@ -34,7 +34,6 @@ jobs:
     outputs:
       gateway: ${{ steps.filter.outputs.gateway }}
       console: ${{ steps.filter.outputs.console }}
-      go: ${{ steps.filter.outputs.go }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -54,10 +53,6 @@ jobs:
               - "packages/ui/**"
               - "pnpm-lock.yaml"
               - "deploy/ci/github-workflows/ci.yml"
-            go:
-              - "deploy/**/*.go"
-              - "deploy/**/go.mod"
-              - "deploy/**/go.sum"
               - "deploy/ci/github-workflows/ci.yml"
 
   gateway:
@@ -102,23 +97,3 @@ jobs:
       - run: pnpm install --frozen-lockfile --filter "@llmp/console..."
       - run: pnpm --filter @llmp/console typecheck
       - run: pnpm --filter @llmp/console test
-
-  go:
-    needs: changes
-    if: needs.changes.outputs.go == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with: {go-version: stable, cache-dependency-path: "deploy/**/go.sum"}
-      # One runner for every Go module under deploy/ (the agent's module has
-      # moved before and may again), rather than a matrix job per module.
-      - name: gofmt, vet, test
-        run: |
-          set -eu
-          for mod in $(find deploy -name go.mod -exec dirname {} \; | sort -u); do
-            echo "::group::$mod"
-            (cd "$mod" && test -z "$(gofmt -l . | tee /dev/stderr)" && go vet ./... && go test ./...)
-            echo "::endgroup::"
-          done

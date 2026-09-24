@@ -274,7 +274,7 @@ def build(options: AdoptOptions, release: dict[str, str]) -> AdoptResult:
         notes.append(
             "CODE_AGENTS_ENABLED is on: machines now dial out to the chat "
             "(wss://<origin>/chat/api/v2/code/machine) — there is no relay to carry over. "
-            "Re-enrol each machine with 'pystino-agent enroll', then 'pystino-agent run'"
+            "Re-enrol each machine with 'galopin enroll', then 'galopin run'"
         )
     for gone in ("TLS_DIRECTIVE", "HTTPS_PORT", "PUBLIC_HOST", "CHAT_REPO", "SSL_CERT_FILE"):
         if gone in values:

@@ -42,7 +42,7 @@ Authelia on a dotless host (browsers refuse its cookie), an `http://` origin.
 | `--preset` | `homelab` (no ledger), `team` (ledger, quotas, pattern redaction), `enterprise` (+ NER redaction built locally, headless fetch), `satellite` / `generic` (the chat alone — also `cerea init`) |
 | `--tls` | `acme` (a public name, Let's Encrypt), `internal` (Caddy's own CA; development), `upstream` (TLS ends in front — the NetBird edge) |
 | `--idp` | `authelia` (bundled) or `external` with `--oidc-issuer` and the client secrets in `PYSTINO_OIDC_*_CLIENT_SECRET` |
-| `--agents` | the coding-agent panel: machines dial `wss://<origin>/chat/api/v2/code/machine` with client `opencode-enrollment` — installing `pystino-agent` on them is [Agent machines](agent-machines.md) |
+| `--agents` | the coding-agent panel: machines dial `wss://<origin>/chat/api/v2/code/machine` with client `opencode-enrollment` — installing galopin, the Cerea machine agent, on them is documented in the chat repository (`docs/agent-machines.md`) |
 
 The first sign-in whose verified email is `--admin-email` becomes the
 administrator, once, on a deployment that has none. With the bundled Authelia,
