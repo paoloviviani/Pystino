@@ -26,6 +26,19 @@ type credentials struct {
 	// opencode.json's baseURL; serve honours it so the two ends agree without
 	// the human passing --port. Omitted (0) falls back to defaultShimPort.
 	ShimPort int `json:"shim_port,omitempty"`
+	// ShimSecret is the per-install bearer the shim requires of its caller
+	// (C3): enroll mints it once and writes it into opencode's provider
+	// apiKey, so opencode sends it as `Authorization: Bearer <secret>`
+	// instead of the real gateway bearer, which never reaches opencode's
+	// config or the loopback socket. Empty on a credential file written by
+	// an enroll that predates this field; the shim then refuses every
+	// request rather than silently running unauthenticated.
+	ShimSecret string `json:"shim_secret,omitempty"`
+	// CereaOrigin is the Cerea origin `run` dials by default (PROTOCOL.md
+	// §3): recorded at enroll time so a plain `pystino-agent run` (no
+	// --cerea) works the same way `pystino-agent serve` already needs no
+	// flags beyond what enroll wrote.
+	CereaOrigin string `json:"cerea_origin,omitempty"`
 }
 
 // refreshSkew makes serve refresh a little before expiry, so no proxied
@@ -60,26 +73,18 @@ func defaultCredsPath() (string, error) {
 	return filepath.Join(dir, "opencode", "pystino-credentials.json"), nil
 }
 
-// saveCredentials writes the file with owner-only permissions from the
-// start: creating it 0600 first (not chmod-after) leaves no window where a
-// group-readable refresh token sits on disk.
+// saveCredentials writes the file at 0600, atomically (R8): a crash, a full
+// disk or a concurrent writer mid-write must never leave a truncated file
+// behind, since it holds the only copy of the refresh token.
 func saveCredentials(path string, creds *credentials) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("creating creds dir: %w", err)
-	}
 	body, err := json.MarshalIndent(creds, "", "  ")
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
+	if err := writeFileAtomic(path, append(body, '\n'), 0o600); err != nil {
 		return fmt.Errorf("writing creds: %w", err)
 	}
-	if _, err := file.Write(append(body, '\n')); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("writing creds: %w", err)
-	}
-	return file.Close()
+	return nil
 }
 
 // loadCredentials reads the file serve runs from. A corrupt file is a hard
@@ -87,14 +92,19 @@ func saveCredentials(path string, creds *credentials) error {
 func loadCredentials(path string) (*credentials, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading creds (run 'enroll enroll' first): %w", err)
+		return nil, fmt.Errorf("reading creds (run 'pystino-agent enroll' first): %w", err)
 	}
 	var creds credentials
 	if err := json.Unmarshal(body, &creds); err != nil {
 		return nil, fmt.Errorf("parsing creds: %w", err)
 	}
-	if creds.RefreshToken == "" || creds.TokenEndpoint == "" || creds.Gateway == "" {
-		return nil, fmt.Errorf("creds file is incomplete: re-run 'enroll enroll'")
+	// Gateway is deliberately not required here: it only matters to the
+	// shim's forwarding (checked separately, in runServe and run's shim
+	// startup), not to refreshing the token itself — `run --no-shim` has no
+	// gateway to forward to at all (its opencode points straight at a
+	// caller-provided config, e.g. a mock LLM in tests).
+	if creds.RefreshToken == "" || creds.TokenEndpoint == "" {
+		return nil, fmt.Errorf("creds file is incomplete: re-run 'pystino-agent enroll'")
 	}
 	return &creds, nil
 }
@@ -117,7 +127,10 @@ type opencodeModel struct {
 	Limit *opencodeLimit `json:"limit,omitempty"`
 }
 
-// opencodeProvider is the pystino entry under "provider".
+// opencodeProvider is the pystino entry under "provider". options.apiKey is
+// where opencode's @ai-sdk/openai-compatible provider reads the bearer it
+// sends as Authorization — here that's the per-install shim secret (C3),
+// never the gateway's own bearer, which opencode never sees.
 type opencodeProvider struct {
 	NPM     string                   `json:"npm"`
 	Name    string                   `json:"name"`
@@ -133,9 +146,11 @@ const (
 	defaultMaxOutputTokens = 16384
 )
 
-// opencodeConfig is the whole opencode.json this tool writes. Deliberately
-// no apiKey: opencode would send it as-is and it would expire (ADR 0040).
-// The baseURL points at the local shim, which owns the bearer instead.
+// opencodeConfig is the whole opencode.json this tool writes. Its apiKey is
+// the per-install shim secret (C3), never the gateway bearer: opencode
+// would send whatever apiKey it holds as-is forever, and the gateway bearer
+// expires (ADR 0040). The baseURL points at the local shim, which swaps the
+// secret for a real, fresh bearer before forwarding.
 type opencodeConfig struct {
 	Schema string `json:"$schema"`
 	// EnabledProviders is opencode's own provider allowlist. Verified
@@ -172,6 +187,7 @@ type opencodeConfig struct {
 // operators who want both.
 func buildOpencodeConfig(
 	shimAddr string,
+	shimSecret string,
 	models []gatewayModel,
 	allowOpencodeProviders bool,
 ) *opencodeConfig {
@@ -209,6 +225,7 @@ func buildOpencodeConfig(
 			Name: "Pystino Gateway",
 			Options: map[string]string{
 				"baseURL": "http://" + shimAddr + "/v1",
+				"apiKey":  shimSecret,
 			},
 			Models: entries,
 		},
@@ -223,21 +240,17 @@ func buildOpencodeConfig(
 	}
 }
 
-// writeOpencodeConfig persists the file. 0600 is harmless for a file with no
-// secret in it, and keeps the permissions story to one rule: everything this
-// tool writes is owner-only.
+// writeOpencodeConfig persists the file atomically (R8) at 0600. It now
+// carries the shim secret (C3) in options.apiKey, so it is as sensitive as
+// the credentials file and gets the same treatment: everything this tool
+// writes is owner-only, and a crash never leaves a half-written config.
 func writeOpencodeConfig(path string, cfg *opencodeConfig) error {
 	body, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
+	if err := writeFileAtomic(path, append(body, '\n'), 0o600); err != nil {
 		return fmt.Errorf("writing opencode.json: %w", err)
 	}
-	if _, err := file.Write(append(body, '\n')); err != nil {
-		_ = file.Close()
-		return fmt.Errorf("writing opencode.json: %w", err)
-	}
-	return file.Close()
+	return nil
 }

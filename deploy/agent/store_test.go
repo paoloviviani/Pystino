@@ -10,10 +10,11 @@ import (
 
 // TestBuildOpencodeConfigShape pins the emitted opencode.json to the template
 // shape (deploy/opencode/opencode.json.template): same provider entry, same
-// npm package, baseURL under options, no apiKey (the shim owns the bearer,
-// ADR 0040), and gateway limit hints carried into limit blocks. Default
-// (opt-out) behaviour also pins enabled_providers to [pystino] — opencode's
-// own allowlist, so the gateway's models are the only ones the picker offers.
+// npm package, baseURL and the per-install shim secret under options (C3;
+// never the gateway bearer, which expires — ADR 0040), and gateway limit
+// hints carried into limit blocks. Default (opt-out) behaviour also pins
+// enabled_providers to [pystino] — opencode's own allowlist, so the
+// gateway's models are the only ones the picker offers.
 func TestBuildOpencodeConfigShape(t *testing.T) {
 	models := []gatewayModel{
 		{ID: "coder-large", DisplayName: "Coder Large", ContextWindow: 200000, MaxOutputTokens: 32000},
@@ -24,7 +25,7 @@ func TestBuildOpencodeConfigShape(t *testing.T) {
 		{ID: "qwen3-embedding-8b", Kind: "embedding", ContextWindow: 32768},
 		{ID: "legacy-unknown-kind", Kind: ""},
 	}
-	cfg := buildOpencodeConfig("127.0.0.1:41871", models, false)
+	cfg := buildOpencodeConfig("127.0.0.1:41871", "test-shim-secret", models, false)
 	if cfg.Schema != "https://opencode.ai/config.json" {
 		t.Fatalf("wrong schema: %s", cfg.Schema)
 	}
@@ -41,8 +42,8 @@ func TestBuildOpencodeConfigShape(t *testing.T) {
 	if provider.Options["baseURL"] != "http://127.0.0.1:41871/v1" {
 		t.Fatalf("wrong baseURL: %s", provider.Options["baseURL"])
 	}
-	if _, hasKey := provider.Options["apiKey"]; hasKey {
-		t.Fatal("config must not carry an apiKey: the token expires, the shim refreshes it")
+	if provider.Options["apiKey"] != "test-shim-secret" {
+		t.Fatalf("apiKey must carry the per-install shim secret (C3), got %q", provider.Options["apiKey"])
 	}
 	large := provider.Models["coder-large"]
 	if large.Name != "Coder Large" || large.Limit == nil ||
@@ -104,7 +105,7 @@ func TestBuildOpencodeConfigShape(t *testing.T) {
 // same placeholder id the pasted-key installer writes, so both paths tell
 // the user the same thing.
 func TestBuildOpencodeConfigPlaceholder(t *testing.T) {
-	cfg := buildOpencodeConfig("127.0.0.1:41871", nil, false)
+	cfg := buildOpencodeConfig("127.0.0.1:41871", "test-shim-secret", nil, false)
 	entry, ok := cfg.Provider["pystino"].Models["REPLACE-WITH-MODEL-ID"]
 	if !ok {
 		t.Fatal("missing placeholder models entry")
@@ -123,7 +124,7 @@ func TestBuildOpencodeConfigPlaceholder(t *testing.T) {
 // the key is the only shape that leaves opencode untouched.
 func TestBuildOpencodeConfigAllowOpencodeProvider(t *testing.T) {
 	models := []gatewayModel{{ID: "coder-large", DisplayName: "Coder Large"}}
-	cfg := buildOpencodeConfig("127.0.0.1:41871", models, true)
+	cfg := buildOpencodeConfig("127.0.0.1:41871", "test-shim-secret", models, true)
 	if cfg.EnabledProviders != nil {
 		t.Fatalf("opting in must omit enabled_providers, got %v", cfg.EnabledProviders)
 	}
