@@ -36,7 +36,7 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from joserfc import jwt
@@ -58,6 +58,9 @@ from gateway.models import (
     UserIdentity,
 )
 from gateway.oidc_policy import OIDCPolicy
+
+if TYPE_CHECKING:
+    from gateway.identity_policy import AdminRule
 from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
@@ -211,29 +214,72 @@ class OIDCClient:
         self._jwks: KeySet | None = None
         self._jwks_fetched_at: float = 0.0
 
+    def _backchannel_headers(self) -> dict[str, str]:
+        """Forwarded headers naming the public issuer, for internal-URL calls.
+
+        Authelia derives its issuer — and so every endpoint in discovery and
+        the `iss` of what it mints — from these headers; called on its internal
+        address without them it answers nothing at all (verified against
+        4.39.22). Empty when there is no internal URL, so an external IdP sees
+        exactly the requests it always did.
+        """
+        if not self._settings.internal_base_url:
+            return {}
+        public = httpx.URL(self._settings.issuer)
+        host = public.host if public.port is None else f"{public.host}:{public.port}"
+        return {"x-forwarded-proto": public.scheme, "x-forwarded-host": host}
+
+    def _backchannel_url(self, url: str | None) -> str | None:
+        """Rewrite a public endpoint onto the internal base, when one is set.
+
+        Only endpoints under the public issuer move. Anything else — an IdP
+        that serves JWKS from a CDN — is left alone, because rewriting a URL we
+        do not understand would send the request somewhere it was never meant
+        to go.
+        """
+        internal = self._settings.internal_base_url.rstrip("/")
+        public = self._settings.issuer.rstrip("/")
+        if not url or not internal or not url.startswith(public):
+            return url
+        return internal + url[len(public) :]
+
     async def metadata(self) -> OIDCMetadata:
         if self._metadata is not None:
             return self._metadata
-        url = f"{self._settings.issuer}/.well-known/openid-configuration"
+        base = (self._settings.internal_base_url or self._settings.issuer).rstrip("/")
+        url = f"{base}/.well-known/openid-configuration"
         try:
-            response = await self._http.get(url)
+            response = await self._http.get(url, headers=self._backchannel_headers())
             response.raise_for_status()
             document = response.json()
         except (httpx.HTTPError, ValueError) as exc:
             raise OIDCError(f"could not fetch OIDC discovery document from {url}: {exc}") from exc
 
         try:
+            # The browser-facing endpoints (authorization, end_session) stay as
+            # the IdP published them; only what this server calls itself moves
+            # onto the internal URL.
             self._metadata = OIDCMetadata(
                 issuer=document["issuer"],
                 authorization_endpoint=document["authorization_endpoint"],
-                token_endpoint=document["token_endpoint"],
-                jwks_uri=document["jwks_uri"],
-                userinfo_endpoint=document.get("userinfo_endpoint"),
+                token_endpoint=self._backchannel_url(document["token_endpoint"]) or "",
+                jwks_uri=self._backchannel_url(document["jwks_uri"]) or "",
+                userinfo_endpoint=self._backchannel_url(document.get("userinfo_endpoint")),
                 device_authorization_endpoint=document.get("device_authorization_endpoint"),
                 end_session_endpoint=document.get("end_session_endpoint"),
             )
         except KeyError as exc:
             raise OIDCError(f"discovery document is missing {exc}") from exc
+        published = self._metadata.issuer.rstrip("/")
+        if self._settings.internal_base_url and published != self._settings.issuer.rstrip("/"):
+            # The one misconfiguration the forwarded headers can produce: the
+            # IdP ignored them and answered as its internal self. Every token
+            # would then fail the issuer check with a message about the token,
+            # not about this, so say it here.
+            raise OIDCError(
+                f"discovery via {base} reports issuer {published!r}, not "
+                f"{self._settings.issuer!r}: the IdP did not honour X-Forwarded-Host/Proto"
+            )
         return self._metadata
 
     async def jwks(self, *, force: bool = False) -> KeySet:
@@ -249,7 +295,7 @@ class OIDCClient:
 
         metadata = await self.metadata()
         try:
-            response = await self._http.get(metadata.jwks_uri)
+            response = await self._http.get(metadata.jwks_uri, headers=self._backchannel_headers())
             response.raise_for_status()
             self._jwks = KeySet.import_key_set(response.json())
         except (httpx.HTTPError, ValueError, JoseError) as exc:
@@ -293,7 +339,9 @@ class OIDCClient:
             data["client_secret"] = secret
 
         try:
-            response = await self._http.post(metadata.token_endpoint, data=data)
+            response = await self._http.post(
+                metadata.token_endpoint, data=data, headers=self._backchannel_headers()
+            )
         except httpx.HTTPError as exc:
             raise OIDCError(f"token endpoint unreachable: {exc}") from exc
 
@@ -425,7 +473,7 @@ class OIDCClient:
         try:
             response = await self._http.get(
                 metadata.userinfo_endpoint,
-                headers={"authorization": f"Bearer {access_token}"},
+                headers={"authorization": f"Bearer {access_token}", **self._backchannel_headers()},
             )
             response.raise_for_status()
             payload = response.json()
@@ -573,6 +621,10 @@ async def provision_user(
     allow_local_link: bool = False,
     email_verified: bool | None = None,
     group_sync: GroupSync = GroupSync.EVERY_LOGIN,
+    group_source: str = "claim",
+    admin_rule: AdminRule | None = None,
+    claims: dict[str, Any] | None = None,
+    group_mappings: dict[str, str] | None = None,
 ) -> User:
     """Create or update a user and reconcile their group memberships.
 
@@ -681,11 +733,18 @@ async def provision_user(
     # `never` does not even resolve the claim's group names: with nothing to
     # apply them to, creating groups from them would leave a directory's
     # vocabulary lying around in a deployment that decided not to use it.
-    if group_sync is GroupSync.EVERY_LOGIN or (
+    # How often the directory's answer applies (ADR 0057) — to groups and, when
+    # the provider decides admin by claim, to the admin flag (ADR 0088).
+    directory_answers = group_sync is GroupSync.EVERY_LOGIN or (
         group_sync is GroupSync.FIRST_LOGIN and first_login_here
-    ):
+    )
+    # `group_source` says *where* that answer comes from: the token here, the
+    # directory mirror (applied by a sync run, never from a token), or nowhere.
+    if directory_answers and group_source == "claim":
         groups = await _resolve_groups(session, group_names, settings)
         await _reconcile_memberships(session, user, groups)
+    if directory_answers and admin_rule is not None and claims is not None:
+        await apply_admin_answer(session, user, admin_rule.matches(claims, group_mappings))
 
     # Everything below reads the *effective* membership set, not the token's
     # answer. They are no longer the same thing: a manual grant is a real
@@ -722,6 +781,82 @@ async def provision_user(
     return user
 
 
+async def apply_admin_answer(session: AsyncSession, user: User, is_admin: bool) -> str:
+    """Apply a directory's answer about the admin flag, within provenance.
+
+    Grants are recorded as ``admin_source="oidc"``. A revocation only touches
+    a flag the directory granted — a console-made administrator (``manual``)
+    is never demoted by a login or a sync — and is refused when it would leave
+    no active administrator, which is the one way a directory glitch could
+    lock everyone out of the console. Returns what happened, for sync reports.
+    """
+    if is_admin:
+        if user.is_admin:
+            return "unchanged"
+        user.is_admin = True
+        user.admin_source = "oidc"
+        return "granted"
+    if not user.is_admin or user.admin_source != "oidc":
+        return "unchanged"
+    others = await session.execute(
+        select(User.id)
+        .where(User.is_admin.is_(True), User.is_active.is_(True), User.id != user.id)
+        .limit(1)
+    )
+    if others.scalar_one_or_none() is None:
+        logger.warning(
+            "not revoking admin from %s: they are the last active administrator", user.id
+        )
+        return "kept-last-admin"
+    user.is_admin = False
+    return "revoked"
+
+
+async def promote_bootstrap_admin(
+    session: AsyncSession,
+    user: User,
+    *,
+    bootstrap_email: str,
+    email: str | None,
+    email_verified: object,
+) -> bool:
+    """Make ``user`` the first administrator, if everything lines up.
+
+    All four must hold: a bootstrap address is configured; this login's email
+    matches it (case-insensitively); the provider says the address is verified
+    — the literal boolean ``True``, the same strictness account linking uses
+    (ADR 0056), because otherwise an ``email`` claim would be a password; and
+    no active administrator exists yet. The last condition is what makes the
+    setting inert for the life of the deployment after its first use: it can
+    seed an empty console, never add a second administrator behind the
+    console's back.
+
+    Called from the browser callback only. A ``/v1`` bearer call never
+    promotes anyone, for the reason it never links: only the callback sees the
+    full claim set.
+    """
+    wanted = bootstrap_email.strip().casefold()
+    if not wanted or not email or email.strip().casefold() != wanted:
+        return False
+    if email_verified is not True:
+        logger.warning(
+            "bootstrap admin %s signed in but email_verified=%r; not promoting",
+            email,
+            email_verified,
+        )
+        return False
+    if user.is_admin:
+        return False
+    existing = await session.execute(
+        select(User.id).where(User.is_admin.is_(True), User.is_active.is_(True)).limit(1)
+    )
+    if existing.scalar_one_or_none() is not None:
+        return False
+    user.is_admin = True
+    logger.warning("bootstrap admin: %s is now the first administrator", email)
+    return True
+
+
 async def sync_user_from_claims(
     session: AsyncSession,
     *,
@@ -729,6 +864,9 @@ async def sync_user_from_claims(
     settings: OIDCSettings,
     policy: OIDCPolicy | None = None,
     group_sync: GroupSync = GroupSync.EVERY_LOGIN,
+    group_source: str = "claim",
+    admin_rule: AdminRule | None = None,
+    group_mappings: dict[str, str] | None = None,
 ) -> User:
     """Resolve an access token's claims to the user row it names.
 
@@ -796,7 +934,11 @@ async def sync_user_from_claims(
             or user.username == username
             or "username" in (user.admin_edited_fields or [])
         )
-        and not _claims_diverge(user, group_names, settings, policy, group_sync)
+        and (
+            group_source != "claim"
+            or not _claims_diverge(user, group_names, settings, policy, group_sync)
+        )
+        and not _admin_diverges(user, claims, group_sync, admin_rule, group_mappings)
     ):
         return user
 
@@ -812,7 +954,32 @@ async def sync_user_from_claims(
         touch_login=False,
         policy=policy,
         group_sync=group_sync,
+        group_source=group_source,
+        admin_rule=admin_rule,
+        claims=claims,
+        group_mappings=group_mappings,
     )
+
+
+def _admin_diverges(
+    user: User,
+    claims: dict[str, Any],
+    group_sync: GroupSync,
+    admin_rule: AdminRule | None,
+    mappings: dict[str, str] | None,
+) -> bool:
+    """Would this token change the admin flag? Only asked on every-login sync.
+
+    Cheap — the claims are parsed, the row loaded — and it settles: after one
+    provisioning the flag agrees with the token (or provenance forbids the
+    change), so the hot path returns early again.
+    """
+    if admin_rule is None or group_sync is not GroupSync.EVERY_LOGIN:
+        return False
+    wanted = admin_rule.matches(claims, mappings)
+    if wanted:
+        return not user.is_admin
+    return user.is_admin and user.admin_source == "oidc"
 
 
 def _claims_diverge(

@@ -15,17 +15,22 @@ import {
   useCreateIdentityProvider,
   useDeleteIdentityProvider,
   useEmailSettings,
+  useIdentityKinds,
   useIdentityProviders,
   useTestEmail,
   useUpdateEmailSettings,
   useUpdateIdentityProvider,
 } from "../lib/admin";
 import type {
+  AdminSource,
   EmailSettingsInput,
+  GroupSource,
   GroupSync,
+  IdentityKind,
   IdentityProvider,
   IdentityProviderInput,
 } from "../lib/types";
+import { AutheliaUsersDialog, DirectoryDialog } from "./IdentityDirectory";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
 import { ProvisioningPolicySection } from "./AdminIdentity";
@@ -241,6 +246,8 @@ function ProvidersCard() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<IdentityProvider | null>(null);
   const [deleting, setDeleting] = useState<IdentityProvider | null>(null);
+  const [directoryOf, setDirectoryOf] = useState<IdentityProvider | null>(null);
+  const [usersOf, setUsersOf] = useState<IdentityProvider | null>(null);
 
   return (
     <Card
@@ -268,7 +275,7 @@ function ProvidersCard() {
       ) : (providers.data ?? []).length === 0 ? (
         <EmptyState
           title="No identity provider is configured"
-          detail="Sign-in is local accounts only. Add a provider to offer SSO."
+          detail="Nobody can sign in yet: every person signs in through an OpenID Connect provider."
           action={
             <Button variant="primary" onClick={() => setCreating(true)}>
               Add provider
@@ -291,18 +298,37 @@ function ProvidersCard() {
                   <Badge tone={provider.source === "console" ? "accent" : "neutral"}>
                     {provider.source}
                   </Badge>
+                  <Badge tone="neutral">{provider.kind}</Badge>
+                  {provider.admin_source === "claim" && <Badge tone="warn">admin from IdP</Badge>}
+                  {provider.sync_adapter !== "none" && (
+                    <Badge tone={provider.sync_confirmed || provider.sync_adapter === "scim" ? "ok" : "warn"}>
+                      sync: {provider.sync_adapter}
+                      {provider.sync_confirmed || provider.sync_adapter === "scim" ? "" : " (awaiting review)"}
+                    </Badge>
+                  )}
                 </div>
                 <div className="mt-1 text-sm text-ink-muted">{provider.issuer}</div>
                 <div className="mt-1 text-xs text-ink-faint">
                   client {provider.client_id} · groups claim{" "}
                   <span className="font-mono">{provider.groups_claim}</span> ·{" "}
-                  {Object.keys(provider.group_mappings).length} mapping rule(s)
+                  {Object.keys(provider.group_mappings).length} mapping rule(s) · groups from{" "}
+                  {provider.group_source === "claim" ? "the token" : provider.group_source === "directory" ? "the directory" : "this console only"}
                 </div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Button variant="ghost" onClick={() => setEditing(provider)}>
                   Edit
                 </Button>
+                {provider.source === "console" && (
+                  <Button variant="ghost" onClick={() => setDirectoryOf(provider)}>
+                    Directory
+                  </Button>
+                )}
+                {provider.kind === "authelia" && provider.source === "console" && (
+                  <Button variant="ghost" onClick={() => setUsersOf(provider)}>
+                    People
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   className="text-danger"
@@ -325,6 +351,11 @@ function ProvidersCard() {
         }}
       />
       <DeleteProviderDialog provider={deleting} onClose={() => setDeleting(null)} />
+      <DirectoryDialog
+        provider={(providers.data ?? []).find((p) => p.id === directoryOf?.id) ?? null}
+        onClose={() => setDirectoryOf(null)}
+      />
+      <AutheliaUsersDialog provider={usersOf} onClose={() => setUsersOf(null)} />
     </Card>
   );
 }
@@ -355,8 +386,17 @@ function ProviderDialog({
   const [groupsClaim, setGroupsClaim] = useState("groups");
   const [mappings, setMappings] = useState<{ idp: string; local: string }[]>([]);
   const [linkLocal, setLinkLocal] = useState(false);
-  const [groupSync, setGroupSync] = useState<GroupSync>("every_login");
+  const [groupSync, setGroupSync] = useState<GroupSync>("first_login");
   const [isEnabled, setIsEnabled] = useState(true);
+  const [kind, setKind] = useState<IdentityKind>("generic");
+  const [internalUrl, setInternalUrl] = useState("");
+  const [groupSource, setGroupSource] = useState<GroupSource>("claim");
+  const [adminSource, setAdminSource] = useState<AdminSource>("console");
+  const [adminClaim, setAdminClaim] = useState("groups");
+  const [adminValues, setAdminValues] = useState("");
+  const [subjectClaim, setSubjectClaim] = useState("sub");
+  const kinds = useIdentityKinds();
+  const caps = kinds.data?.[kind];
 
   const target = isEdit ? existing : null;
 
@@ -371,6 +411,13 @@ function ProviderDialog({
     setLinkLocal(target.link_local_by_email);
     setGroupSync(target.group_sync);
     setIsEnabled(target.is_enabled);
+    setKind(target.kind);
+    setInternalUrl(target.internal_base_url);
+    setGroupSource(target.group_source);
+    setAdminSource(target.admin_source);
+    setAdminClaim(target.admin_claim);
+    setAdminValues(target.admin_values.join(", "));
+    setSubjectClaim(target.subject_claim);
   }, [target]);
 
   const close = () => {
@@ -381,11 +428,28 @@ function ProviderDialog({
     setGroupsClaim("groups");
     setMappings([]);
     setLinkLocal(false);
-    setGroupSync("every_login");
+    setGroupSync("first_login");
     setIsEnabled(true);
+    setKind("generic");
+    setInternalUrl("");
+    setGroupSource("claim");
+    setAdminSource("console");
+    setAdminClaim("groups");
+    setAdminValues("");
+    setSubjectClaim("sub");
     create.reset();
     update.reset();
     onClose();
+  };
+
+  const policy = {
+    kind,
+    internal_base_url: internalUrl.trim(),
+    group_source: groupSource,
+    admin_source: adminSource,
+    admin_claim: adminClaim.trim() || "groups",
+    admin_values: adminValues.split(",").map((v) => v.trim()).filter(Boolean),
+    subject_claim: subjectClaim.trim() || "sub",
   };
 
   const submit = () => {
@@ -400,6 +464,7 @@ function ProviderDialog({
         link_local_by_email: linkLocal,
         group_sync: groupSync,
         is_enabled: isEnabled,
+        ...policy,
       };
       if (clientSecret) body.client_secret = clientSecret;
       update.mutate(
@@ -427,6 +492,7 @@ function ProviderDialog({
           group_mappings: mappings.filter((r) => r.idp.trim() && r.local.trim()),
           link_local_by_email: linkLocal,
           group_sync: groupSync,
+          ...policy,
         },
         {
           onSuccess: (created) => {
@@ -481,6 +547,27 @@ function ProviderDialog({
           onChange={(e) => setIssuer(e.target.value)}
           hint="The identity provider's issuer URL — discovery is fetched from
             <issuer>/.well-known/openid-configuration."
+        />
+        <Select
+          label="Kind of directory"
+          value={kind}
+          onChange={(e) => setKind(e.target.value as IdentityKind)}
+          hint="Decides what this directory can offer: groups in the token, a user listing, SCIM push."
+        >
+          <option value="generic">Generic OpenID Connect</option>
+          <option value="authelia">Authelia (the bundled one)</option>
+          <option value="keycloak">Keycloak</option>
+          <option value="entra">Microsoft Entra ID</option>
+          <option value="okta">Okta</option>
+          <option value="authentik">Authentik</option>
+          <option value="google">Google Workspace</option>
+        </Select>
+        <Input
+          label="Internal URL (optional)"
+          value={internalUrl}
+          onChange={(e) => setInternalUrl(e.target.value)}
+          hint="Where this server reaches the issuer when not at its public URL — the bundled
+            Authelia is http://authelia:9091/authelia. Browsers always use the issuer."
         />
         <Input label="Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} />
         <Input
@@ -544,7 +631,20 @@ function ProviderDialog({
           </Button>
         </div>
         <Select
-          label="Group membership from this directory"
+          label="Who decides group membership?"
+          value={groupSource}
+          onChange={(e) => setGroupSource(e.target.value as GroupSource)}
+        >
+          {caps?.claims_groups !== false && (
+            <option value="claim">The identity provider — the groups claim at sign-in</option>
+          )}
+          {(caps?.adapters.length ?? 0) > 0 && (
+            <option value="directory">The directory — its user listing or SCIM push</option>
+          )}
+          <option value="none">This console only</option>
+        </Select>
+        <Select
+          label="When does the provider's answer apply?"
           value={groupSync}
           onChange={(e) => setGroupSync(e.target.value as GroupSync)}
           hint="Applies only to memberships this directory granted. A group an
@@ -561,6 +661,34 @@ function ProviderDialog({
             Never — sign-in only, groups assigned here
           </option>
         </Select>
+        <Select
+          label="Who decides who is an administrator?"
+          value={adminSource}
+          onChange={(e) => setAdminSource(e.target.value as AdminSource)}
+          hint="The provider can only take away an administrator flag it granted, and never the
+            last active administrator's; `pystino admin grant` stays the way back in."
+        >
+          <option value="console">This console</option>
+          <option value="claim">A claim or group from this provider</option>
+        </Select>
+        {adminSource === "claim" && (
+          <>
+            <Input label="Admin claim" value={adminClaim} onChange={(e) => setAdminClaim(e.target.value)} />
+            <Input
+              label="Values that make someone an administrator"
+              value={adminValues}
+              onChange={(e) => setAdminValues(e.target.value)}
+              hint="Comma-separated; matched as the directory spells them or as mapped here."
+            />
+          </>
+        )}
+        <Input
+          label="Subject claim"
+          value={subjectClaim}
+          onChange={(e) => setSubjectClaim(e.target.value)}
+          hint="The claim that identifies a person: sub, or oid for Entra ID. Locked once
+            the provider has users."
+        />
         <div>
           <label className="flex cursor-pointer items-start gap-2">
             <input

@@ -6,23 +6,25 @@ compose route is the one that gets you a billed completion and a console.
 
 ## Run the stack
 
+A development stack from this checkout, with a fake upstream so no provider
+account is needed (the full set of options is in [Deployment](deployment.md)):
+
 ```bash
-cp deploy/.env.example deploy/.env
-# edit deploy/.env: set POSTGRES_PASSWORD, GATEWAY_SESSION_SECRET,
-# and GATEWAY_UPSTREAM__API_KEY
-docker compose -f deploy/compose/docker-compose.yml up --build
+uv run pystino init --dir ~/pystino-dev --mode dev --tls internal \
+  --origin https://dev.example.test:8443 --https-port 8443 \
+  --admin-email you@example.org --preset homelab
+# add the fake upstream: append ":$PWD/deploy/dev/smoke.yml" to COMPOSE_FILE in ~/pystino-dev/.env
+cd ~/pystino-dev && docker compose up -d --build --wait
 ```
 
-That starts PostgreSQL and Valkey, runs migrations once, and starts the gateway
-on `localhost:8000`. The base compose file publishes **127.0.0.1 only** — that
-is deliberate, and [Deployment](deployment.md) covers what it takes to change
-it.
+`init` prints the bundled Authelia's first password once. `dev.example.test`
+must resolve to this machine for a browser (a hosts entry is enough). The
+gateway itself also listens on `127.0.0.1:8000`, loopback only.
 
 ## Create something to talk to
 
 ```bash
-docker compose -f deploy/compose/docker-compose.yml exec gateway \
-  gateway seed --model my-model --upstream-model gpt-4o-mini
+docker compose exec gateway gateway seed --model my-model --upstream-model gpt-4o-mini
 ```
 
 It prints an API key (once) and a ready-made `curl`. Any OpenAI client works:
@@ -42,37 +44,14 @@ settled into the ledger. Streaming works the same way, with `stream=True` or
 `stream_options={"include_usage": true}` — the gateway forces usage out of the
 upstream either way (ADR 0007).
 
-## Try it without a provider key
-
-`docker-compose.smoke.yml` adds a fake OpenAI-compatible upstream, so the whole
-topology can be exercised with no provider account:
-
-```bash
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml up --build
-```
-
-It is a separate overlay on purpose: a fake upstream in the base file would be
-one careless `-f` away from production.
-
 ## Sign in to the console
 
-Enable local sign-in and create the first administrator — it prompts, so
-nothing lands in shell history:
-
-```bash
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml exec gateway \
-  gateway passwd admin@local
-```
-
-The console is at <http://localhost:8000/console>. Sign in with the account you
-just created. OIDC against GitLab, Entra ID or any other provider is a `.env`
-change, not a new component — see
-[OIDC against any provider](oidc-generic-provider.md). Local authentication and
-OIDC are two doors into the same session (ADR 0043).
+The console is at `https://dev.example.test:8443/console`. Sign in through the
+bundled Authelia with the account `init` created; because its email is the
+`--admin-email`, that first sign-in makes it the administrator. Everyone signs
+in through an OIDC provider — there is no password door (ADR 0088). Other
+providers (GitLab, Entra ID, Keycloak, …) are added in the console's Settings
+screen; see [OIDC against any provider](oidc-generic-provider.md).
 
 ## Reach it from another machine
 

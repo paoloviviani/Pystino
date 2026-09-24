@@ -12,7 +12,6 @@ from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
@@ -100,6 +99,16 @@ class OIDCSettings(BaseModel):
     # same fact for a deployment that configures providers there instead.
     link_local_by_email: bool = False
 
+    # Where this server reaches the issuer, when that is not the issuer URL
+    # itself — the bundled Authelia at http://authelia:9091/authelia. Discovery,
+    # token, JWKS and userinfo go there, carrying X-Forwarded-Proto/Host for the
+    # public issuer so the IdP still mints tokens whose `iss` is public; the
+    # browser keeps the public authorization and logout endpoints. Without it,
+    # server-to-server calls hairpin through the proxy's public TLS listener,
+    # which is what the CA trust bundle existed to paper over. Empty means
+    # "the issuer URL is reachable from here", the external-IdP case.
+    internal_base_url: str = ""
+
     # Removed as a setting by ADR 0069 and kept only as a tripwire: the field
     # exists so that a deployment still setting GATEWAY_OIDC__ADMIN_GROUPS gets
     # a startup error naming the removal instead of a silent no-op. An
@@ -115,7 +124,7 @@ class OIDCSettings(BaseModel):
             raise ValueError(
                 "GATEWAY_OIDC__ADMIN_GROUPS was removed (ADR 0069): authorisation is a "
                 "gateway fact. Make an administrator in the console or with "
-                "`gateway passwd --admin`, and delete the variable."
+                "`pystino admin grant <email>`, and delete the variable."
             )
         return value
 
@@ -147,229 +156,67 @@ class OIDCSettings(BaseModel):
 
 
 class PasswordResetSettings(BaseModel):
-    """Self-service password reset by email (ADR 0049).
+    """The environment's mail server (ADR 0049), kept after the local door went.
 
-    Amends the part of ADR 0043 that declined email reset as "a bigger surface
-    than the feature is worth". The surface is bounded three ways, all here in
-    the environment rather than in the database: the feature is off until this
-    section names a mail server (`enabled` plus `smtp_host`), only ``local``
-    accounts may reset (a directory user's password belongs to the IdP), and
-    the link is a single-use, high-entropy, short-lived token stored only as a
-    SHA-256 hash — the same shape as an API key (ADR 0010), for the same
-    reason.
-
-    Delivery is plain ``smtplib`` run in a worker thread: the dependency that
-    would be adopted for one email is not worth its supply chain. STARTTLS is
-    always attempted; a server that refuses TLS refuses the mail.
+    The nesting under ``local_auth.password_reset`` is historical — it arrived
+    with password reset — and is kept so existing ``GATEWAY_LOCAL_AUTH__
+    PASSWORD_RESET__SMTP_*`` variables keep configuring mail, which quota
+    notifications still send (the console's email settings override it).
     """
 
     enabled: bool = False
-
-    # Short on purpose: the token's only job is to survive "check my mail".
-    token_ttl_seconds: int = Field(default=3600, gt=0)
-    # Per email address, per worker process — the same sharing trade the login
-    # throttle makes (see gateway/login_throttle.py).
-    request_cooldown_seconds: float = Field(default=60, gt=0)
-
     smtp_host: str = ""
     smtp_port: int = Field(default=587, gt=0)
     smtp_username: str = ""
     smtp_password: SecretStr = SecretStr("")
-    # RFC 5322 From, address required: "Pystino <no-reply@example.org>".
     smtp_from: str = ""
 
 
 class LocalAuthSettings(BaseModel):
-    """Local email + password sign-in for the management surface (ADR 0043).
+    """Local email + password sign-in — removed (ADR 0088, decision D3).
 
-    Off by default: a deployment with an identity provider should not grow a
-    second way in just because the feature shipped. Enabling it adds
-    ``POST /auth/login``; disabling it makes that endpoint answer 503 and the
-    console hides the form. Nothing else changes — the session cookie, its
-    lifetime, and everything downstream of it are shared with the OIDC flow.
-
-    There is no self-service registration: an account exists because an
-    operator created it, via ``gateway passwd`` or the admin API. Password
-    reset by email arrived later, opt-in and environment-configured — see
-    ``PasswordResetSettings`` and ADR 0049, which amend the refusal recorded
-    here originally.
+    Every person signs in through an OpenID Connect provider; the break-glass
+    for a deployment with no administrator is `pystino admin grant <email>`
+    inside the gateway container. Kept only as a tripwire, per ADR 0065's
+    rule: a deployment still asking for the password door gets a startup error
+    naming the change, not a silent absence.
     """
 
     enabled: bool = False
-
-    # Argon2id is what protects a weak password from a GPU; no KDF protects it
-    # from a dictionary. The floor is low enough to accept generated secrets and
-    # long passphrases without friction, and exists so "password1" is refused at
-    # every entry point rather than hashed and stored.
-    min_password_length: int = Field(default=10, ge=1)
-
-    # Brute-force throttle, per worker process (see gateway/login_throttle.py
-    # for why it is not shared across workers).
-    max_failed_attempts: int = Field(default=10, ge=1)
-    throttle_window_seconds: float = Field(default=900, gt=0)
-
-    # Self-service password reset (ADR 0049): disabled until the deployment
-    # names a mail server and says so. Nested because a reset is a local-auth
-    # concern — it exists to recover exactly the credential local auth mints.
     password_reset: PasswordResetSettings = Field(default_factory=PasswordResetSettings)
 
-
-class IdPClientSettings(BaseModel):
-    """A first-party client the house issuer will answer (ADR 0068).
-
-    Registered server-side on purpose: a public registry is how client
-    squatting starts, and every client here is software this deployment ships.
-    The redirect is a *path* on this origin rather than an absolute URL — the
-    origin is the issuer's, and one deployment serves one origin, so the full
-    URL is derived at authorize time and cannot be made to name another host.
-    """
-
-    client_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
-    # e.g. "/chat/login/callback" — validated below.
-    redirect_path: str
-    # Empty means a PKCE-only public client: acceptable because the token
-    # endpoint is advertised at the compose-internal base URL and PKCE is
-    # mandatory, so a stolen code is worthless without the verifier. A secret,
-    # when set, is checked (Basic or post) and makes the client confidential.
-    secret: SecretStr = SecretStr("")
-
-    @field_validator("redirect_path")
+    @field_validator("enabled")
     @classmethod
-    def _is_a_path_here(cls, value: str) -> str:
-        # The same shape `_safe_next` refuses in the login flow: anything not
-        # obviously a path on this origin is rejected rather than repaired,
-        # because a redirect URI we had to fix up is a redirect we did not
-        # understand — and the code lands on whoever controls the URL.
-        if not value.startswith("/") or value.startswith("//") or value.startswith("/\\"):
-            raise ValueError("redirect_path must be an absolute path on this origin")
-        if any(character in value for character in "\r\n\t") or any(
-            ord(character) < 0x20 or ord(character) == 0x7F for character in value
-        ):
-            raise ValueError("redirect_path contains control characters")
+    def _local_auth_was_removed(cls, value: bool) -> bool:
+        if value:
+            raise ValueError(
+                "GATEWAY_LOCAL_AUTH__ENABLED was removed (ADR 0088): people sign in through "
+                "an OIDC provider, and the break-glass is `pystino admin grant <email>`. "
+                "Delete the variable."
+            )
         return value
 
 
 class IdPSettings(BaseModel):
-    """The house issuer: a minimal IdP for browser-facing clients (ADR 0068).
+    """The house identity provider — removed (ADR 0088; it superseded ADR 0068).
 
-    Discovery, authorization-code + PKCE, an ``id_token``, JWKS, userinfo and
-    ``end_session`` — built on the credential machinery ADR 0046 left as the
-    substrate, whose browser-facing flow this supersedes. Access tokens stay
-    opaque key rows: no JWT is ever validated on the ``/v1`` hot path.
-
-    Off by default, and off means *absent*: the routes are not registered and
-    discovery does not resolve. The management doors — console login, API
-    keys, external OIDC — are not part of the IdP and do not answer to this
-    switch (ADR 0068).
+    The bundled Authelia (`pystino init --idp authelia`) or any OIDC provider
+    replaces it. A tripwire, like LocalAuthSettings: GATEWAY_IDP__ENABLED=true
+    refuses to start with a message saying what to do instead.
     """
 
     enabled: bool = False
 
-    # The URL clients see — the public origin. Every id_token's ``iss`` and
-    # every browser-facing endpoint URL in discovery is built from it, never
-    # from the request: behind a plain-HTTP edge the request arrives as http
-    # while every client knows the deployment as https, and an issuer that
-    # changed with the vantage point would fail validation on one side or the
-    # other. Required when enabled.
-    issuer: str = ""
-
-    # Where the server-to-server endpoints live: token, JWKS, userinfo — the
-    # half of discovery only another backend fetches. Defaults to ``issuer``.
-    # The compose deployment sets it to the gateway's internal address so the
-    # chat's token exchanges, JWKS fetches and userinfo calls never leave the
-    # host and never meet the edge; a caller outside the network that trusted
-    # discovery would simply be unable to reach them. Browser-facing endpoints
-    # (authorize, end_session) are always built from ``issuer``.
-    internal_base_url: str = ""
-
-    # ES256 private key, PEM. The only asymmetric material the gateway holds:
-    # it signs ``id_token``s at login and nothing else, so the JOSE machinery
-    # never approaches the request path (ADR 0068). Required when enabled.
-    signing_key: SecretStr = SecretStr("")
-
-    # Where to read that key from instead, which is how the deployment does it.
-    # A PEM is several lines and an env file is a line-oriented format, so
-    # carrying the key inline makes every reader and writer of ``deploy/.env``
-    # handle a continuation case that exists for exactly one variable. A path
-    # is one line; the file is mounted into the container and never passes
-    # through the environment at all, which also keeps it out of ``docker
-    # inspect`` and out of any process listing.
-    #
-    # Inline still works and is not deprecated — a deployment that sets
-    # ``GATEWAY_IDP__SIGNING_KEY`` directly is untouched. Setting both is
-    # refused rather than resolved by precedence: two sources for one key is a
-    # question about which one is live, and the answer should not be buried in
-    # a validator.
-    signing_key_file: str = ""
-
-    # Guards the legacy minting endpoints (``POST /auth/token``, ``POST
-    # /auth/revoke``) when the IdP is enabled: a credential only the compose
-    # network's services hold. The IdP's own token endpoint is guarded by
-    # client authentication instead, because it is called by a standard OAuth
-    # client that cannot be taught a custom header. Required when enabled.
-    internal_token: SecretStr = SecretStr("")
-
-    code_ttl_seconds: int = Field(default=60, gt=0, le=600)
-    id_token_ttl_seconds: int = Field(default=600, gt=0)
-
-    clients: list[IdPClientSettings] = Field(
-        default_factory=lambda: [
-            IdPClientSettings(client_id="cerea", redirect_path="/chat/login/callback")
-        ]
-    )
-
-    @field_validator("issuer", "internal_base_url")
+    @field_validator("enabled")
     @classmethod
-    def _absolute_and_stripped(cls, value: str) -> str:
-        return value.rstrip("/")
-
-    @model_validator(mode="after")
-    def _load_signing_key_file(self) -> IdPSettings:
-        """Read the PEM off disk, once, at startup.
-
-        Done here rather than at first login so a missing or unreadable key is
-        a refusal to start — the alternative is a gateway that serves every
-        other route and fails only when somebody tries to sign in, which is
-        the shape of outage that gets diagnosed last.
-        """
-        if not self.signing_key_file:
-            return self
-        if self.signing_key.get_secret_value():
+    def _idp_was_removed(cls, value: bool) -> bool:
+        if value:
             raise ValueError(
-                "set GATEWAY_IDP__SIGNING_KEY or GATEWAY_IDP__SIGNING_KEY_FILE, not both"
+                "GATEWAY_IDP__ENABLED was removed (ADR 0088): the house identity provider is "
+                "gone. Use the bundled Authelia (pystino init --idp authelia) or any OIDC "
+                "provider, and delete the GATEWAY_IDP__* variables."
             )
-        path = Path(self.signing_key_file)
-        try:
-            pem = path.read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            raise ValueError(f"GATEWAY_IDP__SIGNING_KEY_FILE: cannot read {path}: {exc}") from exc
-        if "PRIVATE KEY" not in pem:
-            raise ValueError(
-                f"GATEWAY_IDP__SIGNING_KEY_FILE: {path} does not look like a PEM private key"
-            )
-        self.signing_key = SecretStr(pem)
-        return self
-
-    @model_validator(mode="after")
-    def _enabled_requires_a_working_issuer(self) -> IdPSettings:
-        if not self.enabled:
-            return self
-        missing = [
-            name
-            for name, value in (
-                ("GATEWAY_IDP__ISSUER", self.issuer),
-                ("GATEWAY_IDP__SIGNING_KEY", self.signing_key.get_secret_value()),
-                ("GATEWAY_IDP__INTERNAL_TOKEN", self.internal_token.get_secret_value()),
-            )
-            if not value
-        ]
-        if missing:
-            raise ValueError("idp.enabled requires: " + ", ".join(missing))
-        if not self.issuer.startswith(("http://", "https://")):
-            raise ValueError("GATEWAY_IDP__ISSUER must be an absolute http(s) URL")
-        if not self.clients:
-            raise ValueError("idp.enabled requires at least one registered client")
-        return self
+        return value
 
 
 class EntityMode(StrEnum):
@@ -864,6 +711,13 @@ class Settings(BaseSettings):
     environment: Literal["dev", "staging", "production"] = "dev"
     log_level: str = "INFO"
     log_json: bool = True
+
+    # The first administrator of an OIDC-only deployment (ADR 0088 draft).
+    # The first browser sign-in whose *verified* email is this address, while
+    # no active administrator exists, is made one. Inert once any administrator
+    # exists, so leaving it set is harmless; `pystino init` writes it. It
+    # replaces `gateway passwd --admin`, which needed the local-password door.
+    bootstrap_admin_email: str = ""
 
     database_url: str = "postgresql+asyncpg://gateway:gateway@localhost:5432/gateway"
     database_pool_size: int = 10

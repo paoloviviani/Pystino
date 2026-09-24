@@ -112,15 +112,11 @@ the end for the one part that still needs a live test.
 3. **Bring the stack up** and sign in:
 
    ```bash
-   docker compose --env-file deploy/.env \
-     -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.smoke.yml \
-     -f deploy/compose/docker-compose.redaction.yml \
-     -f deploy/compose/docker-compose.proxy.yml up -d --build
+   docker compose up -d --wait
    ```
 
-   `GET /auth/methods` should now report `{"local":true,"oidc":true}`; the
-   console shows the password form **and** a "Sign in with SSO" link. If you
-   want SSO only, set `GATEWAY_LOCAL_AUTH__ENABLED=false`.
+   `GET /auth/methods` should now list the provider; with one provider the
+   console sends you straight to it, with several it offers a button each.
 
 ### GitLab caveats, verified at source
 
@@ -384,7 +380,7 @@ KEYCLOAK_ADMIN_PASSWORD=<minted master-admin password>
 The first human is `owner@example.org` — or that admin, in Admin Console at
 `<PUBLIC_ORIGIN>/idp/admin/`. There is deliberately no admin-group setting
 (ADR 0069): make administrators in the console or with
-`gateway passwd --admin`, as with any provider.
+`pystino admin grant <email>`, as with any provider.
 
 The chat needs nothing extra: it signs in against the same issuer with its
 own client (`pystino-chat`, redirect `<PUBLIC_ORIGIN>/chat/login/callback`

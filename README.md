@@ -92,86 +92,47 @@ The four ideas that carry most of the design:
 
 ## Quick start
 
-```bash
-./install.sh    # profiles plus component selection; writes deploy/.env and prints the bring-up
-```
-
-Or by hand (the script does this, with generated secrets and validation):
-
-```bash
-cp deploy/.env.example deploy/.env
-# edit deploy/.env: set POSTGRES_PASSWORD, GATEWAY_SESSION_SECRET,
-# and GATEWAY_UPSTREAM__API_KEY
-docker compose -f deploy/compose/docker-compose.yml up --build
-```
-
-This starts PostgreSQL and Valkey, runs migrations once, and starts the
-gateway on `localhost:8000`. Then create something to talk to:
+The host needs Docker and nothing else. One directory holds the deployment:
+a `.env` (every secret, minted for you) and, for a distributed install, the
+release's `compose.yaml`. Images come from `ghcr.io/paoloviviani/` (private
+while the repositories are: `docker login ghcr.io` once with a `read:packages`
+token — `init` says so if it is missing).
 
 ```bash
-docker compose -f deploy/compose/docker-compose.yml exec gateway \
-  gateway seed --model my-model --upstream-model gpt-4o-mini
+mkdir /srv/pystino && cd /srv/pystino
+docker run --rm -it -u "$(id -u):$(id -g)" -v "$PWD:/deploy" -w /deploy \
+  ghcr.io/paoloviviani/pystino-gateway:<version> pystino init \
+  --origin https://llm.example.org --admin-email you@example.org --preset team
+./pystino doctor && docker compose up -d --wait
 ```
 
-It prints an API key (once) and a ready-made `curl`. Any OpenAI client works:
+`init` prints the bundled Authelia's first password once; the first sign-in
+with the administrator email becomes the administrator. Presets: `homelab`,
+`team`, `enterprise` (a full stack), and `satellite` / `generic` for the chat
+alone (`cerea init` is the same thing, Cerea-branded). TLS: `--tls acme`
+(a public name), `internal` (development), `upstream` (TLS ends in front,
+e.g. NetBird). Bring your own OIDC provider with `--idp external
+--oidc-issuer …`. Upgrading is `./pystino upgrade <version>` and the same
+`docker compose up -d --wait`.
 
-```python
-from openai import OpenAI
+### Development
 
-client = OpenAI(base_url="http://localhost:8000/v1", api_key="gwk_...")
-client.chat.completions.create(model="my-model", messages=[{"role": "user", "content": "hello"}])
-```
-
-### Trying it without a provider key
-
-`docker-compose.smoke.yml` adds a fake OpenAI-compatible upstream so the whole
-stack can be exercised with no provider account:
+The same stack, built from your checkouts instead of pulled:
 
 ```bash
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml up --build
+uv run pystino init --dir ~/pystino-dev --mode dev --tls internal \
+  --origin https://dev.example.test:8443 --admin-email you@example.org \
+  [--cerea-src ../Cerea]
+cd ~/pystino-dev && docker compose up -d --build --wait
 ```
 
-### The console
+`deploy/dev/smoke.yml` adds a fake upstream (no provider account needed), and
+`deploy/dev/keycloak/` a Keycloak to develop the external-IdP paths against.
+The design, and why the old overlays, the edge Caddyfile, the CA bundle, the
+house IdP and the bash installers are gone: ADRs 0086–0088.
 
-Enable local sign-in and create the first administrator (it prompts, so
-nothing lands in shell history):
-
-```bash
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml exec gateway \
-  gateway passwd admin@local
-```
-
-The console is at <http://localhost:8000/console>. Signing in through an
-identity provider (GitLab, Entra ID, anything OIDC) is configured in the
-console's Settings screen or via env — see
-[docs/oidc-generic-provider.md](docs/oidc-generic-provider.md).
-
-### On a public address, behind TLS
-
-`docker-compose.proxy.yml` puts Caddy in front of everything and terminates
-TLS — Caddy's own CA for an IP address, Let's Encrypt for a name:
-
-```bash
-# deploy/.env
-PUBLIC_HOST=your.domain.or.ip
-HTTPS_PORT=8443
-TLS_DIRECTIVE="tls internal"    # empty for a real name + Let's Encrypt
-
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml \
-  -f deploy/compose/docker-compose.redaction.yml \
-  -f deploy/compose/docker-compose.proxy.yml up -d --build
-```
-
-The console is then at `https://<PUBLIC_HOST>:8443/console`. Read
-ADR 0035 before calling this a
-production deployment. `./scripts/test_public_tls_live.py` asserts the
-certificate verifies and that nothing else is reachable on a routable address.
+Moving an install made by the old installer: `pystino adopt <old deploy dir>`
+(reads only; carries every secret over and prints the cutover).
 
 ## Development
 
@@ -216,11 +177,11 @@ services/redaction/  Presidio detection service
 packages/ui/         shared design tokens + UI primitives
 packages/shared-py/  shared Python contracts
 scripts/             live checks, fake upstream, pricing importer
-deploy/compose/      docker compose: base + smoke, redaction, chat, exposure
-                     and bundled-IdP overlays
-deploy/idp/          bundled Authelia / Keycloak config generators
+deploy/stack/        the one topology: compose.yaml (+ compose.build*.yaml for
+                     development), the proxy and Authelia images, release.env
+deploy/dev/          development-only fixtures: fake upstream, Keycloak
+deploy/ci/           the image workflow, until it can live in .github/workflows
 deploy/opencode/     coding-agent setup: pasted-key installer, enrollment CLI
-deploy/profiles/     the named deployment shapes and their overlay derivation
 docs/                the documentation site (mkdocs.yml)
 ```
 
