@@ -32,10 +32,16 @@ func TestPartFromMapText(t *testing.T) {
 }
 
 func TestPartFromMapTool(t *testing.T) {
+	// state is nested (found live against opencode 1.18.31): status/input
+	// /output/title all live under part.state, not the part's top level.
 	p := partFromMap(map[string]any{
 		"id": "prt_2", "messageID": "msg_1", "type": "tool", "callID": "call_1",
-		"tool": "bash", "status": "completed", "input": map[string]any{"command": "echo hi"},
-		"output": "hi\n",
+		"tool": "bash",
+		"state": map[string]any{
+			"status": "completed",
+			"input":  map[string]any{"command": "echo hi"},
+			"output": "hi\n",
+		},
 	})
 	if p.Type != backend.PartTool || p.CallID != "call_1" || p.Tool != "bash" {
 		t.Fatalf("unexpected part: %+v", p)

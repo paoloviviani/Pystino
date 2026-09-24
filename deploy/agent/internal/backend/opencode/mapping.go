@@ -152,16 +152,24 @@ func partFromMap(m map[string]any) backend.Part {
 	case backend.PartTool:
 		p.CallID = getStr(m, "callID", "callId")
 		p.Tool = getStr(m, "tool")
-		p.ToolStatus = backend.ToolStatus(getStr(m, "status"))
-		p.Title = getStr(m, "title")
-		if in := getMap(m, "input"); in != nil {
+		// Everything about a tool call's progress lives under "state"
+		// (found live — 1.18.31 does not put status/input/output/title at
+		// the part's top level): {input, status, output?, title?, time,
+		// metadata}. status observed: pending, running, completed.
+		state := getMap(m, "state")
+		if state == nil {
+			state = m
+		}
+		p.ToolStatus = backend.ToolStatus(getStr(state, "status"))
+		p.Title = getStr(state, "title")
+		if in := getMap(state, "input"); in != nil {
 			p.Input = in
 		}
-		p.Output = getStr(m, "output")
-		if e := getMap(m, "error"); e != nil {
+		p.Output = getStr(state, "output")
+		if e := getMap(state, "error"); e != nil {
 			p.ToolError = getStr(e, "message", "name")
 		} else {
-			p.ToolError = getStr(m, "error")
+			p.ToolError = getStr(state, "error")
 		}
 	case backend.PartFile:
 		p.Mime = getStr(m, "mime")

@@ -191,12 +191,16 @@ func (b *Backend) SetModel(ctx context.Context, workspaceDir, sessionID, modelID
 	return b.GetSession(ctx, workspaceDir, sessionID)
 }
 
-func (b *Backend) ReplyPermission(ctx context.Context, _ string, _ string, requestID string, decision backend.Decision, message string) error {
+func (b *Backend) ReplyPermission(ctx context.Context, workspaceDir string, _ string, requestID string, decision backend.Decision, message string) error {
 	body := map[string]any{"reply": string(decision)}
 	if message != "" {
 		body["message"] = message
 	}
-	return b.doJSON(ctx, http.MethodPost, "/permission/"+url.PathEscape(requestID)+"/reply", body, nil)
+	// directory is optional in the OpenAPI schema but load-bearing in
+	// practice (found live): omitting it 404s with PermissionNotFoundError
+	// even for a request id that was just seen in a live permission.asked
+	// event for this exact session.
+	return b.doJSON(ctx, http.MethodPost, "/permission/"+url.PathEscape(requestID)+"/reply"+directoryQuery(workspaceDir), body, nil)
 }
 
 func (b *Backend) Modes(ctx context.Context, _ string) ([]backend.Mode, error) {
