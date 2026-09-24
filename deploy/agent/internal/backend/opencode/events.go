@@ -180,6 +180,7 @@ func (b *Backend) translateEvent(directory, typ string, props map[string]any) []
 		if sid == "" {
 			sid = sessionID
 		}
+		b.resolveClientMessageID(sid, &msg)
 		events := []backend.BackendEvent{wrap(sid, backend.Event{Kind: backend.EventMessage, Message: &msg})}
 		if msg.Role == "assistant" {
 			if u := usageFromMessageMap(info); u != nil {

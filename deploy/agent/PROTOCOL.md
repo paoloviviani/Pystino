@@ -125,7 +125,7 @@ Envelope: `{sessionId, epoch, seq, event}`. `epoch` is a random id minted when t
 
 | `event.kind` | fields | notes |
 | --- | --- | --- |
-| `message` | `message: Message` | upsert. `Message = {id, role:"user"|"assistant", parentId?, createdAt, modeId?, modelId?, completedAt?, error?}` |
+| `message` | `message: Message` | upsert. `Message = {id, role:"user"|"assistant", parentId?, createdAt, modeId?, modelId?, completedAt?, error?, clientMessageId?}` — `clientMessageId` echoes `session.prompt`'s on the user message it created (it keys Cerea's attachment store) |
 | `part` | `part: Part` | upsert of the full part. **Text contract:** for `text` and `reasoning` parts, the first `part` event for a part id carries the text so far; later growth arrives only as `delta`; a later `part` event for the same id never carries text that contradicts `text_so_far + deltas` (the agent converts a backend's full-text re-send into a suffix `delta`, or drops it if nothing is new). So `concat(first part.text, deltas…)` is always the current text. |
 | `delta` | `messageId, partId, role, field:"text", delta` | append |
 | `part.removed` | `messageId, partId` | |

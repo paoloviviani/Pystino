@@ -148,6 +148,13 @@ func (b *Backend) Prompt(ctx context.Context, _ string, sessionID string, prompt
 		providerID, modelID := splitModelID(ov.ModelID)
 		body["model"] = map[string]string{"providerID": providerID, "modelID": modelID}
 	}
+	// prompt_async's documented body has no field for an externally chosen
+	// message id, so the clientMessageId is matched to whichever new user
+	// message shows up next for this session (PROTOCOL.md §7) rather than
+	// sent in the request. Worth re-checking against a live GET /doc if the
+	// IT test ever shows a way to pass one explicitly — that would be more
+	// precise than the "next message" heuristic.
+	b.claimPendingClientMessageID(sessionID, prompt.ClientMessageID)
 	return b.doJSON(ctx, http.MethodPost, "/session/"+url.PathEscape(sessionID)+"/prompt_async", body, nil)
 }
 
@@ -252,6 +259,7 @@ func (b *Backend) Transcript(ctx context.Context, _ string, sessionID string) (b
 			info = entry
 		}
 		msg := messageFromMap(info)
+		b.resolveClientMessageID(sessionID, &msg)
 		var parts []backend.Part
 		for _, pm := range asMaps(getSlice(entry, "parts")) {
 			parts = append(parts, partFromMap(pm))
