@@ -132,7 +132,7 @@ func (mc *machine) Handle(ctx context.Context, op string, args json.RawMessage) 
 }
 
 func (mc *machine) opWorkspaceList() (any, *link.OpError) {
-	return map[string]any{"workspaces": mc.workspaces.List(false)}, nil
+	return map[string]any{"workspaces": orEmpty(mc.workspaces.List(false))}, nil
 }
 
 func (mc *machine) opWorkspaceCreate(args json.RawMessage) (any, *link.OpError) {
@@ -212,7 +212,7 @@ func (mc *machine) opSessionList(ctx context.Context, args json.RawMessage) (any
 			out = append(out, mc.enrich(s, w.ID))
 		}
 	}
-	return map[string]any{"sessions": out}, nil
+	return map[string]any{"sessions": orEmpty(out)}, nil
 }
 
 func (mc *machine) opSessionGet(ctx context.Context, args json.RawMessage) (any, *link.OpError) {
@@ -425,7 +425,7 @@ func (mc *machine) opSessionSync(ctx context.Context, args json.RawMessage) (any
 			"sessionId": env.SessionID, "epoch": env.Epoch, "seq": env.Seq, "event": eventToWire(env.Event),
 		})
 	}
-	out["events"] = envs
+	out["events"] = orEmpty(envs)
 	return out, nil
 }
 
@@ -448,7 +448,7 @@ func (mc *machine) opSessionDiff(ctx context.Context, args json.RawMessage) (any
 	if err != nil {
 		return nil, backendErr(err)
 	}
-	return map[string]any{"files": files}, nil
+	return map[string]any{"files": orEmpty(files)}, nil
 }
 
 func (mc *machine) opSessionChildren(ctx context.Context, args json.RawMessage) (any, *link.OpError) {
@@ -474,7 +474,7 @@ func (mc *machine) opSessionChildren(ctx context.Context, args json.RawMessage) 
 	for _, c := range children {
 		out = append(out, mc.enrich(c, workspaceID))
 	}
-	return map[string]any{"sessions": out}, nil
+	return map[string]any{"sessions": orEmpty(out)}, nil
 }
 
 func (mc *machine) opPermissionReply(ctx context.Context, args json.RawMessage) (any, *link.OpError) {
@@ -518,7 +518,7 @@ func (mc *machine) opBackendModes(ctx context.Context, args json.RawMessage) (an
 	if err != nil {
 		return nil, backendErr(err)
 	}
-	return map[string]any{"modes": modes}, nil
+	return map[string]any{"modes": orEmpty(modes)}, nil
 }
 
 func (mc *machine) opBackendModels(ctx context.Context, args json.RawMessage) (any, *link.OpError) {
@@ -551,5 +551,15 @@ func (mc *machine) opBackendModels(ctx context.Context, args json.RawMessage) (a
 		}
 		models = filtered
 	}
-	return map[string]any{"models": models}, nil
+	return map[string]any{"models": orEmpty(models)}, nil
+}
+
+// orEmpty turns a nil slice into an empty one. Go marshals nil as null, and
+// PROTOCOL.md types every list as an array: Cerea's strict parsing either
+// rejects a null or crashes on it, as the first end-to-end runs showed.
+func orEmpty[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
