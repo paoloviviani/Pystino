@@ -74,7 +74,9 @@ nav:
   - Accounting and quotas: accounting-and-quotas.md
   - Redaction: redaction.md
   - Deployment: deployment.md
-  - Coding agents: coding-agents.md
+  - Coding agents:
+      - coding-agents.md
+      - "Agent machines": agent-machines.md
   - Operations:
       - operations.md
       - "Measured performance": performance.md
