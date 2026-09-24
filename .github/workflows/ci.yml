@@ -7,7 +7,7 @@
 #   - docs-only changes run nothing; a cheap `changes` job then runs only the
 #     suites whose inputs changed (a gateway PR never runs the console, and
 #     vice versa);
-#   - uv/pnpm/Go caches; a newer push to the same PR cancels the run.
+#   - uv/pnpm caches; a newer push to the same PR cancels the run.
 # Image builds are images.yml (main and tags); the stack bring-up is stack.yml
 # (release PRs, on demand, weekly).
 name: ci
@@ -17,7 +17,6 @@ on:
     paths-ignore:
       - "docs/**"
       - "**/*.md"
-      - "deploy/ci/github-workflows/README.md"
   workflow_dispatch:
 
 permissions:
@@ -47,13 +46,12 @@ jobs:
               - "deploy/stack/**"
               - "uv.lock"
               - "pyproject.toml"
-              - "deploy/ci/github-workflows/ci.yml"
+              - ".github/workflows/ci.yml"
             console:
               - "apps/console/**"
               - "packages/ui/**"
               - "pnpm-lock.yaml"
-              - "deploy/ci/github-workflows/ci.yml"
-              - "deploy/ci/github-workflows/ci.yml"
+              - ".github/workflows/ci.yml"
 
   gateway:
     needs: changes

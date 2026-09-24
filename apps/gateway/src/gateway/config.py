@@ -109,6 +109,12 @@ class OIDCSettings(BaseModel):
     # "the issuer URL is reachable from here", the external-IdP case.
     internal_base_url: str = ""
 
+    # What kind of directory the environment's provider is (ADR 0088):
+    # `authelia` for the bundled one, which `pystino init` writes. It only
+    # matters when the first provider row is seeded from here — that row then
+    # gets the users-file sync adapter and the console's user management.
+    kind: str = "generic"
+
     # Removed as a setting by ADR 0069 and kept only as a tripwire: the field
     # exists so that a deployment still setting GATEWAY_OIDC__ADMIN_GROUPS gets
     # a startup error naming the removal instead of a silent no-op. An
@@ -153,6 +159,16 @@ class OIDCSettings(BaseModel):
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
         return value.rstrip("/")
+
+    @field_validator("kind")
+    @classmethod
+    def _known_kind(cls, value: str) -> str:
+        # identity_policy.KINDS, spelled here: importing it would be a cycle.
+        kinds = ("generic", "authelia", "keycloak", "entra", "okta", "authentik", "google")
+        value = value.strip().lower() or "generic"
+        if value not in kinds:
+            raise ValueError(f"GATEWAY_OIDC__KIND must be one of {', '.join(kinds)}")
+        return value
 
 
 class PasswordResetSettings(BaseModel):
@@ -753,6 +769,10 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 8 * 3600
     session_cookie_name: str = "gw_session"
     session_cookie_secure: bool = True
+    # Other applications' session cookies on this same origin that signing out
+    # here also expires — the chat's, on the Pystino stack — so that signing
+    # out of one never leaves the other signed in (`name` or `name:path`).
+    logout_also_clear_cookies: list[str] = []
 
     api_key_prefix: str = "gwk"
 

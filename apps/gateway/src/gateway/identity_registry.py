@@ -60,6 +60,9 @@ class ProviderRecord:
     # Back-channel base (OIDCSettings.internal_base_url); empty for an IdP
     # this server reaches at its public issuer.
     internal_base_url: str = ""
+    # Signing-out override (`{redirect}` = the page to come back to); empty
+    # means discovery's end_session_endpoint, else the kind's default.
+    logout_url: str = ""
     # Identity policy (ADR 0088); defaults reproduce the behaviour before it.
     kind: str = "generic"
     group_source: str = "claim"
@@ -120,6 +123,7 @@ def record_from_row(row: IdentityProvider, secrets: SecretBox) -> ProviderRecord
         source="console",
         updated_at=row.updated_at,
         internal_base_url=row.internal_base_url or "",
+        logout_url=row.logout_url or "",
         kind=row.kind or "generic",
         group_source=row.group_source or "claim",
         admin_source=row.admin_source or "console",
@@ -167,7 +171,20 @@ def record_from_env(settings: Settings) -> ProviderRecord | None:
         is_enabled=True,
         source="environment",
         internal_base_url=oidc.internal_base_url,
+        # The bundled Authelia (`pystino init` writes GATEWAY_OIDC__KIND) is a
+        # directory we can read: its users file is on a volume this container
+        # mounts. So it gets the users-file adapter — and with it the console's
+        # user management (D10) — but unconfirmed: nothing is applied until an
+        # administrator has looked at a first dry run.
+        kind=oidc.kind,
+        sync_adapter=_seed_adapter(oidc.kind),
+        sync_confirmed=False,
     )
+
+
+def _seed_adapter(kind: str) -> str:
+    """The pull adapter an environment-seeded provider of this kind starts with."""
+    return "authelia_file" if kind == "authelia" else "none"
 
 
 async def list_providers(
@@ -246,6 +263,7 @@ async def seed_from_env(session: AsyncSession, settings: Settings, secrets: Secr
     any_row = (await session.execute(select(IdentityProvider.id).limit(1))).scalar_one_or_none()
     if any_row is not None:
         await _fill_internal_base_url(session, settings)
+        await _fill_kind(session, settings)
         return
     env_record = record_from_env(settings)
     if env_record is None:
@@ -267,6 +285,9 @@ async def seed_from_env(session: AsyncSession, settings: Settings, secrets: Secr
             # it is authoritative and every later startup reads it instead.
             link_local_by_email=env_record.link_local_by_email,
             internal_base_url=env_record.internal_base_url,
+            kind=env_record.kind,
+            sync_adapter=env_record.sync_adapter,
+            sync_confirmed=False,
             is_enabled=True,
         )
     )
@@ -316,5 +337,41 @@ async def _fill_internal_base_url(session: AsyncSession, settings: Settings) -> 
             logger.info(
                 "identity provider %r: scopes %s added from the environment", row.name, missing
             )
+    if rows:
+        await session.commit()
+
+
+async def _fill_kind(session: AsyncSession, settings: Settings) -> None:
+    """Give the environment's provider row the environment's kind, once.
+
+    A row seeded before the seed knew about kinds is `generic` with no adapter
+    even when it is the bundled Authelia; migration 0046 corrects the ones it
+    can recognise by their internal URL, and this covers an install whose
+    environment says so outright (GATEWAY_OIDC__KIND, which `init` and `adopt`
+    write). Only a row still at those old defaults is touched: an
+    administrator's own choice of kind or adapter is theirs.
+    """
+    kind = settings.oidc.kind
+    issuer = settings.oidc.issuer.strip().rstrip("/")
+    if kind == "generic" or not issuer:
+        return
+    rows = (
+        (
+            await session.execute(
+                select(IdentityProvider).where(
+                    IdentityProvider.issuer == issuer,
+                    IdentityProvider.kind == "generic",
+                    IdentityProvider.sync_adapter == "none",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        logger.info("identity provider %r: kind set to %s from the environment", row.name, kind)
+        row.kind = kind
+        row.sync_adapter = _seed_adapter(kind)
+        row.sync_confirmed = False
     if rows:
         await session.commit()

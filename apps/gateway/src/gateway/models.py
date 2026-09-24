@@ -1387,6 +1387,11 @@ class IdentityProvider(Base):
     internal_base_url: Mapped[str] = mapped_column(
         String(512), default="", server_default=text("''")
     )
+    # Where signing out sends the browser to end the provider's own session,
+    # overriding what discovery says. `{redirect}` is replaced by the
+    # URL-encoded page to come back to. Empty: the provider's
+    # end_session_endpoint, or the kind's default (Authelia publishes none).
+    logout_url: Mapped[str] = mapped_column(String(512), default="", server_default=text("''"))
     # --- identity policy (ADR 0088) -------------------------------------
     # What kind of directory this is: decides which capabilities (claims,
     # pull adapter, SCIM push, subject known before login) the console offers.
