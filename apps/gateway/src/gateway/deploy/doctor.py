@@ -35,6 +35,8 @@ REQUIRED_BY_PROFILE = {
         "OIDC_CONSOLE_CLIENT_SECRET",
     ),
     "chat": ("CHAT_PG_PASSWORD", "CHAT_SECRET_KEY", "CEREA_VERSION", "OIDC_CHAT_CLIENT_SECRET"),
+    # The gateway refuses to start with engine=http and no placeholder key.
+    "redaction": ("REDACTION_PLACEHOLDER_KEY",),
     "authelia": (
         "AUTHELIA_COOKIE_DOMAIN",
         "AUTHELIA_SESSION_SECRET",

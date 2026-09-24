@@ -62,6 +62,7 @@ def legacy(tmp_path: Path) -> Path:
                 "GATEWAY_UPSTREAM__API_KEY=upstream-key",
                 "GATEWAY_ACCOUNTING__ENABLED=true",
                 "GATEWAY_REDACTION__ENGINE=http",
+                "REDACTION_PLACEHOLDER_KEY=old-placeholder-key",
                 f"GATEWAY_OIDC__ISSUER={ORIGIN}/authelia",
                 "GATEWAY_OIDC__CLIENT_ID=pystino-console",
                 "GATEWAY_OIDC__CLIENT_SECRET=console-plain",
@@ -110,6 +111,8 @@ def test_adopt_carries_every_secret_verbatim_and_reads_only(legacy: Path, tmp_pa
     assert env["COMPOSE_PROFILES"] == "gateway,chat,redaction,authelia"
     assert env["PYSTINO_BOOTSTRAP_ADMIN_EMAIL"] == "paolo@example.org"
     assert env["CODE_AGENTS_ENABLED"] == "true"
+    # Re-minting it would re-label every entity in the old transcripts.
+    assert env["REDACTION_PLACEHOLDER_KEY"] == "old-placeholder-key"
     assert not any(key.startswith("GATEWAY_IDP__") for key in env)
 
     staged = new / "adopt" / "authelia-config"

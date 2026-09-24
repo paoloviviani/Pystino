@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -142,6 +143,38 @@ def test_from_the_image_files_go_to_cwd_and_env_records_the_host_path(
     assert doctor.check(tmp_path, probe_docker=False).ok
     assert main(["set", "GATEWAY_LOG_LEVEL=debug"]) == 0
     assert envfile.read(tmp_path / ".env")["GATEWAY_LOG_LEVEL"] == "debug"
+
+
+def _interpolate(value: str, env: dict[str, str]) -> str:
+    """Compose's `${X}`, `${X:-default}` and `${X:?message}`, enough for compose.yaml."""
+
+    def one(match: re.Match[str]) -> str:
+        name, op, arg = match.group(1), match.group(2), match.group(3) or ""
+        found = env.get(name, "")
+        if op == ":?" and not found:
+            raise AssertionError(f"compose would refuse: {name} unset ({arg})")
+        return found or (arg if op == ":-" else "")
+
+    return re.sub(r"\$\{([A-Z0-9_]+)(:-|:\?)?([^}]*)\}", one, value)
+
+
+@pytest.mark.parametrize("preset", ["homelab", "team", "enterprise"])
+def test_the_gateway_starts_on_what_init_writes(tmp_path: Path, monkeypatch, preset: str) -> None:
+    # Twice a trial found the gateway refusing to start on an env only a
+    # particular preset produced (a tripwire default, then redaction's missing
+    # placeholder key). Settings is the gateway's own startup validation: run
+    # it on compose's gateway environment, interpolated from init's .env.
+    from gateway.config import Settings
+
+    argv = ["init", "--dir", str(tmp_path), "--origin", "https://llm.example.org"]
+    assert main([*argv, "--admin-email", "ops@example.org", "--preset", preset]) == 0
+    written = envfile.read(tmp_path / ".env")
+    environment = _compose()["services"]["gateway"]["environment"]
+    for key in [k for k in os.environ if k.startswith("GATEWAY_")]:
+        monkeypatch.delenv(key)
+    for key, value in environment.items():
+        monkeypatch.setenv(key, _interpolate(str(value), written))
+    Settings(_env_file=None)
 
 
 def test_doctor_names_what_is_missing(tmp_path: Path) -> None:
