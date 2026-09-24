@@ -163,8 +163,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - name: A release pins every image by digest
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: uv run pystino release-pin --check
       - name: Deploy unit tests
-        run: uv run pytest -q apps/gateway/tests/test_deploy_envfile.py apps/gateway/tests/test_deploy_init.py apps/gateway/tests/test_deploy_bootstrap.py apps/gateway/tests/test_deploy_stack.py apps/gateway/tests/test_deploy_adopt.py apps/gateway/tests/test_oidc_backchannel.py
+        run: uv run pytest -q apps/gateway/tests/test_deploy_envfile.py apps/gateway/tests/test_deploy_init.py apps/gateway/tests/test_deploy_bootstrap.py apps/gateway/tests/test_deploy_stack.py apps/gateway/tests/test_deploy_adopt.py apps/gateway/tests/test_deploy_standalone.py apps/gateway/tests/test_deploy_release.py apps/gateway/tests/test_oidc_backchannel.py
       - name: init writes a file compose accepts (both modes)
         run: |
           set -eu

@@ -237,6 +237,9 @@ def build_env(
         ]
     if options.cerea_image:
         image_items.append(("CEREA_IMAGE", options.cerea_image))
+    if "CEREA_IMAGE" in release and not options.cerea_image and options.cerea_src is None:
+        # The manifest's digest-pinned chat image: what this release was tested with.
+        image_items.append(("CEREA_IMAGE", release["CEREA_IMAGE"]))
     for key in (
         "POSTGRES_IMAGE",
         "VALKEY_IMAGE",
