@@ -114,9 +114,20 @@ type Config struct {
 	Logf func(format string, args ...any)
 }
 
-// errGiveUp signals Run to stop reconnecting for good (4403: revoked or
-// otherwise permanently forbidden).
-var errGiveUp = errors.New("link: forbidden, giving up")
+// ErrRevoked signals Run's caller that Cerea closed with 4403: the owner
+// revoked this machine (PROTOCOL.md §4). It is terminal wherever it arrives,
+// the welcome handshake included: the same machine id is refused on every
+// later connect, so reconnecting only loops.
+var ErrRevoked = errors.New("link: this machine was revoked (4403)")
+
+// errGiveUp is ErrRevoked's old name inside this package.
+var errGiveUp = ErrRevoked
+
+// isRevokedClose reports whether err is Cerea's 4403 close.
+func isRevokedClose(err error) bool {
+	var closeErr websocket.CloseError
+	return errors.As(err, &closeErr) && closeErr.Code == 4403
+}
 
 // ErrExpired signals the caller that credential refresh (on a 4401) itself
 // failed permanently — the caller (run's top level) is expected to react
@@ -303,6 +314,9 @@ func (l *Link) runOnce(ctx context.Context) error {
 		Status   string `json:"status"`
 	}
 	if err := l.readFrame(connCtx, &welcome); err != nil {
+		if isRevokedClose(err) {
+			return errGiveUp
+		}
 		return fmt.Errorf("reading welcome: %w", err)
 	}
 	if welcome.Type != "welcome" {

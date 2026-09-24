@@ -16,6 +16,9 @@
     <key>PATH</key><string>/Users/USER/.local/bin:/Users/USER/.opencode/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
   <key>RunAtLoad</key><true/>
+  <!-- launchd cannot skip one exit code: after a revocation (exit 78) it restarts
+       once, and that start finds its machine id marked revoked and exits 0, which
+       ends the loop. Re-enroll, then `launchctl kickstart` the job. -->
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>StandardOutPath</key><string>/Users/USER/Library/Logs/pystino-agent.log</string>
   <key>StandardErrorPath</key><string>/Users/USER/Library/Logs/pystino-agent.log</string>
