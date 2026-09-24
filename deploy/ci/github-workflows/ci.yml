@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gateway-tests:
+    name: Gateway (pytest, ruff, mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked
+      - run: uv run pytest -q
+      # Lint only, never --fix: this is a check, not a rewrite.
+      - run: uv run ruff check .
+      - run: uv run mypy apps/gateway/src services
+
+  discover-go-modules:
+    name: Discover Go modules under deploy/
+    runs-on: ubuntu-latest
+    outputs:
+      dirs: ${{ steps.find.outputs.dirs }}
+    steps:
+      - uses: actions/checkout@v4
+      # The enrollment CLI's module has moved before (deploy/opencode/enroll
+      # -> deploy/agent) and may move again; discover it instead of hardcoding
+      # a path so this workflow doesn't need editing every time it does.
+      - id: find
+        run: |
+          dirs=$(find deploy -name go.mod -exec dirname {} \; | sort -u | jq -R -s -c 'split("\n")[:-1]')
+          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+
+  go:
+    name: Go (gofmt, vet, test)
+    needs: discover-go-modules
+    if: needs.discover-go-modules.outputs.dirs != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir: ${{ fromJson(needs.discover-go-modules.outputs.dirs) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.dir }}/go.mod
+      - name: gofmt
+        working-directory: ${{ matrix.dir }}
+        run: |
+          fmt_out=$(gofmt -l .)
+          if [ -n "$fmt_out" ]; then
+            echo "$fmt_out"
+            exit 1
+          fi
+      - name: go vet
+        working-directory: ${{ matrix.dir }}
+        run: go vet ./...
+      - name: go test
+        working-directory: ${{ matrix.dir }}
+        run: go test ./...
