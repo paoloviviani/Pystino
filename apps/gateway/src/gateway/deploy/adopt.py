@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 
 from gateway.deploy import envfile, presets
 from gateway.deploy.envfile import Section
-from gateway.deploy.init import AUTHELIA_INTERNAL, CONFIG_VERSION
+from gateway.deploy.init import AUTHELIA_INTERNAL, CONFIG_VERSION, _token
 
 OLD_PROJECT = "llm-platform"
 
@@ -326,7 +326,15 @@ def build(options: AdoptOptions, release: dict[str, str]) -> AdoptResult:
         ),
         (
             "Gateway secrets",
-            carry("GATEWAY_SECRET_KEY", "GATEWAY_SESSION_SECRET", "CHAT_SECRET_KEY"),
+            [
+                *carry("GATEWAY_SECRET_KEY", "GATEWAY_SESSION_SECRET", "CHAT_SECRET_KEY"),
+                # Carried, not re-minted: a new key would re-label every entity
+                # in the transcripts the old one labelled.
+                (
+                    "REDACTION_PLACEHOLDER_KEY",
+                    values.get("REDACTION_PLACEHOLDER_KEY") or _token(32),
+                ),
+            ],
         ),
         ("Upstream", carry("GATEWAY_UPSTREAM__BASE_URL", "GATEWAY_UPSTREAM__API_KEY")),
         (

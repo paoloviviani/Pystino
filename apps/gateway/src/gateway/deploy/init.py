@@ -359,6 +359,11 @@ def build_env(
                 ("GATEWAY_SECRET_KEY", token(32)),
                 ("GATEWAY_SESSION_SECRET", token(32)),
                 ("CHAT_SECRET_KEY", token(32)),
+                # The HMAC key redaction derives placeholders from. Minted even
+                # when redaction is off, so switching the profile on later needs
+                # no new secret; it must then stay stable for as long as the
+                # transcripts it labelled are kept.
+                ("REDACTION_PLACEHOLDER_KEY", token(32)),
             ],
         ),
         (
