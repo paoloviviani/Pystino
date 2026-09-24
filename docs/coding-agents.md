@@ -234,7 +234,16 @@ pystino-agent run
 `--allow-free-models` lets `run` offer models from providers other than the
 gateway's own (by default only `pystino/*`, so spend lands where the machine
 enrolled). `--allow-auto-accept` and `--workspace-root` are the machine's own
-vetoes, fixed at enrol time (PROTOCOL.md §4). To keep `run` alive across
+vetoes, fixed at enrol time (PROTOCOL.md §4).
+
+`run` drives opencode by default (it supervises `opencode serve`). `run --backend
+acp --acp-command "<agent>"` drives any ACP agent instead: `opencode acp`, Gemini
+CLI, Claude Code or Codex through their ACP adapters, Pi through `pi-acp`. An ACP
+backend reports fewer capabilities (no usage, compaction or subagents), and the
+chat panel hides those controls. The Changes pane works for either backend,
+because the agent reads it from git.
+
+To keep `run` alive across
 reboots, install it as a user service — a systemd user unit on Linux, a
 LaunchAgent on macOS; the deployment re-architecture report's cutover plan has
 both, verbatim.
