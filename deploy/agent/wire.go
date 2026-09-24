@@ -49,6 +49,22 @@ func eventToWire(ev backend.Event) map[string]any {
 		}
 	case backend.EventTodo:
 		m["todos"] = ev.Todos
+	case backend.EventQuestionAsked:
+		request := map[string]any{
+			"id":        ev.QuestionRequestID,
+			"questions": orEmpty(ev.Questions),
+		}
+		if ev.QuestionCallID != "" {
+			request["callId"] = ev.QuestionCallID
+		}
+		m["request"] = request
+	case backend.EventQuestionResolved:
+		m["requestId"] = ev.QuestionRequestID
+		if ev.QuestionDecision == "rejected" {
+			m["rejected"] = true
+		} else {
+			m["answers"] = orEmpty(ev.QuestionAnswers)
+		}
 	}
 	return m
 }
