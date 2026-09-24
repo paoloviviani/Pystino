@@ -90,7 +90,7 @@ func (b *Backend) ListSessions(ctx context.Context, workspaceDir string) ([]back
 	}
 	out := make([]backend.Session, 0, len(raw))
 	for _, m := range asMaps(raw) {
-		out = append(out, sessionFromMap(m))
+		out = append(out, b.withUsage(sessionFromMap(m)))
 	}
 	return out, nil
 }
@@ -103,7 +103,7 @@ func (b *Backend) GetSession(ctx context.Context, _ string, sessionID string) (b
 	s := sessionFromMap(m)
 	ov := b.getOverlay(sessionID)
 	s.ModeID, s.ModelID = ov.ModeID, ov.ModelID
-	return s, nil
+	return b.withUsage(s), nil
 }
 
 func (b *Backend) CreateSession(ctx context.Context, workspaceDir string, opts backend.CreateSessionOptions) (backend.Session, error) {
@@ -122,7 +122,7 @@ func (b *Backend) CreateSession(ctx context.Context, workspaceDir string, opts b
 		}
 	}
 	s.ModeID, s.ModelID = opts.ModeID, opts.ModelID
-	return s, nil
+	return b.withUsage(s), nil
 }
 
 func (b *Backend) RenameSession(ctx context.Context, _ string, sessionID, title string) (backend.Session, error) {
@@ -133,7 +133,7 @@ func (b *Backend) RenameSession(ctx context.Context, _ string, sessionID, title 
 	s := sessionFromMap(m)
 	ov := b.getOverlay(sessionID)
 	s.ModeID, s.ModelID = ov.ModeID, ov.ModelID
-	return s, nil
+	return b.withUsage(s), nil
 }
 
 func (b *Backend) DeleteSession(ctx context.Context, _ string, sessionID string) error {
@@ -282,7 +282,9 @@ func (b *Backend) Transcript(ctx context.Context, _ string, sessionID string) (b
 		tr.Messages = append(tr.Messages, backend.TranscriptEntry{Message: msg, Parts: parts})
 		if msg.Role == "assistant" {
 			if u := usageFromMessageMap(info); u != nil {
+				b.fillContextMax(info, u)
 				tr.Usage = u
+				b.setSessionUsage(sessionID, u)
 			}
 			if msg.Error != "" {
 				tr.Status = backend.StatusError

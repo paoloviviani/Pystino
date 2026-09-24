@@ -185,6 +185,7 @@ func (b *Backend) translateEvent(directory, typ string, props map[string]any) []
 		if msg.Role == "assistant" {
 			if u := usageFromMessageMap(info); u != nil {
 				b.fillContextMax(info, u)
+				b.setSessionUsage(sid, u)
 				events = append(events, wrap(sid, backend.Event{Kind: backend.EventUsage, Usage: u}))
 			}
 		}
