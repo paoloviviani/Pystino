@@ -1433,6 +1433,82 @@ class IdentityProvider(Base):
         return f"<IdentityProvider name={self.name!r} issuer={self.issuer!r}>"
 
 
+class DirectoryEntry(Base):
+    """What a directory last said about one person (ADR 0088 draft).
+
+    A mirror, written by a sync adapter (pull) or by SCIM (push), and the only
+    input the reconciler reads for `group_source=directory`. Kept separate from
+    `users` because a directory can name people who have never signed in — and
+    for Authelia, whose `sub` is an opaque id minted at first login, cannot even
+    say which `(issuer, subject)` they will be. An entry is linked to a user
+    (`user_id`) when the subject is known up front (Keycloak, SCIM) or at that
+    person's first login (by username and verified email).
+
+    `preassigned_groups` lets an administrator put someone in groups before
+    they have ever signed in; they become `manual` memberships at link time.
+    """
+
+    __tablename__ = "directory_entries"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "external_id", name="uq_directory_entries_provider_ext"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("identity_providers.id", ondelete="CASCADE"), index=True
+    )
+    #: The directory's own key: Keycloak/SCIM id (= the OIDC subject), or the
+    #: Authelia login name.
+    external_id: Mapped[str] = mapped_column(String(255))
+    username: Mapped[str | None] = mapped_column(String(255), default=None)
+    email: Mapped[str | None] = mapped_column(String(320), default=None)
+    display_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    groups: Mapped[list[str]] = mapped_column(JSON, default=list)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: False once a sync no longer sees the person; the row is kept for audit.
+    present: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    preassigned_groups: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'")
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None, index=True
+    )
+    first_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class DirectorySyncRun(Base):
+    """One pull or push application, with what it changed (or would have)."""
+
+    __tablename__ = "directory_sync_runs"
+    __table_args__ = (
+        Index("ix_directory_sync_runs_provider_started", "provider_id", "started_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("identity_providers.id", ondelete="CASCADE")
+    )
+    trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual | push
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: ok | failed | needs_confirmation (the mass-deactivation valve tripped)
+    status: Mapped[str] = mapped_column(String(24), default="ok")
+    seen: Mapped[int] = mapped_column(default=0)
+    created: Mapped[int] = mapped_column(default=0)
+    linked: Mapped[int] = mapped_column(default=0)
+    updated: Mapped[int] = mapped_column(default=0)
+    deactivated: Mapped[int] = mapped_column(default=0)
+    reactivated: Mapped[int] = mapped_column(default=0)
+    #: The individual changes (capped), for the console's diff view.
+    changes: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    started_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+
+
 class FXRate(Base):
     """The last known exchange rate for one currency pair (ADR 0054).
 

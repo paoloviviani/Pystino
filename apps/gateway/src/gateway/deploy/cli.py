@@ -199,6 +199,8 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     if args.import_only:
         for line in bootstrap.import_authelia_state(Path(args.import_only)):
             print(f"bootstrap: authelia {line}")
+        for line in bootstrap.share_authelia_volumes(bootstrap.AUTHELIA_DIR):
+            print(f"bootstrap: {line}")
         return 0
     return bootstrap.run()
 

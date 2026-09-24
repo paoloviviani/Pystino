@@ -26,6 +26,7 @@ from sqlalchemy import delete, select
 
 from gateway.config import Settings
 from gateway.deps import ManagementUserDep, SessionDep, SettingsDep
+from gateway.directory.engine import link_at_login
 from gateway.errors import AuthenticationError as _AuthnError
 from gateway.errors import (
     BadRequestError,
@@ -707,6 +708,11 @@ async def callback(
             claims=merged,
             group_mappings=record.mappings_dict(),
         )
+        # A directory whose subjects are unknown until first login (Authelia)
+        # links its mirrored entry now: pre-assigned groups and directory
+        # groups apply at once, not at the next scheduled sync.
+        if record.sync_adapter != "none" and getattr(record, "source", "") != "environment":
+            await link_at_login(session, record, user, merged, settings=settings.oidc)
         # OIDC-only deployments have no password door to make the first
         # administrator through; the configured address, verified, is it.
         await promote_bootstrap_admin(

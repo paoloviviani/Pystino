@@ -77,6 +77,7 @@ services:
       AUTHELIA_ADMIN_PASSWORD_DIGEST: ${AUTHELIA_ADMIN_PASSWORD_DIGEST:-}
     volumes:
       - authelia-config:/authelia
+      - authelia-data:/authelia-data
     depends_on:
       postgres:
         condition: service_healthy
@@ -198,6 +199,10 @@ services:
       GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE: ${OIDC_AUDIENCE:-pystino-api}
       GATEWAY_OIDC__LINK_LOCAL_BY_EMAIL: ${OIDC_LINK_LOCAL_BY_EMAIL:-false}
       GATEWAY_BOOTSTRAP_ADMIN_EMAIL: ${PYSTINO_BOOTSTRAP_ADMIN_EMAIL:-}
+    volumes:
+      # The bundled Authelia's users file, which the console manages (D10)
+      # and the authelia_file adapter reads. Empty when the profile is off.
+      - authelia-config:/authelia
     depends_on:
       postgres:
         condition: service_healthy
@@ -233,6 +238,11 @@ services:
     restart: unless-stopped
     environment:
       X_AUTHELIA_CONFIG_FILTERS: template
+      # The gateway's uid: the console manages the bundled users file (D10),
+      # and Authelia's entrypoint re-owns /config to PUID on every start —
+      # as root it would lock the gateway out of the file after a restart.
+      PUID: "1001"
+      PGID: "1001"
       X_AUTHELIA_HEALTHCHECK_PATH: /authelia
       X_PYSTINO_PUBLIC_ORIGIN: ${PUBLIC_ORIGIN}
       X_PYSTINO_COOKIE_DOMAIN: ${AUTHELIA_COOKIE_DOMAIN:-}

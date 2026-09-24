@@ -216,6 +216,31 @@ def import_authelia_state(source: Path, directory: Path = AUTHELIA_DIR) -> list[
     return done
 
 
+AUTHELIA_DATA_DIR = Path(os.environ.get("PYSTINO_AUTHELIA_DATA_DIR", "/authelia-data"))
+#: The gateway's uid/gid in its image, which Authelia also runs as (compose PUID).
+SHARED_UID = 1001
+
+
+def share_authelia_volumes(*directories: Path, uid: int = SHARED_UID) -> list[str]:
+    """Hand the Authelia volumes to the uid the gateway and Authelia share.
+
+    The console writes the users file (D10), so the gateway (uid 1001) must own
+    it; Authelia runs as the same uid. Volumes an older install created as
+    root (an adopted authelia-data, say) are re-owned here, every `up` —
+    idempotent, and only when bootstrap runs as root.
+    """
+    if os.geteuid() != 0:
+        return []
+    done = []
+    for directory in directories:
+        if not directory.exists():
+            continue
+        for path in [directory, *directory.rglob("*")]:
+            os.chown(path, uid, uid, follow_symlinks=False)
+        done.append(f"{directory} owned by {uid}")
+    return done
+
+
 def run(environ: dict[str, str] | None = None, authelia_dir: Path = AUTHELIA_DIR) -> int:
     env = BootstrapEnv.from_environ(environ)
     problems = env.problems()
@@ -230,6 +255,8 @@ def run(environ: dict[str, str] | None = None, authelia_dir: Path = AUTHELIA_DIR
         if "authelia" in env.profiles:
             for line in ensure_authelia_state(env, authelia_dir):
                 print(f"bootstrap: authelia {line}")
+            for line in share_authelia_volumes(authelia_dir, AUTHELIA_DATA_DIR):
+                print(f"bootstrap: {line}")
     except Exception as exc:  # the exit code is the contract; say why first
         print(f"bootstrap: failed: {exc}")
         return 1
