@@ -213,6 +213,11 @@ func (mc *machine) opSessionList(ctx context.Context, args json.RawMessage) (any
 		}
 		for _, s := range sessList {
 			mc.trackSession(w, s)
+			// A subagent's session belongs under its parent's task call
+			// (session.children), not beside it in the workspace's list.
+			if s.ParentID != "" {
+				continue
+			}
 			out = append(out, mc.enrich(s, w.ID))
 		}
 	}
@@ -482,8 +487,21 @@ func (mc *machine) opSessionChildren(ctx context.Context, args json.RawMessage) 
 	if err != nil {
 		return nil, backendErr(err)
 	}
+	// Each child is anchored at the parent's tool call that spawned it: the
+	// parent's transcript records the child's session id on that call.
+	spawnedBy := map[string]string{}
+	if parent, err := mc.mat.Sync(ctx, a.SessionID, "", 0); err == nil && parent.Snapshot != nil {
+		for _, entry := range parent.Snapshot.Messages {
+			for _, part := range entry.Parts {
+				if part.Type == backend.PartTool && part.SubtaskSessionID != "" {
+					spawnedBy[part.SubtaskSessionID] = part.CallID
+				}
+			}
+		}
+	}
 	out := make([]backend.Session, 0, len(children))
 	for _, c := range children {
+		c.ParentToolCallID = spawnedBy[c.ID]
 		out = append(out, mc.enrich(c, workspaceID))
 	}
 	return map[string]any{"sessions": orEmpty(out)}, nil

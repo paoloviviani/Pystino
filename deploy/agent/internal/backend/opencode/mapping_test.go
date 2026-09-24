@@ -254,3 +254,14 @@ func TestAbortedMessageIsNotAnError(t *testing.T) {
 		t.Error("a real provider error must still be reported")
 	}
 }
+
+// The task tool's metadata names the child session; the part must carry it so
+// session.children can anchor the subagent at this call.
+func TestTaskToolPartCarriesChildSession(t *testing.T) {
+	p := partFromMap(map[string]any{"id": "p", "messageID": "m", "type": "tool", "callID": "call_task", "tool": "task",
+		"state": map[string]any{"status": "running", "input": map[string]any{"description": "d"},
+			"metadata": map[string]any{"sessionId": "ses_child"}}})
+	if p.SubtaskSessionID != "ses_child" || p.CallID != "call_task" {
+		t.Fatalf("part = %+v", p)
+	}
+}

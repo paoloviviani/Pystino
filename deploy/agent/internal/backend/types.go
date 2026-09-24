@@ -27,9 +27,12 @@ type Session struct {
 	ModelID            string        `json:"modelId,omitempty"`
 	AutoAccept         bool          `json:"autoAccept"`
 	ParentID           string        `json:"parentId,omitempty"`
-	CreatedAt          time.Time     `json:"createdAt"`
-	UpdatedAt          time.Time     `json:"updatedAt"`
-	Usage              *Usage        `json:"usage,omitempty"`
+	// ParentToolCallID is the parent's tool call that spawned this session
+	// (set by session.children), so the panel can anchor it in the transcript.
+	ParentToolCallID string    `json:"parentToolCallId,omitempty"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
+	Usage            *Usage    `json:"usage,omitempty"`
 }
 
 // Message is a normalized chat message (PROTOCOL.md §7).

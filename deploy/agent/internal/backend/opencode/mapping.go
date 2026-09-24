@@ -164,6 +164,11 @@ func partFromMap(m map[string]any) backend.Part {
 			state = m
 		}
 		p.ToolStatus = backend.ToolStatus(getStr(state, "status"))
+		// opencode's task tool names the child session it spawned in its
+		// metadata; carrying it on the part is what links a subagent to the call.
+		if md := getMap(state, "metadata"); md != nil {
+			p.SubtaskSessionID = getStr(md, "sessionId", "sessionID")
+		}
 		p.Title = getStr(state, "title")
 		if in := getMap(state, "input"); in != nil {
 			p.Input = in
