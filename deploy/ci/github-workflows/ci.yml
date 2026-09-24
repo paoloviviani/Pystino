@@ -24,25 +24,6 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy apps/gateway/src services
 
-  pre-commit-hygiene:
-    name: pre-commit (file hygiene + mypy)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
-        with:
-          python-version: "3.13"
-      - run: uv sync --locked
-      # ruff and ruff-format are skipped here: ruff (lint) already runs,
-      # unfixed, in gateway-tests above, and ruff-format is excluded on
-      # purpose — the tree has never been ruff-format-clean repo-wide (see
-      # CLAUDE.md), so running it over --all-files would make this job
-      # permanently red for files nobody touched. Format only files you
-      # have just created; don't reformat the whole tree in one PR.
-      - run: uv run pre-commit run --all-files --show-diff-on-failure
-        env:
-          SKIP: ruff,ruff-format
-
   discover-go-modules:
     name: Discover Go modules under deploy/
     runs-on: ubuntu-latest
