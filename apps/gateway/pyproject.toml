@@ -32,6 +32,10 @@ dependencies = [
     # own (verified at source, 0.0.32). Without it FastAPI refuses to *build*
     # the route, at import time — so this is not an optional extra.
     "python-multipart>=0.0.20",
+    # MIT. Already present at runtime through uvicorn[standard]; declared
+    # because `pystino adopt` reads the old installer's generated Authelia YAML
+    # and should not depend on another package's extras to do it.
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]

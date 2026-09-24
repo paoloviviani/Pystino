@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from gateway.deploy import bootstrap, doctor, envfile, presets, stackfiles, upgrade
+from gateway.deploy import adopt, bootstrap, doctor, envfile, presets, stackfiles, upgrade
 from gateway.deploy.init import TLS_MODES, InitError, InitOptions, build_env
 
 SHIM = """#!/bin/sh
@@ -160,7 +160,64 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_bootstrap(args: argparse.Namespace) -> int:
+    if args.import_only:
+        for line in bootstrap.import_authelia_state(Path(args.import_only)):
+            print(f"bootstrap: authelia {line}")
+        return 0
     return bootstrap.run()
+
+
+def cmd_adopt(args: argparse.Namespace) -> int:
+    new_dir = _deploy_dir(args)
+    if (new_dir / ".env").exists() and not args.force:
+        print(f"{new_dir / '.env'} exists; adopt never overwrites a deployment (--force)")
+        return 1
+    options = adopt.AdoptOptions(
+        old_deploy_dir=Path(args.old_deploy_dir).resolve(),
+        new_deploy_dir=new_dir,
+        tls=args.tls,
+        mode=args.mode,
+        project=args.project,
+        pystino_src=Path(args.pystino_src).resolve() if args.pystino_src else None,
+        cerea_src=Path(args.cerea_src).resolve() if args.cerea_src else None,
+        http_port=args.http_port,
+        https_port=args.https_port,
+    )
+    try:
+        result = adopt.build(options, stackfiles.release())
+    except (adopt.AdoptError, envfile.EnvFileError) as exc:
+        print(f"adopt: {exc}")
+        return 2
+    envfile.write_atomic(new_dir / ".env", envfile.render(result.sections))
+    for relative, data in result.staged.items():
+        target = new_dir / "adopt" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        envfile.write_atomic(target, data.decode("utf-8"))
+    (new_dir / "proxy.d").mkdir(exist_ok=True)
+    readme = new_dir / "proxy.d" / "00-readme.caddy"
+    if not readme.exists():
+        readme.write_text(PROXY_README, encoding="utf-8")
+    if args.mode == "dist":
+        shutil.copyfile(stackfiles.stack_dir() / "compose.yaml", new_dir / "compose.yaml")
+    shim = new_dir / "pystino"
+    shim.write_text(SHIM, encoding="utf-8")
+    shim.chmod(0o755)
+    print(f"wrote {new_dir / '.env'} from {options.old_deploy_dir} (nothing there was changed)")
+    for note in result.notes:
+        print(f"note: {note}")
+    print("")
+    print("Cutover — nothing above has touched the running stack; these do:")
+    print(f"  cd {new_dir} && ./pystino doctor")
+    print("  # 1. stop the old stack WITHOUT -v (volumes are the data), from its old directory")
+    if result.staged:
+        print("  # 2. put the carried users file and signing key into the new volume:")
+        print(
+            '  docker compose run --rm --no-deps -v "$PWD/adopt/authelia-config:/import:ro" '
+            "bootstrap pystino bootstrap --import-only /import"
+        )
+    print("  # 3. docker compose up -d --wait")
+    print("  # back: docker compose down (no -v) here, then start the old stack as before")
+    return 0
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -249,7 +306,25 @@ def build_parser() -> argparse.ArgumentParser:
     init.set_defaults(func=cmd_init)
 
     boot = sub.add_parser("bootstrap", help="(inside the stack) converge DB and IdP state")
+    boot.add_argument(
+        "--import-only",
+        metavar="DIR",
+        help="copy an adopted install's Authelia users file and key where absent, then exit",
+    )
     boot.set_defaults(func=cmd_bootstrap)
+
+    ad = sub.add_parser("adopt", help="carry an installer-made deployment over (reads only)")
+    ad.add_argument("old_deploy_dir", help="the old install's deploy/ directory")
+    ad.add_argument("--dir", help="new deployment directory (default: current)")
+    ad.add_argument("--tls", required=True, choices=TLS_MODES, help="edge shape = upstream")
+    ad.add_argument("--mode", default="dist", choices=("dev", "dist"))
+    ad.add_argument("--project", default=adopt.OLD_PROJECT)
+    ad.add_argument("--pystino-src")
+    ad.add_argument("--cerea-src")
+    ad.add_argument("--http-port", type=int)
+    ad.add_argument("--https-port", type=int)
+    ad.add_argument("--force", action="store_true")
+    ad.set_defaults(func=cmd_adopt)
 
     doc = sub.add_parser("doctor", help="check a deployment directory")
     doc.add_argument("--dir")
