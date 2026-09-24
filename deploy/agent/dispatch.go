@@ -542,7 +542,9 @@ func (mc *machine) opBackendModels(ctx context.Context, args json.RawMessage) (a
 	if err != nil {
 		return nil, backendErr(err)
 	}
+	hidden := 0
 	if !mc.pol.AllowFreeModels {
+		hidden = len(models)
 		filtered := models[:0]
 		for _, m := range models {
 			if m.ProviderID == policy.GatewayProviderID {
@@ -550,8 +552,11 @@ func (mc *machine) opBackendModels(ctx context.Context, args json.RawMessage) (a
 			}
 		}
 		models = filtered
+		hidden -= len(models)
 	}
-	return map[string]any{"models": orEmpty(models)}, nil
+	// hidden lets the panel say why the list is short (PROTOCOL.md §6) instead
+	// of looking broken; the ids themselves never leave the machine.
+	return map[string]any{"models": orEmpty(models), "hidden": hidden}, nil
 }
 
 // orEmpty turns a nil slice into an empty one. Go marshals nil as null, and
