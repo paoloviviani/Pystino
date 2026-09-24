@@ -70,6 +70,3 @@ directory.
 # (there is no node on the deployment host). Not a build output — a cache.
 .pnpm-store/
 
-# The paseo-relay source deploy/code-relay/fetch.sh checks out — a pinned
-# vendored tree, fetched at install time, never ours to edit.
-deploy/code-relay/paseo-relay/

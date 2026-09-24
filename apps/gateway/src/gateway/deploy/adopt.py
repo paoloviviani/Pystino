@@ -272,10 +272,9 @@ def build(options: AdoptOptions, release: dict[str, str]) -> AdoptResult:
 
     if values.get("CODE_AGENTS_ENABLED") == "true":
         notes.append(
-            "CODE_AGENTS_ENABLED is on: the relay is not part of the core stack. Attach it "
-            "through the component hook (report §9) — add its compose file to COMPOSE_FILE "
-            "and its Caddy snippet to proxy.d — or leave it on the old stack until the thin "
-            "agent replaces it"
+            "CODE_AGENTS_ENABLED is on: machines now dial out to the chat "
+            "(wss://<origin>/chat/api/v2/code/machine) — there is no relay to carry over. "
+            "Re-enrol each machine with 'pystino-agent enroll', then 'pystino-agent run'"
         )
     for gone in ("TLS_DIRECTIVE", "HTTPS_PORT", "PUBLIC_HOST", "CHAT_REPO", "SSL_CERT_FILE"):
         if gone in values:

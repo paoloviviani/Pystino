@@ -41,10 +41,11 @@ The decision record indexes every design decision; this file is the fast layer.
 - The gateway accepts a caller-supplied `x-request-id` and never returns the one
   it uses — a caller who wants a transcript tied to cost mints it and sends it
   (the convention the chat branch lives by; ADR 0040).
-- `deploy/opencode/` is the agent-machine side: the pasted-key `install.sh`
-  (ADR 0010), the Go enrollment CLI (`enroll` / `serve` / `pair`) and
-  `setup-agent.sh`. It imports nothing from the gateway and is documented in
-  `docs/coding-agents.md`.
+- `deploy/agent/` is the agent-machine binary (`pystino-agent enroll` /
+  `serve` / `run`: OIDC enrolment, the refreshing shim, and the outbound link
+  to the chat); `deploy/opencode/` keeps the pasted-key `install.sh`
+  (ADR 0010). Neither imports anything from the gateway; both are documented
+  in `docs/coding-agents.md`. The stack side is `pystino init --agents`.
 - Gateway internals that carry the weight: `routers/_metered.py`
   (resolve → reserve → record → settle), `accounting/cost.py` (the only code that
   multiplies a count by a rate), `quota/engine.py`, `access.py`, `plugins/`
