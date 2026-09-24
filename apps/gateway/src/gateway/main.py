@@ -19,9 +19,7 @@ from gateway.db import create_engine, create_session_factory
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.fx import FXService
 from gateway.identity_registry import OIDCProviderRegistry, seed_from_env
-from gateway.idp import IdpSigner
 from gateway.logging_config import configure_logging
-from gateway.login_throttle import LoginThrottle
 from gateway.oidc_policy import OIDCPolicyResolver
 from gateway.providers import ProviderRegistry
 from gateway.quota import (
@@ -43,7 +41,6 @@ from gateway.routers import (
     embeddings,
     health,
     identity,
-    idp,
     images,
     me,
     messages,
@@ -52,10 +49,8 @@ from gateway.routers import (
     pystino,
     scim,
     search,
-    tokens,
 )
 from gateway.routers import responses as responses_router
-from gateway.routers.auth import ResetRequestThrottle
 from gateway.secrets import SecretBox
 from gateway.upstream import build_http_client
 
@@ -193,14 +188,6 @@ async def init_app_state(
     except Exception:
         logger.warning("could not read the oidc policy at startup", exc_info=True)
     oidc_policy_resolver.start()
-    # The reset-email cooldown, armed only when the feature is: an absent
-    # throttle means POST /auth/password-reset answers 503, the same switch
-    # the login throttle is.
-    app.state.reset_throttle = (
-        ResetRequestThrottle(settings.local_auth.password_reset.request_cooldown_seconds)
-        if settings.local_auth.password_reset.enabled
-        else None
-    )
     app.state.token_estimator = DEFAULT_ESTIMATOR
     # Strong references to detached finalisation tasks (chat.py) and quota
     # notification sends; the notifier shares this set.
@@ -249,27 +236,6 @@ async def init_app_state(
             await seed_from_env(session, settings, app.state.secrets)
     except Exception:
         logger.warning("could not seed identity providers at startup", exc_info=True)
-    # The local-login throttle. Its presence *is* the feature switch: an
-    # absent throttle means POST /auth/login answers 503, and /auth/methods
-    # reports no local way in.
-    app.state.login_throttle = (
-        LoginThrottle(
-            max_failed_attempts=settings.local_auth.max_failed_attempts,
-            window_seconds=settings.local_auth.throttle_window_seconds,
-        )
-        if settings.local_auth.enabled
-        else None
-    )
-    # The house issuer's signing key (ADR 0068), armed only when the IdP is:
-    # built here so a malformed GATEWAY_IDP__SIGNING_KEY refuses the boot
-    # rather than the first login. The settings validator has already checked
-    # the key is present; this checks it is *readable*. Off means absent, so
-    # an unconfigured deployment builds no key material at all.
-    app.state.idp_signer = (
-        IdpSigner.from_pem(settings.idp.signing_key.get_secret_value())
-        if settings.idp.enabled
-        else None
-    )
 
     # An empty counter cache is not a failed read — it answers confidently with
     # zero, which would hand every group a fresh budget after Valkey is wiped.
@@ -290,7 +256,6 @@ async def init_app_state(
             "redaction_engine": settings.redaction.engine,
             "secret_key_configured": app.state.secrets.enabled,
             "oidc_enabled": settings.oidc.enabled,
-            "idp_enabled": settings.idp.enabled,
             "quota_enabled": settings.quota.enabled,
         },
     )
@@ -389,17 +354,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(identity.router)
     app.include_router(pystino.router)
     app.include_router(auth.router)
-    app.include_router(tokens.router)
     app.include_router(me.router)
     app.include_router(admin.router)
     app.include_router(directory.router)
     app.include_router(scim.router)
-    # The house issuer (ADR 0068). Registered only when enabled — off means
-    # the routes do not exist and discovery does not resolve, which is what
-    # "off means absent" has to mean for a federating surface. Discovery's
-    # well-known path must live at the root, so this router carries no prefix.
-    if resolved.idp.enabled:
-        app.include_router(idp.router)
 
     # Last, so a console route can never shadow an API one. Mounts only if the
     # assets are in the image and the setting allows it (ADR 0023).

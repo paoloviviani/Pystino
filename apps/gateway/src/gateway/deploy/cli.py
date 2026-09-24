@@ -297,7 +297,20 @@ def cmd_adopt(args: argparse.Namespace) -> int:
             '  docker compose run --rm --no-deps -v "$PWD/adopt/authelia-config:/import:ro" '
             "bootstrap pystino bootstrap --import-only /import"
         )
-    print("  # 3. docker compose up -d --wait")
+    written = envfile.read(new_dir / ".env")
+    if "chat" in written.get("COMPOSE_PROFILES", "").split(","):
+        # Cerea with the thin-agent machine link re-creates the codeDevices
+        # userId index without its old partial filter, under the same name;
+        # Mongo refuses that as an options conflict, so the old one goes first.
+        # Only the partial one is dropped, so this is safe to repeat.
+        print("  # 3. before the new chat starts: drop Cerea's old partial codeDevices index")
+        print("  docker compose up -d --wait chat-mongo")
+        print(
+            "  docker compose exec -T chat-mongo mongo chat-ui --quiet --eval "
+            "'db.codeDevices.getIndexes().some(i => i.name === \"userId_1_updatedAt_-1\" "
+            "&& i.partialFilterExpression) && db.codeDevices.dropIndex(\"userId_1_updatedAt_-1\")'"
+        )
+    print("  # 4. docker compose up -d --wait")
     print("  # back: docker compose down (no -v) here, then start the old stack as before")
     return 0
 

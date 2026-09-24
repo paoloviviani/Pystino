@@ -9,10 +9,12 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from gateway.deploy import bootstrap, doctor, envfile, stackfiles
+from gateway.deploy import bootstrap, doctor, envfile
 from gateway.deploy.cli import main
 
-GENERATOR = stackfiles.stack_dir().parent / "idp" / "generate-authelia-config.sh"
+# The old installer's generator, kept as a fixture: adopt must read exactly
+# what it wrote, and the generator itself was deleted with the old deployment.
+GENERATOR = Path(__file__).parent / "fixtures" / "legacy" / "generate-authelia-config.sh"
 ORIGIN = "https://cerea.example.org"
 
 

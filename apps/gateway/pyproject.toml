@@ -18,7 +18,10 @@ dependencies = [
     "pydantic-settings>=2.6",
     "redis>=5.2",                    # protocol client; talks to Valkey. ADR 0006
     "joserfc>=1.0",                  # JOSE/JWT. authlib.jose is deprecated. ADR 0011
-    "pwdlib[argon2]>=0.2",           # password hashing for local login. ADR 0043
+    # Argon2id digests for the bundled Authelia (client secrets, the first
+    # user, console-managed users). MIT. Replaces pwdlib, which wrapped it for
+    # the local-password door that ADR 0088 removed.
+    "argon2-cffi>=23.1",
     "orjson>=3.10",
     "llmp-shared",
     "google-re2>=1.1.20251105",

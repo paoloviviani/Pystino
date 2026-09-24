@@ -98,7 +98,6 @@ from gateway.models import (
 )
 from gateway.oidc_policy import environment_policy
 from gateway.pagination import Page, PageDep, count_of
-from gateway.passwords import hash_password, validate_password
 from gateway.periods import PeriodKind
 from gateway.plugins import registry as plugin_registry
 from gateway.pricing import (
@@ -187,8 +186,6 @@ from gateway.schemas import (
     SearchBackendDeleteResponse,
     UsageReport,
     UserAdminResponse,
-    UserCreateRequest,
-    UserPasswordRequest,
     UserUpdateRequest,
 )
 from gateway.secrets import SecretBox, SecretsUnavailableError, hint_for
@@ -2454,158 +2451,6 @@ async def update_user(
 
     # Not by re-reading the listing and picking a row out of it: the listing is
     # a page now, and the user just edited may not be on the page.
-    return (await _user_responses(session, [user]))[0]
-
-
-async def _load_local_user(user_id: uuid.UUID, session: SessionDep) -> User:
-    """The user a password route was aimed at, or the error that stops it.
-
-    Only ``issuer="local"`` accounts may carry a password. Attaching one to a
-    directory user would create a second credential for an identity the IdP
-    is supposed to be authoritative about — a leaked local password would
-    then ride the issuer's group memberships without anything in the
-    directory having granted it.
-    """
-    user = (
-        await session.execute(
-            select(User)
-            .where(User.id == user_id)
-            .options(selectinload(User.memberships).selectinload(Membership.group))
-        )
-    ).scalar_one_or_none()
-    if user is None:
-        raise NotFoundError(f"No user with id {user_id}.")
-    if user.issuer != "local":
-        raise BadRequestError(
-            "Only local accounts (issuer 'local') can have a password. This user "
-            "signs in through the identity provider, which is authoritative for them."
-        )
-    return user
-
-
-@router.put("/users/{user_id}/password", response_model=UserAdminResponse)
-async def set_user_password(
-    user_id: uuid.UUID,
-    payload: UserPasswordRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    settings: SettingsDep,
-) -> UserAdminResponse:
-    """Set or reset a local account's password.
-
-    A reset needs no knowledge of the old password: the caller is already an
-    authenticated administrator, and requiring the old value would make
-    "operator resets a locked-out account" impossible. Same trust level as
-    minting a key on someone's behalf.
-    """
-    user = await _load_local_user(user_id, session)
-    try:
-        validate_password(payload.password, settings.local_auth)
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-
-    credential = await session.get(LocalCredential, user.id)
-    if credential is None:
-        session.add(LocalCredential(user_id=user.id, password_hash=hash_password(payload.password)))
-    else:
-        credential.password_hash = hash_password(payload.password)
-    await session.commit()
-    return (await _user_responses(session, [user]))[0]
-
-
-@router.delete("/users/{user_id}/password", response_model=UserAdminResponse)
-async def clear_user_password(
-    user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
-) -> UserAdminResponse:
-    """Revoke an account's ability to sign in locally.
-
-    Row deletion, not an empty hash: "no credential" and "credential that
-    matches nothing" are different states, and only the first is honest about
-    what login will do.
-    """
-    user = await _load_local_user(user_id, session)
-    await session.execute(delete(LocalCredential).where(LocalCredential.user_id == user.id))
-    await session.commit()
-    return (await _user_responses(session, [user]))[0]
-
-
-@router.post("/users", response_model=UserAdminResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(
-    payload: UserCreateRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    settings: SettingsDep,
-) -> UserAdminResponse:
-    """Mint a local account (ADR 0048).
-
-    The console-shaped version of ``gateway passwd``: email, initial password,
-    optional groups and admin. Local only — an identity-provider account is
-    the IdP's to create, and a console-created directory user would be
-    overwritten or orphaned at the next login.
-    """
-    email = payload.email.strip().casefold()
-    if "@" not in email or email.startswith("@") or email.endswith("@"):
-        raise BadRequestError("A valid email address is required.")
-
-    existing = await session.execute(
-        select(User).where(User.issuer == "local", User.subject == email)
-    )
-    if existing.scalar_one_or_none() is not None:
-        raise BadRequestError(f"An account for {email} already exists.", code="account_exists")
-
-    try:
-        validate_password(payload.password, settings.local_auth)
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-
-    user = User(
-        issuer="local",
-        subject=email,
-        email=email,
-        display_name=payload.display_name or None,
-        is_admin=payload.is_admin,
-    )
-    session.add(user)
-    await session.flush()
-    # The credential at creation, not left for a second step: an account
-    # handed over with "your password is X" and no hash would answer every
-    # sign-in attempt with "incorrect email or password" — found by the
-    # end-to-end assertion in test_oidc_policy.py, not by the type checker.
-    # It needs the flush above: user.id does not exist before it.
-    session.add(LocalCredential(user_id=user.id, password_hash=hash_password(payload.password)))
-
-    # Group *names*, resolved or created. Created groups are "manual", not
-    # "oidc": an OIDC-sourced group that the IdP stops reporting is pruned from
-    # memberships at the next login, and a group an administrator typed into a
-    # form must not be subject to that reconciliation.
-    names: list[str] = []
-    for name in payload.groups:
-        cleaned = name.strip()
-        if cleaned and cleaned not in names:
-            names.append(cleaned)
-    groups: list[Group] = []
-    for name in names:
-        group = (
-            await session.execute(select(Group).where(Group.name == name))
-        ).scalar_one_or_none()
-        if group is None:
-            group = Group(name=name, source=GroupSource.MANUAL)
-            session.add(group)
-            await session.flush()
-        groups.append(group)
-    for group in groups:
-        session.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL))
-    # The same sole-group rule the login path applies: one group means it is
-    # the default, and the account can bill without a settings detour.
-    if len(groups) == 1:
-        user.default_billing_group_id = groups[0].id
-
-    await session.commit()
-    # _user_responses reads user.memberships, and nothing above has loaded it:
-    # a lazy load from async code is a MissingGreenlet on the *first* account
-    # created — the same trap provision_user documents and dodges. Explicit
-    # refresh rather than a hope.
-    await session.refresh(user, attribute_names=["memberships"])
     return (await _user_responses(session, [user]))[0]
 
 

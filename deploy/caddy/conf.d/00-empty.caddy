@@ -1,6 +1,0 @@
-# Deliberately empty, and deliberately committed.
-#
-# The Caddyfile imports conf.d/*.caddy so an overlay can add a route without
-# rewriting the file every deployment shares. Caddy treats an import glob that
-# matches nothing as an error, so without this placeholder the base stack — the
-# common case, with no overlay — would refuse to start.
