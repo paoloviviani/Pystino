@@ -1,68 +1,124 @@
-name: CI
+# The one PR workflow for Pystino (it folds in the checks thin-agent/main
+# parked here as ci.yml: pytest, ruff, mypy, Go gofmt/vet/test).
+#
+# Sized for the GitHub free plan's Action minutes:
+#   - PRs and manual runs only — no push-to-main run (what merges was checked
+#     on its PR), no matrix;
+#   - docs-only changes run nothing; a cheap `changes` job then runs only the
+#     suites whose inputs changed (a gateway PR never runs the console, and
+#     vice versa);
+#   - uv/pnpm/Go caches; a newer push to the same PR cancels the run.
+# Image builds are images.yml (main and tags); the stack bring-up is stack.yml
+# (release PRs, on demand, weekly).
+name: ci
 
 on:
-  push:
-    branches: [main]
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "deploy/ci/github-workflows/README.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  gateway-tests:
-    name: Gateway (pytest, ruff, mypy)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
-        with:
-          python-version: "3.13"
-      - run: uv sync --locked
-      - run: uv run pytest -q
-      # Lint only, never --fix: this is a check, not a rewrite.
-      - run: uv run ruff check .
-      - run: uv run mypy apps/gateway/src services
-
-  discover-go-modules:
-    name: Discover Go modules under deploy/
+  changes:
     runs-on: ubuntu-latest
     outputs:
-      dirs: ${{ steps.find.outputs.dirs }}
+      gateway: ${{ steps.filter.outputs.gateway }}
+      console: ${{ steps.filter.outputs.console }}
+      go: ${{ steps.filter.outputs.go }}
     steps:
       - uses: actions/checkout@v4
-      # The enrollment CLI's module has moved before (deploy/opencode/enroll
-      # -> deploy/agent) and may move again; discover it instead of hardcoding
-      # a path so this workflow doesn't need editing every time it does.
-      - id: find
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            gateway:
+              - "apps/gateway/**"
+              - "packages/shared-py/**"
+              - "services/**"
+              - "deploy/stack/**"
+              - "uv.lock"
+              - "pyproject.toml"
+              - "deploy/ci/github-workflows/ci.yml"
+            console:
+              - "apps/console/**"
+              - "packages/ui/**"
+              - "pnpm-lock.yaml"
+              - "deploy/ci/github-workflows/ci.yml"
+            go:
+              - "deploy/**/*.go"
+              - "deploy/**/go.mod"
+              - "deploy/**/go.sum"
+              - "deploy/ci/github-workflows/ci.yml"
+
+  gateway:
+    needs: changes
+    if: needs.changes.outputs.gateway == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: {enable-cache: true, python-version: "3.13"}
+      - run: uv sync --locked
+      # Lint only, never --fix: a check, not a rewrite.
+      - run: uv run ruff check .
+      - run: uv run mypy apps/gateway/src services
+      - run: uv run pytest -q -p no:cacheprovider
+      - name: init writes files compose accepts; the Caddyfile adapts in every TLS mode
         run: |
-          dirs=$(find deploy -name go.mod -exec dirname {} \; | sort -u | jq -R -s -c 'split("\n")[:-1]')
-          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+          set -eu
+          for mode in dist dev; do
+            dir="$RUNNER_TEMP/$mode"; mkdir -p "$dir"
+            PYSTINO_UPSTREAM_API_KEY= uv run pystino init --dir "$dir" --mode "$mode" \
+              --origin https://stack.example.org --admin-email ops@example.org --preset team >/dev/null
+            (cd "$dir" && docker compose config --quiet)
+          done
+          for spec in "https://stack.example.org|" "https://10.0.0.5|tls internal" "http://:80|"; do
+            docker run --rm -e SITE_ADDRESS="${spec%%|*}" -e TLS_DIRECTIVE="${spec#*|}" \
+              -v "$PWD/deploy/stack/proxy:/etc/caddy:ro" caddy:2.11-alpine \
+              caddy adapt --config /etc/caddy/Caddyfile >/dev/null
+          done
+
+  console:
+    needs: changes
+    if: needs.changes.outputs.console == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 24, cache: pnpm}
+      - run: pnpm install --frozen-lockfile --filter "@llmp/console..."
+      - run: pnpm --filter @llmp/console typecheck
+      - run: pnpm --filter @llmp/console test
 
   go:
-    name: Go (gofmt, vet, test)
-    needs: discover-go-modules
-    if: needs.discover-go-modules.outputs.dirs != '[]'
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        dir: ${{ fromJson(needs.discover-go-modules.outputs.dirs) }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with:
-          go-version-file: ${{ matrix.dir }}/go.mod
-      - name: gofmt
-        working-directory: ${{ matrix.dir }}
+        with: {go-version: stable, cache-dependency-path: "deploy/**/go.sum"}
+      # One runner for every Go module under deploy/ (the agent's module has
+      # moved before and may again), rather than a matrix job per module.
+      - name: gofmt, vet, test
         run: |
-          fmt_out=$(gofmt -l .)
-          if [ -n "$fmt_out" ]; then
-            echo "$fmt_out"
-            exit 1
-          fi
-      - name: go vet
-        working-directory: ${{ matrix.dir }}
-        run: go vet ./...
-      - name: go test
-        working-directory: ${{ matrix.dir }}
-        run: go test ./...
+          set -eu
+          for mod in $(find deploy -name go.mod -exec dirname {} \; | sort -u); do
+            echo "::group::$mod"
+            (cd "$mod" && test -z "$(gofmt -l . | tee /dev/stderr)" && go vet ./... && go test ./...)
+            echo "::endgroup::"
+          done

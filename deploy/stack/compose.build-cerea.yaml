@@ -1,0 +1,13 @@
+# Development mode, chat half: build Cerea from CEREA_SRC. Listed in
+# COMPOSE_FILE only when init was given a Cerea checkout; without it the chat
+# image is pulled at CEREA_VERSION like in a distributed install.
+services:
+  chat:
+    build:
+      context: ${CEREA_SRC:?set CEREA_SRC in .env to the Cerea checkout}
+      dockerfile: Dockerfile
+      args:
+        APP_BASE: /chat
+        PUBLIC_COMMIT_SHA: ${CEREA_BUILD_REVISION:-unknown}
+      labels:
+        org.opencontainers.image.revision: ${CEREA_BUILD_REVISION:-unknown}

@@ -31,11 +31,6 @@ export interface Me {
   has_password: boolean;
 }
 
-/** A self-service password change: the current one proves the person. */
-export interface MyPasswordChangeInput {
-  current_password: string;
-  new_password: string;
-}
 
 /** A self-service default billing group choice, from the caller's own groups. */
 export interface SetDefaultBillingGroupInput {
@@ -620,19 +615,6 @@ export interface SearchBackendDeleteResult {
   cleared_groups: string[];
 }
 
-/**
- * Minting a local account from the console (ADR 0048). Local only: an
- * identity-provider account is the IdP's to create, and one made here would
- * be overwritten or orphaned at the next login.
- */
-export interface UserCreateInput {
-  email: string;
-  password: string;
-  display_name?: string;
-  is_admin?: boolean;
-  /** Group *names*; a name that does not exist yet is created (source "manual"). */
-  groups?: string[];
-}
 
 /**
  * The identity policy in force (ADR 0048), as `GET /api/admin/oidc/policy`
@@ -675,12 +657,6 @@ export interface GroupCreateInput {
   description?: string;
 }
 
-/** The policy in force (ADR 0049): a reset link is only minted when the
- * deployment enabled the feature. */
-export interface PasswordResetEnabled {
-  local: boolean;
-  reset_available: boolean;
-}
 
 // -- Settings (ADR 0051) ------------------------------------------------------
 
@@ -706,6 +682,82 @@ export interface IdentityProvider {
   group_sync: GroupSync;
   is_enabled: boolean;
   source: "console" | "environment";
+  /** Server-to-server base URL for the issuer (the bundled Authelia's
+   * internal address); empty when the issuer URL is reachable directly. */
+  internal_base_url: string;
+  kind: IdentityKind;
+  /** Where the directory's answer about groups comes from (ADR 0088). */
+  group_source: GroupSource;
+  /** Who decides who is an administrator (ADR 0088). */
+  admin_source: AdminSource;
+  admin_claim: string;
+  admin_values: string[];
+  subject_claim: string;
+  sync_adapter: SyncAdapter;
+  sync_interval_minutes: number;
+  sync_deprovision: "disable" | "ignore";
+  sync_create_users: boolean;
+  sync_confirmed: boolean;
+  capabilities: IdentityCapabilities;
+}
+
+export type IdentityKind =
+  | "generic"
+  | "authelia"
+  | "keycloak"
+  | "entra"
+  | "okta"
+  | "authentik"
+  | "google";
+export type GroupSource = "claim" | "directory" | "none";
+export type AdminSource = "console" | "claim";
+export type SyncAdapter = "none" | "authelia_file" | "keycloak_admin" | "scim";
+
+export interface IdentityCapabilities {
+  claims_groups: boolean;
+  pull_adapters: SyncAdapter[];
+  scim_push: boolean;
+  subject_before_login: boolean;
+  deprovision: boolean;
+  adapters: SyncAdapter[];
+}
+
+export interface SyncRun {
+  id: string;
+  trigger: "schedule" | "manual" | "push";
+  dry_run: boolean;
+  status: "ok" | "failed" | "needs_confirmation";
+  seen: number;
+  created: number;
+  linked: number;
+  updated: number;
+  deactivated: number;
+  reactivated: number;
+  changes: { change: string; who: string; [detail: string]: unknown }[];
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface DirectoryPerson {
+  id: string;
+  external_id: string;
+  username: string | null;
+  email: string | null;
+  display_name: string | null;
+  groups: string[];
+  active: boolean;
+  present: boolean;
+  preassigned_groups: string[];
+  user_id: string | null;
+}
+
+export interface AutheliaUser {
+  username: string;
+  email: string;
+  display_name: string;
+  groups: string[];
+  disabled: boolean;
 }
 
 export interface IdentityProviderInput {
@@ -720,6 +772,17 @@ export interface IdentityProviderInput {
   link_local_by_email?: boolean;
   group_sync?: GroupSync;
   is_enabled?: boolean;
+  internal_base_url?: string;
+  kind?: IdentityKind;
+  group_source?: GroupSource;
+  admin_source?: AdminSource;
+  admin_claim?: string;
+  admin_values?: string[];
+  subject_claim?: string;
+  sync_adapter?: SyncAdapter;
+  sync_interval_minutes?: number;
+  sync_deprovision?: "disable" | "ignore";
+  sync_create_users?: boolean;
 }
 
 /** The SMTP configuration in force — the row's, or the environment's. */

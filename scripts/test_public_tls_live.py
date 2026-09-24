@@ -172,11 +172,6 @@ def main() -> int:
             8000: "the gateway, without TLS",
             8081: "the fake upstream",
             int(os.environ.get("CHAT_PORT", "8100")): "the chat service, without TLS",
-            # The relay rides the origin itself (Caddy routes /ws to it), so
-            # it publishes nothing extra and needs no entry here: daemons
-            # outside dial <origin>/ws through the same TLS the browser gets.
-            # Identity-blind by design (ADR 0085) — no secret, no identity,
-            # no plaintext — so sharing the origin's port is not a hole.
             # The development Keycloak (docker-compose.keycloak.yml). It is
             # deliberately not published — a browser reaches it through Caddy
             # at /idp on the origin above — and this line is what keeps that

@@ -32,6 +32,10 @@ out/
 .env.*
 !*.env.example
 !.env.example
+# The release's version manifest: image names and tags, no secrets. It must
+# be tracked — `pystino init`/`upgrade` and the image builds read it, and a
+# clean clone without it cannot produce a working gateway image.
+!deploy/stack/release.env
 # The deployment profile fragments are env-shaped but not secrets: every
 # credential field in them is an empty template the installer fills, and a
 # fresh clone must carry them or the Cerea installer's checkout validation
@@ -70,6 +74,3 @@ directory.
 # (there is no node on the deployment host). Not a build output — a cache.
 .pnpm-store/
 
-# The paseo-relay source deploy/code-relay/fetch.sh checks out — a pinned
-# vendored tree, fetched at install time, never ours to edit.
-deploy/code-relay/paseo-relay/

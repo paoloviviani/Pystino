@@ -12,17 +12,12 @@ import {
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import {
-  useClearUserPassword,
-  useCreateUser,
   useDeleteUser,
-  useGroups,
-  useSetUserPassword,
   useUpdateUser,
   useUsers,
 } from "../lib/admin";
 import {
   CHECK_ITEM,
-  CHECK_LIST,
   CHIPS,
   CODE,
   FORM,
@@ -31,7 +26,7 @@ import {
   ROW_ACTIONS,
 } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
-import type { AdminGroup, AdminUser } from "../lib/types";
+import type { AdminUser } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
 
@@ -43,13 +38,9 @@ export function AdminUsers() {
   // searches the first page and reports nothing found.
   const paged = usePaginated();
   const users = useUsers(paged.page);
-  // The create-account dialog picks from existing groups (and may name new
-  // ones); managing them is the Groups screen's job (ADR 0050).
-  const groups = useGroups({ limit: 200 });
   const update = useUpdateUser();
   const remove = useDeleteUser();
 
-  const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [deleting, setDeleting] = useState<AdminUser | null>(null);
 
@@ -160,13 +151,9 @@ export function AdminUsers() {
     <div className={PAGE}>
       <PageHeader
         title="Users"
-        subtitle="Directory users arrive on first login (see Identity). New here means a
-          local account with a password."
-        actions={
-          <Button variant="primary" onClick={() => setCreating(true)}>
-            New user
-          </Button>
-        }
+        subtitle="People arrive at their first sign-in, or before it through directory sync
+          (Settings → Identity providers → Directory). The bundled Authelia's people are
+          added under People there."
       />
 
       {update.error ? (
@@ -224,155 +211,12 @@ export function AdminUsers() {
         )}
       </Card>
 
-      <CreateUserDialog
-        open={creating}
-        groups={groups.data?.items ?? []}
-        onClose={() => setCreating(false)}
-      />
 
       <EditUserDialog user={editing} onClose={() => setEditing(null)} />
 
       <DeleteUserDialog user={deleting} onClose={() => setDeleting(null)} />
 
     </div>
-  );
-}
-
-/**
- * Mint a local account (ADR 0048).
- *
- * Local only, and the form says so: a directory user created here would be
- * overwritten or orphaned at the next login, so the dialog names who it is
- * for — a contractor, a service account, someone the IdP will never know.
- * Groups are chosen from names, and a name that does not exist yet is
- * created — an operator typing a group name in a form means it.
- */
-function CreateUserDialog({
-  open,
-  groups,
-  onClose,
-}: {
-  open: boolean;
-  groups: AdminGroup[];
-  onClose: () => void;
-}) {
-  const create = useCreateUser();
-  const toast = useOptionalToast();
-  const [email, setEmail] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [password, setPassword] = useState("");
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [picked, setPicked] = useState<string[]>([]);
-
-  const close = () => {
-    setEmail("");
-    setDisplayName("");
-    setPassword("");
-    setIsAdmin(false);
-    setPicked([]);
-    create.reset();
-    onClose();
-  };
-
-  const toggleGroup = (name: string) =>
-    setPicked((current) =>
-      current.includes(name) ? current.filter((g) => g !== name) : [...current, name],
-    );
-
-  const submit = () =>
-    create.mutate(
-      {
-        email: email.trim(),
-        password,
-        display_name: displayName.trim() || undefined,
-        is_admin: isAdmin,
-        groups: picked,
-      },
-      {
-        onSuccess: (user) => {
-          toast?.add({ title: `Account for ${user.subject} created`, type: "success" });
-          close();
-        },
-        onError: () =>
-          toast?.add({ title: "Could not create the account", type: "error" }),
-      },
-    );
-
-  return (
-    <Dialog
-      open={open}
-      title="New local user"
-      onClose={close}
-      footer={
-        <>
-          <Button onClick={close}>Cancel</Button>
-          <Button
-            variant="primary"
-            busy={create.isPending}
-            disabled={!email.trim() || password.length === 0}
-            onClick={submit}
-          >
-            Create account
-          </Button>
-        </>
-      }
-    >
-      {create.error ? (
-        <Notice tone="danger">
-          {create.error instanceof Error ? create.error.message : "Unknown error."}
-        </Notice>
-      ) : null}
-
-      <div className={FORM}>
-        <Input
-          label="Email"
-          type="email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          hint="The sign-in name, and the account's key."
-        />
-        <Input
-          label="Password"
-          type="password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          hint="Given to the user directly. Reset here later if it leaks."
-        />
-        <Input
-          label="Display name"
-          value={displayName}
-          onChange={(event) => setDisplayName(event.target.value)}
-        />
-        <label className={CHECK_ITEM}>
-          <input
-            type="checkbox"
-            checked={isAdmin}
-            onChange={(event) => setIsAdmin(event.target.checked)}
-          />
-          Administrator
-        </label>
-        <div>
-          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">Groups</div>
-          <div className={CHECK_LIST}>
-            {groups.map((group) => (
-              <label key={group.id} className={CHECK_ITEM}>
-                <input
-                  type="checkbox"
-                  checked={picked.includes(group.name)}
-                  onChange={() => toggleGroup(group.name)}
-                />
-                {group.name}
-              </label>
-            ))}
-          </div>
-          {/* Only active groups are listed; naming one that does not exist is
-              also fine — the account creation makes it. */}
-          <p className="mt-1 text-xs text-ink-faint">
-            A name that is not on the list is created when the account is.
-          </p>
-        </div>
-      </div>
-    </Dialog>
   );
 }
 
@@ -461,8 +305,6 @@ function formatDate(iso: string): string {
  */
 function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
   const update = useUpdateUser();
-  const setPassword = useSetUserPassword();
-  const clearPassword = useClearUserPassword();
   const toast = useOptionalToast();
 
   const [isActive, setIsActive] = useState(user?.is_active ?? true);
@@ -470,7 +312,6 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
   const [email, setEmail] = useState(user?.email ?? "");
   const [displayName, setDisplayName] = useState(user?.display_name ?? "");
   const [username, setUsername] = useState(user?.username ?? "");
-  const [newPassword, setNewPassword] = useState("");
 
   // Re-seed the fields when a different user opens: the dialog is keyed by
   // remount at the call site in spirit, but state here must follow the row.
@@ -483,14 +324,10 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
     setEmail(user?.email ?? "");
     setDisplayName(user?.display_name ?? "");
     setUsername(user?.username ?? "");
-    setNewPassword("");
   }
 
   const close = () => {
-    setNewPassword("");
     update.reset();
-    setPassword.reset();
-    clearPassword.reset();
     onClose();
   };
 
@@ -522,26 +359,6 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
         onError: (caught: unknown) =>
           toast?.add({
             title: caught instanceof Error ? caught.message : "Could not update the user",
-            type: "error",
-          }),
-      },
-    );
-
-  const setNewPasswordForUser = () =>
-    user &&
-    setPassword.mutate(
-      { id: user.id, password: newPassword },
-      {
-        onSuccess: () => {
-          toast?.add({
-            title: "Password set — hand it to the person over a channel you trust",
-            type: "success",
-          });
-          setNewPassword("");
-        },
-        onError: (caught: unknown) =>
-          toast?.add({
-            title: caught instanceof Error ? caught.message : "Could not set the password",
             type: "error",
           }),
       },
@@ -678,58 +495,10 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
           </span>
         </label>
 
-        {isLocal ? (
-          <div>
-            <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">Password</div>
-            <div className="mt-1 flex flex-wrap items-end gap-2">
-              <div className="min-w-56 flex-1">
-                <Input
-                  label="Set a new password"
-                  type="password"
-                  value={newPassword}
-                  onChange={(event) => setNewPassword(event.target.value)}
-                  placeholder="New password"
-                />
-              </div>
-              <Button
-                busy={setPassword.isPending}
-                disabled={newPassword.length === 0}
-                onClick={setNewPasswordForUser}
-              >
-                Set password
-              </Button>
-              {user?.has_password && (
-                <Button
-                  variant="ghost"
-                  busy={clearPassword.isPending}
-                  onClick={() =>
-                    user &&
-                    clearPassword.mutate(user.id, {
-                      onSuccess: () => toast?.add({ title: "Password removed", type: "success" }),
-                      onError: (caught: unknown) =>
-                        toast?.add({
-                          title:
-                            caught instanceof Error
-                              ? caught.message
-                              : "Could not remove the password",
-                          type: "error",
-                        }),
-                    })
-                  }
-                >
-                  Remove password
-                </Button>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-ink-faint">
-              The person can change it themselves from their account menu.
-            </p>
-          </div>
-        ) : (
-          <p className="m-0 text-sm text-ink-muted">
-            Password, if any, is managed by the identity provider above.
-          </p>
-        )}
+        <p className="m-0 text-sm text-ink-muted">
+          Passwords belong to the identity provider; for the bundled Authelia they are managed
+          under Settings → Identity providers → People.
+        </p>
       </div>
     </Dialog>
   );
