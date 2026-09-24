@@ -1,27 +1,27 @@
-# Build the Pystino images on every PR; publish them from main, deploy/rearch
-# (to exercise the pipeline) and release tags. (Report §6, ADR 0086.)
+# Publish the Pystino images — from main and release tags only (the GitHub free
+# plan's Action minutes are the budget; PRs never build images).
 #
-# Packages are PRIVATE for now: images pushed from a private repository with
-# GITHUB_TOKEN inherit its visibility. Pulling them needs
-# `docker login ghcr.io` with a token holding read:packages (pystino init and
-# doctor say so). Going public later is a per-package switch in the package's
-# settings (Danger Zone → Change visibility), once the repositories are public.
+# Packages are PRIVATE while the repository is: pushed with GITHUB_TOKEN from a
+# private repository they inherit its visibility, and pulling needs
+# `docker login ghcr.io` with a read:packages token. Going public later is the
+# package's own setting (Package settings → Danger Zone → Change visibility).
 #
-# Private storage counts against the plan's Packages quota, so the tag set is
-# lean:
-#   main          edge              (moving)
-#   deploy/rearch rearch            (moving)
-#   vX.Y.Z        X.Y.Z and X.Y     (X.Y.Z is never overwritten)
-# A moving tag leaves the previous build untagged; the cleanup job keeps the
-# newest few untagged versions (so a digest pinned during testing survives a
-# while) and deletes the rest. Provenance/SBOM attestations are off: they are
-# stored as extra untagged manifests, and deleting those breaks the image.
-# Pins are by digest (deploy/stack/release.env; `pystino release-pin`), so no
-# per-commit tag is needed to reference a build immutably.
+# Lean on minutes and on storage (private packages count against the plan):
+#   - path filters: a push that touches none of the images' inputs runs nothing;
+#   - the GHA layer cache: an image whose inputs did not change rebuilds from
+#     cache in well under a minute;
+#   - main → `edge`, vX.Y.Z → `X.Y.Z` + `X.Y` (never overwritten), no per-commit
+#     tags — releases pin by digest (`pystino release-pin`);
+#   - one cleanup job (not one per image: every job is billed rounded up to a
+#     whole minute) keeping the newest five untagged versions per image;
+#   - no provenance/SBOM attestations (they are stored as untagged manifests,
+#     and pruning those would break the images).
 name: images
 
 on:
-  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
     paths:
       - "apps/gateway/**"
       - "apps/console/**"
@@ -32,9 +32,6 @@ on:
       - "pnpm-lock.yaml"
       - ".dockerignore"
       - ".github/workflows/images.yml"
-  push:
-    branches: [main, deploy/rearch]
-    tags: ["v*.*.*"]
   workflow_dispatch:
 
 permissions:
@@ -43,10 +40,7 @@ permissions:
 
 concurrency:
   group: images-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-env:
-  PUBLISH: ${{ github.event_name != 'pull_request' }}
+  cancel-in-progress: false  # never cancel a push half-way
 
 jobs:
   build:
@@ -55,12 +49,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # The four images the stack runs; nothing else is built here.
         include:
           - image: pystino-gateway
             context: .
             file: apps/gateway/Dockerfile
-            build-args: |
-              INCLUDE_CONSOLE=true
+            build-args: INCLUDE_CONSOLE=true
             suffix: ""
           - image: pystino-proxy
             context: deploy/stack/proxy
@@ -72,27 +66,20 @@ jobs:
             file: deploy/stack/authelia/Dockerfile
             build-args: ""
             suffix: ""
-          # Pattern-only redaction; the NER model is CC BY-NC-SA and is built
-          # locally (decision D6).
+          # Pattern-only; the NER model is CC BY-NC-SA and is built locally (D6).
           - image: pystino-redaction
             context: .
             file: services/redaction/Dockerfile
-            build-args: |
-              SPACY_MODELS=
+            build-args: SPACY_MODELS=
             suffix: "-pattern"
     steps:
       - uses: actions/checkout@v4
-
       - uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        if: env.PUBLISH == 'true'
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Refuse to overwrite a released version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -100,7 +87,6 @@ jobs:
           if docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:$tag" >/dev/null 2>&1; then
             echo "::error::${{ matrix.image }}:$tag already exists; a release tag is immutable"; exit 1
           fi
-
       - id: meta
         uses: docker/metadata-action@v5
         with:
@@ -110,14 +96,11 @@ jobs:
             suffix=${{ matrix.suffix }},onlatest=true
           tags: |
             type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=rearch,enable=${{ github.ref == 'refs/heads/deploy/rearch' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=ref,event=pr
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.licenses=EUPL-1.2
-
       - id: build
         uses: docker/build-push-action@v6
         with:
@@ -128,61 +111,33 @@ jobs:
             CONSOLE_BUILD_SHA=${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
           tags: ${{ steps.meta.outputs.tags }}
-          push: ${{ env.PUBLISH == 'true' }}
+          push: true
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           provenance: false
           sbom: false
-
       - name: Record the digest
-        if: env.PUBLISH == 'true'
-        run: |
-          echo "${{ matrix.image }}${{ matrix.suffix }}=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+        run: echo "${{ matrix.image }}${{ matrix.suffix }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
 
-  # Keep private storage lean: delete untagged versions beyond the newest few.
   cleanup:
     needs: build
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        image: [pystino-gateway, pystino-proxy, pystino-authelia, pystino-redaction]
     steps:
       - uses: actions/delete-package-versions@v5
-        with:
-          package-name: ${{ matrix.image }}
-          package-type: container
-          delete-only-untagged-versions: "true"
-          min-versions-to-keep: 5
+        with: {package-name: pystino-gateway, package-type: container, delete-only-untagged-versions: "true", min-versions-to-keep: 5}
+      - uses: actions/delete-package-versions@v5
+        with: {package-name: pystino-proxy, package-type: container, delete-only-untagged-versions: "true", min-versions-to-keep: 5}
+      - uses: actions/delete-package-versions@v5
+        with: {package-name: pystino-authelia, package-type: container, delete-only-untagged-versions: "true", min-versions-to-keep: 5}
+      - uses: actions/delete-package-versions@v5
+        with: {package-name: pystino-redaction, package-type: container, delete-only-untagged-versions: "true", min-versions-to-keep: 5}
 
-  # The stack files' invariants, and a compose/Caddy parse of what init writes,
-  # without starting anything.
-  stack-lint:
+  # A release names every image by digest; refuse a tag that does not.
+  release-pins:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - name: A release pins every image by digest
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: uv run pystino release-pin --check
-      - name: Deploy unit tests
-        run: uv run pytest -q apps/gateway/tests/test_deploy_envfile.py apps/gateway/tests/test_deploy_init.py apps/gateway/tests/test_deploy_bootstrap.py apps/gateway/tests/test_deploy_stack.py apps/gateway/tests/test_deploy_adopt.py apps/gateway/tests/test_deploy_standalone.py apps/gateway/tests/test_deploy_release.py apps/gateway/tests/test_oidc_backchannel.py
-      - name: init writes a file compose accepts (both modes)
-        run: |
-          set -eu
-          for mode in dist dev; do
-            dir="$RUNNER_TEMP/$mode"; mkdir -p "$dir"
-            PYSTINO_UPSTREAM_API_KEY= uv run pystino init --dir "$dir" --mode "$mode" \
-              --origin https://stack.example.org --admin-email ops@example.org --preset team
-            (cd "$dir" && docker compose config --quiet && docker compose --profile '*' config --services)
-          done
-      - name: The Caddyfile adapts in every TLS mode
-        run: |
-          set -eu
-          for spec in "https://stack.example.org|" "https://10.0.0.5|tls internal" "http://:80|"; do
-            site="${spec%%|*}"; tls="${spec#*|}"
-            docker run --rm -e SITE_ADDRESS="$site" -e TLS_DIRECTIVE="$tls" \
-              -v "$PWD/deploy/stack/proxy:/etc/caddy:ro" \
-              caddy:2.11-alpine sh -c 'caddy adapt --config /etc/caddy/Caddyfile >/dev/null && echo "ok: $SITE_ADDRESS"'
-          done
+        with: {enable-cache: true}
+      - run: uv run --package gateway pystino release-pin --check

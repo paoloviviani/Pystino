@@ -1,0 +1,51 @@
+# PR checks for the gateway and the stack files: lint + unit tests, one job.
+# Lean by design (GitHub free plan): path-filtered, one runner, uv cache, and a
+# newer push to the same PR cancels the run in progress. No image builds here
+# (images.yml runs on main and tags only); no stack bring-up (stack.yml runs on
+# release PRs, on demand and weekly).
+name: ci-gateway
+
+on:
+  pull_request:
+    paths:
+      - "apps/gateway/**"
+      - "packages/shared-py/**"
+      - "deploy/stack/**"
+      - "uv.lock"
+      - "pyproject.toml"
+      - ".github/workflows/ci-gateway.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-gateway-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: {enable-cache: true}
+      - name: Lint
+        run: uv run ruff check apps/gateway packages/shared-py
+      - name: Unit tests
+        run: uv run pytest -q -p no:cacheprovider apps/gateway/tests
+      - name: init writes files compose accepts; the Caddyfile adapts in every TLS mode
+        run: |
+          set -eu
+          for mode in dist dev; do
+            dir="$RUNNER_TEMP/$mode"; mkdir -p "$dir"
+            PYSTINO_UPSTREAM_API_KEY= uv run pystino init --dir "$dir" --mode "$mode" \
+              --origin https://stack.example.org --admin-email ops@example.org --preset team >/dev/null
+            (cd "$dir" && docker compose config --quiet)
+          done
+          for spec in "https://stack.example.org|" "https://10.0.0.5|tls internal" "http://:80|"; do
+            docker run --rm -e SITE_ADDRESS="${spec%%|*}" -e TLS_DIRECTIVE="${spec#*|}" \
+              -v "$PWD/deploy/stack/proxy:/etc/caddy:ro" caddy:2.11-alpine \
+              caddy adapt --config /etc/caddy/Caddyfile >/dev/null
+          done
