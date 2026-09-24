@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -20,13 +21,19 @@ import (
 	"pystino-agent/internal/policy"
 )
 
-// Workspace is one registry entry (PROTOCOL.md §6 Types).
+// Workspace is one registry entry (PROTOCOL.md §6 Types). WorktreeOf and
+// Branch are set only on a workspace CreateWorktree registered; IsGitRepo
+// is computed at Create time for every workspace, since it gates the
+// panel's "New worktree…" action regardless of how the workspace was made.
 type Workspace struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Path      string    `json:"path"`
-	CreatedAt time.Time `json:"createdAt"`
-	Archived  bool      `json:"archived"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Path       string    `json:"path"`
+	CreatedAt  time.Time `json:"createdAt"`
+	Archived   bool      `json:"archived"`
+	WorktreeOf string    `json:"worktreeOf,omitempty"`
+	Branch     string    `json:"branch,omitempty"`
+	IsGitRepo  bool      `json:"isGitRepo"`
 }
 
 // Registry is the loaded, mutable workspace list, backed by one file.
@@ -107,6 +114,13 @@ func (r *Registry) Get(id string) (Workspace, bool) {
 // caller (which already loaded the policy once for the process) is the
 // single source of truth for it.
 func (r *Registry) Create(name, path string, roots []string) (Workspace, error) {
+	return r.create(name, path, roots, "", "")
+}
+
+// create is Create plus the worktree bookkeeping CreateWorktree needs; the
+// two share every validation step (resolve, must-be-a-dir, workspaceRoots)
+// since a worktree's directory is just as much a workspace as any other.
+func (r *Registry) create(name, path string, roots []string, worktreeOf, branch string) (Workspace, error) {
 	resolved, err := policy.ResolvePath(path)
 	if err != nil {
 		return Workspace{}, fmt.Errorf("workspace path %q: %w", path, err)
@@ -130,7 +144,15 @@ func (r *Registry) Create(name, path string, roots []string) (Workspace, error) 
 	if err != nil {
 		return Workspace{}, err
 	}
-	w := &Workspace{ID: id, Name: name, Path: resolved, CreatedAt: time.Now().UTC()}
+	w := &Workspace{
+		ID:         id,
+		Name:       name,
+		Path:       resolved,
+		CreatedAt:  time.Now().UTC(),
+		WorktreeOf: worktreeOf,
+		Branch:     branch,
+		IsGitRepo:  isGitRepo(resolved),
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -140,6 +162,14 @@ func (r *Registry) Create(name, path string, roots []string) (Workspace, error) 
 		return Workspace{}, err
 	}
 	return *w, nil
+}
+
+// isGitRepo is a cheap heuristic (a stat, no subprocess) good enough to
+// gate the "New worktree…" affordance: a plain repo has ".git" as a
+// directory, a worktree or submodule has it as a file pointing elsewhere.
+func isGitRepo(path string) bool {
+	_, err := os.Stat(filepath.Join(path, ".git"))
+	return err == nil
 }
 
 // Rename updates title in place.
