@@ -36,13 +36,9 @@ visible.
 
 ## The live checks
 
-Bring up a development stack with the fake upstream (see
-[Getting started](getting-started.md)).
-
-**Known gap (2026-09-24):** these scripts sign in through the local-password
-door, which ADR 0088 removed. Until they are ported to an OIDC login (the
-scripted Authelia flow in the deployment re-architecture trial is the model),
-they run only against a stack older than that change.
+Bring up a stack with the bundled Authelia (see
+[Deployment](deployment.md)); a development one with the fake upstream is the
+usual target.
 
 | Script | Covers |
 |---|---|
@@ -58,12 +54,22 @@ they run only against a stack older than that change.
 | `test_citations_live.py` | a citation that still quotes the right word after a real placeholder changed the offsets (ADR 0059) |
 | `test_web_search_live.py` | per-search billing through PostgreSQL's `Numeric`, including the CSV export's own column list (ADR 0058) |
 | `benchmark_live.py` | per-layer cost; reproduces [Measured performance](performance.md) |
-| `test_public_tls_live.py` | only with the proxy overlay: TLS, rotated credentials, and that nothing else is on a routable address |
+| `test_public_tls_live.py` | TLS, the IdP refusing a wrong password, a Secure session cookie, and that nothing else is on a routable address |
 
-They sign in with local password auth, so with the proxy overlay they also need
-Caddy's CA (see [Deployment](deployment.md#verify-what-is-exposed)) and
-`deploy/.env` sourced — they follow `PUBLIC_HOST` when it is set, and the
-session cookie is scoped to the origin the login happened on.
+They sign in the way a browser does — the gateway's OIDC login through the
+bundled Authelia (`scripts/live_session.py`) — so they run against the public
+origin, with the deployment's `.env` sourced for `PUBLIC_ORIGIN`:
+
+```bash
+cd <deploy dir>; set -a; . ./.env; set +a
+export PYSTINO_LIVE_ADMIN_PASSWORD=…        # what `pystino init` printed
+export PYSTINO_LIVE_USER=… PYSTINO_LIVE_USER_PASSWORD=…   # optional non-admin
+# a trial stack with no DNS / on Caddy's internal CA:
+export PYSTINO_LIVE_RESOLVE=127.0.0.1 GATEWAY_CA_BUNDLE=$PWD/caddy-root.crt
+uv run --project <checkout> python <checkout>/scripts/test_console_live.py
+```
+
+The non-admin is added in the console (Settings → Identity providers → People).
 
 !!! warning "The demo cap exhausts legitimately"
 

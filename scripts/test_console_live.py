@@ -107,7 +107,7 @@ def main() -> int:
     print("=== the API calls the page makes, with a real session ===")
     credentials = admin_credentials()
     if credentials is None:
-        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
+        print("FAILED: PYSTINO_LIVE_ADMIN_PASSWORD is not set (see scripts/live_session.py)")
         return 1
     admin_session = login(*credentials)
     if admin_session is None:
@@ -120,8 +120,8 @@ def main() -> int:
     else:
         skip(
             "a non-admin is refused the admin report",
-            "GATEWAY_LOCAL_USER_EMAIL/PASSWORD are not set — create one with "
-            "`gateway passwd --no-admin <email>`",
+            "PYSTINO_LIVE_USER/_PASSWORD are not set — add a person in the console "
+            "(Settings → Identity providers → People)",
         )
 
     status, _, body = fetch(admin_session, "/api/me")
