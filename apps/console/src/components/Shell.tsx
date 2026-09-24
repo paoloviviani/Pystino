@@ -2,7 +2,6 @@ import {
   Badge,
   Button,
   Dialog,
-  Input,
   MenuCheckboxItem,
   MenuContent,
   MenuItem,
@@ -14,7 +13,7 @@ import {
   Select,
 } from "@llmp/ui";
 import { useState } from "react";
-import type { FormEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
 import logoUrl from "../assets/logo.png";
 import { request } from "../lib/api";
