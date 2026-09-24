@@ -73,6 +73,8 @@ class InitOptions:
     # Image origin; defaults come from release.env.
     cerea_version: str = ""
     cerea_image: str = ""
+    # The agent-machine component: the /code panel and machine enrolment.
+    agents: bool = False
 
 
 @dataclass
@@ -365,6 +367,11 @@ def build_env(
             ],
         ),
         ("Preset: " + preset.name, [*preset.values, *chat_backend]),
+        (
+            "Agent machines (report §9): the thin agent dials the chat over WSS with its\n"
+            "enrolment token (client opencode-enrollment). No relay, no extra service.",
+            [("CODE_AGENTS_ENABLED", "true" if options.agents else "")],
+        ),
         ("Identity: OIDC only (ADR 0088)", identity),
     ]
     if authelia:
