@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"pystino-agent/internal/backend"
@@ -191,5 +194,143 @@ func TestOpSessionCompactUnknownSession(t *testing.T) {
 	_, operr := mc.Handle(context.Background(), "session.compact", json.RawMessage(`{"sessionId":"nope"}`))
 	if operr == nil || operr.Code != "not_found" {
 		t.Fatalf("operr = %+v, want not_found", operr)
+	}
+}
+
+func newTestMachineWithRoots(t *testing.T, back backend.Backend, roots []string) *machine {
+	t.Helper()
+	dir := t.TempDir()
+	reg, err := workspaces.Load(dir + "/workspaces.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol := policy.Policy{WorkspaceRoots: roots}
+	mat := sessions.New(back, pol)
+	return newMachine(reg, back, mat, pol)
+}
+
+func TestOpWorkspaceSuggest(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "workspace-a"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mc := newTestMachineWithRoots(t, &fakeBackend{}, []string{dir})
+
+	args, err := json.Marshal(map[string]string{"prefix": filepath.Join(dir, "works")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, operr := mc.Handle(context.Background(), "workspace.suggest", args)
+	if operr != nil {
+		t.Fatalf("unexpected error: %+v", operr)
+	}
+	dirs, ok := res.(map[string]any)["directories"].([]workspaces.Directory)
+	if !ok || len(dirs) != 1 || dirs[0].Name != "workspace-a" {
+		t.Fatalf("directories = %#v", res.(map[string]any)["directories"])
+	}
+}
+
+// initGitRepo makes an initialized git repo at dir with one commit, so
+// `git worktree add` has a HEAD to branch from.
+func initGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@example.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "README"), []byte("hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "README")
+	run("commit", "-q", "-m", "initial")
+}
+
+func TestOpWorkspaceCreateWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "proj")
+	initGitRepo(t, repo)
+	mc := newTestMachineWithRoots(t, &fakeBackend{}, nil)
+
+	createArgs, _ := json.Marshal(map[string]string{"path": repo})
+	res, operr := mc.Handle(context.Background(), "workspace.create", createArgs)
+	if operr != nil {
+		t.Fatalf("unexpected error: %+v", operr)
+	}
+	from := res.(map[string]any)["workspace"].(workspaces.Workspace)
+	if !from.IsGitRepo {
+		t.Fatal("repo workspace must report isGitRepo: true")
+	}
+
+	wtArgs, _ := json.Marshal(map[string]any{
+		"worktree": map[string]string{"from": from.ID, "branch": "feature/x"},
+	})
+	res2, operr2 := mc.Handle(context.Background(), "workspace.create", wtArgs)
+	if operr2 != nil {
+		t.Fatalf("unexpected error: %+v", operr2)
+	}
+	w := res2.(map[string]any)["workspace"].(workspaces.Workspace)
+	if w.WorktreeOf != from.ID || w.Branch != "feature/x" {
+		t.Fatalf("worktree workspace = %+v", w)
+	}
+	if info, err := os.Stat(w.Path); err != nil || !info.IsDir() {
+		t.Fatalf("worktree directory missing at %q: %v", w.Path, err)
+	}
+}
+
+func TestOpWorkspaceArchiveRemoveWorktree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "proj")
+	initGitRepo(t, repo)
+	mc := newTestMachineWithRoots(t, &fakeBackend{}, nil)
+
+	createArgs, _ := json.Marshal(map[string]string{"path": repo})
+	res, operr := mc.Handle(context.Background(), "workspace.create", createArgs)
+	if operr != nil {
+		t.Fatalf("unexpected error: %+v", operr)
+	}
+	from := res.(map[string]any)["workspace"].(workspaces.Workspace)
+
+	wtArgs, _ := json.Marshal(map[string]any{
+		"worktree": map[string]string{"from": from.ID, "branch": "feature"},
+	})
+	res2, operr2 := mc.Handle(context.Background(), "workspace.create", wtArgs)
+	if operr2 != nil {
+		t.Fatalf("unexpected error: %+v", operr2)
+	}
+	w := res2.(map[string]any)["workspace"].(workspaces.Workspace)
+
+	archiveArgs, _ := json.Marshal(map[string]any{"workspaceId": w.ID, "removeWorktree": true})
+	if _, operr := mc.Handle(context.Background(), "workspace.archive", archiveArgs); operr != nil {
+		t.Fatalf("unexpected error: %+v", operr)
+	}
+	if _, err := os.Stat(w.Path); !os.IsNotExist(err) {
+		t.Errorf("worktree directory must be gone, stat err = %v", err)
+	}
+
+	// removeWorktree against a workspace that isn't a worktree must refuse
+	// rather than silently doing nothing to the source repo.
+	archiveArgs2, _ := json.Marshal(map[string]any{"workspaceId": from.ID, "removeWorktree": true})
+	_, operr3 := mc.Handle(context.Background(), "workspace.archive", archiveArgs2)
+	if operr3 == nil || operr3.Code != "invalid" {
+		t.Fatalf("operr = %+v, want invalid", operr3)
 	}
 }

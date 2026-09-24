@@ -87,9 +87,10 @@ All ids are opaque strings. `workspaceId` is the agent's own registry id; a work
 | op | args | result |
 | --- | --- | --- |
 | `workspace.list` | `{}` | `{workspaces: Workspace[]}` |
-| `workspace.create` | `{path, title?}` (path must exist, be a dir, satisfy `workspaceRoots`) | `{workspace}` |
+| `workspace.suggest` | `{prefix}` | `{directories: Directory[]}` — path autocomplete for the "Add workspace" dialog; at most 20 subdirectories of `prefix`'s parent whose name starts with `prefix`'s own basename, confined to `workspaceRoots` (or `$HOME` when none are configured), hidden entries only when `prefix` itself names one, never descending into `/proc` or `/sys` |
+| `workspace.create` | `{path, title?}` (path must exist, be a dir, satisfy `workspaceRoots`) or `{worktree: {from, branch, base?}, title?}` | `{workspace}` |
 | `workspace.rename` | `{workspaceId, title}` | `{workspace}` |
-| `workspace.archive` | `{workspaceId}` | `{}` |
+| `workspace.archive` | `{workspaceId, removeWorktree?, force?}` | `{}` |
 | `session.list` | `{workspaceId?}` | `{sessions: Session[]}` (archived excluded) |
 | `session.get` | `{sessionId}` | `{session}` |
 | `session.create` | `{workspaceId, backend?:"opencode", title?, modeId?, modelId?}` | `{session}` |
@@ -108,9 +109,12 @@ All ids are opaque strings. `workspaceId` is the agent's own registry id; a work
 | `backend.modes` | `{backend?, workspaceId?}` | `{modes: Mode[]}` |
 | `backend.models` | `{backend?, workspaceId?}` | `{models: Model[], hidden: number}` (already filtered by `allowFreeModels`; `hidden` counts what the filter removed) |
 
+**Worktrees.** `workspace.create`'s `worktree` form runs `git worktree add -b <branch> <path> <base|HEAD>` against the workspace named by `from`, using the git CLI directly rather than opencode's experimental `/experimental/worktree` — worktrees are a property of the checkout, not of one backend. `path` is `<repo parent>/<repo name>.worktrees/<branch>` (`git rev-parse --show-toplevel` finds the repo root regardless of whether `from` points at the root or a subdirectory); `branch` is refused if it contains `".."` or is otherwise unsafe as a path component. The resulting directory is registered as an ordinary workspace, still subject to `workspaceRoots`, carrying `{worktreeOf: from, branch}`. `workspace.archive`'s `removeWorktree` runs `git worktree remove` (`--force` when `force` is set); git itself refuses a dirty worktree without `force`, so there is no separate dirty check. Archiving without `removeWorktree` just hides the workspace, same as any other — the directory and the git worktree both remain on disk.
+
 Types:
 ```
-Workspace  = {id, name, path, createdAt}
+Workspace  = {id, name, path, createdAt, archived: bool, isGitRepo: bool, worktreeOf?, branch?}
+Directory  = {path, name, isGitRepo: bool}
 Session    = {id, workspaceId, backend, title, status: "idle"|"busy"|"retry"|"error", pendingPermissions: number,
               modeId|null, modelId|null, autoAccept: bool, parentId|null, createdAt, updatedAt, usage: Usage|null}
 Mode       = {id, label, description?}
