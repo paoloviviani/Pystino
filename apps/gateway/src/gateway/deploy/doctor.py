@@ -129,7 +129,9 @@ def check(deploy_dir: Path, *, probe_docker: bool = True) -> Report:
         path = Path(name) if Path(name).is_absolute() else deploy_dir / name
         if not path.is_file():
             report.errors.append(f"COMPOSE_FILE names {name}, which does not exist")
-    proxy_d = Path(values.get("PYSTINO_DEPLOY_DIR") or deploy_dir) / "proxy.d"
+    # The directory as seen here: under the shim that is /deploy, while
+    # PYSTINO_DEPLOY_DIR is the host's path to the same place.
+    proxy_d = deploy_dir / "proxy.d"
     if not proxy_d.is_dir():
         report.errors.append(f"{proxy_d} is missing (the proxy mounts it; create it empty)")
 
