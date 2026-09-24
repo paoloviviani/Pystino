@@ -34,3 +34,14 @@ listed in `.pre-commit-config.yaml`'s `additional_dependencies`) reports 13
 errors that `uv run mypy apps/gateway/src services` — the project's real
 environment — does not. Wiring the full hook suite in now would make CI
 red on day one for pre-existing, out-of-scope issues.
+
+## `opencode-latest.yml`: weekly real-opencode check
+
+An early warning for opencode churn. It runs the machine agent's integration tests
+(`TestOpencodeIntegration` over `opencode serve`, `TestACPIntegration` over
+`opencode acp`) against the **latest** opencode, with the in-process mock LLM
+(`deploy/agent/internal/mockllm`) as its only provider. There is no Node mock and no
+second repository. It is scheduled weekly and on manual dispatch only, never on a push
+or PR, so a red run is a warning, not a merge blocker. It is a single job with no
+matrix and a 15-minute cap, to stay light on the free plan's minutes. Install it like
+`ci.yml`, by moving it into `.github/workflows/`.
