@@ -767,6 +767,51 @@ async def provision_user(
     return user
 
 
+async def promote_bootstrap_admin(
+    session: AsyncSession,
+    user: User,
+    *,
+    bootstrap_email: str,
+    email: str | None,
+    email_verified: object,
+) -> bool:
+    """Make ``user`` the first administrator, if everything lines up.
+
+    All four must hold: a bootstrap address is configured; this login's email
+    matches it (case-insensitively); the provider says the address is verified
+    — the literal boolean ``True``, the same strictness account linking uses
+    (ADR 0056), because otherwise an ``email`` claim would be a password; and
+    no active administrator exists yet. The last condition is what makes the
+    setting inert for the life of the deployment after its first use: it can
+    seed an empty console, never add a second administrator behind the
+    console's back.
+
+    Called from the browser callback only. A ``/v1`` bearer call never
+    promotes anyone, for the reason it never links: only the callback sees the
+    full claim set.
+    """
+    wanted = bootstrap_email.strip().casefold()
+    if not wanted or not email or email.strip().casefold() != wanted:
+        return False
+    if email_verified is not True:
+        logger.warning(
+            "bootstrap admin %s signed in but email_verified=%r; not promoting",
+            email,
+            email_verified,
+        )
+        return False
+    if user.is_admin:
+        return False
+    existing = await session.execute(
+        select(User.id).where(User.is_admin.is_(True), User.is_active.is_(True)).limit(1)
+    )
+    if existing.scalar_one_or_none() is not None:
+        return False
+    user.is_admin = True
+    logger.warning("bootstrap admin: %s is now the first administrator", email)
+    return True
+
+
 async def sync_user_from_claims(
     session: AsyncSession,
     *,
