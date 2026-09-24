@@ -125,6 +125,25 @@ def test_init_then_doctor_is_clean(tmp_path: Path, capsys) -> None:
     )
 
 
+def test_from_the_image_files_go_to_cwd_and_env_records_the_host_path(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    # The shim and the first `docker run … pystino init` mount the directory at
+    # /deploy and pass the host's path as PYSTINO_DEPLOY_DIR, which does not
+    # exist inside the container: files must land in the working directory,
+    # and only the bind mounts in .env may use the host path.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PYSTINO_DEPLOY_DIR", "/srv/on-the-host")
+    argv = ["init", "--origin", "https://llm.example.org", "--admin-email", "ops@example.org"]
+    assert main(argv) == 0
+    assert "cd /srv/on-the-host && ./pystino doctor" in capsys.readouterr().out
+    assert envfile.read(tmp_path / ".env")["PYSTINO_DEPLOY_DIR"] == "/srv/on-the-host"
+    assert (tmp_path / "proxy.d").is_dir()
+    assert doctor.check(tmp_path, probe_docker=False).ok
+    assert main(["set", "GATEWAY_LOG_LEVEL=debug"]) == 0
+    assert envfile.read(tmp_path / ".env")["GATEWAY_LOG_LEVEL"] == "debug"
+
+
 def test_doctor_names_what_is_missing(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text("COMPOSE_PROFILES=gateway,chat\nGATEWAY_IDP__ENABLED=true\n")
     report = doctor.check(tmp_path, probe_docker=False)

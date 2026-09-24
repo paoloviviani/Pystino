@@ -66,8 +66,20 @@ PROXY_README = """# Component hook (report §2, §9). Any *.caddy file here is i
 
 
 def _deploy_dir(args: argparse.Namespace) -> Path:
-    raw = getattr(args, "dir", None) or os.environ.get("PYSTINO_DEPLOY_DIR") or os.getcwd()
-    return Path(raw).resolve()
+    """Where the deployment's files are, as this process sees them."""
+    return Path(getattr(args, "dir", None) or os.getcwd()).resolve()
+
+
+def _host_dir(deploy_dir: Path) -> Path:
+    """The same directory as the Docker host sees it — what compose's bind mounts need.
+
+    Run from the gateway image (the `./pystino` shim, or the first `docker run
+    … pystino init`), this process sees the directory at `/deploy`, and only
+    the caller knows the host path: the shim passes it as PYSTINO_DEPLOY_DIR.
+    On the host (uv, development) the two are the same.
+    """
+    host = os.environ.get("PYSTINO_DEPLOY_DIR", "").strip()
+    return Path(host) if host else deploy_dir
 
 
 def _ask(prompt: str, default: str = "", *, secret: bool = False) -> str:
@@ -138,7 +150,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         tls=args.tls,
         idp=args.idp,
         project=args.project,
-        deploy_dir=deploy_dir,
+        deploy_dir=_host_dir(deploy_dir),
         pystino_src=pystino_src,
         cerea_src=cerea_src,
         build_revision=_git_revision(pystino_src) if pystino_src else "unknown",
@@ -191,7 +203,10 @@ def cmd_init(args: argparse.Namespace) -> int:
             print("")
             print(note)
     print("")
-    print(f"Next:  cd {deploy_dir} && ./{args.prog_name} doctor && docker compose up -d --wait")
+    print(
+        f"Next:  cd {_host_dir(deploy_dir)} && ./{args.prog_name} doctor"
+        " && docker compose up -d --wait"
+    )
     return 0
 
 
@@ -258,7 +273,7 @@ def cmd_adopt(args: argparse.Namespace) -> int:
         return 1
     options = adopt.AdoptOptions(
         old_deploy_dir=Path(args.old_deploy_dir).resolve(),
-        new_deploy_dir=new_dir,
+        new_deploy_dir=_host_dir(new_dir),
         tls=args.tls,
         mode=args.mode,
         project=args.project,
@@ -289,7 +304,7 @@ def cmd_adopt(args: argparse.Namespace) -> int:
         print(f"note: {note}")
     print("")
     print("Cutover — nothing above has touched the running stack; these do:")
-    print(f"  cd {new_dir} && ./pystino doctor")
+    print(f"  cd {_host_dir(new_dir)} && ./pystino doctor")
     print("  # 1. stop the old stack WITHOUT -v (volumes are the data), from its old directory")
     if result.staged:
         print("  # 2. put the carried users file and signing key into the new volume:")
