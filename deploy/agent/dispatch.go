@@ -86,12 +86,14 @@ func (mc *machine) Handle(ctx context.Context, op string, args json.RawMessage) 
 	switch op {
 	case "workspace.list":
 		return mc.opWorkspaceList()
+	case "workspace.suggest":
+		return mc.opWorkspaceSuggest(args)
 	case "workspace.create":
-		return mc.opWorkspaceCreate(args)
+		return mc.opWorkspaceCreate(ctx, args)
 	case "workspace.rename":
 		return mc.opWorkspaceRename(args)
 	case "workspace.archive":
-		return mc.opWorkspaceArchive(args)
+		return mc.opWorkspaceArchive(ctx, args)
 
 	case "session.list":
 		return mc.opSessionList(ctx, args)
@@ -139,13 +141,43 @@ func (mc *machine) opWorkspaceList() (any, *link.OpError) {
 	return map[string]any{"workspaces": orEmpty(mc.workspaces.List(false))}, nil
 }
 
-func (mc *machine) opWorkspaceCreate(args json.RawMessage) (any, *link.OpError) {
+func (mc *machine) opWorkspaceSuggest(args json.RawMessage) (any, *link.OpError) {
 	var a struct {
-		Path  string `json:"path"`
-		Title string `json:"title,omitempty"`
+		Prefix string `json:"prefix"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, invalidArgs(err)
+	}
+	dirs, err := workspaces.Suggest(a.Prefix, mc.pol.WorkspaceRoots)
+	if err != nil {
+		return nil, backendErr(err)
+	}
+	return map[string]any{"directories": orEmpty(dirs)}, nil
+}
+
+func (mc *machine) opWorkspaceCreate(ctx context.Context, args json.RawMessage) (any, *link.OpError) {
+	var a struct {
+		Path     string `json:"path"`
+		Title    string `json:"title,omitempty"`
+		Worktree *struct {
+			From   string `json:"from"`
+			Branch string `json:"branch"`
+			Base   string `json:"base,omitempty"`
+		} `json:"worktree,omitempty"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, invalidArgs(err)
+	}
+	if a.Worktree != nil {
+		from, ok := mc.workspaces.Get(a.Worktree.From)
+		if !ok {
+			return nil, notFound("workspace")
+		}
+		w, err := mc.workspaces.CreateWorktree(ctx, from, a.Worktree.Branch, a.Worktree.Base, mc.pol.WorkspaceRoots)
+		if err != nil {
+			return nil, opErrf("forbidden", "%v", err)
+		}
+		return map[string]any{"workspace": w}, nil
 	}
 	title := a.Title
 	if title == "" {
@@ -173,12 +205,30 @@ func (mc *machine) opWorkspaceRename(args json.RawMessage) (any, *link.OpError) 
 	return map[string]any{"workspace": w}, nil
 }
 
-func (mc *machine) opWorkspaceArchive(args json.RawMessage) (any, *link.OpError) {
+func (mc *machine) opWorkspaceArchive(ctx context.Context, args json.RawMessage) (any, *link.OpError) {
 	var a struct {
-		WorkspaceID string `json:"workspaceId"`
+		WorkspaceID    string `json:"workspaceId"`
+		RemoveWorktree bool   `json:"removeWorktree,omitempty"`
+		Force          bool   `json:"force,omitempty"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, invalidArgs(err)
+	}
+	if a.RemoveWorktree {
+		w, ok := mc.workspaces.Get(a.WorkspaceID)
+		if !ok {
+			return nil, notFound("workspace")
+		}
+		if w.WorktreeOf == "" {
+			return nil, opErrf("invalid", "workspace %q is not a worktree", w.Name)
+		}
+		from, ok := mc.workspaces.Get(w.WorktreeOf)
+		if !ok {
+			return nil, notFound("source workspace")
+		}
+		if err := workspaces.RemoveWorktree(ctx, from.Path, w.Path, a.Force); err != nil {
+			return nil, backendErr(err)
+		}
 	}
 	if err := mc.workspaces.Archive(a.WorkspaceID); err != nil {
 		return nil, notFound("workspace")
