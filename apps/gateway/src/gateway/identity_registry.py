@@ -305,5 +305,16 @@ async def _fill_internal_base_url(session: AsyncSession, settings: Settings) -> 
             "identity provider %r: back-channel set to %s from the environment", row.name, internal
         )
         row.internal_base_url = internal
+        # The same one-time adoption step: a row the old gateway seeded asks
+        # only for openid/profile/email, so the adopted console would sign in
+        # with no groups claim at all (found in the adoption rehearsal). The
+        # environment's scopes — which name `groups` on the new stack — are
+        # added, never removed: an administrator's narrower choice later wins.
+        missing = [scope for scope in settings.oidc.scopes if scope not in (row.scopes or [])]
+        if missing:
+            row.scopes = [*(row.scopes or []), *missing]
+            logger.info(
+                "identity provider %r: scopes %s added from the environment", row.name, missing
+            )
     if rows:
         await session.commit()
