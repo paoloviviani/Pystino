@@ -307,8 +307,8 @@ def cmd_adopt(args: argparse.Namespace) -> int:
         print("  docker compose up -d --wait chat-mongo")
         print(
             "  docker compose exec -T chat-mongo mongo chat-ui --quiet --eval "
-            "'db.codeDevices.getIndexes().some(i => i.name === \"userId_1_updatedAt_-1\" "
-            "&& i.partialFilterExpression) && db.codeDevices.dropIndex(\"userId_1_updatedAt_-1\")'"
+            '\'db.codeDevices.getIndexes().some(i => i.name === "userId_1_updatedAt_-1" '
+            '&& i.partialFilterExpression) && db.codeDevices.dropIndex("userId_1_updatedAt_-1")\''
         )
     print("  # 4. docker compose up -d --wait")
     print("  # back: docker compose down (no -v) here, then start the old stack as before")
@@ -414,7 +414,9 @@ def _add_init_arguments(
     init.add_argument("--force", action="store_true", help="overwrite an existing .env")
 
 
-def _add_common_commands(sub, *, prog_name: str) -> None:
+def _add_common_commands(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser], *, prog_name: str
+) -> None:
     boot = sub.add_parser("bootstrap", help="(inside the stack) converge DB and IdP state")
     boot.add_argument(
         "--import-only",

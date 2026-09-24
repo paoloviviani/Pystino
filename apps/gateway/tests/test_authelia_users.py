@@ -44,7 +44,7 @@ def test_update_reset_delete(users: UsersFile) -> None:
     stored = yaml.safe_load(users.path.read_text())["users"]["carol"]
     assert PasswordHasher().verify(stored["password"], new)
     users.delete("carol")
-    assert [u.username for u in users.list()] == ["admin"]
+    assert [u.username for u in users.users()] == ["admin"]
 
 
 def test_refusals(users: UsersFile) -> None:

@@ -20,7 +20,7 @@ here" stays global in ``oidc_config`` (ADR 0048).
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gateway.config import OIDCSettings, Settings
 from gateway.models import GroupSync, IdentityProvider
 from gateway.oidc import OIDCClient
+
+if TYPE_CHECKING:
+    from gateway.identity_policy import AdminRule
 from gateway.secrets import SecretBox
 
 logger = logging.getLogger(__name__)
@@ -70,7 +73,7 @@ class ProviderRecord:
     sync_create_users: bool = True
     sync_confirmed: bool = False
 
-    def admin_rule(self):
+    def admin_rule(self) -> "AdminRule | None":
         from gateway.identity_policy import admin_rule
 
         return admin_rule(self.admin_source, self.admin_claim, self.admin_values)

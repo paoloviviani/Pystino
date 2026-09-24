@@ -38,7 +38,7 @@ def resolve_digest(reference: str) -> str:
         timeout=60,
         check=True,
     ).stdout
-    digest = json.loads(out).get("digest", "")
+    digest = str(json.loads(out).get("digest", ""))
     if not digest.startswith("sha256:"):
         raise ValueError(f"no digest for {reference}")
     return digest

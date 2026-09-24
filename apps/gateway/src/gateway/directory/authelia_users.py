@@ -98,7 +98,7 @@ class UsersFile:
             disabled=bool(info.get("disabled")),
         )
 
-    def list(self) -> list[AutheliaUser]:
+    def users(self) -> list[AutheliaUser]:
         return [self._user(k, v or {}) for k, v in self._load()["users"].items()]
 
     def _mint(self) -> tuple[str, str]:
