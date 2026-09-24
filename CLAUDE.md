@@ -71,11 +71,11 @@ apps/console     React admin SPA, served by the gateway at /console
 packages/ui      design tokens and primitives, shared with the console
 packages/shared-py  detection contract and the deterministic placeholder scheme
 services/redaction  Presidio behind a swappable contract, out of process
-deploy/compose   the stack: base + smoke + redaction + proxy + keycloak +
-                 chat overlays. The headless-browser overlay moved to the
-                 chat repository with its consumer; it publishes no port,
-                 and the chat's docs/browser.md says why it never can
-deploy/caddy     the TLS reverse proxy's one config file, for both configurations
+deploy/stack     the one topology (compose.yaml, images only; compose.build*.yaml
+                 for development), the proxy and Authelia images, release.env.
+                 `pystino init|bootstrap|doctor|upgrade|adopt` lives in
+                 apps/gateway/src/gateway/deploy. ADRs 0086-0088
+deploy/dev       development-only fixtures: fake upstream, Keycloak
 scripts/         live checks against a running stack (see below)
 docs/            how to run, deploy and operate this. The ADRs are not here
                  and are not linked — cite them by number; see below.
@@ -481,16 +481,14 @@ Then, for anything touching the request path, money, or SQL, against the real
 stack:
 
 ```bash
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml \
-  -f deploy/compose/docker-compose.redaction.yml up -d --build
+# A development stack from this checkout (docs/getting-started.md), plus the
+# fake upstream (deploy/dev/smoke.yml appended to COMPOSE_FILE):
+uv run pystino init --dir ~/pystino-dev --mode dev --tls internal ...
+cd ~/pystino-dev && docker compose up -d --build --wait
 
-# The live scripts sign in with local password auth (ADR 0043); set
-# GATEWAY_LOCAL_ADMIN_PASSWORD (and GATEWAY_LOCAL_USER_* for the 403 checks)
-# in deploy/.env, and create the accounts:
-#   docker compose ... exec gateway gateway passwd admin@local
-#   docker compose ... exec gateway gateway passwd --no-admin user@local
+# KNOWN GAP: the live scripts still sign in with local passwords, which ADR 0088
+# removed; they need porting to an OIDC login (scripts/live_session.py is the
+# one helper they share) before they run against the new stack.
 
 ./scripts/test_reporting_live.py    # dialect-specific SQL the suite cannot reach
 ./scripts/test_redaction_live.py
