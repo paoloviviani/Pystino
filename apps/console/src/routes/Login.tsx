@@ -1,26 +1,25 @@
-import { Button, Input, Notice, Spinner } from "@llmp/ui";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
-import { fetchAuthMethods, localLogin, loginWith, nextForRouter, safeNextPath, NotAuthenticatedError } from "../lib/api";
+import { Button, Notice, Spinner } from "@llmp/ui";
+import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useSearchParams } from "react-router";
+import { fetchAuthMethods, loginWith } from "../lib/api";
 import { FORM_STACK, LOGIN_CARD, LOGIN_CENTRE } from "../lib/layout";
 
 /**
- * The adaptive sign-in page (ADR 0043).
+ * The sign-in page: OpenID Connect only (ADR 0088, decision D3).
  *
  * Reaches the reader in exactly one way: `App` renders it when the API answered
- * 401. What it shows is decided by `GET /auth/methods`:
+ * 401. `GET /auth/methods` names the enabled providers:
  *
- * - **OIDC only** (every deployment before local auth existed): the same
- *   auto-redirect there has always been — a page whose only content is a
- *   button that does the inevitable is a wasted step.
- * - **Local only, or both:** an email + password form. With both enabled, a
- *   "Sign in with SSO" link sits beside it, and the redirect stops being
- *   automatic — auto-redirecting past a working local form would make the
- *   password path unreachable without typing a URL by hand.
+ * - **one:** the browser is sent straight there — a page whose only content is
+ *   a button that does the inevitable is a wasted step;
+ * - **several:** one button each; guessing would be a login to the wrong
+ *   directory (before this page showed "Redirecting…" forever in that case);
+ * - **none:** a deployment with no way in, which this page can only report.
  *
- * `?next` survives the journey in both directions: carried into the OIDC
- * redirect, and honoured by the router after a local sign-in.
+ * `?next` is carried into the redirect, so a deep link survives signing in.
+ * There is no password form: every person signs in through a provider, and a
+ * deployment with no administrator recovers with `pystino admin grant`.
  */
 export function Login() {
   const [searchParams] = useSearchParams();
@@ -28,25 +27,15 @@ export function Login() {
   const methods = useQuery({
     queryKey: ["auth-methods"],
     queryFn: fetchAuthMethods,
-    // The answer is a property of the deployment, not of the session; retrying
-    // a 4xx/5xx here only delays the form.
+    // The answer is a property of the deployment, not of the session.
     retry: false,
     staleTime: Infinity,
   });
+  const providers = methods.data?.providers ?? [];
 
   useEffect(() => {
-    // OIDC-only, and exactly one provider: sent straight there, as this screen
-    // always worked before local auth existed. With several providers and no
-    // local form, picking is the reader's — a guess would be a login to the
-    // wrong directory.
-    if (
-      methods.data &&
-      !methods.data.local &&
-      methods.data.providers.length === 1
-    ) {
-      loginWith(methods.data.providers[0]!.name, next);
-    }
-  }, [methods.data, next]);
+    if (providers.length === 1) loginWith(providers[0]!.name, next);
+  }, [providers, next]);
 
   if (methods.isPending) {
     return (
@@ -66,19 +55,19 @@ export function Login() {
     );
   }
 
-  // Both off is a deployment wired without any way in — not a state this page
-  // can fix, only report.
-  if (!methods.data.local && !methods.data.oidc) {
+  if (providers.length === 0) {
     return (
       <div className={LOGIN_CENTRE}>
-        <Notice tone="danger" title="No sign-in method is enabled">
-          This deployment has neither local authentication nor OIDC configured.
+        <Notice tone="danger" title="No identity provider is enabled">
+          Everyone signs in through an OpenID Connect provider, and this deployment has none
+          enabled. An operator can add one in the console after{" "}
+          <code>pystino admin grant &lt;email&gt;</code>, or set GATEWAY_OIDC__* and restart.
         </Notice>
       </div>
     );
   }
 
-  if (!methods.data.local && methods.data.oidc) {
+  if (providers.length === 1) {
     return (
       <div className={LOGIN_CENTRE}>
         <Spinner label="Redirecting to sign in" />
@@ -87,127 +76,17 @@ export function Login() {
   }
 
   return (
-    <LocalLoginForm
-      next={next}
-      ssoAvailable={methods.data.oidc}
-      ssoProviders={methods.data.providers ?? []}
-    />
-  );
-}
-
-function LocalLoginForm({
-  next,
-  ssoAvailable,
-  ssoProviders,
-}: {
-  next: string;
-  ssoAvailable: boolean;
-  ssoProviders: { name: string; issuer: string }[];
-}) {
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    setError(null);
-    setSubmitting(true);
-    try {
-      await localLogin(email, password);
-      // The cookie is set; the cached failure from before it was must not be
-      // what the next screen reads.
-      await queryClient.invalidateQueries();
-      // Two different things hand `next` here, and they want different rides:
-      //
-      // - the console's own pages store `/console/...` — the SPA's to render,
-      //   and the router already carries that basename;
-      // - the house IdP stores `/oauth/authorize?...` when a browser-facing
-      //   client (the chat) started a sign-in and found no session — a round
-      //   trip only the *browser* can finish, because it is the gateway's own
-      //   address that the fresh session cookie must be carried to, and the
-      //   router's answer to an address that is not its own is "No such page",
-      //   which is where this flow used to die.
-      const target = safeNextPath(next);
-      if (target === null || target === "/") {
-        navigate("/", { replace: true });
-      } else if (target === "/console" || target.startsWith("/console/")) {
-        navigate(nextForRouter(target), { replace: true });
-      } else {
-        window.location.assign(target);
-      }
-    } catch (caught) {
-      // The gateway's message is specific by design ("Too many failed
-      // sign-in attempts" versus "Incorrect email or password") and safe to
-      // show; swallowing it into a generic string would hide the one thing
-      // the reader can act on.
-      setError(caught instanceof Error ? caught.message : "Sign-in failed.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
     <div className={LOGIN_CENTRE}>
-      <section className={LOGIN_CARD}>
-        <div>
-          <h1 className="m-0 text-xl font-semibold text-ink">Sign in</h1>
-          <p className="m-0 mt-1 text-sm text-ink-muted">Sign in to continue.</p>
-        </div>
-        {error ? (
-          <Notice tone="danger" title="Sign-in failed">
-            {error}
-          </Notice>
-        ) : null}
-        <form className={FORM_STACK} onSubmit={handleSubmit}>
-          {/* autoComplete values are the browser's cue to offer or save the
-              credential; without them a password manager offers the wrong
-              thing on the wrong field. */}
-          <Input
-            label="Email"
-            type="email"
-            name="email"
-            autoComplete="username"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            required
-            autoFocus
-          />
-          <Input
-            label="Password"
-            type="password"
-            name="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-          />
-          <Button type="submit" variant="primary" busy={submitting} disabled={submitting}>
-            Sign in
-          </Button>
-          <Link to={`/password-reset`} className="text-sm text-accent no-underline">
-            Forgot your password?
-          </Link>
-        </form>
-        {ssoAvailable &&
-          ssoProviders.map((provider) => (
-            <Button
-              key={provider.name}
-              onClick={() => loginWith(provider.name, next)}
-              disabled={submitting}
-            >
+      <div className={LOGIN_CARD}>
+        <h1 className="text-lg font-semibold">Sign in</h1>
+        <div className={FORM_STACK}>
+          {providers.map((provider) => (
+            <Button key={provider.name} variant="primary" onClick={() => loginWith(provider.name, next)}>
               Sign in with {provider.name}
             </Button>
           ))}
-      </section>
+        </div>
+      </div>
     </div>
   );
 }
-
-/**
- * Exported for App: the 401 path renders this page rather than navigating.
- * `NotAuthenticatedError` is re-exported so App keeps one import site.
- */
-export { NotAuthenticatedError };

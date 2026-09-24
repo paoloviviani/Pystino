@@ -92,7 +92,7 @@ ADR 0043).
   ADR 0044 stands — but a deployment need not go find one: the installer can
   bring up Authelia or Keycloak beside the gateway on the origin already
   published (ADR 0084), and the gateway can act as a minimal issuer for its
-  own first-party clients (ADR 0068, [the house IdP](idp.md)). All three are
+  own first-party clients (ADR 0068, the house IdP — removed by ADR 0088). All three are
   the same `GATEWAY_OIDC__*` configuration from the gateway's side.
   Discovery is read once at
   startup, so changing any `GATEWAY_OIDC__*` value needs a restart. Users are

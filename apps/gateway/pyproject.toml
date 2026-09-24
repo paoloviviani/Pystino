@@ -18,7 +18,10 @@ dependencies = [
     "pydantic-settings>=2.6",
     "redis>=5.2",                    # protocol client; talks to Valkey. ADR 0006
     "joserfc>=1.0",                  # JOSE/JWT. authlib.jose is deprecated. ADR 0011
-    "pwdlib[argon2]>=0.2",           # password hashing for local login. ADR 0043
+    # Argon2id digests for the bundled Authelia (client secrets, the first
+    # user, console-managed users). MIT. Replaces pwdlib, which wrapped it for
+    # the local-password door that ADR 0088 removed.
+    "argon2-cffi>=23.1",
     "orjson>=3.10",
     "llmp-shared",
     "google-re2>=1.1.20251105",
@@ -32,10 +35,18 @@ dependencies = [
     # own (verified at source, 0.0.32). Without it FastAPI refuses to *build*
     # the route, at import time — so this is not an optional extra.
     "python-multipart>=0.0.20",
+    # MIT. Already present at runtime through uvicorn[standard]; declared
+    # because `pystino adopt` reads the old installer's generated Authelia YAML
+    # and should not depend on another package's extras to do it.
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]
 gateway = "gateway.cli:main"
+# Deployment: init, bootstrap, doctor (ADR 0086).
+pystino = "gateway.deploy.cli:main"
+# The same commands, Cerea-branded, for a chat-only install (report §0, D9).
+cerea = "gateway.deploy.cli:cerea_main"
 
 [tool.uv.sources]
 llmp-shared = { workspace = true }

@@ -79,7 +79,7 @@ exclude = ['migrations/versions/.*']
 # These ship no type information as of the versions pinned in apps/gateway.
 # `re2` is Google's RE2 binding, used for operator-written patterns because it
 # cannot backtrack — see ADR 0038 and the measurement in it.
-module = ["joserfc.*", "redis.*", "re2.*"]
+module = ["joserfc.*", "redis.*", "re2.*", "yaml.*", "asyncpg.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

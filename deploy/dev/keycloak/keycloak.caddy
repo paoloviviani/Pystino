@@ -1,0 +1,6 @@
+# Drop into the deploy dir's proxy.d/ to route /idp/* to the development Keycloak.
+handle /idp/* {
+	reverse_proxy keycloak:8080 {
+		import to_app
+	}
+}

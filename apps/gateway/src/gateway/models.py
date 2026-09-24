@@ -409,6 +409,13 @@ class User(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # Who set `is_admin` (ADR 0088): "manual" (console, CLI, bootstrap) or
+    # "oidc" (a provider whose admin_source is a claim). A directory may only
+    # revoke what it granted — the same provenance rule memberships follow.
+    admin_source: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
+    # Who deactivated the account: "manual" or "directory" (a sync saw the
+    # person gone). A directory may only reactivate what it deactivated.
+    deactivated_by: Mapped[str | None] = mapped_column(String(16), default=None)
 
     # The user's own choice of which group to bill by default. Users change this
     # themselves; the gateway validates that they are still a member of it at
@@ -1374,6 +1381,47 @@ class IdentityProvider(Base):
         default=GroupSync.EVERY_LOGIN,
         server_default=text("'every_login'"),
     )
+    # The back-channel base URL (OIDCSettings.internal_base_url): where this
+    # server reaches the issuer when the public URL would hairpin through the
+    # proxy. Empty for an IdP reachable at its issuer.
+    internal_base_url: Mapped[str] = mapped_column(
+        String(512), default="", server_default=text("''")
+    )
+    # --- identity policy (ADR 0088) -------------------------------------
+    # What kind of directory this is: decides which capabilities (claims,
+    # pull adapter, SCIM push, subject known before login) the console offers.
+    kind: Mapped[str] = mapped_column(String(32), default="generic", server_default="generic")
+    # Where the directory's answer about groups comes from: the token's claim,
+    # the directory mirror a sync adapter fills, or nowhere (console only).
+    # *How often* it is applied stays `group_sync`.
+    group_source: Mapped[str] = mapped_column(String(16), default="claim", server_default="claim")
+    # Who decides who is an administrator: this console (ADR 0069's default),
+    # or a claim/group from this directory — with provenance on the user row,
+    # so the directory can only revoke an admin flag it granted.
+    admin_source: Mapped[str] = mapped_column(
+        String(16), default="console", server_default="console"
+    )
+    admin_claim: Mapped[str] = mapped_column(String(255), default="groups", server_default="groups")
+    admin_values: Mapped[list[str]] = mapped_column(JSON, default=list, server_default=text("'[]'"))
+    # The claim that identifies a person here. `sub` everywhere except where a
+    # directory's `sub` is pairwise per application (Entra: use `oid`).
+    subject_claim: Mapped[str] = mapped_column(String(64), default="sub", server_default="sub")
+    # Batch sync (ADR 0088): the adapter, its credentials (encrypted, ADR
+    # 0027's box), its schedule, and what "gone from the directory" does.
+    sync_adapter: Mapped[str] = mapped_column(String(32), default="none", server_default="none")
+    sync_config_encrypted: Mapped[str | None] = mapped_column(Text, default=None)
+    sync_interval_minutes: Mapped[int] = mapped_column(default=60, server_default=text("60"))
+    sync_deprovision: Mapped[str] = mapped_column(
+        String(16), default="disable", server_default="disable"
+    )
+    sync_create_users: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
+    # Set when the first run of an adapter (always a dry run) has been
+    # reviewed and the adapter may apply changes.
+    sync_confirmed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
@@ -1383,6 +1431,82 @@ class IdentityProvider(Base):
 
     def __repr__(self) -> str:
         return f"<IdentityProvider name={self.name!r} issuer={self.issuer!r}>"
+
+
+class DirectoryEntry(Base):
+    """What a directory last said about one person (ADR 0088 draft).
+
+    A mirror, written by a sync adapter (pull) or by SCIM (push), and the only
+    input the reconciler reads for `group_source=directory`. Kept separate from
+    `users` because a directory can name people who have never signed in — and
+    for Authelia, whose `sub` is an opaque id minted at first login, cannot even
+    say which `(issuer, subject)` they will be. An entry is linked to a user
+    (`user_id`) when the subject is known up front (Keycloak, SCIM) or at that
+    person's first login (by username and verified email).
+
+    `preassigned_groups` lets an administrator put someone in groups before
+    they have ever signed in; they become `manual` memberships at link time.
+    """
+
+    __tablename__ = "directory_entries"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "external_id", name="uq_directory_entries_provider_ext"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("identity_providers.id", ondelete="CASCADE"), index=True
+    )
+    #: The directory's own key: Keycloak/SCIM id (= the OIDC subject), or the
+    #: Authelia login name.
+    external_id: Mapped[str] = mapped_column(String(255))
+    username: Mapped[str | None] = mapped_column(String(255), default=None)
+    email: Mapped[str | None] = mapped_column(String(320), default=None)
+    display_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    groups: Mapped[list[str]] = mapped_column(JSON, default=list)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: False once a sync no longer sees the person; the row is kept for audit.
+    present: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    preassigned_groups: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'")
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None, index=True
+    )
+    first_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class DirectorySyncRun(Base):
+    """One pull or push application, with what it changed (or would have)."""
+
+    __tablename__ = "directory_sync_runs"
+    __table_args__ = (
+        Index("ix_directory_sync_runs_provider_started", "provider_id", "started_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("identity_providers.id", ondelete="CASCADE")
+    )
+    trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual | push
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: ok | failed | needs_confirmation (the mass-deactivation valve tripped)
+    status: Mapped[str] = mapped_column(String(24), default="ok")
+    seen: Mapped[int] = mapped_column(default=0)
+    created: Mapped[int] = mapped_column(default=0)
+    linked: Mapped[int] = mapped_column(default=0)
+    updated: Mapped[int] = mapped_column(default=0)
+    deactivated: Mapped[int] = mapped_column(default=0)
+    reactivated: Mapped[int] = mapped_column(default=0)
+    #: The individual changes (capped), for the console's diff view.
+    changes: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    started_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
 
 
 class FXRate(Base):

@@ -37,6 +37,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
+from gateway import identity_policy
 from gateway.accounting.cost import select_price
 from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings, Settings
 from gateway.deps import (
@@ -97,7 +98,6 @@ from gateway.models import (
 )
 from gateway.oidc_policy import environment_policy
 from gateway.pagination import Page, PageDep, count_of
-from gateway.passwords import hash_password, validate_password
 from gateway.periods import PeriodKind
 from gateway.plugins import registry as plugin_registry
 from gateway.pricing import (
@@ -186,8 +186,6 @@ from gateway.schemas import (
     SearchBackendDeleteResponse,
     UsageReport,
     UserAdminResponse,
-    UserCreateRequest,
-    UserPasswordRequest,
     UserUpdateRequest,
 )
 from gateway.secrets import SecretBox, SecretsUnavailableError, hint_for
@@ -2436,170 +2434,23 @@ async def update_user(
     fields = payload.model_dump(exclude_unset=True)
     for field, value in fields.items():
         setattr(user, field, value)
+    # Provenance (ADR 0088): what the console sets is the console's, so a
+    # provider deciding admin by claim can never undo it — and a console
+    # reactivation clears a directory deactivation.
+    if "is_admin" in fields:
+        user.admin_source = "manual"
+    if "is_active" in fields:
+        user.deactivated_by = None if fields["is_active"] else "manual"
     # A new list every time: SQLAlchemy does not see in-place mutation of a
     # JSON attribute, and an append the unit-of-work never flushes would make
     # the override exist only until the request ended — the edit would revert
     # at the next login exactly as if the column were not there.
     if edited := [field for field in _PROFILE_FIELDS if field in fields]:
-        user.admin_edited_fields = list(
-            dict.fromkeys([*(user.admin_edited_fields or []), *edited])
-        )
+        user.admin_edited_fields = list(dict.fromkeys([*(user.admin_edited_fields or []), *edited]))
     await session.commit()
 
     # Not by re-reading the listing and picking a row out of it: the listing is
     # a page now, and the user just edited may not be on the page.
-    return (await _user_responses(session, [user]))[0]
-
-
-async def _load_local_user(user_id: uuid.UUID, session: SessionDep) -> User:
-    """The user a password route was aimed at, or the error that stops it.
-
-    Only ``issuer="local"`` accounts may carry a password. Attaching one to a
-    directory user would create a second credential for an identity the IdP
-    is supposed to be authoritative about — a leaked local password would
-    then ride the issuer's group memberships without anything in the
-    directory having granted it.
-    """
-    user = (
-        await session.execute(
-            select(User)
-            .where(User.id == user_id)
-            .options(selectinload(User.memberships).selectinload(Membership.group))
-        )
-    ).scalar_one_or_none()
-    if user is None:
-        raise NotFoundError(f"No user with id {user_id}.")
-    if user.issuer != "local":
-        raise BadRequestError(
-            "Only local accounts (issuer 'local') can have a password. This user "
-            "signs in through the identity provider, which is authoritative for them."
-        )
-    return user
-
-
-@router.put("/users/{user_id}/password", response_model=UserAdminResponse)
-async def set_user_password(
-    user_id: uuid.UUID,
-    payload: UserPasswordRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    settings: SettingsDep,
-) -> UserAdminResponse:
-    """Set or reset a local account's password.
-
-    A reset needs no knowledge of the old password: the caller is already an
-    authenticated administrator, and requiring the old value would make
-    "operator resets a locked-out account" impossible. Same trust level as
-    minting a key on someone's behalf.
-    """
-    user = await _load_local_user(user_id, session)
-    try:
-        validate_password(payload.password, settings.local_auth)
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-
-    credential = await session.get(LocalCredential, user.id)
-    if credential is None:
-        session.add(LocalCredential(user_id=user.id, password_hash=hash_password(payload.password)))
-    else:
-        credential.password_hash = hash_password(payload.password)
-    await session.commit()
-    return (await _user_responses(session, [user]))[0]
-
-
-@router.delete("/users/{user_id}/password", response_model=UserAdminResponse)
-async def clear_user_password(
-    user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
-) -> UserAdminResponse:
-    """Revoke an account's ability to sign in locally.
-
-    Row deletion, not an empty hash: "no credential" and "credential that
-    matches nothing" are different states, and only the first is honest about
-    what login will do.
-    """
-    user = await _load_local_user(user_id, session)
-    await session.execute(delete(LocalCredential).where(LocalCredential.user_id == user.id))
-    await session.commit()
-    return (await _user_responses(session, [user]))[0]
-
-
-@router.post("/users", response_model=UserAdminResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(
-    payload: UserCreateRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    settings: SettingsDep,
-) -> UserAdminResponse:
-    """Mint a local account (ADR 0048).
-
-    The console-shaped version of ``gateway passwd``: email, initial password,
-    optional groups and admin. Local only — an identity-provider account is
-    the IdP's to create, and a console-created directory user would be
-    overwritten or orphaned at the next login.
-    """
-    email = payload.email.strip().casefold()
-    if "@" not in email or email.startswith("@") or email.endswith("@"):
-        raise BadRequestError("A valid email address is required.")
-
-    existing = await session.execute(
-        select(User).where(User.issuer == "local", User.subject == email)
-    )
-    if existing.scalar_one_or_none() is not None:
-        raise BadRequestError(f"An account for {email} already exists.", code="account_exists")
-
-    try:
-        validate_password(payload.password, settings.local_auth)
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-
-    user = User(
-        issuer="local",
-        subject=email,
-        email=email,
-        display_name=payload.display_name or None,
-        is_admin=payload.is_admin,
-    )
-    session.add(user)
-    await session.flush()
-    # The credential at creation, not left for a second step: an account
-    # handed over with "your password is X" and no hash would answer every
-    # sign-in attempt with "incorrect email or password" — found by the
-    # end-to-end assertion in test_oidc_policy.py, not by the type checker.
-    # It needs the flush above: user.id does not exist before it.
-    session.add(LocalCredential(user_id=user.id, password_hash=hash_password(payload.password)))
-
-    # Group *names*, resolved or created. Created groups are "manual", not
-    # "oidc": an OIDC-sourced group that the IdP stops reporting is pruned from
-    # memberships at the next login, and a group an administrator typed into a
-    # form must not be subject to that reconciliation.
-    names: list[str] = []
-    for name in payload.groups:
-        cleaned = name.strip()
-        if cleaned and cleaned not in names:
-            names.append(cleaned)
-    groups: list[Group] = []
-    for name in names:
-        group = (
-            await session.execute(select(Group).where(Group.name == name))
-        ).scalar_one_or_none()
-        if group is None:
-            group = Group(name=name, source=GroupSource.MANUAL)
-            session.add(group)
-            await session.flush()
-        groups.append(group)
-    for group in groups:
-        session.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL))
-    # The same sole-group rule the login path applies: one group means it is
-    # the default, and the account can bill without a settings detour.
-    if len(groups) == 1:
-        user.default_billing_group_id = groups[0].id
-
-    await session.commit()
-    # _user_responses reads user.memberships, and nothing above has loaded it:
-    # a lazy load from async code is a MissingGreenlet on the *first* account
-    # created — the same trap provision_user documents and dodges. Explicit
-    # refresh rather than a hope.
-    await session.refresh(user, attribute_names=["memberships"])
     return (await _user_responses(session, [user]))[0]
 
 
@@ -2855,7 +2706,40 @@ def _idp_response(record: Any) -> IdentityProviderResponse:
         group_sync=record.group_sync.value,
         is_enabled=record.is_enabled,
         source=record.source,
+        internal_base_url=record.internal_base_url,
+        kind=record.kind,
+        group_source=record.group_source,
+        admin_source=record.admin_source,
+        admin_claim=record.admin_claim,
+        admin_values=list(record.admin_values),
+        subject_claim=record.subject_claim,
+        sync_adapter=record.sync_adapter,
+        sync_interval_minutes=record.sync_interval_minutes,
+        sync_deprovision=record.sync_deprovision,
+        sync_create_users=record.sync_create_users,
+        sync_confirmed=record.sync_confirmed,
+        capabilities=identity_policy.capabilities(record.kind).as_dict(),
     )
+
+
+def _check_policy(row: IdentityProvider) -> None:
+    try:
+        # Column defaults only apply at INSERT, so a row being created still
+        # holds None where it will hold the default; validate what it will be.
+        identity_policy.validate(
+            row.kind or "generic",
+            row.group_source or "claim",
+            row.admin_source or "console",
+            row.sync_adapter or "none",
+            row.sync_deprovision or "disable",
+        )
+    except identity_policy.PolicyError as exc:
+        raise BadRequestError(str(exc), code="invalid_identity_policy") from exc
+    if row.admin_source == "claim" and not row.admin_values:
+        raise BadRequestError(
+            "Admin from a claim needs at least one value that confers it.",
+            code="invalid_identity_policy",
+        )
 
 
 @router.get("/identity-providers", response_model=list[IdentityProviderResponse])
@@ -2904,9 +2788,17 @@ async def create_identity_provider(
         group_mappings=[[rule.idp, rule.local] for rule in payload.group_mappings],
         link_local_by_email=payload.link_local_by_email,
         group_sync=GroupSync(payload.group_sync),
+        internal_base_url=payload.internal_base_url.strip().rstrip("/"),
+        kind=payload.kind,
+        group_source=payload.group_source,
+        admin_source=payload.admin_source,
+        admin_claim=payload.admin_claim,
+        admin_values=list(payload.admin_values),
+        subject_claim=payload.subject_claim,
         is_enabled=True,
         created_by=admin.id,
     )
+    _check_policy(row)
     session.add(row)
     await session.commit()
     return _idp_response(record_from_row(row, request.app.state.secrets))
@@ -2951,6 +2843,36 @@ async def update_identity_provider(
         row.group_sync = GroupSync(fields["group_sync"])
     if "is_enabled" in fields and fields["is_enabled"] is not None:
         row.is_enabled = fields["is_enabled"]
+    if "internal_base_url" in fields and fields["internal_base_url"] is not None:
+        row.internal_base_url = fields["internal_base_url"].strip().rstrip("/")
+    for name in (
+        "kind",
+        "group_source",
+        "admin_source",
+        "admin_claim",
+        "admin_values",
+        "sync_adapter",
+        "sync_interval_minutes",
+        "sync_deprovision",
+        "sync_create_users",
+    ):
+        if name in fields and fields[name] is not None:
+            setattr(row, name, fields[name])
+    if "subject_claim" in fields and fields["subject_claim"] not in (None, row.subject_claim):
+        # Changing the identity key on a directory with users would silently
+        # make every one of them a new person at their next login.
+        has_users = await session.execute(select(User.id).where(User.issuer == row.issuer).limit(1))
+        if has_users.scalar_one_or_none() is not None:
+            raise BadRequestError(
+                "This provider already has users; changing the subject claim would "
+                "re-key every one of them. Create a new provider instead.",
+                code="subject_claim_locked",
+            )
+        row.subject_claim = fields["subject_claim"]
+    if "sync_adapter" in fields:
+        # A new adapter starts over: its first run is a dry run again.
+        row.sync_confirmed = False
+    _check_policy(row)
     await session.commit()
     return _idp_response(record_from_row(row, request.app.state.secrets))
 
