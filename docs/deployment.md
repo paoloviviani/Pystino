@@ -26,7 +26,7 @@ service names an image, and add-ons are compose **profiles** chosen by
 ```bash
 mkdir /srv/pystino && cd /srv/pystino
 docker run --rm -it -u "$(id -u):$(id -g)" -v "$PWD:/deploy" -w /deploy \
-  ghcr.io/paoloviviani/pystino-gateway:<version> pystino init \
+  -e PYSTINO_DEPLOY_DIR="$PWD" ghcr.io/paoloviviani/pystino-gateway:<version> pystino init \
   --origin https://llm.example.org --admin-email you@example.org --preset team
 ./pystino doctor
 docker compose up -d --wait
