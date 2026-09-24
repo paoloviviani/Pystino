@@ -592,11 +592,12 @@ ADR 0046 — the local door issuing `/v1` credentials — is a gateway feature a
 stays here, as does ADR 0043. Merge order is unchanged in spirit: gateway
 features land here first, and the chat follows.
 
-**The agent-machine side (`deploy/opencode/`) is this repository's**, even
-though the `/code` panel that drives it is Cerea's. The split is by trust axis:
-anything that authenticates to `/v1` is a gateway concern (the enrollment CLI,
-the refreshing shim, the IdP's `opencode-enrollment` client); the relay and the
-panel are the chat's. See `docs/coding-agents.md`.
+**The agent-machine side (`deploy/agent/`, `pystino-agent`) is this
+repository's**, even though the `/code` panel that drives it is Cerea's. The
+split is by trust axis: anything that authenticates to `/v1` is a gateway
+concern (enrolment, the refreshing shim, the IdP's `opencode-enrollment`
+client); the machine link and the panel are the chat's. There is no relay: the
+machine dials out to the chat. See `docs/coding-agents.md`.
 
 Two pieces of work with their reasoning written down rather than left to be
 rediscovered — one being built, one not started:

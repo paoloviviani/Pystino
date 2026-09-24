@@ -6,31 +6,28 @@ server can. It runs unattended, it is configured by a file on disk, and the
 person it works for is not watching. This page is what this repository ships
 to wire one up, and why each piece exists.
 
-Everything here lives in `deploy/opencode/`.
+The machine side is one binary, `pystino-agent` (`deploy/agent/`), plus the
+pasted-key fallback in `deploy/opencode/install.sh`.
 
-## Two axes, and only one of them is this repository's
+## One binary, two jobs
 
-| Axis | What it carries | Where it is set up |
+| Job | What it carries | Command |
 |---|---|---|
-| **LLM** | opencode → the local `serve` shim → gateway `/v1` | here |
-| **control** | the paseo daemon → a self-hosted relay → the chat's `/code` panel | the chat's repository (ADR 0085) |
+| **LLM** | opencode → the local refreshing shim → gateway `/v1`, billed to the signed-in person | `pystino-agent enroll`, then the shim `run` starts |
+| **control** | the machine dials *out* to the chat over WSS (`/chat/api/v2/code/machine`), so the chat's `/code` panel can drive it | `pystino-agent run` |
 
-The two are independent. A machine can have the LLM axis alone (opencode
-billed to the person, driven from their own terminal) or both (the same
-machine also drivable from the chat's Agents panel). Nothing on the control
-axis touches `/v1`, and nothing on the LLM axis touches the relay.
+There is no relay and no daemon to pair: the machine connects outbound with its
+own enrolment token, and a person confirms it in the `/code` panel
+(`deploy/agent/PROTOCOL.md` §4). The stack side is one switch,
+`pystino init --agents` (`CODE_AGENTS_ENABLED=true`); the machine's public OIDC
+client `opencode-enrollment` ships in the bundled Authelia.
 
-`deploy/opencode/setup-agent.sh` sets up both, which is why it takes a
-`--relay` as well as a `--gateway`. The `--skip-daemon` flag reduces it to
-this page's half.
+## Two ways in
 
-## Three ways in, in increasing order of what they buy
-
-| Script | Credential | Bills |
+| How | Credential | Bills |
 |---|---|---|
 | `deploy/opencode/install.sh` | a `gwk_…` API key pasted by a human (ADR 0010) | the key's group |
-| `deploy/opencode/setup-agent.sh --skip-daemon` | an OIDC enrollment, renewed by a local shim (ADR 0040) | the signed-in person, `x-bill-to` their chosen group (ADR 0061) |
-| `deploy/opencode/setup-agent.sh` | the same, plus the daemon pairing | as above, and the machine appears in the chat's `/code` panel |
+| `pystino-agent enroll` + `run` | an OIDC enrolment (device or loopback flow), renewed by the local shim (ADR 0040) | the signed-in person, `x-bill-to` their chosen group (ADR 0061); the machine appears in the chat's `/code` panel |
 
 `install.sh` never mints the key: `POST /api/me/keys` is session-cookie only,
 so a human mints it in the console and pastes it at a hidden prompt. The key
@@ -38,15 +35,10 @@ is never taken as an argv flag — argv leaks through `ps` and shell history.
 
 ## The enrollment CLI
 
-> **TODO(thin-agent):** this module is becoming `pystino-agent`, the single
-> binary that also supervises opencode and dials out to Cerea (see
-> `deploy/agent/PROTOCOL.md`). `pair` (paseo daemon pairing) is gone; a `run`
-> subcommand replaces it. The rest of this section, written for the paseo-era
-> `pystino-enroll pair` flow, is updated only where the binary name and path
-> changed; a fuller rewrite follows once `run` lands.
-
 `deploy/agent/` is a small Go program with subcommands. Build it from that
-directory (`go build -o pystino-agent .`); `setup-agent.sh` builds it for you.
+directory (`go build -o pystino-agent .`, Go 1.24+), or cross-compile for a
+target machine (`GOOS=darwin GOARCH=arm64 go build …`); it has no runtime
+dependency beyond `opencode` itself.
 
 ```
 pystino-agent enroll   sign in, pick a billing group, write opencode.json,
@@ -97,12 +89,12 @@ long hang. Three things make that true:
   `<creds-dir>/pystino-status.json` (next to
   `pystino-credentials.json`) as `{"state","checkedAt","message"}`, and the
   same JSON is served at `GET http://127.0.0.1:<port>/pystino/health`. The
-  file exists for a reader with no loopback access — Cerea, through the
-  paseo daemon — and the endpoint for one that has it; both always agree,
+  file exists for a reader with no loopback access — `run`, which reports it
+  to the chat over the machine link — and the endpoint for one that has it; both always agree,
   because the endpoint reads the same in-memory status the file was last
   written from.
 
-### `enroll enroll`
+### `enroll`
 
 ```
 pystino-agent enroll [--issuer URL] [--gateway URL] [--client-id ID]
@@ -225,54 +217,36 @@ sized for the browser case, not this one:
   case, so there is nothing to override — noted here so the absence reads as
   a decision, not an oversight.
 
-## `setup-agent.sh`
+## Setting up a machine
 
+```sh
+# 1. the binary (built from deploy/agent/, or copied from a release build)
+install -m 0755 pystino-agent ~/.local/bin/pystino-agent
+# 2. enrol: sign in (device flow on a headless box), pick a billing group,
+#    write opencode.json, store the refresh credential (mode 0600)
+pystino-agent enroll --issuer https://llm.example.org/authelia \
+  --gateway https://llm.example.org --cerea https://llm.example.org/chat \
+  --output ~/.config/opencode/opencode.json [--device] [--allow-free-models]
+# 3. run: supervise opencode and dial out to the chat
+pystino-agent run
 ```
-./deploy/opencode/setup-agent.sh [--relay HOST:PORT] [--relay-tls|--no-relay-tls]
-                                 [--gateway ORIGIN] [--issuer ORIGIN]
-                                 [--paseo-version X] [--opencode-version X]
-                                 [--allow-opencode-provider] [--name NAME]
-                                 [--skip-daemon] [--skip-llm] [--skip-posture] [--yes]
-```
 
-`PASEO_RELAY`, `PYSTINO_GATEWAY` and `PYSTINO_ISSUER` are the environment
-defaults for the first three.
-
-Requirements: `bash`, `node`/`npm`, `python3`, and **Go 1.24 or later** — but
-only when the `pystino-agent` binary needs building. `go.mod` requires 1.24;
-an older toolchain tries to auto-download one and dies with "toolchain not
-available", so the script checks the version itself and names the remedy
-(apt's `golang` is usually older; install the official tarball).
-
-The script **rebuilds the CLI when any `*.go` beside it is newer than the
-binary**, not merely when the binary is missing. The earlier "exists, so skip"
-rule was silent drift: a box kept running last month's CLI — missing flags,
-missing model gating — while every run printed success.
-
-It also retires a previous `pystino-agent serve` before enrolling. A shim
-from an earlier run owns the default port with the earlier run's credentials;
-leaving it alive makes `enroll` dodge to a new port that nothing serves while
-`opencode.json` points at it (found live: 41872 written, nothing listening).
+`--allow-free-models` lets `run` offer models from providers other than the
+gateway's own (by default only `pystino/*`, so spend lands where the machine
+enrolled). `--allow-auto-accept` and `--workspace-root` are the machine's own
+vetoes, fixed at enrol time (PROTOCOL.md §4). To keep `run` alive across
+reboots, install it as a user service — a systemd user unit on Linux, a
+LaunchAgent on macOS; the deployment re-architecture report's cutover plan has
+both, verbatim.
 
 ### The permission posture
 
-The script writes `"permission": {"edit": "ask", "bash": "ask"}` into the
-opencode config, merged rather than overwritten. The paseo daemon drops
-per-prompt permission rules, so the posture has to live in the machine's
-config — that is what makes the chat panel's approval card the gate it claims
-to be. `--skip-posture` leaves an existing config alone.
-
-### Pairing, and its fallback
-
-> **TODO(thin-agent):** obsolete. Pairing is now `pystino-agent run` dialing
-> out to Cerea over WSS and a human confirming the machine in the `/code`
-> panel (`deploy/agent/PROTOCOL.md` §4) — there is no more paseo daemon or
-> pairing offer to POST. `setup-agent.sh` currently just prints the `run`
-> command and exits; a later task wires it up fully.
+opencode's permission rules live in the machine's own config, and `enroll`
+merges rather than overwrites them; the chat panel's approval card is the gate
+because the machine asks.
 
 ## Where the rest of it is documented
 
-The relay, the `/code` panel and what an operator has to deploy for the
-control axis are the chat's, not the gateway's. See the chat repository's
+The `/code` panel and the machine link are the chat's, not the gateway's. See the chat repository's
 `docs/code-panel.md` (operators) and `docs/agent-machines.md` (the person at
 the keyboard).
