@@ -18,6 +18,8 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"pystino-agent/internal/backend"
 )
 
 // Config is everything needed to spawn and reach one opencode instance.
@@ -95,6 +97,14 @@ type Backend struct {
 	// can fill in ContextMax without a request per event.
 	modelsMu   sync.Mutex
 	modelLimit map[string]int
+
+	// usageMu/sessionUsage remembers each session's latest Usage as it's
+	// observed on the event stream (opencode's own session object carries
+	// no usage field, only assistant messages do), so session.get/list can
+	// answer with it instead of nothing until a caller asks for the full
+	// Transcript.
+	usageMu      sync.Mutex
+	sessionUsage map[string]*backend.Usage
 }
 
 type sessionOverlay struct {
@@ -120,6 +130,7 @@ func New(cfg Config) *Backend {
 		clientMessageIDs: map[string]string{},
 		pendingClientMsg: map[string]string{},
 		modelLimit:       map[string]int{},
+		sessionUsage:     map[string]*backend.Usage{},
 	}
 }
 
