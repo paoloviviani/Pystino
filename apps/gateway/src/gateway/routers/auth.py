@@ -44,6 +44,7 @@ from gateway.oidc import (
     extract_groups,
     generate_pkce_pair,
     issue_session_token,
+    promote_bootstrap_admin,
     provision_user,
 )
 from gateway.passwords import hash_password, validate_password, verify_and_rehash, verify_dummy
@@ -710,6 +711,15 @@ async def callback(
             email_verified=merged.get("email_verified"),
             # How far this directory's answer about groups reaches (ADR 0057).
             group_sync=record.group_sync,
+        )
+        # OIDC-only deployments have no password door to make the first
+        # administrator through; the configured address, verified, is it.
+        await promote_bootstrap_admin(
+            session,
+            user,
+            bootstrap_email=settings.bootstrap_admin_email,
+            email=merged.get("email"),
+            email_verified=merged.get("email_verified"),
         )
     except ProvisioningRefused as exc:
         # The policy's message is written for the person at the keyboard

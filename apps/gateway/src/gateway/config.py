@@ -875,6 +875,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = True
 
+    # The first administrator of an OIDC-only deployment (ADR 0088 draft).
+    # The first browser sign-in whose *verified* email is this address, while
+    # no active administrator exists, is made one. Inert once any administrator
+    # exists, so leaving it set is harmless; `pystino init` writes it. It
+    # replaces `gateway passwd --admin`, which needed the local-password door.
+    bootstrap_admin_email: str = ""
+
     database_url: str = "postgresql+asyncpg://gateway:gateway@localhost:5432/gateway"
     database_pool_size: int = 10
     database_max_overflow: int = 20
