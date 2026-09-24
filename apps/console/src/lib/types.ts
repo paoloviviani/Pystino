@@ -615,19 +615,6 @@ export interface SearchBackendDeleteResult {
   cleared_groups: string[];
 }
 
-/**
- * Minting a local account from the console (ADR 0048). Local only: an
- * identity-provider account is the IdP's to create, and one made here would
- * be overwritten or orphaned at the next login.
- */
-export interface UserCreateInput {
-  email: string;
-  password: string;
-  display_name?: string;
-  is_admin?: boolean;
-  /** Group *names*; a name that does not exist yet is created (source "manual"). */
-  groups?: string[];
-}
 
 /**
  * The identity policy in force (ADR 0048), as `GET /api/admin/oidc/policy`

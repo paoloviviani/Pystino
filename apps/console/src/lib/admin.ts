@@ -12,7 +12,6 @@ import type {
   ModelImportResponse,
   OidcPolicy,
   OidcPolicyInput,
-  UserCreateInput,
   ModelKind,
   Price,
   ProviderPlugin,

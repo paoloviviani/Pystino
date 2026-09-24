@@ -13,13 +13,11 @@ import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import {
   useDeleteUser,
-  useGroups,
   useUpdateUser,
   useUsers,
 } from "../lib/admin";
 import {
   CHECK_ITEM,
-  CHECK_LIST,
   CHIPS,
   CODE,
   FORM,
@@ -28,7 +26,7 @@ import {
   ROW_ACTIONS,
 } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
-import type { AdminGroup, AdminUser } from "../lib/types";
+import type { AdminUser } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
 
@@ -40,13 +38,9 @@ export function AdminUsers() {
   // searches the first page and reports nothing found.
   const paged = usePaginated();
   const users = useUsers(paged.page);
-  // The create-account dialog picks from existing groups (and may name new
-  // ones); managing them is the Groups screen's job (ADR 0050).
-  const groups = useGroups({ limit: 200 });
   const update = useUpdateUser();
   const remove = useDeleteUser();
 
-  const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [deleting, setDeleting] = useState<AdminUser | null>(null);
 
