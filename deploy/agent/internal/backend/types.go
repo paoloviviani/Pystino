@@ -39,6 +39,13 @@ type Message struct {
 	ModelID     string     `json:"modelId,omitempty"`
 	CompletedAt *time.Time `json:"completedAt,omitempty"`
 	Error       string     `json:"error,omitempty"`
+	// ClientMessageID echoes session.prompt's clientMessageId on the user
+	// message it created (it keys Cerea's attachment store). Set once, when
+	// the backend first reports the user message a prompt produced; never
+	// derivable from the backend itself, since opencode has no notion of it
+	// — a Backend implementation is responsible for remembering the
+	// mapping durably enough to survive a restart (PROTOCOL.md §7).
+	ClientMessageID string `json:"clientMessageId,omitempty"`
 }
 
 // PartType discriminates Part's per-type fields (PROTOCOL.md §7).

@@ -20,6 +20,9 @@ Usage:
   --issuer     OIDC issuer where discovery lives (prompted when missing).
   --gateway    Gateway origin or /v1 base, e.g. https://llm.example.org
                (a bare origin gets /v1 appended; prompted when missing).
+  --cerea      Cerea origin 'run' dials by default, e.g. https://cerea.example.org
+               (optional: 'run --cerea' overrides it; unset means 'run' has
+               no default and --cerea becomes required on that command).
   --client-id  OAuth client id (default opencode-enrollment: the id baked
                into both bundled IdPs, so it must match on either).
   --device     Force the device flow (headless boxes).
@@ -47,6 +50,7 @@ const defaultShimPort = 41871
 type enrollOptions struct {
 	issuer                 string
 	gateway                string
+	cerea                  string
 	clientID               string
 	device                 bool
 	loopback               bool
@@ -64,6 +68,7 @@ func runEnroll(args []string) error {
 	opts := enrollOptions{}
 	fs.StringVar(&opts.issuer, "issuer", "", "")
 	fs.StringVar(&opts.gateway, "gateway", "", "")
+	fs.StringVar(&opts.cerea, "cerea", "", "")
 	fs.StringVar(&opts.clientID, "client-id", "opencode-enrollment", "")
 	fs.BoolVar(&opts.device, "device", false, "")
 	fs.BoolVar(&opts.loopback, "loopback", false, "")
@@ -182,6 +187,7 @@ func enroll(ctx context.Context, opts *enrollOptions) error {
 		ObtainedAt:    time.Now().Unix(),
 		ShimPort:      shimPort,
 		ShimSecret:    shimSecret,
+		CereaOrigin:   strings.TrimSuffix(opts.cerea, "/"),
 	}
 	if err := saveCredentials(opts.creds, creds); err != nil {
 		return err

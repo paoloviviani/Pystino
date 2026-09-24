@@ -138,3 +138,53 @@ func TestOverlayRoundTrip(t *testing.T) {
 		t.Fatalf("overlay did not survive reload: %+v", ov)
 	}
 }
+
+// TestResolveClientMessageIDClaimsNextUserMessage pins the fallback mapping
+// (PROTOCOL.md §7): a prompt's clientMessageId is attached to the next new
+// user message seen for that session, and the mapping then persists so a
+// later lookup (a restart, a re-seeded transcript) still finds it without
+// needing a pending claim again.
+func TestResolveClientMessageIDClaimsNextUserMessage(t *testing.T) {
+	dir := t.TempDir()
+	b := New(Config{OverlayPath: dir + "/overlay.json"})
+	if err := b.loadOverlay(); err != nil {
+		t.Fatal(err)
+	}
+	b.claimPendingClientMessageID("ses_1", "client-msg-abc")
+
+	msg := backend.Message{ID: "msg_new", Role: "user"}
+	b.resolveClientMessageID("ses_1", &msg)
+	if msg.ClientMessageID != "client-msg-abc" {
+		t.Fatalf("ClientMessageID = %q, want client-msg-abc", msg.ClientMessageID)
+	}
+
+	// A second, unrelated user message on the same session must not also
+	// claim it — the pending entry is consumed exactly once.
+	msg2 := backend.Message{ID: "msg_other", Role: "user"}
+	b.resolveClientMessageID("ses_1", &msg2)
+	if msg2.ClientMessageID != "" {
+		t.Fatalf("second message must not claim the same pending id: %+v", msg2)
+	}
+
+	// The mapping survives a fresh Backend loading the same overlay file —
+	// simulating an agent restart, or Transcript() re-seeding after one.
+	b2 := New(Config{OverlayPath: dir + "/overlay.json"})
+	if err := b2.loadOverlay(); err != nil {
+		t.Fatal(err)
+	}
+	reseeded := backend.Message{ID: "msg_new", Role: "user"}
+	b2.resolveClientMessageID("ses_1", &reseeded)
+	if reseeded.ClientMessageID != "client-msg-abc" {
+		t.Fatalf("mapping did not survive reload: %+v", reseeded)
+	}
+}
+
+func TestResolveClientMessageIDIgnoresAssistantMessages(t *testing.T) {
+	b := New(Config{})
+	b.claimPendingClientMessageID("ses_1", "client-msg-abc")
+	msg := backend.Message{ID: "msg_assistant", Role: "assistant"}
+	b.resolveClientMessageID("ses_1", &msg)
+	if msg.ClientMessageID != "" {
+		t.Fatalf("an assistant message must never claim a pending clientMessageId: %+v", msg)
+	}
+}

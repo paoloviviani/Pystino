@@ -70,6 +70,12 @@ type sessionState struct {
 
 	permissionOrder []string
 	permissions     map[string]*backend.PermissionRequest
+	// autoRepliedIDs holds request ids this materializer itself auto-replied
+	// to, so the backend's own permission.replied echo of that same reply
+	// (opencode emits one once it has processed our ReplyPermission call)
+	// is recognized as "already told the client" and dropped instead of
+	// emitting a second permission.replied for an ask the client never saw.
+	autoRepliedIDs map[string]bool
 
 	status backend.SessionStatus
 	usage  *backend.Usage
@@ -214,6 +220,32 @@ func (m *Materializer) Track(workspaceDir string, sess backend.Session) {
 	m.sessions[sess.ID] = st
 }
 
+// WorkspaceDir returns the workspace directory a known session belongs to
+// — what the op dispatcher needs to call most Backend methods, which take
+// a directory, not a session id alone.
+func (m *Materializer) WorkspaceDir(sessionID string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st, ok := m.sessions[sessionID]
+	if !ok {
+		return "", false
+	}
+	return st.workspaceDir, true
+}
+
+// Status is the session's last-known turn-boundary state (PROTOCOL.md §6
+// Session.status), tracked from live "status" events and Track's initial
+// value.
+func (m *Materializer) Status(sessionID string) (backend.SessionStatus, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st, ok := m.sessions[sessionID]
+	if !ok {
+		return "", false
+	}
+	return st.status, true
+}
+
 // Start begins consuming the backend's event stream in a goroutine, until
 // ctx is cancelled or the backend's subscription itself ends (the backend
 // doc's "fatal, needs a new epoch" case — Start returns nothing to signal
@@ -350,6 +382,10 @@ func (m *Materializer) translateLocked(st *sessionState, ev backend.Event) ([]ba
 			return nil, nil
 		}
 		if st.autoAccept && m.policy.AutoAcceptAllowed() {
+			if st.autoRepliedIDs == nil {
+				st.autoRepliedIDs = map[string]bool{}
+			}
+			st.autoRepliedIDs[ev.Request.ID] = true
 			req := *ev.Request
 			return nil, &req
 		}
@@ -361,6 +397,14 @@ func (m *Materializer) translateLocked(st *sessionState, ev backend.Event) ([]ba
 		return []backend.Event{ev}, nil
 
 	case backend.EventPermissionReplied:
+		if st.autoRepliedIDs[ev.RequestID] {
+			// This is the backend's own echo of a reply we already made and
+			// already told the client about (by:"auto"); the client never
+			// saw an ask for it, so a second permission.replied would be
+			// for an id it has no record of.
+			delete(st.autoRepliedIDs, ev.RequestID)
+			return nil, nil
+		}
 		delete(st.permissions, ev.RequestID)
 		st.permissionOrder = removeString(st.permissionOrder, ev.RequestID)
 		return []backend.Event{ev}, nil

@@ -318,6 +318,43 @@ func TestAutoAcceptRepliesOnceAndMarksAuto(t *testing.T) {
 	}
 }
 
+// TestAutoAcceptDropsBackendEcho pins that when opencode's own event
+// stream later echoes back the permission.replied for a request this
+// materializer already auto-replied to, it is dropped rather than
+// forwarded a second time — the client never saw an ask for it in the
+// first place, so a second "replied" event would be for nothing it knows
+// about.
+func TestAutoAcceptDropsBackendEcho(t *testing.T) {
+	fb := newFakeBackend()
+	m := New(fb, policy.Policy{AutoAccept: policy.AutoAcceptAllowed})
+	m.Track("/ws", backend.Session{ID: "s1"})
+	ctx := context.Background()
+	if err := m.SetAutoAccept("s1", true); err != nil {
+		t.Fatal(err)
+	}
+
+	m.ApplyBackendEvent(ctx, backend.BackendEvent{
+		WorkspaceDir: "/ws", SessionID: "s1",
+		Event: backend.Event{Kind: backend.EventPermissionAsked, Request: &backend.PermissionRequest{ID: "perm1", SessionID: "s1"}},
+	})
+	// opencode's own event stream echoes the reply we just made.
+	m.ApplyBackendEvent(ctx, backend.BackendEvent{
+		WorkspaceDir: "/ws", SessionID: "s1",
+		Event: backend.Event{Kind: backend.EventPermissionReplied, RequestID: "perm1", Decision: backend.DecisionOnce, By: "user"},
+	})
+
+	res, err := m.Sync(ctx, "s1", m.Epoch(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Events) != 1 {
+		t.Fatalf("got %d events, want exactly 1 (the synthesized auto reply, echo dropped): %+v", len(res.Events), res.Events)
+	}
+	if res.Events[0].Event.By != "auto" {
+		t.Errorf("events[0].By = %q, want auto", res.Events[0].Event.By)
+	}
+}
+
 // TestSetAutoAcceptForbiddenByPolicy pins the machine's veto: denied policy
 // refuses session.setAutoAccept outright, regardless of what's asked.
 func TestSetAutoAcceptForbiddenByPolicy(t *testing.T) {

@@ -54,10 +54,46 @@ type shim struct {
 	// ever legitimate callers of a shim that only opencode, on this same
 	// machine, should ever reach.
 	port int
+	// onExpired, if set, is called (outside s.mu) the moment the credential
+	// is first found permanently dead — `run` wires this to push a
+	// {"type":"credential","state":"expired"} frame over the link before
+	// its socket necessarily dies (PROTOCOL.md §5).
+	onExpired func(message string)
 }
 
 func newShim(creds *credentials, credsPath, statusPath string, port int) *shim {
 	return &shim{creds: creds, credsPath: credsPath, statusPath: statusPath, client: &http.Client{}, port: port}
+}
+
+// Token and ForceRefresh implement link.Credential: the shim is the single
+// in-process token source (R7) both the HTTP proxy handler and the link's
+// WSS auth draw from, so they can never disagree about the credential's
+// state or race each other refreshing it.
+func (s *shim) Token(ctx context.Context) (string, error) {
+	return s.token()
+}
+
+func (s *shim) ForceRefresh(ctx context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.refreshLocked(); err != nil {
+		return "", err
+	}
+	return s.creds.AccessToken, nil
+}
+
+// NextRenewal is ~70% of the current access token's lifetime from when it
+// was obtained (PROTOCOL.md §3), the instant the link should proactively
+// renew and push a fresh auth frame.
+func (s *shim) NextRenewal() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lifetime := s.creds.ExpiresIn
+	if lifetime <= 0 {
+		lifetime = defaultExpiresIn
+	}
+	obtained := time.Unix(s.creds.ObtainedAt, 0)
+	return obtained.Add(time.Duration(float64(lifetime)*0.7) * time.Second)
 }
 
 // allowedHosts reports whether r.Host is one this shim should answer.
@@ -130,6 +166,12 @@ func (s *shim) transitionLocked(state credState, checkedAt time.Time, message st
 	switch state {
 	case stateExpired:
 		fmt.Fprintf(os.Stderr, "\n!!! pystino shim: credential EXPIRED — every request will fail until this machine is re-enrolled !!!\n%s\n\n", message)
+		if s.onExpired != nil {
+			// Run outside s.mu: the callback (run's link) does its own I/O
+			// and must never be able to deadlock against this shim's lock.
+			onExpired, msg := s.onExpired, message
+			go onExpired(msg)
+		}
 	case stateUnreachable:
 		fmt.Fprintf(os.Stderr, "pystino shim: refresh failed, will retry — %s\n", message)
 	case stateOK:
@@ -422,6 +464,9 @@ func runServe(args []string) error {
 	creds, err := loadCredentials(credsPath)
 	if err != nil {
 		return err
+	}
+	if creds.Gateway == "" {
+		return fmt.Errorf("creds file has no gateway: re-run 'pystino-agent enroll' (the shim has nothing to forward to)")
 	}
 	// Precedence: an explicit --port, else the port enroll recorded, else the
 	// default. The recorded port is what enroll wrote into opencode.json's

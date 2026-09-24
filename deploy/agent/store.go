@@ -34,6 +34,11 @@ type credentials struct {
 	// an enroll that predates this field; the shim then refuses every
 	// request rather than silently running unauthenticated.
 	ShimSecret string `json:"shim_secret,omitempty"`
+	// CereaOrigin is the Cerea origin `run` dials by default (PROTOCOL.md
+	// §3): recorded at enroll time so a plain `pystino-agent run` (no
+	// --cerea) works the same way `pystino-agent serve` already needs no
+	// flags beyond what enroll wrote.
+	CereaOrigin string `json:"cerea_origin,omitempty"`
 }
 
 // refreshSkew makes serve refresh a little before expiry, so no proxied
@@ -93,7 +98,12 @@ func loadCredentials(path string) (*credentials, error) {
 	if err := json.Unmarshal(body, &creds); err != nil {
 		return nil, fmt.Errorf("parsing creds: %w", err)
 	}
-	if creds.RefreshToken == "" || creds.TokenEndpoint == "" || creds.Gateway == "" {
+	// Gateway is deliberately not required here: it only matters to the
+	// shim's forwarding (checked separately, in runServe and run's shim
+	// startup), not to refreshing the token itself — `run --no-shim` has no
+	// gateway to forward to at all (its opencode points straight at a
+	// caller-provided config, e.g. a mock LLM in tests).
+	if creds.RefreshToken == "" || creds.TokenEndpoint == "" {
 		return nil, fmt.Errorf("creds file is incomplete: re-run 'pystino-agent enroll'")
 	}
 	return &creds, nil
