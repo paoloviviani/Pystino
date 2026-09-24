@@ -1,6 +1,6 @@
 """End-to-end sign-in through a Pystino stack (used by stack.yml and by hand).
 
-    uv run python deploy/ci/e2e_login.py <deploy dir> <first user's password> [--chat]
+    uv run python deploy/ci/e2e_login.py <deploy dir> <first user's password> [--chat] [--real-dns]
 
 Browser-shaped: every request goes to the public origin, whose name this
 script resolves to the local proxy; cookies are kept per host and redirects
@@ -10,6 +10,10 @@ code over the internal back-channel (no CA bundle anywhere), and the bootstrap
 address is the administrator. With --chat it then signs into the chat on the
 same Authelia session — the chat's own back-channel discovery and token
 exchange — and reads the signed-in user back.
+
+--real-dns checks a live deployment as it is reached from outside: the public
+name resolves as DNS says (through a TLS-terminating edge, say) and the
+certificate is verified.
 """
 
 import socket
@@ -20,9 +24,10 @@ import httpx
 
 args = [a for a in sys.argv[1:] if not a.startswith("--")]
 if len(args) != 2:
-    sys.exit("usage: e2e_login.py <deploy dir> <first user password> [--chat]")
+    sys.exit("usage: e2e_login.py <deploy dir> <first user password> [--chat] [--real-dns]")
 deploy, password = args
 chat = "--chat" in sys.argv
+real_dns = "--real-dns" in sys.argv
 
 env = {}
 with open(f"{deploy}/.env") as handle:
@@ -43,10 +48,12 @@ def _resolve(host, *rest, **kw):
     return _getaddrinfo("127.0.0.1" if host == public.hostname else host, *rest, **kw)
 
 
-socket.getaddrinfo = _resolve
-# verify=False: the trial stacks run TLS_MODE=internal (Caddy's own CA), which
-# no server is meant to trust — that is the whole point of the back-channel.
-client = httpx.Client(verify=False, follow_redirects=False, timeout=30)  # noqa: S501
+if not real_dns:
+    socket.getaddrinfo = _resolve
+# verify=False for the trial stacks: they run TLS_MODE=internal (Caddy's own
+# CA), which no server is meant to trust — that is the whole point of the
+# back-channel. A live check verifies the certificate like any browser.
+client = httpx.Client(verify=real_dns, follow_redirects=False, timeout=30)
 
 
 def step(method, url, **kw):
