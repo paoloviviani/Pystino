@@ -43,6 +43,15 @@ func statusPathFor(credsPath string) string {
 	return filepath.Join(filepath.Dir(credsPath), statusFileName)
 }
 
+// policyFileName and policyPathFor mirror statusPathFor: policy.json lives
+// beside the credential file, so `run` finds it from --creds alone (or
+// --state-dir, when given, takes precedence — see run.go).
+const policyFileName = "policy.json"
+
+func policyPathFor(credsPath string) string {
+	return filepath.Join(filepath.Dir(credsPath), policyFileName)
+}
+
 // writeStatusFile persists status atomically (R8, via writeFileAtomic): a
 // reader (the health endpoint's file-based twin, or Cerea through the link)
 // must never observe a half-written file.

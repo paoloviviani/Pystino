@@ -27,6 +27,7 @@ Commands:
             and store the refresh credential.
   serve     Local refreshing proxy shim: opencode points its baseURL here,
             the shim injects a fresh access token plus x-bill-to per request.
+  run       Supervise opencode and dial out to Cerea over WSS (PROTOCOL.md).
 
 Run 'pystino-agent <command> -h' for that command's options.
 `
@@ -42,6 +43,8 @@ func main() {
 		err = runEnroll(os.Args[2:])
 	case "serve":
 		err = runServe(os.Args[2:])
+	case "run":
+		err = runRun(os.Args[2:])
 	case "-h", "-help", "--help", "help":
 		fmt.Print(usage)
 		return
