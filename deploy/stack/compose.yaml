@@ -95,6 +95,7 @@ services:
       TLS_DIRECTIVE: ${TLS_DIRECTIVE:-}
       ACME_EMAIL: ${ACME_EMAIL:-admin@example.org}
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-private_ranges}
+      PROXY_DEFAULT: ${PROXY_DEFAULT:-gateway}
     volumes:
       - caddy-data:/data
       - caddy-config:/config

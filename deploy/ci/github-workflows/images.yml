@@ -1,15 +1,23 @@
-# Build the Pystino images on every PR; publish them from main and tags.
+# Build the Pystino images on every PR; publish them from main, deploy/rearch
+# (to exercise the pipeline) and release tags. (Report §6, ADR 0086.)
 #
-# Publishing is OFF until the repository variable PUBLISH_IMAGES is set to
-# "true" (Settings → Variables). Until then every run builds and throws the
-# result away, which still proves each Dockerfile builds from a clean checkout
-# — the thing a locally built image never proved. (Report §6, ADR 0086.)
+# Packages are PRIVATE for now: images pushed from a private repository with
+# GITHUB_TOKEN inherit its visibility. Pulling them needs
+# `docker login ghcr.io` with a token holding read:packages (pystino init and
+# doctor say so). Going public later is a per-package switch in the package's
+# settings (Danger Zone → Change visibility), once the repositories are public.
 #
-# Tags:
-#   main       sha-<7>, edge
-#   vX.Y.Z     X.Y.Z, X.Y, latest
-# Redaction publishes only the pattern-only variant (suffix -pattern); the NER
-# variant carries a CC BY-NC-SA model and is built locally (decision D6).
+# Private storage counts against the plan's Packages quota, so the tag set is
+# lean:
+#   main          edge              (moving)
+#   deploy/rearch rearch            (moving)
+#   vX.Y.Z        X.Y.Z and X.Y     (X.Y.Z is never overwritten)
+# A moving tag leaves the previous build untagged; the cleanup job keeps the
+# newest few untagged versions (so a digest pinned during testing survives a
+# while) and deletes the rest. Provenance/SBOM attestations are off: they are
+# stored as extra untagged manifests, and deleting those breaks the image.
+# Pins are by digest (deploy/stack/release.env; `pystino release-pin`), so no
+# per-commit tag is needed to reference a build immutably.
 name: images
 
 on:
@@ -25,22 +33,20 @@ on:
       - ".dockerignore"
       - ".github/workflows/images.yml"
   push:
-    branches: [main]
+    branches: [main, deploy/rearch]
     tags: ["v*.*.*"]
   workflow_dispatch:
 
 permissions:
   contents: read
   packages: write
-  id-token: write
-  attestations: write
 
 concurrency:
   group: images-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  PUBLISH: ${{ vars.PUBLISH_IMAGES == 'true' && github.event_name != 'pull_request' }}
+  PUBLISH: ${{ github.event_name != 'pull_request' }}
 
 jobs:
   build:
@@ -66,6 +72,8 @@ jobs:
             file: deploy/stack/authelia/Dockerfile
             build-args: ""
             suffix: ""
+          # Pattern-only redaction; the NER model is CC BY-NC-SA and is built
+          # locally (decision D6).
           - image: pystino-redaction
             context: .
             file: services/redaction/Dockerfile
@@ -85,6 +93,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Refuse to overwrite a released version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}${{ matrix.suffix }}"
+          if docker buildx imagetools inspect "ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:$tag" >/dev/null 2>&1; then
+            echo "::error::${{ matrix.image }}:$tag already exists; a release tag is immutable"; exit 1
+          fi
+
       - id: meta
         uses: docker/metadata-action@v5
         with:
@@ -93,17 +109,17 @@ jobs:
             latest=false
             suffix=${{ matrix.suffix }},onlatest=true
           tags: |
-            type=sha,prefix=sha-,format=short
-            type=edge,branch=main
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=rearch,enable=${{ github.ref == 'refs/heads/deploy/rearch' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=ref,event=pr
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.licenses=EUPL-1.2
 
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
@@ -115,19 +131,40 @@ jobs:
           push: ${{ env.PUBLISH == 'true' }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
-          # Attestations need an image to attach to, so only when pushing.
-          provenance: ${{ env.PUBLISH == 'true' && 'mode=max' || 'false' }}
-          sbom: ${{ env.PUBLISH == 'true' }}
+          provenance: false
+          sbom: false
+
+      - name: Record the digest
+        if: env.PUBLISH == 'true'
+        run: |
+          echo "${{ matrix.image }}${{ matrix.suffix }}=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # Keep private storage lean: delete untagged versions beyond the newest few.
+  cleanup:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [pystino-gateway, pystino-proxy, pystino-authelia, pystino-redaction]
+    steps:
+      - uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ matrix.image }}
+          package-type: container
+          delete-only-untagged-versions: "true"
+          min-versions-to-keep: 5
 
   # The stack files' invariants, and a compose/Caddy parse of what init writes,
-  # without starting anything. The fresh-install job lives in stack.yml.
+  # without starting anything.
   stack-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - name: Deploy unit tests
-        run: uv run pytest -q apps/gateway/tests/test_deploy_envfile.py apps/gateway/tests/test_deploy_init.py apps/gateway/tests/test_deploy_bootstrap.py apps/gateway/tests/test_deploy_stack.py apps/gateway/tests/test_oidc_backchannel.py
+        run: uv run pytest -q apps/gateway/tests/test_deploy_envfile.py apps/gateway/tests/test_deploy_init.py apps/gateway/tests/test_deploy_bootstrap.py apps/gateway/tests/test_deploy_stack.py apps/gateway/tests/test_deploy_adopt.py apps/gateway/tests/test_oidc_backchannel.py
       - name: init writes a file compose accepts (both modes)
         run: |
           set -eu
@@ -143,6 +180,6 @@ jobs:
           for spec in "https://stack.example.org|" "https://10.0.0.5|tls internal" "http://:80|"; do
             site="${spec%%|*}"; tls="${spec#*|}"
             docker run --rm -e SITE_ADDRESS="$site" -e TLS_DIRECTIVE="$tls" \
-              -v "$PWD/deploy/stack/proxy/Caddyfile:/etc/caddy/Caddyfile:ro" \
-              caddy:2.11-alpine sh -c 'mkdir -p /etc/caddy/extra && caddy adapt --config /etc/caddy/Caddyfile >/dev/null && echo "ok: $SITE_ADDRESS"'
+              -v "$PWD/deploy/stack/proxy:/etc/caddy:ro" \
+              caddy:2.11-alpine sh -c 'caddy adapt --config /etc/caddy/Caddyfile >/dev/null && echo "ok: $SITE_ADDRESS"'
           done

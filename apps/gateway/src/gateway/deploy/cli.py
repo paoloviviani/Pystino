@@ -14,7 +14,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-from gateway.deploy import adopt, bootstrap, doctor, envfile, presets, stackfiles, upgrade
+from gateway.deploy import (
+    adopt,
+    bootstrap,
+    doctor,
+    envfile,
+    presets,
+    registry,
+    stackfiles,
+    upgrade,
+)
 from gateway.deploy.init import TLS_MODES, InitError, InitOptions, build_env
 
 SHIM = """#!/bin/sh
@@ -33,10 +42,19 @@ fi
 reg=$(val PYSTINO_REGISTRY)
 ver=$(val PYSTINO_VERSION)
 if [ "${1:-}" = upgrade ] && [ -n "${2:-}" ]; then ver="$2"; fi
+image="$reg/pystino-gateway:$ver"
+if ! docker image inspect "$image" >/dev/null 2>&1 && ! docker pull -q "$image" >/dev/null; then
+    echo "Could not pull $image." >&2
+    case "$reg" in ghcr.io/*)
+        echo "The images are private while the repositories are: log in once with a token" >&2
+        echo "holding read:packages:  docker login ghcr.io -u <github-user>" >&2;;
+    esac
+    exit 1
+fi
 tty=""
 if [ -t 0 ]; then tty="-it"; fi
 exec docker run --rm $tty -u "$(id -u):$(id -g)" -v "$PWD:/deploy" -w /deploy \\
-    -e PYSTINO_DEPLOY_DIR="$PWD" "$reg/pystino-gateway:$ver" pystino "$@"
+    -e PYSTINO_DEPLOY_DIR="$PWD" "$image" "${PYSTINO_CLI:-pystino}" "$@"
 """
 
 PROXY_README = """# Component hook (report §2, §9). Any *.caddy file here is imported into the
@@ -82,6 +100,18 @@ def _git_revision(path: Path) -> str:
     return f"{sha}-dirty" if dirty else sha
 
 
+def _write_shim(deploy_dir: Path, name: str) -> None:
+    """`./pystino` (or `./cerea`, same script, branded CLI) in the deploy dir."""
+    text = (
+        SHIM
+        if name == "pystino"
+        else SHIM.replace("set -eu\n", f'set -eu\nPYSTINO_CLI="${{PYSTINO_CLI:-{name}}}"\n', 1)
+    )
+    shim = deploy_dir / name
+    shim.write_text(text, encoding="utf-8")
+    shim.chmod(0o755)
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     deploy_dir = _deploy_dir(args)
     env_path = deploy_dir / ".env"
@@ -122,6 +152,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         oidc_internal_base_url=args.oidc_internal_base_url or "",
         oidc_console_client_secret=os.environ.get("PYSTINO_OIDC_CONSOLE_CLIENT_SECRET", ""),
         oidc_chat_client_secret=os.environ.get("PYSTINO_OIDC_CHAT_CLIENT_SECRET", ""),
+        central_url=args.central_url or "",
         upstream_base_url=args.upstream_base_url,
         # Read from the environment or a prompt, never from argv: argv is
         # visible to every process on the host.
@@ -142,20 +173,24 @@ def cmd_init(args: argparse.Namespace) -> int:
         readme.write_text(PROXY_README, encoding="utf-8")
     if args.mode == "dist":
         shutil.copyfile(stackfiles.stack_dir() / "compose.yaml", deploy_dir / "compose.yaml")
-    shim = deploy_dir / "pystino"
-    shim.write_text(SHIM, encoding="utf-8")
-    shim.chmod(0o755)
+    _write_shim(deploy_dir, args.prog_name)
 
     print(
-        f"wrote {env_path} (mode 0600), proxy.d/, ./pystino"
+        f"wrote {env_path} (mode 0600), proxy.d/, ./{args.prog_name}"
         + (", compose.yaml" if args.mode == "dist" else "")
     )
     if result.admin_password:
         print("")
         print(f"  First sign-in:  {options.admin_user} / {result.admin_password}")
         print("  Shown once and stored nowhere in plaintext — keep it now.")
+    if args.mode == "dist" and stackfiles.stack_dir() != stackfiles.IMAGE_STACK_DIR:
+        written = envfile.read(env_path)
+        note = registry.hint(written.get("PYSTINO_REGISTRY", ""))
+        if note:
+            print("")
+            print(note)
     print("")
-    print(f"Next:  cd {deploy_dir} && ./pystino doctor && docker compose up -d --wait")
+    print(f"Next:  cd {deploy_dir} && ./{args.prog_name} doctor && docker compose up -d --wait")
     return 0
 
 
@@ -199,9 +234,7 @@ def cmd_adopt(args: argparse.Namespace) -> int:
         readme.write_text(PROXY_README, encoding="utf-8")
     if args.mode == "dist":
         shutil.copyfile(stackfiles.stack_dir() / "compose.yaml", new_dir / "compose.yaml")
-    shim = new_dir / "pystino"
-    shim.write_text(SHIM, encoding="utf-8")
-    shim.chmod(0o755)
+    _write_shim(new_dir, "pystino")
     print(f"wrote {new_dir / '.env'} from {options.old_deploy_dir} (nothing there was changed)")
     for note in result.notes:
         print(f"note: {note}")
@@ -280,10 +313,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     init = sub.add_parser("init", help="write .env for a new deployment")
+    _add_init_arguments(init, default_preset="team", choices=sorted(presets.PRESETS))
+    init.set_defaults(func=cmd_init, prog_name="pystino")
+
+    _add_common_commands(sub, prog_name="pystino")
+    return parser
+
+
+def _add_init_arguments(
+    init: argparse.ArgumentParser, *, default_preset: str | None, choices: list[str]
+) -> None:
     init.add_argument("--dir", help="deployment directory (default: current)")
     init.add_argument("--origin", help="public origin, https://host[:port]")
     init.add_argument("--admin-email")
-    init.add_argument("--preset", default="team", choices=sorted(presets.PRESETS))
+    init.add_argument("--preset", default=default_preset, choices=choices)
+    init.add_argument("--central-url", help="satellite preset: the central Pystino's origin")
     init.add_argument("--mode", default="dist", choices=("dev", "dist"))
     init.add_argument("--tls", default="acme", choices=TLS_MODES)
     init.add_argument("--idp", default="authelia", choices=("authelia", "external"))
@@ -303,8 +347,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     init.add_argument("--upstream-base-url", default="https://api.cortecs.ai/v1")
     init.add_argument("--force", action="store_true", help="overwrite an existing .env")
-    init.set_defaults(func=cmd_init)
 
+
+def _add_common_commands(sub, *, prog_name: str) -> None:
     boot = sub.add_parser("bootstrap", help="(inside the stack) converge DB and IdP state")
     boot.add_argument(
         "--import-only",
@@ -347,7 +392,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="keep a CEREA_VERSION you moved off the manifest on purpose",
     )
     up.set_defaults(func=cmd_upgrade)
+
+
+def build_cerea_parser() -> argparse.ArgumentParser:
+    """`cerea`: the same commands, for a Cerea-only install.
+
+    Cerea is its own product with its own name; a person setting up the chat
+    should not have to know it is deployed by a tool named after the gateway.
+    `cerea init` offers only the gateway-less presets and picks between them:
+    `--central-url` means satellite (against a central Pystino), otherwise
+    generic (any OpenAI-compatible endpoint).
+    """
+    parser = argparse.ArgumentParser(
+        prog="cerea", description="Set up and manage a Cerea deployment (the chat, standalone)."
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    init = sub.add_parser("init", help="write .env for a new Cerea deployment")
+    _add_init_arguments(init, default_preset=None, choices=["satellite", "generic"])
+    init.set_defaults(func=cmd_init, prog_name="cerea")
+    _add_common_commands(sub, prog_name="cerea")
     return parser
+
+
+def cerea_main(argv: list[str] | None = None) -> int:
+    args = build_cerea_parser().parse_args(argv)
+    if args.command == "init" and args.preset is None:
+        args.preset = "satellite" if args.central_url else "generic"
+    return int(args.func(args))
 
 
 def main(argv: list[str] | None = None) -> int:
