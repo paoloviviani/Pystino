@@ -182,6 +182,8 @@ func partFromMap(m map[string]any) backend.Part {
 		p.SubtaskSessionID = getStr(m, "sessionID", "sessionId")
 		p.Description = getStr(m, "description")
 		p.Agent = getStr(m, "agent")
+	case backend.PartCompaction:
+		p.Auto = getBool(m, "auto")
 	}
 	return p
 }
@@ -274,4 +276,24 @@ func usageFromMessageMap(m map[string]any) *backend.Usage {
 	}
 	u.ContextUsed = u.Input + u.Output + u.Reasoning + u.CacheRead + u.CacheWrite
 	return u
+}
+
+// setSessionUsage records sessionID's latest known Usage, observed off the
+// event stream (opencode's own session object carries no usage field).
+func (b *Backend) setSessionUsage(sessionID string, u *backend.Usage) {
+	b.usageMu.Lock()
+	b.sessionUsage[sessionID] = u
+	b.usageMu.Unlock()
+}
+
+// withUsage fills s.Usage from the cache setSessionUsage populates, so
+// session.get/list carry the latest usage without a Transcript() round trip
+// per call. A session untouched by any event since this process started has
+// no cache entry yet and keeps s.Usage nil — the caller's Transcript() (or
+// session.sync's snapshot) is what backfills that case.
+func (b *Backend) withUsage(s backend.Session) backend.Session {
+	b.usageMu.Lock()
+	s.Usage = b.sessionUsage[s.ID]
+	b.usageMu.Unlock()
+	return s
 }

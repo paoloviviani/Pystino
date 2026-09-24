@@ -117,6 +117,8 @@ func (mc *machine) Handle(ctx context.Context, op string, args json.RawMessage) 
 		return mc.opSessionDiff(ctx, args)
 	case "session.children":
 		return mc.opSessionChildren(ctx, args)
+	case "session.compact":
+		return mc.opSessionCompact(ctx, args)
 
 	case "permission.reply":
 		return mc.opPermissionReply(ctx, args)
@@ -475,6 +477,27 @@ func (mc *machine) opSessionChildren(ctx context.Context, args json.RawMessage) 
 		out = append(out, mc.enrich(c, workspaceID))
 	}
 	return map[string]any{"sessions": orEmpty(out)}, nil
+}
+
+func (mc *machine) opSessionCompact(ctx context.Context, args json.RawMessage) (any, *link.OpError) {
+	var a struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, invalidArgs(err)
+	}
+	dir, _, operr := mc.resolveSession(a.SessionID)
+	if operr != nil {
+		return nil, operr
+	}
+	compactor, ok := mc.back.(backend.Compactor)
+	if !ok {
+		return nil, opErrf("unsupported", "backend %s has no compact capability", mc.back.ID())
+	}
+	if err := compactor.Compact(ctx, dir, a.SessionID); err != nil {
+		return nil, backendErr(err)
+	}
+	return map[string]any{}, nil
 }
 
 func (mc *machine) opPermissionReply(ctx context.Context, args json.RawMessage) (any, *link.OpError) {
