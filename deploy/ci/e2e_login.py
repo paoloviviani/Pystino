@@ -25,10 +25,11 @@ deploy, password = args
 chat = "--chat" in sys.argv
 
 env = {}
-for line in open(f"{deploy}/.env"):
-    if "=" in line and not line.startswith("#"):
-        key, value = line.rstrip("\n").split("=", 1)
-        env[key] = value.strip("'")
+with open(f"{deploy}/.env") as handle:
+    for line in handle:
+        if "=" in line and not line.startswith("#"):
+            key, value = line.rstrip("\n").split("=", 1)
+            env[key] = value.strip("'")
 origin = env["PUBLIC_ORIGIN"]
 public = urllib.parse.urlsplit(origin)
 
@@ -43,7 +44,9 @@ def _resolve(host, *rest, **kw):
 
 
 socket.getaddrinfo = _resolve
-client = httpx.Client(verify=False, follow_redirects=False, timeout=30)
+# verify=False: the trial stacks run TLS_MODE=internal (Caddy's own CA), which
+# no server is meant to trust — that is the whole point of the back-channel.
+client = httpx.Client(verify=False, follow_redirects=False, timeout=30)  # noqa: S501
 
 
 def step(method, url, **kw):
