@@ -124,6 +124,11 @@ func (f *e2eFakeBackend) Subscribe(ctx context.Context) (<-chan backend.BackendE
 type e2eServerConn struct {
 	t    *testing.T
 	conn *websocket.Conn
+	// Frames read while looking for another type, in arrival order. The agent
+	// answers each req on its own goroutine, so a prompt's live events can
+	// reach the wire before that prompt's res; waiting for the res must not
+	// throw them away.
+	skipped []map[string]any
 }
 
 func (s *e2eServerConn) readJSON() map[string]any {
@@ -139,19 +144,33 @@ func (s *e2eServerConn) readJSON() map[string]any {
 	return m
 }
 
-// readUntilType drains frames until one of the given types is seen,
-// returning it. Used to skip past live event frames when waiting for a
-// specific res.
+// readUntilType returns the earliest frame of one of the given types,
+// first from the frames skipped by earlier calls, then off the wire. Frames
+// of other types are kept for later calls, never dropped: which of a res and
+// its turn's events arrives first is a race the protocol allows.
 func (s *e2eServerConn) readUntilType(types ...string) map[string]any {
 	s.t.Helper()
-	for i := 0; i < 200; i++ {
-		m := s.readJSON()
+	matches := func(m map[string]any) bool {
 		typ, _ := m["type"].(string)
 		for _, want := range types {
 			if typ == want {
-				return m
+				return true
 			}
 		}
+		return false
+	}
+	for i, m := range s.skipped {
+		if matches(m) {
+			s.skipped = append(s.skipped[:i], s.skipped[i+1:]...)
+			return m
+		}
+	}
+	for i := 0; i < 200; i++ {
+		m := s.readJSON()
+		if matches(m) {
+			return m
+		}
+		s.skipped = append(s.skipped, m)
 	}
 	s.t.Fatalf("never saw a frame of type %v", types)
 	return nil
