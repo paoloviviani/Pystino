@@ -247,6 +247,8 @@ def build(options: AdoptOptions, release: dict[str, str]) -> AdoptResult:
             ("OIDC_AUDIENCE", values.get("GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE") or "pystino-api"),
             ("OIDC_LINK_LOCAL_BY_EMAIL", values.get("GATEWAY_OIDC__LINK_LOCAL_BY_EMAIL", "false")),
             ("PYSTINO_BOOTSTRAP_ADMIN_EMAIL", admin_email),
+            ("OIDC_KIND", "authelia"),
+            ("OIDC_LOGOUT_URL", f"{origin}/authelia/logout?rd={{redirect}}"),
         ]
         staged = {
             "authelia-config/users_database.yml": users_path.read_bytes(),

@@ -125,6 +125,13 @@ def check(deploy_dir: Path, *, probe_docker: bool = True) -> Report:
         if key in values:
             report.warnings.append(f"{key} is set but no longer read: {why}")
 
+    if {"chat", "authelia"} <= profiles and not values.get("OIDC_LOGOUT_URL"):
+        origin = values.get("PUBLIC_ORIGIN", "https://<origin>")
+        report.warnings.append(
+            "OIDC_LOGOUT_URL is empty: signing out of the chat will not end the bundled "
+            "Authelia's session (it publishes no end_session_endpoint). Set "
+            f"OIDC_LOGOUT_URL='{origin}/authelia/logout?rd={{redirect}}'"
+        )
     if not values.get("PUBLIC_ORIGIN", "").startswith("https://"):
         report.errors.append("PUBLIC_ORIGIN must be an https:// origin")
     if values.get("TLS_MODE") == "internal":

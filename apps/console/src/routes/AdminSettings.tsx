@@ -390,6 +390,7 @@ function ProviderDialog({
   const [isEnabled, setIsEnabled] = useState(true);
   const [kind, setKind] = useState<IdentityKind>("generic");
   const [internalUrl, setInternalUrl] = useState("");
+  const [logoutUrl, setLogoutUrl] = useState("");
   const [groupSource, setGroupSource] = useState<GroupSource>("claim");
   const [adminSource, setAdminSource] = useState<AdminSource>("console");
   const [adminClaim, setAdminClaim] = useState("groups");
@@ -413,6 +414,7 @@ function ProviderDialog({
     setIsEnabled(target.is_enabled);
     setKind(target.kind);
     setInternalUrl(target.internal_base_url);
+    setLogoutUrl(target.logout_url ?? "");
     setGroupSource(target.group_source);
     setAdminSource(target.admin_source);
     setAdminClaim(target.admin_claim);
@@ -432,6 +434,7 @@ function ProviderDialog({
     setIsEnabled(true);
     setKind("generic");
     setInternalUrl("");
+    setLogoutUrl("");
     setGroupSource("claim");
     setAdminSource("console");
     setAdminClaim("groups");
@@ -445,6 +448,7 @@ function ProviderDialog({
   const policy = {
     kind,
     internal_base_url: internalUrl.trim(),
+    logout_url: logoutUrl.trim(),
     group_source: groupSource,
     admin_source: adminSource,
     admin_claim: adminClaim.trim() || "groups",
@@ -568,6 +572,19 @@ function ProviderDialog({
           onChange={(e) => setInternalUrl(e.target.value)}
           hint="Where this server reaches the issuer when not at its public URL — the bundled
             Authelia is http://authelia:9091/authelia. Browsers always use the issuer."
+        />
+        <Input
+          label="Logout URL (optional)"
+          value={logoutUrl}
+          onChange={(e) => setLogoutUrl(e.target.value)}
+          placeholder={
+            kind === "authelia"
+              ? `${issuer.trim().replace(/\/+$/, "")}/logout?rd={redirect}`
+              : "the provider's end_session_endpoint"
+          }
+          hint="Where signing out sends the browser to end this directory's own session.
+            {redirect} is replaced by the page to come back to. Empty: the provider's
+            end_session_endpoint, or for Authelia (which publishes none) the default shown."
         />
         <Input label="Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} />
         <Input

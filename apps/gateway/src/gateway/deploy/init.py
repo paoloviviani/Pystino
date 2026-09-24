@@ -275,6 +275,13 @@ def build_env(
             ("OIDC_CHAT_CLIENT_SECRET", chat_secret),
             ("OIDC_GROUPS_CLAIM", "groups"),
             ("OIDC_AUDIENCE", "pystino-api"),
+            # The provider row the gateway seeds is then an Authelia one: the
+            # users-file sync (unconfirmed until a first dry run) and the
+            # console's user management (D10).
+            ("OIDC_KIND", "authelia"),
+            # Authelia publishes no end_session_endpoint; the chat signs out
+            # through the portal's own /logout, `{redirect}` = where to land.
+            ("OIDC_LOGOUT_URL", f"{origin}/authelia/logout?rd={{redirect}}"),
         ]
         authelia = [
             ("AUTHELIA_COOKIE_DOMAIN", host),

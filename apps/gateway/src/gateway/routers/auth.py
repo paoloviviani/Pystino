@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import secrets
 from typing import Any
-from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -20,6 +19,7 @@ from joserfc.jwk import OctKey
 from joserfc.jwt import JWTClaimsRegistry
 from pydantic import BaseModel, Field
 
+from gateway import identity_policy
 from gateway.config import Settings
 from gateway.deps import ManagementUserDep, SessionDep, SettingsDep
 from gateway.directory.engine import link_at_login
@@ -531,62 +531,52 @@ async def logout(request: Request, session: SessionDep, settings: SettingsDep) -
     Keycloak's page into JavaScript instead of taking the browser there. The
     console does a full page navigation with it.
 
-    ``end_session_endpoint`` is optional in the spec. When a provider does not
-    publish one, ``redirect_to`` is null and the caller falls back to signing
-    in again — our session is still gone, which is as much as we can do.
+    ``end_session_endpoint`` is optional in the spec, and the bundled Authelia
+    (4.39) publishes none — so a null here used to mean the same silent
+    half-logout. The provider's configured logout URL comes first, then
+    discovery, then the kind's default (``identity_policy.logout_redirect``);
+    null only when none of them names anything.
     """
     redirect_to: str | None = None
     console_mounted = bool(getattr(request.app.state, "console_mounted", False))
     # Resolved through the provider registry, because `app.state.oidc_client`
     # is set nowhere and has not been since ADR 0051 moved providers into rows.
-    # `getattr` with a default meant this read `None` forever and the route
-    # silently did half its job: our cookie went, the provider's SSO session
-    # stayed, and the next visit to /auth/login came back signed in as the same
-    # person — the exact failure the docstring above says this exists to
-    # prevent. Nothing logged it, because a provider that publishes no
-    # `end_session_endpoint` produces the same null.
     client, record = await _logout_client(request, session)
-    if isinstance(client, OIDCClient):
-        try:
-            metadata = await client.metadata()
-        except OIDCError as exc:
-            # Never fatal: failing to reach the provider must not leave someone
-            # unable to drop their session here.
-            logger.warning("could not read discovery for logout: %s", exc)
-        else:
-            if metadata.end_session_endpoint:
-                # Built from the origin this request actually arrived on, so it
-                # is the origin whose post-logout URI is registered with the
-                # provider. Hard-coding it would break the moment the stack is
-                # reached on the overlay address instead of localhost.
-                origin = str(request.base_url).rstrip("/")
-                landing = f"{origin}{_DEFAULT_LANDING}" if console_mounted else origin
-                parameters = {"post_logout_redirect_uri": landing}
-
-                # With the hint, the provider knows which session to end and
-                # does it. Without one it cannot, and Keycloak stops to ask —
-                # correctly, since otherwise any page able to navigate a
-                # browser here could sign people out. `client_id` is what makes
-                # the request resolvable at all in that case.
-                hint = request.cookies.get(_HINT_COOKIE)
-                if hint:
-                    parameters["id_token_hint"] = hint
-                else:
-                    # The *provider's* client id, not the environment's.
-                    # `settings.oidc.client_id` is what seeded the first row and
-                    # can name a different provider than the one being signed
-                    # out of — or nothing at all, in a deployment whose
-                    # providers were all added through the console.
-                    parameters["client_id"] = (
-                        record.client_id if record is not None else settings.oidc.client_id
-                    )
-
-                redirect_to = f"{metadata.end_session_endpoint}?{urlencode(parameters)}"
+    if record is not None:
+        end_session: str | None = None
+        if isinstance(client, OIDCClient) and not record.logout_url.strip():
+            try:
+                end_session = (await client.metadata()).end_session_endpoint
+            except OIDCError as exc:
+                # Never fatal: failing to reach the provider must not leave
+                # someone unable to drop their session here.
+                logger.warning("could not read discovery for logout: %s", exc)
+        # Built from the origin this request actually arrived on, so it is
+        # the origin whose post-logout URI the provider knows.
+        origin = str(request.base_url).rstrip("/")
+        landing = f"{origin}{_DEFAULT_LANDING}" if console_mounted else origin
+        redirect_to = identity_policy.logout_redirect(
+            override=record.logout_url,
+            end_session_endpoint=end_session,
+            kind=record.kind,
+            issuer=record.issuer,
+            landing=landing,
+            id_token_hint=request.cookies.get(_HINT_COOKIE),
+            # The *provider's* client id, not the environment's: the env one
+            # seeded the first row and may name a different provider.
+            client_id=record.client_id,
+        )
 
     response = JSONResponse({"status": "ok", "redirect_to": redirect_to})
     response.delete_cookie(settings.session_cookie_name)
     # Same path it was set with, or the browser keeps it.
     response.delete_cookie(_HINT_COOKIE, path="/auth")
+    # The other applications on this origin (the chat): one sign-out, not a
+    # console signed out beside a chat still signed in.
+    for spec in settings.logout_also_clear_cookies:
+        name, _, path = spec.partition(":")
+        if name.strip():
+            response.delete_cookie(name.strip(), path=path.strip() or "/")
     return response
 
 
