@@ -299,14 +299,19 @@ func TestE2EFakeCereaAgainstFakeBackend(t *testing.T) {
 		Logf:        t.Logf,
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Generous margin over the sub-millisecond common case: this box runs
+	// several heavy agent workloads concurrently (found live — a run under
+	// load missed a 9s deadline that normally resolves in ~10ms), so the
+	// margin is here to absorb scheduling delay, not because the test
+	// itself is slow.
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	go lnk.Run(ctx)
 	go forwardEvents(ctx, mat, lnk)
 
 	select {
 	case <-scriptDone:
-	case <-time.After(9 * time.Second):
+	case <-time.After(40 * time.Second):
 		t.Fatal("server-side script never completed")
 	}
 
