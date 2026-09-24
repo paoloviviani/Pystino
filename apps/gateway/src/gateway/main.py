@@ -39,6 +39,7 @@ from gateway.routers import (
     billing,
     chat,
     console,
+    directory,
     embeddings,
     health,
     identity,
@@ -49,6 +50,7 @@ from gateway.routers import (
     models,
     ocr,
     pystino,
+    scim,
     search,
     tokens,
 )
@@ -212,6 +214,19 @@ async def init_app_state(
     except Exception:
         logger.warning("could not read quota notification settings at startup", exc_info=True)
     notifier.start()
+    # Batch directory sync (ADR 0088 draft): scheduled pulls for providers
+    # whose adapter has been confirmed. A Valkey lock per provider keeps the
+    # workers from syncing the same directory twice.
+    from gateway.directory.service import DirectoryScheduler
+
+    app.state.directory_scheduler = DirectoryScheduler(
+        session_factory,
+        app.state.secrets,
+        control_http,
+        settings,
+        getattr(app.state, "valkey", None),
+    )
+    app.state.directory_scheduler.start()
     # The day's rate is fetched before serving, so the first USD-priced
     # request of the day does not wait on the rates API. Failure is the same
     # non-fatal story: the last known rate answers, or admission refuses
@@ -304,6 +319,8 @@ async def shutdown_app_state(app: FastAPI) -> None:
         await policy.stop()
     if (notifier := getattr(app.state, "quota_notifier", None)) is not None:
         await notifier.stop()
+    if (scheduler := getattr(app.state, "directory_scheduler", None)) is not None:
+        await scheduler.stop()
     if (fx := getattr(app.state, "fx", None)) is not None:
         await fx.stop()
         await fx.close()
@@ -375,6 +392,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(tokens.router)
     app.include_router(me.router)
     app.include_router(admin.router)
+    app.include_router(directory.router)
+    app.include_router(scim.router)
     # The house issuer (ADR 0068). Registered only when enabled — off means
     # the routes do not exist and discovery does not resolve, which is what
     # "off means absent" has to mean for a federating surface. Discovery's
