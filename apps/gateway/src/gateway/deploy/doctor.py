@@ -1,20 +1,25 @@
 """`pystino doctor`: what is wrong with this deployment directory, all at once.
 
-Static checks only — it reads `.env` and the files it names, and asks the
-Docker CLI for its Compose version when one is on PATH. It never starts or
+Static checks — it reads `.env` and the files it names, and asks the Docker CLI
+for its Compose version when one is on PATH. With `--against-running` it also
+compares that with the running containers (`running.py`). It never starts or
 stops anything, so it is safe to run against a live install.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import stat
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gateway.deploy import envfile, registry, stackfiles
+import yaml
+
+from gateway.deploy import envfile, registry, running, stackfiles
 
 MIN_COMPOSE = (2, 24)
 
@@ -156,3 +161,32 @@ def check(deploy_dir: Path, *, probe_docker: bool = True) -> Report:
 
     report.notes.append("back up: " + "; ".join(BACKUP))
     return report
+
+
+def check_running(deploy_dir: Path, report: Report, *, inspect: str | None = None) -> None:
+    """Add what differs between `.env` and the running containers to the report."""
+    values = envfile.read(deploy_dir / ".env")
+    first = (values.get("COMPOSE_FILE") or "compose.yaml").split(":")[0]
+    compose_path = Path(first) if Path(first).is_absolute() else deploy_dir / first
+    if not compose_path.is_file():
+        report.errors.append(f"--against-running: {compose_path} is not readable here")
+        return
+    if inspect == "-":
+        data = json.load(sys.stdin)
+    elif inspect:
+        data = json.loads(Path(inspect).read_text(encoding="utf-8"))
+    else:
+        data = running.collect(deploy_dir)
+    if data is None:
+        report.errors.append(
+            "--against-running needs `docker inspect` data: run it through ./pystino, "
+            "which collects it on the host, or pass --inspect FILE"
+        )
+        return
+    wanted = running.expected_services(yaml.safe_load(compose_path.read_text()), values)
+    found = running.compare(wanted, data, values.get("COMPOSE_PROJECT_NAME", ""))
+    report.errors += found.errors
+    report.warnings += found.warnings
+    report.notes += found.notes
+    if not (found.errors or found.warnings):
+        report.notes.append(f"the running containers match .env ({len(wanted)} services)")
