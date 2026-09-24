@@ -132,7 +132,10 @@ func messageFromMap(m map[string]any) backend.Message {
 			msg.CompletedAt = &completed
 		}
 	}
-	if e := getMap(m, "error"); e != nil {
+	// An abort is how opencode records a person pressing Stop (session.cancel),
+	// not a failure: surfacing it as an error would show a failed turn for a
+	// deliberate stop, so it ends the message like a normal finish.
+	if e := getMap(m, "error"); e != nil && getStr(e, "name") != "MessageAbortedError" {
 		msg.Error = getStr(e, "message", "name")
 	}
 	return msg

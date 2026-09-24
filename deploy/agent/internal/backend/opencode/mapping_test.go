@@ -194,3 +194,17 @@ func TestResolveClientMessageIDIgnoresAssistantMessages(t *testing.T) {
 		t.Fatalf("an assistant message must never claim a pending clientMessageId: %+v", msg)
 	}
 }
+
+// A Stop is not a failure: opencode's abort error must not reach Cerea as one.
+func TestAbortedMessageIsNotAnError(t *testing.T) {
+	aborted := messageFromMap(map[string]any{"id": "m", "role": "assistant",
+		"error": map[string]any{"name": "MessageAbortedError", "data": map[string]any{"message": "aborted"}}})
+	if aborted.Error != "" {
+		t.Errorf("aborted message error = %q, want none", aborted.Error)
+	}
+	failed := messageFromMap(map[string]any{"id": "m", "role": "assistant",
+		"error": map[string]any{"name": "APIError", "message": "upstream 500"}})
+	if failed.Error == "" {
+		t.Error("a real provider error must still be reported")
+	}
+}
