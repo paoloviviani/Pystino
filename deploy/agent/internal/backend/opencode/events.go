@@ -234,6 +234,37 @@ func (b *Backend) translateEvent(directory, typ string, props map[string]any) []
 			By:        "user",
 		})}
 
+	case "question.asked":
+		req := questionRequestFromMap(props)
+		if req.id == "" {
+			return nil
+		}
+		return []backend.BackendEvent{wrap(req.sessionID, backend.Event{
+			Kind:              backend.EventQuestionAsked,
+			QuestionRequestID: req.id,
+			Questions:         req.questions,
+			QuestionCallID:    req.callID,
+		})}
+
+	case "question.replied":
+		var answers [][]string
+		for _, raw := range getSlice(props, "answers") {
+			answers = append(answers, asStrings(raw))
+		}
+		return []backend.BackendEvent{wrap(sessionID, backend.Event{
+			Kind:              backend.EventQuestionResolved,
+			QuestionRequestID: getStr(props, "requestID", "requestId"),
+			QuestionDecision:  "answered",
+			QuestionAnswers:   answers,
+		})}
+
+	case "question.rejected":
+		return []backend.BackendEvent{wrap(sessionID, backend.Event{
+			Kind:              backend.EventQuestionResolved,
+			QuestionRequestID: getStr(props, "requestID", "requestId"),
+			QuestionDecision:  "rejected",
+		})}
+
 	case "todo.updated":
 		var todos []backend.Todo
 		for _, tm := range asMaps(getSlice(props, "todos")) {

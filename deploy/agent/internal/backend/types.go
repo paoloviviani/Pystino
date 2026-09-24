@@ -212,6 +212,24 @@ type Todo struct {
 	Priority string     `json:"priority,omitempty"`
 }
 
+// QuestionOption is one choice offered for a single question (the
+// user-question tool design; opencode's own QuestionOption: a short label
+// plus why someone might pick it).
+type QuestionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+
+// QuestionItem is one question of a (possibly multi-question) ask —
+// opencode's own Question shape, verified live against 1.18.31's built-in
+// "question" tool.
+type QuestionItem struct {
+	Question    string           `json:"question"`
+	Header      string           `json:"header,omitempty"`
+	Options     []QuestionOption `json:"options"`
+	MultiSelect bool             `json:"multiple,omitempty"`
+}
+
 // Attachment is a prompt's non-text input (PROTOCOL.md §6). URL is a data:
 // URL for P0.
 type Attachment struct {
@@ -255,6 +273,13 @@ const (
 	EventSession           EventKind = "session"
 	EventError             EventKind = "error"
 	EventTodo              EventKind = "todo"
+	// EventQuestionAsked/EventQuestionResolved are the user-question tool
+	// design's own events: opencode's built-in "question" tool call (its
+	// own question.asked/question.replied/question.rejected — the latter
+	// two unified into one resolved event here, the same normalization
+	// permission.replied already does for once/always/reject).
+	EventQuestionAsked    EventKind = "question.asked"
+	EventQuestionResolved EventKind = "question.resolved"
 )
 
 // Event is one normalized stream event (PROTOCOL.md §7). Its fields are
@@ -305,6 +330,16 @@ type Event struct {
 
 	// todo: full list
 	Todos []Todo
+
+	// question.asked
+	QuestionRequestID string
+	Questions         []QuestionItem
+	QuestionCallID    string
+
+	// question.resolved (QuestionRequestID above names the request;
+	// QuestionDecision carries "answered" | "rejected")
+	QuestionDecision string
+	QuestionAnswers  [][]string
 }
 
 // MarshalJSON always emits arrays for the transcript's lists: a fresh session

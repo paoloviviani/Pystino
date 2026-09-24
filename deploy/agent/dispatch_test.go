@@ -129,6 +129,29 @@ func (f *fakeBackendNoCompact) Subscribe(context.Context) (<-chan backend.Backen
 
 var _ backend.Backend = (*fakeBackendNoCompact)(nil)
 
+// fakeBackendAsker adds backend.Asker on top of fakeBackend's floor, for the
+// question.reply tests: embedding promotes every other method, so this type
+// only has to record the two calls it exists to test.
+type fakeBackendAsker struct {
+	*fakeBackend
+	replied  []string
+	answers  [][][]string
+	rejected []string
+}
+
+func (f *fakeBackendAsker) ReplyQuestion(_ context.Context, _, _, requestID string, answers [][]string) error {
+	f.replied = append(f.replied, requestID)
+	f.answers = append(f.answers, answers)
+	return nil
+}
+
+func (f *fakeBackendAsker) RejectQuestion(_ context.Context, _, _, requestID string) error {
+	f.rejected = append(f.rejected, requestID)
+	return nil
+}
+
+var _ backend.Asker = (*fakeBackendAsker)(nil)
+
 func newTestMachine(t *testing.T, back backend.Backend) *machine {
 	t.Helper()
 	dir := t.TempDir()
@@ -184,6 +207,81 @@ func TestOpSessionCompactUnsupportedBackend(t *testing.T) {
 	}
 	if operr.Code != "unsupported" {
 		t.Fatalf("code = %q, want unsupported", operr.Code)
+	}
+}
+
+// question.reply's "answer" decision calls ReplyQuestion with the answers in
+// order (the user-question tool design).
+func TestOpQuestionReplyAnswer(t *testing.T) {
+	back := &fakeBackendAsker{fakeBackend: &fakeBackend{}}
+	mc := newTestMachine(t, back)
+	trackTestSession(t, mc, "s1")
+
+	res, operr := mc.Handle(context.Background(), "question.reply", json.RawMessage(
+		`{"sessionId":"s1","requestId":"que_1","decision":"answer","answers":[["A"],["X","Y"]]}`,
+	))
+	if operr != nil {
+		t.Fatalf("unexpected error: %+v", operr)
+	}
+	if _, ok := res.(map[string]any); !ok {
+		t.Fatalf("result = %#v, want an empty object", res)
+	}
+	if len(back.replied) != 1 || back.replied[0] != "que_1" {
+		t.Fatalf("replied = %v, want [que_1]", back.replied)
+	}
+	if len(back.answers) != 1 || len(back.answers[0]) != 2 || back.answers[0][0][0] != "A" {
+		t.Fatalf("answers = %+v", back.answers)
+	}
+	if len(back.rejected) != 0 {
+		t.Fatalf("rejected = %v, want none", back.rejected)
+	}
+}
+
+// question.reply's "reject" decision calls RejectQuestion, not ReplyQuestion.
+func TestOpQuestionReplyReject(t *testing.T) {
+	back := &fakeBackendAsker{fakeBackend: &fakeBackend{}}
+	mc := newTestMachine(t, back)
+	trackTestSession(t, mc, "s1")
+
+	_, operr := mc.Handle(context.Background(), "question.reply", json.RawMessage(
+		`{"sessionId":"s1","requestId":"que_2","decision":"reject"}`,
+	))
+	if operr != nil {
+		t.Fatalf("unexpected error: %+v", operr)
+	}
+	if len(back.rejected) != 1 || back.rejected[0] != "que_2" {
+		t.Fatalf("rejected = %v, want [que_2]", back.rejected)
+	}
+	if len(back.replied) != 0 {
+		t.Fatalf("replied = %v, want none", back.replied)
+	}
+}
+
+// A backend that does not implement backend.Asker must refuse with
+// `unsupported` (ACP: PROTOCOL.md/the task's "ACP reports questions: false").
+func TestOpQuestionReplyUnsupportedBackend(t *testing.T) {
+	back := &fakeBackend{}
+	mc := newTestMachine(t, back)
+	trackTestSession(t, mc, "s1")
+
+	_, operr := mc.Handle(context.Background(), "question.reply", json.RawMessage(
+		`{"sessionId":"s1","requestId":"que_1","decision":"answer","answers":[["A"]]}`,
+	))
+	if operr == nil || operr.Code != "unsupported" {
+		t.Fatalf("operr = %+v, want unsupported", operr)
+	}
+}
+
+func TestOpQuestionReplyInvalidDecision(t *testing.T) {
+	back := &fakeBackendAsker{fakeBackend: &fakeBackend{}}
+	mc := newTestMachine(t, back)
+	trackTestSession(t, mc, "s1")
+
+	_, operr := mc.Handle(context.Background(), "question.reply", json.RawMessage(
+		`{"sessionId":"s1","requestId":"que_1","decision":"maybe"}`,
+	))
+	if operr == nil || operr.Code != "invalid" {
+		t.Fatalf("operr = %+v, want invalid", operr)
 	}
 }
 
