@@ -42,17 +42,22 @@ type Config struct {
 	// (opencode has no server-side memory of a session's chosen mode/model
 	// across prompts) across agent restarts.
 	OverlayPath string
+	// StartupTimeout bounds Start's wait for the first health check
+	// (default 30s). A first run on a cold cache can be slower than that;
+	// the integration test overrides it rather than this package assuming
+	// every environment is warm.
+	StartupTimeout time.Duration
 	// Logf receives lifecycle-only messages: started, healthy, restarting,
 	// exited (R6 — never frame or response bodies).
 	Logf func(format string, args ...any)
 }
 
 const (
-	startupTimeout  = 30 * time.Second
-	healthPollEvery = 200 * time.Millisecond
-	restartMinDelay = time.Second
-	restartMaxDelay = 30 * time.Second
-	stopGrace       = 3 * time.Second
+	defaultStartupTimeout = 30 * time.Second
+	healthPollEvery       = 200 * time.Millisecond
+	restartMinDelay       = time.Second
+	restartMaxDelay       = 30 * time.Second
+	stopGrace             = 3 * time.Second
 )
 
 // Backend is internal/backend.Backend over one supervised opencode
@@ -164,7 +169,11 @@ func (b *Backend) Start(ctx context.Context) error {
 	b.doneCh = make(chan struct{})
 	go b.superviseLoop(ctx)
 
-	if err := b.waitHealthy(ctx, startupTimeout); err != nil {
+	timeout := b.cfg.StartupTimeout
+	if timeout == 0 {
+		timeout = defaultStartupTimeout
+	}
+	if err := b.waitHealthy(ctx, timeout); err != nil {
 		return err
 	}
 	b.cfg.Logf("opencode: healthy on %s", b.baseURL())

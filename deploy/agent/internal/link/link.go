@@ -165,6 +165,21 @@ func (l *Link) Paired() bool {
 	return l.paired
 }
 
+// Close sends a normal WebSocket close frame on the current connection, if
+// any. Best effort and non-blocking on the network: used at shutdown so
+// Cerea sees a clean close instead of the connection just dropping when
+// this process exits (which still works, but leaves Cerea to notice via a
+// read error or a missed ping instead of being told directly).
+func (l *Link) Close() error {
+	l.mu.Lock()
+	conn := l.conn
+	l.mu.Unlock()
+	if conn == nil {
+		return nil
+	}
+	return conn.Close(websocket.StatusNormalClosure, "agent shutting down")
+}
+
 // Run dials, serves, and reconnects with backoff until ctx is cancelled or
 // Cerea closes with 4403 (revoked — PROTOCOL.md §3/§4), which Run treats as
 // permanent and returns errGiveUp for.
