@@ -141,6 +141,14 @@ def test_caddyfile_has_one_site_and_the_component_hook() -> None:
     assert "cerea.pviviani.eu" not in text
 
 
+def test_authelia_config_comments_hold_no_template_expression() -> None:
+    # Authelia's template filter executes the whole file, comments included.
+    text = (STACK / "authelia" / "configuration.yml").read_text()
+    for number, line in enumerate(text.splitlines(), start=1):
+        if line.lstrip().startswith("#"):
+            assert "{{" not in line, f"line {number}: template syntax in a comment runs"
+
+
 def test_authelia_config_holds_no_secret_and_every_client() -> None:
     text = (STACK / "authelia" / "configuration.yml").read_text()
     body = re.sub(r"(?m)^\s*#.*$", "", text)
