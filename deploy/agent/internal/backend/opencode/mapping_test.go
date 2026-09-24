@@ -195,6 +195,52 @@ func TestResolveClientMessageIDIgnoresAssistantMessages(t *testing.T) {
 	}
 }
 
+// CompactionPart (opencode's OpenAPI, GET /doc, 1.18.31): a marker part on
+// the assistant message that summarized the session. `auto` is the one
+// field PROTOCOL.md's normalized `compaction` part carries.
+func TestPartFromMapCompaction(t *testing.T) {
+	p := partFromMap(map[string]any{
+		"id": "prt_3", "messageID": "msg_1", "sessionID": "ses_1", "type": "compaction", "auto": true,
+	})
+	if p.Type != backend.PartCompaction {
+		t.Fatalf("Type = %q, want compaction", p.Type)
+	}
+	if !p.Auto {
+		t.Errorf("Auto = false, want true")
+	}
+}
+
+func TestPartFromMapCompactionManual(t *testing.T) {
+	p := partFromMap(map[string]any{
+		"id": "prt_4", "messageID": "msg_1", "type": "compaction", "auto": false,
+	})
+	if p.Auto {
+		t.Errorf("Auto = true, want false")
+	}
+}
+
+// The session-usage cache (session.get/list, PROTOCOL.md §7): opencode's own
+// session object carries no usage field, so the backend caches the latest
+// Usage it has observed per session and answers withUsage from that cache.
+func TestSessionUsageCache(t *testing.T) {
+	b := New(Config{})
+	if got := b.withUsage(backend.Session{ID: "s1"}); got.Usage != nil {
+		t.Fatalf("Usage = %+v, want nil before any observation", got.Usage)
+	}
+
+	u := &backend.Usage{Input: 10, Output: 5, ContextUsed: 15}
+	b.setSessionUsage("s1", u)
+
+	got := b.withUsage(backend.Session{ID: "s1"})
+	if got.Usage != u {
+		t.Fatalf("Usage = %+v, want the cached pointer %+v", got.Usage, u)
+	}
+	// A different session's cache entry must not leak onto this one.
+	if got := b.withUsage(backend.Session{ID: "s2"}); got.Usage != nil {
+		t.Fatalf("Usage = %+v, want nil for an untouched session", got.Usage)
+	}
+}
+
 // A Stop is not a failure: opencode's abort error must not reach Cerea as one.
 func TestAbortedMessageIsNotAnError(t *testing.T) {
 	aborted := messageFromMap(map[string]any{"id": "m", "role": "assistant",

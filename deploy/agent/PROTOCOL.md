@@ -102,6 +102,7 @@ All ids are opaque strings. `workspaceId` is the agent's own registry id; a work
 | `session.sync` | `{sessionId, epoch?, afterSeq?}` | `{epoch, seq, events: Envelope[]}` if `epoch` matches and the ring buffer still holds `afterSeq+1…seq`; else `{epoch, seq, snapshot: Transcript}` |
 | `session.diff` | `{sessionId}` | `{files: FileDiff[]}` (capability `diff`) |
 | `session.children` | `{sessionId}` | `{sessions: Session[]}` (capability `children`) |
+| `session.compact` | `{sessionId}` | `{}` once accepted (capability `compact`; `unsupported` if the backend has none — opencode: `POST /session/:id/summarize`) |
 | `backend.modes` | `{backend?, workspaceId?}` | `{modes: Mode[]}` |
 | `backend.models` | `{backend?, workspaceId?}` | `{models: Model[], hidden: number}` (already filtered by `allowFreeModels`; `hidden` counts what the filter removed) |
 
@@ -143,8 +144,11 @@ Envelope: `{sessionId, epoch, seq, event}`. `epoch` is a random id minted when t
 - `tool` `{callId, tool, status:"pending"|"running"|"completed"|"error", title?, input{}, output?, error?}`
 - `file` `{mime, filename?, url?}`
 - `subtask` `{sessionId?, description?, agent?}` (a subagent spawn)
+- `compaction` `{auto: bool}` — a marker part on the assistant message that summarized the session (opencode: `CompactionPart`, verified against 1.18.31's `GET /doc`; carried as an ordinary part on `message.part.updated`/the transcript, not a separate event kind). `auto` distinguishes opencode's own context-overflow trigger from a person's "Compact now". opencode's OpenAPI also has richer `session.next.compaction.{started,delta,ended}`/`session.compacted` broadcast events (progress text, `reason: auto|manual`) that this backend does not map — the `compaction` part is the single signal Cerea needs, per §8.
 
 The agent is subscribed to its backend from process start, so it has seen every event of every session touched since; for sessions untouched since start, the backend's persisted transcript is exact. The snapshot therefore equals "persisted transcript + everything applied since", with no gap.
+
+**Usage on `Session` (`session.get`/`session.list`).** opencode's own session object carries no usage field — only assistant messages do — so the agent caches each session's latest `Usage` as it is observed on the event stream (or when `Transcript` is fetched) and answers `session.get`/`session.list` from that cache. A session this process has not touched since it started (no event, no `Transcript` call) answers with `usage: null`; the caller's `session.sync` snapshot (which does read the persisted transcript) is what backfills that case, per the no-gap guarantee above.
 
 ## 8. Cerea side (what maps to what)
 

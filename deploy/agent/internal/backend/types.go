@@ -55,11 +55,12 @@ type Message struct {
 type PartType string
 
 const (
-	PartText    PartType = "text"
-	PartReason  PartType = "reasoning"
-	PartTool    PartType = "tool"
-	PartFile    PartType = "file"
-	PartSubtask PartType = "subtask"
+	PartText       PartType = "text"
+	PartReason     PartType = "reasoning"
+	PartTool       PartType = "tool"
+	PartFile       PartType = "file"
+	PartSubtask    PartType = "subtask"
+	PartCompaction PartType = "compaction"
 )
 
 // ToolStatus is a tool part's lifecycle state.
@@ -109,6 +110,10 @@ type Part struct {
 	SubtaskSessionID string `json:"sessionId,omitempty"`
 	Description      string `json:"description,omitempty"`
 	Agent            string `json:"agent,omitempty"`
+
+	// compaction (opencode's CompactionPart: a marker part on the assistant
+	// message that summarized the session, PROTOCOL.md §7)
+	Auto bool `json:"auto,omitempty"`
 }
 
 // Decision is a human's (or auto-accept's) answer to a PermissionRequest.
