@@ -37,6 +37,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
+from gateway import identity_policy
 from gateway.accounting.cost import select_price
 from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings, Settings
 from gateway.deps import (
@@ -2436,14 +2437,19 @@ async def update_user(
     fields = payload.model_dump(exclude_unset=True)
     for field, value in fields.items():
         setattr(user, field, value)
+    # Provenance (ADR 0088): what the console sets is the console's, so a
+    # provider deciding admin by claim can never undo it — and a console
+    # reactivation clears a directory deactivation.
+    if "is_admin" in fields:
+        user.admin_source = "manual"
+    if "is_active" in fields:
+        user.deactivated_by = None if fields["is_active"] else "manual"
     # A new list every time: SQLAlchemy does not see in-place mutation of a
     # JSON attribute, and an append the unit-of-work never flushes would make
     # the override exist only until the request ended — the edit would revert
     # at the next login exactly as if the column were not there.
     if edited := [field for field in _PROFILE_FIELDS if field in fields]:
-        user.admin_edited_fields = list(
-            dict.fromkeys([*(user.admin_edited_fields or []), *edited])
-        )
+        user.admin_edited_fields = list(dict.fromkeys([*(user.admin_edited_fields or []), *edited]))
     await session.commit()
 
     # Not by re-reading the listing and picking a row out of it: the listing is
@@ -2856,7 +2862,39 @@ def _idp_response(record: Any) -> IdentityProviderResponse:
         is_enabled=record.is_enabled,
         source=record.source,
         internal_base_url=record.internal_base_url,
+        kind=record.kind,
+        group_source=record.group_source,
+        admin_source=record.admin_source,
+        admin_claim=record.admin_claim,
+        admin_values=list(record.admin_values),
+        subject_claim=record.subject_claim,
+        sync_adapter=record.sync_adapter,
+        sync_interval_minutes=record.sync_interval_minutes,
+        sync_deprovision=record.sync_deprovision,
+        sync_create_users=record.sync_create_users,
+        sync_confirmed=record.sync_confirmed,
+        capabilities=identity_policy.capabilities(record.kind).as_dict(),
     )
+
+
+def _check_policy(row: IdentityProvider) -> None:
+    try:
+        # Column defaults only apply at INSERT, so a row being created still
+        # holds None where it will hold the default; validate what it will be.
+        identity_policy.validate(
+            row.kind or "generic",
+            row.group_source or "claim",
+            row.admin_source or "console",
+            row.sync_adapter or "none",
+            row.sync_deprovision or "disable",
+        )
+    except identity_policy.PolicyError as exc:
+        raise BadRequestError(str(exc), code="invalid_identity_policy") from exc
+    if row.admin_source == "claim" and not row.admin_values:
+        raise BadRequestError(
+            "Admin from a claim needs at least one value that confers it.",
+            code="invalid_identity_policy",
+        )
 
 
 @router.get("/identity-providers", response_model=list[IdentityProviderResponse])
@@ -2906,9 +2944,16 @@ async def create_identity_provider(
         link_local_by_email=payload.link_local_by_email,
         group_sync=GroupSync(payload.group_sync),
         internal_base_url=payload.internal_base_url.strip().rstrip("/"),
+        kind=payload.kind,
+        group_source=payload.group_source,
+        admin_source=payload.admin_source,
+        admin_claim=payload.admin_claim,
+        admin_values=list(payload.admin_values),
+        subject_claim=payload.subject_claim,
         is_enabled=True,
         created_by=admin.id,
     )
+    _check_policy(row)
     session.add(row)
     await session.commit()
     return _idp_response(record_from_row(row, request.app.state.secrets))
@@ -2955,6 +3000,34 @@ async def update_identity_provider(
         row.is_enabled = fields["is_enabled"]
     if "internal_base_url" in fields and fields["internal_base_url"] is not None:
         row.internal_base_url = fields["internal_base_url"].strip().rstrip("/")
+    for name in (
+        "kind",
+        "group_source",
+        "admin_source",
+        "admin_claim",
+        "admin_values",
+        "sync_adapter",
+        "sync_interval_minutes",
+        "sync_deprovision",
+        "sync_create_users",
+    ):
+        if name in fields and fields[name] is not None:
+            setattr(row, name, fields[name])
+    if "subject_claim" in fields and fields["subject_claim"] not in (None, row.subject_claim):
+        # Changing the identity key on a directory with users would silently
+        # make every one of them a new person at their next login.
+        has_users = await session.execute(select(User.id).where(User.issuer == row.issuer).limit(1))
+        if has_users.scalar_one_or_none() is not None:
+            raise BadRequestError(
+                "This provider already has users; changing the subject claim would "
+                "re-key every one of them. Create a new provider instead.",
+                code="subject_claim_locked",
+            )
+        row.subject_claim = fields["subject_claim"]
+    if "sync_adapter" in fields:
+        # A new adapter starts over: its first run is a dry run again.
+        row.sync_confirmed = False
+    _check_policy(row)
     await session.commit()
     return _idp_response(record_from_row(row, request.app.state.secrets))
 

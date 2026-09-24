@@ -57,6 +57,23 @@ class ProviderRecord:
     # Back-channel base (OIDCSettings.internal_base_url); empty for an IdP
     # this server reaches at its public issuer.
     internal_base_url: str = ""
+    # Identity policy (ADR 0088); defaults reproduce the behaviour before it.
+    kind: str = "generic"
+    group_source: str = "claim"
+    admin_source: str = "console"
+    admin_claim: str = "groups"
+    admin_values: tuple[str, ...] = ()
+    subject_claim: str = "sub"
+    sync_adapter: str = "none"
+    sync_interval_minutes: int = 60
+    sync_deprovision: str = "disable"
+    sync_create_users: bool = True
+    sync_confirmed: bool = False
+
+    def admin_rule(self):
+        from gateway.identity_policy import admin_rule
+
+        return admin_rule(self.admin_source, self.admin_claim, self.admin_values)
 
     def as_oidc_settings(self, redirect_uri: str, access_token_audience: str = "") -> OIDCSettings:
         """The OIDCSettings one login against this provider needs.
@@ -100,6 +117,17 @@ def record_from_row(row: IdentityProvider, secrets: SecretBox) -> ProviderRecord
         source="console",
         updated_at=row.updated_at,
         internal_base_url=row.internal_base_url or "",
+        kind=row.kind or "generic",
+        group_source=row.group_source or "claim",
+        admin_source=row.admin_source or "console",
+        admin_claim=row.admin_claim or "groups",
+        admin_values=tuple(row.admin_values or ()),
+        subject_claim=row.subject_claim or "sub",
+        sync_adapter=row.sync_adapter or "none",
+        sync_interval_minutes=row.sync_interval_minutes or 60,
+        sync_deprovision=row.sync_deprovision or "disable",
+        sync_create_users=bool(row.sync_create_users),
+        sync_confirmed=bool(row.sync_confirmed),
     )
 
 
