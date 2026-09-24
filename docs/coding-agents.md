@@ -241,9 +241,10 @@ both, verbatim.
 
 ### The permission posture
 
-opencode's permission rules live in the machine's own config, and `enroll`
-merges rather than overwrites them; the chat panel's approval card is the gate
-because the machine asks.
+opencode's permission rules live in the machine's own config. `enroll` writes
+`--output` whole (it asks before replacing an existing file; `--yes` does not
+ask), so point it at a dedicated path, or re-add your own rules afterwards. The
+chat panel's approval card is the gate because the machine asks.
 
 ## Where the rest of it is documented
 
