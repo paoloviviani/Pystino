@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // Re-enrolling must give the machine a new identity: the old id may have been
@@ -46,5 +48,22 @@ func TestRevokedMarkerIsPerMachineID(t *testing.T) {
 	}
 	if revokedMarkerMatches(dir, "new-id") {
 		t.Fatal("a marker for another id must not stop this one")
+	}
+}
+
+// The live hang: after a revoke the link returns on its own while the
+// process-wide context is still live. The forwarder must stop when run cancels
+// its own context, or run waits in <-eventsDone forever instead of exiting 78.
+func TestForwardingStopsWhenRunCancelsItNotOnlyOnSignal(t *testing.T) {
+	processCtx, cancelProcess := context.WithCancel(context.Background())
+	defer cancelProcess() // never cancelled before the assertion: no signal arrived
+	forwardCtx, stopForwarding := context.WithCancel(processCtx)
+	done := startForwarding(forwardCtx, func(c context.Context) { <-c.Done() })
+
+	stopForwarding() // what run does on its way out after the link returned ErrRevoked
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the forwarder kept running after run cancelled it; run would hang instead of exiting")
 	}
 }
