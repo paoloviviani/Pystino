@@ -1068,6 +1068,7 @@ class IdentityProviderResponse(BaseModel):
     group_sync: Literal["every_login", "first_login", "never"]
     is_enabled: bool
     source: str
+    internal_base_url: str = ""
 
 
 class IdentityProviderCreateRequest(BaseModel):
@@ -1086,6 +1087,9 @@ class IdentityProviderCreateRequest(BaseModel):
     # provisioning, and the gateway owns everything after. A client that
     # wants the directory to keep answering chooses every_login explicitly.
     group_sync: Literal["every_login", "first_login", "never"] = "first_login"
+    # Where the gateway reaches the issuer server-to-server, when not at the
+    # issuer URL (the bundled Authelia). Empty: use the issuer.
+    internal_base_url: str = Field(default="", max_length=512, pattern=r"^(|https?://\S+)$")
 
 
 class IdentityProviderUpdateRequest(BaseModel):
@@ -1101,6 +1105,7 @@ class IdentityProviderUpdateRequest(BaseModel):
     link_local_by_email: bool | None = None
     group_sync: Literal["every_login", "first_login", "never"] | None = None
     is_enabled: bool | None = None
+    internal_base_url: str | None = Field(default=None, max_length=512, pattern=r"^(|https?://\S+)$")
 
 
 class EmailSettingsResponse(BaseModel):

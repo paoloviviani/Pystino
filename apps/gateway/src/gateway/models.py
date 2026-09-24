@@ -1374,6 +1374,12 @@ class IdentityProvider(Base):
         default=GroupSync.EVERY_LOGIN,
         server_default=text("'every_login'"),
     )
+    # The back-channel base URL (OIDCSettings.internal_base_url): where this
+    # server reaches the issuer when the public URL would hairpin through the
+    # proxy. Empty for an IdP reachable at its issuer.
+    internal_base_url: Mapped[str] = mapped_column(
+        String(512), default="", server_default=text("''")
+    )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)

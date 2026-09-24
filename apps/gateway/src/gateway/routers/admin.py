@@ -2855,6 +2855,7 @@ def _idp_response(record: Any) -> IdentityProviderResponse:
         group_sync=record.group_sync.value,
         is_enabled=record.is_enabled,
         source=record.source,
+        internal_base_url=record.internal_base_url,
     )
 
 
@@ -2904,6 +2905,7 @@ async def create_identity_provider(
         group_mappings=[[rule.idp, rule.local] for rule in payload.group_mappings],
         link_local_by_email=payload.link_local_by_email,
         group_sync=GroupSync(payload.group_sync),
+        internal_base_url=payload.internal_base_url.strip().rstrip("/"),
         is_enabled=True,
         created_by=admin.id,
     )
@@ -2951,6 +2953,8 @@ async def update_identity_provider(
         row.group_sync = GroupSync(fields["group_sync"])
     if "is_enabled" in fields and fields["is_enabled"] is not None:
         row.is_enabled = fields["is_enabled"]
+    if "internal_base_url" in fields and fields["internal_base_url"] is not None:
+        row.internal_base_url = fields["internal_base_url"].strip().rstrip("/")
     await session.commit()
     return _idp_response(record_from_row(row, request.app.state.secrets))
 

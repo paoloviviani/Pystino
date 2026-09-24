@@ -100,6 +100,16 @@ class OIDCSettings(BaseModel):
     # same fact for a deployment that configures providers there instead.
     link_local_by_email: bool = False
 
+    # Where this server reaches the issuer, when that is not the issuer URL
+    # itself — the bundled Authelia at http://authelia:9091/authelia. Discovery,
+    # token, JWKS and userinfo go there, carrying X-Forwarded-Proto/Host for the
+    # public issuer so the IdP still mints tokens whose `iss` is public; the
+    # browser keeps the public authorization and logout endpoints. Without it,
+    # server-to-server calls hairpin through the proxy's public TLS listener,
+    # which is what the CA trust bundle existed to paper over. Empty means
+    # "the issuer URL is reachable from here", the external-IdP case.
+    internal_base_url: str = ""
+
     # Removed as a setting by ADR 0069 and kept only as a tripwire: the field
     # exists so that a deployment still setting GATEWAY_OIDC__ADMIN_GROUPS gets
     # a startup error naming the removal instead of a silent no-op. An
