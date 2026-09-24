@@ -251,6 +251,8 @@ def test_upgrade_swaps_compose_and_pins_and_keeps_secrets(tmp_path: Path, monkey
     old = before["PYSTINO_VERSION"]
     assert (deploy / f"compose.yaml.bak-{old}").read_text() == "# old release\n"
     assert envfile.read(deploy / f".env.bak-{old}") == before
+    # the helper is re-created at the new release's version
+    assert "--against-running" in (deploy / "pystino").read_text()
 
 
 def test_upgrade_refuses_the_wrong_image_and_dev_installs(tmp_path: Path) -> None:

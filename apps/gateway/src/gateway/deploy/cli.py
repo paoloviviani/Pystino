@@ -51,6 +51,18 @@ if ! docker image inspect "$image" >/dev/null 2>&1 && ! docker pull -q "$image" 
     esac
     exit 1
 fi
+case " $* " in *" --against-running "*)
+    # The image has no Docker access, and must not be given the socket:
+    # inspect on the host and hand the container the JSON on stdin.
+    ids=$(docker compose ps -aq)
+    containers=$(if [ -n "$ids" ]; then docker inspect $ids; fi)
+    refs=$(if [ -n "$ids" ]; then docker inspect -f '{{.Config.Image}} {{.Image}}' $ids; fi)
+    images=$(if [ -n "$refs" ]; then docker image inspect $refs 2>/dev/null || true; fi)
+    printf '{"containers": %s, "images": %s}' "${containers:-[]}" "${images:-[]}" |
+        docker run --rm -i -u "$(id -u):$(id -g)" -v "$PWD:/deploy" -w /deploy \\
+        -e PYSTINO_DEPLOY_DIR="$PWD" "$image" "${PYSTINO_CLI:-pystino}" "$@" --inspect -
+    exit $?;;
+esac
 tty=""
 if [ -t 0 ]; then tty="-it"; fi
 exec docker run --rm $tty -u "$(id -u):$(id -g)" -v "$PWD:/deploy" -w /deploy \\
@@ -331,7 +343,10 @@ def cmd_adopt(args: argparse.Namespace) -> int:
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    report = doctor.check(_deploy_dir(args), probe_docker=not args.no_docker)
+    deploy_dir = _deploy_dir(args)
+    report = doctor.check(deploy_dir, probe_docker=not args.no_docker)
+    if args.against_running and report.ok:
+        doctor.check_running(deploy_dir, report, inspect=args.inspect)
     for line in report.errors:
         print(f"ERROR   {line}")
     for line in report.warnings:
@@ -379,6 +394,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         return 0
     for path in upgrade.apply(deploy_dir, change):
         print(f"wrote {path}")
+    # The helper is the release's too (it grows commands, e.g. doctor
+    # --against-running collecting on the host); it holds nothing of the
+    # operator's, so it is re-created rather than left at the old version's.
+    name = getattr(args, "prog_name", "pystino")
+    _write_shim(deploy_dir, name)
+    print(f"wrote {deploy_dir / name}")
     print("")
     print("Next:  snapshot the volumes, then  docker compose pull && docker compose up -d --wait")
     print(f"Back:  restore compose.yaml.bak-{change.old_version} and .env.bak-{change.old_version}")
@@ -469,6 +490,16 @@ def _add_common_commands(
     doc.add_argument(
         "--no-docker", action="store_true", help="skip the docker compose version probe"
     )
+    doc.add_argument(
+        "--against-running",
+        action="store_true",
+        help="also compare images, environment and volumes with the running containers",
+    )
+    doc.add_argument(
+        "--inspect",
+        metavar="FILE",
+        help="`docker inspect` data as JSON ('-' for stdin; the ./pystino helper passes it)",
+    )
     doc.set_defaults(func=cmd_doctor)
 
     setp = sub.add_parser("set", help="change values in .env")
@@ -484,7 +515,7 @@ def _add_common_commands(
         action="store_true",
         help="keep a CEREA_VERSION you moved off the manifest on purpose",
     )
-    up.set_defaults(func=cmd_upgrade)
+    up.set_defaults(func=cmd_upgrade, prog_name=prog_name)
 
 
 def build_cerea_parser() -> argparse.ArgumentParser:

@@ -183,8 +183,20 @@ docker compose pull && docker compose up -d --wait
 ```
 
 `upgrade` backs up `compose.yaml` and `.env` as `*.bak-<old version>`, keeps
-every secret, and never starts anything itself; `migrate` and `bootstrap` run
-on the `up`. Snapshot the volumes first — down-migrations are not promised.
+every secret, re-creates the `./pystino` helper at the new version, and never
+starts anything itself; `migrate` and `bootstrap` run on the `up`. Snapshot the
+volumes first — down-migrations are not promised.
+
+**Does what runs match `.env`?** `./pystino doctor --against-running` adds, to
+the usual checks, a read-only comparison with the project's containers: an
+image other than the one `.env` names (or a tag rebuilt since the container
+started, with each image's source revision), environment keys whose values
+differ — named, never printed — named volumes not mounted, and services
+stopped, unhealthy or failed. The helper runs `docker inspect` on the host and
+pipes the result in, because the gateway image has no Docker access and is not
+given the socket. A helper written before this existed lacks that step, and
+`upgrade` replaces it. Until then, run it from a checkout on the host, which
+inspects directly: `uv run pystino doctor --dir <deploy dir> --against-running`.
 
 ## Adding a component
 
