@@ -151,3 +151,68 @@ def test_authelia_config_holds_no_secret_and_every_client() -> None:
     compose = (STACK / "compose.yaml").read_text()
     for var in set(re.findall(r'env "(X_PYSTINO_[A-Z_]+)"', body)):
         assert f"{var}:" in compose, var
+
+
+def _dist_install(tmp_path: Path) -> Path:
+    assert (
+        main(
+            [
+                "init",
+                "--dir",
+                str(tmp_path),
+                "--origin",
+                "https://llm.example.org",
+                "--admin-email",
+                "ops@example.org",
+            ]
+        )
+        == 0
+    )
+    return tmp_path
+
+
+def test_upgrade_swaps_compose_and_pins_and_keeps_secrets(tmp_path: Path, monkeypatch) -> None:
+    from gateway.deploy import upgrade
+
+    deploy = _dist_install(tmp_path)
+    before = envfile.read(deploy / ".env")
+    (deploy / "compose.yaml").write_text("# old release\n")
+    release = {**stackfiles.release(), "PYSTINO_VERSION": "9.9.9", "CEREA_VERSION": "8.8.8"}
+    change = upgrade.plan(deploy, "9.9.9", release)
+    upgrade.apply(deploy, change)
+
+    after = envfile.read(deploy / ".env")
+    assert after["PYSTINO_VERSION"] == "9.9.9" and after["CEREA_VERSION"] == "8.8.8"
+    for key in ("GATEWAY_SECRET_KEY", "AUTHELIA_STORAGE_KEY", "POSTGRES_PASSWORD", "PUBLIC_ORIGIN"):
+        assert after[key] == before[key], key
+    assert (deploy / "compose.yaml").read_text() == (
+        stackfiles.stack_dir() / "compose.yaml"
+    ).read_text()
+    old = before["PYSTINO_VERSION"]
+    assert (deploy / f"compose.yaml.bak-{old}").read_text() == "# old release\n"
+    assert envfile.read(deploy / f".env.bak-{old}") == before
+
+
+def test_upgrade_refuses_the_wrong_image_and_dev_installs(tmp_path: Path) -> None:
+    import pytest as _pytest
+    from gateway.deploy import upgrade
+
+    deploy = _dist_install(tmp_path)
+    with _pytest.raises(upgrade.UpgradeError, match="target version's image"):
+        upgrade.plan(deploy, "9.9.9", stackfiles.release())
+    envfile.update(deploy / ".env", {"PYSTINO_SRC": "/src"})
+    with _pytest.raises(upgrade.UpgradeError, match="git pull"):
+        upgrade.plan(deploy, stackfiles.release()["PYSTINO_VERSION"], stackfiles.release())
+
+
+def test_upgrade_can_keep_a_deliberate_cerea_override(tmp_path: Path) -> None:
+    from gateway.deploy import upgrade
+
+    deploy = _dist_install(tmp_path)
+    envfile.update(deploy / ".env", {"CEREA_VERSION": "7.0.0-hotfix"})
+    release = {**stackfiles.release(), "PYSTINO_VERSION": "9.9.9", "CEREA_VERSION": "8.8.8"}
+    kept = upgrade.plan(deploy, "9.9.9", release, keep_overrides=True)
+    assert kept.kept_overrides == {"CEREA_VERSION": "7.0.0-hotfix"}
+    assert "CEREA_VERSION" not in kept.changes
+    replaced = upgrade.plan(deploy, "9.9.9", release)
+    assert replaced.changes["CEREA_VERSION"] == "8.8.8"

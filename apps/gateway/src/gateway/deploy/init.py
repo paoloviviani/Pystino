@@ -191,6 +191,9 @@ def build_env(
             ("PYSTINO_VERSION", release["PYSTINO_VERSION"]),
             ("CEREA_REGISTRY", release.get("CEREA_REGISTRY", release["PYSTINO_REGISTRY"])),
             ("CEREA_VERSION", options.cerea_version or release["CEREA_VERSION"]),
+            # What the manifest pinned, so `upgrade` can tell a deliberate
+            # CEREA_VERSION override from a pin that simply went stale.
+            ("PYSTINO_RELEASE_CEREA_VERSION", release["CEREA_VERSION"]),
         ]
     if options.cerea_image:
         image_items.append(("CEREA_IMAGE", options.cerea_image))
