@@ -9,7 +9,6 @@ their own assertions, against the real application and the real resolver.
 
 from __future__ import annotations
 
-import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -17,7 +16,6 @@ import httpx
 import pytest
 import pytest_asyncio
 from gateway.config import OIDCSettings
-from gateway.login_throttle import LoginThrottle
 from gateway.models import ApiKey, Group, OIDCPolicyConfig, User
 from gateway.oidc import ProvisioningRefused, provision_user
 from gateway.oidc_policy import (
@@ -65,9 +63,7 @@ class TestEffectivePolicy:
         assert "unknown_user_policy" not in policy.sources
 
     def test_mappings_fold_into_a_dictionary(self) -> None:
-        row = OIDCPolicyConfig(
-            group_mappings=[["idp-a", "local-one"], ["idp-b", "local-one"]]
-        )
+        row = OIDCPolicyConfig(group_mappings=[["idp-a", "local-one"], ["idp-b", "local-one"]])
         policy = effective_policy(OIDCSettings(), row)
         assert policy.group_mappings == {"idp-a": "local-one", "idp-b": "local-one"}
 
@@ -107,9 +103,7 @@ async def policy_resolver(
     resolver._policy = environment_policy(app.state.settings.oidc)
 
 
-async def write_policy(
-    session_factory: async_sessionmaker[AsyncSession], **columns: Any
-) -> None:
+async def write_policy(session_factory: async_sessionmaker[AsyncSession], **columns: Any) -> None:
     async with session_factory() as session:
         session.add(OIDCPolicyConfig(**columns))
         await session.commit()
@@ -257,65 +251,6 @@ async def admin_session(
 
 
 class TestUserEndpoints:
-
-    async def test_create_local_account_end_to_end(
-        self,
-        app: Any,
-        client: httpx.AsyncClient,
-        admin_session: dict[str, str],
-    ) -> None:
-        response = await client.post(
-            "/api/admin/users",
-            json={
-                "email": "New.Person@Example.org",
-                "password": "a-long-enough-password",
-                "display_name": "New Person",
-                "groups": ["research", "Contractors"],
-            },
-            headers=admin_session,
-        )
-        assert response.status_code == 201
-        body = response.json()
-        # Keyed by the casefolded email, the login query's convention.
-        assert body["subject"] == "new.person@example.org"
-        assert sorted(body["groups"]) == ["Contractors", "research"]
-        # Two groups is not a sole group: the automatic default applies only
-        # when there is exactly one, because picking between two would be a
-        # guess. A second group makes the default an explicit decision.
-        assert body["default_billing_group"] is None
-
-        # And the account can actually sign in — the proof that matters. The
-        # shared settings ship local auth off; the throttle's presence is the
-        # feature switch, so the test arms it.
-        app.state.login_throttle = LoginThrottle(
-            max_failed_attempts=10, window_seconds=60
-        )
-        login = await client.post(
-            "/auth/login",
-            json={"email": "new.person@example.org", "password": "a-long-enough-password"},
-        )
-        assert login.status_code == 200
-
-    async def test_duplicate_email_is_refused(
-        self, client: httpx.AsyncClient, admin_session: dict[str, str]
-    ) -> None:
-        payload = {"email": "dup@example.org", "password": "a-long-enough-password"}
-        first = await client.post("/api/admin/users", json=payload, headers=admin_session)
-        assert first.status_code == 201
-        again = await client.post("/api/admin/users", json=payload, headers=admin_session)
-        assert again.status_code == 400
-        assert again.json()["error"]["code"] == "account_exists"
-
-    async def test_a_short_password_is_refused(
-        self, client: httpx.AsyncClient, admin_session: dict[str, str]
-    ) -> None:
-        response = await client.post(
-            "/api/admin/users",
-            json={"email": "short@example.org", "password": "short"},
-            headers=admin_session,
-        )
-        assert response.status_code == 400
-
     async def test_delete_removes_keys_and_keeps_the_ledger(
         self,
         app: Any,
@@ -327,17 +262,14 @@ class TestUserEndpoints:
         # A second account to be the victim: the session admin can never be
         # the target of a delete (self-delete is refused), so the fixture
         # promotes the seeded user and the test mints someone expendable.
-        created = await client.post(
-            "/api/admin/users",
-            json={
-                "email": "victim@example.org",
-                "password": "a-long-enough-password",
-                "groups": ["research"],
-            },
-            headers=admin_session,
-        )
-        user_id = created.json()["id"]
-        user_pk = uuid.UUID(user_id)
+        # Inserted directly: accounts arrive through an identity provider now
+        # (ADR 0088), and the console no longer creates password accounts.
+        async with session_factory() as session:
+            victim = User(issuer="https://idp.test", subject="victim", email="victim@example.org")
+            session.add(victim)
+            await session.commit()
+            user_pk = victim.id
+        user_id = str(user_pk)
         async with session_factory() as session:
             generated = generate_api_key()
             session.add(
@@ -384,9 +316,7 @@ class TestUserEndpoints:
             },
             headers=admin_session,
         )
-        response = await client.delete(
-            f"/api/admin/users/{seeded.user.id}", headers=admin_session
-        )
+        response = await client.delete(f"/api/admin/users/{seeded.user.id}", headers=admin_session)
         assert response.status_code == 400
         message = response.json()["error"]["message"]
         assert "cannot delete the account you are signed in with" in message
@@ -396,19 +326,21 @@ class TestUserEndpoints:
         client: httpx.AsyncClient,
         seeded: Any,
         admin_session: dict[str, str],
+        session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         # Two admins, then one goes. The caller remains — which is precisely
         # why no last-admin guard can ever fire: the request itself proves an
         # active administrator survives the deletion.
-        await client.post(
-            "/api/admin/users",
-            json={
-                "email": "second-admin@example.org",
-                "password": "a-long-enough-password",
-                "is_admin": True,
-            },
-            headers=admin_session,
-        )
+        async with session_factory() as session:
+            session.add(
+                User(
+                    issuer="https://idp.test",
+                    subject="second-admin",
+                    email="second-admin@example.org",
+                    is_admin=True,
+                )
+            )
+            await session.commit()
         listing = await client.get("/api/admin/users?q=second-admin", headers=admin_session)
         second_id = listing.json()["items"][0]["id"]
         response = await client.delete(f"/api/admin/users/{second_id}", headers=admin_session)
@@ -487,9 +419,7 @@ class TestOidcPolicyEndpoints:
         )
         assert response.status_code == 400
 
-    async def test_non_admin_is_403(
-        self, app: Any, client: httpx.AsyncClient, seeded: Any
-    ) -> None:
+    async def test_non_admin_is_403(self, app: Any, client: httpx.AsyncClient, seeded: Any) -> None:
         # The seeded user is a non-admin here: identity policy is governance,
         # and a non-admin must not even be able to read it.
         response = await client.get(

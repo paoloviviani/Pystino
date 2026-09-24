@@ -7,7 +7,6 @@ import type {
   MintedApiKey,
   MyLimit,
   MyNotificationThresholdsInput,
-  MyPasswordChangeInput,
   SetDefaultBillingGroupInput,
   UsageReport,
 } from "./types";
@@ -143,20 +142,6 @@ export function useDeleteKey() {
  * it moves, and one that refreshes only on navigation is the number they were
  * trying not to have to trust.
  */
-/**
- * Change the account's own password (ADR 0049). Local accounts only — the
- * response's 400 carries the reason for everyone else, and the console offers
- * the item on `me.issuer === "local"` so the button is simply absent for a
- * directory user.
- */
-export function useChangeMyPassword() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (body: MyPasswordChangeInput) =>
-      request<void>("/api/me/password", { method: "PUT", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: keys.me }),
-  });
-}
 
 /**
  * Choose the account's own default billing group, from its own groups.

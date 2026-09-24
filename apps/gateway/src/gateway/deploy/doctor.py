@@ -51,6 +51,7 @@ RETIRED = {
     "CHAT_REPO": "chat images are pulled or built from CEREA_SRC now",
     "TLS_DIRECTIVE_EDGE": "the edge shape is TLS_MODE=upstream",
     "GATEWAY_OIDC__ADMIN_GROUPS": "removed by ADR 0069",
+    "GATEWAY_LOCAL_AUTH__ENABLED": "the password door is gone; use `pystino admin grant`",
 }
 BACKUP = (
     ".env (every secret: GATEWAY_SECRET_KEY decrypts provider keys, "

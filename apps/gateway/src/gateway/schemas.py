@@ -568,13 +568,6 @@ class CallerIdentity(BaseModel):
     billing_group: str
 
 
-class MyPasswordChangeRequest(BaseModel):
-    """A self-service password change: the current one proves the person."""
-
-    current_password: str = Field(min_length=1, max_length=1024)
-    new_password: str = Field(min_length=1, max_length=1024)
-
-
 class SetDefaultBillingGroupRequest(BaseModel):
     group_id: uuid.UUID
 
@@ -1244,10 +1237,6 @@ class UserAdminResponse(BaseModel):
     last_login_at: datetime | None
 
 
-class UserPasswordRequest(BaseModel):
-    password: str = Field(min_length=1, max_length=1024)
-
-
 def _clean_optional_text(value: str | None) -> str | None:
     """Strip surrounding whitespace; an empty result clears the field.
 
@@ -1308,26 +1297,6 @@ class UserUpdateRequest(BaseModel):
     username: Annotated[str | None, AfterValidator(_clean_optional_text)] = Field(
         default=None, max_length=255
     )
-
-
-class UserCreateRequest(BaseModel):
-    """Mint a local account from the console.
-
-    Local only, deliberately: an identity-provider account is the IdP's to
-    create (that is what provisioning means), and a console-created directory
-    user would be overwritten or orphaned at the next login. A local account
-    is keyed by its email — the same convention ``gateway passwd`` and the
-    login query follow — so the email is the subject, not merely a label.
-    """
-
-    email: str = Field(min_length=3, max_length=255)
-    password: str = Field(min_length=1, max_length=1024)
-    display_name: str | None = Field(default=None, max_length=255)
-    is_admin: bool = False
-    # Group *names*, not ids — the caller thinks in names, and a name that does
-    # not exist yet is created (source "manual"), which is what an operator
-    # naming a group in a form means.
-    groups: list[str] = Field(default_factory=list)
 
 
 class OidcMappingRule(BaseModel):

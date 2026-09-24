@@ -31,11 +31,6 @@ export interface Me {
   has_password: boolean;
 }
 
-/** A self-service password change: the current one proves the person. */
-export interface MyPasswordChangeInput {
-  current_password: string;
-  new_password: string;
-}
 
 /** A self-service default billing group choice, from the caller's own groups. */
 export interface SetDefaultBillingGroupInput {
@@ -675,12 +670,6 @@ export interface GroupCreateInput {
   description?: string;
 }
 
-/** The policy in force (ADR 0049): a reset link is only minted when the
- * deployment enabled the feature. */
-export interface PasswordResetEnabled {
-  local: boolean;
-  reset_available: boolean;
-}
 
 // -- Settings (ADR 0051) ------------------------------------------------------
 
