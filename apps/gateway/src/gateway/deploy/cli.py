@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from gateway.deploy import bootstrap, doctor, envfile, presets, stackfiles
+from gateway.deploy import bootstrap, doctor, envfile, presets, stackfiles, upgrade
 from gateway.deploy.init import TLS_MODES, InitError, InitOptions, build_env
 
 SHIM = """#!/bin/sh
@@ -193,6 +193,31 @@ def cmd_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_upgrade(args: argparse.Namespace) -> int:
+    deploy_dir = _deploy_dir(args)
+    try:
+        change = upgrade.plan(
+            deploy_dir, args.version, stackfiles.release(), keep_overrides=args.keep_overrides
+        )
+    except (upgrade.UpgradeError, envfile.EnvFileError, FileNotFoundError) as exc:
+        print(f"upgrade: {exc}")
+        return 2
+    print(f"upgrade {change.old_version} -> {change.new_version}")
+    for key, value in sorted(change.changes.items()):
+        print(f"  {key}={value}")
+    for key, value in sorted(change.kept_overrides.items()):
+        print(f"  {key}={value} (your override, kept)")
+    if args.dry_run:
+        print("dry run: nothing written")
+        return 0
+    for path in upgrade.apply(deploy_dir, change):
+        print(f"wrote {path}")
+    print("")
+    print("Next:  snapshot the volumes, then  docker compose pull && docker compose up -d --wait")
+    print(f"Back:  restore compose.yaml.bak-{change.old_version} and .env.bak-{change.old_version}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pystino", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -237,6 +262,16 @@ def build_parser() -> argparse.ArgumentParser:
     setp.add_argument("--dir")
     setp.add_argument("assignments", nargs="+", metavar="KEY=VALUE")
     setp.set_defaults(func=cmd_set)
+    up = sub.add_parser("upgrade", help="move a distributed install to another release")
+    up.add_argument("version", help="target release, e.g. 1.5.0")
+    up.add_argument("--dir")
+    up.add_argument("--dry-run", action="store_true")
+    up.add_argument(
+        "--keep-overrides",
+        action="store_true",
+        help="keep a CEREA_VERSION you moved off the manifest on purpose",
+    )
+    up.set_defaults(func=cmd_upgrade)
     return parser
 
 

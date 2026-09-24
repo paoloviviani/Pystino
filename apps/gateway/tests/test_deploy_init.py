@@ -60,6 +60,7 @@ def test_development_mode_differs_only_in_image_origin(tmp_path: Path) -> None:
         "PYSTINO_REGISTRY",
         "PYSTINO_VERSION",
         "BUILD_REVISION",
+        "PYSTINO_RELEASE_CEREA_VERSION",
     }
     assert set(dev) - image_keys == set(dist) - image_keys
 
