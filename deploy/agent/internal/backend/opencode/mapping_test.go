@@ -1,0 +1,140 @@
+package opencode
+
+import (
+	"testing"
+
+	"pystino-agent/internal/backend"
+)
+
+func TestSessionFromMap(t *testing.T) {
+	s := sessionFromMap(map[string]any{
+		"id": "ses_1", "title": "My Session", "parentID": "ses_parent",
+		"time": map[string]any{"created": float64(1000), "updated": float64(2000)},
+	})
+	if s.ID != "ses_1" || s.Title != "My Session" || s.ParentID != "ses_parent" {
+		t.Fatalf("unexpected session: %+v", s)
+	}
+	if s.CreatedAt.IsZero() || s.UpdatedAt.IsZero() {
+		t.Fatalf("timestamps not parsed: %+v", s)
+	}
+	if s.Backend != "opencode" {
+		t.Errorf("Backend = %q, want opencode", s.Backend)
+	}
+}
+
+func TestPartFromMapText(t *testing.T) {
+	p := partFromMap(map[string]any{
+		"id": "prt_1", "messageID": "msg_1", "role": "assistant", "type": "text", "text": "hello",
+	})
+	if p.Type != backend.PartText || p.Text != "hello" || p.MessageID != "msg_1" {
+		t.Fatalf("unexpected part: %+v", p)
+	}
+}
+
+func TestPartFromMapTool(t *testing.T) {
+	p := partFromMap(map[string]any{
+		"id": "prt_2", "messageID": "msg_1", "type": "tool", "callID": "call_1",
+		"tool": "bash", "status": "completed", "input": map[string]any{"command": "echo hi"},
+		"output": "hi\n",
+	})
+	if p.Type != backend.PartTool || p.CallID != "call_1" || p.Tool != "bash" {
+		t.Fatalf("unexpected part: %+v", p)
+	}
+	if p.ToolStatus != backend.ToolCompleted {
+		t.Errorf("ToolStatus = %q, want completed", p.ToolStatus)
+	}
+	if p.Input["command"] != "echo hi" {
+		t.Errorf("Input lost: %+v", p.Input)
+	}
+}
+
+func TestModeFromAgentMapFiltersUtilityAgents(t *testing.T) {
+	cases := []struct {
+		name, mode string
+		wantOK     bool
+	}{
+		{"build", "primary", true},
+		{"plan", "primary", true},
+		{"compaction", "primary", false},
+		{"summary", "primary", false},
+		{"title", "primary", false},
+		{"some-subagent", "subagent", false},
+	}
+	for _, c := range cases {
+		_, ok := modeFromAgentMap(map[string]any{"name": c.name, "mode": c.mode})
+		if ok != c.wantOK {
+			t.Errorf("modeFromAgentMap(name=%q, mode=%q) ok = %v, want %v", c.name, c.mode, ok, c.wantOK)
+		}
+	}
+}
+
+func TestUsageFromMessageMap(t *testing.T) {
+	u := usageFromMessageMap(map[string]any{
+		"tokens": map[string]any{
+			"input": float64(100), "output": float64(50), "reasoning": float64(10),
+			"cache": map[string]any{"read": float64(5), "write": float64(2)},
+		},
+		"cost": float64(0.0123),
+	})
+	if u == nil {
+		t.Fatal("expected non-nil usage")
+	}
+	if u.Input != 100 || u.Output != 50 || u.Reasoning != 10 || u.CacheRead != 5 || u.CacheWrite != 2 {
+		t.Fatalf("unexpected usage: %+v", u)
+	}
+	if u.ContextUsed != 167 {
+		t.Errorf("ContextUsed = %d, want 167", u.ContextUsed)
+	}
+	if u.Cost != 0.0123 {
+		t.Errorf("Cost = %v", u.Cost)
+	}
+}
+
+func TestUsageFromMessageMapNoTokens(t *testing.T) {
+	if u := usageFromMessageMap(map[string]any{"role": "user"}); u != nil {
+		t.Fatalf("expected nil usage for a message with no tokens, got %+v", u)
+	}
+}
+
+func TestSplitModelID(t *testing.T) {
+	providerID, modelID := splitModelID("pystino/coder-large")
+	if providerID != "pystino" || modelID != "coder-large" {
+		t.Fatalf("got %q / %q", providerID, modelID)
+	}
+	providerID, modelID = splitModelID("no-slash")
+	if providerID != "" || modelID != "no-slash" {
+		t.Fatalf("malformed id: got %q / %q", providerID, modelID)
+	}
+}
+
+func TestCapabilitiesMatchesProtocolSpec(t *testing.T) {
+	b := New(Config{})
+	c := b.Capabilities()
+	want := backend.Capabilities{Diff: true, Children: true, Usage: true, Compact: true, Images: true, Files: true, Worktrees: false, AutoAccept: true}
+	if c != want {
+		t.Fatalf("Capabilities = %+v, want %+v", c, want)
+	}
+	if b.ID() != "opencode" {
+		t.Errorf("ID() = %q", b.ID())
+	}
+}
+
+func TestOverlayRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	b := New(Config{OverlayPath: dir + "/overlay.json"})
+	if err := b.loadOverlay(); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.setOverlay("ses_1", sessionOverlay{ModeID: "build", ModelID: "pystino/coder-large"}); err != nil {
+		t.Fatal(err)
+	}
+
+	b2 := New(Config{OverlayPath: dir + "/overlay.json"})
+	if err := b2.loadOverlay(); err != nil {
+		t.Fatal(err)
+	}
+	ov := b2.getOverlay("ses_1")
+	if ov.ModeID != "build" || ov.ModelID != "pystino/coder-large" {
+		t.Fatalf("overlay did not survive reload: %+v", ov)
+	}
+}
