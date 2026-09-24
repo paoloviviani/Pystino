@@ -9,9 +9,18 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"pystino-agent/internal/backend"
 )
+
+// doJSONTimeout bounds every control-plane call doJSON makes. All of them
+// are supposed to be fast — session CRUD, prompt_async (204, fire and
+// forget; the model's actual reply streams over SSE separately), abort,
+// permission replies, listings — never a call that legitimately runs long.
+// Capping it here means a single wedged request can't hang a caller
+// forever regardless of what deadline (if any) it happened to pass in.
+const doJSONTimeout = 20 * time.Second
 
 // Compile-time checks: Backend must satisfy the floor interface and every
 // optional capability its Capabilities() advertises as true.
@@ -26,6 +35,8 @@ var (
 // basic-authenticated, and decodes a JSON response into out (nil to
 // discard the body — POST /session/:id/prompt_async answers 204).
 func (b *Backend) doJSON(ctx context.Context, method, path string, body any, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, doJSONTimeout)
+	defer cancel()
 	var reader io.Reader
 	if body != nil {
 		buf, err := json.Marshal(body)

@@ -263,17 +263,26 @@ func (b *Backend) waitHealthy(ctx context.Context, timeout time.Duration) error 
 	deadline := time.Now().Add(timeout)
 	url := b.baseURL() + "/global/health"
 	for {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		// Each attempt gets its own short deadline, not the caller's whole
+		// timeout: a single hung connection attempt (found live — a request
+		// that never completed even though the server answered a fresh curl
+		// instantly moments later) must not stall every later attempt behind
+		// it. A fresh request each iteration also means a bad pooled
+		// connection doesn't keep getting reused.
+		attemptCtx, cancel := context.WithTimeout(ctx, healthPollEvery*10)
+		req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, url, nil)
 		if err == nil {
 			req.SetBasicAuth("opencode", b.cfg.Password)
 			resp, doErr := b.client.Do(req)
 			if doErr == nil {
 				resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
+					cancel()
 					return nil
 				}
 			}
 		}
+		cancel()
 		if time.Now().After(deadline) {
 			return fmt.Errorf("opencode: did not become healthy within %s", timeout)
 		}
