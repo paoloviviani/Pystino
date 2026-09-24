@@ -9,7 +9,7 @@ import {
   Stat,
   SummaryStrip,
   Table,
-  
+
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useId, useState } from "react";
