@@ -16,8 +16,7 @@ Workflows: Read and write** (or push these yourself). Then:
 
 | Workflow | Runs on | What |
 |---|---|---|
-| `ci-gateway.yml` | PRs touching the gateway or stack files | ruff, the gateway suite, compose/Caddy parse |
-| `ci-console.yml` | PRs touching the console or UI | typecheck, console tests |
+| `ci.yml` | PRs (docs excluded); jobs by changed paths | gateway: ruff, mypy, pytest, compose/Caddy parse · console: typecheck, tests · go: gofmt, vet, test — the one PR workflow (thin-agent's parked ci.yml folded in) |
 | `images.yml` | pushes to main (path-filtered) and v* tags | build + push to `ghcr.io/paoloviviani/*` (private), prune untagged |
 | `stack.yml` | release PRs (`release/*`), manual, Mondays | fresh install + upgrade, with a scripted sign-in |
 
