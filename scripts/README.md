@@ -50,6 +50,7 @@ gateway, and what it keeps is a refresh credential rather than a key — which
 is what lets spend land on the signed-in person's own account instead of a
 standing secret on a laptop (ADR 0040, ADR 0061).
 
-That work lives in `deploy/agent/` (`pystino-agent`) and is documented in
+That work lives in the chat repository (galopin, the Cerea machine agent, in its
+`agent/` directory); the gateway's side of the contract is
 [docs/coding-agents.md](../docs/coding-agents.md). The gateway still has no
 device-flow endpoints of its own, and now needs none.
