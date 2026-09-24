@@ -1,9 +1,13 @@
 # The bundled Authelia's configuration, a release artefact (ADR 0086).
 #
 # Rendered by Authelia itself at start (template filter), never by a script on
-# the host. Values come from:
-#   {{ env "X_PYSTINO_*" }}          the container environment (compose.yaml ← .env)
-#   {{ secret "/config/keys/..." }}  files `pystino bootstrap` created once
+# the host. Values come from the template functions `env` (the container
+# environment, compose.yaml <- .env, variables named X_PYSTINO_*) and `secret`
+# (files `pystino bootstrap` created once under /config/keys).
+#
+# NEVER write a double-brace template expression in a comment in this file:
+# the filter executes the whole file, comments included (found in the trial —
+# a quoted example in this very header crashed Authelia at start).
 # Nothing here is state; the users file and the signing key are, and live in
 # the authelia-config volume. Client *secrets* appear only as argon2id digests
 # (`pystino init` mints the secret and its digest together) — plaintext client
