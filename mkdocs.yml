@@ -80,7 +80,6 @@ nav:
       - "Measured performance": performance.md
   - Guides:
       - "OIDC against any provider": oidc-generic-provider.md
-      - "The house IdP": idp.md
       - "Cache accounting findings": cache-accounting-findings.md
   - Plans:
       - "Redaction scoping — design": redaction-scoping-design.md

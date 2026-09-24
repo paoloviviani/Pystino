@@ -36,16 +36,13 @@ visible.
 
 ## The live checks
 
-```bash
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml \
-  -f deploy/compose/docker-compose.redaction.yml up -d --build
-```
+Bring up a development stack with the fake upstream (see
+[Getting started](getting-started.md)).
 
-Then, with the accounts created (`docker compose ... exec gateway gateway
-passwd admin@local`, and `--no-admin user@local` for the 403 checks) and
-`GATEWAY_LOCAL_ADMIN_PASSWORD` set in `deploy/.env`:
+**Known gap (2026-09-24):** these scripts sign in through the local-password
+door, which ADR 0088 removed. Until they are ported to an OIDC login (the
+scripted Authelia flow in the deployment re-architecture trial is the model),
+they run only against a stack older than that change.
 
 | Script | Covers |
 |---|---|
