@@ -103,7 +103,9 @@ identity_providers:
         audience: ['pystino-api']
         requested_audience_mode: 'implicit'
         claims_policy: 'pystino'
-        consent_mode: 'pre-configured'
+        # First-party: auto-approved, no consent screen (decision D15,
+        # as ADR 0068 held for the house issuer's clients).
+        consent_mode: 'implicit'
       - client_id: 'cerea'
         client_name: 'Cerea Chat'
         client_secret: '{{ env "X_PYSTINO_CHAT_CLIENT_DIGEST" }}'
@@ -121,7 +123,9 @@ identity_providers:
         audience: ['pystino-api']
         requested_audience_mode: 'implicit'
         claims_policy: 'pystino'
-        consent_mode: 'pre-configured'
+        # First-party: auto-approved, no consent screen (decision D15,
+        # as ADR 0068 held for the house issuer's clients).
+        consent_mode: 'implicit'
       # The agent machine's public client (report §9). Kept under its current
       # id so enrolled machines keep refreshing across the migration.
       - client_id: 'opencode-enrollment'

@@ -216,16 +216,16 @@ def build(options: AdoptOptions, release: dict[str, str]) -> AdoptResult:
     chat_secret = values.get("CHAT_OIDC_CLIENT_SECRET") or values.get("CHAT_IDP_CLIENT_SECRET", "")
     if bundled == "authelia":
         idp = old / "idp"
-        config = idp / "authelia-configuration.yml"
-        users = idp / "users_database.yml"
-        key = idp / "authelia-jwks-rsa.pem"
-        for path in (config, users, key):
+        config_path = idp / "authelia-configuration.yml"
+        users_path = idp / "users_database.yml"
+        key_path = idp / "authelia-jwks-rsa.pem"
+        for path in (config_path, users_path, key_path):
             if not path.is_file():
                 raise AdoptError(
                     f"{path} not found; a bundled-Authelia install keeps it in deploy/idp"
                 )
-        secrets = _authelia_secrets(config.read_text(encoding="utf-8"))
-        login, email, name, digest = _first_user(users.read_text(encoding="utf-8"))
+        secrets = _authelia_secrets(config_path.read_text(encoding="utf-8"))
+        login, email, name, digest = _first_user(users_path.read_text(encoding="utf-8"))
         admin_email = values.get("IDP_ADMIN_EMAIL") or email
         authelia = [
             *secrets.items(),
@@ -249,8 +249,8 @@ def build(options: AdoptOptions, release: dict[str, str]) -> AdoptResult:
             ("PYSTINO_BOOTSTRAP_ADMIN_EMAIL", admin_email),
         ]
         staged = {
-            "authelia-config/users_database.yml": users.read_bytes(),
-            "authelia-config/keys/jwks.pem": key.read_bytes(),
+            "authelia-config/users_database.yml": users_path.read_bytes(),
+            "authelia-config/keys/jwks.pem": key_path.read_bytes(),
         }
     else:
         issuer = values.get("GATEWAY_OIDC__ISSUER", "")

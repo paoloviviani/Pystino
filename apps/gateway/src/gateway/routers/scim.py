@@ -18,11 +18,13 @@ so an account can exist before its first login — else by userName.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import hmac
 import json
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
@@ -81,7 +83,13 @@ async def _authorise(request: Request, session: AsyncSession, provider: str) -> 
     given = hashlib.sha256(token.encode()).hexdigest()
     # One answer for "no such provider", "not a SCIM provider" and "wrong
     # token", and a constant-time compare for the last.
-    if not token or not expected or not hmac.compare_digest(given, expected) or not row.is_enabled:
+    if (
+        row is None
+        or not token
+        or not expected
+        or not hmac.compare_digest(given, expected)
+        or not row.is_enabled
+    ):
         raise ScimError(401, "Unauthorized")
     return row
 
@@ -176,17 +184,16 @@ async def _entry_by_external(
 
 
 def _as_entry(row: DirectoryEntry, **changes: Any) -> Entry:
-    base = {
-        "external_id": row.external_id,
-        "username": row.username,
-        "email": row.email,
-        "display_name": row.display_name,
-        "groups": tuple(row.groups or ()),
-        "active": row.active,
-        "is_subject": row.external_id != row.username,
-    }
-    base.update(changes)
-    return Entry(**base)
+    base = Entry(
+        external_id=row.external_id,
+        username=row.username,
+        email=row.email,
+        display_name=row.display_name,
+        groups=tuple(row.groups or ()),
+        active=row.active,
+        is_subject=row.external_id != row.username,
+    )
+    return dataclasses.replace(base, **changes)
 
 
 def _groups_registry(
@@ -210,7 +217,11 @@ def _group_id(provider_id: uuid.UUID, display: str) -> str:
 # --- routes ------------------------------------------------------------------
 
 
-async def _handle(request: Request, provider: str, work: Any) -> Response:
+async def _handle(
+    request: Request,
+    provider: str,
+    work: Callable[[AsyncSession, IdentityProvider], Awaitable[Response]],
+) -> Response:
     session_factory = request.app.state.session_factory
     async with session_factory() as session:
         try:
@@ -322,6 +333,8 @@ async def create_user(request: Request, provider: str) -> Response:
             raise ScimError(409, "User already exists", "uniqueness")
         await _apply(request, session, row, [entry])
         created = await _entry_by_external(session, row.id, entry.external_id)
+        if created is None:
+            raise ScimError(500, "the user was not recorded")
         return _json(_user_resource(created, request, provider), 201)
 
     return await _handle(request, provider, work)
@@ -332,7 +345,7 @@ async def replace_user(request: Request, provider: str, entry_id: str) -> Respon
     async def work(session: AsyncSession, row: IdentityProvider) -> Response:
         current = await _entry(session, row.id, entry_id)
         entry = _entry_from_payload(await request.json(), current)
-        entry = Entry(**{**entry.__dict__, "external_id": current.external_id})
+        entry = dataclasses.replace(entry, external_id=current.external_id)
         await _apply(request, session, row, [entry])
         return _json(_user_resource(await _entry(session, row.id, entry_id), request, provider))
 
@@ -384,8 +397,9 @@ async def delete_user(request: Request, provider: str, entry_id: str) -> Respons
     async def work(session: AsyncSession, row: IdentityProvider) -> Response:
         current = await _entry(session, row.id, entry_id)
         await _apply(request, session, row, [_as_entry(current, active=False)])
-        current = await session.get(DirectoryEntry, current.id)
-        current.present = False
+        gone = await session.get(DirectoryEntry, current.id)
+        if gone is not None:
+            gone.present = False
         await session.commit()
         return Response(status_code=204)
 
@@ -569,8 +583,10 @@ async def delete_group(request: Request, provider: str, group_id: str) -> Respon
             raise ScimError(404, "Resource not found")
         members = [str(m.id) for m in await _members(session, row.id, display)]
         await _set_membership(request, session, row, display, [], members)
-        row = await session.get(IdentityProvider, row.id)
-        _save_groups(row, request, config, groups)
+        fresh = await session.get(IdentityProvider, row.id)
+        if fresh is None:
+            raise ScimError(404, "Resource not found")
+        _save_groups(fresh, request, config, groups)
         await session.commit()
         return Response(status_code=204)
 

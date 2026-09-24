@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.deps import AdminUserDep, SessionDep, SettingsDep
 from gateway.directory.adapters import AdapterError, build_adapter
@@ -66,8 +67,8 @@ async def identity_kinds(admin: AdminUserDep) -> dict[str, Any]:
     return {kind: identity_policy.capabilities(kind).as_dict() for kind in identity_policy.KINDS}
 
 
-async def _provider(session: Any, provider_id: uuid.UUID) -> IdentityProvider:
-    row = await session.get(IdentityProvider, provider_id)
+async def _provider(session: AsyncSession, provider_id: uuid.UUID) -> IdentityProvider:
+    row: IdentityProvider | None = await session.get(IdentityProvider, provider_id)
     if row is None:
         raise NotFoundError(f"No identity provider with id {provider_id}.")
     return row
@@ -279,7 +280,7 @@ async def list_authelia_users(
 ) -> list[dict[str, Any]]:
     try:
         return [
-            u.as_dict() for u in _users_file(await _provider(session, provider_id), request).list()
+            u.as_dict() for u in _users_file(await _provider(session, provider_id), request).users()
         ]
     except UsersFileError as exc:
         raise _users_error(exc) from exc
