@@ -1,6 +1,9 @@
 package backend
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // SessionStatus is a session's turn-boundary state, per PROTOCOL.md §6.
 type SessionStatus string
@@ -226,7 +229,7 @@ type Transcript struct {
 	Permissions []PermissionRequest `json:"permissions"`
 	Status      SessionStatus       `json:"status"`
 	Usage       *Usage              `json:"usage,omitempty"`
-	Todos       []Todo              `json:"todos,omitempty"`
+	Todos       []Todo              `json:"todos"`
 }
 
 // EventKind discriminates Event's per-kind fields (PROTOCOL.md §7).
@@ -294,4 +297,27 @@ type Event struct {
 
 	// todo: full list
 	Todos []Todo
+}
+
+// MarshalJSON always emits arrays for the transcript's lists: a fresh session
+// has no messages, permissions or todos, and PROTOCOL.md types all three as
+// arrays that Cerea iterates without a null check.
+func (t Transcript) MarshalJSON() ([]byte, error) {
+	type plain Transcript
+	out := plain(t)
+	if out.Messages == nil {
+		out.Messages = []TranscriptEntry{}
+	}
+	for i := range out.Messages {
+		if out.Messages[i].Parts == nil {
+			out.Messages[i].Parts = []Part{}
+		}
+	}
+	if out.Permissions == nil {
+		out.Permissions = []PermissionRequest{}
+	}
+	if out.Todos == nil {
+		out.Todos = []Todo{}
+	}
+	return json.Marshal(out)
 }
