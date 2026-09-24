@@ -197,7 +197,9 @@ func (l *Link) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		l.cfg.Logf("link: disconnected, reconnecting in %s", backoff)
+		// The close code and reason are the one clue to a rejected handshake
+		// or hello (4000/4401/4403), so they are always worth the line.
+		l.cfg.Logf("link: disconnected (%v), reconnecting in %s", err, backoff)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
