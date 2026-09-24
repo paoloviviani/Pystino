@@ -38,16 +38,20 @@ is never taken as an argv flag — argv leaks through `ps` and shell history.
 
 ## The enrollment CLI
 
-`deploy/opencode/enroll/` is a small Go program with three subcommands. Build
-it from that directory (`go build -o pystino-enroll .`); `setup-agent.sh`
-builds it for you.
+> **TODO(thin-agent):** this module is becoming `pystino-agent`, the single
+> binary that also supervises opencode and dials out to Cerea (see
+> `deploy/agent/PROTOCOL.md`). `pair` (paseo daemon pairing) is gone; a `run`
+> subcommand replaces it. The rest of this section, written for the paseo-era
+> `pystino-enroll pair` flow, is updated only where the binary name and path
+> changed; a fuller rewrite follows once `run` lands.
+
+`deploy/agent/` is a small Go program with subcommands. Build it from that
+directory (`go build -o pystino-agent .`); `setup-agent.sh` builds it for you.
 
 ```
-pystino-enroll enroll   sign in, pick a billing group, write opencode.json,
+pystino-agent enroll   sign in, pick a billing group, write opencode.json,
                         store the refresh credential
-pystino-enroll serve    the local refreshing proxy shim opencode points at
-pystino-enroll pair     pair this machine's paseo daemon into the chat's
-                        /code panel, using the enrollment's own access token
+pystino-agent serve    the local refreshing proxy shim opencode points at
 ```
 
 ### Why a shim at all
@@ -101,7 +105,7 @@ long hang. Three things make that true:
 ### `enroll enroll`
 
 ```
-pystino-enroll enroll [--issuer URL] [--gateway URL] [--client-id ID]
+pystino-agent enroll [--issuer URL] [--gateway URL] [--client-id ID]
                       [--device | --loopback] [--group NAME] [--output PATH]
                       [--creds PATH] [--shim-port PORT] [--no-discover]
                       [--allow-opencode-provider] [--yes]
@@ -235,7 +239,7 @@ sized for the browser case, not this one:
 defaults for the first three.
 
 Requirements: `bash`, `node`/`npm`, `python3`, and **Go 1.24 or later** — but
-only when the `pystino-enroll` binary needs building. `go.mod` requires 1.24;
+only when the `pystino-agent` binary needs building. `go.mod` requires 1.24;
 an older toolchain tries to auto-download one and dies with "toolchain not
 available", so the script checks the version itself and names the remedy
 (apt's `golang` is usually older; install the official tarball).
@@ -245,7 +249,7 @@ binary**, not merely when the binary is missing. The earlier "exists, so skip"
 rule was silent drift: a box kept running last month's CLI — missing flags,
 missing model gating — while every run printed success.
 
-It also retires a previous `pystino-enroll serve` before enrolling. A shim
+It also retires a previous `pystino-agent serve` before enrolling. A shim
 from an earlier run owns the default port with the earlier run's credentials;
 leaving it alive makes `enroll` dodge to a new port that nothing serves while
 `opencode.json` points at it (found live: 41872 written, nothing listening).
@@ -260,16 +264,11 @@ to be. `--skip-posture` leaves an existing config alone.
 
 ### Pairing, and its fallback
 
-With both axes wired, the last step is automatic: `pystino-enroll pair` runs
-`paseo daemon pair --json` for the daemon's pairing offer and POSTs it to the
-chat, authenticated by the enrollment's own access token. The chat trusts the
-same issuer, so there is no second sign-in and no human paste.
-
-`--skip-llm` has no token to pair with, and a machine that cannot reach the
-chat origin has no route: both end with the manual path instead — run `paseo
-daemon pair` and paste the printed link into the chat's **/code → Pair a
-device** dialog. A failed automatic pairing says so and hands back the same
-instructions; the LLM axis is unaffected either way.
+> **TODO(thin-agent):** obsolete. Pairing is now `pystino-agent run` dialing
+> out to Cerea over WSS and a human confirming the machine in the `/code`
+> panel (`deploy/agent/PROTOCOL.md` §4) — there is no more paseo daemon or
+> pairing offer to POST. `setup-agent.sh` currently just prints the `run`
+> command and exits; a later task wires it up fully.
 
 ## Where the rest of it is documented
 
