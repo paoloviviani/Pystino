@@ -133,9 +133,16 @@ func runAgent(ctx context.Context, opts *runOptions) error {
 		return err
 	}
 
-	machineID, err := loadOrMintMachineID(filepath.Join(stateDir, "machine-id"))
+	machineID, err := loadOrMintMachineID(filepath.Join(stateDir, machineIDFileName))
 	if err != nil {
 		return err
+	}
+	// A service manager that cannot filter on exit codes (launchd) restarts
+	// once after the revoked exit; this start then sees the same machine id
+	// marked revoked and stops cleanly instead of looping against 4403.
+	if revokedMarkerMatches(stateDir, machineID) {
+		fmt.Fprint(os.Stderr, revokedHelp)
+		return nil
 	}
 
 	machineName := opts.machineName
@@ -234,7 +241,11 @@ func runAgent(ctx context.Context, opts *runOptions) error {
 	case <-ctx.Done():
 		logf("shutting down")
 	case err := <-linkErr:
-		if err != nil && !errors.Is(err, context.Canceled) {
+		if errors.Is(err, link.ErrRevoked) {
+			_ = writeRevokedMarker(stateDir, machineID)
+			fmt.Fprint(os.Stderr, revokedHelp)
+			runErr = exitError{code: exitRevoked, err: err}
+		} else if err != nil && !errors.Is(err, context.Canceled) {
 			logf("link stopped: %v", err)
 			runErr = err
 		}
@@ -376,4 +387,54 @@ func loadOrMintMachineID(path string) (string, error) {
 		return "", err
 	}
 	return id, nil
+}
+
+const (
+	machineIDFileName     = "machine-id"
+	revokedMarkerFileName = "revoked"
+	// exitRevoked is EX_CONFIG: this machine's identity is no longer valid and
+	// no restart can fix it. The systemd unit lists it in
+	// RestartPreventExitStatus, so it is not restart-looped.
+	exitRevoked = 78
+)
+
+const revokedHelp = `
+This machine was revoked in the chat's /code panel, so its machine id is refused
+for good. To connect it again, re-enroll (which mints a new machine id):
+
+  pystino-agent enroll ... --cerea <chat origin>   # same flags as before
+  pystino-agent run
+
+or delete the machine id file (it lives next to the credentials, as "machine-id")
+and start 'run' again; the machine then shows up as a new pending device to confirm.
+`
+
+// exitError carries the process exit code main should use.
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e exitError) Error() string { return e.err.Error() }
+func (e exitError) Unwrap() error { return e.err }
+
+// writeRevokedMarker records that machineID was revoked, so a restarted run
+// with the same id exits cleanly instead of dialling into another 4403.
+func writeRevokedMarker(stateDir, machineID string) error {
+	return fsutil.WriteFileAtomic(filepath.Join(stateDir, revokedMarkerFileName), []byte(machineID+"\n"), 0o600)
+}
+
+func revokedMarkerMatches(stateDir, machineID string) bool {
+	body, err := fsutil.ReadFileOrEmpty(filepath.Join(stateDir, revokedMarkerFileName))
+	return err == nil && body != nil && strings.TrimSpace(string(body)) == machineID
+}
+
+// rotateMachineID gives the machine a fresh identity: what a re-enroll means
+// to Cerea (a new pending device), and the only way past a revoked id.
+func rotateMachineID(stateDir string) (string, error) {
+	_ = os.Remove(filepath.Join(stateDir, revokedMarkerFileName))
+	if err := os.Remove(filepath.Join(stateDir, machineIDFileName)); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	return loadOrMintMachineID(filepath.Join(stateDir, machineIDFileName))
 }

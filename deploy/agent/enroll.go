@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -247,11 +248,19 @@ func enroll(ctx context.Context, opts *enrollOptions) error {
 	if err := policy.Save(policyPathFor(opts.creds), pol); err != nil {
 		return err
 	}
+	// Enrolling is a new identity for Cerea too: a fresh machine id means the
+	// machine appears as a new pending device to confirm, and a machine revoked
+	// in the panel can come back at all (its old id is refused for good).
+	// 'run' keeps its state next to the credentials by default.
+	if _, err := rotateMachineID(filepath.Dir(opts.creds)); err != nil {
+		return fmt.Errorf("minting a new machine id: %w", err)
+	}
 
 	fmt.Fprintf(os.Stderr, "wrote %s (provider pystino via shim %s) and %s\n", opts.output, shimAddr, opts.creds)
 	fmt.Fprintf(os.Stderr, "billing group: %s (sent as x-bill-to by the shim)\n", group)
-	fmt.Fprintf(os.Stderr, "next: run 'pystino-agent serve' (same machine), then point opencode at it.\n")
-	fmt.Fprintf(os.Stderr, "spend is not visible to opencode — /v1 has no usage endpoint; watch it in the console.\n")
+	fmt.Fprintf(os.Stderr, "next: run 'pystino-agent run', then confirm this machine in the chat's /code panel.\n")
+	fmt.Fprintf(os.Stderr, "      (for opencode on its own without the panel, 'pystino-agent serve' runs just the gateway shim.)\n")
+	fmt.Fprintf(os.Stderr, "spend lands in the gateway's ledger under the billing group above; see it in the console.\n")
 	return nil
 }
 

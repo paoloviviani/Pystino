@@ -241,6 +241,13 @@ backend reports fewer capabilities (no usage, compaction or subagents), and the
 chat panel hides those controls. The Changes pane works for either backend,
 because the agent reads it from git.
 
+Each enrollment mints a new machine id (`machine-id`, next to the credentials). The
+chat therefore sees a re-enrolled machine as a new pending device to confirm. A machine
+revoked in the panel is refused for good under its old id, and `run` reports that and
+exits with code 78 instead of reconnecting. The systemd unit does not restart it
+(`RestartPreventExitStatus=78`), and the LaunchAgent stops after one retry. To bring
+it back, re-enroll (or delete `machine-id`) and start `run` again.
+
 To keep `run` alive across reboots, install it as a user service:
 `deploy/agent/packaging/` has the systemd user unit and the LaunchAgent, and
 [Agent machines](agent-machines.md#keeping-it-running) has the commands.

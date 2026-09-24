@@ -3,8 +3,10 @@ package link
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -187,6 +189,36 @@ func TestClose4403StopsReconnecting(t *testing.T) {
 	}
 	if ctx.Err() != nil {
 		t.Fatalf("Run took the whole timeout instead of stopping on 4403: %v", ctx.Err())
+	}
+}
+
+// TestClose4403DuringWelcomeIsTerminal is the live failure: Cerea refuses a
+// revoked machine id right after the hello, before any welcome, and the link
+// must stop instead of reconnecting forever. It dials exactly once.
+func TestClose4403DuringWelcomeIsTerminal(t *testing.T) {
+	var dials atomic.Int32
+	srv := newFakeCereaServer(t, func(sc *serverConn, r *http.Request) {
+		dials.Add(1)
+		sc.readType("hello")
+		_ = sc.conn.Close(websocket.StatusCode(4403), "this machine was revoked")
+	})
+
+	l := New(Config{
+		CereaOrigin: srv.URL,
+		Cred:        &fakeCred{token: "tok"},
+		Hello:       func() Hello { return Hello{} },
+		Handler:     &fakeHandler{calls: make(chan string, 1)},
+		MinBackoff:  10 * time.Millisecond,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := l.Run(ctx)
+	if !errors.Is(err, ErrRevoked) {
+		t.Fatalf("Run = %v, want ErrRevoked", err)
+	}
+	if n := dials.Load(); n != 1 {
+		t.Fatalf("dialled %d times, want exactly 1 (no reconnect after 4403)", n)
 	}
 }
 
