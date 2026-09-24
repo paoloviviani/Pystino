@@ -133,3 +133,43 @@ async def test_without_an_internal_url_nothing_changes() -> None:
     assert str(requests[0].url) == f"{PUBLIC}/.well-known/openid-configuration"
     assert "x-forwarded-host" not in requests[0].headers
     assert metadata.token_endpoint == f"{PUBLIC}/api/oidc/token"
+
+
+async def test_an_adopted_row_gets_the_environments_internal_url_once(session) -> None:
+    """The provider row an old install seeded has no internal URL; the env fills it, once."""
+    from gateway.config import Settings
+    from gateway.identity_registry import seed_from_env
+    from gateway.models import GroupSync, IdentityProvider
+    from gateway.secrets import SecretBox
+
+    box = SecretBox(["test-encryption-key-not-for-production"])
+    row = IdentityProvider(
+        name="default",
+        issuer=PUBLIC,
+        client_id="pystino-console",
+        client_secret_encrypted=box.encrypt("s"),
+        scopes=["openid"],
+        groups_claim="groups",
+        fetch_userinfo=True,
+        group_mappings=[],
+        link_local_by_email=False,
+        group_sync=GroupSync.FIRST_LOGIN,
+        is_enabled=True,
+    )
+    session.add(row)
+    await session.commit()
+    settings = Settings(
+        oidc=OIDCSettings(
+            enabled=True, issuer=PUBLIC, client_id="pystino-console", internal_base_url=INTERNAL
+        ),
+    )
+    await seed_from_env(session, settings, box)  # type: ignore[arg-type]
+    await session.refresh(row)
+    assert row.internal_base_url == INTERNAL
+    row.internal_base_url = "http://elsewhere:9091/authelia"
+    await session.commit()
+    await seed_from_env(session, settings, box)  # type: ignore[arg-type]
+    await session.refresh(row)
+    assert row.internal_base_url == "http://elsewhere:9091/authelia", (
+        "an administrator's value wins"
+    )
