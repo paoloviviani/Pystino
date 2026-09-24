@@ -10,21 +10,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
 	"pystino-agent/internal/backend"
 	backendopencode "pystino-agent/internal/backend/opencode"
+	"pystino-agent/internal/mockllm"
 	"pystino-agent/internal/policy"
 	"pystino-agent/internal/sessions"
 )
-
-// mockOpenAIScript is the mock upstream this test drives via its
-// /__control/* plane (see the file for the exact shapes). It lives in a
-// sibling worktree, not this one — it's Cerea's test fixture, reused here
-// rather than duplicated.
-const mockOpenAIScript = "/home/ubuntu/.paseo/worktrees/thin-cerea/tests/mock-openai.ts"
 
 // itFreePort picks a free loopback port without holding the listener open
 // — the same small race every test in this codebase that needs to hand a
@@ -39,47 +33,19 @@ func itFreePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-// startMockLLM launches the mock OpenAI-compatible server and waits for its
-// control-plane health check. Registers cleanup that kills it by PID —
-// never leave it running past this test.
+// startMockLLM serves the in-process mock OpenAI upstream (internal/mockllm)
+// on port and returns its origin; opencode reaches it over loopback like any
+// provider. Closed in t.Cleanup.
 func startMockLLM(t *testing.T, port int) string {
 	t.Helper()
-	if _, err := os.Stat(mockOpenAIScript); err != nil {
-		t.Skipf("mock LLM script not found at %s: %v", mockOpenAIScript, err)
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("mock LLM listen: %v", err)
 	}
-	cmd := exec.Command("node", mockOpenAIScript)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("MOCK_OPENAI_PORT=%d", port))
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	// Belt and suspenders alongside the Kill in t.Cleanup below: if this
-	// test binary itself dies without running cleanup (e.g. `go test
-	// -timeout` firing), the kernel still reaps this child rather than
-	// leaving a mock LLM listening forever.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("starting mock LLM: %v", err)
-	}
-	t.Cleanup(func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-			_, _ = cmd.Process.Wait()
-		}
-	})
-
-	origin := fmt.Sprintf("http://127.0.0.1:%d", port)
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		resp, err := http.Get(origin + "/__control/health")
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return origin
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	t.Fatalf("mock LLM never became healthy (stderr: %s)", stderr.String())
-	return ""
+	srv := &http.Server{Handler: mockllm.New()}
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return fmt.Sprintf("http://127.0.0.1:%d", port)
 }
 
 func setMockScenario(t *testing.T, origin string, scenario any) {

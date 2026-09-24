@@ -27,7 +27,7 @@ import (
 //
 // Gated behind PYSTINO_AGENT_ACP_IT=1 (needs opencode and node on PATH,
 // plus the sibling thin-cerea checkout for the mock's script — see
-// mockOpenAIScript in opencode_it_test.go, reused here unchanged).
+// startMockLLM in opencode_it_test.go, the in-process internal/mockllm).
 func TestACPIntegration(t *testing.T) {
 	if os.Getenv("PYSTINO_AGENT_ACP_IT") != "1" {
 		t.Skip("set PYSTINO_AGENT_ACP_IT=1 to run (spawns real `opencode acp` + a mock LLM)")
