@@ -139,8 +139,8 @@ func TestPermanentRefreshErrorMessage(t *testing.T) {
 	if !strings.Contains(msg, "re-enroll") && !strings.Contains(msg, "Re-enroll") {
 		t.Errorf("message %q does not tell the human what to do", msg)
 	}
-	if !strings.Contains(msg, "setup-agent.sh") || !strings.Contains(msg, "pystino-enroll enroll") {
-		t.Errorf("message %q does not name the concrete remedy commands", msg)
+	if !strings.Contains(msg, "pystino-agent enroll") {
+		t.Errorf("message %q does not name the concrete remedy command", msg)
 	}
 }
 

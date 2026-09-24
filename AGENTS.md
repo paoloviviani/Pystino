@@ -41,10 +41,11 @@ The decision record indexes every design decision; this file is the fast layer.
 - The gateway accepts a caller-supplied `x-request-id` and never returns the one
   it uses — a caller who wants a transcript tied to cost mints it and sends it
   (the convention the chat branch lives by; ADR 0040).
-- `deploy/opencode/` is the agent-machine side: the pasted-key `install.sh`
-  (ADR 0010), the Go enrollment CLI (`enroll` / `serve` / `pair`) and
-  `setup-agent.sh`. It imports nothing from the gateway and is documented in
-  `docs/coding-agents.md`.
+- `deploy/agent/` is the agent-machine binary (`pystino-agent enroll` /
+  `serve` / `run`: OIDC enrolment, the refreshing shim, and the outbound link
+  to the chat); `deploy/opencode/` keeps the pasted-key `install.sh`
+  (ADR 0010). Neither imports anything from the gateway; both are documented
+  in `docs/coding-agents.md`. The stack side is `pystino init --agents`.
 - Gateway internals that carry the weight: `routers/_metered.py`
   (resolve → reserve → record → settle), `accounting/cost.py` (the only code that
   multiplies a count by a rate), `quota/engine.py`, `access.py`, `plugins/`
@@ -77,21 +78,18 @@ uv run mkdocs build --strict                                   # docs site (mkdo
 
 ## Changes touching the request path, money, or SQL: run the live scripts
 
-```bash
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml -f deploy/compose/docker-compose.smoke.yml \
-  -f deploy/compose/docker-compose.redaction.yml up -d --build
-```
+A development stack: `uv run pystino init --mode dev …` then
+`docker compose up -d --build --wait` in the deploy directory
+(docs/getting-started.md; the fake upstream is deploy/dev/smoke.yml).
 
 Then the matching `./scripts/test_*.py` (reporting, redaction, console,
-providers, surfaces, quota_race, cache_accounting, public_tls). The live scripts
-sign in with local password auth (ADR 0043) — set `GATEWAY_LOCAL_ADMIN_PASSWORD`
-in `deploy/.env` and create the account with `docker compose ... exec gateway
-gateway passwd admin@local` first. More than
+providers, surfaces, quota_race, cache_accounting, public_tls). **Known gap:**
+they sign in with the local-password door ADR 0088 removed and need porting
+to an OIDC login (`scripts/live_session.py`) first. More than
 half the serious bugs in this project's history were only findable against the
 running stack.
 
-- Compose is overlay-based; the base file binds `127.0.0.1` on purpose.
+- One compose file with profiles (deploy/stack); the gateway binds `127.0.0.1` on purpose.
 - **Source `deploy/.env` before the live scripts** — they follow
   `PUBLIC_HOST` when set (needed under the TLS proxy, where
   certificates are verified, not skipped).

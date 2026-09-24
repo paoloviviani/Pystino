@@ -20,7 +20,7 @@ here" stays global in ``oidc_config`` (ADR 0048).
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gateway.config import OIDCSettings, Settings
 from gateway.models import GroupSync, IdentityProvider
 from gateway.oidc import OIDCClient
+
+if TYPE_CHECKING:
+    from gateway.identity_policy import AdminRule
 from gateway.secrets import SecretBox
 
 logger = logging.getLogger(__name__)
@@ -54,6 +57,26 @@ class ProviderRecord:
     is_enabled: bool
     source: str  # "console" | "environment"
     updated_at: object = None
+    # Back-channel base (OIDCSettings.internal_base_url); empty for an IdP
+    # this server reaches at its public issuer.
+    internal_base_url: str = ""
+    # Identity policy (ADR 0088); defaults reproduce the behaviour before it.
+    kind: str = "generic"
+    group_source: str = "claim"
+    admin_source: str = "console"
+    admin_claim: str = "groups"
+    admin_values: tuple[str, ...] = ()
+    subject_claim: str = "sub"
+    sync_adapter: str = "none"
+    sync_interval_minutes: int = 60
+    sync_deprovision: str = "disable"
+    sync_create_users: bool = True
+    sync_confirmed: bool = False
+
+    def admin_rule(self) -> "AdminRule | None":
+        from gateway.identity_policy import admin_rule
+
+        return admin_rule(self.admin_source, self.admin_claim, self.admin_values)
 
     def as_oidc_settings(self, redirect_uri: str, access_token_audience: str = "") -> OIDCSettings:
         """The OIDCSettings one login against this provider needs.
@@ -72,6 +95,7 @@ class ProviderRecord:
             groups_claim=self.groups_claim,
             fetch_userinfo=self.fetch_userinfo,
             access_token_audience=access_token_audience,
+            internal_base_url=self.internal_base_url,
         )
 
     def mappings_dict(self) -> dict[str, str]:
@@ -95,6 +119,18 @@ def record_from_row(row: IdentityProvider, secrets: SecretBox) -> ProviderRecord
         is_enabled=row.is_enabled,
         source="console",
         updated_at=row.updated_at,
+        internal_base_url=row.internal_base_url or "",
+        kind=row.kind or "generic",
+        group_source=row.group_source or "claim",
+        admin_source=row.admin_source or "console",
+        admin_claim=row.admin_claim or "groups",
+        admin_values=tuple(row.admin_values or ()),
+        subject_claim=row.subject_claim or "sub",
+        sync_adapter=row.sync_adapter or "none",
+        sync_interval_minutes=row.sync_interval_minutes or 60,
+        sync_deprovision=row.sync_deprovision or "disable",
+        sync_create_users=bool(row.sync_create_users),
+        sync_confirmed=bool(row.sync_confirmed),
     )
 
 
@@ -130,6 +166,7 @@ def record_from_env(settings: Settings) -> ProviderRecord | None:
         group_sync=GroupSync.FIRST_LOGIN,
         is_enabled=True,
         source="environment",
+        internal_base_url=oidc.internal_base_url,
     )
 
 
@@ -208,6 +245,7 @@ async def seed_from_env(session: AsyncSession, settings: Settings, secrets: Secr
     """
     any_row = (await session.execute(select(IdentityProvider.id).limit(1))).scalar_one_or_none()
     if any_row is not None:
+        await _fill_internal_base_url(session, settings)
         return
     env_record = record_from_env(settings)
     if env_record is None:
@@ -228,7 +266,55 @@ async def seed_from_env(session: AsyncSession, settings: Settings, secrets: Secr
             # the env switch: the fallback honours it, but once this row exists
             # it is authoritative and every later startup reads it instead.
             link_local_by_email=env_record.link_local_by_email,
+            internal_base_url=env_record.internal_base_url,
             is_enabled=True,
         )
     )
     await session.commit()
+
+
+async def _fill_internal_base_url(session: AsyncSession, settings: Settings) -> None:
+    """Give an existing row the environment's back-channel URL, once.
+
+    An install adopted from the old installers already has its provider row —
+    seeded from the environment by a gateway that had no internal_base_url —
+    and a row is authoritative once it exists, so the new environment's value
+    would never reach it: the adopted gateway would keep calling the public
+    issuer, the very hairpin the back-channel removes. So when the row for the
+    environment's issuer has no internal URL and the environment names one, it
+    is filled in. One-way and only when empty: a URL an administrator set (or
+    cleared to a different value) in the console is theirs.
+    """
+    internal = settings.oidc.internal_base_url.strip().rstrip("/")
+    issuer = settings.oidc.issuer.strip().rstrip("/")
+    if not internal or not issuer:
+        return
+    rows = (
+        (
+            await session.execute(
+                select(IdentityProvider).where(
+                    IdentityProvider.issuer == issuer, IdentityProvider.internal_base_url == ""
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        logger.info(
+            "identity provider %r: back-channel set to %s from the environment", row.name, internal
+        )
+        row.internal_base_url = internal
+        # The same one-time adoption step: a row the old gateway seeded asks
+        # only for openid/profile/email, so the adopted console would sign in
+        # with no groups claim at all (found in the adoption rehearsal). The
+        # environment's scopes — which name `groups` on the new stack — are
+        # added, never removed: an administrator's narrower choice later wins.
+        missing = [scope for scope in settings.oidc.scopes if scope not in (row.scopes or [])]
+        if missing:
+            row.scopes = [*(row.scopes or []), *missing]
+            logger.info(
+                "identity provider %r: scopes %s added from the environment", row.name, missing
+            )
+    if rows:
+        await session.commit()

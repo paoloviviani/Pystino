@@ -12,7 +12,6 @@ import type {
   ModelImportResponse,
   OidcPolicy,
   OidcPolicyInput,
-  UserCreateInput,
   ModelKind,
   Price,
   ProviderPlugin,
@@ -27,9 +26,14 @@ import type {
   EmailSettingsInput,
   EmailTestResult,
   GroupCreateInput,
+  AutheliaUser,
+  DirectoryPerson,
+  IdentityCapabilities,
+  IdentityKind,
   IdentityProvider,
   IdentityProviderInput,
   SearchBackendDeleteResult,
+  SyncRun,
   UsageReport,
 } from "./types";
 
@@ -59,6 +63,10 @@ export const adminKeys = {
   users: ["admin", "users"] as const,
   email: ["admin", "email"] as const,
   identityProviders: ["admin", "identity-providers"] as const,
+  identityKinds: ["admin", "identity-kinds"] as const,
+  syncRuns: (id: string) => ["admin", "identity-providers", id, "runs"] as const,
+  directory: (id: string) => ["admin", "identity-providers", id, "directory"] as const,
+  autheliaUsers: (id: string) => ["admin", "identity-providers", id, "authelia-users"] as const,
   oidcPolicy: ["admin", "oidc-policy"] as const,
   redaction: ["admin", "redaction"] as const,
   redactionRules: ["admin", "redaction", "rules"] as const,
@@ -821,23 +829,7 @@ export function useUpdateUser() {
   });
 }
 
-export function useSetUserPassword() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, password }: { id: string; password: string }) =>
-      request<AdminUser>(`/api/admin/users/${id}/password`, { method: "PUT", body: { password } }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
-  });
-}
 
-export function useClearUserPassword() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      request<AdminUser>(`/api/admin/users/${id}/password`, { method: "DELETE" }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
-  });
-}
 
 // -- Settings: email + identity providers (ADR 0051) --------------------------
 
@@ -906,14 +898,6 @@ export function useDeleteIdentityProvider() {
   });
 }
 
-export function useCreateUser() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (body: UserCreateInput) =>
-      request<AdminUser>("/api/admin/users", { method: "POST", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
-  });
-}
 
 export function useDeleteUser() {
   const client = useQueryClient();
@@ -976,3 +960,157 @@ export function useAdminReport(query: ReportQuery) {
   });
 }
 
+
+
+// --- directory sync, SCIM and the bundled Authelia's users (ADR 0088) -------
+
+export function useIdentityKinds() {
+  return useQuery({
+    queryKey: adminKeys.identityKinds,
+    queryFn: () => request<Record<IdentityKind, IdentityCapabilities>>("/api/admin/identity-kinds"),
+    staleTime: Infinity,
+    retry: retryUnlessRejected,
+  });
+}
+
+export function useSyncRuns(providerId: string, enabled = true) {
+  return useQuery({
+    queryKey: adminKeys.syncRuns(providerId),
+    queryFn: () => request<SyncRun[]>(`/api/admin/identity-providers/${providerId}/sync/runs`),
+    enabled,
+    retry: retryUnlessRejected,
+  });
+}
+
+export function useDirectory(providerId: string, enabled = true) {
+  return useQuery({
+    queryKey: adminKeys.directory(providerId),
+    queryFn: () => request<DirectoryPerson[]>(`/api/admin/identity-providers/${providerId}/directory`),
+    enabled,
+    retry: retryUnlessRejected,
+  });
+}
+
+export function useSetSyncConfig() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, config }: { id: string; config: Record<string, string> }) =>
+      request<{ has_config: boolean }>(`/api/admin/identity-providers/${id}/sync-config`, {
+        method: "PUT",
+        body: { config },
+      }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
+  });
+}
+
+export function useTestSync() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<{ total: number; sample: { username: string | null; email: string | null; groups: string[]; active: boolean }[] }>(
+        `/api/admin/identity-providers/${id}/sync/test`,
+        { method: "POST" },
+      ),
+  });
+}
+
+export function useRunSync() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, dryRun, force }: { id: string; dryRun: boolean; force?: boolean }) =>
+      request<{ run: SyncRun; confirmed: boolean }>(`/api/admin/identity-providers/${id}/sync`, {
+        method: "POST",
+        body: { dry_run: dryRun, force: force ?? false },
+      }),
+    onSuccess: (_result, { id }) => {
+      client.invalidateQueries({ queryKey: adminKeys.syncRuns(id) });
+      client.invalidateQueries({ queryKey: adminKeys.directory(id) });
+      client.invalidateQueries({ queryKey: adminKeys.users });
+    },
+  });
+}
+
+export function useConfirmSync() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<{ confirmed: boolean }>(`/api/admin/identity-providers/${id}/sync/confirm`, {
+        method: "POST",
+      }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
+  });
+}
+
+export function usePreassignGroups() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, entryId, groups }: { id: string; entryId: string; groups: string[] }) =>
+      request<{ preassigned_groups: string[] }>(
+        `/api/admin/identity-providers/${id}/directory/${entryId}/preassigned`,
+        { method: "PUT", body: { groups } },
+      ),
+    onSuccess: (_result, { id }) => client.invalidateQueries({ queryKey: adminKeys.directory(id) }),
+  });
+}
+
+export function useMintScimToken() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<{ token: string; endpoint: string }>(`/api/admin/identity-providers/${id}/scim-token`, {
+        method: "POST",
+      }),
+  });
+}
+
+export function useAutheliaUsers(providerId: string, enabled = true) {
+  return useQuery({
+    queryKey: adminKeys.autheliaUsers(providerId),
+    queryFn: () => request<AutheliaUser[]>(`/api/admin/identity-providers/${providerId}/authelia-users`),
+    enabled,
+    retry: retryUnlessRejected,
+  });
+}
+
+export function useCreateAutheliaUser() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; username: string; email: string; display_name: string; groups: string[] }) =>
+      request<{ user: AutheliaUser; password: string }>(
+        `/api/admin/identity-providers/${id}/authelia-users`,
+        { method: "POST", body },
+      ),
+    onSuccess: (_result, { id }) => client.invalidateQueries({ queryKey: adminKeys.autheliaUsers(id) }),
+  });
+}
+
+export function useUpdateAutheliaUser() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, username, ...body }: { id: string; username: string } & Partial<Omit<AutheliaUser, "username">>) =>
+      request<AutheliaUser>(`/api/admin/identity-providers/${id}/authelia-users/${username}`, {
+        method: "PATCH",
+        body,
+      }),
+    onSuccess: (_result, { id }) => client.invalidateQueries({ queryKey: adminKeys.autheliaUsers(id) }),
+  });
+}
+
+export function useResetAutheliaPassword() {
+  return useMutation({
+    mutationFn: ({ id, username }: { id: string; username: string }) =>
+      request<{ password: string }>(
+        `/api/admin/identity-providers/${id}/authelia-users/${username}/reset-password`,
+        { method: "POST" },
+      ),
+  });
+}
+
+export function useDeleteAutheliaUser() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, username }: { id: string; username: string }) =>
+      request<void>(`/api/admin/identity-providers/${id}/authelia-users/${username}`, {
+        method: "DELETE",
+      }),
+    onSuccess: (_result, { id }) => client.invalidateQueries({ queryKey: adminKeys.autheliaUsers(id) }),
+  });
+}

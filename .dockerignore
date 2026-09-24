@@ -32,3 +32,10 @@ deploy/
 !apps/gateway/README.md
 !packages/shared-py/README.md
 !services/redaction/README.md
+
+# Except the release's stack files, which the gateway image carries so that
+# `pystino init` can write compose.yaml on a host with no checkout (ADR 0086).
+# release.env is a version manifest, not secrets, despite its suffix. Last
+# match wins, so these re-includes must stay below the exclusions above.
+!deploy/stack/
+!deploy/stack/**

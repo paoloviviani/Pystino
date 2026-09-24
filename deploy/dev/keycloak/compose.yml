@@ -1,0 +1,41 @@
+# Development only: a Keycloak to build the keycloak_admin sync adapter and
+# the external-IdP paths against. Not a bundled identity provider (decision
+# D2: Keycloak is supported as an *external* IdP; Authelia is the bundled one).
+# It attaches through the stack's component hook (report §2, §9), which is also
+# a worked example of one:
+#
+#   1. append this file to COMPOSE_FILE in .env
+#   2. cp keycloak.caddy <deploy dir>/proxy.d/  — browsers reach it at /idp
+#   3. set KEYCLOAK_ADMIN_PASSWORD in .env, then docker compose up -d --wait
+#   4. in the console, add a provider: kind keycloak, issuer
+#      <origin>/idp/realms/<realm>, internal URL
+#      http://keycloak:8080/idp/realms/<realm> (the back-channel — no CA bundle,
+#      the reason the old overlay needed one is gone), then a Directory adapter
+#      keycloak_admin with a service-account client (view-users, query-groups).
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.3
+    restart: unless-stopped
+    command: ["start-dev"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
+      # Served under /idp, and always naming the public origin in what it mints,
+      # whichever address a request arrived on — which is what lets the gateway
+      # call http://keycloak:8080/idp/… and still validate the public issuer.
+      KC_HTTP_RELATIVE_PATH: /idp
+      KC_HOSTNAME: ${PUBLIC_ORIGIN}/idp
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && echo -e 'GET /idp/health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '\"status\": \"UP\"' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+volumes:
+  keycloak-data:

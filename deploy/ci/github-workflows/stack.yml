@@ -1,0 +1,108 @@
+# The whole stack, brought up the way an operator would, and signed into.
+# Expensive, so it runs only where it earns its minutes (GitHub free plan):
+# on release PRs (head branch release/*), on demand, and weekly — never on
+# every PR. The jobs skip themselves on other PRs, and a skipped job bills
+# nothing.
+#
+#   fresh-install  pystino init (development mode: images built here) →
+#                  compose up → a scripted browser sign-in through the proxy,
+#                  Authelia and the gateway's back-channel → /api/me is admin
+#   upgrade        the previous release, pulled → signed in → `pystino upgrade`
+#                  to this tree's version (built here) → up → signed in again
+#
+# The chat is left out: its image lives in the Cerea repository's private
+# package, which this repository's GITHUB_TOKEN cannot pull until that
+# package grants it access (Package settings → Manage Actions access).
+name: stack
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"  # Mondays
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: stack-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ORIGIN: https://stack.pystino.test:8443
+
+jobs:
+  fresh-install:
+    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: {enable-cache: true}
+      - name: Resolve the origin to this runner
+        run: echo "127.0.0.1 stack.pystino.test" | sudo tee -a /etc/hosts
+      - name: pystino init (development mode)
+        run: |
+          set -eu
+          dir="$RUNNER_TEMP/stack"; mkdir -p "$dir"
+          PYSTINO_UPSTREAM_API_KEY= uv run pystino init --dir "$dir" --mode dev --preset homelab \
+            --tls internal --origin "$ORIGIN" --https-port 8443 --http-port 8080 \
+            --admin-email ops@pystino.test > "$RUNNER_TEMP/init.out"
+          uv run pystino set --dir "$dir" COMPOSE_PROFILES=gateway,authelia PUBLIC_BIND=127.0.0.1
+          uv run pystino doctor --dir "$dir"
+          sed -n 's/.*First sign-in:  [^ ]* \/ //p' "$RUNNER_TEMP/init.out" > "$RUNNER_TEMP/password"
+      - name: Build and bring up
+        working-directory: ${{ runner.temp }}/stack
+        run: docker compose up -d --build --wait
+      - name: Sign in end to end
+        run: uv run python deploy/ci/e2e_login.py "$RUNNER_TEMP/stack" "$(cat "$RUNNER_TEMP/password")"
+      - name: Logs on failure
+        if: failure()
+        working-directory: ${{ runner.temp }}/stack
+        run: docker compose logs --tail 80
+
+  upgrade:
+    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: astral-sh/setup-uv@v5
+        with: {enable-cache: true}
+      - id: versions
+        run: |
+          prev=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n 1 | sed 's/^v//')
+          cand=$(sed -n 's/^PYSTINO_VERSION=//p' deploy/stack/release.env)
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"; echo "cand=$cand" >> "$GITHUB_OUTPUT"
+          if [ -z "$prev" ] || [ "$prev" = "$cand" ]; then echo "::notice::no earlier release to upgrade from"; fi
+      - if: steps.versions.outputs.prev != '' && steps.versions.outputs.prev != steps.versions.outputs.cand
+        uses: docker/login-action@v3
+        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
+      - name: Install the previous release, sign in, upgrade, sign in again
+        if: steps.versions.outputs.prev != '' && steps.versions.outputs.prev != steps.versions.outputs.cand
+        env:
+          PREV: ${{ steps.versions.outputs.prev }}
+          CAND: ${{ steps.versions.outputs.cand }}
+        run: |
+          set -eu
+          echo "127.0.0.1 stack.pystino.test" | sudo tee -a /etc/hosts
+          R=ghcr.io/${{ github.repository_owner }}
+          dir="$RUNNER_TEMP/up"; mkdir -p "$dir"; cd "$dir"
+          docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/deploy" -w /deploy -e PYSTINO_UPSTREAM_API_KEY= \
+            "$R/pystino-gateway:$PREV" pystino init --tls internal --origin "$ORIGIN" --https-port 8443 \
+            --http-port 8080 --admin-email ops@pystino.test --preset homelab > init.out
+          ./pystino set COMPOSE_PROFILES=gateway,authelia PUBLIC_BIND=127.0.0.1
+          password=$(sed -n 's/.*First sign-in:  [^ ]* \/ //p' init.out)
+          docker compose up -d --wait
+          uv run --project "$GITHUB_WORKSPACE" python "$GITHUB_WORKSPACE/deploy/ci/e2e_login.py" "$dir" "$password"
+          # The candidate, built here under its release tag, as a release would publish it.
+          docker build -q -t "$R/pystino-gateway:$CAND" --build-arg INCLUDE_CONSOLE=true -f "$GITHUB_WORKSPACE/apps/gateway/Dockerfile" "$GITHUB_WORKSPACE"
+          docker build -q -t "$R/pystino-proxy:$CAND" "$GITHUB_WORKSPACE/deploy/stack/proxy"
+          docker build -q -t "$R/pystino-authelia:$CAND" "$GITHUB_WORKSPACE/deploy/stack/authelia"
+          ./pystino upgrade "$CAND"
+          docker compose up -d --wait
+          uv run --project "$GITHUB_WORKSPACE" python "$GITHUB_WORKSPACE/deploy/ci/e2e_login.py" "$dir" "$password"
