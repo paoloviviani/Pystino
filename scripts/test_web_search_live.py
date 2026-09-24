@@ -59,7 +59,7 @@ def expect(label: str, condition: bool, detail: str = "") -> None:
 def main() -> int:
     credentials = admin_credentials()
     if credentials is None:
-        print("set GATEWAY_LOCAL_ADMIN_PASSWORD in deploy/.env")
+        print("set PYSTINO_LIVE_ADMIN_PASSWORD (see scripts/live_session.py)")
         return 1
     session = login(*credentials)
     if session is None:
@@ -71,7 +71,7 @@ def main() -> int:
     # none — which is the 400 this script hit the first time it was run.
     people = user_credentials()
     if people is None:
-        print("set GATEWAY_LOCAL_USER_EMAIL and GATEWAY_LOCAL_USER_PASSWORD in deploy/.env")
+        print("set PYSTINO_LIVE_USER and PYSTINO_LIVE_USER_PASSWORD")
         return 1
     user = login(*people)
     if user is None:

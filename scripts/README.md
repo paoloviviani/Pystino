@@ -33,9 +33,8 @@ whether sending `stream_options` changes anything there. They spend nothing.
 Everything named `test_*_live.py` runs against a **running stack**, not the
 unit suite: `bill_to`, `cache_accounting`, `citations`, `console`, `providers`,
 `public_tls`, `pystino_usage`, `quota_race`, `redaction`, `reporting`,
-`surfaces`, `web_search`. They sign in with local email + password through
-`live_session.py` — deliberately, so the checks work on a deployment with no
-identity provider configured at all. See
+`surfaces`, `web_search`. They sign in through the gateway's OIDC login and
+the bundled Authelia, as a browser does, via `live_session.py`. See
 [Operations](../docs/operations.md#the-live-checks) for what each one covers
 and the environment they need.
 
@@ -51,6 +50,6 @@ gateway, and what it keeps is a refresh credential rather than a key — which
 is what lets spend land on the signed-in person's own account instead of a
 standing secret on a laptop (ADR 0040, ADR 0061).
 
-That work lives in `deploy/opencode/` and is documented in
+That work lives in `deploy/agent/` (`pystino-agent`) and is documented in
 [docs/coding-agents.md](../docs/coding-agents.md). The gateway still has no
 device-flow endpoints of its own, and now needs none.

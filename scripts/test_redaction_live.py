@@ -72,13 +72,13 @@ def get(url: str, headers: dict[str, str] | None = None) -> Any:
 
 
 def mint_key() -> str | None:
-    """An API key for a member, via local password sign-in like the other scripts."""
+    """An API key for a member, via an OIDC sign-in like the other scripts."""
     from live_session import login, request
 
     credentials = user_credentials()
     if credentials is None:
         print(
-            "  skipped: GATEWAY_LOCAL_USER_EMAIL/PASSWORD are not set — a redacted "
+            "  skipped: PYSTINO_LIVE_USER/_PASSWORD are not set — a redacted "
             "request needs a member of a billing group, which the admin is not"
         )
         return None

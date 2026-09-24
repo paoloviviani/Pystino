@@ -126,7 +126,7 @@ def setup() -> str | None:
     """An unpriced model on the fake upstream, and a key. Returns the secret."""
     credentials = admin_credentials()
     if credentials is None:
-        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
+        print("FAILED: PYSTINO_LIVE_ADMIN_PASSWORD is not set (see scripts/live_session.py)")
         return None
     admin = login(*credentials)
     if admin is None:
