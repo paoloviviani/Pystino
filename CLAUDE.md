@@ -52,7 +52,7 @@ what used to share the monorepo:
 
 | Repository | What | Why it is not here |
 |---|---|---|
-| the decision record (internal) | ADRs 0001–0085, the whole-stack architecture, the roadmap and the scope of unstarted work | The series spans a gateway, a chat app, a RAG pipeline and three design languages. A numbered sequence cannot be split without renumbering, which its index forbids |
+| the decision record (internal) | ADRs 0001–0089, the whole-stack architecture, the roadmap and the scope of unstarted work | The series spans a gateway, a chat app, a RAG pipeline and three design languages. A numbered sequence cannot be split without renumbering, which its index forbids |
 | [Cerea](https://github.com/paoloviviani/Cerea) | The chat application, a `/v1` **client** (a fork of huggingface/chat-ui) | It imports nothing from the gateway: it talks over `/v1` with a key or an OIDC bearer (ADR 0040, ADR 0046). On the day of the split its monorepo branch was 56 commits behind, and every gateway change made the merge worse |
 
 **Citing a decision:** by number, in prose — `(ADR 0032)`, never as a link.

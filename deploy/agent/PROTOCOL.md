@@ -1,6 +1,6 @@
 # Thin machine agent: architecture and wire protocol (v1)
 
-Status: implemented (P0 and parity milestones 1–9, 2026-09-24; live since the deploy-rearch cutover). Supersedes paseo in the `/code` data path (ADR 0086).
+Status: implemented (P0 and parity milestones 1–9, 2026-09-24; live since the deploy-rearch cutover). Supersedes paseo in the `/code` data path (ADR 0089, superseding 0085).
 Source of truth for both implementations: the Go agent (Pystino `deploy/agent/`) and Cerea's machine link (`src/lib/server/code/machine*.ts`).
 
 ## 1. Shape
