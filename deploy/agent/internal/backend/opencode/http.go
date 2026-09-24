@@ -29,6 +29,7 @@ var (
 	_ backend.Differ     = (*Backend)(nil)
 	_ backend.Childrener = (*Backend)(nil)
 	_ backend.Compactor  = (*Backend)(nil)
+	_ backend.Asker      = (*Backend)(nil)
 )
 
 // doJSON issues one request against the supervised opencode instance,
@@ -80,6 +81,7 @@ func (b *Backend) Capabilities() backend.Capabilities {
 	return backend.Capabilities{
 		Diff: true, Children: true, Usage: true, Compact: true,
 		Images: true, Files: true, Worktrees: false, AutoAccept: true,
+		Questions: true,
 	}
 }
 
@@ -330,6 +332,22 @@ func (b *Backend) Children(ctx context.Context, _ string, sessionID string) ([]b
 
 func (b *Backend) Compact(ctx context.Context, _ string, sessionID string) error {
 	return b.doJSON(ctx, http.MethodPost, "/session/"+url.PathEscape(sessionID)+"/summarize", nil, nil)
+}
+
+// ReplyQuestion answers a pending question.asked (the user-question tool
+// design). Like ReplyPermission, directory is required in practice even
+// though the OpenAPI schema marks it optional — found live, the same
+// PermissionNotFoundError-style 404 without it.
+func (b *Backend) ReplyQuestion(ctx context.Context, workspaceDir, _, requestID string, answers [][]string) error {
+	body := map[string]any{"answers": answers}
+	return b.doJSON(ctx, http.MethodPost, "/question/"+url.PathEscape(requestID)+"/reply"+directoryQuery(workspaceDir), body, nil)
+}
+
+// RejectQuestion dismisses a pending question.asked without answering it —
+// opencode reports the tool call itself as an error ("The user dismissed
+// this question"), verified live.
+func (b *Backend) RejectQuestion(ctx context.Context, workspaceDir, _, requestID string) error {
+	return b.doJSON(ctx, http.MethodPost, "/question/"+url.PathEscape(requestID)+"/reject"+directoryQuery(workspaceDir), nil, nil)
 }
 
 // splitModelID turns "<providerID>/<modelID>" into its two halves. A

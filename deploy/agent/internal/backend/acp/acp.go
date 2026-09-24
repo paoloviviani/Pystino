@@ -140,14 +140,18 @@ func (b *Backend) Capabilities() backend.Capabilities {
 	b.infoMu.Lock()
 	images := b.agentCaps.promptImage
 	b.infoMu.Unlock()
-	// Diff/Children/Usage/Compact/Worktrees: ACP has no wire message for
-	// any of these (PROTOCOL.md §2). AutoAccept is true regardless of the
-	// underlying agent: the materializer (internal/sessions) implements
-	// auto-accept generically by answering session/request_permission
-	// itself, not something a backend opts into.
+	// Diff/Children/Usage/Compact/Worktrees/Questions: ACP has no wire
+	// message for any of these (PROTOCOL.md §2) — the user-question tool
+	// design's fallback for a backend without a native question mechanism
+	// is the injected MCP tool the agent-handoff work adds, not this
+	// capability. AutoAccept is true regardless of the underlying agent:
+	// the materializer (internal/sessions) implements auto-accept
+	// generically by answering session/request_permission itself, not
+	// something a backend opts into.
 	return backend.Capabilities{
 		Diff: false, Children: false, Usage: false, Compact: false,
 		Images: images, Files: false, Worktrees: false, AutoAccept: true,
+		Questions: false,
 	}
 }
 

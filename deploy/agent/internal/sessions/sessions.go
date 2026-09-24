@@ -430,6 +430,12 @@ func (m *Materializer) translateLocked(st *sessionState, ev backend.Event) ([]ba
 		st.todos = ev.Todos
 		return []backend.Event{ev}, nil
 
+	case backend.EventQuestionAsked, backend.EventQuestionResolved:
+		// The user-question tool design: forwarded as-is, no tracked state
+		// (unlike permissions, auto-accept never applies to a question —
+		// PROTOCOL.md's auto-accept scope is tool-call permissions only).
+		return []backend.Event{ev}, nil
+
 	default:
 		// Forward-compatible: an event kind this build doesn't know yet is
 		// dropped rather than forwarded blind (PROTOCOL.md §5 says unknown
