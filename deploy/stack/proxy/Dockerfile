@@ -3,6 +3,7 @@
 # file edited in place (the inode class this replaces).
 FROM caddy:2.11-alpine
 COPY Caddyfile /etc/caddy/Caddyfile
+COPY modes/ /etc/caddy/modes/
 RUN mkdir -p /etc/caddy/extra
 LABEL org.opencontainers.image.title="pystino-proxy" \
       org.opencontainers.image.source="https://github.com/paoloviviani/Pystino" \

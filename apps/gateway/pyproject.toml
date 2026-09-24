@@ -42,6 +42,8 @@ dependencies = [
 gateway = "gateway.cli:main"
 # Deployment: init, bootstrap, doctor (ADR 0086).
 pystino = "gateway.deploy.cli:main"
+# The same commands, Cerea-branded, for a chat-only install (report §0, D9).
+cerea = "gateway.deploy.cli:cerea_main"
 
 [tool.uv.sources]
 llmp-shared = { workspace = true }

@@ -14,7 +14,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from gateway.deploy import envfile
+from gateway.deploy import envfile, registry, stackfiles
 
 MIN_COMPOSE = (2, 24)
 
@@ -142,6 +142,12 @@ def check(deploy_dir: Path, *, probe_docker: bool = True) -> Report:
                 f"{MIN_COMPOSE[0]}.{MIN_COMPOSE[1]}+ is needed "
                 "(profiles with required: false, --wait)"
             )
+
+    reg = values.get("PYSTINO_REGISTRY", "")
+    if not values.get("PYSTINO_SRC") and stackfiles.stack_dir() != stackfiles.IMAGE_STACK_DIR:
+        note = registry.hint(reg)
+        if note:
+            report.warnings.append(note)
 
     report.notes.append("back up: " + "; ".join(BACKUP))
     return report

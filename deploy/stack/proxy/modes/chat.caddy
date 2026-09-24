@@ -1,0 +1,5 @@
+# PROXY_DEFAULT=chat: a Cerea-only install (satellite/generic presets) has no
+# gateway, so everything not routed above lands on the chat.
+handle {
+	redir * /chat/ 302
+}

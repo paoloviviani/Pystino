@@ -47,9 +47,8 @@
 	}
 	redir /authelia /authelia/
 
-	handle {
-		reverse_proxy gateway:8000 {
-			import to_app
-		}
-	}
+	# What everything else — `/` included — goes to: the gateway (API and
+	# console), or, on a Cerea-only install with no gateway, a redirect to
+	# the chat. PROXY_DEFAULT is gateway | chat; `pystino init` writes it.
+	import /etc/caddy/modes/{$PROXY_DEFAULT:gateway}.caddy
 }

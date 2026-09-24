@@ -11,6 +11,7 @@ upstream provider key, an external IdP's client secret).
 
 from __future__ import annotations
 
+import dataclasses
 import ipaddress
 import secrets
 from collections.abc import Callable
@@ -64,7 +65,9 @@ class InitOptions:
     oidc_chat_client_id: str = "cerea"
     oidc_chat_client_secret: str = ""
     oidc_groups_claim: str = "groups"
-    # Upstream inference provider.
+    # Satellite preset: the central Pystino's origin (its /v1 and its IdP).
+    central_url: str = ""
+    # Upstream inference provider (the gateway's; the chat's own in `generic`).
     upstream_base_url: str = "https://api.cortecs.ai/v1"
     upstream_api_key: str = ""
     # Image origin; defaults come from release.env.
@@ -120,6 +123,7 @@ def build_env(
     hasher: PasswordHasher | None = None,
 ) -> InitResult:
     """Every value the stack reads, derived from the answers. Pure."""
+    options = dataclasses.replace(options)  # presets may adjust it; never the caller's
     hasher = hasher or PasswordHasher()
     if options.mode not in MODES:
         raise InitError(f"mode must be one of {MODES}")
@@ -146,6 +150,40 @@ def build_env(
         site, directive = "http://:80", ""
     https_port = options.https_port or origin_port or 443
     http_port = options.http_port or 80
+
+    # --- Cerea without a local gateway (ADR 0082) --------------------------------
+    standalone = "gateway" not in preset.profiles
+    chat_backend: list[tuple[str, str]] = []
+    if preset.name == "satellite":
+        central = options.central_url.strip().rstrip("/")
+        if not central.startswith("https://"):
+            raise InitError("the satellite preset needs --central-url https://<central pystino>")
+        if options.upstream_api_key:
+            # A stored key would bill every user on this site to one account.
+            raise InitError("a satellite stores no API key: every call carries the user's token")
+        if options.idp != "external":
+            # One directory: the central gateway only accepts its own issuer's
+            # tokens on /v1 (ADR 0082).
+            options.idp = "external"
+        if not options.oidc_issuer:
+            options.oidc_issuer = f"{central}/authelia"
+        chat_backend = [
+            ("CHAT_OPENAI_BASE_URL", f"{central}/v1"),
+            ("CHAT_OPENAI_API_KEY", ""),
+            ("CHAT_USE_USER_TOKEN", "true"),
+        ]
+    elif preset.name == "generic":
+        if not options.upstream_api_key:
+            raise InitError(
+                "the generic preset needs the endpoint's API key (PYSTINO_UPSTREAM_API_KEY)"
+            )
+        chat_backend = [
+            ("CHAT_OPENAI_BASE_URL", options.upstream_base_url),
+            ("CHAT_OPENAI_API_KEY", options.upstream_api_key),
+            # Forced, not offered: user-token mode would send the person's IdP
+            # access token to a third party (ADR 0082).
+            ("CHAT_USE_USER_TOKEN", "false"),
+        ]
 
     # --- profiles --------------------------------------------------------------
     profiles = list(preset.profiles)
@@ -250,8 +288,10 @@ def build_env(
             ("AUTHELIA_ADMIN_PASSWORD_DIGEST", hasher.hash(password)),
         ]
     else:
-        if not options.oidc_issuer or not options.oidc_console_client_secret:
-            raise InitError("an external IdP needs --oidc-issuer and the console client secret")
+        if not options.oidc_issuer:
+            raise InitError("an external IdP needs --oidc-issuer")
+        if not standalone and not options.oidc_console_client_secret:
+            raise InitError("an external IdP needs the console client secret")
         if "chat" in profiles and not options.oidc_chat_client_secret:
             raise InitError("an external IdP with the chat needs the chat client secret")
         identity += [
@@ -293,6 +333,9 @@ def build_env(
                 ("HTTPS_PORT", str(https_port)),
                 ("GATEWAY_PORT", str(options.gateway_port)),
                 ("ACME_EMAIL", options.acme_email or _default_acme_email(host)),
+                # What `/` serves: the gateway, or — with no gateway here — a
+                # redirect to the chat.
+                ("PROXY_DEFAULT", "chat" if standalone else "gateway"),
             ],
         ),
         (
@@ -317,10 +360,11 @@ def build_env(
             "Upstream inference provider (more are added in the console)",
             [
                 ("GATEWAY_UPSTREAM__BASE_URL", options.upstream_base_url),
-                ("GATEWAY_UPSTREAM__API_KEY", options.upstream_api_key),
+                # Standalone presets hand the key to the chat instead (below).
+                ("GATEWAY_UPSTREAM__API_KEY", "" if standalone else options.upstream_api_key),
             ],
         ),
-        ("Preset: " + preset.name, list(preset.values)),
+        ("Preset: " + preset.name, [*preset.values, *chat_backend]),
         ("Identity: OIDC only (ADR 0088)", identity),
     ]
     if authelia:
