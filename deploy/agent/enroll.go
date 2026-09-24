@@ -7,12 +7,14 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"pystino-agent/internal/policy"
 )
 
-const enrollUsage = `enroll enroll — sign in and write the opencode setup.
+const enrollUsage = `pystino-agent enroll — sign in and write the opencode setup.
 
 Usage:
-  enroll enroll [--issuer URL] [--gateway URL] [--client-id ID]
+  pystino-agent enroll [--issuer URL] [--gateway URL] [--client-id ID]
                 [--device | --loopback] [--group NAME] [--output PATH]
                 [--creds PATH] [--shim-port PORT] [--no-discover]
                 [--allow-opencode-provider] [--yes]
@@ -20,6 +22,9 @@ Usage:
   --issuer     OIDC issuer where discovery lives (prompted when missing).
   --gateway    Gateway origin or /v1 base, e.g. https://llm.example.org
                (a bare origin gets /v1 appended; prompted when missing).
+  --cerea      Cerea origin 'run' dials by default, e.g. https://cerea.example.org
+               (optional: 'run --cerea' overrides it; unset means 'run' has
+               no default and --cerea becomes required on that command).
   --client-id  OAuth client id (default opencode-enrollment: the id baked
                into both bundled IdPs, so it must match on either).
   --device     Force the device flow (headless boxes).
@@ -36,6 +41,17 @@ Usage:
                enabled_providers, so the gateway's models are the only
                ones opencode offers; this flag omits that allowlist for
                operators who want the built-ins too.
+  --allow-auto-accept  Let 'run' permit session.setAutoAccept at all
+               (default denied: the machine's own veto, PROTOCOL.md §4 —
+               Cerea can never turn this on over the link if this flag was
+               never passed at enroll time).
+  --workspace-root PATH  Confine workspace.create to this path or below
+               (repeatable; default unrestricted). Every occurrence is
+               recorded; 'run' refuses a workspace outside all of them.
+  --allow-free-models  Let 'run' list and accept models from providers
+               other than the gateway's own (default: only pystino/*
+               models, so spend always lands in the account this machine
+               enrolled under).
   --yes        Overwrite existing files without asking.
 `
 
@@ -47,6 +63,7 @@ const defaultShimPort = 41871
 type enrollOptions struct {
 	issuer                 string
 	gateway                string
+	cerea                  string
 	clientID               string
 	device                 bool
 	loopback               bool
@@ -56,7 +73,27 @@ type enrollOptions struct {
 	shimPort               int
 	discover               bool
 	allowOpencodeProviders bool
+	allowAutoAccept        bool
+	workspaceRoots         []string
+	allowFreeModels        bool
 	yes                    bool
+}
+
+// stringListFlag implements flag.Value for a flag that may be repeated
+// (--workspace-root), which the stdlib flag package has no direct support
+// for: each occurrence appends rather than replacing.
+type stringListFlag struct{ values *[]string }
+
+func (f stringListFlag) String() string {
+	if f.values == nil {
+		return ""
+	}
+	return strings.Join(*f.values, ",")
+}
+
+func (f stringListFlag) Set(v string) error {
+	*f.values = append(*f.values, v)
+	return nil
 }
 
 func runEnroll(args []string) error {
@@ -64,6 +101,7 @@ func runEnroll(args []string) error {
 	opts := enrollOptions{}
 	fs.StringVar(&opts.issuer, "issuer", "", "")
 	fs.StringVar(&opts.gateway, "gateway", "", "")
+	fs.StringVar(&opts.cerea, "cerea", "", "")
 	fs.StringVar(&opts.clientID, "client-id", "opencode-enrollment", "")
 	fs.BoolVar(&opts.device, "device", false, "")
 	fs.BoolVar(&opts.loopback, "loopback", false, "")
@@ -76,6 +114,9 @@ func runEnroll(args []string) error {
 	noDiscover := fs.Bool("no-discover", false, "")
 	fs.BoolVar(&opts.discover, "discover", true, "")
 	fs.BoolVar(&opts.allowOpencodeProviders, "allow-opencode-provider", false, "")
+	fs.BoolVar(&opts.allowAutoAccept, "allow-auto-accept", false, "")
+	fs.Var(stringListFlag{&opts.workspaceRoots}, "workspace-root", "")
+	fs.BoolVar(&opts.allowFreeModels, "allow-free-models", false, "")
 	fs.BoolVar(&opts.yes, "yes", false, "")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -158,6 +199,14 @@ func enroll(ctx context.Context, opts *enrollOptions) error {
 		return err
 	}
 
+	// C3: a fresh per-install secret every enroll, never reused across
+	// machines or re-enrollments — opencode's config and this one gateway
+	// bearer are the only two places it is ever written.
+	shimSecret, err := randomHex(32)
+	if err != nil {
+		return fmt.Errorf("minting shim secret: %w", err)
+	}
+
 	if err := confirmOverwrite(opts.output, opts.creds, opts.yes); err != nil {
 		return err
 	}
@@ -173,20 +222,35 @@ func enroll(ctx context.Context, opts *enrollOptions) error {
 		ExpiresIn:     tokens.ExpiresIn,
 		ObtainedAt:    time.Now().Unix(),
 		ShimPort:      shimPort,
+		ShimSecret:    shimSecret,
+		CereaOrigin:   strings.TrimSuffix(opts.cerea, "/"),
 	}
 	if err := saveCredentials(opts.creds, creds); err != nil {
 		return err
 	}
 	if err := writeOpencodeConfig(
 		opts.output,
-		buildOpencodeConfig(shimAddr, models, opts.allowOpencodeProviders),
+		buildOpencodeConfig(shimAddr, shimSecret, models, opts.allowOpencodeProviders),
 	); err != nil {
+		return err
+	}
+
+	// The machine's own veto (PROTOCOL.md §4): written once here, never
+	// writable over the link. `run` loads it from the same directory as
+	// the credential file.
+	pol := policy.Default()
+	if opts.allowAutoAccept {
+		pol.AutoAccept = policy.AutoAcceptAllowed
+	}
+	pol.WorkspaceRoots = opts.workspaceRoots
+	pol.AllowFreeModels = opts.allowFreeModels
+	if err := policy.Save(policyPathFor(opts.creds), pol); err != nil {
 		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "wrote %s (provider pystino via shim %s) and %s\n", opts.output, shimAddr, opts.creds)
 	fmt.Fprintf(os.Stderr, "billing group: %s (sent as x-bill-to by the shim)\n", group)
-	fmt.Fprintf(os.Stderr, "next: run 'enroll serve' (same machine), then point opencode at it.\n")
+	fmt.Fprintf(os.Stderr, "next: run 'pystino-agent serve' (same machine), then point opencode at it.\n")
 	fmt.Fprintf(os.Stderr, "spend is not visible to opencode — /v1 has no usage endpoint; watch it in the console.\n")
 	return nil
 }
