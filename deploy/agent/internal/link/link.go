@@ -219,6 +219,9 @@ func jitter(d time.Duration) time.Duration {
 	return d + delta
 }
 
+// MaxFrameBytes bounds one frame from Cerea (a prompt with its attachments).
+const MaxFrameBytes = 160 << 20
+
 func dialURL(origin string) (string, error) {
 	origin = strings.TrimSuffix(origin, "/")
 	switch {
@@ -259,6 +262,11 @@ func (l *Link) runOnce(ctx context.Context) error {
 		return fmt.Errorf("dialing cerea: %w", err)
 	}
 	defer conn.CloseNow()
+	// coder/websocket reads at most 32 KiB per message by default, and a prompt
+	// carrying an image or a file is far larger: the frame would kill the
+	// connection. Cerea caps an attachment at 10 MiB and a message at 10
+	// attachments, base64 inflating them by a third.
+	conn.SetReadLimit(MaxFrameBytes)
 
 	connCtx, connCancel := context.WithCancel(ctx)
 	defer connCancel()
