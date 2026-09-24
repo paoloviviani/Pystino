@@ -280,6 +280,13 @@ func usageFromMessageMap(m map[string]any) *backend.Usage {
 		u.CacheWrite = getInt(cache, "write")
 	}
 	u.ContextUsed = u.Input + u.Output + u.Reasoning + u.CacheRead + u.CacheWrite
+	// opencode creates each assistant message with all-zero tokens and fills
+	// them in when the step finishes. Zero is "not reported yet", never a real
+	// context size, so it must not replace the last known usage: the meter
+	// otherwise dropped to 0% for the whole of every turn.
+	if u.ContextUsed == 0 {
+		return nil
+	}
 	return u
 }
 

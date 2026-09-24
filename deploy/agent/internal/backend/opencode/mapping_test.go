@@ -265,3 +265,17 @@ func TestTaskToolPartCarriesChildSession(t *testing.T) {
 		t.Fatalf("part = %+v", p)
 	}
 }
+
+// An in-flight assistant message carries zero tokens until its step finishes;
+// that is no usage report at all, or every turn would show a 0% context.
+func TestUsageFromMessageMapInFlightIsNotAReport(t *testing.T) {
+	inFlight := map[string]any{"role": "assistant", "tokens": map[string]any{
+		"input": 0.0, "output": 0.0, "reasoning": 0.0, "cache": map[string]any{"read": 0.0, "write": 0.0}}}
+	if u := usageFromMessageMap(inFlight); u != nil {
+		t.Fatalf("an all-zero in-flight message must not report usage, got %+v", u)
+	}
+	done := map[string]any{"role": "assistant", "tokens": map[string]any{"input": 120.0, "output": 30.0}}
+	if u := usageFromMessageMap(done); u == nil || u.ContextUsed != 150 {
+		t.Fatalf("a finished step must report its usage, got %+v", u)
+	}
+}
