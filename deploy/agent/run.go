@@ -276,6 +276,13 @@ func forwardEvents(ctx context.Context, mat *sessions.Materializer, lnk *link.Li
 func buildHello(back backend.Backend, pol policy.Policy) link.Hello {
 	caps := back.Capabilities()
 	hostname, _ := os.Hostname()
+	// A nil slice marshals to null, and Cerea validates the hello strictly:
+	// PROTOCOL.md types workspaceRoots as an array, so an unconfigured
+	// policy must say [] or the hello is dropped and the link never pairs.
+	roots := pol.WorkspaceRoots
+	if roots == nil {
+		roots = []string{}
+	}
 	return link.Hello{
 		Agent: link.AgentInfo{
 			Version:  agentVersion,
@@ -294,7 +301,7 @@ func buildHello(back backend.Backend, pol policy.Policy) link.Hello {
 		}},
 		Policy: link.PolicyInfo{
 			AutoAccept:      string(pol.AutoAccept),
-			WorkspaceRoots:  pol.WorkspaceRoots,
+			WorkspaceRoots:  roots,
 			AllowFreeModels: pol.AllowFreeModels,
 		},
 	}
