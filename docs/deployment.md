@@ -1,14 +1,11 @@
 # Deployment
 
 `deploy/` in this repository is a self-contained deployment of Pystino: the
-gateway and its console, alone — no chat. The design and its reasons are
-ADR 0086 (the original one-stack design), ADR 0087 (two repositories, Pystino
-pins Cerea), ADR 0088 (OIDC-only identity) and ADR 0091 (the installer leaves
-the gateway image; the deployment moves into readable files you `git pull`
-instead of a CLI that writes them).
+gateway and its console, alone, with no chat. Everything is readable files you
+edit and `git pull`: a compose file, a documented `.env.example`, and the
+Caddy and Authelia configuration mounted into their stock images.
 
-**Want the chat too?** Use the separate `cerea-deploy` repository instead
-(private for now). It is the same variable names and `.env` conventions, so
+**Want the chat too?** Use the separate `cerea-deploy` repository instead. It is the same variable names and `.env` conventions, so
 moving to it later is: copy this `.env` and the compose project name over,
 `./configure` again to add the chat's secrets, then `docker compose up -d`.
 
@@ -74,8 +71,11 @@ Three, chosen by `TLS_MODE` (`deploy/.env.example` has the exact
 
 People sign in through an OpenID Connect provider — the bundled Authelia or
 your own (`OIDC_ISSUER`, `OIDC_INTERNAL_BASE_URL`, `OIDC_CONSOLE_CLIENT_ID`/
-`_SECRET`). There is no password door. Per provider, the console decides
-where groups come from (the token's claim, the directory, or the console
+`_SECRET`). There is no password door. The stack currently signs both the
+console and the chat in against one provider; to combine several sources of
+users, federate them in your own IdP (Keycloak, Authentik and the like) and
+point the stack at it. For that provider, the console decides where groups
+come from (the token's claim, the directory, or the console
 only), how often the provider's answer applies, and whether admin comes from
 the console or from a claim. The bundled Authelia's people are managed in the
 console (Settings → Identity providers → People).

@@ -1,8 +1,7 @@
 # Gateway
 
 OpenAI-compatible API gateway with per-user and per-group accounting, quotas,
-per-group model availability and a pluggable redaction layer. The reference for
-every decision behind it is the ADR index.
+per-group model availability and a pluggable redaction layer.
 
 ## Surfaces
 
@@ -13,23 +12,23 @@ every decision behind it is the ADR index.
 | `POST /v1/messages` | key or bearer | Anthropic's Messages API, over the same chat models |
 | `POST /v1/embeddings` | key or bearer | Embeddings, metered and redacted like a completion |
 | `POST /v1/images/generations` | key or bearer | Image generation, billed per picture or per token depending on the model |
-| `POST /v1/ocr` | key or bearer | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor (ADR 0055) |
-| `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina), metered per call (ADR 0058). `POST /v1/search/{backend}` names one explicitly |
+| `POST /v1/ocr` | key or bearer | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor |
+| `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina), metered per call. `POST /v1/search/{backend}` names one explicitly |
 | `GET /v1/models` | key, bearer or none | Models the caller may use, by group or personal grant, with capabilities |
 | `GET /v1/pystino/usage` | key or bearer | This caller's own spend, for a client that wants to show it without a console session |
-| `GET /v1/billing/groups` | key or bearer | Which groups this caller may bill, and which one paid for this request (ADR 0061) |
-| `/v1/files` | key or bearer | Upload, list, download and delete the only content this gateway stores (ADR 0062) |
-| `/v1/vector_stores` | key or bearer | Knowledge bases: documents in, passages out, and who they are shared with (ADR 0062) |
+| `GET /v1/billing/groups` | key or bearer | Which groups this caller may bill, and which one paid for this request |
+| `/v1/files` | key or bearer | Upload, list, download and delete the only content this gateway stores |
+| `/v1/vector_stores` | key or bearer | Knowledge bases: documents in, passages out, and who they are shared with |
 | `GET /auth/login`, `/auth/callback` | — | OIDC authorization-code login (PKCE) |
 | `/api/me/*` | session cookie | Identity, billing group, API keys, own usage and reports |
 | `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, reports |
 | `GET /healthz`, `/readyz` | — | Liveness (no dependencies) and readiness (one DB round trip) |
 
 Every metered `/v1` route shares one metering path — `routers/_metered.py` — so
-resolve → reserve → record → settle cannot drift between surfaces (ADR 0030).
+resolve → reserve → record → settle cannot drift between surfaces.
 Seven routers import it today: chat, responses, messages, embeddings, images,
 ocr and search.
-Since ADR 0062 that path is also what **knowledge-base ingestion** bills
+That path is also what **knowledge-base ingestion** bills
 through, which is why `_metered.begin` takes `fx` and `session_factory` rather
 than a `Request`: a background task has no request, and a second copy of the
 money code would make indexing spend invisible to every report.
@@ -37,31 +36,30 @@ money code would make indexing spend invisible to every report.
 Two things this table used to get wrong, corrected here rather than quietly:
 `/v1/ocr` was missing entirely, and `PUT /api/me/redaction` was listed but has
 never existed — a user's own redaction policy is a scoped rule set by an
-administrator (ADR 0038), not something a user can weaken.
+administrator, not something a user can weaken.
 
 **`/v1` and `/api` differ, and that is the whole asymmetry.** One dependency
 (`deps.get_principal`) authenticates every `/v1` route, and it takes either
 credential: a JWT in the `Authorization` header is verified against the issuer
-that minted it (ADR 0040), anything else is looked up as an API key — so
+that minted it, anything else is looked up as an API key — so
 "accepts a key" and "accepts a bearer" are the same list, not two. `/api`
 accepts neither; it reads a session cookie and nothing else. That is why
 `/v1/billing/groups`, `/v1/files` and `/v1/vector_stores` are on `/v1` at all:
 a chat client holding a bearer token cannot reach a management route, so
 anything it needs has to live where it can be reached.
 
-The one credential-shaped distinction that survives is `x-bill-to` (ADR 0061):
+The one credential-shaped distinction that survives is `x-bill-to`:
 a bearer caller may name the group to bill, an *issued* key may not — it
 already carries its answer, and quietly overriding it is how somebody finds
 out from an invoice. `GET /v1/models` is the other exception, in the opposite
 direction: it answers unauthenticated too, brochure-level fields only, so a
-client can build a catalogue before anyone has signed in (ADR 0081).
+client can build a catalogue before anyone has signed in.
 
 `GET /v1/models` reports each model's `kind`, `context_window`,
 `max_input_tokens`, `max_output_tokens`, `input_modalities`,
 `output_modalities` and `supported_features`, so a client
 can pick a model that does tool calling or reads images without taking a 400 to
-find out. These are non-standard fields, which OpenAI clients ignore
-(ADR 0031). `max_input_tokens` is the one limit the gateway itself enforces:
+find out. These are non-standard fields, which OpenAI clients ignore. `max_input_tokens` is the one limit the gateway itself enforces:
 a prompt estimated above it is a 400 `prompt_too_long` before any
 reservation is made, and it is unset for most models — no catalogue reports
 a provider's real input cap, so an operator records it by hand and null
@@ -70,45 +68,41 @@ means "no local limit", never zero.
 Every management listing answers with `{items, total, limit, offset}` and takes
 `?limit=&offset=` (ceiling 200; out of range is a 400, not a clamp). Users,
 models and groups also take `?q=` for case-insensitive substring search.
-Reports are aggregations, not listings, and return every row they summed
-(ADR 0029).
+Reports are aggregations, not listings, and return every row they summed.
 
 There is **no HTML admin panel built by hand**: `/docs` is the operator API
 console — Swagger, generated from the same schemas the endpoints validate
 against. Sign in at `/auth/login` first so the session cookie travels with the
-requests. The React console at `/console` is the human surface
-(ADR 0022, ADR 0023).
+requests. The React console at `/console` is the human surface.
 
 ## Two authentication schemes, on purpose
 
 `/v1` is for programs and uses revocable API keys that carry a billing group;
-`/api` is for humans and uses OIDC sessions (or local email + password,
-ADR 0043).
+`/api` is for humans and uses OIDC sessions. There is no password sign-in:
+people sign in through an OpenID Connect provider, the bundled Authelia or
+your own.
 
 - **API keys** are `gwk_...` secrets, shown once, stored as SHA-256 hashes —
   a slow KDF would buy nothing on 256 bits of entropy, but revocation must be
-  instant (ADR 0010).
-- **OIDC** works against any provider. The gateway itself still ships none —
-  ADR 0044 stands — but a deployment need not go find one: the installer can
-  bring up Authelia or Keycloak beside the gateway on the origin already
-  published (ADR 0084), and the gateway can act as a minimal issuer for its
-  own first-party clients (ADR 0068, the house IdP — removed by ADR 0088). All three are
-  the same `GATEWAY_OIDC__*` configuration from the gateway's side.
-  Discovery is read once at
+  instant.
+- **OIDC** works against any provider. The gateway ships no identity
+  provider of its own; the deployments in `deploy/` and cerea-deploy can run
+  Authelia beside it, and any other issuer is the same `GATEWAY_OIDC__*`
+  configuration from the gateway's side. Discovery is read once at
   startup, so changing any `GATEWAY_OIDC__*` value needs a restart. Users are
   keyed on `(issuer, subject)`: changing the issuer re-provisions every user as
   a new row with no memberships at their next login.
 - **OIDC access tokens on `/v1`** are accepted when
   `GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE` names an audience — what lets a
   first-party client stream as the person typing, and what a device-flow
-  bootstrap needs (ADR 0040).
+  bootstrap needs.
 
 ## Providers and plugins
 
-A provider record holds credentials (encrypted at rest,
-ADR 0027) and a **plugin** that carries its
+A provider record holds credentials (encrypted at rest) and a **plugin**
+that carries its
 vendor knowledge: which header names it wants, what unit it reports cost in,
-whether it is a provider or a router (ADR 0032).
+whether it is a provider or a router.
 In-tree plugins cover the generic OpenAI-compatible case (`generic`), OpenAI,
 Anthropic, Mistral, Nebius, OpenRouter, Cortecs and Tensorix, this
 deployment's own extractor, and the search backends DuckDuckGo, Exa, Jina and
@@ -167,8 +161,8 @@ src/gateway/
 Stated plainly, so none of them is a surprise later.
 
 - **OIDC is fully verified against Keycloak 26.7 and Authelia 4.39.22**, the
-  two versions the bundled overlays pin. Entra ID, Google and others differ in exactly
-  the places ADR 0011 makes configurable — where
+  two versions tested. Entra ID, Google and others differ in exactly
+  the places the OIDC settings make configurable — where
   groups live, whether they appear in the ID token at all, how they are named.
   Test any new provider against your instance before relying on it; see the
   [OIDC guide](oidc-generic-provider.md) for the checklist.
@@ -183,8 +177,7 @@ Stated plainly, so none of them is a surprise later.
   while the gateway keeps running, the cache reports zero and quotas are
   briefly too permissive until the gateway restarts. An empty cache is not a
   failed read, so nothing detects it at runtime. Restart the gateway after any
-  cache loss (ADR 0006).
-- **Load behaviour is reasoned, not measured.** The arithmetic in
-  ADR 0004 says Python is not the constraint;
-  the [measured numbers](performance.md) cover one small box. Profile before
+  cache loss.
+- **Load behaviour is measured on one small box only.** The gateway's own
+  overhead per request is small next to upstream latency, but profile before
   scaling.

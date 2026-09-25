@@ -8,8 +8,8 @@
 - **The box: 2 cores, 3 GB, everything co-resident** — gateway, Postgres,
   Valkey, Presidio, Keycloak, the fake upstream, *and* the load generator. Treat
   throughput as a floor and CPU-per-request as the transferable number.
-- Related: [docs/redaction-scoping-plan.md](redaction-scoping-plan.md), which
-  turns out to be a performance feature as much as a policy one.
+- Related: [redaction scoping](redaction.md), which turns out to be a
+  performance feature as much as a policy one.
 - Sources for the comparison table: LiteLLM's own
   [benchmarks page](https://docs.litellm.ai/docs/benchmarks), Tetrate's
   [Envoy AI Gateway benchmarks](https://tetrate.io/learn/ai/ai-gateway-benchmarks),
@@ -89,7 +89,7 @@ call so a crash mid-request is visible — and are not a saving to go after.
 ## Re-measured on 5 cores, 2026-09-08
 
 The figures above are from the 2-core/3 GB box. Repeated on
-`130.192.84.103` — **5 cores, 14 GB**, still with everything co-resident
+a host with **5 cores, 14 GB**, still with everything co-resident
 including the load generator, and with the gateway running its usual **2 uvicorn
 workers**. Two conclusions, and the second is the useful one.
 
@@ -138,7 +138,7 @@ redaction actually costs.
 
 ### Moving the final write off the critical path (2026-09-08)
 
-ADR 0060. The `UPDATE usage_records`
+The `UPDATE usage_records`
 and the counter settle used to be awaited between the upstream answering and
 the response going out; they now ride on the response as a background task.
 Same host, same 2 workers, redaction on:
@@ -162,7 +162,7 @@ should stay.
 **A cheaper-looking idea that was measured and dropped:** switching response
 serialisation from the standard library to orjson. Six to fourteen times
 faster in relative terms and worth 0.009ms on a chat completion — 0.04% of the
-request. The ADR has the table. FastAPI 0.141 already serialises
+request. FastAPI 0.141 already serialises
 response-model routes straight to bytes, and its `ORJSONResponse` is
 deprecated for that reason.
 
@@ -250,8 +250,7 @@ range of prompt sizes; everything else is the detector.
 
 A 4,500-token prompt costs **0.6 seconds** and **0.625 CPU-seconds**. At that
 size one core serves 1.6 requests per second. That is the capacity fact behind
-[docs/redaction-scoping-plan.md](redaction-scoping-plan.md): scoping redaction
-is not a policy nicety, it is how a deployment with long prompts stays
+[redaction scoping](redaction.md): scoping redaction is not a policy nicety, it is how a deployment with long prompts stays
 affordable.
 
 ### How these were taken

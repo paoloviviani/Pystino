@@ -79,17 +79,4 @@ nav:
       - operations.md
       - "Measured performance": performance.md
   - Guides:
-      - "OIDC against any provider": oidc-generic-provider.md
-      - "Cache accounting findings": cache-accounting-findings.md
-  - Plans:
-      - "Redaction scoping — design": redaction-scoping-design.md
-      - "Redaction scoping — plan": redaction-scoping-plan.md
-      - "Web search — priced, then the rest": web-search-plan.md
-  # Dated records, kept as written. Listed because `--strict` fails the build
-  # over a page the nav omits, and an unreachable page is the same lie as a
-  # broken link — quieter.
-  - History:
-      - "Handoff, 2026-09-11": handoff-2026-09-11.md
-  # No decisions page. The record is internal, so an index of links into it
-  # would be a list of URLs nobody reading these docs can open. Code and
-  # comments cite by number instead.
+      - "Identity: the OIDC provider": oidc-generic-provider.md

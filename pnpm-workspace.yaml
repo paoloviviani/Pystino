@@ -1,4 +1,4 @@
-# JS/TS half of the monorepo. See https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0002-monorepo-tooling.md
+# JS/TS half of the repository: packages/ui and apps/console.
 #
 # Two members, both built. The desktop shell and the shared TypeScript types
 # moved to the pystino-chat repository with the rest of the client side.
