@@ -1,0 +1,6 @@
+# The gateway is the only application this deployment serves.
+handle {
+	reverse_proxy gateway:8000 {
+		import to_app
+	}
+}
