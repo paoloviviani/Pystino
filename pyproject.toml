@@ -1,6 +1,5 @@
 # Workspace root. This is a "virtual" root: it is not itself an installable
 # package, it only ties the Python members together and holds shared tool config.
-# See https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0002-monorepo-tooling.md
 [tool.uv.workspace]
 members = ["apps/gateway", "packages/shared-py"]
 
