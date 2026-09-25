@@ -1,0 +1,17 @@
+{
+  "_comment": "Shared by Pystino (gateway) and Cerea (chat), ADR 0093 §6.1. normalized = NFKC, strip, casefold (Python) / toLowerCase (TypeScript). trusted = may take part in an automatic trust decision (link, admin email, bootstrap): ASCII after normalisation and a valid address. normalized null = Python and TypeScript legitimately differ (casefold vs toLowerCase outside ASCII); only trusted=false is asserted for it. Keep both copies byte-identical.",
+  "vectors": [
+    {"input": "Alice@Example.org", "normalized": "alice@example.org", "trusted": true},
+    {"input": "  bob@example.org\t", "normalized": "bob@example.org", "trusted": true},
+    {"input": "CAROL@EXAMPLE.ORG", "normalized": "carol@example.org", "trusted": true},
+    {"input": "ｄａｖｅ@example.org", "normalized": "dave@example.org", "trusted": true},
+    {"input": "eve@examplе.org", "normalized": "eve@examplе.org", "trusted": false},
+    {"input": "fréd@example.org", "normalized": "fréd@example.org", "trusted": false},
+    {"input": "grüße@example.org", "normalized": null, "trusted": false},
+    {"input": "no-at-sign.example.org", "normalized": "no-at-sign.example.org", "trusted": false},
+    {"input": "two@@example.org", "normalized": "two@@example.org", "trusted": false},
+    {"input": "admin@local", "normalized": "admin@local", "trusted": false},
+    {"input": ".lead@example.org", "normalized": ".lead@example.org", "trusted": false},
+    {"input": "", "normalized": "", "trusted": false}
+  ]
+}

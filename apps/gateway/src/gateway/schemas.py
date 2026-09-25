@@ -566,6 +566,49 @@ class CallerIdentity(BaseModel):
     #: What *this* caller's requests bill right now, which is not always the
     #: default: a key may pin a group, and a bearer request may name one.
     billing_group: str
+    #: A session the chat opened before this instant is no longer good: the
+    #: account was disabled, merged into, or recovered (ADR 0093). Null when
+    #: nothing has ever revoked this person's sessions.
+    sessions_valid_after: datetime | None = None
+    #: The newest time another account was merged into this one. A chat that
+    #: has not folded its records since then asks `/v1/me/identities`.
+    merged_at: datetime | None = None
+
+
+class IdentityRef(BaseModel):
+    """One ``(issuer, subject)`` that signs in as a gateway user (ADR 0093)."""
+
+    issuer: str
+    subject: str
+
+
+class MeIdentities(BaseModel):
+    """``GET /v1/me/identities``: everything that names this person here.
+
+    The chat keys its own records on the gateway's ``id`` and uses the rest to
+    adopt records it has not keyed yet (``identities``) and to fold records of
+    accounts merged into this one (``merged_from``, chains resolved).
+    """
+
+    id: uuid.UUID
+    identities: list[IdentityRef]
+    merged_from: list[uuid.UUID]
+
+
+class SessionAnnounce(MeIdentities):
+    """``POST /v1/session/announce``: the chat's sign-in door (ADR 0093).
+
+    Called by the chat's login callback with the fresh access token (``azp``
+    must be the chat client). The gateway fetches userinfo itself and runs
+    the same sign-in sequence as the console callback — links, bindings,
+    admin rules, bootstrap — then answers who this is. A disabled account
+    answers 403, never this body.
+    """
+
+    is_active: bool
+    is_admin: bool
+    sessions_valid_after: datetime | None = None
+    merged_at: datetime | None = None
 
 
 class SetDefaultBillingGroupRequest(BaseModel):
