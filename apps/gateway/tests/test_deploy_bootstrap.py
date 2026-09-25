@@ -69,3 +69,21 @@ def test_profiles_that_need_nothing_do_nothing(tmp_path: Path) -> None:
 
 def test_role_password_is_quoted_not_interpolated() -> None:
     assert bootstrap._quote_literal("a'; DROP ROLE x; --") == "'a''; DROP ROLE x; --'"
+
+
+def test_pbkdf2_digests_are_accepted(tmp_path: Path) -> None:
+    # ./configure (cerea-deploy, ADR 0091 decision 4) mints these; it has no
+    # argon2 dependency, so bootstrap must not refuse what it writes.
+    for digest in (
+        "$pbkdf2-sha512$310000$c2FsdA$aGFzaA",
+        "$pbkdf2-sha256$29000$c2FsdA$aGFzaA",
+        "$pbkdf2$29000$c2FsdA$aGFzaA",
+    ):
+        env = {**ENV, "AUTHELIA_ADMIN_PASSWORD_DIGEST": digest}
+        assert bootstrap.BootstrapEnv.from_environ(env).problems() == []
+
+
+def test_an_unrecognised_digest_scheme_is_refused() -> None:
+    env = {**ENV, "AUTHELIA_ADMIN_PASSWORD_DIGEST": "$scrypt$plain-text-looking-thing"}
+    problems = bootstrap.BootstrapEnv.from_environ(env).problems()
+    assert any("pbkdf2" in p for p in problems)

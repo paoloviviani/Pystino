@@ -80,11 +80,16 @@ class BootstrapEnv:
                 found.append("AUTHELIA_ADMIN_USER must be a lowercase login name")
             if "@" not in self.authelia_admin_email:
                 found.append("AUTHELIA_ADMIN_EMAIL must be an email address")
-            # argon2id from `pystino init`; SHA512-crypt ($6$) from installs the
-            # old generator made and `pystino adopt` carried over. Authelia
-            # verifies both.
-            if not self.authelia_admin_password_digest.startswith(("$argon2", "$6$")):
-                found.append("AUTHELIA_ADMIN_PASSWORD_DIGEST must be an argon2 or $6$ digest")
+            # argon2id from an installer-era deployment; SHA512-crypt ($6$) and
+            # PBKDF2 ($pbkdf2-sha512$, $pbkdf2-sha256$, $pbkdf2$) from
+            # ./configure, which has no argon2 dependency (ADR 0091 decision
+            # 4). Authelia verifies all of them.
+            if not self.authelia_admin_password_digest.startswith(
+                ("$argon2", "$6$", "$pbkdf2-sha512$", "$pbkdf2-sha256$", "$pbkdf2$")
+            ):
+                found.append(
+                    "AUTHELIA_ADMIN_PASSWORD_DIGEST must be an argon2, $6$ or $pbkdf2 digest"
+                )
         return found
 
 
