@@ -36,3 +36,11 @@ def test_check_names_what_is_unpinned() -> None:
     assert release.unpinned({"POSTGRES_IMAGE": "pg:18", "VALKEY_IMAGE": f"v:8@{D}"}) == [
         "POSTGRES_IMAGE"
     ]
+
+
+def test_release_pin_cli_points_at_deploy_release_env_by_default() -> None:
+    # cli.py no longer has stackfiles.stack_dir() to ask; it computes the
+    # repository root itself. This is the tripwire for that arithmetic.
+    from gateway.deploy.cli import ROOT
+
+    assert (ROOT / "deploy" / "release.env").is_file()

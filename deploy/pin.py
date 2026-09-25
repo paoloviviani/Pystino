@@ -59,7 +59,7 @@ def refreshed(text: str) -> tuple[str, list[str]]:
             raise SystemExit(f"pin: no pystino.config-rev label on service {service!r}")
         if match.group(2) != rev:
             changes.append(f"{service}: config-rev {match.group(2)} -> {rev}")
-            text = pattern.sub(lambda m: m.group(1) + rev + m.group(3), text, count=1)
+            text = pattern.sub(lambda m, rev=rev: m.group(1) + rev + m.group(3), text, count=1)
     return text, changes
 
 
