@@ -1,67 +1,50 @@
 # Pystino
 
 A self-hosted OpenAI-compatible **gateway** with per-user and per-group
-accounting, quotas and policy, plus the **console** that operates it. The name
-is *pistino* — Turin dialect for a nitpicker, the person who checks every last
-detail.
+accounting, quotas, redaction and OIDC sign-in, plus the **console** that
+operates it. The name is *pistino*: Turin dialect for a nitpicker, the person
+who checks every last detail.
 
-One origin, one port: the gateway serves the `/v1` API surfaces, the management
-API and the console at `/console`. Everything is published on loopback unless
-deliberately put behind the TLS proxy
-(ADR 0035).
-
-## Status
-
-| Component | State |
-|---|---|
-| `apps/gateway` | **Built and tested.** Seven metered `/v1` surfaces (chat completions, responses, Anthropic messages, embeddings, image generation, document extraction, web search — streaming and not), models, files and vector stores, API keys, OIDC, accounting, quotas, redaction. |
-| `services/redaction` | **Built and tested.** Presidio behind a swappable detection contract; PII never reaches the upstream. |
-| `apps/console` | **Built.** Spend, reports, quotas, providers, models with prices and access, users, redaction rules. |
-| `packages/ui` | **Built.** Material Design 3 tokens and primitives (ADR 0042), shared by console and chat. |
-| the chat application | **Elsewhere.** [Cerea](https://github.com/paoloviviani/Cerea) is a `/v1` client of this gateway and imports nothing from it. |
-| `packages/shared-py` | **Built.** The detection contract and the deterministic placeholder scheme. |
-| the desktop shell, the RAG pipeline | Not started, and not this repository's. |
+One origin: the gateway serves the `/v1` API, the management API and the
+console at `/console`. [Cerea](https://github.com/paoloviviani/Cerea), the chat,
+is a `/v1` client of this gateway and a separate repository.
 
 ## The four ideas that carry the design
 
 1. **PostgreSQL is the ledger of record; Valkey is a rebuildable cache.** Quotas
    still evaluate correctly with Valkey gone, just more slowly. Nothing about
-   money is stored only in a cache. (ADR 0006)
+   money is stored only in a cache.
 2. **Quota check before the upstream call, accounting after, a reservation in
    between.** Without the reservation, concurrent requests each read the same
-   under-limit total and collectively blow the budget. (ADR 0009)
+   under-limit total and collectively blow the budget.
 3. **Accounting never silently reports zero.** Usage is forced out of the
    upstream, and if it never arrives the tokens are counted locally and the row
-   is stamped `estimated`. (ADR 0008)
+   is stamped `estimated`.
 4. **A plugin returns facts and never computes money.** Vendor quirks live in
    `gateway/plugins/`; the arithmetic stays in `accounting/cost.py`, the only
-   code that multiplies a count by a rate. (ADR 0032)
+   code that multiplies a count by a rate.
 
 ## Where to go next
 
-- [Getting started](getting-started.md) — run the stack, seed a model, make a
-  first billed request, sign in to the console.
-- Architecture — the topology, the components and the
-  boundaries that are deliberate.
-- [Gateway](gateway.md) — every surface, the two authentication schemes, and
-  the streaming traps with the file that handles each.
-- [Accounting and quotas](accounting-and-quotas.md) — the three cost figures,
+- [Getting started](getting-started.md): run it, add a model, make a first
+  billed request, sign in to the console.
+- [Gateway](gateway.md): every surface, the two authentication schemes, and
+  the streaming traps.
+- [Accounting and quotas](accounting-and-quotas.md): the three cost figures,
   the two prompt conventions, and what money looks like end to end.
-- [Redaction](redaction.md) — the engine, the policy model, and why a scope can
+- [Redaction](redaction.md): the engine, the policy model, and why a scope can
   only tighten.
-- [Deployment](deployment.md) — compose overlays, loopback-only by default, and
-  what it takes to serve a real address.
-- [Coding agents](coding-agents.md) — enrolling opencode against `/v1`: the
-  three scripts in `deploy/opencode/`, the refreshing shim, and what the
-  identity provider has to grant.
-- [Operations](operations.md) — verifying a change, the live checks, measured
-  performance, and the known sharp edges.
-- Design decisions — 85 ADRs with the licence, version and CVE
-  evidence behind each, dated. Start here before changing anything.
+- [Deployment](deployment.md): the Pystino-only compose deployment, TLS,
+  identity, upgrades and backups.
+- [Identity: OIDC providers](oidc-generic-provider.md): the bundled Authelia,
+  or your own issuer.
+- [Coding agents](coding-agents.md): what the gateway provides to agents on
+  people's own machines.
+- [Operations](operations.md) and [Measured performance](performance.md):
+  verifying a change, the live checks, and what the gateway costs.
 
 ## Licence
 
 [EUPL-1.2](https://github.com/paoloviviani/Pystino/blob/main/LICENCE) for all
-first-party code. This is a hard requirement, not a preference — every inbound
-dependency must be OSI-licensed, without a CLA and without an open-core model
-(ADR 0001).
+first-party code. Dependencies must be OSI-licensed, without a CLA or an
+open-core model.

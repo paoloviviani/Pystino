@@ -44,7 +44,7 @@ client.chat.completions.create(
 The request is redacted, admitted against the caller's quotas, metered and
 settled into the ledger. Streaming works the same way, with `stream=True` or
 `stream_options={"include_usage": true}` — the gateway forces usage out of the
-upstream either way (ADR 0007).
+upstream either way.
 
 ## Sign in to the console
 
@@ -53,7 +53,7 @@ bundled Authelia with `AUTHELIA_ADMIN_USER` and the password behind
 `AUTHELIA_ADMIN_PASSWORD_DIGEST`; because its email
 (`AUTHELIA_ADMIN_EMAIL`/`PYSTINO_BOOTSTRAP_ADMIN_EMAIL`) matches, that first
 sign-in makes it the administrator. Everyone signs
-in through an OIDC provider — there is no password door (ADR 0088). Other
+in through an OIDC provider — there is no password door. Other
 providers (GitLab, Entra ID, Keycloak, …) are added in the console's Settings
 screen; see [OIDC against any provider](oidc-generic-provider.md).
 
@@ -109,4 +109,4 @@ uv run gateway serve --reload
   contains, and how a cost is computed.
 - [Operations](operations.md) — the live checks, and what they can only find
   against a running stack.
-- [Deployment](deployment.md) — overlays, TLS, and the loopback-only rule.
+- [Deployment](deployment.md) — TLS, identity, upgrades and backups.

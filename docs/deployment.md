@@ -1,14 +1,11 @@
 # Deployment
 
 `deploy/` in this repository is a self-contained deployment of Pystino: the
-gateway and its console, alone — no chat. The design and its reasons are
-ADR 0086 (the original one-stack design), ADR 0087 (two repositories, Pystino
-pins Cerea), ADR 0088 (OIDC-only identity) and ADR 0091 (the installer leaves
-the gateway image; the deployment moves into readable files you `git pull`
-instead of a CLI that writes them).
+gateway and its console, alone, with no chat. Everything is readable files you
+edit and `git pull`: a compose file, a documented `.env.example`, and the
+Caddy and Authelia configuration mounted into their stock images.
 
-**Want the chat too?** Use the separate `cerea-deploy` repository instead
-(private for now). It is the same variable names and `.env` conventions, so
+**Want the chat too?** Use the separate `cerea-deploy` repository instead. It is the same variable names and `.env` conventions, so
 moving to it later is: copy this `.env` and the compose project name over,
 `./configure` again to add the chat's secrets, then `docker compose up -d`.
 

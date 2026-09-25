@@ -13,8 +13,7 @@ planning; see [Measured performance](performance.md).
 ## Out of process, by contract
 
 The detection service (`services/redaction`, Presidio) is a separate process
-behind a wire contract defined in `packages/shared-py`
-(ADR 0012). The split has two reasons:
+behind a wire contract defined in `packages/shared-py`. The split has two reasons:
 
 - **The event loop must not block.** Detection is CPU-bound NER; in-process it
   would stall every concurrent request for the length of every prompt.
@@ -34,8 +33,7 @@ placeholders stop matching.
 ### Why not embed Presidio in the gateway?
 
 The question recurs, so the numbers that answer it are recorded here. Embedding
-would save one container and one HTTP hop, and the in-process seam exists
-(ADR 0026) — it is meant for engines where a
+would save one container and one HTTP hop, and the in-process seam exists — it is meant for engines where a
 network hop is absurd, such as a pure-regex ruleset. NER is not that case:
 
 - **Memory multiplies by worker.** Presidio with NER is ~900MB; the gateway runs
@@ -51,15 +49,13 @@ network hop is absurd, such as a pure-regex ruleset. NER is not that case:
   (`REDACTION_NLP_ENGINE=disabled`) covers pattern-only deployments cheaply.
 
 Enabling and disabling redaction from the console needs no architecture change:
-the engine choice is a UI decision that reaches every worker within ten seconds
-(ADR 0033), and the sidecar is only
+the engine choice is a UI decision that reaches every worker within ten seconds, and the sidecar is only
 needed when the engine is `http`.
 
 ## The engine is a decision, not a build flag
 
 Installed engines are described by a registry; which one runs is an admin
-decision stored on an append-only `redaction_config` row
-(ADR 0033). `RedactionResolver`
+decision stored on an append-only `redaction_config` row. `RedactionResolver`
 polls it every 10 seconds, so a change reaches every worker without a restart
 and without a query on the request path. Switching to an engine that redacts
 *less* than the current one requires a written reason, kept permanently — the
@@ -103,16 +99,13 @@ capabilities are installed.
 
 ## Deploying less of it
 
-Three shapes, and all three already work. Written down here because the pieces
-were scattered across a compose overlay, a build argument and an environment
-variable, and "can we run this without Presidio" is a question that should not
-require reading three files to answer.
+Three shapes, and all three work:
 
 | You want | How | What you get |
 |---|---|---|
-| **No redaction, no sidecar** | Leave the engine at `noop` and omit `docker-compose.redaction.yml` | The default. The base compose file names no redaction service, and `noop` needs none |
+| **No redaction, no sidecar** | Leave `redaction` out of `COMPOSE_PROFILES` and the engine at `noop` | Nothing runs, and `noop` needs nothing |
 | **Pattern matching only, no NER** | Build the image with `SPACY_MODELS=` empty, run it with `REDACTION_NLP_ENGINE=disabled`, engine `http` | Presidio's pattern recognisers — cards, IBANs, emails, phone numbers, the Italian identifiers — at about 150MB and without the CPU cost that scales with prompt length |
-| **Everything** | The redaction overlay as shipped | NER for the configured languages on top of the patterns |
+| **Everything** | The `redaction` profile with the NER image built locally (`SPACY_MODELS=en_core_web_lg`, never published) and `REDACTION_NLP_ENGINE=spacy` | NER for the configured languages on top of the patterns |
 
 Two things to know before choosing the middle row.
 
@@ -120,8 +113,8 @@ Two things to know before choosing the middle row.
 Presidio's, so the sidecar is still deployed and still called per request —
 what goes away is spaCy, the language models and the inference cost. There is
 no in-gateway regex engine, and deliberately so: a detector in the request path
-is what ADR 0012 rejected, and the reasons (CPU-bound, synchronous, crash
-isolation) do not change because the detector got simpler.
+would be CPU-bound and synchronous, and would share the gateway's fate when it
+crashes; that does not change because the detector got simpler.
 
 **It is a deploy-time choice, unlike the engine.** `REDACTION_NLP_ENGINE` is
 read by the sidecar at startup, so moving between NER and pattern-only means
@@ -141,8 +134,7 @@ still advertised.
 
 ## What happens to a detected entity: the policy model
 
-For each entity type, a policy names a **mode**
-(ADR 0037) — two independent questions, what
+For each entity type, a policy names a **mode** — two independent questions, what
 the model sees and what the reader gets back:
 
 | Mode | Upstream sees | Reader gets back |
@@ -177,11 +169,10 @@ matched value.
 
 ## Rules, not a deployment policy
 
-There is no deployment-wide policy any more
-(ADR 0039); there is a rules table
+There is no deployment-wide policy any more; there is a rules table
 (`redaction_rules`), and the **catch-all is one rule among them** — scope
 `all`, exactly one row may hold it. A rule can scope to `provider`, `model`,
-`group`, `user` or `api_key` (ADR 0038) —
+`group`, `user` or `api_key` —
 notably different from quota scopes, because quotas follow who *pays* while
 redaction follows where the **text goes** and who **wrote it**.
 
@@ -194,7 +185,7 @@ except four types") after that default redacted the wrong things for a
 language it was never written against: *"Riassumi le notizie del giorno da
 ilpost.it"* went upstream as `<PERSON_…> le notizie del giorno da <URL_…>` —
 an English model calling an Italian verb a person at 0.85 and the news site a
-URL (ADR 0037).
+URL.
 
 An allow-list (values never redacted, compared case-insensitively, **exactly**
 — a substring rule would let "it" allow every Italian domain) belongs to the
@@ -211,8 +202,7 @@ inert rather than dangerous, which is the difference between a bug and an
 incident. Nothing needs a priority column or a "most specific wins" rule. This
 is the quota model's fold inverted: quotas are *all rules must pass* because a
 permissive rule would raise a ceiling; redaction is *the strictest answer wins*
-because a permissive rule would remove protection
-(ADR 0009).
+because a permissive rule would remove protection.
 
 One subtlety cost a test to find: there is **one row per subject**, so an
 administrator's `scope=user` rule and that person's own policy are the *same
@@ -244,6 +234,3 @@ and 135ms on a 1,000-token prompt).
 - Scoping redaction is a **performance lever** as much as a policy one: not
   running NER where no rule requires it is the largest single optimisation
   available.
-- The research and measurements behind scoping are in
-  [the scoping design](redaction-scoping-design.md) and
-  [the scoping plan](redaction-scoping-plan.md).

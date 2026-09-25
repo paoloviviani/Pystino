@@ -49,10 +49,10 @@ usual target.
 | `test_surfaces_live.py` | responses, Anthropic messages, image generation |
 | `test_quota_race_live.py` | admission under concurrency, against real Valkey |
 | `test_cache_accounting_live.py` | a real cache hit, and what the ledger records |
-| `test_bill_to_live.py` | `x-bill-to` with a real access token: which group actually paid (ADR 0061) |
+| `test_bill_to_live.py` | `x-bill-to` with a real access token: which group actually paid |
 | `test_pystino_usage_live.py` | `GET /v1/pystino/usage` under both credentials, through real discovery and a live JWKS fetch |
-| `test_citations_live.py` | a citation that still quotes the right word after a real placeholder changed the offsets (ADR 0059) |
-| `test_web_search_live.py` | per-search billing through PostgreSQL's `Numeric`, including the CSV export's own column list (ADR 0058) |
+| `test_citations_live.py` | a citation that still quotes the right word after a real placeholder changed the offsets |
+| `test_web_search_live.py` | per-search billing through PostgreSQL's `Numeric`, including the CSV export's own column list |
 | `benchmark_live.py` | per-layer cost; reproduces [Measured performance](performance.md) |
 | `test_public_tls_live.py` | TLS, the IdP refusing a wrong password, a Secure session cookie, and that nothing else is on a routable address |
 
