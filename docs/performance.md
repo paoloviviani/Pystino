@@ -8,8 +8,8 @@
 - **The box: 2 cores, 3 GB, everything co-resident** — gateway, Postgres,
   Valkey, Presidio, Keycloak, the fake upstream, *and* the load generator. Treat
   throughput as a floor and CPU-per-request as the transferable number.
-- Related: [docs/redaction-scoping-plan.md](redaction-scoping-plan.md), which
-  turns out to be a performance feature as much as a policy one.
+- Related: [redaction scoping](redaction.md), which turns out to be a
+  performance feature as much as a policy one.
 - Sources for the comparison table: LiteLLM's own
   [benchmarks page](https://docs.litellm.ai/docs/benchmarks), Tetrate's
   [Envoy AI Gateway benchmarks](https://tetrate.io/learn/ai/ai-gateway-benchmarks),
@@ -250,8 +250,7 @@ range of prompt sizes; everything else is the detector.
 
 A 4,500-token prompt costs **0.6 seconds** and **0.625 CPU-seconds**. At that
 size one core serves 1.6 requests per second. That is the capacity fact behind
-[docs/redaction-scoping-plan.md](redaction-scoping-plan.md): scoping redaction
-is not a policy nicety, it is how a deployment with long prompts stays
+[redaction scoping](redaction.md): scoping redaction is not a policy nicety, it is how a deployment with long prompts stays
 affordable.
 
 ### How these were taken
