@@ -1,25 +1,32 @@
-# The whole stack, brought up the way an operator would, and signed into.
-# Expensive, so it runs only where it earns its minutes (GitHub free plan):
-# on release PRs (head branch release/*), on demand, and weekly — never on
-# every PR. The jobs skip themselves on other PRs, and a skipped job bills
-# nothing.
+# The tag-time drift guard (ADR 0091): does a released Pystino tag actually
+# come up, alone (deploy/compose.yaml) and inside the full stack
+# (cerea-deploy)? Expensive — an image build, a checkout of a second private
+# repository, two real compose bring-ups — so it runs only on release tags
+# and by hand, never on a push to main or a PR (GitHub free plan). There is
+# no fresh-install/upgrade pair here any more: `pystino init` and `upgrade`
+# are gone (ADR 0091), and cerea-deploy's own CI (a separate repository)
+# covers `./configure` and `tools/pin --check` on every push there.
 #
-#   fresh-install  pystino init (development mode: images built here) →
-#                  compose up → a scripted browser sign-in through the proxy,
-#                  Authelia and the gateway's back-channel → /api/me is admin
-#   upgrade        the previous release, pulled → signed in → `pystino upgrade`
-#                  to this tree's version (built here) → up → signed in again
+# Two things this workflow needs that it cannot arrange by itself:
 #
-# The chat is left out: its image lives in the Cerea repository's private
-# package, which this repository's GITHUB_TOKEN cannot pull until that
-# package grants it access (Package settings → Manage Actions access).
+#   - a repository secret CEREA_DEPLOY_TOKEN: a fine-grained, read-only
+#     personal access token scoped to contents:read on the private
+#     paoloviviani/cerea-deploy repository. Create it at
+#     github.com/settings/tokens, then add it here under this repository's
+#     Settings -> Secrets and variables -> Actions.
+#   - the paoloviviani/Cerea package (ghcr.io/paoloviviani/cerea) must grant
+#     this repository's Actions access to pull it: that package's own
+#     Settings -> Manage Actions access -> add this repository. Without it
+#     the Cerea pull below fails with "denied", and the job fails on
+#     purpose, naming this fix.
+#
+# Untested in CI as written (this agent cannot run Actions): validated with a
+# YAML parser and read carefully, not exercised end to end.
 name: stack
 
-# Manual runs only while publishing is on hold (see images.yml): the upgrade
-# job pulls the previous release from GHCR. To restore the weekly run and the
-# release-PR run, replace the two `on:` lines below with this one line:
-# on: {workflow_dispatch: {}, pull_request: {branches: [main]}, schedule: [{cron: "17 4 * * 1"}]}
 on:
+  push:
+    tags: ["v*.*.*"]
   workflow_dispatch:
 
 permissions:
@@ -28,81 +35,151 @@ permissions:
 
 concurrency:
   group: stack-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
-  ORIGIN: https://stack.pystino.test:8443
+  HOST: stack.pystino.test
 
 jobs:
-  fresh-install:
-    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release/')
+  # Built once, shared by both bring-ups below: a release tag's own gateway
+  # image, under the local/ prefix both compose.yaml and cerea-deploy's
+  # compose.yaml treat as a build override. Redaction is not built — neither
+  # bring-up below turns its profile on.
+  build-gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      cerea_version: ${{ steps.version.outputs.cerea_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        run: |
+          set -eu
+          version=${GITHUB_REF_NAME#v}
+          [ "$GITHUB_REF_NAME" = "$version" ] && version="sha-${GITHUB_SHA::7}"
+          cerea_version=$(sed -n 's/^CEREA_VERSION=//p' deploy/release.env)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "cerea_version=$cerea_version" >> "$GITHUB_OUTPUT"
+      - name: Build the gateway image at this tag
+        run: |
+          docker build -q -t "local/pystino-gateway:${{ steps.version.outputs.version }}" \
+            --build-arg INCLUDE_CONSOLE=true -f apps/gateway/Dockerfile .
+      - run: docker save "local/pystino-gateway:${{ steps.version.outputs.version }}" -o "$RUNNER_TEMP/gateway.tar"
+      - uses: actions/upload-artifact@v4
+        with: {name: gateway-image, path: "${{ runner.temp }}/gateway.tar", retention-days: 1}
+
+  # Inside the full stack: this tag's gateway plus the Cerea version this
+  # tag's deploy/release.env pins, brought up the way cerea-deploy documents.
+  full-stack:
+    needs: build-gateway
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.build-gateway.outputs.version }}
+      CEREA_VERSION: ${{ needs.build-gateway.outputs.cerea_version }}
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with: {enable-cache: true}
-      - name: Resolve the origin to this runner
-        run: echo "127.0.0.1 stack.pystino.test" | sudo tee -a /etc/hosts
-      - name: pystino init (development mode)
+        with: {path: pystino}
+      - uses: actions/checkout@v4
+        with:
+          repository: paoloviviani/cerea-deploy
+          token: ${{ secrets.CEREA_DEPLOY_TOKEN }}
+          path: cerea-deploy
+      - uses: actions/download-artifact@v4
+        with: {name: gateway-image, path: "${{ runner.temp }}"}
+      - run: docker load -i "$RUNNER_TEMP/gateway.tar"
+      - name: Pull the Cerea image this tag is tested with
         run: |
           set -eu
-          dir="$RUNNER_TEMP/stack"; mkdir -p "$dir"
-          PYSTINO_UPSTREAM_API_KEY= uv run pystino init --dir "$dir" --mode dev --preset homelab \
-            --tls internal --origin "$ORIGIN" --https-port 8443 --http-port 8080 \
-            --admin-email ops@pystino.test > "$RUNNER_TEMP/init.out"
-          uv run pystino set --dir "$dir" COMPOSE_PROFILES=gateway,authelia PUBLIC_BIND=127.0.0.1
-          uv run pystino doctor --dir "$dir"
-          sed -n 's/.*First sign-in:  [^ ]* \/ //p' "$RUNNER_TEMP/init.out" > "$RUNNER_TEMP/password"
-      - name: Build and bring up
-        working-directory: ${{ runner.temp }}/stack
-        run: docker compose up -d --build --wait
-      - name: Sign in end to end
-        run: uv run python deploy/ci/e2e_login.py "$RUNNER_TEMP/stack" "$(cat "$RUNNER_TEMP/password")"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          image="ghcr.io/paoloviviani/cerea:$CEREA_VERSION"
+          if ! docker pull "$image"; then
+            echo "::error::could not pull $image — the paoloviviani/Cerea package must grant" \
+                 "this repository's Actions access (its Settings -> Manage Actions access)"
+            exit 1
+          fi
+      - run: echo "127.0.0.1 $HOST" | sudo tee -a /etc/hosts
+      - name: ./configure the full stack against the local gateway and the pinned Cerea
+        working-directory: cerea-deploy
+        run: |
+          set -eu
+          ./configure --non-interactive --origin "https://$HOST:8443" --admin-email ops@pystino.test \
+            --tls internal --https-port 8443 --preset homelab --idp authelia
+          ./configure --set PYSTINO_REGISTRY=local "PYSTINO_VERSION=$VERSION" \
+            CEREA_REGISTRY=ghcr.io/paoloviviani "CEREA_VERSION=$CEREA_VERSION" PUBLIC_BIND=127.0.0.1
+      - name: Bring up compose.yaml + dev/smoke.yaml (the fake upstream)
+        working-directory: cerea-deploy
+        env:
+          PYSTINO_SRC: ${{ github.workspace }}/pystino
+        run: docker compose -f compose.yaml -f dev/smoke.yaml up -d --wait
+      - name: The gateway answers, and the chat is routed
+        run: |
+          set -eu
+          curl -fsS -k --resolve "$HOST:8443:127.0.0.1" "https://$HOST:8443/healthz"
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -k --resolve "$HOST:8443:127.0.0.1" "https://$HOST:8443/chat/")
+          case "$code" in 200|302) ;; *) echo "::error::GET /chat/ -> $code"; exit 1 ;; esac
       - name: Logs on failure
         if: failure()
-        working-directory: ${{ runner.temp }}/stack
-        run: docker compose logs --tail 80
+        working-directory: cerea-deploy
+        run: docker compose logs --tail 100
 
-  upgrade:
-    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'release/')
+  # The Pystino-only deployment, the same way: no cerea-deploy checkout, no
+  # chat, secrets hand-minted the way deploy/.env.example documents (there is
+  # no ./configure here by design — ADR 0091 decision 6).
+  pystino-only:
+    needs: build-gateway
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.build-gateway.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-        with: {fetch-depth: 0}
-      - uses: astral-sh/setup-uv@v5
-        with: {enable-cache: true}
-      - id: versions
-        run: |
-          prev=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n 1 | sed 's/^v//')
-          cand=$(sed -n 's/^PYSTINO_VERSION=//p' deploy/stack/release.env)
-          echo "prev=$prev" >> "$GITHUB_OUTPUT"; echo "cand=$cand" >> "$GITHUB_OUTPUT"
-          if [ -z "$prev" ] || [ "$prev" = "$cand" ]; then echo "::notice::no earlier release to upgrade from"; fi
-      - if: steps.versions.outputs.prev != '' && steps.versions.outputs.prev != steps.versions.outputs.cand
-        uses: docker/login-action@v3
-        with: {registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}"}
-      - name: Install the previous release, sign in, upgrade, sign in again
-        if: steps.versions.outputs.prev != '' && steps.versions.outputs.prev != steps.versions.outputs.cand
-        env:
-          PREV: ${{ steps.versions.outputs.prev }}
-          CAND: ${{ steps.versions.outputs.cand }}
+      - uses: actions/download-artifact@v4
+        with: {name: gateway-image, path: "${{ runner.temp }}"}
+      - run: docker load -i "$RUNNER_TEMP/gateway.tar"
+      - run: echo "127.0.0.1 $HOST" | sudo tee -a /etc/hosts
+      - name: A throwaway .env, hand-minted the way deploy/.env.example documents
         run: |
           set -eu
-          echo "127.0.0.1 stack.pystino.test" | sudo tee -a /etc/hosts
-          R=ghcr.io/${{ github.repository_owner }}
-          dir="$RUNNER_TEMP/up"; mkdir -p "$dir"; cd "$dir"
-          docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/deploy" -w /deploy -e PYSTINO_UPSTREAM_API_KEY= \
-            "$R/pystino-gateway:$PREV" pystino init --tls internal --origin "$ORIGIN" --https-port 8443 \
-            --http-port 8080 --admin-email ops@pystino.test --preset homelab > init.out
-          ./pystino set COMPOSE_PROFILES=gateway,authelia PUBLIC_BIND=127.0.0.1
-          password=$(sed -n 's/.*First sign-in:  [^ ]* \/ //p' init.out)
-          docker compose up -d --wait
-          uv run --project "$GITHUB_WORKSPACE" python "$GITHUB_WORKSPACE/deploy/ci/e2e_login.py" "$dir" "$password"
-          # The candidate, built here under its release tag, as a release would publish it.
-          docker build -q -t "$R/pystino-gateway:$CAND" --build-arg INCLUDE_CONSOLE=true -f "$GITHUB_WORKSPACE/apps/gateway/Dockerfile" "$GITHUB_WORKSPACE"
-          docker build -q -t "$R/pystino-proxy:$CAND" "$GITHUB_WORKSPACE/deploy/stack/proxy"
-          docker build -q -t "$R/pystino-authelia:$CAND" "$GITHUB_WORKSPACE/deploy/stack/authelia"
-          ./pystino upgrade "$CAND"
-          docker compose up -d --wait
-          uv run --project "$GITHUB_WORKSPACE" python "$GITHUB_WORKSPACE/deploy/ci/e2e_login.py" "$dir" "$password"
+          admin_digest=$(docker run --rm authelia/authelia:4.39.22 authelia crypto hash generate \
+            sha2crypt --variant sha512 --password test-password | sed -n 's/^Digest: //p')
+          console_secret=$(openssl rand -hex 32)
+          console_digest=$(docker run --rm authelia/authelia:4.39.22 authelia crypto hash generate \
+            pbkdf2 --variant sha512 --password "$console_secret" | sed -n 's/^Digest: //p')
+          cat > deploy/.env <<EOF
+          COMPOSE_PROJECT_NAME='pystino-drift'
+          COMPOSE_PROFILES='authelia'
+          PYSTINO_REGISTRY='local'
+          PYSTINO_VERSION='$VERSION'
+          PUBLIC_ORIGIN='https://$HOST:8443'
+          TLS_MODE='internal'
+          SITE_ADDRESS='https://$HOST'
+          TLS_DIRECTIVE='tls internal'
+          HTTPS_PORT='8443'
+          PUBLIC_BIND='127.0.0.1'
+          POSTGRES_PASSWORD='$(openssl rand -hex 24)'
+          GATEWAY_SECRET_KEY='$(openssl rand -hex 32)'
+          GATEWAY_SESSION_SECRET='$(openssl rand -hex 32)'
+          PYSTINO_BOOTSTRAP_ADMIN_EMAIL='ops@pystino.test'
+          OIDC_ISSUER='https://$HOST:8443/authelia'
+          OIDC_INTERNAL_BASE_URL='http://authelia:9091/authelia'
+          OIDC_KIND='authelia'
+          OIDC_CONSOLE_CLIENT_SECRET='$console_secret'
+          AUTHELIA_COOKIE_DOMAIN='$HOST'
+          AUTHELIA_SESSION_SECRET='$(openssl rand -hex 32)'
+          AUTHELIA_HMAC_SECRET='$(openssl rand -hex 32)'
+          AUTHELIA_STORAGE_KEY='$(openssl rand -hex 32)'
+          AUTHELIA_CONSOLE_CLIENT_DIGEST='$console_digest'
+          AUTHELIA_ADMIN_USER='admin'
+          AUTHELIA_ADMIN_EMAIL='ops@pystino.test'
+          AUTHELIA_ADMIN_NAME='admin'
+          AUTHELIA_ADMIN_PASSWORD_DIGEST='$admin_digest'
+          EOF
+          chmod 600 deploy/.env
+      - name: Bring up deploy/compose.yaml
+        run: docker compose -f deploy/compose.yaml --env-file deploy/.env up -d --wait
+      - run: curl -fsS -k --resolve "$HOST:8443:127.0.0.1" "https://$HOST:8443/healthz"
+      - name: Logs on failure
+        if: failure()
+        run: docker compose -f deploy/compose.yaml --env-file deploy/.env logs --tail 100

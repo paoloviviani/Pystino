@@ -171,8 +171,9 @@ def record_from_env(settings: Settings) -> ProviderRecord | None:
         is_enabled=True,
         source="environment",
         internal_base_url=oidc.internal_base_url,
-        # The bundled Authelia (`pystino init` writes GATEWAY_OIDC__KIND) is a
-        # directory we can read: its users file is on a volume this container
+        # The bundled Authelia (OIDC_KIND='authelia' in .env sets
+        # GATEWAY_OIDC__KIND) is a directory we can read: its users file is on
+        # a volume this container
         # mounts. So it gets the users-file adapter — and with it the console's
         # user management (D10) — but unconfirmed: nothing is applied until an
         # administrator has looked at a first dry run.

@@ -16,7 +16,8 @@ Credentials come from the environment:
 
     PUBLIC_ORIGIN                    the deployment (source the deploy dir's .env)
     PYSTINO_LIVE_ADMIN_USER          Authelia username (default $AUTHELIA_ADMIN_USER, else admin)
-    PYSTINO_LIVE_ADMIN_PASSWORD      required: the password `pystino init` printed
+    PYSTINO_LIVE_ADMIN_PASSWORD      required: the password behind AUTHELIA_ADMIN_PASSWORD_DIGEST
+                                     (whatever you minted it from — deploy/.env.example)
     PYSTINO_LIVE_USER                optional, a non-admin for the 403 checks
     PYSTINO_LIVE_USER_PASSWORD
     PYSTINO_LIVE_PROVIDER            optional: the provider name (default: the first enabled)

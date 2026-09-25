@@ -46,7 +46,7 @@ The decision record indexes every design decision; this file is the fast layer.
   outbound link to the chat). `deploy/opencode/` keeps the pasted-key
   `install.sh` (ADR 0010). The gateway's side of the contract (`/v1`,
   `x-bill-to`, the `opencode-enrollment` client) is `docs/coding-agents.md`,
-  and the stack side is `pystino init --agents`.
+  and the stack side is `CODE_AGENTS_ENABLED=true` in `.env` (the full stack's).
 - Gateway internals that carry the weight: `routers/_metered.py`
   (resolve → reserve → record → settle), `accounting/cost.py` (the only code that
   multiplies a count by a rate), `quota/engine.py`, `access.py`, `plugins/`
@@ -79,9 +79,9 @@ uv run mkdocs build --strict                                   # docs site (mkdo
 
 ## Changes touching the request path, money, or SQL: run the live scripts
 
-A development stack: `uv run pystino init --mode dev …` then
-`docker compose up -d --build --wait` in the deploy directory
-(docs/getting-started.md; the fake upstream is deploy/dev/smoke.yml).
+A development stack: fill `deploy/.env` from `deploy/.env.example` by hand,
+then `docker compose -f deploy/compose.yaml -f deploy/dev/smoke.yml up -d
+--wait` (docs/getting-started.md; the fake upstream is deploy/dev/smoke.yml).
 
 Then the matching `./scripts/test_*.py` (reporting, redaction, console,
 providers, surfaces, quota_race, cache_accounting, public_tls). **Known gap:**
@@ -90,7 +90,7 @@ to an OIDC login (`scripts/live_session.py`) first. More than
 half the serious bugs in this project's history were only findable against the
 running stack.
 
-- One compose file with profiles (deploy/stack); the gateway binds `127.0.0.1` on purpose.
+- One compose file with profiles (deploy/compose.yaml); the gateway binds `127.0.0.1` on purpose.
 - **Source `deploy/.env` before the live scripts** — they follow
   `PUBLIC_HOST` when set (needed under the TLS proxy, where
   certificates are verified, not skipped).

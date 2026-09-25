@@ -43,7 +43,7 @@ jobs:
               - "apps/gateway/**"
               - "packages/shared-py/**"
               - "services/**"
-              - "deploy/stack/**"
+              - "deploy/**"
               - "uv.lock"
               - "pyproject.toml"
               - ".github/workflows/ci.yml"
@@ -67,20 +67,26 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy apps/gateway/src services
       - run: uv run pytest -q -p no:cacheprovider
-      - name: init writes files compose accepts; the Caddyfile adapts in every TLS mode
+      - name: deploy/compose.yaml resolves for every profile; the Caddyfile adapts in every TLS mode
         run: |
           set -eu
-          for mode in dist dev; do
-            dir="$RUNNER_TEMP/$mode"; mkdir -p "$dir"
-            PYSTINO_UPSTREAM_API_KEY= uv run pystino init --dir "$dir" --mode "$mode" \
-              --origin https://stack.example.org --admin-email ops@example.org --preset team >/dev/null
-            (cd "$dir" && docker compose config --quiet)
+          cat > "$RUNNER_TEMP/placeholder.env" <<'EOF'
+          POSTGRES_PASSWORD=x
+          GATEWAY_SECRET_KEY=x
+          GATEWAY_SESSION_SECRET=x
+          PUBLIC_ORIGIN=https://stack.example.org
+          SITE_ADDRESS=https://stack.example.org
+          EOF
+          for profiles in "" authelia redaction "authelia,redaction"; do
+            COMPOSE_PROFILES="$profiles" docker compose -f deploy/compose.yaml \
+              --env-file "$RUNNER_TEMP/placeholder.env" config -q
           done
           for spec in "https://stack.example.org|" "https://10.0.0.5|tls internal" "http://:80|"; do
             docker run --rm -e SITE_ADDRESS="${spec%%|*}" -e TLS_DIRECTIVE="${spec#*|}" \
-              -v "$PWD/deploy/stack/proxy:/etc/caddy:ro" caddy:2.11-alpine \
-              caddy adapt --config /etc/caddy/Caddyfile >/dev/null
+              -v "$PWD/deploy/caddy:/etc/caddy:ro" -v "$PWD/deploy/proxy.d:/etc/caddy.d:ro" \
+              caddy:2.11-alpine caddy adapt --config /etc/caddy/Caddyfile >/dev/null
           done
+          deploy/pin.py --check
 
   console:
     needs: changes

@@ -1,0 +1,307 @@
+# Pystino, self-contained: the gateway and its console, no chat.
+#
+#   cp .env.example .env && chmod 600 .env && $EDITOR .env
+#   docker compose up -d     brings everything up; add --wait to block until healthy
+#
+# Every service names an image; nothing here builds. The images this release
+# was tested with are the defaults below, so an install never names a version:
+# upgrading is `git pull && docker compose pull && docker compose up -d`.
+#
+# For the full stack, with the chat, use the `cerea-deploy` repository
+# instead (private for now): same variable names and .env conventions, so
+# moving to it is carrying this .env and the project name over, then adding
+# the chat's secrets.
+#
+# Add-ons are compose profiles chosen by COMPOSE_PROFILES in .env: authelia,
+# redaction. postgres, bootstrap, migrate, valkey, gateway and the proxy
+# always run — there is no `gateway` profile here, because the gateway is the
+# only thing this deployment serves. An empty COMPOSE_PROFILES is fine.
+#
+# Caddy and Authelia run their stock images. Their configuration is the
+# readable files in caddy/ and authelia/, mounted read-only. Compose does not
+# recreate a container when a mounted file changes, so each of those services
+# carries a `pystino.config-rev` label: a digest of its directory, which
+# deploy/pin.py rewrites whenever the files change (a unit test fails the
+# build when a label is stale). A release that changes the Caddyfile
+# therefore changes this file too, and `up -d` recreates the proxy. Edited
+# them locally? `docker compose up -d --force-recreate proxy authelia`.
+
+name: ${COMPOSE_PROJECT_NAME:-pystino}
+
+# The pin. A release of this repository names the version in release.env; a
+# unit test fails if this default and release.env's PYSTINO_VERSION diverge.
+# .env overrides it only for a local build or a private registry.
+x-gateway-image: &gateway-image ${GATEWAY_IMAGE:-${PYSTINO_REGISTRY:-ghcr.io/paoloviviani}/pystino-gateway:${PYSTINO_VERSION:-0.1.0}}
+x-redaction-image: &redaction-image ${REDACTION_IMAGE:-${PYSTINO_REGISTRY:-ghcr.io/paoloviviani}/pystino-redaction:${PYSTINO_VERSION:-0.1.0}-pattern}
+
+x-database-url: &database-url postgresql+asyncpg://${POSTGRES_USER:-gateway}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-gateway}
+
+services:
+  # --- always on -------------------------------------------------------------
+
+  postgres:
+    # pgvector: knowledge-base retrieval is a SQL query.
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg18}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gateway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-gateway}
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8 --encoding=UTF8"
+    volumes:
+      # One level above data/: PostgreSQL 18's image refuses the old mount point.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gateway} -d ${POSTGRES_DB:-gateway}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # Idempotent, on every `up`: validates .env and seeds Authelia's key and
+  # first user when absent. It never overwrites state, so re-running it is
+  # always safe. (No chat here, so it never touches the chat's database role.)
+  bootstrap:
+    image: *gateway-image
+    command: ["pystino", "bootstrap"]
+    restart: "no"
+    # Root, for one reason: it writes Authelia's key and users file into a
+    # volume Authelia (root in its image) reads. It runs, exits, and holds no
+    # port.
+    user: "0:0"
+    environment:
+      COMPOSE_PROFILES: ${COMPOSE_PROFILES:-}
+      POSTGRES_USER: ${POSTGRES_USER:-gateway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-gateway}
+      AUTHELIA_ADMIN_USER: ${AUTHELIA_ADMIN_USER:-}
+      AUTHELIA_ADMIN_EMAIL: ${AUTHELIA_ADMIN_EMAIL:-}
+      AUTHELIA_ADMIN_NAME: ${AUTHELIA_ADMIN_NAME:-}
+      AUTHELIA_ADMIN_PASSWORD_DIGEST: ${AUTHELIA_ADMIN_PASSWORD_DIGEST:-}
+    volumes:
+      - authelia-config:/authelia
+      - authelia-data:/authelia-data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  valkey:
+    image: ${VALKEY_IMAGE:-valkey/valkey:8-alpine}
+    restart: unless-stopped
+    command: ["valkey-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  migrate:
+    image: *gateway-image
+    command: ["alembic", "-c", "apps/gateway/alembic.ini", "upgrade", "head"]
+    restart: "no"
+    environment:
+      GATEWAY_DATABASE_URL: *database-url
+      GATEWAY_UPSTREAM__BASE_URL: ${GATEWAY_UPSTREAM__BASE_URL:-https://api.cortecs.ai/v1}
+      GATEWAY_UPSTREAM__API_KEY: ${GATEWAY_UPSTREAM__API_KEY:-}
+      GATEWAY_SECRET_KEY: ${GATEWAY_SECRET_KEY:?set GATEWAY_SECRET_KEY in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  gateway:
+    image: *gateway-image
+    restart: unless-stopped
+    ports:
+      # Loopback only, for SSH port-forwarding and local scripts; the world
+      # reaches the gateway through the proxy.
+      - "127.0.0.1:${GATEWAY_PORT:-8000}:8000"
+    environment:
+      GATEWAY_ENVIRONMENT: ${GATEWAY_ENVIRONMENT:-production}
+      GATEWAY_LOG_LEVEL: ${GATEWAY_LOG_LEVEL:-INFO}
+      GATEWAY_LOG_JSON: ${GATEWAY_LOG_JSON:-true}
+      GATEWAY_DATABASE_URL: *database-url
+      GATEWAY_VALKEY_URL: redis://valkey:6379/0
+      GATEWAY_BILLING_CURRENCY: ${GATEWAY_BILLING_CURRENCY:-EUR}
+      GATEWAY_SESSION_SECRET: ${GATEWAY_SESSION_SECRET:?set GATEWAY_SESSION_SECRET in .env}
+      GATEWAY_SECRET_KEY: ${GATEWAY_SECRET_KEY}
+      GATEWAY_SESSION_COOKIE_SECURE: "true"
+      FORWARDED_ALLOW_IPS: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16,127.0.0.1"
+      GATEWAY_UPSTREAM__BASE_URL: ${GATEWAY_UPSTREAM__BASE_URL:-https://api.cortecs.ai/v1}
+      GATEWAY_UPSTREAM__API_KEY: ${GATEWAY_UPSTREAM__API_KEY:-}
+      GATEWAY_ACCOUNTING__ENABLED: ${GATEWAY_ACCOUNTING__ENABLED:-true}
+      GATEWAY_QUOTA__ENABLED: ${GATEWAY_QUOTA__ENABLED:-true}
+      # Redaction: the engine is `noop` unless the redaction profile is on
+      # (.env writes both together). The endpoints are harmless when nothing
+      # listens there, because the noop engine never calls them.
+      GATEWAY_REDACTION__ENGINE: ${GATEWAY_REDACTION__ENGINE:-noop}
+      GATEWAY_REDACTION__ENDPOINT: http://redaction:8080
+      GATEWAY_REDACTION__PLACEHOLDER_KEY: ${REDACTION_PLACEHOLDER_KEY:-}
+      GATEWAY_REDACTION__LANGUAGE: ${REDACTION_LANGUAGE:-en}
+      GATEWAY_REDACTION__FAIL_OPEN: "false"
+      GATEWAY_EXTRACTOR__ENDPOINT: ${GATEWAY_EXTRACTOR__ENDPOINT:-}
+      # Identity: OIDC only. The env seeds the first provider row;
+      # after that the console owns it. INTERNAL_BASE_URL is the back-channel:
+      # the gateway reaches the bundled Authelia at http://authelia:9091, never
+      # through the proxy, so no CA bundle is ever needed.
+      GATEWAY_LOCAL_AUTH__ENABLED: ${GATEWAY_LOCAL_AUTH__ENABLED:-false}
+      GATEWAY_OIDC__ENABLED: ${OIDC_ENABLED:-true}
+      GATEWAY_OIDC__ISSUER: ${OIDC_ISSUER:-}
+      GATEWAY_OIDC__INTERNAL_BASE_URL: ${OIDC_INTERNAL_BASE_URL:-}
+      GATEWAY_OIDC__CLIENT_ID: ${OIDC_CONSOLE_CLIENT_ID:-pystino-console}
+      GATEWAY_OIDC__CLIENT_SECRET: ${OIDC_CONSOLE_CLIENT_SECRET:-}
+      GATEWAY_OIDC__REDIRECT_URI: ${PUBLIC_ORIGIN:?set PUBLIC_ORIGIN in .env}/auth/callback/default
+      GATEWAY_OIDC__SCOPES: '["openid","profile","email","groups"]'
+      GATEWAY_OIDC__GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-groups}
+      GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE: ${OIDC_AUDIENCE:-pystino-api}
+      GATEWAY_OIDC__LINK_LOCAL_BY_EMAIL: ${OIDC_LINK_LOCAL_BY_EMAIL:-false}
+      # `authelia` for the bundled IdP (.env writes it): the seeded provider
+      # row then gets the users-file sync and the console's user management.
+      GATEWAY_OIDC__KIND: ${OIDC_KIND:-generic}
+      GATEWAY_BOOTSTRAP_ADMIN_EMAIL: ${PYSTINO_BOOTSTRAP_ADMIN_EMAIL:-}
+    volumes:
+      # The bundled Authelia's users file, which the console manages
+      # and the authelia_file adapter reads. Empty when the profile is off.
+      - authelia-config:/authelia
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      bootstrap:
+        condition: service_completed_successfully
+      authelia:
+        condition: service_healthy
+        required: false
+      redaction:
+        condition: service_healthy
+        required: false
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=3).status == 200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  proxy:
+    # Stock Caddy reading caddy/Caddyfile. TLS_MODE picks acme, internal or
+    # upstream (TLS terminated in front, e.g. the NetBird edge) through the
+    # variables below; the routes are the same in all three.
+    image: ${CADDY_IMAGE:-caddy:2.11-alpine}
+    restart: unless-stopped
+    labels:
+      pystino.config-rev: "sha256:7556e959cea7689e"
+    ports:
+      - "${PUBLIC_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+      - "${PUBLIC_BIND:-0.0.0.0}:${HTTPS_PORT:-443}:443"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env}
+      TLS_DIRECTIVE: ${TLS_DIRECTIVE:-}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.org}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-private_ranges}
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+      # Directories, never single files: a directory mount sees new and
+      # renamed files, so neither `git pull` nor a component adding a route
+      # meets the stale inode a single-file mount pins.
+      - ./caddy:/etc/caddy:ro
+      # Operator and component snippets (*.caddy), imported inside the site
+      # block. Git ignores them, so `git pull` never conflicts with yours.
+      - ./proxy.d:/etc/caddy.d:ro
+    depends_on:
+      gateway:
+        condition: service_started
+      authelia:
+        condition: service_started
+        required: false
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # --- profile: authelia (the bundled IdP) ------------------------------------
+
+  authelia:
+    profiles: [authelia]
+    # Stock Authelia reading authelia/configuration.yml. Every secret arrives
+    # through the environment and the signing key through a file bootstrap
+    # creates once, via Authelia's template filter. A new client arrives with
+    # the file and the label below; a changed secret changes this service's
+    # environment. Either way compose recreates it, and nothing is rendered on
+    # the host, so nothing drifts.
+    image: ${AUTHELIA_IMAGE:-authelia/authelia:4.39.22}
+    command: ["--config", "/etc/authelia/configuration.yml"]
+    restart: unless-stopped
+    labels:
+      pystino.config-rev: "sha256:fe5d95b20ffa4609"
+    environment:
+      X_AUTHELIA_CONFIG_FILTERS: template
+      # The gateway's uid: the console manages the bundled users file,
+      # and Authelia's entrypoint re-owns /config to PUID on every start —
+      # as root it would lock the gateway out of the file after a restart.
+      PUID: "1001"
+      PGID: "1001"
+      X_AUTHELIA_HEALTHCHECK_PATH: /authelia
+      X_PYSTINO_PUBLIC_ORIGIN: ${PUBLIC_ORIGIN}
+      X_PYSTINO_COOKIE_DOMAIN: ${AUTHELIA_COOKIE_DOMAIN:-}
+      X_PYSTINO_SESSION_SECRET: ${AUTHELIA_SESSION_SECRET:-}
+      X_PYSTINO_HMAC_SECRET: ${AUTHELIA_HMAC_SECRET:-}
+      X_PYSTINO_STORAGE_KEY: ${AUTHELIA_STORAGE_KEY:-}
+      X_PYSTINO_CONSOLE_CLIENT_DIGEST: ${AUTHELIA_CONSOLE_CLIENT_DIGEST:-}
+    volumes:
+      - ./authelia:/etc/authelia:ro
+      - authelia-config:/config
+      - authelia-data:/data
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "/app/healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
+
+  # --- profile: redaction ------------------------------------------------------
+
+  redaction:
+    profiles: [redaction]
+    image: *redaction-image
+    restart: unless-stopped
+    environment:
+      REDACTION_NLP_ENGINE: ${REDACTION_NLP_ENGINE:-disabled}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+
+  extractor:
+    profiles: [redaction]
+    image: *redaction-image
+    restart: unless-stopped
+    environment:
+      REDACTION_NLP_ENGINE: disabled
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+# Named the same as an adopted pre-0091 install already has, so a Pystino-only
+# deployment carried over from `deploy/stack/` keeps its data.
+volumes:
+  postgres-data:
+  valkey-data:
+  authelia-config:
+  authelia-data:
+  caddy-data:
+  caddy-config:

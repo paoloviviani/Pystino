@@ -13,9 +13,11 @@
 #     cache in well under a minute;
 #   - main → `edge` + `sha-<short>`, vX.Y.Z → `X.Y.Z` + `X.Y` (never
 #     overwritten); releases pin by digest (`pystino release-pin`);
-#   - ONE job building the four images in sequence, no matrix: every job is
-#     billed rounded up to a whole minute, and four jobs pay checkout, buildx
-#     and login four times; the cleanup rides in the same job;
+#   - ONE job building the two images in sequence, no matrix: every job is
+#     billed rounded up to a whole minute, and separate jobs would pay
+#     checkout, buildx and login twice; the cleanup rides in the same job.
+#     The proxy and Authelia are no longer built here (ADR 0091): they run
+#     stock images, configured by files a deployment repository mounts;
 #   - the newest five untagged versions per image are kept, older ones pruned;
 #   - no provenance/SBOM attestations (they are stored as untagged manifests,
 #     and pruning those would break the images).
@@ -25,7 +27,7 @@ name: images
 # (a few more days of development, 2026-09-24): manual runs only. To publish
 # on every push to main and on release tags, replace the two `on:` lines below
 # with this one line:
-# on: {workflow_dispatch: {}, push: {branches: [main], tags: ["v*.*.*"], paths: [apps/gateway/**, apps/console/**, packages/**, services/redaction/**, deploy/stack/**, uv.lock, pnpm-lock.yaml, .dockerignore, .github/workflows/images.yml]}}
+# on: {workflow_dispatch: {}, push: {branches: [main], tags: ["v*.*.*"], paths: [apps/gateway/**, apps/console/**, packages/**, services/redaction/**, uv.lock, pnpm-lock.yaml, .dockerignore, .github/workflows/images.yml]}}
 on:
   workflow_dispatch:
 
@@ -92,8 +94,6 @@ jobs:
             echo "::endgroup::"
           done <<'IMAGES'
           pystino-gateway|.|apps/gateway/Dockerfile|INCLUDE_CONSOLE=true|
-          pystino-proxy|deploy/stack/proxy|deploy/stack/proxy/Dockerfile||
-          pystino-authelia|deploy/stack/authelia|deploy/stack/authelia/Dockerfile||
           pystino-redaction|.|services/redaction/Dockerfile|SPACY_MODELS=|-pattern
           IMAGES
       - name: Prune untagged versions (keep five per image)
@@ -104,12 +104,6 @@ jobs:
           package-type: container
           delete-only-untagged-versions: "true"
           min-versions-to-keep: 5
-      - if: github.ref == 'refs/heads/main'
-        uses: actions/delete-package-versions@v5
-        with: {package-name: pystino-proxy, package-type: container, delete-only-untagged-versions: "true", min-versions-to-keep: 5}
-      - if: github.ref == 'refs/heads/main'
-        uses: actions/delete-package-versions@v5
-        with: {package-name: pystino-authelia, package-type: container, delete-only-untagged-versions: "true", min-versions-to-keep: 5}
       - if: github.ref == 'refs/heads/main'
         uses: actions/delete-package-versions@v5
         with: {package-name: pystino-redaction, package-type: container, delete-only-untagged-versions: "true", min-versions-to-keep: 5}

@@ -1,6 +1,0 @@
-# PROXY_DEFAULT=gateway: every path not routed above goes to the gateway.
-handle {
-	reverse_proxy gateway:8000 {
-		import to_app
-	}
-}

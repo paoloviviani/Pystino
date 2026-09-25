@@ -6,20 +6,22 @@ compose route is the one that gets you a billed completion and a console.
 
 ## Run the stack
 
-A development stack from this checkout, with a fake upstream so no provider
+`deploy/compose.yaml` from this checkout, with a fake upstream so no provider
 account is needed (the full set of options is in [Deployment](deployment.md)):
 
 ```bash
-uv run pystino init --dir ~/pystino-dev --mode dev --tls internal \
-  --origin https://dev.example.test:8443 --https-port 8443 \
-  --admin-email you@example.org --preset homelab
-# add the fake upstream: append ":$PWD/deploy/dev/smoke.yml" to COMPOSE_FILE in ~/pystino-dev/.env
-cd ~/pystino-dev && docker compose up -d --build --wait
+cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
+# fill in deploy/.env: TLS_MODE=internal, PUBLIC_ORIGIN=https://dev.example.test:8443,
+# SITE_ADDRESS=https://dev.example.test, TLS_DIRECTIVE='tls internal', HTTPS_PORT=8443,
+# then mint every secret and, for the bundled Authelia, its digests — the comment above
+# each variable in deploy/.env.example names the exact command.
+export PYSTINO_SRC="$PWD"    # the fake upstream (deploy/dev/smoke.yml) needs it
+cd deploy && docker compose -f compose.yaml -f dev/smoke.yml up -d --wait
 ```
 
-`init` prints the bundled Authelia's first password once. `dev.example.test`
-must resolve to this machine for a browser (a hosts entry is enough). The
-gateway itself also listens on `127.0.0.1:8000`, loopback only.
+`dev.example.test` must resolve to this machine for a browser (a hosts entry
+is enough). The gateway itself also listens on `127.0.0.1:8000`, loopback
+only.
 
 ## Create something to talk to
 
@@ -47,8 +49,10 @@ upstream either way (ADR 0007).
 ## Sign in to the console
 
 The console is at `https://dev.example.test:8443/console`. Sign in through the
-bundled Authelia with the account `init` created; because its email is the
-`--admin-email`, that first sign-in makes it the administrator. Everyone signs
+bundled Authelia with `AUTHELIA_ADMIN_USER` and the password behind
+`AUTHELIA_ADMIN_PASSWORD_DIGEST`; because its email
+(`AUTHELIA_ADMIN_EMAIL`/`PYSTINO_BOOTSTRAP_ADMIN_EMAIL`) matches, that first
+sign-in makes it the administrator. Everyone signs
 in through an OIDC provider — there is no password door (ADR 0088). Other
 providers (GitLab, Entra ID, Keycloak, …) are added in the console's Settings
 screen; see [OIDC against any provider](oidc-generic-provider.md).

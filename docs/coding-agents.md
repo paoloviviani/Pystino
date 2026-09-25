@@ -11,8 +11,9 @@ The machine side lives in the chat repository. galopin, the Cerea machine agent,
 its `agent/` directory. It enrols with the IdP, runs a local refreshing shim in front
 of `/v1`, supervises opencode, and dials out to the chat's `/code` panel. Its
 installation and operation are documented in the chat repository's
-`docs/agent-machines.md` and `agent/PROTOCOL.md`. The stack side is one switch here,
-`pystino init --agents` (`CODE_AGENTS_ENABLED=true`).
+`docs/agent-machines.md` and `agent/PROTOCOL.md`. The stack side is one switch,
+`CODE_AGENTS_ENABLED=true` in `.env` (the full stack's; a Pystino-only
+deployment has no chat, so no `/code` panel to dial into).
 
 ## Two ways in
 

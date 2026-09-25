@@ -62,7 +62,7 @@ origin, with the deployment's `.env` sourced for `PUBLIC_ORIGIN`:
 
 ```bash
 cd <deploy dir>; set -a; . ./.env; set +a
-export PYSTINO_LIVE_ADMIN_PASSWORD=…        # what `pystino init` printed
+export PYSTINO_LIVE_ADMIN_PASSWORD=…        # the password behind AUTHELIA_ADMIN_PASSWORD_DIGEST
 export PYSTINO_LIVE_USER=… PYSTINO_LIVE_USER_PASSWORD=…   # optional non-admin
 # a trial stack with no DNS / on Caddy's internal CA:
 export PYSTINO_LIVE_RESOLVE=127.0.0.1 GATEWAY_CA_BUNDLE=$PWD/caddy-root.crt

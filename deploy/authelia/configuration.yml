@@ -1,20 +1,28 @@
-# The bundled Authelia's configuration, a release artefact (ADR 0086).
+# The bundled Authelia's configuration, read by the stock Authelia image from
+# this directory (mounted read-only at /etc/authelia).
 #
 # Rendered by Authelia itself at start (template filter), never by a script on
 # the host. Values come from the template functions `env` (the container
 # environment, compose.yaml <- .env, variables named X_PYSTINO_*) and `secret`
-# (files `pystino bootstrap` created once under /config/keys).
+# (files the bootstrap service creates once under /config/keys).
 #
 # NEVER write a double-brace template expression in a comment in this file:
-# the filter executes the whole file, comments included (found in the trial —
-# a quoted example in this very header crashed Authelia at start).
-# Nothing here is state; the users file and the signing key are, and live in
-# the authelia-config volume. Client *secrets* appear only as argon2id digests
-# (`pystino init` mints the secret and its digest together) — plaintext client
-# secrets are deprecated in 4.39 and slated for removal.
+# the filter executes the whole file, comments included, and Authelia then
+# refuses to start.
 #
-# Ported from deploy/idp/generate-authelia-config.sh (same clients, same
-# claims policy, same lifespans), so an adopted install keeps working.
+# Nothing here is state; the users file and the signing key are, and live in
+# the authelia-config volume. Client *secrets* appear only as digests
+# (deploy/.env.example names the command that mints each secret and its
+# digest together). Plaintext client secrets are deprecated in 4.39 and
+# slated for removal.
+#
+# This is the Pystino-only copy: no `cerea` client, because this deployment
+# runs no chat. The full stack (its own Authelia configuration, with the chat
+# client) is the separate `cerea-deploy` repository (private for now).
+#
+# Changed this file? compose does not notice a mounted file: run
+# `docker compose up -d --force-recreate authelia`, or `deploy/pin.py` to
+# refresh the config-rev label in compose.yaml.
 
 server:
   address: 'tcp://:9091/authelia'
@@ -59,8 +67,7 @@ storage:
   local:
     path: '/data/db.sqlite3'
   # Encrypts the sqlite store, which holds the opaque subject identifiers every
-  # user is keyed on downstream. Changing it re-keys everyone: it is copied
-  # verbatim on adoption and never rotated by `pystino rotate`.
+  # user is keyed on downstream. Changing it re-keys everyone: never rotate it.
   encryption_key: '{{ env "X_PYSTINO_STORAGE_KEY" }}'
 
 notifier:
@@ -103,31 +110,12 @@ identity_providers:
         audience: ['pystino-api']
         requested_audience_mode: 'implicit'
         claims_policy: 'pystino'
-        # First-party: auto-approved, no consent screen (decision D15,
-        # as ADR 0068 held for the house issuer's clients).
+        # First-party: auto-approved, no consent screen.
         consent_mode: 'implicit'
-      - client_id: 'cerea'
-        client_name: 'Cerea Chat'
-        client_secret: '{{ env "X_PYSTINO_CHAT_CLIENT_DIGEST" }}'
-        public: false
-        authorization_policy: 'one_factor'
-        require_pkce: true
-        pkce_challenge_method: 'S256'
-        redirect_uris:
-          - '{{ env "X_PYSTINO_PUBLIC_ORIGIN" }}/chat/login/callback'
-        scopes: ['openid', 'profile', 'email', 'groups']
-        response_types: ['code']
-        grant_types: ['authorization_code']
-        access_token_signed_response_alg: 'RS256'
-        token_endpoint_auth_method: 'client_secret_basic'
-        audience: ['pystino-api']
-        requested_audience_mode: 'implicit'
-        claims_policy: 'pystino'
-        # First-party: auto-approved, no consent screen (decision D15,
-        # as ADR 0068 held for the house issuer's clients).
-        consent_mode: 'implicit'
-      # The agent machine's public client (report §9). Kept under its current
-      # id so enrolled machines keep refreshing across the migration.
+      # galopin's public client (agent machines, which live in Cerea — ADR
+      # 0089). Kept here too, under this id, because it enrolls against
+      # whichever Pystino a machine is paired to; a Pystino-only deployment
+      # with no chat may still run agent machines against it directly.
       - client_id: 'opencode-enrollment'
         client_name: 'Opencode Enrollment'
         public: true

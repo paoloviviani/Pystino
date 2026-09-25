@@ -1,10 +1,10 @@
-# Development only: a fake upstream so the stack answers /v1 without a real
-# provider. Never part of a distributed install (ADR 0076's rule: a fake
-# upstream must never be one careless file away from production) — it lives
-# outside deploy/stack/ and needs the checkout's scripts/.
+# Development and CI only: a fake upstream so the stack answers /v1 without a
+# real provider. Never part of an install — it needs a Pystino checkout's
+# scripts/, mounted from PYSTINO_SRC.
 #
-#   append ":$PYSTINO_SRC/deploy/dev/smoke.yml" to COMPOSE_FILE in .env,
-#   then docker compose up -d --wait
+#   docker compose -f deploy/compose.yaml -f deploy/dev/smoke.yml up -d --wait
+#
+# Paths are relative to the project directory (deploy/, where compose.yaml is).
 services:
   fake-upstream:
     image: ${GATEWAY_IMAGE:-${PYSTINO_REGISTRY:-local}/pystino-gateway:${PYSTINO_VERSION:-dev}}
