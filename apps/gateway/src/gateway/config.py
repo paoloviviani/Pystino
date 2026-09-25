@@ -110,7 +110,8 @@ class OIDCSettings(BaseModel):
     internal_base_url: str = ""
 
     # What kind of directory the environment's provider is (ADR 0088):
-    # `authelia` for the bundled one, which `pystino init` writes. It only
+    # `authelia` for the bundled one, which OIDC_KIND in .env writes (ADR
+    # 0091: deploy/.env.example, or cerea-deploy's ./configure). It only
     # matters when the first provider row is seeded from here — that row then
     # gets the users-file sync adapter and the console's user management.
     kind: str = "generic"
@@ -216,9 +217,10 @@ class LocalAuthSettings(BaseModel):
 class IdPSettings(BaseModel):
     """The house identity provider — removed (ADR 0088; it superseded ADR 0068).
 
-    The bundled Authelia (`pystino init --idp authelia`) or any OIDC provider
-    replaces it. A tripwire, like LocalAuthSettings: GATEWAY_IDP__ENABLED=true
-    refuses to start with a message saying what to do instead.
+    The bundled Authelia (COMPOSE_PROFILES=authelia in deploy/.env.example, or
+    cerea-deploy's `./configure --idp authelia`) or any OIDC provider replaces
+    it. A tripwire, like LocalAuthSettings: GATEWAY_IDP__ENABLED=true refuses
+    to start with a message saying what to do instead.
     """
 
     enabled: bool = False
@@ -229,8 +231,8 @@ class IdPSettings(BaseModel):
         if value:
             raise ValueError(
                 "GATEWAY_IDP__ENABLED was removed (ADR 0088): the house identity provider is "
-                "gone. Use the bundled Authelia (pystino init --idp authelia) or any OIDC "
-                "provider, and delete the GATEWAY_IDP__* variables."
+                "gone. Use the bundled Authelia (deploy/.env.example: COMPOSE_PROFILES=authelia) "
+                "or any OIDC provider, and delete the GATEWAY_IDP__* variables."
             )
         return value
 
@@ -731,8 +733,9 @@ class Settings(BaseSettings):
     # The first administrator of an OIDC-only deployment (ADR 0088 draft).
     # The first browser sign-in whose *verified* email is this address, while
     # no active administrator exists, is made one. Inert once any administrator
-    # exists, so leaving it set is harmless; `pystino init` writes it. It
-    # replaces `gateway passwd --admin`, which needed the local-password door.
+    # exists, so leaving it set is harmless; PYSTINO_BOOTSTRAP_ADMIN_EMAIL in
+    # .env writes it. It replaces `gateway passwd --admin`, which needed the
+    # local-password door.
     bootstrap_admin_email: str = ""
 
     database_url: str = "postgresql+asyncpg://gateway:gateway@localhost:5432/gateway"

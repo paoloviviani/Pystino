@@ -36,10 +36,6 @@ COPY apps/gateway/src apps/gateway/src
 COPY packages/shared-py/src packages/shared-py/src
 COPY apps/gateway/migrations apps/gateway/migrations
 COPY apps/gateway/alembic.ini apps/gateway/
-# The release's stack files: `pystino init` copies compose.yaml out of the
-# image in a distributed install (no checkout on the host), and reads
-# release.env for the pinned versions.
-COPY deploy/stack deploy/stack
 
 # `--package gateway`, not a bare sync: a bare sync installs every workspace
 # member, so one member's presence or absence would couple this build to a

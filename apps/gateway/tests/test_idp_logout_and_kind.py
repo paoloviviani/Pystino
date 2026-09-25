@@ -9,7 +9,6 @@ sync adapter, hiding the users-file sync and the console's user management.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -211,22 +210,3 @@ class TestTheBundledAutheliaRow:
     def test_an_unknown_kind_in_the_environment_is_refused(self) -> None:
         with pytest.raises(ValueError, match="GATEWAY_OIDC__KIND"):
             OIDCSettings(kind="ldap")
-
-
-def test_init_writes_the_kind_and_the_chat_logout_url_for_the_bundled_authelia(
-    tmp_path: Path,
-) -> None:
-    from gateway.deploy import doctor, envfile
-    from gateway.deploy.cli import main
-
-    argv = ["init", "--dir", str(tmp_path), "--origin", "https://llm.example.org"]
-    assert main([*argv, "--admin-email", "ops@example.org", "--preset", "team"]) == 0
-    env = envfile.read(tmp_path / ".env")
-    assert env["OIDC_KIND"] == "authelia"
-    assert env["OIDC_LOGOUT_URL"] == "https://llm.example.org/authelia/logout?rd={redirect}"
-    first = doctor.check(tmp_path, probe_docker=False).warnings
-    assert not any("OIDC_LOGOUT_URL" in w for w in first)
-
-    envfile.update(tmp_path / ".env", {"OIDC_LOGOUT_URL": ""})
-    warnings = doctor.check(tmp_path, probe_docker=False).warnings
-    assert any("OIDC_LOGOUT_URL" in w and "/authelia/logout?rd={redirect}" in w for w in warnings)

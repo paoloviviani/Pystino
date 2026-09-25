@@ -201,26 +201,6 @@ def ensure_authelia_state(env: BootstrapEnv, directory: Path = AUTHELIA_DIR) -> 
     return done
 
 
-def import_authelia_state(source: Path, directory: Path = AUTHELIA_DIR) -> list[str]:
-    """Copy an adopted install's users file and signing key, where absent.
-
-    `pystino adopt` stages them; this is the one-off that puts them into the
-    new authelia-config volume. Like everything here it never overwrites: a
-    file already in the volume is state, and wins.
-    """
-    done: list[str] = []
-    for relative in ("users_database.yml", "keys/jwks.pem"):
-        src, dst = source / relative, directory / relative
-        if not src.is_file():
-            done.append(f"{relative}: nothing to import")
-        elif dst.exists():
-            done.append(f"{relative}: already present (kept)")
-        else:
-            _write_new(dst, src.read_bytes())
-            done.append(f"{relative}: imported")
-    return done
-
-
 AUTHELIA_DATA_DIR = Path(os.environ.get("PYSTINO_AUTHELIA_DATA_DIR", "/authelia-data"))
 #: The gateway's uid/gid in its image, which Authelia also runs as (compose PUID).
 SHARED_UID = 1001
