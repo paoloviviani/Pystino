@@ -79,4 +79,4 @@ nav:
       - operations.md
       - "Measured performance": performance.md
   - Guides:
-      - "OIDC against any provider": oidc-generic-provider.md
+      - "Identity: the OIDC provider": oidc-generic-provider.md

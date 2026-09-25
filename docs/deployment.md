@@ -71,8 +71,11 @@ Three, chosen by `TLS_MODE` (`deploy/.env.example` has the exact
 
 People sign in through an OpenID Connect provider — the bundled Authelia or
 your own (`OIDC_ISSUER`, `OIDC_INTERNAL_BASE_URL`, `OIDC_CONSOLE_CLIENT_ID`/
-`_SECRET`). There is no password door. Per provider, the console decides
-where groups come from (the token's claim, the directory, or the console
+`_SECRET`). There is no password door. The stack currently signs both the
+console and the chat in against one provider; to combine several sources of
+users, federate them in your own IdP (Keycloak, Authentik and the like) and
+point the stack at it. For that provider, the console decides where groups
+come from (the token's claim, the directory, or the console
 only), how often the provider's answer applies, and whether admin comes from
 the console or from a claim. The bundled Authelia's people are managed in the
 console (Settings → Identity providers → People).

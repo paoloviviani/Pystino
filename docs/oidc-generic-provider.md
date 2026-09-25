@@ -1,4 +1,4 @@
-# Identity: OIDC providers
+# Identity: the OIDC provider
 
 People sign in to the console, and to the chat when it is deployed, through
 OpenID Connect only. There is no password sign-in in the gateway itself. Use
@@ -7,8 +7,12 @@ gateway, or bring **your own issuer**: any server that speaks OIDC discovery.
 
 ## Configuration
 
-The deployment's `.env` seeds the first provider; after the first start, the
-console (**Settings → Identity providers**) owns it and any others you add.
+The stack currently signs both the console and the chat in against one
+provider. If you need several sources of users, federate them in your own IdP
+(Keycloak, Authentik and the like) and point the stack at it.
+
+The deployment's `.env` seeds the provider; after the first start, the
+console (**Settings → Identity providers**) owns its settings.
 
 | Variable | Meaning |
 |---|---|
@@ -67,7 +71,7 @@ only what is in the access token.
 
 A string claim is one group; it is never split on separators.
 
-Per provider, the console decides:
+For that provider, the console decides:
 
 - **where groups come from**: the token's claim, a directory sync, or the
   console only;

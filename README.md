@@ -27,9 +27,10 @@ against quotas, redacted, metered and written to a ledger you can report on.
 - **PII redaction** before anything leaves: detected entities become
   deterministic placeholders and are restored in the answer, with per-group
   and per-model policy.
-- **OIDC-only sign-in**, against the bundled Authelia or any issuer, with
-  groups from claims, directory sync or SCIM. Programs use revocable API keys
-  or OIDC access tokens.
+- **OIDC-only sign-in** against one identity provider, the bundled Authelia
+  or your own issuer, with groups from claims, directory sync or SCIM. To
+  combine several sources of users, federate them in your own IdP. Programs
+  use revocable API keys or OIDC access tokens.
 - **An admin console** for spend, reports, quotas, providers, models and
   prices, users, groups and redaction rules.
 
@@ -69,8 +70,8 @@ Every gateway setting is in `apps/gateway/src/gateway/config.py`
 
 Served at `/console` and signed in through OIDC. Administrators manage
 providers and their credentials, models with prices and access, users and
-groups, quotas, redaction rules and identity providers, and read spend and
-usage reports. Everyone else sees their own usage, limits and API keys. The
+groups, quotas, redaction rules and the identity provider's settings, and
+read spend and usage reports. Everyone else sees their own usage, limits and API keys. The
 management API behind it is under `/api`, with a generated reference at
 `/docs`.
 
