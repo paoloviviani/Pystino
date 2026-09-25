@@ -92,47 +92,40 @@ The four ideas that carry most of the design:
 
 ## Quick start
 
-The host needs Docker and nothing else. One directory holds the deployment:
-a `.env` (every secret, minted for you) and, for a distributed install, the
-release's `compose.yaml`. Images come from `ghcr.io/paoloviviani/` (private
-while the repositories are: `docker login ghcr.io` once with a `read:packages`
-token — `init` says so if it is missing).
+The host needs Docker and nothing else. `deploy/` in this repository is a
+self-contained deployment: the gateway and its console, no chat. Images come
+from `ghcr.io/paoloviviani/` (private while the repository is: `docker login
+ghcr.io` once with a `read:packages` token).
 
 ```bash
-mkdir /srv/pystino && cd /srv/pystino
-docker run --rm -it -u "$(id -u):$(id -g)" -v "$PWD:/deploy" -w /deploy \
-  -e PYSTINO_DEPLOY_DIR="$PWD" ghcr.io/paoloviviani/pystino-gateway:<version> pystino init \
-  --origin https://llm.example.org --admin-email you@example.org --preset team
-./pystino doctor && docker compose up -d --wait
+cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
+$EDITOR deploy/.env      # every variable is explained where it stands
+cd deploy && docker compose up -d --wait
 ```
 
-`init` prints the bundled Authelia's first password once; the first sign-in
-with the administrator email becomes the administrator. Presets: `homelab`,
-`team`, `enterprise` (a full stack), and `satellite` / `generic` for the chat
-alone (`cerea init` is the same thing, Cerea-branded). TLS: `--tls acme`
-(a public name), `internal` (development), `upstream` (TLS ends in front,
-e.g. NetBird). Bring your own OIDC provider with `--idp external
---oidc-issuer …`. Upgrading is `./pystino upgrade <version>` and the same
-`docker compose up -d --wait`.
+There is no installer: every secret's minting command is a comment above it
+in `.env.example` (`openssl rand -hex 32`, or, for the bundled Authelia's
+digests, `docker run --rm authelia/authelia:4.39.22 authelia crypto hash
+generate …`). The first sign-in whose email matches
+`PYSTINO_BOOTSTRAP_ADMIN_EMAIL` becomes the administrator. `TLS_MODE`:
+`acme` (a public name), `internal` (development), `upstream` (TLS ends in
+front, e.g. NetBird). Bring your own OIDC provider by leaving the `authelia`
+profile out of `COMPOSE_PROFILES` and setting `OIDC_ISSUER` and the
+`OIDC_CONSOLE_CLIENT_*` variables yourself. Upgrading is `git pull && docker
+compose pull && docker compose up -d --wait`. Full details, including TLS,
+identity and backups: [docs/deployment.md](docs/deployment.md).
 
-### Development
+**Want the chat too?** The separate `cerea-deploy` repository (private for
+now) is the full stack, with its own `./configure`; `deploy/.env` here uses
+the same variable names, so it carries over.
 
-The same stack, built from your checkouts instead of pulled:
-
-```bash
-uv run pystino init --dir ~/pystino-dev --mode dev --tls internal \
-  --origin https://dev.example.test:8443 --admin-email you@example.org \
-  [--cerea-src ../Cerea]
-cd ~/pystino-dev && docker compose up -d --build --wait
-```
-
-`deploy/dev/smoke.yml` adds a fake upstream (no provider account needed), and
-`deploy/dev/keycloak/` a Keycloak to develop the external-IdP paths against.
-The design, and why the old overlays, the edge Caddyfile, the CA bundle, the
-house IdP and the bash installers are gone: ADRs 0086–0088.
-
-Moving an install made by the old installer: `pystino adopt <old deploy dir>`
-(reads only; carries every secret over and prints the cutover).
+`deploy/dev/smoke.yml` adds a fake upstream to develop against (no provider
+account needed): `docker compose -f deploy/compose.yaml -f
+deploy/dev/smoke.yml up -d --wait`, with `PYSTINO_SRC` set to this checkout.
+`deploy/dev/keycloak/` is a Keycloak to develop the external-IdP paths
+against. The design, and why the old installer, the baked-in proxy and
+Authelia images, and the bash installers before them are gone: ADRs
+0086–0088, 0091.
 
 ## Development
 
@@ -177,8 +170,9 @@ services/redaction/  Presidio detection service
 packages/ui/         shared design tokens + UI primitives
 packages/shared-py/  shared Python contracts
 scripts/             live checks, fake upstream, pricing importer
-deploy/stack/        the one topology: compose.yaml (+ compose.build*.yaml for
-                     development), the proxy and Authelia images, release.env
+deploy/              the Pystino-only deployment: compose.yaml, caddy/ and
+                     authelia/ (mounted into stock images), .env.example,
+                     pin.py, release.env
 deploy/dev/          development-only fixtures: fake upstream, Keycloak
 deploy/ci/           the image workflow, until it can live in .github/workflows
 deploy/opencode/     coding-agent setup: pasted-key installer, enrollment CLI
