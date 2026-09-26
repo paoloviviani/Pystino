@@ -287,6 +287,22 @@ class SmtpSettings(BaseModel):
     security: Literal["starttls", "tls", "none"] = "starttls"
 
 
+class ChatSettings(BaseModel):
+    """The gateway's own call to the chat, for erasure only (ADR 0093 §9.3).
+
+    ``erasure_token`` is a service credential minted once by
+    ``cerea-deploy``'s ``./configure``, used for nothing else, and never
+    reaches the edge (the Caddyfile answers 404 for the path first; the chat
+    refuses it again itself if a proxy header is present regardless). Empty
+    ``erasure_url`` means this deployment has no chat the gateway can reach —
+    a Pystino-only install, or a satellite without its own — and delete
+    refuses outright rather than queuing a call that can never land.
+    """
+
+    erasure_url: str = ""
+    erasure_token: SecretStr = SecretStr("")
+
+
 class _RemovedPasswordResetSettings(BaseModel):
     """``GATEWAY_LOCAL_AUTH__PASSWORD_RESET__*`` — removed (ADR 0093 §1).
 
@@ -939,6 +955,7 @@ class Settings(BaseSettings):
     upstream: UpstreamSettings = Field(default_factory=UpstreamSettings)
     oidc: OIDCSettings = Field(default_factory=OIDCSettings)
     smtp: SmtpSettings = Field(default_factory=SmtpSettings)
+    chat: ChatSettings = Field(default_factory=ChatSettings)
     local_auth: LocalAuthSettings = Field(default_factory=LocalAuthSettings)
     idp: IdPSettings = Field(default_factory=IdPSettings)
     redaction: RedactionSettings = Field(default_factory=RedactionSettings)

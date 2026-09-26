@@ -599,6 +599,51 @@ class UserMerge(Base):
         return f"<UserMerge {self.source_user_id} -> {self.target_user_id}>"
 
 
+class ChatErasureStatus(enum.StrEnum):
+    PENDING = "pending"
+    DONE = "done"
+
+
+class ChatErasure(Base):
+    """One person's chat-side erasure, tracked from the same transaction that
+    deletes them here to the chat's own confirmation (ADR 0093 §9.2, §9.3).
+
+    ``id`` is the ``erasure_id`` sent to the chat and is what makes a repeat
+    delivery idempotent on its side. ``gateway_user_id`` carries no foreign
+    key, deliberately: the gateway row it names is deleted in the very same
+    transaction that inserts this one, so by the time anything reads this
+    table the person it is about no longer exists here at all -- the point
+    of the column is to *tell the chat who to erase*, not to reference a row.
+    ``identities`` is the same reason: the chat resolves its own records by
+    ``(issuer, subject)`` as well as by ``gatewayUserId``, for an account it
+    never finished keying, so both must be captured before the delete rather
+    than looked up again afterwards.
+    """
+
+    __tablename__ = "chat_erasures"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    gateway_user_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    identities: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    status: Mapped[ChatErasureStatus] = mapped_column(
+        _enum(ChatErasureStatus, "chat_erasure_status"),
+        default=ChatErasureStatus.PENDING,
+        server_default=text("'pending'"),
+    )
+    attempts: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    # Null means "not attempted yet" -- the inline, post-commit try runs
+    # before anything ever reads this column, so it never has to mean "due
+    # now" as well as "not yet scheduled".
+    next_attempt_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_error: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    done_at: Mapped[datetime | None] = mapped_column(default=None)
+    chat_counts: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+
+    def __repr__(self) -> str:
+        return f"<ChatErasure {self.id} {self.status} attempts={self.attempts}>"
+
+
 class Membership(Base):
     __tablename__ = "memberships"
 
@@ -1626,6 +1671,13 @@ class IdentityEventAction(enum.StrEnum):
     BOOTSTRAP_ADMIN = "bootstrap.admin"
     SESSIONS_REVOKE = "sessions.revoke"
     DEVICES_REVOKE = "devices.revoke"
+    # ADR 0093 §9.3, stage (c)'s own addition: not in §3.1's original list,
+    # written before the erasure design existed. The chat side of a delete
+    # is retried indefinitely in the background, so its outcome needs an
+    # audit trail of its own -- the gateway-side `user.delete` above fires
+    # once, at the request that started it.
+    CHAT_ERASURE_DONE = "chat.erasure_done"
+    CHAT_ERASURE_RETRYING = "chat.erasure_retrying"
 
 
 #: Raised by both dialects' triggers, so a caller sees the same reason whether

@@ -71,6 +71,12 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     IdentityEventAction.BOOTSTRAP_ADMIN: frozenset(),
     IdentityEventAction.SESSIONS_REVOKE: frozenset(),
     IdentityEventAction.DEVICES_REVOKE: frozenset(),
+    # §9.3: "an audit row chat.erasure_done with the counts".
+    IdentityEventAction.CHAT_ERASURE_DONE: frozenset({"counts"}),
+    # §9.3: "the first failure and every tenth after it" -- which attempt
+    # this was, so the audit trail itself shows the cadence rather than just
+    # a run of identical rows.
+    IdentityEventAction.CHAT_ERASURE_RETRYING: frozenset({"attempts"}),
 }
 
 #: Unconditional, whatever the action: the review's rule is "never a password,

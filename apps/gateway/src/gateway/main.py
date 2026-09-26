@@ -17,6 +17,7 @@ from gateway.accounting import DEFAULT_ESTIMATOR
 from gateway.config import Settings, get_settings, startup_warnings
 from gateway.db import create_engine, create_session_factory
 from gateway.directory.bundled_migration import migrate_bundled_directory
+from gateway.erasure import ErasureRetryLoop
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.fx import FXService
 from gateway.identity_registry import (
@@ -247,6 +248,12 @@ async def init_app_state(
     # (a test builds a fresh app per test and must get a fresh limiter with
     # it).
     app.state.announce_limiter = SlidingWindowLimiter(max_calls=10, window_seconds=60)
+    # ADR 0093 §9.3: retries a delete's chat call, exponential backoff,
+    # never gives up. The inline try after a delete commits covers the
+    # common case; this is what a chat that was down at that moment gets
+    # instead of losing the erasure.
+    app.state.erasure_retry_loop = ErasureRetryLoop(session_factory, settings)
+    app.state.erasure_retry_loop.start()
     try:
         async with session_factory() as session:
             await reseed_from_env(session, settings, app.state.secrets)
@@ -339,6 +346,8 @@ async def shutdown_app_state(app: FastAPI) -> None:
     if (fx := getattr(app.state, "fx", None)) is not None:
         await fx.stop()
         await fx.close()
+    if (erasure_loop := getattr(app.state, "erasure_retry_loop", None)) is not None:
+        await erasure_loop.stop()
     if (valkey := getattr(app.state, "valkey", None)) is not None:
         await valkey.aclose()
     await app.state.engine.dispose()

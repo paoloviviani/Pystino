@@ -1358,6 +1358,49 @@ class MergeResponse(BaseModel):
     bundled_logins_disabled: list[str]
 
 
+class DeletePreviewResponse(BaseModel):
+    """``GET /admin/users/{id}/delete-preview`` (ADR 0093 §9.2). The dialog
+    shows this verbatim before the confirmation.
+    """
+
+    user_id: uuid.UUID
+    gateway_counts: dict[str, int]
+    #: The bundled Authelia login bound to this account, if any.
+    bundled_login: str | None
+    #: `None` when the chat could not be reached at all -- shown as "chat
+    #: counts unavailable; the erasure will be queued and retried" rather
+    #: than blocking the preview on it.
+    chat_counts: dict[str, int] | None
+    chat_reachable: bool
+    #: Shares the chat's own preview reports (its `sharedConversations`
+    #: count) plus legacy shares nobody's login could ever be attributed to
+    #: -- the two figures the chat's preview endpoint actually returns.
+    #: `DELETE` refuses without `confirm_shared_loss` while this is true.
+    shared_with_others: bool
+    chat_unattributed_legacy_shares: int
+
+
+class DeleteUserRequest(BaseModel):
+    #: Required (true) once the preview reports `shared_with_others`;
+    #: otherwise ignored. §9.2: "delete isn't refused because of shares... the
+    #: tick box makes the consequence explicit instead."
+    confirm_shared_loss: bool = False
+
+
+class DeleteUserResponse(BaseModel):
+    erasure_id: uuid.UUID
+    #: Whether the chat confirmed inline, right after the commit -- `False`
+    #: means it is `pending` and the retry loop has it now.
+    chat_erasure_done: bool
+
+
+class PendingErasuresResponse(BaseModel):
+    """``GET /admin/erasures/pending`` (ADR 0093 §9.3): the Users page's own
+    banner, "N erasures waiting for the chat", while any are pending."""
+
+    pending: int
+
+
 class OidcMappingRule(BaseModel):
     """One IdP group → local group mapping (ADR 0048)."""
 

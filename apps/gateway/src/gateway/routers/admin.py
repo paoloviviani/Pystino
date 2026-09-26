@@ -58,6 +58,7 @@ from gateway.directory.engine import add_manual_memberships
 from gateway.directory.service import bundled_users_file
 from gateway.email_config import effective_smtp
 from gateway.email_normalize import is_trusted_email
+from gateway.erasure import attempt_erasure, preview_chat_erasure, queue_erasure
 from gateway.errors import (
     BadRequestError,
     ContentBlockedError,
@@ -74,15 +75,20 @@ from gateway.identity_registry import (
 )
 from gateway.mail import MailDeliveryError, send_mail_async
 from gateway.merge import (
+    MERGE_RULES,
     MergeNotFound,
     MergeRefused,
+    MergeRuleKind,
     compute_merge_preview,
     disable_dropped_bundled_login,
     merge_users,
 )
 from gateway.models import (
     ApiKey,
+    Base,
     BillingMode,
+    ChatErasure,
+    ChatErasureStatus,
     DirectoryEntry,
     Group,
     GroupModelAccess,
@@ -158,6 +164,9 @@ from gateway.schemas import (
     CatalogueDiscoveryResponse,
     CatalogueDriftRow,
     CatalogueTagsResponse,
+    DeletePreviewResponse,
+    DeleteUserRequest,
+    DeleteUserResponse,
     DiscoveredModel,
     EmailSettingsResponse,
     EmailTestRequest,
@@ -187,6 +196,7 @@ from gateway.schemas import (
     OidcPolicyResponse,
     OidcPolicyUpdateRequest,
     PasswordResetResponse,
+    PendingErasuresResponse,
     PriceCreateRequest,
     PriceResponse,
     ProviderCreateRequest,
@@ -3047,12 +3057,102 @@ async def merge_user(
     )
 
 
-@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
-    """Delete an account, keeping the ledger and leaving their rules inert.
+#: A plain delete's own reading of the merge registry (ADR 0093 §9.2): every
+#: table whose rule means "this row is this person's and disappears with
+#: them" -- as opposed to `REASSIGN`/`SCOPE_ID_USER`, which describe a
+#: *merge*'s "move it to someone else" and have nothing to say about a solo
+#: delete, where rows simply survive, orphaned (`SET NULL`) or inert
+#: (`scope_id` unresolvable). One registry, so a table added to it for the
+#: merge guard is counted here too without a second list to keep in step.
+_DELETE_REMOVES = frozenset(
+    {
+        MergeRuleKind.DELETE,
+        MergeRuleKind.KEEP_TARGET_DELETE_SOURCE,
+        MergeRuleKind.UNION_MEMBERSHIPS,
+        MergeRuleKind.UNION_MODEL_ACCESS,
+        MergeRuleKind.IDENTITIES,
+    }
+)
 
-    What dies with the row: keys, memberships, refresh credentials and the
-    local password — all ``CASCADE``. What survives on purpose:
+
+async def _gateway_delete_counts(session: AsyncSession, user_id: uuid.UUID) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for rule in MERGE_RULES:
+        if rule.kind not in _DELETE_REMOVES:
+            continue
+        table = Base.metadata.tables[rule.table]
+        stmt = select(func.count()).select_from(table).where(table.c[rule.column] == user_id)
+        counts[rule.table] = (await session.execute(stmt)).scalar_one()
+    return counts
+
+
+async def _user_identities_for_erasure(
+    session: AsyncSession, user: User
+) -> list[dict[str, str]]:
+    """Every ``(issuer, subject)`` naming this person, the primary pair
+    included -- what the chat's own resolution needs, since an account it
+    never finished keying to ``gatewayUserId`` is only findable this way."""
+    linked = (
+        await session.execute(select(UserIdentity).where(UserIdentity.user_id == user.id))
+    ).scalars().all()
+    return [{"issuer": user.issuer, "subject": user.subject}] + [
+        {"issuer": row.issuer, "subject": row.subject} for row in linked
+    ]
+
+
+@router.get("/users/{user_id}/delete-preview", response_model=DeletePreviewResponse)
+async def delete_preview(
+    user_id: uuid.UUID,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    http: ControlHttpDep,
+) -> DeletePreviewResponse:
+    user = await session.get(User, user_id)
+    if user is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+
+    gateway_counts = await _gateway_delete_counts(session, user.id)
+    bundled = await _bundled_entry_for(session, user)
+    identities = await _user_identities_for_erasure(session, user)
+
+    chat_preview = await preview_chat_erasure(
+        settings, http, gateway_user_id=user.id, identities=identities
+    )
+    chat_counts = chat_preview.get("counts") if chat_preview else None
+    legacy = chat_preview.get("unattributed_legacy_shares") if chat_preview else 0
+    shared_conversations = (chat_counts or {}).get("sharedConversations", 0)
+
+    return DeletePreviewResponse(
+        user_id=user.id,
+        gateway_counts=gateway_counts,
+        bundled_login=bundled[1].external_id if bundled else None,
+        chat_counts=chat_counts if isinstance(chat_counts, dict) else None,
+        chat_reachable=chat_preview is not None,
+        shared_with_others=bool(shared_conversations) or bool(legacy),
+        chat_unattributed_legacy_shares=int(legacy or 0),
+    )
+
+
+@router.delete("/users/{user_id}", response_model=DeleteUserResponse)
+async def delete_user(
+    user_id: uuid.UUID,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    http: ControlHttpDep,
+    secrets: SecretsDep,
+    body: DeleteUserRequest = DeleteUserRequest(),
+) -> DeleteUserResponse:
+    """Delete an account everywhere (ADR 0093 §9.2, §9.3): the gateway's own
+    rows in one transaction with the ``chat_erasures`` row that records the
+    chat still owes an answer, then — after that commits — the bound
+    Authelia login, then one inline try at the chat itself. Anything short
+    of that inline try succeeding is not a failure of this request: the
+    retry loop has the row, and it does not give up.
+
+    What dies with the gateway row: keys, memberships, refresh credentials
+    and the local password — all ``CASCADE``. What survives on purpose:
 
     * **The ledger.** ``usage_records.user_id`` is ``ON DELETE SET NULL``, so
       historical spend is never lost — the rows keep their amounts and groups,
@@ -3122,6 +3222,30 @@ async def delete_user(user_id: uuid.UUID, admin: AdminUserDep, session: SessionD
             "everybody using them."
         )
 
+    if not settings.chat.erasure_url or not settings.chat.erasure_token.get_secret_value():
+        # A URL with no token is exactly as unusable as no URL at all: every
+        # call would be refused with 401, forever, by design — so this is
+        # the same refusal, not a distinct one, however the deployment ended
+        # up in the state. cerea-deploy sets the URL unconditionally on any
+        # preset that runs a local chat; the token is what an unconfigured
+        # deployment (an .env from before `./configure` minted one) lacks.
+        raise BadRequestError("this deployment's chat is not reachable from the gateway")
+
+    identities = await _user_identities_for_erasure(session, user)
+    chat_preview = await preview_chat_erasure(
+        settings, http, gateway_user_id=user.id, identities=identities
+    )
+    shared = bool((chat_preview or {}).get("counts", {}).get("sharedConversations")) or bool(
+        (chat_preview or {}).get("unattributed_legacy_shares")
+    )
+    if shared and not body.confirm_shared_loss:
+        raise BadRequestError(
+            "This account has content shared with others. Confirm you understand it will "
+            "disappear for them (confirm_shared_loss) to proceed."
+        )
+
+    bundled = await _bundled_entry_for(session, user)
+
     await record_event(
         session,
         actor_type=IdentityEventActor.USER,
@@ -3132,7 +3256,37 @@ async def delete_user(user_id: uuid.UUID, admin: AdminUserDep, session: SessionD
         target_label=user.email or "",
     )
     await session.delete(user)
+    erasure = await queue_erasure(session, gateway_user_id=user.id, identities=identities)
     await session.commit()
+
+    if bundled is not None:
+        provider, entry = bundled
+        users_file = bundled_users_file(provider, secrets)
+        try:
+            users_file.delete(entry.external_id)
+        except UsersFileError as exc:
+            if "last user" in str(exc):
+                with contextlib.suppress(UsersFileError):
+                    users_file.update(entry.external_id, disabled=True)
+            else:
+                logger.warning(
+                    "could not remove bundled login %r on delete: %s", entry.external_id, exc
+                )
+
+    done = await attempt_erasure(session, settings, http, erasure)
+    return DeleteUserResponse(erasure_id=erasure.id, chat_erasure_done=done)
+
+
+@router.get("/erasures/pending", response_model=PendingErasuresResponse)
+async def pending_erasures(admin: AdminUserDep, session: SessionDep) -> PendingErasuresResponse:
+    """The Users page's own banner (ADR 0093 §9.3): "N erasures waiting for
+    the chat", shown while this is above zero."""
+    count = await session.scalar(
+        select(func.count())
+        .select_from(ChatErasure)
+        .where(ChatErasure.status == ChatErasureStatus.PENDING)
+    )
+    return PendingErasuresResponse(pending=count or 0)
 
 
 async def _published_by(session: AsyncSession, user_id: uuid.UUID) -> list[str]:

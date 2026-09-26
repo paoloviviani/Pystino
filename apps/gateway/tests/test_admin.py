@@ -804,8 +804,12 @@ class TestLastAdminGuard:
             await session.commit()
             victim_id = victim.id
         as_user(app, admin)
+        # A delete refuses outright with no chat configured (ADR 0093 §9.3);
+        # unreachable is enough to prove the gateway side of a delete works,
+        # which is this test's own point.
+        app.state.settings.chat.erasure_url = "http://127.0.0.1:1/internal/erasure"
         response = await client.delete(f"/api/admin/users/{victim_id}")
-        assert response.status_code == 204
+        assert response.status_code == 200
 
 
 class TestUserProfileEdits:

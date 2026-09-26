@@ -247,6 +247,11 @@ async def admin_session(
 ) -> AsyncIterator[dict[str, str]]:
     """A session cookie for an administrator: the seeded user, promoted."""
     admin = await make_admin(session_factory=session_factory, seeded=seeded)
+    # A delete now refuses outright with no chat configured (ADR 0093 §9.3);
+    # this class deletes accounts, so it needs one set, even an unreachable
+    # one -- the inline post-commit call failing and queuing for retry is
+    # not this test file's concern, only that delete itself is not refused.
+    app.state.settings.chat.erasure_url = "http://127.0.0.1:1/internal/erasure"
     yield session_cookie(admin.id, app)
 
 
@@ -284,7 +289,7 @@ class TestUserEndpoints:
             await session.commit()
 
         deleted = await client.delete(f"/api/admin/users/{user_id}", headers=admin_session)
-        assert deleted.status_code == 204
+        assert deleted.status_code == 200
 
         async with session_factory() as session:
             assert (
@@ -344,7 +349,7 @@ class TestUserEndpoints:
         listing = await client.get("/api/admin/users?q=second-admin", headers=admin_session)
         second_id = listing.json()["items"][0]["id"]
         response = await client.delete(f"/api/admin/users/{second_id}", headers=admin_session)
-        assert response.status_code == 204
+        assert response.status_code == 200
 
 
 # -- the policy endpoints -----------------------------------------------------
