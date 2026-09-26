@@ -19,12 +19,15 @@ Two rules the endpoints enforce rather than trust:
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
 import time
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import quote
 
@@ -49,11 +52,20 @@ from gateway.deps import (
     SessionDep,
     SettingsDep,
 )
+from gateway.directory.authelia_users import (
+    UsersFile,
+    UsersFileError,
+    UsersFileLockedError,
+)
+from gateway.directory.engine import add_manual_memberships
+from gateway.directory.service import decrypt_config
 from gateway.email_config import effective_smtp
+from gateway.email_normalize import is_trusted_email
 from gateway.errors import (
     BadRequestError,
     ContentBlockedError,
     GatewayError,
+    ServiceUnavailableError,
     UpstreamUnavailableError,
 )
 from gateway.identity_events import record_event
@@ -64,11 +76,13 @@ from gateway.mail import MailDeliveryError, send_mail_async
 from gateway.models import (
     ApiKey,
     BillingMode,
+    DirectoryEntry,
     Group,
     GroupModelAccess,
     GroupSource,
     IdentityEventAction,
     IdentityEventActor,
+    IdentityProvider,
     LimitMetric,
     LimitRule,
     LimitScope,
@@ -130,6 +144,8 @@ from gateway.reporting import (
     resolve_period,
 )
 from gateway.schemas import (
+    BundledUserCreatedResponse,
+    BundledUserCreateRequest,
     CatalogueDiscoveryResponse,
     CatalogueDriftRow,
     CatalogueTagsResponse,
@@ -157,6 +173,7 @@ from gateway.schemas import (
     OidcPolicyChange,
     OidcPolicyResponse,
     OidcPolicyUpdateRequest,
+    PasswordResetResponse,
     PriceCreateRequest,
     PriceResponse,
     ProviderCreateRequest,
@@ -179,6 +196,7 @@ from gateway.schemas import (
     RedactionServiceHealth,
     RedactionStatusResponse,
     SearchBackendDeleteResponse,
+    SignInCreateRequest,
     UsageReport,
     UserAdminResponse,
     UserUpdateRequest,
@@ -2357,6 +2375,266 @@ async def _user_responses(
     ]
 
 
+async def _bundled_provider(session: AsyncSession) -> IdentityProvider:
+    """The one enabled row, refusing anything but the bundled Authelia.
+
+    ADR 0093 §2 guarantees at most one enabled row deployment-wide, so there
+    is no id to take here the way `directory.py`'s routes take one: an
+    operator on any other kind gets a clear refusal rather than a 404 that
+    reads like a typo'd id.
+    """
+    row = (
+        await session.execute(select(IdentityProvider).where(IdentityProvider.is_enabled.is_(True)))
+    ).scalar_one_or_none()
+    if row is None or row.kind != "authelia":
+        raise BadRequestError(
+            "This deployment's identity provider is not the bundled Authelia."
+        )
+    return row
+
+
+def _bundled_users_file(row: IdentityProvider, secrets: SecretBox) -> UsersFile:
+    """Same convention `directory.py`'s (removed in step 7) routes used: the
+    path lives in the provider's own sync-config blob, defaulting to the
+    compose mount point."""
+    config = json.loads(decrypt_config(row, secrets) or "{}")
+    return UsersFile(Path(config.get("path") or "/authelia/users_database.yml"))
+
+
+@router.post(
+    "/users", response_model=BundledUserCreatedResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_user(
+    payload: BundledUserCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+) -> BundledUserCreatedResponse:
+    """Add a person to the bundled directory (ADR 0093 §8.1/§8.2).
+
+    In order: the Authelia entry (so its own validation and "already exists"
+    refusal run before anything gateway-side is written), a **pending**
+    gateway user (§3.1 — the real ``(issuer, subject)`` arrives at their
+    first sign-in, via `bind_bundled_login`), the requested console groups as
+    manual memberships, and a `directory_entries` row bound to that user
+    *in advance* — the reverse of every other directory kind, where a row
+    exists unbound until a login claims it. If any gateway-side step fails,
+    the Authelia entry is removed again: a login with no account behind it
+    is worse than the create simply having failed outright.
+    """
+    provider = await _bundled_provider(session)
+    users_file = _bundled_users_file(provider, secrets)
+
+    try:
+        _authelia_user, password = users_file.create(
+            payload.login, payload.email, payload.display_name
+        )
+    except UsersFileLockedError as exc:
+        raise ServiceUnavailableError(str(exc)) from exc
+    except UsersFileError as exc:
+        raise BadRequestError(str(exc), code="authelia_users") from exc
+
+    try:
+        normalized_email, _ = is_trusted_email(payload.email)
+        user = User(
+            issuer=PENDING_USER_ISSUER,
+            subject=str(uuid.uuid4()),
+            email=payload.email,
+            email_normalized=normalized_email,
+            display_name=payload.display_name or None,
+            username=payload.login,
+            # The administrator just set it; it must not revert at this
+            # person's first login the way an ordinary directory claim would
+            # (§3.1's own reasoning for the column, applied at creation
+            # rather than at a later PATCH).
+            admin_edited_fields=["email"],
+        )
+        session.add(user)
+        await session.flush()
+        # `add_manual_memberships` reads `user.memberships` synchronously; a
+        # brand-new row has never loaded that relationship, and touching it
+        # unloaded here would be an implicit lazy load outside the greenlet
+        # context asyncpg/aiosqlite need for one — MissingGreenlet, not a
+        # wrong answer, but a crash on every create.
+        await session.refresh(user, attribute_names=["memberships"])
+
+        await add_manual_memberships(session, user, payload.groups)
+
+        session.add(
+            DirectoryEntry(
+                provider_id=provider.id,
+                external_id=payload.login,
+                username=payload.login,
+                email=payload.email,
+                user_id=user.id,
+            )
+        )
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.USER_CREATE,
+            target_user_id=user.id,
+            target_label=payload.email,
+        )
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.LOGIN_CREATE,
+            target_user_id=user.id,
+            target_label=payload.login,
+        )
+        await session.commit()
+    except IntegrityError as exc:
+        # A directory_entries row already bound to this login (a second
+        # admin racing the same name — the file's own "already exists" check
+        # ran first and passed, so this is the gateway-side race that ran
+        # after it) — same compensation, a clearer refusal than the bare
+        # constraint message.
+        await session.rollback()
+        with contextlib.suppress(UsersFileError):
+            users_file.delete(payload.login)
+        raise ConflictError(f"{payload.login!r} already exists.") from exc
+    except Exception:
+        await session.rollback()
+        # The file is in whatever state it was in before this route ran;
+        # the gateway-side failure is the error worth raising, not a
+        # cleanup that could not undo a create that never happened.
+        with contextlib.suppress(UsersFileError):
+            users_file.delete(payload.login)
+        raise
+
+    await session.refresh(user, attribute_names=["memberships"])
+    response = (await _user_responses(session, [user]))[0]
+    return BundledUserCreatedResponse(**response.model_dump(), password=password)
+
+
+@router.post(
+    "/users/{user_id}/sign-in",
+    response_model=BundledUserCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_sign_in(
+    user_id: uuid.UUID,
+    payload: SignInCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+) -> BundledUserCreatedResponse:
+    """A bundled login for an existing gateway user who has none (§8.1):
+    the after-a-switch and after-break-glass case, where the person already
+    has a chat history and memberships under this gateway id, just no way to
+    reach it while the bundled Authelia is what's configured.
+    """
+    user = (
+        await session.execute(
+            select(User)
+            .where(User.id == user_id)
+            .options(selectinload(User.memberships).selectinload(Membership.group))
+        )
+    ).scalar_one_or_none()
+    if user is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+
+    provider = await _bundled_provider(session)
+    users_file = _bundled_users_file(provider, secrets)
+
+    email = user.email or ""
+    try:
+        _authelia_user, password = users_file.create(payload.login, email, user.display_name or "")
+    except UsersFileLockedError as exc:
+        raise ServiceUnavailableError(str(exc)) from exc
+    except UsersFileError as exc:
+        raise BadRequestError(str(exc), code="authelia_users") from exc
+
+    try:
+        session.add(
+            DirectoryEntry(
+                provider_id=provider.id,
+                external_id=payload.login,
+                username=payload.login,
+                email=email,
+                user_id=user.id,
+            )
+        )
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.LOGIN_CREATE,
+            target_user_id=user.id,
+            target_label=payload.login,
+        )
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        with contextlib.suppress(UsersFileError):
+            users_file.delete(payload.login)
+        raise ConflictError(f"{payload.login!r} already exists.") from exc
+    except Exception:
+        await session.rollback()
+        with contextlib.suppress(UsersFileError):
+            users_file.delete(payload.login)
+        raise
+
+    response = (await _user_responses(session, [user]))[0]
+    return BundledUserCreatedResponse(**response.model_dump(), password=password)
+
+
+@router.post("/users/{user_id}/reset-password", response_model=PasswordResetResponse)
+async def reset_password(
+    user_id: uuid.UUID,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+) -> PasswordResetResponse:
+    """Mint a fresh one-time password for the user's bundled login (§8.1).
+
+    Works with or without SMTP configured, by decision (§8.4): the
+    admin-issued reset is the only reset this deployment has without it, and
+    stays available with it, since a lost password is not always a person
+    who still has their mailbox.
+    """
+    user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+
+    provider = await _bundled_provider(session)
+    entry = (
+        await session.execute(
+            select(DirectoryEntry).where(
+                DirectoryEntry.provider_id == provider.id, DirectoryEntry.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        raise NotFoundError("This user has no bundled login to reset.")
+
+    users_file = _bundled_users_file(provider, secrets)
+    try:
+        password = users_file.reset_password(entry.external_id)
+    except UsersFileLockedError as exc:
+        raise ServiceUnavailableError(str(exc)) from exc
+    except UsersFileError as exc:
+        raise BadRequestError(str(exc), code="authelia_users") from exc
+
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.PASSWORD_RESET,
+        target_user_id=user.id,
+        target_label=user.email or "",
+    )
+    await session.commit()
+    return PasswordResetResponse(password=password)
+
+
 @router.get("/users", response_model=Page[UserAdminResponse])
 async def list_users(
     admin: AdminUserDep,
@@ -2438,6 +2716,14 @@ async def update_user(
         raise NotFoundError(f"No user with id {user_id}.")
 
     fields = payload.model_dump(exclude_unset=True)
+    # ADR 0093 §5.4: an invite is not a grant. A pending user (§3.1) has never
+    # signed in, so nothing has verified they are who the console typed in —
+    # the only way to become admin ahead of that is break-glass, which is a
+    # host-side recovery, not this route.
+    if fields.get("is_admin") and user.issuer == PENDING_USER_ISSUER:
+        raise BadRequestError(
+            "This account has not signed in yet. Grant admin after their first sign-in."
+        )
     was_admin, was_active = user.is_admin, user.is_active
     currently_active_admin = was_admin and was_active and user.issuer != PENDING_USER_ISSUER
     loses_admin_or_active = fields.get("is_admin") is False or fields.get("is_active") is False

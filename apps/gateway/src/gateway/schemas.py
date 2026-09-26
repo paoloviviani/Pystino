@@ -1280,6 +1280,43 @@ class UserUpdateRequest(BaseModel):
     )
 
 
+class BundledUserCreateRequest(BaseModel):
+    """``POST /admin/users``, bundled Authelia only (ADR 0093 §8.1/§8.2).
+
+    ``groups`` are console groups — ``manual`` memberships, granted the same
+    way a pre-assigned directory group is — never Authelia file groups, which
+    stop being administrator-editable at all (§8.3, every entry is
+    ``["users"]``). The shape check here is deliberately shallow, the same
+    one ``UserUpdateRequest.email`` applies; ``UsersFile.create``'s stricter
+    §6.1 validator is what actually decides whether the login file will
+    accept the address, and duplicating its rules into the request schema
+    would only let the two quietly disagree later.
+    """
+
+    login: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=255)
+    email: Annotated[str, AfterValidator(_well_formed_email)] = Field(max_length=320)
+    groups: list[str] = Field(default_factory=list, max_length=100)
+
+
+class BundledUserCreatedResponse(UserAdminResponse):
+    """Includes the one-time password, shown once (§8.1)."""
+
+    password: str
+
+
+class SignInCreateRequest(BaseModel):
+    """``POST /admin/users/{id}/sign-in``: a bundled login for an existing
+    gateway user who has none yet (§8.1's "Create sign-in" — the
+    after-a-switch and after-break-glass case)."""
+
+    login: str = Field(min_length=1, max_length=64)
+
+
+class PasswordResetResponse(BaseModel):
+    password: str
+
+
 class OidcMappingRule(BaseModel):
     """One IdP group → local group mapping (ADR 0048)."""
 
