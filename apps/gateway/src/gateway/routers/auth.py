@@ -307,19 +307,17 @@ async def callback(
         raise BadRequestError("The login state does not match. Start again.")
 
     client, record = await _resolve_provider_client(request, session, provider_name)
-    # The policy in force, with this provider's dialect folded in: its group
-    # claim and its IdP→local mappings. Provisioning decisions (auto-provision,
-    # the unknown-user rule, admin groups) stay global — they answer "who may
-    # exist here", not "how does this directory speak".
+    # The policy in force, with this provider's own group claim folded in —
+    # every IdP puts groups somewhere different, so that much stays a
+    # connection fact. The mappings themselves are the global policy's alone
+    # now (ADR 0093 §3.4): there is only ever one active provider, so a
+    # per-row translation table has nothing left to disagree with the
+    # console's about.
     global_policy = getattr(request.app.state, "oidc_policy", None)
     from dataclasses import replace as _dc_replace
 
     policy = (
-        _dc_replace(
-            global_policy.policy,
-            groups_claim=record.groups_claim,
-            group_mappings=record.mappings_dict(),
-        )
+        _dc_replace(global_policy.policy, groups_claim=record.groups_claim)
         if global_policy is not None
         else None
     )
@@ -371,7 +369,10 @@ async def callback(
             # Where it comes from, and whether it decides admin (ADR 0088).
             group_source=record.group_source,
             claims=merged,
-            group_mappings=record.mappings_dict(),
+            # The claim rule's own mapping lookup (so "either vocabulary
+            # works", ADR 0088) reads the same global mappings now — there is
+            # no per-row copy left to disagree with it (ADR 0093 §3.4).
+            group_mappings=policy.group_mappings if policy is not None else None,
         )
         # A directory whose subjects are unknown until first login (Authelia)
         # links its mirrored entry now: pre-assigned groups and directory

@@ -374,17 +374,15 @@ async def _bearer_principal(request: Request, session: AsyncSession, token: str)
     try:
         claims = await client.validate_access_token(token)
         # The same policy gate the browser login answers to (ADR 0048), folded
-        # with this provider's dialect: its group claim and mappings.
+        # with this provider's own group claim — the mappings are the global
+        # policy's alone now (ADR 0093 §3.4), so there is nothing of the
+        # provider's left to fold in for them.
         resolver = getattr(request.app.state, "oidc_policy", None)
         policy = resolver.policy if resolver is not None else None
         from dataclasses import replace as _dc_replace
 
         if policy is not None and provider is not None:
-            policy = _dc_replace(
-                policy,
-                groups_claim=provider.groups_claim,
-                group_mappings=provider.mappings_dict(),
-            )
+            policy = _dc_replace(policy, groups_claim=provider.groups_claim)
         user = await sync_user_from_claims(
             session,
             claims=claims,
@@ -396,7 +394,7 @@ async def _bearer_principal(request: Request, session: AsyncSession, token: str)
             # provider the operator set to leave groups alone.
             group_sync=provider.group_sync if provider is not None else GroupSync.EVERY_LOGIN,
             group_source=provider.group_source if provider is not None else "claim",
-            group_mappings=provider.mappings_dict() if provider is not None else None,
+            group_mappings=policy.group_mappings if policy is not None else None,
         )
     except OIDCError as exc:
         # Logged in full, returned as one word: the reason a token failed is a

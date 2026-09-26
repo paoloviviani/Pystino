@@ -29,7 +29,7 @@ from conftest import (
 )
 from fastapi import FastAPI
 from gateway.config import OIDCSettings, Settings
-from gateway.models import UsageRecord, User
+from gateway.models import Membership, OIDCPolicyConfig, UsageRecord, User
 from gateway.types import utcnow
 from helpers import completion_body
 from joserfc.jwk import RSAKey
@@ -235,6 +235,62 @@ class TestRefused:
 
         response = await client.get("/v1/models", headers=auth(make_token(signing_key)))
         assert response.status_code == 401
+
+
+class TestGroupMappingsAreGlobalOnly:
+    """ADR 0093 §3.4: the row's own `group_mappings` is no longer read on the
+    bearer path — only `oidc_config`, the global policy, is. Closes R9.
+
+    The row's own mapping is left at its default (empty) rather than set to a
+    *different* value and compared: `seed_identity_provider` caches a stub
+    client keyed by the row's `(id, updated_at)`, and writing to the row would
+    bump `updated_at` and evict it, replacing it with a real `OIDCClient`
+    built from the registry's own settings snapshot — a self-inflicted
+    failure unrelated to what this test is asking. Leaving the row's mapping
+    untouched and empty still distinguishes the two: an unmapped claim name
+    would pass through as its own name if the row (or nothing) were consulted,
+    and only becomes the global policy's local name if the global policy is
+    what actually ran.
+
+    Checked from the database after the call, not from the response body: a
+    request that changes its own caller's default billing group and then
+    resolves the billing group *in the same request* hits a pre-existing,
+    unrelated staleness bug (reported, not fixed here — see the final
+    report) — `User.default_billing_group` is `lazy="joined"`, loaded once
+    per request, and reassigning `default_billing_group_id` in memory during
+    reconciliation does not refresh it, so `resolve_billing_group` can still
+    see the group the request just moved the caller out of. The membership
+    row itself is written correctly either way, which is what this test is
+    actually asking about.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_global_mapping_is_applied(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        async with session_factory() as db:
+            db.add(OIDCPolicyConfig(group_mappings=[["idp-eng", "global-mapped"]]))
+            await db.commit()
+        await bearer_app.state.oidc_policy.refresh_once()
+
+        token = make_token(signing_key, groups=["idp-eng"])
+        await client.get("/v1/me", headers=auth(token))
+
+        async with session_factory() as db:
+            user = (await db.execute(select(User).where(User.subject == "subject-1"))).scalar_one()
+            memberships = (
+                (await db.execute(select(Membership).where(Membership.user_id == user.id)))
+                .scalars()
+                .all()
+            )
+            names = {m.group.name for m in memberships}
+        assert "global-mapped" in names
+        assert "idp-eng" not in names, "the raw claim name would appear unmapped"
 
 
 class TestAcceptedClients:
