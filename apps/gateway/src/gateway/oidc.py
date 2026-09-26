@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from gateway.config import OIDCSettings
+from gateway.deployment_state import get_or_create_deployment_state, mark_bootstrap_consumed
 from gateway.models import (
     Group,
     GroupSource,
@@ -488,6 +489,14 @@ class OIDCClient:
 # here because this module now has to *avoid* matching it as a directory.
 _LOCAL_ISSUER = "local"
 
+# A user created from the console before their first sign-in (ADR 0093 §3.1),
+# with a placeholder `(issuer, subject)` until the bind at that person's first
+# sign-in (§8.2) replaces it. Nothing creates one yet — that is stage (b) —
+# but `other_active_admin_exists` below already excludes it, so that stage
+# does not have to touch this function to stay correct, and it can never be
+# made an administrator ahead of time (§5.4): an invite is not a grant.
+PENDING_USER_ISSUER = "pystino:pending"
+
 
 def _identity_select(issuer: str, subject: str) -> Select[tuple[User]]:
     """The one query that resolves ``(issuer, subject)`` to a person.
@@ -781,6 +790,29 @@ async def provision_user(
     return user
 
 
+async def other_active_admin_exists(session: AsyncSession, *, excluding: uuid.UUID) -> bool:
+    """Would at least one active administrator remain, other than ``excluding``?
+
+    "Active" (ADR 0093 §5.5) means signed in, ``is_admin``, ``is_active``, and
+    not the placeholder identity a console invite creates before someone's
+    first sign-in (``PENDING_USER_ISSUER``). This is the one query every
+    last-admin guard shares — the console's PATCH and DELETE routes, the CLI's
+    ``admin revoke``, and the two rule-driven revocations below — so that
+    "who counts as an active administrator" cannot drift between them.
+    """
+    result = await session.execute(
+        select(User.id)
+        .where(
+            User.is_admin.is_(True),
+            User.is_active.is_(True),
+            User.issuer != PENDING_USER_ISSUER,
+            User.id != excluding,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 async def apply_admin_answer(session: AsyncSession, user: User, is_admin: bool) -> str:
     """Apply a directory's answer about the admin flag, within provenance.
 
@@ -795,15 +827,11 @@ async def apply_admin_answer(session: AsyncSession, user: User, is_admin: bool) 
             return "unchanged"
         user.is_admin = True
         user.admin_source = "oidc"
+        await mark_bootstrap_consumed(session)
         return "granted"
     if not user.is_admin or user.admin_source != "oidc":
         return "unchanged"
-    others = await session.execute(
-        select(User.id)
-        .where(User.is_admin.is_(True), User.is_active.is_(True), User.id != user.id)
-        .limit(1)
-    )
-    if others.scalar_one_or_none() is None:
+    if not await other_active_admin_exists(session, excluding=user.id):
         logger.warning(
             "not revoking admin from %s: they are the last active administrator", user.id
         )
@@ -819,22 +847,34 @@ async def promote_bootstrap_admin(
     bootstrap_email: str,
     email: str | None,
     email_verified: object,
+    kind: str,
 ) -> bool:
     """Make ``user`` the first administrator, if everything lines up.
 
-    All four must hold: a bootstrap address is configured; this login's email
-    matches it (case-insensitively); the provider says the address is verified
-    — the literal boolean ``True``, the same strictness account linking uses
-    (ADR 0056), because otherwise an ``email`` claim would be a password; and
-    no active administrator exists yet. The last condition is what makes the
-    setting inert for the life of the deployment after its first use: it can
-    seed an empty console, never add a second administrator behind the
-    console's back.
+    All five must hold: the environment's provider kind is ``authelia`` — an
+    external IdP names its own admins through ``OIDC_ADMIN_EMAIL`` /
+    ``OIDC_ADMIN_CLAIM`` instead (ADR 0093 §5), and this variable is inert
+    there, with a startup warning rather than a silent behaviour change; a
+    bootstrap address is configured; this login's email matches it
+    (case-insensitively); the provider says the address is verified — the
+    literal boolean ``True``, the same strictness account linking uses (ADR
+    0056), because otherwise an ``email`` claim would be a password; and the
+    bootstrap has not already fired.
+
+    That last condition used to be "no active administrator exists", which
+    let deactivating every admin re-arm this door — a hidden recovery path and
+    a hidden takeover path (review correction 2, R1). It is now
+    ``deployment_state.bootstrap_admin_consumed_at``, set here and by every
+    other path that can produce the deployment's first administrator
+    (``gateway.deployment_state.mark_bootstrap_consumed``), so it can be
+    consulted once and never re-armed for the life of the deployment.
 
     Called from the browser callback only. A ``/v1`` bearer call never
     promotes anyone, for the reason it never links: only the callback sees the
     full claim set.
     """
+    if kind != "authelia":
+        return False
     wanted = bootstrap_email.strip().casefold()
     if not wanted or not email or email.strip().casefold() != wanted:
         return False
@@ -847,12 +887,11 @@ async def promote_bootstrap_admin(
         return False
     if user.is_admin:
         return False
-    existing = await session.execute(
-        select(User.id).where(User.is_admin.is_(True), User.is_active.is_(True)).limit(1)
-    )
-    if existing.scalar_one_or_none() is not None:
+    state = await get_or_create_deployment_state(session)
+    if state.bootstrap_admin_consumed_at is not None:
         return False
     user.is_admin = True
+    await mark_bootstrap_consumed(session)
     logger.warning("bootstrap admin: %s is now the first administrator", email)
     return True
 

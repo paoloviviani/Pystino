@@ -40,6 +40,7 @@ from sqlalchemy.orm import InstrumentedAttribute, selectinload
 from gateway import identity_policy
 from gateway.accounting.cost import select_price
 from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings, Settings
+from gateway.deployment_state import mark_bootstrap_consumed
 from gateway.deps import (
     AdminUserDep,
     ControlHttpDep,
@@ -56,6 +57,7 @@ from gateway.errors import (
     GatewayError,
     UpstreamUnavailableError,
 )
+from gateway.identity_events import record_event
 from gateway.identity_registry import (
     list_providers as list_provider_records,
 )
@@ -71,6 +73,8 @@ from gateway.models import (
     GroupModelAccess,
     GroupSource,
     GroupSync,
+    IdentityEventAction,
+    IdentityEventActor,
     IdentityProvider,
     LimitMetric,
     LimitRule,
@@ -96,6 +100,7 @@ from gateway.models import (
     UserIdentity,
     UserModelAccess,
 )
+from gateway.oidc import PENDING_USER_ISSUER, other_active_admin_exists
 from gateway.oidc_policy import environment_policy
 from gateway.pagination import Page, PageDep, count_of
 from gateway.periods import PeriodKind
@@ -230,6 +235,17 @@ class ConflictError(GatewayError):
     status_code = status.HTTP_409_CONFLICT
     error_type = "invalid_request_error"
     code = "already_exists"
+
+
+class LastAdminError(GatewayError):
+    """ADR 0093 §5.5: refuses whatever would leave zero active administrators,
+    self included. Distinct from `ConflictError`'s `already_exists` so a
+    console can tell "this address is taken" from "this would lock everyone
+    out" without parsing the message."""
+
+    status_code = status.HTTP_409_CONFLICT
+    error_type = "invalid_request_error"
+    code = "last_admin"
 
 
 class NotFoundError(GatewayError):
@@ -2432,6 +2448,33 @@ async def update_user(
         raise NotFoundError(f"No user with id {user_id}.")
 
     fields = payload.model_dump(exclude_unset=True)
+    was_admin, was_active = user.is_admin, user.is_active
+    currently_active_admin = was_admin and was_active and user.issuer != PENDING_USER_ISSUER
+    loses_admin_or_active = fields.get("is_admin") is False or fields.get("is_active") is False
+    # The guard (ADR 0093 §5.5), self included: it is checked before anything
+    # is written, so a refused PATCH changes nothing at all, not "everything
+    # except the one field that would have locked everyone out".
+    if (
+        currently_active_admin
+        and loses_admin_or_active
+        and not await other_active_admin_exists(session, excluding=user.id)
+    ):
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.ADMIN_REFUSED_LAST,
+            target_user_id=user.id,
+            target_label=user.email or "",
+            reason="would leave no active administrator",
+        )
+        await session.commit()
+        raise LastAdminError(
+            "This would leave no active administrator. Make another account an "
+            "administrator first."
+        )
+
     for field, value in fields.items():
         setattr(user, field, value)
     # Provenance (ADR 0088): what the console sets is the console's, so a
@@ -2447,6 +2490,42 @@ async def update_user(
     # at the next login exactly as if the column were not there.
     if edited := [field for field in _PROFILE_FIELDS if field in fields]:
         user.admin_edited_fields = list(dict.fromkeys([*(user.admin_edited_fields or []), *edited]))
+
+    # The audit trail (ADR 0093 §3.1): recorded from what actually changed,
+    # not from the request shape, so a PATCH that sets `is_admin` to the value
+    # it already held writes nothing.
+    if "is_admin" in fields and fields["is_admin"] != was_admin:
+        admin_action = (
+            IdentityEventAction.ADMIN_GRANT
+            if fields["is_admin"]
+            else IdentityEventAction.ADMIN_REVOKE
+        )
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=admin_action,
+            target_user_id=user.id,
+            target_label=user.email or "",
+        )
+        if fields["is_admin"]:
+            await mark_bootstrap_consumed(session)
+    if "is_active" in fields and fields["is_active"] != was_active:
+        active_action = (
+            IdentityEventAction.USER_ENABLE
+            if fields["is_active"]
+            else IdentityEventAction.USER_DISABLE
+        )
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=active_action,
+            target_user_id=user.id,
+            target_label=user.email or "",
+        )
     await session.commit()
 
     # Not by re-reading the listing and picking a row out of it: the listing is
@@ -2480,11 +2559,33 @@ async def delete_user(user_id: uuid.UUID, admin: AdminUserDep, session: SessionD
     if user is None:
         raise NotFoundError(f"No user with id {user_id}.")
 
-    # No last-admin guard is needed beyond the self-delete rule above: the
-    # caller is themselves an active administrator and never the target, so
-    # deleting one admin always leaves at least one — the account making the
-    # request. A guard counting "admins other than the target" could never
-    # fire, and a check that cannot fire is a lie in the code.
+    # The self-delete rule above already makes this unreachable — the caller
+    # is themselves an active administrator and never the target, so deleting
+    # one admin always leaves at least one. It is added anyway (ADR 0093
+    # §5.5): the guard has one implementation, shared with PATCH, the CLI, and
+    # the rule-driven revocations, rather than "this route doesn't need it".
+    if (
+        user.is_admin
+        and user.is_active
+        and user.issuer != PENDING_USER_ISSUER
+        and not await other_active_admin_exists(session, excluding=user.id)
+    ):
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.ADMIN_REFUSED_LAST,
+            target_user_id=user.id,
+            target_label=user.email or "",
+            reason="would leave no active administrator",
+        )
+        await session.commit()
+        raise LastAdminError(
+            "This would leave no active administrator. Make another account an "
+            "administrator first."
+        )
+
     published = await _published_by(session, user_id)
     if published:
         # Not a block on erasure — that would be a compliance bug rather than a
@@ -2507,6 +2608,15 @@ async def delete_user(user_id: uuid.UUID, admin: AdminUserDep, session: SessionD
             "everybody using them."
         )
 
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.USER_DELETE,
+        target_user_id=user.id,
+        target_label=user.email or "",
+    )
     await session.delete(user)
     await session.commit()
 

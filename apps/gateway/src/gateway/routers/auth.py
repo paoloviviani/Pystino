@@ -387,6 +387,7 @@ async def callback(
             bootstrap_email=settings.bootstrap_admin_email,
             email=merged.get("email"),
             email_verified=merged.get("email_verified"),
+            kind=settings.oidc.kind,
         )
     except ProvisioningRefused as exc:
         # The policy's message is written for the person at the keyboard

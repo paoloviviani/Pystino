@@ -14,7 +14,10 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gateway.models import User
+from gateway.deployment_state import mark_bootstrap_consumed
+from gateway.identity_events import record_event
+from gateway.models import IdentityEventAction, IdentityEventActor, User
+from gateway.oidc import other_active_admin_exists
 
 
 class AdminCommandError(RuntimeError):
@@ -36,18 +39,33 @@ async def set_admin(session: AsyncSession, email: str, *, grant: bool, issuer: s
             f"{email} names accounts at several issuers ({issuers}); pass --issuer"
         )
     user = users[0]
-    if not grant and user.is_admin:
-        others = await session.execute(
-            select(User.id)
-            .where(User.is_admin.is_(True), User.is_active.is_(True), User.id != user.id)
-            .limit(1)
+    would_revoke = not grant and user.is_admin
+    if would_revoke and not await other_active_admin_exists(session, excluding=user.id):
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.CLI,
+            actor_label="cli:admin-revoke",
+            action=IdentityEventAction.ADMIN_REFUSED_LAST,
+            target_user_id=user.id,
+            target_label=user.email or email,
+            reason="pystino admin revoke would leave no active administrator",
         )
-        if others.scalar_one_or_none() is None:
-            raise AdminCommandError("refusing to revoke the last active administrator")
+        await session.commit()
+        raise AdminCommandError("refusing to revoke the last active administrator")
     user.is_admin = grant
     user.admin_source = "manual"
     if grant and not user.is_active:
         user.is_active = True
         user.deactivated_by = None
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.CLI,
+        actor_label="cli:admin-grant" if grant else "cli:admin-revoke",
+        action=IdentityEventAction.ADMIN_GRANT if grant else IdentityEventAction.ADMIN_REVOKE,
+        target_user_id=user.id,
+        target_label=user.email or email,
+    )
+    if grant:
+        await mark_bootstrap_consumed(session)
     await session.commit()
     return user

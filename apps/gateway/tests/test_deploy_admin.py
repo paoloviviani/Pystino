@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 from gateway.deploy.admin import AdminCommandError, set_admin
-from gateway.models import User
+from gateway.deployment_state import get_or_create_deployment_state
+from gateway.models import IdentityEvent, IdentityEventAction, User
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 ISS = "https://llm.example.org/authelia"
@@ -23,6 +25,23 @@ async def test_grant_is_manual_and_reactivates(session: AsyncSession) -> None:
     await session.commit()
     granted = await set_admin(session, "ops@example.org", grant=True)
     assert granted.is_admin and granted.admin_source == "manual" and granted.is_active
+
+
+async def test_grant_marks_the_bootstrap_consumed_and_is_audited(session: AsyncSession) -> None:
+    user = User(issuer=ISS, subject="s", email="ops@example.org")
+    session.add(user)
+    await session.commit()
+    await set_admin(session, "ops@example.org", grant=True)
+
+    state = await get_or_create_deployment_state(session)
+    assert state.bootstrap_admin_consumed_at is not None
+
+    row = (
+        await session.execute(select(IdentityEvent).order_by(IdentityEvent.at.desc()))
+    ).scalars().first()
+    assert row is not None
+    assert row.action == IdentityEventAction.ADMIN_GRANT
+    assert row.target_user_id == user.id
 
 
 async def test_revoke_refuses_the_last_admin(session: AsyncSession) -> None:

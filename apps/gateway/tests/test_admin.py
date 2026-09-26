@@ -19,6 +19,8 @@ from gateway.deps import get_management_user
 from gateway.models import (
     Group,
     GroupModelAccess,
+    IdentityEvent,
+    IdentityEventAction,
     LimitRule,
     Membership,
     ModelPrice,
@@ -641,7 +643,13 @@ class TestUsersAndUsage:
         seeded: Seeded,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        as_user(app, await make_admin(session_factory, seeded))
+        # A second admin, so this is not the last-admin guard's case — that one
+        # is covered by TestLastAdminGuard below.
+        admin = await make_admin(session_factory, seeded)
+        async with session_factory() as session:
+            session.add(User(issuer="https://idp.test", subject="other-admin", is_admin=True))
+            await session.commit()
+        as_user(app, admin)
         response = await client.patch(
             f"/api/admin/users/{seeded.user.id}", json={"is_active": False}
         )
@@ -697,6 +705,107 @@ class TestUsersAndUsage:
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
         assert (await client.get("/api/admin/usage?window_seconds=5")).status_code == 400
+
+
+class TestLastAdminGuard:
+    """ADR 0093 §5.5: PATCH and DELETE refuse to leave zero active admins."""
+
+    async def _lone_admin(self, app: object, session_factory, seeded: Seeded) -> User:
+        return await make_admin(session_factory, seeded)
+
+    async def test_self_deactivation_of_the_last_admin_is_refused(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        admin = await self._lone_admin(app, session_factory, seeded)
+        as_user(app, admin)
+        response = await client.patch(f"/api/admin/users/{admin.id}", json={"is_active": False})
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "last_admin"
+
+        async with session_factory() as db:
+            user = (await db.execute(select(User).where(User.id == admin.id))).scalar_one()
+            assert user.is_active
+
+    async def test_self_demotion_of_the_last_admin_is_refused(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        admin = await self._lone_admin(app, session_factory, seeded)
+        as_user(app, admin)
+        response = await client.patch(f"/api/admin/users/{admin.id}", json={"is_admin": False})
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "last_admin"
+
+    async def test_a_refusal_is_audited(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        admin = await self._lone_admin(app, session_factory, seeded)
+        as_user(app, admin)
+        await client.patch(f"/api/admin/users/{admin.id}", json={"is_active": False})
+
+        async with session_factory() as db:
+            row = (
+                await db.execute(select(IdentityEvent).order_by(IdentityEvent.at.desc()))
+            ).scalars().first()
+            assert row is not None
+            assert row.action == IdentityEventAction.ADMIN_REFUSED_LAST
+            assert row.target_user_id == admin.id
+
+    async def test_demoting_one_of_two_admins_succeeds_and_is_audited(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        admin = await self._lone_admin(app, session_factory, seeded)
+        async with session_factory() as session:
+            other = User(issuer="https://idp.test", subject="other-admin", is_admin=True)
+            session.add(other)
+            await session.commit()
+            other_id = other.id
+        as_user(app, admin)
+        response = await client.patch(f"/api/admin/users/{other_id}", json={"is_admin": False})
+        assert response.status_code == 200
+
+        async with session_factory() as db:
+            row = (
+                await db.execute(
+                    select(IdentityEvent)
+                    .where(IdentityEvent.target_user_id == other_id)
+                    .order_by(IdentityEvent.at.desc())
+                )
+            ).scalars().first()
+            assert row is not None
+            assert row.action == IdentityEventAction.ADMIN_REVOKE
+
+    async def test_deleting_a_non_admin_still_works(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        admin = await self._lone_admin(app, session_factory, seeded)
+        async with session_factory() as session:
+            victim = User(issuer="https://idp.test", subject="victim", email="victim@example.org")
+            session.add(victim)
+            await session.commit()
+            victim_id = victim.id
+        as_user(app, admin)
+        response = await client.delete(f"/api/admin/users/{victim_id}")
+        assert response.status_code == 204
 
 
 class TestUserProfileEdits:

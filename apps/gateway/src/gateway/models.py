@@ -1610,6 +1610,31 @@ END;
 """
 
 
+class DeploymentState(Base):
+    """One row, ``id=1``: facts about this deployment, not about any identity
+    (ADR 0093 §3.1). Just ``bootstrap_admin_consumed_at`` so far.
+
+    A table of its own rather than a column added to something existing,
+    because that one fact has no natural owner: not a `User`'s, since no
+    administrator may exist yet when it is set, and not the provider row's,
+    since a re-seeded issuer replaces that row while this fact must survive
+    unchanged. Read and write it through `gateway.deployment_state`, which
+    handles the row not existing yet (the unit suite's schema comes from
+    `Base.metadata.create_all()`, which creates no rows) — never construct or
+    query this class directly elsewhere.
+    """
+
+    __tablename__ = "deployment_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    #: Set the first time any administrator exists through any path (the
+    #: bootstrap, the console, the CLI, or an env rule), and never cleared.
+    #: `promote_bootstrap_admin` fires only while this is null — deactivating
+    #: every administrator afterwards must not make it fire again (ADR 0093
+    #: §5.3, closing review R1 / correction 2).
+    bootstrap_admin_consumed_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
 class IdentityEvent(Base):
     """One append-only fact about an identity (ADR 0093 §3.1, closing R8).
 
