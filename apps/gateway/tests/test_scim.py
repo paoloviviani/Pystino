@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import httpx
 from conftest import Seeded
-from gateway.models import User
+from gateway.models import GroupSync, IdentityProvider, User
+from gateway.secrets import SecretBox
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
@@ -17,24 +18,29 @@ async def _setup(
     app: object, client: httpx.AsyncClient, seeded: Seeded, session_factory
 ) -> tuple[str, dict]:
     as_user(app, await make_admin(session_factory, seeded))
-    created = await client.post(
-        "/api/admin/identity-providers",
-        json={
-            "name": "entra",
-            "issuer": ISS,
-            "client_id": "c",
-            "client_secret": "s",
-            "kind": "entra",
-            "subject_claim": "oid",
-        },
-    )
-    pid = created.json()["id"]
-    upd = await client.put(
-        f"/api/admin/identity-providers/{pid}",
-        # The directory is authoritative for groups: every push applies.
-        json={"sync_adapter": "scim", "group_source": "directory", "group_sync": "every_login"},
-    )
-    assert upd.status_code == 200, upd.text
+    # The row is a projection of the environment now (ADR 0093 §14): the
+    # `POST`/`PUT /admin/identity-providers` this used to go through are
+    # removed, so the fixture writes the row directly, exactly as a re-seed
+    # from `OIDC_KIND=entra`, `OIDC_SYNC_ADAPTER=scim` etc. would.
+    box: SecretBox = app.state.secrets  # type: ignore[attr-defined]
+    async with session_factory() as session:
+        row = IdentityProvider(
+            name="entra",
+            issuer=ISS,
+            client_id="c",
+            client_secret_encrypted=box.encrypt("s"),
+            scopes=["openid", "profile", "email"],
+            kind="entra",
+            subject_claim="oid",
+            # The directory is authoritative for groups: every push applies.
+            sync_adapter="scim",
+            group_source="directory",
+            group_sync=GroupSync.EVERY_LOGIN,
+            is_enabled=True,
+        )
+        session.add(row)
+        await session.commit()
+        pid = str(row.id)
     minted = (await client.post(f"/api/admin/identity-providers/{pid}/scim-token")).json()
     assert minted["endpoint"].endswith("/scim/v2/entra")
     return pid, {"authorization": f"Bearer {minted['token']}", "content-type": SCIM}

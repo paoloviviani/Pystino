@@ -60,9 +60,6 @@ from gateway.identity_events import record_event
 from gateway.identity_registry import (
     list_providers as list_provider_records,
 )
-from gateway.identity_registry import (
-    record_from_row,
-)
 from gateway.mail import MailDeliveryError, send_mail_async
 from gateway.models import (
     ApiKey,
@@ -71,10 +68,8 @@ from gateway.models import (
     Group,
     GroupModelAccess,
     GroupSource,
-    GroupSync,
     IdentityEventAction,
     IdentityEventActor,
-    IdentityProvider,
     LimitMetric,
     LimitRule,
     LimitScope,
@@ -149,9 +144,7 @@ from gateway.schemas import (
     GroupMemberAddRequest,
     GroupSearchBackendRequest,
     GroupUsageRow,
-    IdentityProviderCreateRequest,
     IdentityProviderResponse,
-    IdentityProviderUpdateRequest,
     LimitRuleCreateRequest,
     LimitRuleResetRequest,
     LimitRuleResponse,
@@ -2774,7 +2767,7 @@ async def test_email_settings(
 # -- identity providers (ADR 0051) ---------------------------------------------
 
 
-def _idp_response(record: Any) -> IdentityProviderResponse:
+def _idp_response(record: Any, *, user_count: int = 0) -> IdentityProviderResponse:
     return IdentityProviderResponse(
         id=record.id,
         name=record.name,
@@ -2806,180 +2799,28 @@ def _idp_response(record: Any) -> IdentityProviderResponse:
         sync_create_users=record.sync_create_users,
         sync_confirmed=record.sync_confirmed,
         capabilities=identity_policy.capabilities(record.kind).as_dict(),
+        user_count=user_count,
     )
-
-
-def _check_policy(row: IdentityProvider) -> None:
-    try:
-        # Column defaults only apply at INSERT, so a row being created still
-        # holds None where it will hold the default; validate what it will be.
-        identity_policy.validate(
-            row.kind or "generic",
-            row.group_source or "claim",
-            row.admin_source or "console",
-            row.sync_adapter or "none",
-            row.sync_deprovision or "disable",
-        )
-    except identity_policy.PolicyError as exc:
-        raise BadRequestError(str(exc), code="invalid_identity_policy") from exc
-    if row.admin_source == "claim" and not row.admin_values:
-        raise BadRequestError(
-            "Admin from a claim needs at least one value that confers it.",
-            code="invalid_identity_policy",
-        )
 
 
 @router.get("/identity-providers", response_model=list[IdentityProviderResponse])
 async def list_identity_providers(
     admin: AdminUserDep, session: SessionDep, request: Request
 ) -> list[IdentityProviderResponse]:
-    """Every configured identity provider, rows and any environment fallback."""
+    """Every configured identity provider, rows and any environment fallback.
+
+    Read-only (ADR 0093 §14): the provider row is a projection of the
+    environment now, re-seeded at every start, so there is nothing here for an
+    administrator to create, edit or delete. ``./configure`` is where this
+    changes.
+    """
     settings: Settings = request.app.state.settings
     records = await list_provider_records(
         session, settings, request.app.state.secrets, enabled_only=False
     )
-    return [_idp_response(record) for record in records]
-
-
-@router.post(
-    "/identity-providers",
-    response_model=IdentityProviderResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_identity_provider(
-    payload: IdentityProviderCreateRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    request: Request,
-) -> IdentityProviderResponse:
-    """Add an identity provider. The secret is encrypted at rest (ADR 0027)."""
-    name = payload.name.strip()
-    issuer = payload.issuer.strip().rstrip("/")
-    clash = await session.execute(
-        select(IdentityProvider).where(
-            (IdentityProvider.name == name) | (IdentityProvider.issuer == issuer)
-        )
-    )
-    if clash.scalar_one_or_none() is not None:
-        raise BadRequestError(
-            "A provider with that name or issuer already exists.", code="provider_exists"
-        )
-    row = IdentityProvider(
-        name=name,
-        issuer=issuer,
-        client_id=payload.client_id.strip(),
-        client_secret_encrypted=request.app.state.secrets.encrypt(payload.client_secret),
-        scopes=payload.scopes or ["openid", "profile", "email"],
-        groups_claim=payload.groups_claim,
-        fetch_userinfo=payload.fetch_userinfo,
-        group_mappings=[[rule.idp, rule.local] for rule in payload.group_mappings],
-        link_by_email=payload.link_by_email,
-        group_sync=GroupSync(payload.group_sync),
-        internal_base_url=payload.internal_base_url.strip().rstrip("/"),
-        logout_url=payload.logout_url.strip(),
-        kind=payload.kind,
-        group_source=payload.group_source,
-        admin_source=payload.admin_source,
-        admin_claim=payload.admin_claim,
-        admin_values=list(payload.admin_values),
-        subject_claim=payload.subject_claim,
-        is_enabled=True,
-        created_by=admin.id,
-    )
-    _check_policy(row)
-    session.add(row)
-    await session.commit()
-    return _idp_response(record_from_row(row, request.app.state.secrets))
-
-
-@router.put("/identity-providers/{provider_id}", response_model=IdentityProviderResponse)
-async def update_identity_provider(
-    provider_id: uuid.UUID,
-    payload: IdentityProviderUpdateRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    request: Request,
-) -> IdentityProviderResponse:
-    """Edit a provider. A secret that is not re-typed stays the stored one."""
-    row = await session.get(IdentityProvider, provider_id)
-    if row is None:
-        raise NotFoundError(f"No identity provider with id {provider_id}.")
-    fields = payload.model_dump(exclude_unset=True)
-    if fields.get("issuer"):
-        row.issuer = fields["issuer"].strip().rstrip("/")
-    if fields.get("client_id"):
-        row.client_id = fields["client_id"].strip()
-    if fields.get("client_secret"):
-        row.client_secret_encrypted = request.app.state.secrets.encrypt(fields["client_secret"])
-    if "scopes" in fields and fields["scopes"] is not None:
-        row.scopes = fields["scopes"]
-    if fields.get("groups_claim"):
-        row.groups_claim = fields["groups_claim"]
-    if "fetch_userinfo" in fields and fields["fetch_userinfo"] is not None:
-        row.fetch_userinfo = fields["fetch_userinfo"]
-    if "group_mappings" in fields and fields["group_mappings"] is not None:
-        row.group_mappings = [[rule.idp, rule.local] for rule in fields["group_mappings"]]
-    if "link_by_email" in fields and fields["link_by_email"] is not None:
-        # Turning it off stops *new* links; it does not undo the ones already
-        # made. Unlinking is deleting a `user_identities` row, and doing it
-        # implicitly here would silently split one person's account in two —
-        # spend, keys and quotas on one row, their next login on another.
-        row.link_by_email = fields["link_by_email"]
-    if "group_sync" in fields and fields["group_sync"] is not None:
-        # Takes effect at the next login, like every other field on this row:
-        # nothing here reaches back over memberships already granted.
-        row.group_sync = GroupSync(fields["group_sync"])
-    if "is_enabled" in fields and fields["is_enabled"] is not None:
-        row.is_enabled = fields["is_enabled"]
-    if "internal_base_url" in fields and fields["internal_base_url"] is not None:
-        row.internal_base_url = fields["internal_base_url"].strip().rstrip("/")
-    if "logout_url" in fields and fields["logout_url"] is not None:
-        row.logout_url = fields["logout_url"].strip()
-    for name in (
-        "kind",
-        "group_source",
-        "admin_source",
-        "admin_claim",
-        "admin_values",
-        "sync_adapter",
-        "sync_interval_minutes",
-        "sync_deprovision",
-        "sync_create_users",
-    ):
-        if name in fields and fields[name] is not None:
-            setattr(row, name, fields[name])
-    if "subject_claim" in fields and fields["subject_claim"] not in (None, row.subject_claim):
-        # Changing the identity key on a directory with users would silently
-        # make every one of them a new person at their next login.
-        has_users = await session.execute(select(User.id).where(User.issuer == row.issuer).limit(1))
-        if has_users.scalar_one_or_none() is not None:
-            raise BadRequestError(
-                "This provider already has users; changing the subject claim would "
-                "re-key every one of them. Create a new provider instead.",
-                code="subject_claim_locked",
-            )
-        row.subject_claim = fields["subject_claim"]
-    if "sync_adapter" in fields:
-        # A new adapter starts over: its first run is a dry run again.
-        row.sync_confirmed = False
-    _check_policy(row)
-    await session.commit()
-    return _idp_response(record_from_row(row, request.app.state.secrets))
-
-
-@router.delete("/identity-providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_identity_provider(
-    provider_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
-) -> None:
-    row = await session.get(IdentityProvider, provider_id)
-    if row is None:
-        raise NotFoundError(f"No identity provider with id {provider_id}.")
-    # A provider whose rows are gone comes back only from the environment
-    # fallback — which exists only while the table is empty. Deleting the last
-    # row therefore removes OIDC sign-in entirely, and that is what the
-    # operator asked for.
-    await session.delete(row)
-    await session.commit()
+    by_issuer = select(User.issuer, func.count(User.id)).group_by(User.issuer)
+    counts: dict[str, int] = dict((await session.execute(by_issuer)).tuples().all())
+    return [_idp_response(record, user_count=counts.get(record.issuer, 0)) for record in records]
 
 
 @router.put("/oidc/policy", response_model=OidcPolicyResponse)

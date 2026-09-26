@@ -675,13 +675,15 @@ export interface IdentityProvider {
   fetch_userinfo: boolean;
   group_mappings: { idp: string; local: string }[];
   /** Whether a login here may adopt the local account with the same verified
-   * address (ADR 0056). */
-  link_local_by_email: boolean;
+   * address (ADR 0056; the matcher itself is stage (c) — see ADR 0093 §3.2). */
+  link_by_email: boolean;
   /** How far this directory's answer about groups reaches (ADR 0057). It never
    * reaches a membership an administrator granted, in any of the three. */
   group_sync: GroupSync;
   is_enabled: boolean;
   source: "console" | "environment";
+  /** People signed in under this row's issuer (ADR 0093 §14). */
+  user_count: number;
   /** Server-to-server base URL for the issuer (the bundled Authelia's
    * internal address); empty when the issuer URL is reachable directly. */
   internal_base_url: string;
@@ -758,39 +760,6 @@ export interface DirectoryPerson {
   user_id: string | null;
 }
 
-export interface AutheliaUser {
-  username: string;
-  email: string;
-  display_name: string;
-  groups: string[];
-  disabled: boolean;
-}
-
-export interface IdentityProviderInput {
-  name?: string;
-  issuer?: string;
-  client_id?: string;
-  client_secret?: string;
-  scopes?: string[];
-  groups_claim?: string;
-  fetch_userinfo?: boolean;
-  group_mappings?: { idp: string; local: string }[];
-  link_local_by_email?: boolean;
-  group_sync?: GroupSync;
-  is_enabled?: boolean;
-  internal_base_url?: string;
-  logout_url?: string;
-  kind?: IdentityKind;
-  group_source?: GroupSource;
-  admin_source?: AdminSource;
-  admin_claim?: string;
-  admin_values?: string[];
-  subject_claim?: string;
-  sync_adapter?: SyncAdapter;
-  sync_interval_minutes?: number;
-  sync_deprovision?: "disable" | "ignore";
-  sync_create_users?: boolean;
-}
 
 /** The SMTP configuration in force — the row's, or the environment's. */
 export interface EmailSettings {

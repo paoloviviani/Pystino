@@ -26,13 +26,10 @@ import type {
   EmailSettingsInput,
   EmailTestResult,
   GroupCreateInput,
-  AutheliaUser,
   DirectoryPerson,
-  IdentityCapabilities,
-  IdentityKind,
   IdentityProvider,
-  IdentityProviderInput,
   SearchBackendDeleteResult,
+  SyncAdapter,
   SyncRun,
   UsageReport,
 } from "./types";
@@ -63,10 +60,8 @@ export const adminKeys = {
   users: ["admin", "users"] as const,
   email: ["admin", "email"] as const,
   identityProviders: ["admin", "identity-providers"] as const,
-  identityKinds: ["admin", "identity-kinds"] as const,
   syncRuns: (id: string) => ["admin", "identity-providers", id, "runs"] as const,
   directory: (id: string) => ["admin", "identity-providers", id, "directory"] as const,
-  autheliaUsers: (id: string) => ["admin", "identity-providers", id, "authelia-users"] as const,
   oidcPolicy: ["admin", "oidc-policy"] as const,
   redaction: ["admin", "redaction"] as const,
   redactionRules: ["admin", "redaction", "rules"] as const,
@@ -868,36 +863,9 @@ export function useIdentityProviders() {
   });
 }
 
-export function useCreateIdentityProvider() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (body: IdentityProviderInput & { name: string; issuer: string; client_id: string; client_secret: string }) =>
-      request<IdentityProvider>("/api/admin/identity-providers", { method: "POST", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
-  });
-}
-
-export function useUpdateIdentityProvider() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...body }: IdentityProviderInput & { id: string }) =>
-      request<IdentityProvider>(`/api/admin/identity-providers/${id}`, {
-        method: "PUT",
-        body,
-      }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
-  });
-}
-
-export function useDeleteIdentityProvider() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      request<void>(`/api/admin/identity-providers/${id}`, { method: "DELETE" }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
-  });
-}
-
+// Creating, editing and deleting a provider row went with those routes (ADR
+// 0093 §14): the row is a projection of the environment now, re-seeded at
+// every start, so there is nothing left for these to write to.
 
 export function useDeleteUser() {
   const client = useQueryClient();
@@ -964,15 +932,6 @@ export function useAdminReport(query: ReportQuery) {
 
 // --- directory sync, SCIM and the bundled Authelia's users (ADR 0088) -------
 
-export function useIdentityKinds() {
-  return useQuery({
-    queryKey: adminKeys.identityKinds,
-    queryFn: () => request<Record<IdentityKind, IdentityCapabilities>>("/api/admin/identity-kinds"),
-    staleTime: Infinity,
-    retry: retryUnlessRejected,
-  });
-}
-
 export function useSyncRuns(providerId: string, enabled = true) {
   return useQuery({
     queryKey: adminKeys.syncRuns(providerId),
@@ -991,14 +950,27 @@ export function useDirectory(providerId: string, enabled = true) {
   });
 }
 
+/**
+ * Directory sync: the one console-owned corner of a provider row left (ADR
+ * 0093 §14) — adapter, poll interval, credentials. `config` omitted leaves
+ * stored credentials alone; an explicit `{}` clears them.
+ */
 export function useSetSyncConfig() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, config }: { id: string; config: Record<string, string> }) =>
-      request<{ has_config: boolean }>(`/api/admin/identity-providers/${id}/sync-config`, {
-        method: "PUT",
-        body: { config },
-      }),
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string;
+      sync_adapter?: SyncAdapter;
+      sync_interval_minutes?: number;
+      config?: Record<string, string>;
+    }) =>
+      request<{ has_config: boolean; sync_adapter: SyncAdapter; sync_interval_minutes: number }>(
+        `/api/admin/identity-providers/${id}/sync-config`,
+        { method: "PUT", body },
+      ),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
   });
 }
@@ -1061,56 +1033,6 @@ export function useMintScimToken() {
   });
 }
 
-export function useAutheliaUsers(providerId: string, enabled = true) {
-  return useQuery({
-    queryKey: adminKeys.autheliaUsers(providerId),
-    queryFn: () => request<AutheliaUser[]>(`/api/admin/identity-providers/${providerId}/authelia-users`),
-    enabled,
-    retry: retryUnlessRejected,
-  });
-}
-
-export function useCreateAutheliaUser() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; username: string; email: string; display_name: string; groups: string[] }) =>
-      request<{ user: AutheliaUser; password: string }>(
-        `/api/admin/identity-providers/${id}/authelia-users`,
-        { method: "POST", body },
-      ),
-    onSuccess: (_result, { id }) => client.invalidateQueries({ queryKey: adminKeys.autheliaUsers(id) }),
-  });
-}
-
-export function useUpdateAutheliaUser() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, username, ...body }: { id: string; username: string } & Partial<Omit<AutheliaUser, "username">>) =>
-      request<AutheliaUser>(`/api/admin/identity-providers/${id}/authelia-users/${username}`, {
-        method: "PATCH",
-        body,
-      }),
-    onSuccess: (_result, { id }) => client.invalidateQueries({ queryKey: adminKeys.autheliaUsers(id) }),
-  });
-}
-
-export function useResetAutheliaPassword() {
-  return useMutation({
-    mutationFn: ({ id, username }: { id: string; username: string }) =>
-      request<{ password: string }>(
-        `/api/admin/identity-providers/${id}/authelia-users/${username}/reset-password`,
-        { method: "POST" },
-      ),
-  });
-}
-
-export function useDeleteAutheliaUser() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, username }: { id: string; username: string }) =>
-      request<void>(`/api/admin/identity-providers/${id}/authelia-users/${username}`, {
-        method: "DELETE",
-      }),
-    onSuccess: (_result, { id }) => client.invalidateQueries({ queryKey: adminKeys.autheliaUsers(id) }),
-  });
-}
+// The People dialog these once served is removed (ADR 0093 §14, correction
+// 7); the routes stay for stage (b) to build the Users-page replacement
+// against.

@@ -28,7 +28,6 @@ from gateway.models import (
     Group,
     GroupSource,
     GroupSync,
-    IdentityProvider,
     Membership,
     MembershipSource,
     User,
@@ -359,92 +358,15 @@ class TestDivergenceOnTheRequestPath:
 
 
 class TestTheApiSurface:
-    """The policy through the management API — the console's half of the wiring."""
+    """Reading the policy through the management API.
 
-    async def test_a_provider_defaults_to_first_login(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        """The sync stance of ADR 0069: the directory answers once.
-
-        A client that wants the directory to keep answering chooses
-        every_login explicitly — the stance is the default, not a monopoly.
-        """
-        as_user(app, await make_admin(session_factory, seeded))
-        response = await client.post(
-            "/api/admin/identity-providers",
-            json={
-                "name": "corp",
-                "issuer": "https://corp.example.org",
-                "client_id": "gateway",
-                "client_secret": "not-a-real-secret",
-            },
-        )
-        assert response.status_code == 201
-        assert response.json()["group_sync"] == "first_login"
-
-    async def test_it_can_be_chosen_at_creation_and_changed(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        as_user(app, await make_admin(session_factory, seeded))
-        created = await client.post(
-            "/api/admin/identity-providers",
-            json={
-                "name": "corp",
-                "issuer": "https://corp.example.org",
-                "client_id": "gateway",
-                "client_secret": "not-a-real-secret",
-                "group_sync": "never",
-            },
-        )
-        assert created.status_code == 201
-        assert created.json()["group_sync"] == "never"
-
-        async with session_factory() as db:
-            row = (await db.execute(select(IdentityProvider))).scalar_one()
-            assert row.group_sync is GroupSync.NEVER
-
-        edited = await client.put(
-            "/api/admin/identity-providers/" + created.json()["id"],
-            json={"group_sync": "first_login"},
-        )
-        assert edited.status_code == 200
-        assert edited.json()["group_sync"] == "first_login"
-
-    async def test_a_mode_nobody_implements_is_refused(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        """Refused rather than stored as a word the login path cannot read.
-
-        400 and not 422: this app normalises validation failures into its own
-        error envelope (`validation_error_handler` in main.py), so that is the
-        contract a client sees.
-        """
-        as_user(app, await make_admin(session_factory, seeded))
-        response = await client.post(
-            "/api/admin/identity-providers",
-            json={
-                "name": "corp",
-                "issuer": "https://corp.example.org",
-                "client_id": "gateway",
-                "client_secret": "not-a-real-secret",
-                "group_sync": "sometimes",
-            },
-        )
-        assert response.status_code == 400
-        async with session_factory() as db:
-            assert (await db.execute(select(IdentityProvider))).scalars().all() == []
+    The three tests that used to open this class — creating a provider row
+    through the now-removed `POST`/`PUT /admin/identity-providers` to prove
+    `group_sync` round-tripped and its bad values were refused — are gone
+    along with those routes (ADR 0093 §14, closed in stage (a)'s removals):
+    the row is a projection of the environment now, re-seeded at every start,
+    so there is nothing left there for an administrator to create or edit.
+    """
 
     async def test_the_members_listing_says_who_granted_each_membership(
         self,

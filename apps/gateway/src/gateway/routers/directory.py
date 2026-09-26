@@ -11,7 +11,7 @@ import json
 import secrets
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request, status
 from pydantic import BaseModel, Field
@@ -36,9 +36,25 @@ class SyncRequest(BaseModel):
 
 
 class SyncConfigRequest(BaseModel):
-    """Adapter credentials; write-only (never returned)."""
+    """Directory sync: the one console-owned corner of a provider row left
+    after ADR 0093 §14 (adapter, poll interval, credentials).
 
-    config: dict[str, Any] = Field(default_factory=dict)
+    Everything else on the row is a projection of the environment now, so
+    this is also where the removed generic `PUT /identity-providers/{id}`
+    used to be reached from for these same three fields — merged in here
+    rather than kept as its own endpoint, since picking a new adapter and
+    saving its credentials are the same "start the mirror over" action
+    (`sync_confirmed` resets either way).
+
+    ``config`` is write-only and never returned; ``None`` means "leave the
+    stored credentials alone" and is not the same as an empty dict, which
+    clears them — a save that only changes the adapter or the interval must
+    not silently wipe a working `keycloak_admin` credential.
+    """
+
+    sync_adapter: Literal["none", "authelia_file", "keycloak_admin", "scim"] | None = None
+    sync_interval_minutes: int | None = Field(default=None, ge=0, le=10080)
+    config: dict[str, Any] | None = None
 
 
 class PreassignRequest(BaseModel):
@@ -102,13 +118,38 @@ async def set_sync_config(
     request: Request,
 ) -> dict[str, Any]:
     row = await _provider(session, provider_id)
-    row.sync_config_encrypted = (
-        request.app.state.secrets.encrypt(json.dumps(payload.config)) if payload.config else None
-    )
-    # New credentials, new first run: it is a dry run again.
-    row.sync_confirmed = False
+    if payload.sync_adapter is not None and payload.sync_adapter != row.sync_adapter:
+        from gateway import identity_policy
+
+        try:
+            identity_policy.validate(
+                row.kind or "generic",
+                row.group_source or "claim",
+                row.admin_source or "console",
+                payload.sync_adapter,
+                row.sync_deprovision or "disable",
+            )
+        except identity_policy.PolicyError as exc:
+            raise BadRequestError(str(exc), code="invalid_identity_policy") from exc
+        row.sync_adapter = payload.sync_adapter
+        # A new adapter starts over: its first run is a dry run again.
+        row.sync_confirmed = False
+    if payload.sync_interval_minutes is not None:
+        row.sync_interval_minutes = payload.sync_interval_minutes
+    if payload.config is not None:
+        row.sync_config_encrypted = (
+            request.app.state.secrets.encrypt(json.dumps(payload.config))
+            if payload.config
+            else None
+        )
+        # New credentials, new first run: it is a dry run again.
+        row.sync_confirmed = False
     await session.commit()
-    return {"has_config": bool(payload.config)}
+    return {
+        "has_config": bool(row.sync_config_encrypted),
+        "sync_adapter": row.sync_adapter,
+        "sync_interval_minutes": row.sync_interval_minutes,
+    }
 
 
 @router.post("/identity-providers/{provider_id}/sync/test")

@@ -125,16 +125,19 @@ class TestTheRoute:
         assert mine["logout_url"] == ""
         assert mine["default_logout_url"] == f"{BEARER_ISSUER}/logout?rd={{redirect}}"
 
-        updated = await admin_client.put(
-            f"/api/admin/identity-providers/{row.id}",
-            json={"logout_url": "https://idp.example.org/out?to={redirect}"},
-        )
-        assert updated.status_code == 200, updated.text
-        assert updated.json()["logout_url"] == "https://idp.example.org/out?to={redirect}"
-        refused = await admin_client.put(
-            f"/api/admin/identity-providers/{row.id}", json={"logout_url": "javascript:alert(1)"}
-        )
-        assert refused.status_code in (400, 422)  # the app reports validation as 400
+        # The row is a projection of the environment now (ADR 0093 §14): there
+        # is no `PUT` to edit `logout_url` through any more, only what a
+        # re-seed from `GATEWAY_OIDC__LOGOUT_URL` writes onto the row
+        # directly — which is what this simulates, to prove the listing
+        # still prefers an explicit value over the computed default.
+        async with session_factory() as session:
+            stored = await session.get(IdentityProvider, row.id)
+            assert stored is not None
+            stored.logout_url = "https://idp.example.org/out?to={redirect}"
+            await session.commit()
+        relisted = (await admin_client.get("/api/admin/identity-providers")).json()
+        mine_again = next(p for p in relisted if p["id"] == str(row.id))
+        assert mine_again["logout_url"] == "https://idp.example.org/out?to={redirect}"
 
 
 def _settings(kind: str) -> Settings:

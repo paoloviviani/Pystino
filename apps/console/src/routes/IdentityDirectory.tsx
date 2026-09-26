@@ -1,31 +1,27 @@
 /**
- * Directory sync and the bundled Authelia's users (ADR 0088).
+ * Directory sync, from a provider row (ADR 0088).
  *
- * Two dialogs opened from a provider row. The Directory dialog is where an
- * adapter is chosen and credentialed, where the forced first dry run is looked
- * at and confirmed, and where later runs are read — each run's own list of
- * changes, because "12 updated" is not something to approve. The Users dialog
- * is the admin interface Authelia 4.39 does not have: the gateway edits its
- * users file, and a new or reset password is shown once and stored nowhere.
+ * Where an adapter is chosen and credentialed, where the forced first dry run
+ * is looked at and confirmed, and where later runs are read — each run's own
+ * list of changes, because "12 updated" is not something to approve.
+ *
+ * The bundled Authelia's own People dialog, which used to live in this file
+ * too, is removed (ADR 0093 §14, correction 7): the gateway-edited users file
+ * it drove is stage (b)'s to replace on the Users page, keyed on
+ * `OIDC_KIND=authelia` rather than opened from here.
  */
 
 import { Badge, Button, Dialog, Input, Notice, Select, Spinner } from "@llmp/ui";
 import { useState } from "react";
 import {
-  useAutheliaUsers,
   useConfirmSync,
-  useCreateAutheliaUser,
-  useDeleteAutheliaUser,
   useDirectory,
   useMintScimToken,
   usePreassignGroups,
-  useResetAutheliaPassword,
   useRunSync,
   useSetSyncConfig,
   useSyncRuns,
   useTestSync,
-  useUpdateAutheliaUser,
-  useUpdateIdentityProvider,
 } from "../lib/admin";
 import type { IdentityProvider, SyncAdapter, SyncRun } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
@@ -87,7 +83,6 @@ export function DirectoryDialog({
   const open = provider !== null;
   const id = provider?.id ?? "";
   const toast = useOptionalToast();
-  const update = useUpdateIdentityProvider();
   const setConfig = useSetSyncConfig();
   const test = useTestSync();
   const run = useRunSync();
@@ -111,11 +106,12 @@ export function DirectoryDialog({
   const pull = chosen === "authelia_file" || chosen === "keycloak_admin";
 
   const saveAdapter = () =>
-    update.mutate(
+    setConfig.mutate(
       {
         id,
         sync_adapter: chosen,
-        sync_interval_minutes: intervalMinutes === null ? provider.sync_interval_minutes : Number(intervalMinutes),
+        sync_interval_minutes:
+          intervalMinutes === null ? provider.sync_interval_minutes : Number(intervalMinutes),
       },
       {
         onSuccess: () => toast?.add({ title: "Sync settings saved", type: "success" }),
@@ -165,7 +161,7 @@ export function DirectoryDialog({
         <div>
           <Button
             variant="primary"
-            busy={update.isPending}
+            busy={setConfig.isPending}
             disabled={chosen === provider.sync_adapter && intervalMinutes === null}
             onClick={saveAdapter}
           >
@@ -317,136 +313,6 @@ export function DirectoryDialog({
             )}
           </div>
         )}
-      </div>
-    </Dialog>
-  );
-}
-
-export function AutheliaUsersDialog({
-  provider,
-  onClose,
-}: {
-  provider: IdentityProvider | null;
-  onClose: () => void;
-}) {
-  const open = provider !== null;
-  const id = provider?.id ?? "";
-  const toast = useOptionalToast();
-  const users = useAutheliaUsers(id, open);
-  const create = useCreateAutheliaUser();
-  const update = useUpdateAutheliaUser();
-  const reset = useResetAutheliaPassword();
-  const remove = useDeleteAutheliaUser();
-  const [username, setUsername] = useState("");
-  const [email, setEmail] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [groups, setGroups] = useState("users");
-  const [secret, setSecret] = useState<{ username: string; password: string } | null>(null);
-
-  if (!provider) return null;
-  const fail = (caught: unknown) => toast?.add({ title: errorText(caught, "The directory refused"), type: "error" });
-
-  return (
-    <Dialog
-      open={open}
-      title={`People in ${provider.name}`}
-      onClose={() => {
-        setSecret(null);
-        onClose();
-      }}
-      footer={<Button onClick={() => { setSecret(null); onClose(); }}>Close</Button>}
-    >
-      <div className={FORM}>
-        {secret && (
-          <Notice tone="warn" title={`Password for ${secret.username} — shown once`}>
-            <div className={CODE}>{secret.password}</div>
-            Hand it over now; it is stored only as a digest.
-          </Notice>
-        )}
-        {users.isPending ? (
-          <Spinner label="Loading people" />
-        ) : users.error ? (
-          <Notice tone="danger" title="Could not read the users file">
-            {errorText(users.error, "Unknown error.")}
-          </Notice>
-        ) : (
-          (users.data ?? []).map((user) => (
-            <div key={user.username} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line p-3">
-              <div className="min-w-0">
-                <span className="font-medium">{user.username}</span>{" "}
-                {user.disabled && <Badge tone="neutral">disabled</Badge>}
-                <div className="text-xs text-ink-faint">
-                  {user.email} · {user.groups.join(", ")}
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="ghost"
-                  onClick={() => update.mutate({ id, username: user.username, disabled: !user.disabled }, { onError: fail })}
-                >
-                  {user.disabled ? "Enable" : "Disable"}
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() =>
-                    reset.mutate(
-                      { id, username: user.username },
-                      { onSuccess: (r) => setSecret({ username: user.username, password: r.password }), onError: fail },
-                    )
-                  }
-                >
-                  Reset password
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="text-danger"
-                  onClick={() => remove.mutate({ id, username: user.username }, { onError: fail })}
-                >
-                  Delete
-                </Button>
-              </div>
-            </div>
-          ))
-        )}
-        <div className={DETAIL_LABEL}>Add a person</div>
-        <Input label="Login" value={username} onChange={(e) => setUsername(e.target.value)} />
-        <Input label="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
-        <Input label="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-        <Input
-          label="Groups"
-          value={groups}
-          onChange={(e) => setGroups(e.target.value)}
-          hint="Comma-separated. They reach the gateway as the groups claim."
-        />
-        <div>
-          <Button
-            variant="primary"
-            disabled={!username || !email}
-            busy={create.isPending}
-            onClick={() =>
-              create.mutate(
-                {
-                  id,
-                  username: username.trim(),
-                  email: email.trim(),
-                  display_name: displayName.trim(),
-                  groups: groups.split(",").map((g) => g.trim()).filter(Boolean),
-                },
-                {
-                  onSuccess: (result) => {
-                    setSecret({ username: result.user.username, password: result.password });
-                    setUsername("");
-                    setEmail("");
-                    setDisplayName("");
-                  },
-                  onError: fail,
-                },
-              )
-            }
-          >
-            Add person
-          </Button>
-        </div>
       </div>
     </Dialog>
   );

@@ -1121,69 +1121,10 @@ class IdentityProviderResponse(BaseModel):
     sync_confirmed: bool = False
     #: What this kind of directory can do; the console shows only these controls.
     capabilities: dict[str, Any] = Field(default_factory=dict)
-
-
-class IdentityProviderCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]*$")
-    issuer: str = Field(min_length=8, max_length=512)
-    client_id: str = Field(min_length=1, max_length=255)
-    client_secret: str = Field(min_length=1, max_length=1024)
-    scopes: list[str] | None = None
-    groups_claim: str = Field(default="groups", min_length=1, max_length=255)
-    fetch_userinfo: bool = True
-    group_mappings: list[OidcMappingRule] = Field(default_factory=list)
-    # Off unless asked for, in the request as on the row: a client that omits
-    # the field is not consenting to it (ADR 0056).
-    link_by_email: bool = False
-    # The sync stance of ADR 0069: the directory answers once, at
-    # provisioning, and the gateway owns everything after. A client that
-    # wants the directory to keep answering chooses every_login explicitly.
-    group_sync: Literal["every_login", "first_login", "never"] = "first_login"
-    # Where the gateway reaches the issuer server-to-server, when not at the
-    # issuer URL (the bundled Authelia). Empty: use the issuer.
-    internal_base_url: str = Field(default="", max_length=512, pattern=r"^(|https?://\S+)$")
-    # Overrides the provider's end_session_endpoint; `{redirect}` is the page
-    # to come back to. Empty: discovery, else the kind's default.
-    logout_url: str = Field(default="", max_length=512, pattern=r"^(|https?://\S+)$")
-    kind: Literal["generic", "authelia", "keycloak", "entra", "okta", "authentik", "google"] = (
-        "generic"
-    )
-    group_source: Literal["claim", "directory", "none"] = "claim"
-    admin_source: Literal["console", "claim"] = "console"
-    admin_claim: str = Field(default="groups", min_length=1, max_length=255)
-    admin_values: list[str] = Field(default_factory=list, max_length=50)
-    subject_claim: str = Field(default="sub", min_length=1, max_length=64)
-
-
-class IdentityProviderUpdateRequest(BaseModel):
-    """A provider edit. `client_secret` omitted means "keep the stored one"."""
-
-    issuer: str | None = Field(default=None, min_length=8, max_length=512)
-    client_id: str | None = Field(default=None, min_length=1, max_length=255)
-    client_secret: str | None = Field(default=None, min_length=1, max_length=1024)
-    scopes: list[str] | None = None
-    groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
-    fetch_userinfo: bool | None = None
-    group_mappings: list[OidcMappingRule] | None = None
-    link_by_email: bool | None = None
-    group_sync: Literal["every_login", "first_login", "never"] | None = None
-    is_enabled: bool | None = None
-    internal_base_url: str | None = Field(
-        default=None, max_length=512, pattern=r"^(|https?://\S+)$"
-    )
-    logout_url: str | None = Field(default=None, max_length=512, pattern=r"^(|https?://\S+)$")
-    kind: (
-        Literal["generic", "authelia", "keycloak", "entra", "okta", "authentik", "google"] | None
-    ) = None
-    group_source: Literal["claim", "directory", "none"] | None = None
-    admin_source: Literal["console", "claim"] | None = None
-    admin_claim: str | None = Field(default=None, min_length=1, max_length=255)
-    admin_values: list[str] | None = Field(default=None, max_length=50)
-    subject_claim: str | None = Field(default=None, min_length=1, max_length=64)
-    sync_adapter: Literal["none", "authelia_file", "keycloak_admin", "scim"] | None = None
-    sync_interval_minutes: int | None = Field(default=None, ge=0, le=10080)
-    sync_deprovision: Literal["disable", "ignore"] | None = None
-    sync_create_users: bool | None = None
+    #: People signed in under this row's issuer, disabled or not (ADR 0093
+    #: §14): what tells an operator a disabled previous row is still worth
+    #: keeping the read-only card open on, versus one nobody ever used.
+    user_count: int = 0
 
 
 class EmailSettingsResponse(BaseModel):

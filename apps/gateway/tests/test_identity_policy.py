@@ -180,61 +180,19 @@ class TestGroupSource:
 
 
 class TestTheApi:
-    async def test_create_reports_capabilities_and_refuses_an_empty_admin_rule(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        as_user(app, await make_admin(session_factory, seeded))
-        base = {
-            "name": "kc",
-            "issuer": ISS,
-            "client_id": "gateway",
-            "client_secret": "s",
-            "kind": "keycloak",
-        }
-        bad = await client.post(
-            "/api/admin/identity-providers", json={**base, "admin_source": "claim"}
-        )
-        assert bad.status_code == 400
-        ok = await client.post(
-            "/api/admin/identity-providers",
-            json={**base, "admin_source": "claim", "admin_values": ["ops"]},
-        )
-        assert ok.status_code == 201, ok.text
-        body = ok.json()
-        assert body["capabilities"]["adapters"] == ["keycloak_admin"]
-        assert (body["admin_source"], body["admin_values"]) == ("claim", ["ops"])
-        wrong = await client.put(
-            f"/api/admin/identity-providers/{body['id']}", json={"sync_adapter": "scim"}
-        )
-        assert wrong.status_code == 400
-
-    async def test_the_subject_claim_is_locked_once_users_exist(
-        self,
-        app: object,
-        client: httpx.AsyncClient,
-        seeded: Seeded,
-        session_factory: async_sessionmaker[AsyncSession],
-    ) -> None:
-        as_user(app, await make_admin(session_factory, seeded))
-        created = await client.post(
-            "/api/admin/identity-providers",
-            json={"name": "e", "issuer": ISS, "client_id": "g", "client_secret": "s"},
-        )
-        pid = created.json()["id"]
-        assert (
-            await client.put(f"/api/admin/identity-providers/{pid}", json={"subject_claim": "oid"})
-        ).status_code == 200
-        async with session_factory() as session:
-            session.add(User(issuer=ISS, subject="x"))
-            await session.commit()
-        locked = await client.put(
-            f"/api/admin/identity-providers/{pid}", json={"subject_claim": "sub"}
-        )
-        assert locked.status_code == 400
+    """The two tests that used to open this class — creating a provider row
+    through `POST /admin/identity-providers` to prove `_check_policy` refused
+    an empty admin rule and reported capabilities, and locking `subject_claim`
+    through `PUT` once a provider has users — are gone along with those
+    routes (ADR 0093 §14, closed in stage (a)'s removals): the row is a
+    projection of the environment now, re-seeded at every start, so there is
+    nothing left there for an administrator to create or edit. Both
+    behaviours were specific to hand-editing a row through the console; the
+    module-level `identity_policy.validate` they called stays and is still
+    covered directly by `TestCapabilities` above, since `pystino idp check`
+    (stage (a)'s own step 8, not yet built) and `./configure --check`
+    (stage (a)'s step 10) are expected to want it.
+    """
 
     async def test_a_console_admin_grant_is_manual(
         self,
