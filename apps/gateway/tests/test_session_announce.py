@@ -10,12 +10,15 @@ exists is that a login should provision, link and bootstrap, and no other
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from typing import Any
 
 from conftest import BEARER_ISSUER, Seeded, make_token
 from conftest import bearer_auth as auth
 from fastapi import FastAPI
-from gateway.models import User, UserIdentity
+from gateway.models import ApiKey, User, UserIdentity
+from gateway.security import generate_api_key
+from gateway.types import utcnow
 from joserfc.jwk import RSAKey
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -204,3 +207,37 @@ class TestMyIdentities:
     async def test_it_needs_a_credential(self, client: Any) -> None:
         response = await client.get("/v1/me/identities")
         assert response.status_code == 401
+
+    async def test_a_personal_api_key_is_refused(self, client: Any, seeded: Seeded) -> None:
+        """A program's credential has no business listing its owner's
+        identities (the same `credential` distinction `/v1/me` draws)."""
+        response = await client.get("/v1/me/identities", headers=seeded.auth)
+        assert response.status_code == 403, response.text
+
+    async def test_a_minted_session_credential_answers_as_its_person(
+        self,
+        client: Any,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The house IdP's own access tokens are `minted_by`-set rows in the
+        same table, and count as the person, not as a program's key."""
+        async with session_factory() as db:
+            minted = generate_api_key(environment_prefix="gwa")
+            db.add(
+                ApiKey(
+                    user_id=seeded.user.id,
+                    prefix=minted.prefix,
+                    key_hash=minted.key_hash,
+                    name="idp:cerea",
+                    minted_by="idp-cerea",
+                    expires_at=utcnow() + timedelta(minutes=15),
+                )
+            )
+            await db.commit()
+
+        response = await client.get(
+            "/v1/me/identities", headers={"authorization": f"Bearer {minted.secret}"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == str(seeded.user.id)

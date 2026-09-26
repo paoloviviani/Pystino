@@ -171,7 +171,20 @@ async def my_identities(principal: PrincipalDep, session: SessionDep) -> MeIdent
     pair, every linked identity, and every id ever merged into this one, so
     the chat can adopt or fold records it has not keyed on the gateway's id
     yet.
+
+    Access-token principals only, the same ``credential`` distinction
+    ``/v1/me`` already draws: a personal API key is a program's credential,
+    with no business listing the identities of the person who issued it. A
+    *minted* credential (the house IdP's own access tokens, stored as ``gwa``
+    rows) answers as the person it is proof of having signed in as, exactly
+    like it does for ``is_admin`` there.
     """
+    by_key = principal.api_key is not None and principal.api_key.minted_by is None
+    if by_key:
+        raise PermissionError_(
+            "An API key may not list its owner's identities. Sign in and use an "
+            "access token instead."
+        )
     user = principal.user
     identities = await _identities_for(session, user)
     merged_from = await resolve_merged_from(session, user.id)

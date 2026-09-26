@@ -1082,4 +1082,10 @@ def startup_warnings(settings: Settings) -> list[str]:
             "variable is ignored. Grant admin with OIDC_ADMIN_EMAIL, OIDC_ADMIN_CLAIM, "
             "the console, or `pystino admin grant`."
         )
+    if settings.oidc.access_token_audience and not settings.oidc.chat_client_id:
+        warnings.append(
+            "GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE is set but GATEWAY_OIDC__CHAT_CLIENT_ID "
+            "is not: POST /v1/session/announce refuses every token until it is set, "
+            "which means every chat login fails closed."
+        )
     return warnings

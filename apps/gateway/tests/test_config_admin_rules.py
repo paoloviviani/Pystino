@@ -127,6 +127,22 @@ class TestStartupWarnings:
         )
         assert not any("ignored" in w for w in startup_warnings(settings))
 
+    def test_an_audience_with_no_chat_client_id_warns(self) -> None:
+        """Announce refuses every token silently otherwise (ADR 0093 §4.1)."""
+        settings = Settings(oidc=OIDCSettings(access_token_audience="pystino-api"))
+        assert any("CHAT_CLIENT_ID" in w for w in startup_warnings(settings))
+
+    def test_no_warning_once_the_chat_client_id_is_set(self) -> None:
+        settings = Settings(
+            oidc=OIDCSettings(access_token_audience="pystino-api", chat_client_id="cerea")
+        )
+        assert not any("CHAT_CLIENT_ID" in w for w in startup_warnings(settings))
+
+    def test_no_warning_with_no_audience_at_all(self) -> None:
+        """No audience means /v1 takes no OIDC tokens, announce included."""
+        settings = Settings(oidc=OIDCSettings())
+        assert not any("CHAT_CLIENT_ID" in w for w in startup_warnings(settings))
+
 
 class TestSmtpSettings:
     def test_default_security_is_starttls(self) -> None:

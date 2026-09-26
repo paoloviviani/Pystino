@@ -177,9 +177,15 @@ services:
       # ADR 0093 §2: a bearer token's azp (or client_id) must name one of
       # these once an audience is set, or /v1 accepts a token minted for any
       # purpose by any client the issuer will talk to. This deployment has
-      # one OIDC client of its own (the console); OIDC_MACHINE_CLIENT_ID is
-      # for an operator's own bearer-token client, empty unless set.
-      GATEWAY_OIDC__ACCEPTED_CLIENTS: ${OIDC_ACCEPTED_CLIENTS:-${OIDC_CONSOLE_CLIENT_ID:-pystino-console},${OIDC_MACHINE_CLIENT_ID:-}}
+      # one OIDC client of its own (the console); OIDC_CHAT_CLIENT_ID and
+      # OIDC_MACHINE_CLIENT_ID are for an operator's own chat or bearer-token
+      # client, empty unless set.
+      GATEWAY_OIDC__ACCEPTED_CLIENTS: ${OIDC_ACCEPTED_CLIENTS:-${OIDC_CONSOLE_CLIENT_ID:-pystino-console},${OIDC_CHAT_CLIENT_ID:-},${OIDC_MACHINE_CLIENT_ID:-}}
+      # Which of those accepted clients may call POST /v1/session/announce.
+      # Empty (the default here, with no chat bundled) means announce
+      # refuses every token; a startup WARNING says so once an audience is
+      # also set.
+      GATEWAY_OIDC__CHAT_CLIENT_ID: ${OIDC_CHAT_CLIENT_ID:-}
       GATEWAY_BOOTSTRAP_ADMIN_EMAIL: ${PYSTINO_BOOTSTRAP_ADMIN_EMAIL:-}
       # The stack's one mail setting (ADR 0093 §1): quota notices, the
       # console's "send test", and (with the bundled Authelia) its own

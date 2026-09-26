@@ -1,20 +1,20 @@
 """A tiny in-process rate limiter (ADR 0093 §4.1).
 
-Written for one caller: ``POST /v1/session/announce``, 10 per minute per
-``(issuer, subject)``. The codebase's one existing rate-limiting facility is
-the quota engine (``quota/engine.py``), which meters spend against a billing
-group; announce runs before a billing group is even resolved; and it is not
-priced. Building this on the quota engine would mean giving a sign-in call a
-billing identity it does not have, for a ceiling that has nothing to do with
-spend. Nothing else in the tree is a general-purpose request limiter, so
-this is a small one, in process memory, good enough for the ceiling it
-enforces.
+Written for one caller: ``POST /v1/session/announce``, **10 per minute per
+identity per worker process** — not a strict, deployment-wide ceiling, and
+deliberately so. Announce already needs a valid, signature-checked chat-client
+token to reach this point; the limiter damps a looping or buggy client, it is
+not a security boundary, so a shared store precise enough to make the ceiling
+exact (the gateway image runs two workers by default, ``Dockerfile``, so the
+same identity's real ceiling is up to 2x this) is not worth its cost here.
 
-Not shared across workers: the gateway image runs two by default
-(``Dockerfile``), so the effective ceiling for a given identity is up to
-2x what is configured here. Worth knowing, not worth a shared store — a
-per-identity ceiling this generous is about catching a runaway client, not
-bounding capacity precisely.
+The codebase's one existing rate-limiting facility is the quota engine
+(``quota/engine.py``), which meters spend against a billing group; announce
+runs before a billing group is even resolved, and is not priced. Building
+this on the quota engine would mean giving a sign-in call a billing identity
+it does not have, for a ceiling that has nothing to do with spend. Nothing
+else in the tree is a general-purpose request limiter, so this is a small
+one, in process memory, good enough for what it is damping.
 """
 
 from __future__ import annotations
