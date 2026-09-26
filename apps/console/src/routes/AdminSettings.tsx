@@ -310,7 +310,9 @@ function ProviderRow({
           </Badge>
           <Badge tone="neutral">{provider.kind}</Badge>
           {provider.admin_source === "claim" && <Badge tone="warn">admin from IdP</Badge>}
-          {provider.link_by_email && <Badge tone="danger">adopts local accounts by email</Badge>}
+          {provider.link_by_email && (
+            <Badge tone="danger">links new sign-ins to existing accounts by verified email</Badge>
+          )}
           {provider.sync_adapter !== "none" && (
             <Badge tone={provider.sync_confirmed || provider.sync_adapter === "scim" ? "ok" : "warn"}>
               sync: {provider.sync_adapter}
