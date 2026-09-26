@@ -29,6 +29,7 @@ from gateway.models import (
     User,
 )
 from gateway.types import utcnow
+from pydantic import SecretStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -808,6 +809,7 @@ class TestLastAdminGuard:
         # unreachable is enough to prove the gateway side of a delete works,
         # which is this test's own point.
         app.state.settings.chat.erasure_url = "http://127.0.0.1:1/internal/erasure"
+        app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
         response = await client.delete(f"/api/admin/users/{victim_id}")
         assert response.status_code == 200
 

@@ -25,6 +25,7 @@ from gateway.oidc_policy import (
     environment_policy,
 )
 from gateway.security import generate_api_key
+from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import make_admin
@@ -252,6 +253,7 @@ async def admin_session(
     # one -- the inline post-commit call failing and queuing for retry is
     # not this test file's concern, only that delete itself is not refused.
     app.state.settings.chat.erasure_url = "http://127.0.0.1:1/internal/erasure"
+    app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
     yield session_cookie(admin.id, app)
 
 

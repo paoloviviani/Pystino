@@ -17,6 +17,7 @@ import yaml
 from fastapi import FastAPI
 from gateway.models import DirectoryEntry, IdentityProvider, User
 from gateway.secrets import SecretBox
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
 
@@ -84,6 +85,7 @@ class TestDeletePreview:
         as_user(app, admin)
         app.state.control_http = _fake_chat(None)
         app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
+        app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
         victim_id = await _victim(session_factory)
 
         response = await client.get(f"/api/admin/users/{victim_id}/delete-preview")
@@ -104,6 +106,7 @@ class TestDeletePreview:
         as_user(app, admin)
         app.state.control_http = _fake_chat({"conversations": 5, "sharedConversations": 2})
         app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
+        app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
         victim_id = await _victim(session_factory)
 
         response = await client.get(f"/api/admin/users/{victim_id}/delete-preview")
@@ -144,6 +147,7 @@ class TestDeleteRefusals:
         as_user(app, admin)
         app.state.control_http = _fake_chat({"sharedConversations": 1})
         app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
+        app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
         victim_id = await _victim(session_factory)
 
         response = await client.request(
@@ -165,6 +169,7 @@ class TestDeleteRefusals:
         as_user(app, admin)
         app.state.control_http = _fake_chat({"sharedConversations": 1})
         app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
+        app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
         victim_id = await _victim(session_factory)
 
         response = await client.request(
@@ -185,6 +190,7 @@ class TestDeleteSucceeds:
         as_user(app, admin)
         app.state.control_http = _fake_chat({"conversations": 2})
         app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
+        app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
         victim_id = await _victim(session_factory)
 
         response = await client.request(
@@ -207,6 +213,7 @@ class TestDeleteSucceeds:
         admin = await make_admin(session_factory, seeded)
         as_user(app, admin)
         app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
+        app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
         # Reachable for the pre-delete preview call this test does not make,
         # but the inline post-commit attempt below uses this same client and
         # fails every request -- the point of the test.
@@ -262,6 +269,7 @@ class TestBundledLoginRemoval:
         as_user(app, admin)
         app.state.control_http = _fake_chat({"conversations": 0})
         app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
+        app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
 
         async with session_factory() as session:
             victim = User(issuer=BUNDLED_ISSUER, subject="victim-sub", email="victim@example.org")
@@ -303,6 +311,7 @@ class TestBundledLoginRemoval:
         as_user(app, admin)
         app.state.control_http = _fake_chat({"conversations": 0})
         app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
+        app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
 
         async with session_factory() as session:
             victim = User(issuer=BUNDLED_ISSUER, subject="victim-sub", email="victim@example.org")
@@ -326,3 +335,50 @@ class TestBundledLoginRemoval:
 
         data = yaml.safe_load(path.read_text())["users"]
         assert data["victim-login"]["disabled"] is True
+
+
+class TestPendingErasures:
+    async def test_zero_when_nothing_is_queued(
+        self,
+        app: FastAPI,
+        client: Any,
+        seeded: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        admin = await make_admin(session_factory, seeded)
+        as_user(app, admin)
+        response = await client.get("/api/admin/erasures/pending")
+        assert response.status_code == 200, response.text
+        assert response.json() == {"pending": 0}
+
+    async def test_counts_only_pending_not_done(
+        self,
+        app: FastAPI,
+        client: Any,
+        seeded: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        admin = await make_admin(session_factory, seeded)
+        as_user(app, admin)
+        app.state.control_http = _fake_chat({"conversations": 1})
+        app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
+        app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
+
+        # One that will succeed inline (done) and one whose chat call fails
+        # (stays pending), so the count is a real filter, not just a row count.
+        done_victim = await _victim(session_factory)
+        await client.request(
+            "DELETE", f"/api/admin/users/{done_victim}", json={"confirm_shared_loss": False}
+        )
+
+        app.state.control_http = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: httpx.Response(503))
+        )
+        pending_victim = await _victim(session_factory)
+        await client.request(
+            "DELETE", f"/api/admin/users/{pending_victim}", json={"confirm_shared_loss": False}
+        )
+
+        response = await client.get("/api/admin/erasures/pending")
+        assert response.status_code == 200, response.text
+        assert response.json() == {"pending": 1}
