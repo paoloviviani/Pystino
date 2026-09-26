@@ -1326,6 +1326,38 @@ class PasswordResetResponse(BaseModel):
     password: str
 
 
+class MergePreviewResponse(BaseModel):
+    """``GET /admin/users/{source}/merge-preview?into=`` (ADR 0093 §7.1): the
+    dry run the console shows before an operator can even reach the typed
+    confirmation."""
+
+    source_id: uuid.UUID
+    target_id: uuid.UUID
+    counts: dict[str, int]
+    identities_moving: list[IdentityRef]
+    identities_dropped: list[IdentityRef]
+    resulting_is_admin: bool
+    bundled_logins_disabled: list[str]
+    chat_note: str
+
+
+class MergeRequest(BaseModel):
+    """``POST /admin/users/{source}/merge``. ``confirm`` must equal the
+    source's email, or its id when it has none -- typed by hand, not a
+    checkbox, because this is irreversible."""
+
+    into: uuid.UUID
+    confirm: str
+    reason: str = Field(min_length=1)
+
+
+class MergeResponse(BaseModel):
+    target_id: uuid.UUID
+    counts: dict[str, int]
+    identities_dropped: list[IdentityRef]
+    bundled_logins_disabled: list[str]
+
+
 class OidcMappingRule(BaseModel):
     """One IdP group → local group mapping (ADR 0048)."""
 

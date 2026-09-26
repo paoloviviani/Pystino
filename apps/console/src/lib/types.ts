@@ -222,6 +222,38 @@ export interface BundledUserCreated extends AdminUser {
   password: string;
 }
 
+/** One `(issuer, subject)` (ADR 0093). */
+export interface IdentityRef {
+  issuer: string;
+  subject: string;
+}
+
+/** `GET /admin/users/{source}/merge-preview?into=` (ADR 0093 §7.1). */
+export interface MergePreview {
+  source_id: string;
+  target_id: string;
+  counts: Record<string, number>;
+  identities_moving: IdentityRef[];
+  identities_dropped: IdentityRef[];
+  resulting_is_admin: boolean;
+  bundled_logins_disabled: string[];
+  chat_note: string;
+}
+
+/** `POST /admin/users/{source}/merge` (ADR 0093 §7.1). */
+export interface MergeInput {
+  into: string;
+  confirm: string;
+  reason: string;
+}
+
+export interface MergeResult {
+  target_id: string;
+  counts: Record<string, number>;
+  identities_dropped: IdentityRef[];
+  bundled_logins_disabled: string[];
+}
+
 /** The audit trail `record_event` writes to (ADR 0093 §3.1). */
 export interface IdentityEvent {
   id: string;

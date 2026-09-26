@@ -73,6 +73,13 @@ from gateway.identity_registry import (
     list_providers as list_provider_records,
 )
 from gateway.mail import MailDeliveryError, send_mail_async
+from gateway.merge import (
+    MergeNotFound,
+    MergeRefused,
+    compute_merge_preview,
+    disable_dropped_bundled_login,
+    merge_users,
+)
 from gateway.models import (
     ApiKey,
     BillingMode,
@@ -161,10 +168,14 @@ from gateway.schemas import (
     GroupSearchBackendRequest,
     GroupUsageRow,
     IdentityProviderResponse,
+    IdentityRef,
     LimitRuleCreateRequest,
     LimitRuleResetRequest,
     LimitRuleResponse,
     LimitRuleUpdateRequest,
+    MergePreviewResponse,
+    MergeRequest,
+    MergeResponse,
     ModelAdminResponse,
     ModelCreateRequest,
     ModelImportRequest,
@@ -2934,6 +2945,106 @@ async def update_user(
             }
         )
     return response
+
+
+def _confirm_matches(user: User, confirm: str) -> bool:
+    """§7.1: "confirm must equal the source's email, or its id when it has
+    none." Compared exactly, not casefolded -- an operator copies this from
+    the preview they are looking at, so there is no directory-address
+    normalisation question here the way there is for an automatic match."""
+    expected = user.email or str(user.id)
+    return confirm == expected
+
+
+@router.get("/users/{user_id}/merge-preview", response_model=MergePreviewResponse)
+async def merge_preview(
+    user_id: uuid.UUID, into: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> MergePreviewResponse:
+    try:
+        preview = await compute_merge_preview(
+            session, source_id=user_id, target_id=into, actor_id=admin.id
+        )
+    except MergeNotFound as exc:
+        raise NotFoundError(str(exc)) from exc
+    except MergeRefused as exc:
+        raise BadRequestError(str(exc)) from exc
+    return MergePreviewResponse(
+        source_id=preview.source_id,
+        target_id=preview.target_id,
+        counts=preview.counts,
+        identities_moving=[
+            IdentityRef(issuer=i.issuer, subject=i.subject) for i in preview.identities_moving
+        ],
+        identities_dropped=[
+            IdentityRef(issuer=i.issuer, subject=i.subject) for i in preview.identities_dropped
+        ],
+        resulting_is_admin=preview.resulting_is_admin,
+        bundled_logins_disabled=preview.bundled_logins_disabled,
+        chat_note=preview.chat_note,
+    )
+
+
+@router.post("/users/{user_id}/merge", response_model=MergeResponse)
+async def merge_user(
+    user_id: uuid.UUID,
+    body: MergeRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+) -> MergeResponse:
+    """Irreversible (ADR 0093 §7.1): moves every table `gateway.merge`
+    knows about onto `body.into`, deletes `user_id`, and stamps the target's
+    `merged_at`/`sessions_valid_after` so both people's console sessions end
+    cleanly. The typed confirmation is checked against the source *before*
+    the transaction starts, on the same row the preview read, so a stale
+    preview (the source's email changed since) fails here rather than
+    confirming the wrong person.
+    """
+    source = await session.get(User, user_id)
+    if source is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+    if not _confirm_matches(source, body.confirm):
+        raise BadRequestError(
+            "Type the source account's email (or its id, if it has none) to confirm."
+        )
+
+    try:
+        summary = await merge_users(
+            session,
+            source_id=user_id,
+            target_id=body.into,
+            actor_id=admin.id,
+            actor_label=admin.email or "",
+            reason=body.reason,
+        )
+    except MergeNotFound as exc:
+        await session.rollback()
+        raise NotFoundError(str(exc)) from exc
+    except MergeRefused as exc:
+        await session.rollback()
+        raise BadRequestError(str(exc)) from exc
+    await session.commit()
+
+    if summary.login_to_disable is not None:
+        provider_id, external_id = summary.login_to_disable
+        await disable_dropped_bundled_login(
+            session,
+            secrets,
+            provider_id=provider_id,
+            external_id=external_id,
+            target_id=summary.target_id,
+            actor_id=admin.id,
+            actor_label=admin.email or "",
+        )
+
+    return MergeResponse(
+        target_id=summary.target_id,
+        counts=summary.counts,
+        identities_dropped=[
+            IdentityRef(issuer=i.issuer, subject=i.subject) for i in summary.identities_dropped
+        ],
+        bundled_logins_disabled=summary.bundled_logins_disabled,
+    )
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

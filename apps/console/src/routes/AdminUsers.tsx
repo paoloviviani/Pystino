@@ -17,6 +17,8 @@ import {
   useDeleteUser,
   useIdentityEvents,
   useIdentityProviders,
+  useMergePreview,
+  useMergeUser,
   useResetBundledPassword,
   useUpdateUser,
   useUsers,
@@ -84,6 +86,7 @@ export function AdminUsers() {
   const [resetting, setResetting] = useState<AdminUser | null>(null);
   const [togglingActive, setTogglingActive] = useState<AdminUser | null>(null);
   const [viewingActivity, setViewingActivity] = useState<AdminUser | null>(null);
+  const [merging, setMerging] = useState<AdminUser | null>(null);
 
   const page = users.data;
   const rows = page?.items ?? [];
@@ -192,6 +195,9 @@ export function AdminUsers() {
           <Button variant="ghost" onClick={() => setTogglingActive(user)}>
             {user.is_active ? "Disable" : "Enable"}
           </Button>
+          <Button variant="ghost" onClick={() => setMerging(user)}>
+            Merge into…
+          </Button>
           {/* Thin red text, never filled: the same row-level delete as every
               other screen — filled red belongs to the confirm dialog, not to
               a control that sits beside Edit all day. */}
@@ -296,6 +302,8 @@ export function AdminUsers() {
 
       <ActivityDialog user={viewingActivity} onClose={() => setViewingActivity(null)} />
 
+      <MergeUserDialog user={merging} onClose={() => setMerging(null)} />
+
     </div>
   );
 }
@@ -345,6 +353,169 @@ function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: 
         Past usage stays in the ledger, attributed to their groups as it was
         billed — only the name on the per-user breakdown goes.
       </p>
+    </Dialog>
+  );
+}
+
+/**
+ * Merge one account into another (ADR 0093 §7.1). Irreversible, so the
+ * shape follows the design's own: a target picker, then the preview (once
+ * both ids are known), then a typed confirmation of the *source's* address
+ * (or its id, if it has none) rather than a checkbox, plus a reason.
+ */
+function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
+  const [targetQuery, setTargetQuery] = useState("");
+  const [targetId, setTargetId] = useState<string | undefined>(undefined);
+  const [confirm, setConfirm] = useState("");
+  const [reason, setReason] = useState("");
+  const toast = useOptionalToast();
+
+  const candidates = useUsers({ q: targetQuery, limit: 5 }, targetQuery.trim().length > 1);
+  const preview = useMergePreview(user?.id, targetId);
+  const merge = useMergeUser();
+
+  const reset = () => {
+    setTargetQuery("");
+    setTargetId(undefined);
+    setConfirm("");
+    setReason("");
+  };
+
+  const expectedConfirm = user?.email || user?.id || "";
+  const target = candidates.data?.items.find((candidate) => candidate.id === targetId);
+
+  return (
+    <Dialog
+      open={user !== null}
+      title={`Merge ${user?.display_name || user?.email || "this account"} into…`}
+      onClose={() => {
+        reset();
+        onClose();
+      }}
+      footer={
+        <>
+          <Button
+            onClick={() => {
+              reset();
+              onClose();
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={!user || !targetId || confirm !== expectedConfirm || !reason.trim()}
+            busy={merge.isPending}
+            onClick={() =>
+              user &&
+              targetId &&
+              merge.mutate(
+                { sourceId: user.id, into: targetId, confirm, reason },
+                {
+                  onSuccess: () => {
+                    toast?.add({ title: "Accounts merged", type: "success" });
+                    reset();
+                    onClose();
+                  },
+                  onError: (error) =>
+                    toast?.add({
+                      title: "Could not merge",
+                      description: error instanceof Error ? error.message : "Unknown error.",
+                      type: "error",
+                    }),
+                }
+              )
+            }
+          >
+            Merge, irreversibly
+          </Button>
+        </>
+      }
+    >
+      <p>
+        Moves every membership, key, ledger row and identity of{" "}
+        <strong>{user?.email || user?.display_name || "this account"}</strong> onto the target,
+        then deletes it. There is no undo but restoring a backup taken beforehand (the
+        README's volume tar) — take one now if you have not today.
+      </p>
+
+      {!targetId ? (
+        <div className={FORM}>
+          <Input
+            label="Merge into…"
+            value={targetQuery}
+            onChange={(event) => setTargetQuery(event.target.value)}
+            placeholder="Search by email, name or username"
+            autoFocus
+          />
+          {candidates.data && targetQuery.trim().length > 1 ? (
+            <div className="flex flex-col gap-1">
+              {candidates.data.items
+                .filter((candidate) => candidate.id !== user?.id)
+                .map((candidate) => (
+                  <Button
+                    key={candidate.id}
+                    variant="secondary"
+                    onClick={() => setTargetId(candidate.id)}
+                  >
+                    {candidate.display_name || candidate.email || candidate.subject}
+                    {candidate.email ? ` — ${candidate.email}` : ""}
+                  </Button>
+                ))}
+              {candidates.data.items.length === 0 && (
+                <p className="text-sm text-ink-muted">No match.</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : preview.isPending ? (
+        <Spinner label="Loading preview" />
+      ) : preview.error ? (
+        <Notice tone="danger" title="Could not preview this merge">
+          {preview.error instanceof Error ? preview.error.message : "Unknown error."}
+        </Notice>
+      ) : preview.data ? (
+        <div className={FORM}>
+          <p className="text-sm text-ink-muted">
+            Into {target?.display_name || target?.email || preview.data.target_id}
+          </p>
+          <ul className={CHECK_ITEM}>
+            {Object.entries(preview.data.counts)
+              .filter(([, count]) => count > 0)
+              .map(([table, count]) => (
+                <li key={table}>
+                  {count} {table.replace(/_/g, " ")}
+                </li>
+              ))}
+          </ul>
+          {preview.data.identities_dropped.length > 0 && (
+            <Notice tone="warn" title="These identities are dropped, not moved">
+              The target already has an identity at the same issuer:{" "}
+              {preview.data.identities_dropped.map((i) => i.issuer).join(", ")}.
+            </Notice>
+          )}
+          {preview.data.bundled_logins_disabled.length > 0 && (
+            <p className="text-sm text-ink-muted">
+              Bundled login{preview.data.bundled_logins_disabled.length > 1 ? "s" : ""} disabled:{" "}
+              {preview.data.bundled_logins_disabled.join(", ")}
+            </p>
+          )}
+          <p className="text-sm text-ink-muted">
+            Resulting administrator flag: {preview.data.resulting_is_admin ? "yes" : "no"}. {preview.data.chat_note}.
+          </p>
+          <Input
+            label={`Type "${expectedConfirm}" to confirm`}
+            value={confirm}
+            onChange={(event) => setConfirm(event.target.value)}
+          />
+          <Input
+            label="Reason"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Why these are the same person"
+          />
+        </div>
+      ) : null}
     </Dialog>
   );
 }

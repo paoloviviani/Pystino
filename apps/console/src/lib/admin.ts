@@ -12,6 +12,9 @@ import type {
   CatalogueTags,
   IdentityEvent,
   LimitRule,
+  MergeInput,
+  MergePreview,
+  MergeResult,
   ModelImportResponse,
   OidcPolicy,
   OidcPolicyInput,
@@ -915,6 +918,29 @@ export function useDeleteUser() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => request<void>(`/api/admin/users/${id}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
+
+/** `GET /admin/users/{source}/merge-preview?into=` (ADR 0093 §7.1). Only
+ * fetched once both accounts are chosen -- there is nothing to preview
+ * before then, and the endpoint itself would 404/400 on a half-made pair. */
+export function useMergePreview(sourceId: string | undefined, targetId: string | undefined) {
+  return useQuery({
+    queryKey: [...adminKeys.users, "merge-preview", sourceId, targetId],
+    queryFn: () =>
+      request<MergePreview>(
+        `/api/admin/users/${sourceId}/merge-preview?into=${encodeURIComponent(targetId ?? "")}`
+      ),
+    enabled: Boolean(sourceId && targetId),
+  });
+}
+
+export function useMergeUser() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sourceId, ...body }: MergeInput & { sourceId: string }) =>
+      request<MergeResult>(`/api/admin/users/${sourceId}/merge`, { method: "POST", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
   });
 }
