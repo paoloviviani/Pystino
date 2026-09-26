@@ -10,6 +10,9 @@ the stack towards `.env` and is safe to repeat:
 - Authelia's signing key and first-user file: created **only if absent**. They
   are state (the key signs every token, the users file is the directory), and
   nothing here ever overwrites state.
+- Authelia's SMTP notifier password (§8.5): not state, a credential — written
+  every run so a rotated `SMTP_PASSWORD` actually rotates it, the same
+  reasoning as the Postgres role's password above.
 
 Exit status is the contract: non-zero stops every service that depends on it,
 so a bad `.env` fails the stack closed instead of half-starting it.
@@ -48,6 +51,7 @@ class BootstrapEnv:
     authelia_admin_email: str
     authelia_admin_name: str
     authelia_admin_password_digest: str
+    smtp_password: str
 
     @classmethod
     def from_environ(cls, environ: dict[str, str] | None = None) -> BootstrapEnv:
@@ -66,6 +70,7 @@ class BootstrapEnv:
             authelia_admin_email=env.get("AUTHELIA_ADMIN_EMAIL", ""),
             authelia_admin_name=env.get("AUTHELIA_ADMIN_NAME", ""),
             authelia_admin_password_digest=env.get("AUTHELIA_ADMIN_PASSWORD_DIGEST", ""),
+            smtp_password=env.get("SMTP_PASSWORD", ""),
         )
 
     def problems(self) -> list[str]:
@@ -211,6 +216,35 @@ def ensure_authelia_state(env: BootstrapEnv, directory: Path = AUTHELIA_DIR) -> 
     return done
 
 
+def ensure_smtp_password_file(env: BootstrapEnv, directory: Path = AUTHELIA_DIR) -> str | None:
+    """The SMTP password Authelia's notifier reads through its own
+    ``AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE`` secret convention (§8.5) —
+    written here, never interpolated into ``configuration.yml``.
+
+    Unlike the signing key and the users file, this is a credential, not
+    identity-bearing state: rewritten every run so rotating ``SMTP_PASSWORD``
+    in ``.env`` and redeploying actually rotates it, rather than the first
+    value silently sticking forever. An empty ``SMTP_PASSWORD`` (SMTP off,
+    or never configured) leaves whatever is there alone — nothing reads an
+    unused file, and there is nothing safe to infer about deleting it from
+    the environment simply lacking a value this run.
+    """
+    if not env.smtp_password:
+        return None
+    path = directory / "keys" / "smtp_password"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        handle.write(env.smtp_password)
+        handle.flush()
+        os.fsync(handle.fileno())
+    # `O_CREAT`'s mode is filtered by umask; a pre-existing file could also
+    # already carry different permissions from an older bootstrap. Setting it
+    # explicitly is what actually guarantees 0600 either way.
+    os.chmod(path, 0o600)
+    return "SMTP password file written"
+
+
 AUTHELIA_DATA_DIR = Path(os.environ.get("PYSTINO_AUTHELIA_DATA_DIR", "/authelia-data"))
 #: The gateway's uid/gid in its image, which Authelia also runs as (compose PUID).
 SHARED_UID = 1001
@@ -250,6 +284,8 @@ def run(environ: dict[str, str] | None = None, authelia_dir: Path = AUTHELIA_DIR
         if "authelia" in env.profiles:
             for line in ensure_authelia_state(env, authelia_dir):
                 print(f"bootstrap: authelia {line}")
+            if (smtp_line := ensure_smtp_password_file(env, authelia_dir)) is not None:
+                print(f"bootstrap: authelia {smtp_line}")
             for line in share_authelia_volumes(authelia_dir, AUTHELIA_DATA_DIR):
                 print(f"bootstrap: {line}")
     except Exception as exc:  # the exit code is the contract; say why first

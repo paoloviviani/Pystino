@@ -87,3 +87,33 @@ def test_an_unrecognised_digest_scheme_is_refused() -> None:
     env = {**ENV, "AUTHELIA_ADMIN_PASSWORD_DIGEST": "$scrypt$plain-text-looking-thing"}
     problems = bootstrap.BootstrapEnv.from_environ(env).problems()
     assert any("pbkdf2" in p for p in problems)
+
+
+def test_smtp_password_file_written_at_0600_when_set(tmp_path: Path) -> None:
+    assert bootstrap.run({**ENV, "SMTP_PASSWORD": "s3cret"}, tmp_path) == 0
+    path = tmp_path / "keys" / "smtp_password"
+    assert path.read_text() == "s3cret"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_no_smtp_password_file_when_smtp_password_is_empty(tmp_path: Path) -> None:
+    assert bootstrap.run(ENV, tmp_path) == 0
+    assert not (tmp_path / "keys" / "smtp_password").exists()
+
+
+def test_smtp_password_file_rotates_unlike_the_signing_key(tmp_path: Path) -> None:
+    """Unlike the signing key and the users file, this is a credential, not
+    identity-bearing state: a `.env` edit and a redeploy must actually change
+    what Authelia reads, not silently keep whatever bootstrap wrote first."""
+    bootstrap.run({**ENV, "SMTP_PASSWORD": "first"}, tmp_path)
+    bootstrap.run({**ENV, "SMTP_PASSWORD": "second"}, tmp_path)
+    assert (tmp_path / "keys" / "smtp_password").read_text() == "second"
+
+
+def test_smtp_password_file_is_left_alone_once_smtp_is_turned_off(tmp_path: Path) -> None:
+    """An empty `SMTP_PASSWORD` this run says nothing about whether SMTP was
+    ever configured — leaving the file is the only safe default, since
+    nothing reads it once `AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE` is unset."""
+    bootstrap.run({**ENV, "SMTP_PASSWORD": "first"}, tmp_path)
+    bootstrap.run(ENV, tmp_path)
+    assert (tmp_path / "keys" / "smtp_password").read_text() == "first"
