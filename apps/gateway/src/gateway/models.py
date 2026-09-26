@@ -411,13 +411,29 @@ class User(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
-    # Who set `is_admin` (ADR 0088): "manual" (console, CLI, bootstrap) or
-    # "oidc" (a provider whose admin_source is a claim). A directory may only
-    # revoke what it granted — the same provenance rule memberships follow.
+    # Who set `is_admin` (ADR 0088, provenance widened by ADR 0093 §5): "manual"
+    # (console, CLI, bootstrap) or "env" (an env admin rule — `OIDC_ADMIN_EMAIL`
+    # or `OIDC_ADMIN_CLAIM`/`_VALUES`; the old value was "oidc", migrated by
+    # 0050). A rule may only revoke what a rule granted — the same provenance
+    # memberships follow.
     admin_source: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
+    # Which env rule granted it — "email" or "claim" — so a revocation sweep
+    # scoped to one rule (§5.1: the email list) never touches what the other
+    # granted. Null unless `admin_source == "env"`.
+    admin_rule: Mapped[str | None] = mapped_column(String(8), default=None)
     # Who deactivated the account: "manual" or "directory" (a sync saw the
     # person gone). A directory may only reactivate what it deactivated.
     deactivated_by: Mapped[str | None] = mapped_column(String(16), default=None)
+
+    # The last sign-in's address, normalised (ADR 0093 §6.1), and whether that
+    # sign-in's provider asserted it verified — stored only when the claim was
+    # the literal `True`, otherwise `False` or `None`. Written wherever `email`
+    # is written. Not unique: two people can share an address across issuers,
+    # and a link decision refuses rather than guesses when that happens
+    # (stage c). `OIDC_ADMIN_EMAIL` reads both columns; the startup sweep
+    # (§5.1) can revoke what a fresh login is not there to re-evaluate.
+    email_normalized: Mapped[str | None] = mapped_column(String(320), index=True, default=None)
+    email_verified: Mapped[bool | None] = mapped_column(Boolean, default=None)
 
     # The user's own choice of which group to bill by default. Users change this
     # themselves; the gateway validates that they are still a member of it at

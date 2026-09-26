@@ -20,6 +20,7 @@ from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.fx import FXService
 from gateway.identity_registry import OIDCProviderRegistry, reseed_from_env
 from gateway.logging_config import configure_logging
+from gateway.oidc import sweep_env_admin_email_rule
 from gateway.oidc_policy import OIDCPolicyResolver
 from gateway.providers import ProviderRegistry
 from gateway.quota import (
@@ -246,6 +247,17 @@ async def init_app_state(
         if settings.environment == "production":
             raise
         logger.error("could not re-seed identity providers at startup", exc_info=True)
+
+    try:
+        async with session_factory() as session:
+            await sweep_env_admin_email_rule(session, settings.oidc)
+    except Exception:
+        # Same posture as the re-seed just above, and for the same reason: an
+        # email dropped from OIDC_ADMIN_EMAIL that silently keeps its admin
+        # is the quiet failure ADR 0093 §5.1 closes.
+        if settings.environment == "production":
+            raise
+        logger.error("could not sweep the env admin email rule at startup", exc_info=True)
 
     # An empty counter cache is not a failed read — it answers confidently with
     # zero, which would hand every group a fresh budget after Valkey is wiped.

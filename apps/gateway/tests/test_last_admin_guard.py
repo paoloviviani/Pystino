@@ -58,7 +58,7 @@ class TestOtherActiveAdminExists:
 
 class TestApplyAdminAnswerGuard:
     async def test_revoke_is_kept_when_it_would_leave_no_admin(self, session: AsyncSession) -> None:
-        lone = _user(is_admin=True, admin_source="oidc", subject="lone")
+        lone = _user(is_admin=True, admin_source="env", subject="lone")
         session.add(lone)
         await session.flush()
         outcome = await apply_admin_answer(session, lone, False)
@@ -66,7 +66,7 @@ class TestApplyAdminAnswerGuard:
         assert lone.is_admin
 
     async def test_revoke_proceeds_with_another_admin(self, session: AsyncSession) -> None:
-        lone = _user(is_admin=True, admin_source="oidc", subject="lone")
+        lone = _user(is_admin=True, admin_source="env", subject="lone")
         other = _user(is_admin=True, subject="other", email="b@example.org")
         session.add_all([lone, other])
         await session.flush()

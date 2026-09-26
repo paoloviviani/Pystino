@@ -272,7 +272,7 @@ class TestEngine:
             full=False,
         )
         await session.refresh(alice)
-        assert alice.is_admin and alice.admin_source == "oidc"
+        assert alice.is_admin and alice.admin_source == "env"
         await apply_entries(
             session,
             record,

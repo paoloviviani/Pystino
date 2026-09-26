@@ -370,7 +370,6 @@ async def callback(
             group_sync=record.group_sync,
             # Where it comes from, and whether it decides admin (ADR 0088).
             group_source=record.group_source,
-            admin_rule=record.admin_rule(),
             claims=merged,
             group_mappings=record.mappings_dict(),
         )

@@ -19,7 +19,7 @@ async def test_grant_is_manual_and_reactivates(session: AsyncSession) -> None:
         email="Ops@Example.org",
         is_active=False,
         deactivated_by="directory",
-        admin_source="oidc",
+        admin_source="env",
     )
     session.add(user)
     await session.commit()

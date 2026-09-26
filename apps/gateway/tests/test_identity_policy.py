@@ -59,7 +59,14 @@ class TestAdminRule:
         assert nested.matches({"realm_access": {"roles": ["admin", "user"]}})
 
 
-async def _login(session: AsyncSession, subject: str, groups: list[str], **policy: object) -> User:
+async def _login(
+    session: AsyncSession,
+    subject: str,
+    groups: list[str],
+    *,
+    settings: OIDCSettings | None = None,
+    **policy: object,
+) -> User:
     claims = {"iss": ISS, "sub": subject, "groups": groups}
     user = await provision_user(
         session,
@@ -68,7 +75,7 @@ async def _login(session: AsyncSession, subject: str, groups: list[str], **polic
         email=f"{subject}@example.org",
         display_name=None,
         group_names=groups,
-        settings=OIDCSettings(),
+        settings=settings or OIDCSettings(),
         claims=claims,
         **policy,  # type: ignore[arg-type]
     )
@@ -76,54 +83,82 @@ async def _login(session: AsyncSession, subject: str, groups: list[str], **polic
     return user
 
 
-RULE = AdminRule(claim="groups", values=frozenset({"ops"}))
+def _rule_settings() -> OIDCSettings:
+    """ADR 0093 §5.2: the env claim rule, fed to `apply_env_admin_rules`
+    through `OIDCSettings` rather than a row's `AdminRule` — the row-based
+    shape this module's `TestAdminRule` still tests is `directory/engine.py`'s
+    own batch sync, a different call site untouched by this stage."""
+    return OIDCSettings(admin_claim="groups", admin_claim_values="ops")
 
 
 class TestAdminFromClaim:
-    async def test_grant_is_recorded_as_the_directorys(self, session: AsyncSession) -> None:
-        user = await _login(session, "a", ["ops"], admin_rule=RULE)
-        assert user.is_admin and user.admin_source == "oidc"
+    async def test_grant_is_recorded_as_env(self, session: AsyncSession) -> None:
+        user = await _login(session, "a", ["ops"], settings=_rule_settings())
+        assert user.is_admin and user.admin_source == "env" and user.admin_rule == "claim"
 
-    async def test_the_directory_revokes_only_what_it_granted(self, session: AsyncSession) -> None:
+    async def test_the_rule_revokes_only_what_it_granted(self, session: AsyncSession) -> None:
         keeper = await _login(session, "keeper", [])
         keeper.is_admin, keeper.admin_source = True, "manual"
-        granted = await _login(session, "a", ["ops"], admin_rule=RULE)
+        granted = await _login(session, "a", ["ops"], settings=_rule_settings())
         assert granted.is_admin
-        again = await _login(session, "a", ["users"], admin_rule=RULE)
+        again = await _login(session, "a", ["users"], settings=_rule_settings())
         assert not again.is_admin
-        # A console-made admin is never demoted by the directory.
-        manual = await _login(session, "keeper", ["users"], admin_rule=RULE)
+        # A console-made admin is never demoted by an env rule.
+        manual = await _login(session, "keeper", ["users"], settings=_rule_settings())
         assert manual.is_admin
 
     async def test_the_last_active_admin_is_kept(self, session: AsyncSession) -> None:
-        only = await _login(session, "only", ["ops"], admin_rule=RULE)
+        only = await _login(session, "only", ["ops"], settings=_rule_settings())
         assert only.is_admin
-        still = await _login(session, "only", [], admin_rule=RULE)
+        still = await _login(session, "only", [], settings=_rule_settings())
         assert still.is_admin, "revoking would have left no administrator"
 
-    async def test_admin_follows_the_refresh_policy(self, session: AsyncSession) -> None:
+    async def test_a_door_login_always_re_evaluates_the_rule(self, session: AsyncSession) -> None:
+        """ADR 0093 §5.2: "evaluated at both doors" is unconditional — unlike
+        the bearer path below, a door re-checks the rule even under
+        group_sync=first_login, because a door runs the full sign-in sequence
+        every time rather than the hot-path shortcut `/v1` uses."""
         from gateway.models import GroupSync
 
+        keeper = await _login(session, "keeper", [])
+        keeper.is_admin = True
         user = await _login(
-            session, "b", ["ops"], admin_rule=RULE, group_sync=GroupSync.FIRST_LOGIN
+            session, "b", ["ops"], settings=_rule_settings(), group_sync=GroupSync.FIRST_LOGIN
         )
         assert user.is_admin
-        keeper = await _login(session, "k", [])
-        keeper.is_admin = True
-        later = await _login(session, "b", [], admin_rule=RULE, group_sync=GroupSync.FIRST_LOGIN)
-        assert later.is_admin, "first_login: the directory answered once"
+        later = await _login(
+            session, "b", [], settings=_rule_settings(), group_sync=GroupSync.FIRST_LOGIN
+        )
+        assert not later.is_admin, "a door re-evaluates the rule every time"
+
+    async def test_the_bearer_path_respects_group_sync(self, session: AsyncSession) -> None:
+        """Unlike a door, `/v1` only reconciles the claim rule when
+        group_sync=every_login (ADR 0093 §5.2) — the hot-path-avoidance
+        `_admin_diverges` already had."""
+        from gateway.models import GroupSync
+
+        granted = await _login(
+            session, "b2", ["ops"], settings=_rule_settings(), group_sync=GroupSync.FIRST_LOGIN
+        )
+        assert granted.is_admin
+        user = await sync_user_from_claims(
+            session,
+            claims={"iss": ISS, "sub": "b2", "groups": []},
+            settings=_rule_settings(),
+            group_sync=GroupSync.FIRST_LOGIN,
+        )
+        assert user.is_admin, "first_login: the bearer path does not re-check"
 
     async def test_the_bearer_path_reconciles_a_changed_admin_answer(
         self, session: AsyncSession
     ) -> None:
         keeper = await _login(session, "keeper", [])
         keeper.is_admin = True
-        await _login(session, "c", ["ops"], admin_rule=RULE)
+        await _login(session, "c", ["ops"], settings=_rule_settings())
         user = await sync_user_from_claims(
             session,
             claims={"iss": ISS, "sub": "c", "groups": []},
-            settings=OIDCSettings(),
-            admin_rule=RULE,
+            settings=_rule_settings(),
         )
         assert not user.is_admin
 
@@ -210,7 +245,7 @@ class TestTheApi:
     ) -> None:
         as_user(app, await make_admin(session_factory, seeded))
         async with session_factory() as session:
-            person = User(issuer=ISS, subject="p", is_admin=True, admin_source="oidc")
+            person = User(issuer=ISS, subject="p", is_admin=True, admin_source="env")
             session.add(person)
             await session.commit()
             pid = person.id

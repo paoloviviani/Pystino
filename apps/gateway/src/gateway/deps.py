@@ -396,7 +396,6 @@ async def _bearer_principal(request: Request, session: AsyncSession, token: str)
             # provider the operator set to leave groups alone.
             group_sync=provider.group_sync if provider is not None else GroupSync.EVERY_LOGIN,
             group_source=provider.group_source if provider is not None else "claim",
-            admin_rule=provider.admin_rule() if provider is not None else None,
             group_mappings=provider.mappings_dict() if provider is not None else None,
         )
     except OIDCError as exc:

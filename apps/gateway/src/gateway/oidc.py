@@ -36,7 +36,7 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 from joserfc import jwt
@@ -49,19 +49,20 @@ from sqlalchemy.orm import selectinload
 
 from gateway.config import OIDCSettings
 from gateway.deployment_state import get_or_create_deployment_state, mark_bootstrap_consumed
+from gateway.email_normalize import is_trusted_email, normalize_email
+from gateway.identity_events import record_event
 from gateway.models import (
     Group,
     GroupSource,
     GroupSync,
+    IdentityEventAction,
+    IdentityEventActor,
     Membership,
     MembershipSource,
     User,
     UserIdentity,
 )
 from gateway.oidc_policy import OIDCPolicy
-
-if TYPE_CHECKING:
-    from gateway.identity_policy import AdminRule
 from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
@@ -662,7 +663,6 @@ async def provision_user(
     email_verified: bool | None = None,
     group_sync: GroupSync = GroupSync.EVERY_LOGIN,
     group_source: str = "claim",
-    admin_rule: AdminRule | None = None,
     claims: dict[str, Any] | None = None,
     group_mappings: dict[str, str] | None = None,
 ) -> User:
@@ -743,6 +743,7 @@ async def provision_user(
             issuer=issuer,
             subject=subject,
             email=email,
+            email_normalized=normalize_email(email) if email else None,
             display_name=display_name,
             username=username,
         )
@@ -760,10 +761,21 @@ async def provision_user(
         edited = set(user.admin_edited_fields or [])
         if email is not None and "email" not in edited:
             user.email = email
+            user.email_normalized = normalize_email(email)
         if display_name is not None and "display_name" not in edited:
             user.display_name = display_name
         if username is not None and "username" not in edited:
             user.username = username
+
+    # `email_verified` (ADR 0093 §3.1) tracks the *last sign-in's* claim, not
+    # whatever the email above happens to be — so it is written whenever a
+    # caller has an answer, even one that leaves `email` untouched (an
+    # administrator's edited address that the directory keeps re-asserting
+    # unverified is exactly the case this must still record). Left alone when
+    # a caller has none: a plain `/v1` claim set that omits it must not erase
+    # what the last real login established.
+    if email_verified is not None:
+        user.email_verified = email_verified is True
 
     # A `/v1` call made with an access token is not a login, and recording it as
     # one would make "last seen" mean two different things on the same column.
@@ -783,8 +795,17 @@ async def provision_user(
     if directory_answers and group_source == "claim":
         groups = await _resolve_groups(session, group_names, settings)
         await _reconcile_memberships(session, user, groups)
-    if directory_answers and admin_rule is not None and claims is not None:
-        await apply_admin_answer(session, user, admin_rule.matches(claims, group_mappings))
+    # The env admin rules (ADR 0093 §5): a door (`touch_login`) always
+    # re-evaluates both, full claim set and all; a plain `/v1` bearer call
+    # only reconciles the claim rule, and only when the directory's answer
+    # would apply anyway (`directory_answers`) — the email rule needs
+    # `email_verified`'s literal boolean, which a bearer claim set may not
+    # carry, and re-checking it on every request would put a write on the hot
+    # path for no gain `_admin_diverges` does not already cover.
+    if claims is not None and (touch_login or directory_answers):
+        await apply_env_admin_rules(
+            session, user, claims, settings, group_mappings=group_mappings, email_rule=touch_login
+        )
 
     # Everything below reads the *effective* membership set, not the token's
     # answer. They are no longer the same thing: a manual grant is a real
@@ -845,22 +866,27 @@ async def other_active_admin_exists(session: AsyncSession, *, excluding: uuid.UU
 
 
 async def apply_admin_answer(session: AsyncSession, user: User, is_admin: bool) -> str:
-    """Apply a directory's answer about the admin flag, within provenance.
+    """Apply a directory sync's answer about the admin flag, within provenance.
 
-    Grants are recorded as ``admin_source="oidc"``. A revocation only touches
-    a flag the directory granted — a console-made administrator (``manual``)
-    is never demoted by a login or a sync — and is refused when it would leave
-    no active administrator, which is the one way a directory glitch could
-    lock everyone out of the console. Returns what happened, for sync reports.
+    The batch counterpart to `apply_env_admin_rules` below: this is a pull
+    adapter's mirrored group membership (`directory/engine.py`), read from the
+    directory mirror rather than a fresh claim, but the same provenance rule
+    applies — grants are recorded as ``admin_source="env"`` (ADR 0093 §5;
+    "oidc" before it, migration 0050), ``admin_rule="claim"``, and a
+    revocation only touches a flag a rule granted. Refused when it would
+    leave no active administrator, which is the one way a directory glitch
+    could lock everyone out of the console. Returns what happened, for sync
+    reports.
     """
     if is_admin:
         if user.is_admin:
             return "unchanged"
         user.is_admin = True
-        user.admin_source = "oidc"
+        user.admin_source = "env"
+        user.admin_rule = "claim"
         await mark_bootstrap_consumed(session)
         return "granted"
-    if not user.is_admin or user.admin_source != "oidc":
+    if not user.is_admin or user.admin_source != "env":
         return "unchanged"
     if not await other_active_admin_exists(session, excluding=user.id):
         logger.warning(
@@ -868,7 +894,159 @@ async def apply_admin_answer(session: AsyncSession, user: User, is_admin: bool) 
         )
         return "kept-last-admin"
     user.is_admin = False
+    user.admin_rule = None
     return "revoked"
+
+
+def _matches_email_rule(claims: dict[str, Any], settings: OIDCSettings) -> bool:
+    """ADR 0093 §5.1. The literal boolean, an ASCII address, and list
+    membership — all three, or it does not grant."""
+    allowed = settings.admin_email_list()
+    if not allowed or claims.get("email_verified") is not True:
+        return False
+    email = claims.get("email")
+    if not isinstance(email, str):
+        return False
+    normalized, trusted = is_trusted_email(email)
+    if not trusted:
+        return False
+    return normalized in {normalize_email(candidate) for candidate in allowed}
+
+
+def _matches_claim_rule(
+    claims: dict[str, Any], settings: OIDCSettings, mappings: dict[str, str] | None
+) -> bool:
+    """ADR 0093 §5.2. The existing `AdminRule` shape, fed from `.env`."""
+    values = settings.admin_claim_value_list()
+    if not (settings.admin_claim and values):
+        return False
+    from gateway.identity_policy import AdminRule
+
+    rule = AdminRule(claim=settings.admin_claim, values=frozenset(values))
+    return rule.matches(claims, mappings)
+
+
+async def apply_env_admin_rules(
+    session: AsyncSession,
+    user: User,
+    claims: dict[str, Any],
+    settings: OIDCSettings,
+    *,
+    group_mappings: dict[str, str] | None = None,
+    email_rule: bool = True,
+) -> str:
+    """The ``.env`` admin rules (ADR 0093 §5.1, §5.2), evaluated from claims.
+
+    Never reads the provider row — ``OIDC_ADMIN_EMAIL``, ``OIDC_ADMIN_CLAIM``
+    and ``OIDC_ADMIN_CLAIM_VALUE`` are read from ``settings`` directly, which
+    is what lets stage c's announce door call this unchanged. ``email_rule``
+    is off for a plain ``/v1`` bearer call: its claim set may lack
+    ``email_verified``, and the email rule's whole safety is the *literal*
+    boolean.
+
+    If either rule matches, admin is granted (or kept); "email" wins the
+    ``admin_rule`` label when both do, since it is the more specific of the
+    two. A revocation — refused when it would leave no active administrator,
+    audited as ``admin.refused_last`` — only ever touches
+    ``admin_source == "env"``, and only when *neither* rule matches now
+    (ADR 0093 §5.2): a person granted by one rule is not revoked just because
+    the other one, which never granted them anything, also fails to match.
+    """
+    matched_email = email_rule and _matches_email_rule(claims, settings)
+    matched_claim = _matches_claim_rule(claims, settings, group_mappings)
+
+    if matched_email or matched_claim:
+        rule = "email" if matched_email else "claim"
+        if user.is_admin and user.admin_source == "env" and user.admin_rule == rule:
+            return "unchanged"
+        user.is_admin = True
+        user.admin_source = "env"
+        user.admin_rule = rule
+        await mark_bootstrap_consumed(session)
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.LOGIN,
+            actor_label=user.email or str(user.id),
+            actor_user_id=user.id,
+            action=IdentityEventAction.ADMIN_GRANT,
+            target_user_id=user.id,
+            target_label=user.email or "",
+            detail={"rule": rule},
+        )
+        return "granted"
+
+    if not user.is_admin or user.admin_source != "env":
+        return "unchanged"
+    if not await other_active_admin_exists(session, excluding=user.id):
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.LOGIN,
+            actor_label=user.email or str(user.id),
+            actor_user_id=user.id,
+            action=IdentityEventAction.ADMIN_REFUSED_LAST,
+            target_user_id=user.id,
+            target_label=user.email or "",
+            reason="would leave no active administrator",
+        )
+        return "kept-last-admin"
+    revoked_rule = user.admin_rule
+    user.is_admin = False
+    user.admin_rule = None
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.LOGIN,
+        actor_label=user.email or str(user.id),
+        actor_user_id=user.id,
+        action=IdentityEventAction.ADMIN_REVOKE,
+        target_user_id=user.id,
+        target_label=user.email or "",
+        detail={"rule": revoked_rule} if revoked_rule else {},
+    )
+    return "revoked"
+
+
+async def sweep_env_admin_email_rule(session: AsyncSession, settings: OIDCSettings) -> None:
+    """ADR 0093 §5.1's startup sweep: only ever revokes, and only the email
+    rule's own grants. There is no fresh claim set to re-check the claim rule
+    with at startup — that can only happen at a person's next sign-in
+    (`apply_env_admin_rules`), which this leaves entirely alone.
+    """
+    allowed = {normalize_email(candidate) for candidate in settings.admin_email_list()}
+    candidates = (
+        await session.execute(
+            select(User).where(
+                User.is_admin.is_(True),
+                User.admin_source == "env",
+                User.admin_rule == "email",
+            )
+        )
+    ).scalars()
+    for user in candidates:
+        if user.email_normalized in allowed:
+            continue
+        if not await other_active_admin_exists(session, excluding=user.id):
+            await record_event(
+                session,
+                actor_type=IdentityEventActor.SYSTEM,
+                actor_label="system",
+                action=IdentityEventAction.ADMIN_REFUSED_LAST,
+                target_user_id=user.id,
+                target_label=user.email or "",
+                reason="would leave no active administrator",
+            )
+            continue
+        user.is_admin = False
+        user.admin_rule = None
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.SYSTEM,
+            actor_label="system",
+            action=IdentityEventAction.ADMIN_REVOKE,
+            target_user_id=user.id,
+            target_label=user.email or "",
+            detail={"rule": "email"},
+        )
+    await session.commit()
 
 
 async def promote_bootstrap_admin(
@@ -935,7 +1113,6 @@ async def sync_user_from_claims(
     policy: OIDCPolicy | None = None,
     group_sync: GroupSync = GroupSync.EVERY_LOGIN,
     group_source: str = "claim",
-    admin_rule: AdminRule | None = None,
     group_mappings: dict[str, str] | None = None,
 ) -> User:
     """Resolve an access token's claims to the user row it names.
@@ -1008,7 +1185,7 @@ async def sync_user_from_claims(
             group_source != "claim"
             or not _claims_diverge(user, group_names, settings, policy, group_sync)
         )
-        and not _admin_diverges(user, claims, group_sync, admin_rule, group_mappings)
+        and not _admin_diverges(user, claims, group_sync, settings, group_mappings)
     ):
         return user
 
@@ -1025,7 +1202,6 @@ async def sync_user_from_claims(
         policy=policy,
         group_sync=group_sync,
         group_source=group_source,
-        admin_rule=admin_rule,
         claims=claims,
         group_mappings=group_mappings,
     )
@@ -1035,21 +1211,25 @@ def _admin_diverges(
     user: User,
     claims: dict[str, Any],
     group_sync: GroupSync,
-    admin_rule: AdminRule | None,
+    settings: OIDCSettings,
     mappings: dict[str, str] | None,
 ) -> bool:
     """Would this token change the admin flag? Only asked on every-login sync.
+
+    The claim rule only — never the email rule, whose claim set a bearer
+    token may not carry (ADR 0093 §5.1) — built fresh from ``settings`` each
+    call rather than threaded through as an ``AdminRule``, so this and
+    ``apply_env_admin_rules`` can never disagree about what the rule is.
 
     Cheap — the claims are parsed, the row loaded — and it settles: after one
     provisioning the flag agrees with the token (or provenance forbids the
     change), so the hot path returns early again.
     """
-    if admin_rule is None or group_sync is not GroupSync.EVERY_LOGIN:
+    if group_sync is not GroupSync.EVERY_LOGIN:
         return False
-    wanted = admin_rule.matches(claims, mappings)
-    if wanted:
+    if _matches_claim_rule(claims, settings, mappings):
         return not user.is_admin
-    return user.is_admin and user.admin_source == "oidc"
+    return user.is_admin and user.admin_source == "env" and user.admin_rule == "claim"
 
 
 def _claims_diverge(
