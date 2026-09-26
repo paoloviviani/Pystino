@@ -29,6 +29,7 @@ step the exemption does not cover.
 from __future__ import annotations
 
 from fastapi import APIRouter
+from sqlalchemy import or_
 
 from gateway.access import accessible_model_by_name, accessible_models, all_active_models
 from gateway.deps import OptionalPrincipalDep, PrincipalDep, SessionDep
@@ -65,12 +66,25 @@ async def list_models(
     # expects ride along; `?include=search` is the opt-in for the rest, and
     # the caller's grants still bound whatever is shown.
     kinds: set[ModelKind] | None = None
+    explicit_ocr = False
     if include:
         kinds = {kind for part in include.split(",") if (kind := _KINDS.get(part.strip()))}
         if not kinds:
             raise BadRequestError(
                 f"Unknown kinds in 'include'. Known: {', '.join(sorted(_KINDS))}."
             )
+        # An internal-provider model — this deployment's own extractor — is
+        # plumbing, not a catalogue entry a caller picks (`_NOT_CALLER_FACING`
+        # above), and stays hidden even though `ModelKind.OCR` is one of the
+        # kinds the unqualified default already includes below. It appears
+        # only when `ocr` was named *explicitly* here, which is the opt-in a
+        # caller such as Cerea's Knowledge screen uses to ask "what can read a
+        # document here, including this server's own reader" — never as a side
+        # effect of the default kind set happening to contain OCR. A non-OCR
+        # internal model (none exist today, and the search tiers are a
+        # separate kind entirely) stays hidden regardless: the opt-in is per
+        # kind, not per provider.
+        explicit_ocr = ModelKind.OCR in kinds
     else:
         kinds = set(ModelKind) - {ModelKind.SEARCH}
 
@@ -84,9 +98,10 @@ async def list_models(
         if principal is not None
         else all_active_models()
     )
-    stmt = base.where(
-        ModelDef.kind.in_(kinds), Provider.kind != _NOT_CALLER_FACING
-    ).order_by(ModelDef.name)
+    visible = Provider.kind != _NOT_CALLER_FACING
+    if explicit_ocr:
+        visible = or_(visible, ModelDef.kind == ModelKind.OCR)
+    stmt = base.where(ModelDef.kind.in_(kinds), visible).order_by(ModelDef.name)
     models = (await session.execute(stmt)).scalars().all()
 
     return ModelList(
@@ -103,6 +118,7 @@ async def list_models(
                 input_modalities=list(model.input_modalities or []),
                 output_modalities=list(model.output_modalities or []),
                 supported_features=list(model.supported_features or []),
+                local=model.provider.kind == _NOT_CALLER_FACING,
             )
             for model in models
         ]

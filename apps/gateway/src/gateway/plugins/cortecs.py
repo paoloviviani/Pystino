@@ -36,11 +36,16 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gateway.accounting.cost import TokenCounts
 from gateway.models import ApiSurface
-from gateway.plugins.base import ProviderKind, ReportedCost, ServedBy, bearer_headers
+from gateway.plugins.base import ProbeResult, ProviderKind, ReportedCost, ServedBy, bearer_headers
+
+if TYPE_CHECKING:
+    import httpx
+
+    from gateway.upstream import OpenAICompatibleUpstream
 
 #: Micro-EUR. Derived, then checked four ways against catalogue rates — a
 #: 1152-token prompt at 0.117/Mtok was reported as 135, and 134.78 is what the
@@ -181,3 +186,10 @@ class CortecsRouterPlugin:
         "fixes" to title case one day.
         """
         return "all"
+
+    async def probe(
+        self, upstream: OpenAICompatibleUpstream, client: httpx.AsyncClient
+    ) -> ProbeResult:
+        """``list_models()``, unchanged: Cortecs serves an OpenAI-shaped
+        catalogue at ``/models`` like every direct provider here."""
+        return await upstream.default_probe()

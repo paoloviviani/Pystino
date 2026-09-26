@@ -13,11 +13,17 @@ second change wearing the same commit.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gateway.accounting.cost import TokenCounts
 from gateway.models import ApiSurface
-from gateway.plugins.base import ProviderKind, ReportedCost, ServedBy, bearer_headers
+from gateway.plugins.base import ProbeResult, ProviderKind, ReportedCost, ServedBy, bearer_headers
+from gateway.plugins.search import SearchPlugin, probe_search_backend
+
+if TYPE_CHECKING:
+    import httpx
+
+    from gateway.upstream import OpenAICompatibleUpstream
 
 #: Where a counterparty that reports the serving endpoint in the *body* puts it.
 #: OpenRouter does this. Read here rather than in the recorder, which is where it
@@ -138,3 +144,24 @@ class GenericOpenAIPlugin:
         counterparty overrides in exactly one place per plugin.
         """
         return None
+
+    async def probe(
+        self, upstream: OpenAICompatibleUpstream, client: httpx.AsyncClient
+    ) -> ProbeResult:
+        """``list_models()`` for an OpenAI-compatible counterparty; a real,
+        minimal search for a search backend (Linkup, Exa, Jina, DuckDuckGo).
+
+        The two are told apart by ``isinstance(self, SearchPlugin)`` rather
+        than by ``kind`` — the same check the unified search route uses to
+        refuse a non-search backend named by a group's policy — because
+        conforming to the protocol, not merely carrying the label, is what
+        makes ``probe_search_backend``'s calls (``search_path``,
+        ``build_search_body`` and the rest) something other than a guess.
+        Inherited by every plugin here that names no vendor quirk of its own
+        for testing, which today is all of them: the extractor is the one
+        exception, and it overrides this method outright rather than fitting
+        either branch.
+        """
+        if isinstance(self, SearchPlugin):
+            return await probe_search_backend(self, upstream, client)
+        return await upstream.default_probe()

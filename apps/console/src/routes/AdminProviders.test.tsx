@@ -504,3 +504,45 @@ describe("AdminProviders: choosing a type", () => {
     await waitFor(() => expect(table.getByText("kind mismatch")).toBeInTheDocument());
   });
 });
+
+describe("AdminProviders: the local extractor cannot be deleted", () => {
+  it("disables Delete for an internal-kind provider", async () => {
+    // The gateway answers 409 either way (`routers/admin.py`); disabling the
+    // button here means an administrator sees that up front rather than
+    // after a click and an error toast.
+    vi.stubGlobal(
+      "fetch",
+      routes([
+        provider({ name: "extractor", plugin: "extractor", kind: "internal", plugin_kind: "internal" }),
+      ]),
+    );
+    renderScreen(<AdminProviders />);
+
+    const table = within(await screen.findByRole("table"));
+    await waitFor(() => expect(table.getByText("extractor")).toBeInTheDocument());
+    expect(table.getByRole("button", { name: "Delete" })).toBeDisabled();
+  });
+
+  it("leaves Delete enabled for an ordinary provider", async () => {
+    vi.stubGlobal("fetch", routes([provider()]));
+    renderScreen(<AdminProviders />);
+
+    const table = within(await screen.findByRole("table"));
+    await waitFor(() => expect(table.getByText("acme")).toBeInTheDocument());
+    expect(table.getByRole("button", { name: "Delete" })).toBeEnabled();
+  });
+
+  it("still offers Deactivate for the internal provider", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes([
+        provider({ name: "extractor", plugin: "extractor", kind: "internal", plugin_kind: "internal" }),
+      ]),
+    );
+    renderScreen(<AdminProviders />);
+
+    const table = within(await screen.findByRole("table"));
+    await waitFor(() => expect(table.getByText("extractor")).toBeInTheDocument());
+    expect(table.getByRole("button", { name: "Deactivate" })).toBeEnabled();
+  });
+});
