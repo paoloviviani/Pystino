@@ -1,4 +1,4 @@
-"""The `pystino` command line: bootstrap, release-pin, admin, idp check.
+"""The `pystino` command line: bootstrap, release-pin, admin, idp check, email export-env.
 
 Every command takes its answers as flags so CI and scripts never meet a prompt.
 
@@ -7,9 +7,11 @@ Writing `.env` and standing up a deployment is no longer this CLI's job
 deployment) and the separate `cerea-deploy` repository (the full stack, with
 its own `./configure`) are what an operator reads and edits directly. What
 stays here runs *inside* a deployment: `bootstrap` (the compose one-shot on
-every `up`), `admin grant|revoke` (break-glass) and `idp check` (a live probe
-against the configured identity provider, ADR 0093 §11), plus `release-pin`,
-which a release of this repository runs against its own checkout.
+every `up`), `admin grant|revoke` (break-glass), `idp check` (a live probe
+against the configured identity provider, ADR 0093 §11) and `email
+export-env` (the mail configuration in force, for `./configure --import-smtp`,
+ADR 0093 §13.5), plus `release-pin`, which a release of this repository runs
+against its own checkout.
 """
 
 from __future__ import annotations
@@ -50,6 +52,45 @@ def cmd_admin(args: argparse.Namespace) -> int:
             await engine.dispose()
         state = "is now" if user.is_admin else "is no longer"
         print(f"{user.email} ({user.issuer}) {state} an administrator")
+        return 0
+
+    return asyncio.run(run())
+
+
+def cmd_email_export_env(args: argparse.Namespace) -> int:
+    """The mail configuration in force, as `KEY=VALUE` lines (ADR 0093 §13.5).
+
+    For `cerea-deploy`'s `./configure --import-smtp`: a deployment carrying
+    an old console-set row (from before mail became one environment
+    setting) exports it once, including the password — which nothing else
+    ever returns in plain text — so an operator moving to `SMTP_*` in `.env`
+    does not have to already know it or reset it.
+    """
+    import asyncio
+
+    from gateway.config import get_settings
+    from gateway.db import create_engine, create_session_factory
+    from gateway.email_config import effective_smtp
+    from gateway.secrets import SecretBox
+
+    async def run() -> int:
+        settings = get_settings()
+        engine = create_engine(settings)
+        secrets = SecretBox(settings.secret_key_list())
+        try:
+            async with create_session_factory(engine)() as session:
+                effective = await effective_smtp(session, settings, secrets)
+        finally:
+            await engine.dispose()
+        for key, value in (
+            ("SMTP_HOST", effective.host),
+            ("SMTP_PORT", str(effective.port)),
+            ("SMTP_USERNAME", effective.username),
+            ("SMTP_PASSWORD", effective.password),
+            ("SMTP_FROM", effective.from_address),
+            ("SMTP_SECURITY", effective.security),
+        ):
+            print(f"{key}={value}")
         return 0
 
     return asyncio.run(run())
@@ -98,6 +139,13 @@ def build_parser() -> argparse.ArgumentParser:
     check = idp_sub.add_parser("check", help="probe the configured identity provider live")
     idp_check.build_arg_parser(check)
     check.set_defaults(func=idp_check.cmd_idp_check)
+
+    email = sub.add_parser("email", help="mail configuration")
+    email_sub = email.add_subparsers(dest="email_command", required=True)
+    export_env = email_sub.add_parser(
+        "export-env", help="the mail configuration in force, as KEY=VALUE lines"
+    )
+    export_env.set_defaults(func=cmd_email_export_env)
 
     return parser
 
