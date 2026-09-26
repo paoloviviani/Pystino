@@ -23,6 +23,17 @@ if TYPE_CHECKING:
     import uuid
 
 
+def _split_csv(value: str) -> list[str]:
+    """A comma-separated `.env` value as a list (ADR 0093 §1).
+
+    Not a `list[str]`-typed field with pydantic-settings' own env parsing:
+    that decodes a list env var as JSON, so a plain `a,b,c` fails to parse
+    rather than splitting — see `secret_key_list` below, which predates this
+    and solves it the same way, string field plus a reader.
+    """
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 class UpstreamSettings(BaseModel):
     """Transport tuning for upstream calls, plus the bootstrap endpoint.
 
@@ -99,6 +110,23 @@ class OIDCSettings(BaseModel):
     # same fact for a deployment that configures providers there instead.
     link_local_by_email: bool = False
 
+    @field_validator("link_local_by_email")
+    @classmethod
+    def _link_local_by_email_was_removed(cls, value: bool) -> bool:
+        # `false` is the untouched default and is ignored, not refused: an
+        # upgrade that never used it must not start failing over a variable it
+        # never set. `true` is the only value with anything to say, and what it
+        # said was "adopt a local password account by email", a door that has
+        # not existed since ADR 0088 D3 (ADR 0093 §1).
+        if value:
+            raise ValueError(
+                "GATEWAY_OIDC__LINK_LOCAL_BY_EMAIL was removed (ADR 0093): linking is "
+                "GATEWAY_OIDC__LINK_BY_EMAIL now, which links across issuers by verified "
+                "email rather than adopting a local password account. Delete the "
+                "variable and set GATEWAY_OIDC__LINK_BY_EMAIL instead."
+            )
+        return value
+
     # Where this server reaches the issuer, when that is not the issuer URL
     # itself — the bundled Authelia at http://authelia:9091/authelia. Discovery,
     # token, JWKS and userinfo go there, carrying X-Forwarded-Proto/Host for the
@@ -171,14 +199,92 @@ class OIDCSettings(BaseModel):
             raise ValueError(f"GATEWAY_OIDC__KIND must be one of {', '.join(kinds)}")
         return value
 
+    # Overrides the provider's own end_session_endpoint for signing out (ADR
+    # 0093 §1). This was a row-only field (`IdentityProvider.logout_url`,
+    # migration 0046); `reseed_from_env` writes it onto the row from here, once
+    # the re-seed lands. Authelia 4.39 publishes no end_session_endpoint at
+    # all, which used to leave its SSO session alive after a sign-out.
+    logout_url: str = ""
 
-class PasswordResetSettings(BaseModel):
-    """The environment's mail server (ADR 0049), kept after the local door went.
+    # ADR 0093 §5.1: grants admin at every sign-in to whichever of these
+    # addresses the IdP verifies (the literal boolean `true`, not a truthy
+    # string). Comma-separated, because a `list[str]` field cannot be set from
+    # a plain `.env` string — pydantic-settings decodes a list env var as JSON,
+    # and a bare CSV string is not JSON. `admin_email_list()` is what reads it.
+    admin_emails: str = ""
 
-    The nesting under ``local_auth.password_reset`` is historical — it arrived
-    with password reset — and is kept so existing ``GATEWAY_LOCAL_AUTH__
-    PASSWORD_RESET__SMTP_*`` variables keep configuring mail, which quota
-    notifications still send (the console's email settings override it).
+    # ADR 0093 §5.2: the existing claim-rule shape (`AdminRule`), fed from here
+    # instead of a provider row once `apply_env_admin_rules` lands. A dotted
+    # path, as for `groups_claim` (e.g. `groups`, `realm_access.roles`).
+    admin_claim: str = ""
+    #: Comma-separated; any one value matches. See `admin_emails` for why this
+    #: is a string and not a `list[str]`.
+    admin_claim_values: str = ""
+
+    # ADR 0093 §6: off by default, and turning it on is always an explicit
+    # operator act, the same reasoning `link_local_by_email` was given — a
+    # first sign-in from an unknown identity attaches to the existing account
+    # with the same *verified* email instead of provisioning a second one.
+    # Read and warned about only in this stage; the linking rule itself, at
+    # the two sign-in doors, is stage (c).
+    link_by_email: bool = False
+
+    # ADR 0093 §1: how far the directory's answer about groups reaches, fed
+    # from here once the re-seed lands (`GroupSync` in `gateway.models` is the
+    # same three values, spelled out again here for the reason `_known_kind`
+    # gives for `kind`: importing it would be a cycle).
+    group_sync: Literal["every_login", "first_login", "never"] = "every_login"
+
+    # ADR 0093 §2: a bearer token carrying `azp` (or `client_id`) must name one
+    # of these to be accepted — the console, the chat and galopin's machine
+    # client. Compose fills this from `OIDC_CONSOLE_CLIENT_ID`,
+    # `OIDC_CHAT_CLIENT_ID` and `OIDC_MACHINE_CLIENT_ID`; see `accepted_client_list`
+    # for why this is a string. Enforced on `/v1` once the re-seed lands.
+    accepted_clients: str = ""
+
+    def admin_email_list(self) -> list[str]:
+        return _split_csv(self.admin_emails)
+
+    def admin_claim_value_list(self) -> list[str]:
+        return _split_csv(self.admin_claim_values)
+
+    def accepted_client_list(self) -> list[str]:
+        return _split_csv(self.accepted_clients)
+
+
+class SmtpSettings(BaseModel):
+    """The stack's one mail setting (ADR 0093 §1, review correction 8).
+
+    Was ``local_auth.password_reset`` (ADR 0049), nested there because mail
+    arrived with the local door's password reset. That door is long gone
+    (ADR 0088 D3), but mail outlived it: quota notifications and the
+    console's "send test" both read this, and (through cerea-deploy, a
+    different repo) Authelia's own notifier feeds its self-service reset
+    from the same values. None of that is "password reset" any more, so it
+    moved to the top level and took a name that says what it actually is.
+
+    ``security`` is new: ``starttls`` (the only thing ``mail.py`` used to
+    do — connect plain, then upgrade if the server offers it), ``tls``
+    (connect already encrypted, port 465 by convention), or ``none`` (never
+    encrypt, for a mail sink with no certificate on a private network).
+    """
+
+    enabled: bool = False
+    host: str = ""
+    port: int = Field(default=587, gt=0)
+    username: str = ""
+    password: SecretStr = SecretStr("")
+    from_address: str = ""
+    security: Literal["starttls", "tls", "none"] = "starttls"
+
+
+class _RemovedPasswordResetSettings(BaseModel):
+    """``GATEWAY_LOCAL_AUTH__PASSWORD_RESET__*`` — removed (ADR 0093 §1).
+
+    A tripwire, the same shape as `LocalAuthSettings.enabled`: the fields
+    exist only so that a deployment still setting one of these old variables
+    gets a startup error naming `SmtpSettings` instead of configuring mail
+    that nothing reads any more.
     """
 
     enabled: bool = False
@@ -187,6 +293,25 @@ class PasswordResetSettings(BaseModel):
     smtp_username: str = ""
     smtp_password: SecretStr = SecretStr("")
     smtp_from: str = ""
+
+    @model_validator(mode="after")
+    def _was_removed(self) -> _RemovedPasswordResetSettings:
+        if (
+            self.enabled
+            or self.smtp_host
+            or self.smtp_username
+            or self.smtp_password.get_secret_value()
+            or self.smtp_from
+            or self.smtp_port != 587
+        ):
+            raise ValueError(
+                "GATEWAY_LOCAL_AUTH__PASSWORD_RESET__* was removed (ADR 0093): mail "
+                "settings are GATEWAY_SMTP__* now, and feed quota notifications, the "
+                "console's \"send test\" and (through cerea-deploy) Authelia's own "
+                "reset flow. Delete the variable and set GATEWAY_SMTP__HOST etc. "
+                "instead (cerea-deploy: ./configure --smtp-host ...)."
+            )
+        return self
 
 
 class LocalAuthSettings(BaseModel):
@@ -200,7 +325,9 @@ class LocalAuthSettings(BaseModel):
     """
 
     enabled: bool = False
-    password_reset: PasswordResetSettings = Field(default_factory=PasswordResetSettings)
+    password_reset: _RemovedPasswordResetSettings = Field(
+        default_factory=_RemovedPasswordResetSettings
+    )
 
     @field_validator("enabled")
     @classmethod
@@ -802,6 +929,7 @@ class Settings(BaseSettings):
 
     upstream: UpstreamSettings = Field(default_factory=UpstreamSettings)
     oidc: OIDCSettings = Field(default_factory=OIDCSettings)
+    smtp: SmtpSettings = Field(default_factory=SmtpSettings)
     local_auth: LocalAuthSettings = Field(default_factory=LocalAuthSettings)
     idp: IdPSettings = Field(default_factory=IdPSettings)
     redaction: RedactionSettings = Field(default_factory=RedactionSettings)
@@ -857,6 +985,62 @@ class Settings(BaseSettings):
                 raise ValueError(f"missing required settings in production: {', '.join(missing)}")
         return self
 
+    @model_validator(mode="after")
+    def _admin_claim_pair(self) -> Settings:
+        """ADR 0093 §1.1, refusal 2: half a claim pair is certainly a typo."""
+        has_claim = bool(self.oidc.admin_claim)
+        has_values = bool(self.oidc.admin_claim_values)
+        if has_claim != has_values:
+            raise ValueError(
+                "GATEWAY_OIDC__ADMIN_CLAIM and GATEWAY_OIDC__ADMIN_CLAIM_VALUES must be "
+                "set together, or not at all: set both, or delete both."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _production_requires_an_admin_rule(self) -> Settings:
+        """ADR 0093 §1.1, refusal 1: an external IdP with no admin rule locks
+        everyone out at the first sign-in — refused here, not found at 2am.
+
+        Gated to production for the reason `_production_requires_secrets` is:
+        `OIDCSettings()`'s own defaults (`kind="generic"`, no rule set) are
+        exactly what hundreds of unrelated unit tests construct, and none of
+        them are a deployment.
+        """
+        if (
+            self.environment == "production"
+            and self.oidc.kind != "authelia"
+            and not self.oidc.admin_email_list()
+            and not (self.oidc.admin_claim and self.oidc.admin_claim_values)
+        ):
+            raise ValueError(
+                "an external identity provider needs an admin rule: set "
+                "OIDC_ADMIN_EMAIL, or OIDC_ADMIN_CLAIM with OIDC_ADMIN_CLAIM_VALUE, "
+                "in .env (./configure --admin-email / --admin-claim)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _production_requires_accepted_clients(self) -> Settings:
+        """ADR 0093 §1.1, refusal 6: an audience with no client allowlist would
+        accept a token minted for any purpose by any client that can reach the
+        issuer — the `azp`/`client_id` check this backs (ADR 0093 §2) has
+        nothing to check against otherwise."""
+        if (
+            self.environment == "production"
+            and self.oidc.access_token_audience
+            and not self.oidc.accepted_client_list()
+        ):
+            raise ValueError(
+                "GATEWAY_OIDC__ACCEPTED_CLIENTS must name the clients allowed to use "
+                "GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE (the console, chat and machine "
+                "client ids) when an audience is set. Compose fills this from "
+                "OIDC_CONSOLE_CLIENT_ID, OIDC_CHAT_CLIENT_ID and "
+                "OIDC_MACHINE_CLIENT_ID; a hand-run gateway sets "
+                "GATEWAY_OIDC__ACCEPTED_CLIENTS itself."
+            )
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -866,3 +1050,27 @@ def get_settings() -> Settings:
     via the ``settings`` fixture rather than mutating the object.
     """
     return Settings()
+
+
+def startup_warnings(settings: Settings) -> list[str]:
+    """Advisory only (ADR 0093 §1.1, refusal 7) — logged by the caller, at
+    every start; nothing here refuses to start. Kept as a pure function of
+    ``settings`` rather than a model validator, so the messages are testable
+    without capturing a logger, and so a `Settings()` built for a unit test
+    never has to see them.
+    """
+    warnings: list[str] = []
+    if settings.oidc.link_by_email:
+        warnings.append(
+            "OIDC_LINK_BY_EMAIL is on: a first sign-in with a verified email will "
+            "attach to the existing non-admin account with that address. Turn it "
+            "off when the transition is done."
+        )
+    if settings.bootstrap_admin_email and settings.oidc.kind != "authelia":
+        warnings.append(
+            "PYSTINO_BOOTSTRAP_ADMIN_EMAIL is set but OIDC_KIND is not authelia: the "
+            "bootstrap admin is honoured only with the bundled Authelia, so this "
+            "variable is ignored. Grant admin with OIDC_ADMIN_EMAIL, OIDC_ADMIN_CLAIM, "
+            "the console, or `pystino admin grant`."
+        )
+    return warnings

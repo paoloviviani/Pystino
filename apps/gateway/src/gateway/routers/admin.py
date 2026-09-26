@@ -31,7 +31,6 @@ from urllib.parse import quote
 from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from llmp_shared import EntitySpan, PlaceholderMap
-from pydantic import SecretStr
 from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2760,17 +2759,7 @@ async def test_email_settings(
         )
     try:
         await send_mail_async(
-            effective.__class__(
-                host=effective.host,
-                port=effective.port,
-                username=effective.username,
-                password=effective.password,
-                from_address=effective.from_address,
-                source=effective.source,
-                enabled=effective.enabled,
-            )
-            if False
-            else _smtp_like(effective),
+            effective.to_smtp_settings(),
             payload.to.strip(),
             "Pystino — test email",
             "This is a test message from the Pystino gateway, sent from the "
@@ -2780,20 +2769,6 @@ async def test_email_settings(
     except MailDeliveryError as exc:
         return EmailTestResponse(ok=False, detail=str(exc))
     return EmailTestResponse(ok=True, detail="The message was handed to the mail server.")
-
-
-def _smtp_like(effective: Any) -> Any:
-    """Adapt the effective config to the shape send_mail_async reads."""
-    from gateway.config import PasswordResetSettings
-
-    return PasswordResetSettings(
-        enabled=True,
-        smtp_host=effective.host,
-        smtp_port=effective.port,
-        smtp_username=effective.username,
-        smtp_password=SecretStr(effective.password),
-        smtp_from=effective.from_address,
-    )
 
 
 # -- identity providers (ADR 0051) ---------------------------------------------

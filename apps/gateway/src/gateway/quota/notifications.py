@@ -175,7 +175,7 @@ class QuotaNotifier:
                 return
 
             await send_mail_async(
-                effective.to_password_reset_settings(),
+                effective.to_smtp_settings(),
                 email,
                 f"Quota notice — {rule.name} at {pct}%",
                 f'Your quota "{rule.name}" has reached {pct}% of its limit '

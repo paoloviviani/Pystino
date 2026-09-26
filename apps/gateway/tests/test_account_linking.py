@@ -30,7 +30,7 @@ import httpx
 import pytest
 from conftest import Seeded
 from gateway.config import OIDCSettings
-from gateway.identity_registry import record_from_env, record_from_row, seed_from_env
+from gateway.identity_registry import record_from_env, record_from_row
 from gateway.models import (
     Group,
     IdentityProvider,
@@ -417,41 +417,14 @@ class TestTheSwitchIsCarried:
         assert record is not None
         assert record.link_local_by_email is False
 
-    def test_the_environment_fallback_honours_the_explicit_switch(
-        self, settings: object
-    ) -> None:
-        """Set deliberately (a bundled-IdP install), the fallback carries it."""
-        from gateway.config import OIDCSettings as OS
-
-        settings.oidc = OS(  # type: ignore[attr-defined]
-            enabled=True,
-            issuer=IDP,
-            client_id="c",
-            client_secret="s",
-            link_local_by_email=True,
-        )
-        record = record_from_env(settings)  # type: ignore[arg-type]
-        assert record is not None
-        assert record.link_local_by_email is True
-
-    async def test_the_seeded_row_carries_the_explicit_switch(
-        self, session: AsyncSession, settings: object, app: object
-    ) -> None:
-        """The persisted row is authoritative once seeded, so it must carry it —
-        or the env switch would be silently defeated on the second startup."""
-        from gateway.config import OIDCSettings as OS
-
-        box: SecretBox = app.state.secrets  # type: ignore[attr-defined]
-        settings.oidc = OS(  # type: ignore[attr-defined]
-            enabled=True,
-            issuer=IDP,
-            client_id="c",
-            client_secret="s",
-            link_local_by_email=True,
-        )
-        await seed_from_env(session, settings, box)  # type: ignore[arg-type]
-        row = (await session.execute(select(IdentityProvider))).scalar_one()
-        assert row.link_local_by_email is True
+    # The two tests that used to live here — the environment fallback and the
+    # seeded row both honouring `GATEWAY_OIDC__LINK_LOCAL_BY_EMAIL=true` — are
+    # gone, not just updated: ADR 0093 §1 makes that value a startup error
+    # (`test_config_admin_rules.py::TestRemovedVariables`), so `OIDCSettings`
+    # can no longer be constructed with it at all. The env-to-row fallback
+    # this exercised (`identity_registry.py`'s pre-seed default) is now
+    # unreachable rather than wrong; the design leaves it in place for the
+    # re-seed to remove.
 
 
 class TestTheApiSurface:

@@ -14,7 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from gateway.accounting import DEFAULT_ESTIMATOR
-from gateway.config import Settings, get_settings
+from gateway.config import Settings, get_settings, startup_warnings
 from gateway.db import create_engine, create_session_factory
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.fx import FXService
@@ -102,6 +102,9 @@ async def init_app_state(
     fake transport injected, rather than a hand-built approximation of it that can
     drift from what production does.
     """
+    for message in startup_warnings(settings):
+        logger.warning(message)
+
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
 

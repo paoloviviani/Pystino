@@ -24,7 +24,7 @@ from gateway.models import EmailSettings
 from gateway.secrets import SecretBox
 
 if TYPE_CHECKING:
-    from gateway.config import PasswordResetSettings
+    from gateway.config import SmtpSettings
 
 logger = logging.getLogger(__name__)
 
@@ -40,24 +40,31 @@ class EffectiveSmtp:
     from_address: str
     source: str  # "console" | "environment"
     enabled: bool
+    #: "starttls" | "tls" | "none" (ADR 0093 §1). The console's row (`source
+    #: == "console"`) has no column for this and always gets "starttls" — the
+    #: one thing `mail.py` did before this setting existed, and this row is
+    #: on its way out in favour of `GATEWAY_SMTP__*` (§18 Q1), so it is not
+    #: getting a new column.
+    security: str = "starttls"
 
     @property
     def usable(self) -> bool:
         return self.enabled and bool(self.host) and bool(self.from_address)
 
-    def to_password_reset_settings(self) -> "PasswordResetSettings":
+    def to_smtp_settings(self) -> "SmtpSettings":
         """The shape the mail sender reads. The import is deferred to dodge a
         config <-> settings-config cycle, and the annotation lives in quotes
         for the same reason."""
-        from gateway.config import PasswordResetSettings
+        from gateway.config import SmtpSettings
 
-        return PasswordResetSettings(
+        return SmtpSettings(
             enabled=self.enabled,
-            smtp_host=self.host,
-            smtp_port=self.port,
-            smtp_username=self.username,
-            smtp_password=self.password,
-            smtp_from=self.from_address,
+            host=self.host,
+            port=self.port,
+            username=self.username,
+            password=self.password,
+            from_address=self.from_address,
+            security=self.security,
         )
 
 
@@ -67,16 +74,17 @@ async def effective_smtp(
     """The row's values when it decides, else the environment's."""
     row = await session.get(EmailSettings, 1)
 
-    env = settings.local_auth.password_reset
+    env = settings.smtp
     if row is None or not row.smtp_host:
         return EffectiveSmtp(
-            host=env.smtp_host,
-            port=env.smtp_port,
-            username=env.smtp_username,
-            password=env.smtp_password.get_secret_value(),
-            from_address=env.smtp_from,
+            host=env.host,
+            port=env.port,
+            username=env.username,
+            password=env.password.get_secret_value(),
+            from_address=env.from_address,
             source="environment",
             enabled=env.enabled,
+            security=env.security,
         )
 
     password = ""
