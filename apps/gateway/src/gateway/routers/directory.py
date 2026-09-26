@@ -1,7 +1,10 @@
-"""Directory sync and the bundled Authelia's users, from the console (ADR 0088 draft).
+"""Directory sync, from the console (ADR 0088 draft).
 
 Kept out of `admin.py` (already the gateway's largest module) on purpose.
-Every route requires an administrator.
+Every route requires an administrator. The bundled Authelia's own users
+(create/reset/disable) live in `admin.py` now (ADR 0093 §8, stage (b)) —
+this module used to hold that surface too, back when a users file could be
+managed independently of the gateway's own accounts.
 """
 
 from __future__ import annotations
@@ -10,17 +13,15 @@ import hashlib
 import json
 import secrets
 import uuid
-from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.deps import AdminUserDep, SessionDep, SettingsDep
 from gateway.directory.adapters import AdapterError, build_adapter
-from gateway.directory.authelia_users import UsersFile, UsersFileError
 from gateway.directory.service import PULL_ADAPTERS, decrypt_config, run_pull
 from gateway.errors import BadRequestError, NotFoundError
 from gateway.identity_registry import record_from_row
@@ -59,18 +60,6 @@ class SyncConfigRequest(BaseModel):
 
 class PreassignRequest(BaseModel):
     groups: list[str] = Field(default_factory=list, max_length=100)
-
-
-class AutheliaUserCreate(BaseModel):
-    username: str = Field(min_length=1, max_length=64)
-    email: str = Field(min_length=3, max_length=320)
-    display_name: str = Field(default="", max_length=255)
-
-
-class AutheliaUserUpdate(BaseModel):
-    email: str | None = Field(default=None, min_length=3, max_length=320)
-    display_name: str | None = Field(default=None, max_length=255)
-    disabled: bool | None = None
 
 
 @router.get("/identity-kinds")
@@ -297,97 +286,3 @@ async def mint_scim_token(
     await session.commit()
     base = str(request.base_url).rstrip("/")
     return {"token": token, "endpoint": f"{base}/scim/v2/{row.name}"}
-
-
-# --- the bundled Authelia's users (D10) -------------------------------------
-
-
-def _users_file(row: IdentityProvider, request: Request) -> UsersFile:
-    if row.kind != "authelia":
-        raise BadRequestError("Only a bundled Authelia provider has a users file to manage.")
-    config = json.loads(decrypt_config(row, request.app.state.secrets) or "{}")
-    return UsersFile(Path(config.get("path") or "/authelia/users_database.yml"))
-
-
-def _users_error(exc: UsersFileError) -> BadRequestError:
-    return BadRequestError(str(exc), code="authelia_users")
-
-
-@router.get("/identity-providers/{provider_id}/authelia-users")
-async def list_authelia_users(
-    provider_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
-) -> list[dict[str, Any]]:
-    try:
-        return [
-            u.as_dict() for u in _users_file(await _provider(session, provider_id), request).users()
-        ]
-    except UsersFileError as exc:
-        raise _users_error(exc) from exc
-
-
-@router.post(
-    "/identity-providers/{provider_id}/authelia-users", status_code=status.HTTP_201_CREATED
-)
-async def create_authelia_user(
-    provider_id: uuid.UUID,
-    payload: AutheliaUserCreate,
-    admin: AdminUserDep,
-    session: SessionDep,
-    request: Request,
-) -> dict[str, Any]:
-    """Create a person in the bundled directory. The password is minted and shown once."""
-    users = _users_file(await _provider(session, provider_id), request)
-    try:
-        user, password = users.create(payload.username, payload.email, payload.display_name)
-    except UsersFileError as exc:
-        raise _users_error(exc) from exc
-    return {"user": user.as_dict(), "password": password}
-
-
-@router.patch("/identity-providers/{provider_id}/authelia-users/{username}")
-async def update_authelia_user(
-    provider_id: uuid.UUID,
-    username: str,
-    payload: AutheliaUserUpdate,
-    admin: AdminUserDep,
-    session: SessionDep,
-    request: Request,
-) -> dict[str, Any]:
-    users = _users_file(await _provider(session, provider_id), request)
-    try:
-        return users.update(username, **payload.model_dump(exclude_unset=True)).as_dict()
-    except UsersFileError as exc:
-        raise _users_error(exc) from exc
-
-
-@router.post("/identity-providers/{provider_id}/authelia-users/{username}/reset-password")
-async def reset_authelia_password(
-    provider_id: uuid.UUID,
-    username: str,
-    admin: AdminUserDep,
-    session: SessionDep,
-    request: Request,
-) -> dict[str, Any]:
-    users = _users_file(await _provider(session, provider_id), request)
-    try:
-        return {"password": users.reset_password(username)}
-    except UsersFileError as exc:
-        raise _users_error(exc) from exc
-
-
-@router.delete(
-    "/identity-providers/{provider_id}/authelia-users/{username}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_authelia_user(
-    provider_id: uuid.UUID,
-    username: str,
-    admin: AdminUserDep,
-    session: SessionDep,
-    request: Request,
-) -> None:
-    users = _users_file(await _provider(session, provider_id), request)
-    try:
-        users.delete(username)
-    except UsersFileError as exc:
-        raise _users_error(exc) from exc
