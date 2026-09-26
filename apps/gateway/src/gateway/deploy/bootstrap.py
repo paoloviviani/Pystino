@@ -187,17 +187,27 @@ def ensure_authelia_state(env: BootstrapEnv, directory: Path = AUTHELIA_DIR) -> 
         done.append("signing key created")
 
     users_path = directory / "users_database.yml"
-    if users_path.exists():
-        done.append("users file present (kept)")
-    else:
-        text = users_file_text(
-            env.authelia_admin_user,
-            env.authelia_admin_name,
-            env.authelia_admin_email,
-            env.authelia_admin_password_digest,
-        )
-        _write_new(users_path, text.encode("utf-8"))
-        done.append(f"users file created with {env.authelia_admin_user}")
+    # The same sidecar lock the console's own writes take (ADR 0093 §8.4): a
+    # bootstrap racing a console write — two `compose up`s, or a retried
+    # one-shot service — is the concurrent-writer case the lock exists for,
+    # not a special case exempt from it. The exists-check still runs first,
+    # under the lock, so two bootstraps racing each other never both pass it
+    # and both call `_write_new` (which would raise on the second `O_EXCL`
+    # anyway, but only after the first has already finished writing).
+    from gateway.directory.authelia_users import locked_users_file
+
+    with locked_users_file(users_path):
+        if users_path.exists():
+            done.append("users file present (kept)")
+        else:
+            text = users_file_text(
+                env.authelia_admin_user,
+                env.authelia_admin_name,
+                env.authelia_admin_email,
+                env.authelia_admin_password_digest,
+            )
+            _write_new(users_path, text.encode("utf-8"))
+            done.append(f"users file created with {env.authelia_admin_user}")
     return done
 
 

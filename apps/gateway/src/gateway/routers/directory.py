@@ -65,13 +65,11 @@ class AutheliaUserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     email: str = Field(min_length=3, max_length=320)
     display_name: str = Field(default="", max_length=255)
-    groups: list[str] = Field(default_factory=list, max_length=100)
 
 
 class AutheliaUserUpdate(BaseModel):
     email: str | None = Field(default=None, min_length=3, max_length=320)
     display_name: str | None = Field(default=None, max_length=255)
-    groups: list[str] | None = Field(default=None, max_length=100)
     disabled: bool | None = None
 
 
@@ -340,9 +338,7 @@ async def create_authelia_user(
     """Create a person in the bundled directory. The password is minted and shown once."""
     users = _users_file(await _provider(session, provider_id), request)
     try:
-        user, password = users.create(
-            payload.username, payload.email, payload.display_name, payload.groups
-        )
+        user, password = users.create(payload.username, payload.email, payload.display_name)
     except UsersFileError as exc:
         raise _users_error(exc) from exc
     return {"user": user.as_dict(), "password": password}
