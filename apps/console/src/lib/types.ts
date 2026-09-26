@@ -254,6 +254,24 @@ export interface MergeResult {
   bundled_logins_disabled: string[];
 }
 
+/** `GET /admin/users/{id}/delete-preview` (ADR 0093 §9.2). */
+export interface DeletePreview {
+  user_id: string;
+  gateway_counts: Record<string, number>;
+  bundled_login: string | null;
+  /** `null` means the chat could not be reached at all. */
+  chat_counts: Record<string, number> | null;
+  chat_reachable: boolean;
+  shared_with_others: boolean;
+  chat_unattributed_legacy_shares: number;
+}
+
+/** `DELETE /admin/users/{id}` (ADR 0093 §9.2, §9.3). */
+export interface DeleteUserResult {
+  erasure_id: string;
+  chat_erasure_done: boolean;
+}
+
 /** The audit trail `record_event` writes to (ADR 0093 §3.1). */
 export interface IdentityEvent {
   id: string;

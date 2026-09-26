@@ -14,11 +14,13 @@ import { useState } from "react";
 import {
   useCreateBundledSignIn,
   useCreateBundledUser,
+  useDeletePreview,
   useDeleteUser,
   useIdentityEvents,
   useIdentityProviders,
   useMergePreview,
   useMergeUser,
+  usePendingErasures,
   useResetBundledPassword,
   useUpdateUser,
   useUsers,
@@ -71,7 +73,7 @@ export function AdminUsers() {
   const paged = usePaginated();
   const users = useUsers(paged.page);
   const update = useUpdateUser();
-  const remove = useDeleteUser();
+  const pendingErasures = usePendingErasures();
   const bundled = useBundledProvider();
   const providers = useIdentityProviders();
   // Only meaningful once the identity providers have loaded — before that,
@@ -204,7 +206,6 @@ export function AdminUsers() {
           <Button
             variant="ghost"
             className="text-danger"
-            busy={remove.isPending && remove.variables === user.id}
             onClick={() => setDeleting(user)}
           >
             Delete
@@ -227,6 +228,14 @@ export function AdminUsers() {
           knowsProviders && bundled ? <Button onClick={() => setAdding(true)}>Add user</Button> : null
         }
       />
+
+      {pendingErasures.data && pendingErasures.data.pending > 0 && (
+        <Notice tone="info" title="Erasures waiting for the chat">
+          {pendingErasures.data.pending} erasure
+          {pendingErasures.data.pending === 1 ? "" : "s"} waiting for the chat to confirm. They
+          retry automatically; nothing to do here.
+        </Notice>
+      )}
 
       {update.error ? (
         <Notice tone="danger" title="Could not update the user">
@@ -313,30 +322,47 @@ export function AdminUsers() {
  * the spend survives the person, and their rules go inert rather than away.
  */
 function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
+  const [confirmSharedLoss, setConfirmSharedLoss] = useState(false);
+  const preview = useDeletePreview(user?.id);
   const remove = useDeleteUser();
   const toast = useOptionalToast();
+
+  const close = () => {
+    setConfirmSharedLoss(false);
+    onClose();
+  };
 
   return (
     <Dialog
       open={user !== null}
       title={`Delete ${user?.display_name || user?.email || user?.subject || "this account"}?`}
-      onClose={onClose}
+      onClose={close}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={close}>Cancel</Button>
           <Button
             variant="danger"
+            disabled={Boolean(preview.data?.shared_with_others) && !confirmSharedLoss}
             busy={remove.isPending}
             onClick={() =>
               user &&
-              remove.mutate(user.id, {
-                onSuccess: () => {
-                  toast?.add({ title: "Account deleted", type: "success" });
-                  onClose();
-                },
-                onError: () =>
-                  toast?.add({ title: "Could not delete the account", type: "error" }),
-              })
+              remove.mutate(
+                { id: user.id, confirmSharedLoss },
+                {
+                  onSuccess: (result) => {
+                    toast?.add({
+                      title: "Account deleted",
+                      description: result.chat_erasure_done
+                        ? "The chat confirmed erasure immediately."
+                        : "The chat could not be reached; erasure is queued and will retry.",
+                      type: "success",
+                    });
+                    close();
+                  },
+                  onError: () =>
+                    toast?.add({ title: "Could not delete the account", type: "error" }),
+                }
+              )
             }
           >
             Delete permanently
@@ -344,15 +370,70 @@ function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: 
         </>
       }
     >
-      <p>
-        The account's keys stop working immediately and cannot be restored. Their
-        quota and redaction rules keep their scope but stop matching anyone until
-        you delete or re-point them.
-      </p>
-      <p className="text-sm text-ink-muted">
-        Past usage stays in the ledger, attributed to their groups as it was
-        billed — only the name on the per-user breakdown goes.
-      </p>
+      {preview.isPending ? (
+        <Spinner label="Loading preview" />
+      ) : preview.error ? (
+        <Notice tone="danger" title="Could not load the preview">
+          {preview.error instanceof Error ? preview.error.message : "Unknown error."}
+        </Notice>
+      ) : preview.data ? (
+        <div className={FORM}>
+          <ul className={CHECK_ITEM}>
+            {Object.entries(preview.data.gateway_counts)
+              .filter(([, count]) => count > 0)
+              .map(([table, count]) => (
+                <li key={table}>
+                  {count} {table.replace(/_/g, " ")}
+                </li>
+              ))}
+          </ul>
+          {preview.data.bundled_login && (
+            <p className="text-sm text-ink-muted">
+              Bundled login removed: {preview.data.bundled_login}
+            </p>
+          )}
+          {!preview.data.chat_reachable ? (
+            <Notice tone="warn" title="Chat counts unavailable">
+              The erasure will be queued and retried.
+            </Notice>
+          ) : (
+            <ul className={CHECK_ITEM}>
+              {Object.entries(preview.data.chat_counts ?? {})
+                .filter(([, count]) => count > 0)
+                .map(([collection, count]) => (
+                  <li key={collection}>
+                    {count} {collection.replace(/([A-Z])/g, " $1").toLowerCase()}
+                  </li>
+                ))}
+            </ul>
+          )}
+          <p>
+            The account's keys stop working immediately and cannot be restored. Their
+            quota and redaction rules keep their scope but stop matching anyone until
+            you delete or re-point them.
+          </p>
+          <p className="text-sm text-ink-muted">
+            Past usage stays in the ledger, attributed to their groups as it was
+            billed — only the name on the per-user breakdown goes.
+          </p>
+          {preview.data.shared_with_others && (
+            <label className={CHECK_ITEM}>
+              <input
+                type="checkbox"
+                checked={confirmSharedLoss}
+                onChange={(event) => setConfirmSharedLoss(event.target.checked)}
+              />
+              <span>
+                This account has content shared with others (
+                {preview.data.chat_unattributed_legacy_shares > 0
+                  ? "including some that can no longer be attributed to anyone"
+                  : "conversations shared with other people"}
+                ). I understand it will disappear for them too.
+              </span>
+            </label>
+          )}
+        </div>
+      ) : null}
     </Dialog>
   );
 }

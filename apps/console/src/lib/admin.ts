@@ -10,6 +10,8 @@ import type {
   BundledUserCreated,
   CatalogueDiscovery,
   CatalogueTags,
+  DeletePreview,
+  DeleteUserResult,
   IdentityEvent,
   LimitRule,
   MergeInput,
@@ -63,6 +65,7 @@ export const adminKeys = {
   limits: ["admin", "limits"] as const,
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
   users: ["admin", "users"] as const,
+  pendingErasures: ["admin", "erasures", "pending"] as const,
   identityEvents: (userId: string) => ["admin", "identity-events", userId] as const,
   email: ["admin", "email"] as const,
   identityProviders: ["admin", "identity-providers"] as const,
@@ -917,8 +920,37 @@ export function useIdentityProviders() {
 export function useDeleteUser() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => request<void>(`/api/admin/users/${id}`, { method: "DELETE" }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+    mutationFn: ({ id, confirmSharedLoss }: { id: string; confirmSharedLoss: boolean }) =>
+      request<DeleteUserResult>(`/api/admin/users/${id}`, {
+        method: "DELETE",
+        body: { confirm_shared_loss: confirmSharedLoss },
+      }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.users });
+      client.invalidateQueries({ queryKey: adminKeys.pendingErasures });
+    },
+  });
+}
+
+/** `GET /admin/users/{id}/delete-preview` (ADR 0093 §9.2): shown before the
+ * confirmation, verbatim -- the dialog does not summarise or recompute it. */
+export function useDeletePreview(userId: string | undefined) {
+  return useQuery({
+    queryKey: [...adminKeys.users, "delete-preview", userId],
+    queryFn: () => request<DeletePreview>(`/api/admin/users/${userId}/delete-preview`),
+    enabled: Boolean(userId),
+  });
+}
+
+/** `GET /admin/erasures/pending` (ADR 0093 §9.3): the Users page's own
+ * banner, "N erasures waiting for the chat". Polled, not just fetched once
+ * -- the retry loop resolves rows in the background, off-screen, and the
+ * banner is meant to reflect that without a manual refresh. */
+export function usePendingErasures() {
+  return useQuery({
+    queryKey: adminKeys.pendingErasures,
+    queryFn: () => request<{ pending: number }>("/api/admin/erasures/pending"),
+    refetchInterval: 30_000,
   });
 }
 
