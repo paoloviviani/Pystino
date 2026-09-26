@@ -51,7 +51,7 @@ from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from gateway.config import OIDCSettings
+from gateway.config import OIDCSettings, Settings
 from gateway.deployment_state import get_or_create_deployment_state, mark_bootstrap_consumed
 from gateway.email_normalize import is_trusted_email, normalize_email
 from gateway.identity_events import record_event
@@ -819,6 +819,100 @@ async def claim_unbound_bundled_login(
     )
 
 
+#: ADR 0093 §6.2, in the order the design numbers them: each refusal logs a
+#: WARNING naming its own number, so a declined link is a one-line diagnosis
+#: rather than a search through the eight conditions.
+async def link_by_email(
+    session: AsyncSession,
+    *,
+    issuer: str,
+    subject: str,
+    email: str | None,
+    email_verified: object,
+) -> User | None:
+    """Attach an unknown ``(issuer, subject)`` to the one existing account
+    whose verified email matches (ADR 0093 §6.2).
+
+    Call this only for an identity :func:`bind_bundled_login` left unmatched,
+    and only when the caller has already checked ``OIDC_LINK_BY_EMAIL`` is on
+    — this function does not read settings, so it never has to be told twice
+    what the switch was for. Never call it from the plain ``/v1`` path: a
+    bearer claim set may lack ``email_verified``, and that path's identity is
+    never a stranger this rule should be deciding about.
+
+    On success, adds a ``user_identities`` row for the target and writes the
+    ``identity.link`` audit event; the caller still has to run
+    :func:`provision_user` afterwards; over the same ``(issuer, subject)`` it
+    will find the row just added rather than provisioning a second person.
+    Every refusal just returns ``None`` — an unmatched login is an ordinary
+    new user, not an error.
+    """
+    if email_verified is not True:
+        logger.warning("link-by-email declined (1): email_verified is not the literal true")
+        return None
+    claim_email, trusted = is_trusted_email(email or "")
+    if not trusted:
+        logger.warning("link-by-email declined (2): %r is not a trusted ASCII address", email)
+        return None
+
+    candidates = (
+        await session.execute(select(User).where(User.email_normalized == claim_email))
+    ).scalars().all()
+    if len(candidates) != 1:
+        logger.warning(
+            "link-by-email declined (3): %d account(s) hold %r, need exactly one",
+            len(candidates),
+            claim_email,
+        )
+        return None
+    target = candidates[0]
+
+    if not (target.email_verified is True or "email" in (target.admin_edited_fields or [])):
+        logger.warning(
+            "link-by-email declined (4): %s's stored address was never itself verified", target.id
+        )
+        return None
+    if not target.is_active:
+        logger.warning("link-by-email declined (5): %s is not active", target.id)
+        return None
+    if target.is_admin:
+        logger.warning("link-by-email declined (6): %s is an administrator", target.id)
+        return None
+    if target.issuer == PENDING_USER_ISSUER:
+        logger.warning("link-by-email declined (7): %s is a pending user", target.id)
+        return None
+    existing_at_issuer = (
+        await session.execute(
+            select(UserIdentity).where(
+                UserIdentity.user_id == target.id, UserIdentity.issuer == issuer
+            )
+        )
+    ).scalar_one_or_none()
+    if target.issuer == issuer or existing_at_issuer is not None:
+        logger.warning(
+            "link-by-email declined (8): %s already has an identity at this issuer", target.id
+        )
+        return None
+
+    session.add(
+        UserIdentity(user_id=target.id, issuer=issuer, subject=subject, matched_email=claim_email)
+    )
+    await session.flush()
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.LOGIN,
+        actor_label=claim_email,
+        action=IdentityEventAction.IDENTITY_LINK,
+        target_user_id=target.id,
+        target_label=claim_email,
+        issuer=issuer,
+        subject=subject,
+        detail={"matched_email": claim_email, "issuer": issuer},
+    )
+    logger.info("link-by-email: %s/%s linked to existing user %s", issuer, subject, target.id)
+    return target
+
+
 async def provision_user(
     session: AsyncSession,
     *,
@@ -834,7 +928,6 @@ async def provision_user(
     username: str | None = None,
     touch_login: bool = True,
     policy: OIDCPolicy | None = None,
-    allow_local_link: bool = False,
     email_verified: bool | None = None,
     group_sync: GroupSync = GroupSync.EVERY_LOGIN,
     group_source: str = "claim",
@@ -862,12 +955,15 @@ async def provision_user(
     was treating *all* membership as the directory's to answer for, which made
     an administrator's own grant last until the person next signed in.
 
-    ``allow_local_link`` is accepted but not yet acted on: the matcher that
-    used to live here only ever adopted ``issuer="local"`` accounts, which
-    ADR 0093 §3.2 removes as unsound (a login at *any* other directory with
-    the same address would have adopted it too). §6 replaces it with a
-    cross-issuer rule, gated the same way, in stage (c); this parameter stays
-    so that stage does not have to touch every caller to wire it back in.
+    Linking is not this function's decision any more (ADR 0093 §6): the
+    matcher that used to live here only ever adopted ``issuer="local"``
+    accounts, which §3.2 removes as unsound (a login at *any* other directory
+    with the same address would have adopted it too). §6's cross-issuer rule
+    is :func:`link_by_email`, run by :func:`sign_in` *before* this function,
+    over an identity this function's own ``_identity_select`` would otherwise
+    have treated as brand new — so a successful link simply means this call
+    finds an existing user rather than creating one, with nothing left here
+    to gate.
     """
     user = (await session.execute(_identity_select(issuer, subject))).scalar_one_or_none()
 
@@ -1286,6 +1382,140 @@ async def promote_bootstrap_admin(
     await mark_bootstrap_consumed(session)
     logger.warning("bootstrap admin: %s is now the first administrator", email)
     return True
+
+
+@dataclass
+class SignInResult:
+    """What a sign-in door needs to answer, whatever its own response shape."""
+
+    user: User
+    groups: list[str]
+
+
+async def sign_in(
+    session: AsyncSession,
+    record: IdentityProvider,
+    *,
+    issuer: str,
+    subject: str,
+    claims: dict[str, Any],
+    settings: Settings,
+    policy: OIDCPolicy | None = None,
+) -> SignInResult:
+    """The one sequence every sign-in door runs (ADR 0093 §4.1): the console
+    callback and ``POST /v1/session/announce``. Both see the full claim set —
+    ``claims`` merged with userinfo where the provider needs that — which is
+    what lets them link, bind, apply the email admin rule and fire the
+    bootstrap. A plain ``/v1`` bearer call never reaches here; it runs
+    :func:`sync_user_from_claims` instead, on whatever claims its token
+    happened to carry.
+
+    ``issuer``/``subject`` are taken from the caller separately from
+    ``claims`` rather than read off it here: the console callback's merged
+    claim set folds in userinfo, whose own ``sub`` a provider is not
+    guaranteed to echo byte-for-byte, so identity is decided from the ID
+    token alone while everything else — email, name, groups — reads the
+    merged set.
+
+    The order is the design's own, and it is order, not a checklist: binding
+    a bundled login and linking by email must both be settled *before*
+    :func:`provision_user` ever asks "have I seen this identity before",
+    because each one's whole job is to make that question answer "yes" for
+    an identity that would otherwise look brand new.
+    """
+    email = claims.get("email")
+    email_verified = claims.get("email_verified")
+    preferred_username = claims.get("preferred_username")
+    display_name = claims.get("name") or claims.get("preferred_username")
+    username = preferred_username if isinstance(preferred_username, str) else None
+
+    groups = extract_groups(claims, settings.oidc, policy)
+    if policy is not None:
+        groups = policy.map_group_names(groups)
+
+    # ADR 0093 §8.2: a console-created account's login claims this identity
+    # by login name and verified email, before anything below gets a chance
+    # to treat it as a stranger.
+    await bind_bundled_login(
+        session,
+        record,
+        issuer=issuer,
+        subject=subject,
+        preferred_username=preferred_username,
+        email=email,
+        email_verified=email_verified,
+    )
+
+    # ADR 0093 §6.2: only for an identity still unknown after the bind above,
+    # and only when the operator turned the switch on. A hit here means the
+    # `provision_user` call below finds an existing person instead of
+    # creating one, through the `user_identities` row this just added.
+    known = (
+        await session.execute(_identity_select(issuer, subject))
+    ).scalar_one_or_none()
+    if known is None and settings.oidc.link_by_email:
+        await link_by_email(
+            session,
+            issuer=issuer,
+            subject=subject,
+            email=email if isinstance(email, str) else None,
+            email_verified=email_verified,
+        )
+
+    user = await provision_user(
+        session,
+        issuer=issuer,
+        subject=subject,
+        email=email if isinstance(email, str) else None,
+        display_name=display_name if isinstance(display_name, str) else None,
+        username=username,
+        group_names=groups,
+        settings=settings.oidc,
+        policy=policy,
+        # Raw, not coerced: several providers put `email_verified` on
+        # userinfo only, and coercing a non-boolean here would make this the
+        # one gate that treats "an email claim" as good enough to trust.
+        email_verified=email_verified,
+        group_sync=record.group_sync,
+        group_source=record.group_source,
+        claims=claims,
+        group_mappings=policy.group_mappings if policy is not None else None,
+    )
+
+    # ADR 0093 §13.4/§8.2: a migration-created, unbound login claims itself
+    # at the first real sign-in it gets, now that `provision_user` has given
+    # it a user row to claim with.
+    await claim_unbound_bundled_login(
+        session,
+        record,
+        user,
+        preferred_username=preferred_username,
+        email=email,
+        email_verified=email_verified,
+    )
+
+    # A directory whose subjects are unknown until first login (Authelia)
+    # links its mirrored entry now, so pre-assigned groups and directory
+    # groups apply at once rather than at the next scheduled sync. Imported
+    # here, not at module level: `directory.engine` imports from this module,
+    # and a top-level import the other way would be a cycle.
+    from gateway.directory.engine import link_at_login
+
+    if record.sync_adapter != "none" and getattr(record, "source", "") != "environment":
+        await link_at_login(session, record, user, claims, settings=settings.oidc)
+
+    # OIDC-only deployments have no password door to make the first
+    # administrator through; the configured address, verified, is it.
+    await promote_bootstrap_admin(
+        session,
+        user,
+        bootstrap_email=settings.bootstrap_admin_email,
+        email=email if isinstance(email, str) else None,
+        email_verified=email_verified,
+        kind=settings.oidc.kind,
+    )
+
+    return SignInResult(user=user, groups=groups)
 
 
 async def sync_user_from_claims(

@@ -22,7 +22,6 @@ from pydantic import BaseModel, Field
 from gateway import identity_policy
 from gateway.config import Settings
 from gateway.deps import ManagementUserDep, SessionDep, SettingsDep
-from gateway.directory.engine import link_at_login
 from gateway.errors import (
     BadRequestError,
     ModelNotFoundError,
@@ -33,13 +32,9 @@ from gateway.oidc import (
     OIDCClient,
     OIDCError,
     ProvisioningRefused,
-    bind_bundled_login,
-    claim_unbound_bundled_login,
-    extract_groups,
     generate_pkce_pair,
     issue_session_token,
-    promote_bootstrap_admin,
-    provision_user,
+    sign_in,
 )
 from gateway.types import utcnow
 
@@ -338,85 +333,23 @@ async def callback(
         logger.warning("OIDC login failed: %s", exc)
         raise BadRequestError("Sign-in failed. Please try again.") from exc
 
-    # Mapping first: from here on, the flow speaks local group names.
-    groups = extract_groups(merged, settings.oidc, policy)
-    if policy is not None:
-        groups = policy.map_group_names(groups)
     try:
-        # Bundled-Authelia binding (ADR 0093 §8.2): a console-created account
-        # (pending, or an existing person given a fresh login) claims this
-        # sign-in by login name and verified email, before provision_user
-        # ever gets a chance to treat an unknown (issuer, subject) as a brand
-        # new person.
-        await bind_bundled_login(
+        # ADR 0093 §4.1: the one sequence both sign-in doors run — the bind,
+        # the link-by-email rule, provisioning, the bootstrap and the admin
+        # env rules, in the design's own order. Identity comes from the ID
+        # token (`claims`); `merged` (ID token plus userinfo, when the
+        # provider needs it) is everything else this reads.
+        result = await sign_in(
             session,
             record,
             issuer=str(claims["iss"]),
             subject=str(claims["sub"]),
-            preferred_username=merged.get("preferred_username"),
-            email=merged.get("email"),
-            email_verified=merged.get("email_verified"),
-        )
-        user = await provision_user(
-            session,
-            issuer=str(claims["iss"]),
-            subject=str(claims["sub"]),
-            email=merged.get("email"),
-            display_name=merged.get("name") or merged.get("preferred_username"),
-            username=merged.get("preferred_username"),
-            group_names=groups,
-            settings=settings.oidc,
-            policy=policy,
-            # This provider's switch, and the claim that has to back it up
-            # (ADR 0056). `merged` rather than `claims` on purpose: several
-            # providers put `email_verified` on userinfo only, and reading it
-            # from the ID token alone would decline every link they could
-            # legitimately make.
-            allow_local_link=record.link_by_email,
-            # Passed raw, not coerced. OIDC core says this claim is a boolean;
-            # a provider that sends the *string* "true" gets its link declined
-            # and the value printed in the log, which is a five-second
-            # diagnosis. Coercing it here would make the gate accept whatever
-            # a directory happens to spell, and this is the one gate that
-            # separates linking from "an email claim is a password".
-            email_verified=merged.get("email_verified"),
-            # How far this directory's answer about groups reaches (ADR 0057).
-            group_sync=record.group_sync,
-            # Where it comes from, and whether it decides admin (ADR 0088).
-            group_source=record.group_source,
             claims=merged,
-            # The claim rule's own mapping lookup (so "either vocabulary
-            # works", ADR 0088) reads the same global mappings now — there is
-            # no per-row copy left to disagree with it (ADR 0093 §3.4).
-            group_mappings=policy.group_mappings if policy is not None else None,
+            settings=settings,
+            policy=policy,
         )
-        # A users-file login that pre-dates stage (b) and never signed in has
-        # no gateway user to bind at migration time (§13.4), so its entry is
-        # left unbound; this is the first point a real user row exists to
-        # claim it with.
-        await claim_unbound_bundled_login(
-            session,
-            record,
-            user,
-            preferred_username=merged.get("preferred_username"),
-            email=merged.get("email"),
-            email_verified=merged.get("email_verified"),
-        )
-        # A directory whose subjects are unknown until first login (Authelia)
-        # links its mirrored entry now: pre-assigned groups and directory
-        # groups apply at once, not at the next scheduled sync.
-        if record.sync_adapter != "none" and getattr(record, "source", "") != "environment":
-            await link_at_login(session, record, user, merged, settings=settings.oidc)
-        # OIDC-only deployments have no password door to make the first
-        # administrator through; the configured address, verified, is it.
-        await promote_bootstrap_admin(
-            session,
-            user,
-            bootstrap_email=settings.bootstrap_admin_email,
-            email=merged.get("email"),
-            email_verified=merged.get("email_verified"),
-            kind=settings.oidc.kind,
-        )
+        user = result.user
+        groups = result.groups
     except ProvisioningRefused as exc:
         # The policy's message is written for the person at the keyboard
         # ("ask an administrator"); the generic sign-in failure would bury it.

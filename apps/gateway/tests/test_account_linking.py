@@ -53,8 +53,13 @@ class TestTheOldMatcherIsGone:
     ) -> None:
         """What `_adopt_local_account` used to do here, and no longer does.
 
-        Every argument that used to earn a link — a verified address, the
-        switch on — is passed; the point is that none of it matters any more.
+        Every argument that used to earn a link — a verified address — is
+        passed; the point is that none of it matters any more. The switch
+        itself (`allow_local_link`) is not `provision_user`'s to read at all
+        now: linking is decided before this function is ever called (§6,
+        stage c's `link_by_email`), and this call, on its own, is exactly
+        what the plain `/v1` path or a failed link leaves `provision_user`
+        to do.
         """
         local = await make_local_user(session)
         user = await provision_user(
@@ -65,7 +70,6 @@ class TestTheOldMatcherIsGone:
             display_name="Directory Person",
             group_names=[],
             settings=OIDCSettings(),
-            allow_local_link=True,
             email_verified=True,
         )
         await session.commit()
