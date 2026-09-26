@@ -358,7 +358,7 @@ async def callback(
             # providers put `email_verified` on userinfo only, and reading it
             # from the ID token alone would decline every link they could
             # legitimately make.
-            allow_local_link=record.link_local_by_email,
+            allow_local_link=record.link_by_email,
             # Passed raw, not coerced. OIDC core says this claim is a boolean;
             # a provider that sends the *string* "true" gets its link declined
             # and the value printed in the log, which is a five-second

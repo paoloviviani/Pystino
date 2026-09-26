@@ -154,13 +154,13 @@ class TestTheBundledAutheliaRow:
     async def test_a_fresh_seed_is_an_authelia_row_with_an_unconfirmed_sync(
         self, session: AsyncSession
     ) -> None:
-        from gateway.identity_registry import seed_from_env
+        from gateway.identity_registry import reseed_from_env
         from gateway.models import IdentityProvider
         from gateway.secrets import SecretBox
         from sqlalchemy import select
 
         box = SecretBox(["test-encryption-key-not-for-production"])
-        await seed_from_env(session, _settings("authelia"), box)  # type: ignore[arg-type]
+        await reseed_from_env(session, _settings("authelia"), box)  # type: ignore[arg-type]
         row = (await session.execute(select(IdentityProvider))).scalar_one()
         assert (row.kind, row.sync_adapter, row.sync_confirmed) == (
             "authelia",
@@ -169,43 +169,32 @@ class TestTheBundledAutheliaRow:
         )
 
     @pytest.mark.asyncio
-    async def test_an_old_generic_row_is_corrected_once_and_a_choice_is_kept(
+    async def test_re_seeding_never_touches_an_administrator_s_sync_choice(
         self, session: AsyncSession
     ) -> None:
-        from gateway.identity_registry import seed_from_env
-        from gateway.models import GroupSync, IdentityProvider
+        """``sync_adapter`` is console-owned once the row exists (ADR 0093
+        §2): re-seeding an *existing* matching-issuer row never re-derives it
+        from ``kind`` — unlike the old ``_fill_kind``, which corrected a row
+        still at its old defaults. That correction was itself a one-time
+        historical fix for a pre-0093 deployment (migration 0046); once a row
+        exists under this design, only its first creation sets the adapter
+        from the kind, and an administrator's later choice is theirs from
+        then on.
+        """
+        from gateway.identity_registry import reseed_from_env
+        from gateway.models import IdentityProvider
         from gateway.secrets import SecretBox
+        from sqlalchemy import select
 
         box = SecretBox(["test-encryption-key-not-for-production"])
-        row = IdentityProvider(
-            name="default",
-            issuer=AUTHELIA,
-            client_id="pystino-console",
-            client_secret_encrypted=box.encrypt("s"),
-            scopes=["openid"],
-            groups_claim="groups",
-            fetch_userinfo=True,
-            group_mappings=[],
-            link_local_by_email=False,
-            group_sync=GroupSync.FIRST_LOGIN,
-            internal_base_url="http://authelia:9091/authelia",
-            is_enabled=True,
-        )
-        session.add(row)
-        await session.commit()
-        await seed_from_env(session, _settings("authelia"), box)  # type: ignore[arg-type]
-        await session.refresh(row)
-        assert (row.kind, row.sync_adapter, row.sync_confirmed) == (
-            "authelia",
-            "authelia_file",
-            False,
-        )
-        # An administrator's later choice is theirs.
+        await reseed_from_env(session, _settings("authelia"), box)  # type: ignore[arg-type]
+        row = (await session.execute(select(IdentityProvider))).scalar_one()
         row.sync_adapter = "none"
         await session.commit()
-        await seed_from_env(session, _settings("authelia"), box)  # type: ignore[arg-type]
+        await reseed_from_env(session, _settings("authelia"), box)  # type: ignore[arg-type]
         await session.refresh(row)
         assert row.sync_adapter == "none"
+        assert row.kind == "authelia"  # still environment-owned, still overwritten
 
     def test_an_unknown_kind_in_the_environment_is_refused(self) -> None:
         with pytest.raises(ValueError, match="GATEWAY_OIDC__KIND"):

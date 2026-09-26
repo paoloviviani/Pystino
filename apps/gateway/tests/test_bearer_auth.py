@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from conftest import (
     ABSENT,
+    BEARER_AUDIENCE,
     BEARER_ISSUER,
     Seeded,
     make_token,
@@ -234,6 +235,80 @@ class TestRefused:
 
         response = await client.get("/v1/models", headers=auth(make_token(signing_key)))
         assert response.status_code == 401
+
+
+class TestAcceptedClients:
+    """ADR 0093 §2: `azp` (or `client_id`) must be in `ACCEPTED_CLIENTS`, once
+    that is set — the audience check alone only proves the token is *for*
+    this gateway, never that it was asked for by a client an administrator
+    actually trusts.
+
+    `bearer_app` is deliberately not used here: it seeds a row for
+    `BEARER_ISSUER` once, and seeding a second one for the same issuer with
+    different settings hits the unique index — each test seeds its own,
+    exactly the way `bearer_app` itself does.
+    """
+
+    async def _app(
+        self, app: FastAPI, signing_key: RSAKey, *, accepted_clients: str
+    ) -> FastAPI:
+        settings: Settings = app.state.settings
+        settings.oidc = OIDCSettings(
+            enabled=True,
+            issuer=BEARER_ISSUER,
+            client_id="llm-gateway",
+            groups_claim="groups",
+            access_token_audience=BEARER_AUDIENCE,
+            accepted_clients=accepted_clients,
+        )
+        await seed_identity_provider(app, app.state.session_factory, signing_key)
+        return app
+
+    @pytest.mark.asyncio
+    async def test_a_listed_azp_is_accepted(
+        self, app: FastAPI, client: Any, seeded: Seeded, signing_key: RSAKey
+    ) -> None:
+        await self._app(app, signing_key, accepted_clients="llm-chat,opencode")
+        response = await client.get("/v1/models", headers=auth(make_token(signing_key)))
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_an_unlisted_azp_is_refused(
+        self, app: FastAPI, client: Any, seeded: Seeded, signing_key: RSAKey
+    ) -> None:
+        await self._app(app, signing_key, accepted_clients="opencode")
+        response = await client.get("/v1/models", headers=auth(make_token(signing_key)))
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_client_id_is_read_when_azp_is_absent(
+        self, app: FastAPI, client: Any, seeded: Seeded, signing_key: RSAKey
+    ) -> None:
+        await self._app(app, signing_key, accepted_clients="llm-chat")
+        token = make_token(signing_key, azp=ABSENT, client_id="llm-chat")
+        response = await client.get("/v1/models", headers=auth(token))
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_neither_claim_still_passes_on_audience_alone(
+        self, app: FastAPI, client: Any, seeded: Seeded, signing_key: RSAKey
+    ) -> None:
+        await self._app(app, signing_key, accepted_clients="llm-chat")
+        token = make_token(signing_key, azp=ABSENT)
+        response = await client.get("/v1/models", headers=auth(token))
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_empty_accepted_clients_enforces_nothing(
+        self, app: FastAPI, client: Any, seeded: Seeded, signing_key: RSAKey
+    ) -> None:
+        """The default (unset `ACCEPTED_CLIENTS`) is today's behaviour exactly:
+        the audience check alone."""
+        await self._app(app, signing_key, accepted_clients="")
+        response = await client.get(
+            "/v1/models", headers=auth(make_token(signing_key, azp="anything-at-all"))
+        )
+        assert response.status_code == 200
 
 
 class TestNotConfigured:

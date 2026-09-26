@@ -135,10 +135,15 @@ async def test_without_an_internal_url_nothing_changes() -> None:
     assert metadata.token_endpoint == f"{PUBLIC}/api/oidc/token"
 
 
-async def test_an_adopted_row_gets_the_environments_internal_url_once(session) -> None:
-    """The provider row an old install seeded has no internal URL; the env fills it, once."""
+async def test_reseed_makes_internal_url_and_scopes_agree_with_the_environment(session) -> None:
+    """ADR 0093 §2: `internal_base_url` and `scopes` are environment-owned —
+    overwritten on every start, not backfilled once and then left to an
+    administrator's edit. Under the old `_fill_internal_base_url`, an admin's
+    later value silently won even after the environment changed again, which
+    is exactly the split this closes: only one thing may say what the
+    connection is."""
     from gateway.config import Settings
-    from gateway.identity_registry import seed_from_env
+    from gateway.identity_registry import reseed_from_env
     from gateway.models import GroupSync, IdentityProvider
     from gateway.secrets import SecretBox
 
@@ -152,7 +157,7 @@ async def test_an_adopted_row_gets_the_environments_internal_url_once(session) -
         groups_claim="groups",
         fetch_userinfo=True,
         group_mappings=[],
-        link_local_by_email=False,
+        link_by_email=False,
         group_sync=GroupSync.FIRST_LOGIN,
         is_enabled=True,
     )
@@ -167,15 +172,15 @@ async def test_an_adopted_row_gets_the_environments_internal_url_once(session) -
             scopes=["openid", "profile", "email", "groups"],
         ),
     )
-    await seed_from_env(session, settings, box)  # type: ignore[arg-type]
+    await reseed_from_env(session, settings, box)  # type: ignore[arg-type]
     await session.refresh(row)
     assert row.internal_base_url == INTERNAL
-    # The adopted row also gains the environment's scopes (groups), added only.
     assert row.scopes == ["openid", "profile", "email", "groups"]
+
+    # An edit does not survive the next start: the environment is the only
+    # source of this field now.
     row.internal_base_url = "http://elsewhere:9091/authelia"
     await session.commit()
-    await seed_from_env(session, settings, box)  # type: ignore[arg-type]
+    await reseed_from_env(session, settings, box)  # type: ignore[arg-type]
     await session.refresh(row)
-    assert row.internal_base_url == "http://elsewhere:9091/authelia", (
-        "an administrator's value wins"
-    )
+    assert row.internal_base_url == INTERNAL

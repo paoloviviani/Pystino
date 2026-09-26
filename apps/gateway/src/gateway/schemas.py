@@ -1100,7 +1100,7 @@ class IdentityProviderResponse(BaseModel):
     groups_claim: str
     fetch_userinfo: bool
     group_mappings: list[OidcMappingRule]
-    link_local_by_email: bool
+    link_by_email: bool
     group_sync: Literal["every_login", "first_login", "never"]
     is_enabled: bool
     source: str
@@ -1134,7 +1134,7 @@ class IdentityProviderCreateRequest(BaseModel):
     group_mappings: list[OidcMappingRule] = Field(default_factory=list)
     # Off unless asked for, in the request as on the row: a client that omits
     # the field is not consenting to it (ADR 0056).
-    link_local_by_email: bool = False
+    link_by_email: bool = False
     # The sync stance of ADR 0069: the directory answers once, at
     # provisioning, and the gateway owns everything after. A client that
     # wants the directory to keep answering chooses every_login explicitly.
@@ -1165,7 +1165,7 @@ class IdentityProviderUpdateRequest(BaseModel):
     groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
     fetch_userinfo: bool | None = None
     group_mappings: list[OidcMappingRule] | None = None
-    link_local_by_email: bool | None = None
+    link_by_email: bool | None = None
     group_sync: Literal["every_login", "first_login", "never"] | None = None
     is_enabled: bool | None = None
     internal_base_url: str | None = Field(

@@ -2787,7 +2787,7 @@ def _idp_response(record: Any) -> IdentityProviderResponse:
         group_mappings=[
             OidcMappingRule(idp=idp, local=local) for idp, local in record.group_mappings.items()
         ],
-        link_local_by_email=record.link_local_by_email,
+        link_by_email=record.link_by_email,
         group_sync=record.group_sync.value,
         is_enabled=record.is_enabled,
         source=record.source,
@@ -2873,7 +2873,7 @@ async def create_identity_provider(
         groups_claim=payload.groups_claim,
         fetch_userinfo=payload.fetch_userinfo,
         group_mappings=[[rule.idp, rule.local] for rule in payload.group_mappings],
-        link_local_by_email=payload.link_local_by_email,
+        link_by_email=payload.link_by_email,
         group_sync=GroupSync(payload.group_sync),
         internal_base_url=payload.internal_base_url.strip().rstrip("/"),
         logout_url=payload.logout_url.strip(),
@@ -2919,12 +2919,12 @@ async def update_identity_provider(
         row.fetch_userinfo = fields["fetch_userinfo"]
     if "group_mappings" in fields and fields["group_mappings"] is not None:
         row.group_mappings = [[rule.idp, rule.local] for rule in fields["group_mappings"]]
-    if "link_local_by_email" in fields and fields["link_local_by_email"] is not None:
+    if "link_by_email" in fields and fields["link_by_email"] is not None:
         # Turning it off stops *new* links; it does not undo the ones already
         # made. Unlinking is deleting a `user_identities` row, and doing it
         # implicitly here would silently split one person's account in two —
         # spend, keys and quotas on one row, their next login on another.
-        row.link_local_by_email = fields["link_local_by_email"]
+        row.link_by_email = fields["link_by_email"]
     if "group_sync" in fields and fields["group_sync"] is not None:
         # Takes effect at the next login, like every other field on this row:
         # nothing here reaches back over memberships already granted.

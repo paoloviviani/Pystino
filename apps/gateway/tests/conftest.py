@@ -560,12 +560,14 @@ async def seed_identity_provider(
 
     record = record_from_row(row, box)
     origin = "http://gateway"
-    # The audience is what switches /v1 bearer tokens on (ADR 0040) — the
-    # registry would inject it in client_for; the stub bypasses client_for, so
-    # it injects it itself.
+    # The audience and the accepted-client list are what the registry would
+    # inject in client_for (ADR 0040, ADR 0093 §2); the stub bypasses
+    # client_for, so it injects them itself.
     settings: Settings = app.state.settings
     stub_settings = record.as_oidc_settings(
-        f"{origin}/auth/callback/{name}", settings.oidc.access_token_audience
+        f"{origin}/auth/callback/{name}",
+        settings.oidc.access_token_audience,
+        settings.oidc.accepted_clients,
     )
     app.state.oidc_providers._clients[(row.id, row.updated_at, origin)] = StubOIDCClient(
         stub_settings, signing_key

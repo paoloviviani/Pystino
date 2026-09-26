@@ -54,7 +54,7 @@ async def _provider(session: AsyncSession, **fields: object) -> IdentityProvider
         groups_claim="groups",
         fetch_userinfo=False,
         group_mappings=[],
-        link_local_by_email=False,
+        link_by_email=False,
         group_sync=fields.pop("group_sync", GroupSync.EVERY_LOGIN),
         kind=str(fields.pop("kind", "authelia")),
         group_source=str(fields.pop("group_source", "directory")),

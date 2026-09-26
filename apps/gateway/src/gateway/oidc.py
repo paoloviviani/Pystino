@@ -214,6 +214,9 @@ class OIDCClient:
         self._metadata: OIDCMetadata | None = None
         self._jwks: KeySet | None = None
         self._jwks_fetched_at: float = 0.0
+        # ADR 0093 §2: a token with neither claim still passes on audience
+        # alone, but it is worth one note per client, not one per request.
+        self._warned_no_client_claim = False
 
     def _backchannel_headers(self) -> dict[str, str]:
         """Forwarded headers naming the public issuer, for internal-URL calls.
@@ -465,7 +468,35 @@ class OIDCClient:
                 "the client needs an audience mapper naming this gateway"
             )
 
+        self._check_accepted_client(token.claims)
+
         return dict(token.claims)
+
+    def _check_accepted_client(self, claims: dict[str, Any]) -> None:
+        """ADR 0093 §2: the audience check alone answers "for this gateway",
+        never "asked for by a client we trust" — `aud` is a membership test,
+        so any client an administrator gave an audience mapper can mint a
+        token that passes it. `azp` (or, lacking that, `client_id`) is who
+        actually asked, and it must be one of `ACCEPTED_CLIENTS` once that is
+        configured; empty means the operator has not set it yet, the same
+        escape hatch `GATEWAY_OIDC__ACCEPTED_CLIENTS`'s own startup check
+        gives outside production.
+        """
+        accepted = self._settings.accepted_client_list()
+        if not accepted:
+            return
+        client = claims.get("azp") or claims.get("client_id")
+        if client is None:
+            if not self._warned_no_client_claim:
+                logger.warning(
+                    "access tokens from %s carry neither azp nor client_id; "
+                    "ACCEPTED_CLIENTS cannot be enforced for it, only the audience",
+                    self._settings.issuer,
+                )
+                self._warned_no_client_claim = True
+            return
+        if client not in accepted:
+            raise OIDCError(f"access token client {client!r} is not in ACCEPTED_CLIENTS")
 
     async def fetch_userinfo(self, access_token: str) -> dict[str, Any]:
         metadata = await self.metadata()
@@ -656,7 +687,7 @@ async def provision_user(
     was treating *all* membership as the directory's to answer for, which made
     an administrator's own grant last until the person next signed in.
 
-    ``allow_local_link`` is this provider's ``link_local_by_email`` switch and
+    ``allow_local_link`` is this provider's ``link_by_email`` switch and
     defaults to off, so every caller that does not pass it keeps the behaviour
     it always had. Note where it is *not* passed: an access token on ``/v1``
     resolves an existing link but never creates one (ADR 0056). Linking is a

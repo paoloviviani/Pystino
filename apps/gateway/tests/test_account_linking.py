@@ -390,9 +390,9 @@ class TestTheSwitchIsCarried:
             client_id="c",
             client_secret_encrypted=box.encrypt("s"),
             scopes=["openid"],
-            link_local_by_email=True,
+            link_by_email=True,
         )
-        assert record_from_row(row, box).link_local_by_email is True
+        assert record_from_row(row, box).link_by_email is True
 
     def test_the_default_is_off_on_a_new_row(self, app: object) -> None:
         box: SecretBox = app.state.secrets  # type: ignore[attr-defined]
@@ -402,9 +402,9 @@ class TestTheSwitchIsCarried:
             client_id="c",
             client_secret_encrypted=box.encrypt("s"),
             scopes=["openid"],
-            link_local_by_email=False,
+            link_by_email=False,
         )
-        assert record_from_row(row, box).link_local_by_email is False
+        assert record_from_row(row, box).link_by_email is False
 
     def test_the_environment_fallback_defaults_to_off(self, settings: object) -> None:
         """An upgrade may not switch adoption on by itself: no switch, no link."""
@@ -415,7 +415,7 @@ class TestTheSwitchIsCarried:
         )
         record = record_from_env(settings)  # type: ignore[arg-type]
         assert record is not None
-        assert record.link_local_by_email is False
+        assert record.link_by_email is False
 
     # The two tests that used to live here — the environment fallback and the
     # seeded row both honouring `GATEWAY_OIDC__LINK_LOCAL_BY_EMAIL=true` — are
@@ -448,7 +448,7 @@ class TestTheApiSurface:
             },
         )
         assert response.status_code == 201
-        assert response.json()["link_local_by_email"] is False
+        assert response.json()["link_by_email"] is False
 
     async def test_it_can_be_asked_for_at_creation(
         self,
@@ -465,15 +465,15 @@ class TestTheApiSurface:
                 "issuer": "https://corp.example.org",
                 "client_id": "gateway",
                 "client_secret": "not-a-real-secret",
-                "link_local_by_email": True,
+                "link_by_email": True,
             },
         )
         assert response.status_code == 201
-        assert response.json()["link_local_by_email"] is True
+        assert response.json()["link_by_email"] is True
 
         async with session_factory() as session:
             row = (await session.execute(select(IdentityProvider))).scalar_one()
-            assert row.link_local_by_email is True
+            assert row.link_by_email is True
 
     async def test_it_can_be_turned_off_again(
         self,
@@ -490,16 +490,16 @@ class TestTheApiSurface:
                 "issuer": "https://corp.example.org",
                 "client_id": "gateway",
                 "client_secret": "not-a-real-secret",
-                "link_local_by_email": True,
+                "link_by_email": True,
             },
         )
         provider_id = created.json()["id"]
         edited = await client.put(
             "/api/admin/identity-providers/" + provider_id,
-            json={"link_local_by_email": False},
+            json={"link_by_email": False},
         )
         assert edited.status_code == 200
-        assert edited.json()["link_local_by_email"] is False
+        assert edited.json()["link_by_email"] is False
 
     async def test_a_linked_account_says_so_on_the_user_listing(
         self,

@@ -469,7 +469,8 @@ class LocalCredential(Base):
     password ride an issuer's trust. That risk is real and has not gone away —
     what changed is who decides. An operator who runs the directory their local
     accounts were named after can now turn linking on **per identity provider**
-    (``IdentityProvider.link_local_by_email``, ADR 0056), and the link is
+    (``IdentityProvider.link_by_email``, ADR 0056, repurposed by ADR 0093 §2),
+    and the link is
     recorded as a ``UserIdentity`` row rather than by rewriting this row's key.
     Read that ADR before touching either side: the guarantee that makes it
     tolerable is that a verified email is required, and it is what stops an
@@ -1369,12 +1370,12 @@ class IdentityProvider(Base):
     groups_claim: Mapped[str] = mapped_column(String(255), default="groups")
     fetch_userinfo: Mapped[bool] = mapped_column(Boolean, default=True)
     group_mappings: Mapped[list[list[str]]] = mapped_column(JSON, default=list)
-    # May a login here adopt a local account with the same verified address
-    # (ADR 0056)? Per provider and off by default, because it is this
-    # directory's word that gets to name an existing account: an operator
-    # trusts the corporate IdP their local accounts were named after, and
-    # says nothing about the next one added.
-    link_local_by_email: Mapped[bool] = mapped_column(
+    # May an unknown identity at this issuer attach to an existing account by
+    # verified email (ADR 0056, repurposed by ADR 0093 §2 into the
+    # cross-issuer rule `OIDC_LINK_BY_EMAIL` names)? A display copy of
+    # `GATEWAY_OIDC__LINK_BY_EMAIL`, written by `reseed_from_env`: the linking
+    # rule itself reads the setting, not this column (stage c).
+    link_by_email: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
     # How far this directory's answer about groups reaches (ADR 0057).

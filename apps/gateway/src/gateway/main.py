@@ -18,7 +18,7 @@ from gateway.config import Settings, get_settings, startup_warnings
 from gateway.db import create_engine, create_session_factory
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.fx import FXService
-from gateway.identity_registry import OIDCProviderRegistry, seed_from_env
+from gateway.identity_registry import OIDCProviderRegistry, reseed_from_env
 from gateway.logging_config import configure_logging
 from gateway.oidc_policy import OIDCPolicyResolver
 from gateway.providers import ProviderRegistry
@@ -227,19 +227,25 @@ async def init_app_state(
     except Exception:
         logger.warning("could not fetch fx rates at startup", exc_info=True)
     fx_service.start()
-    # Identity providers (ADR 0051): rows seeded from the environment when the
-    # table is empty, and cached per-provider clients built on demand. The old
-    # single-client state is gone — the registry is the only way in.
+    # Identity providers (ADR 0093 §2): the table is re-seeded from the
+    # environment on every start, and cached per-provider clients are built on
+    # demand. The old single-client state is gone — the registry is the only
+    # way in.
     registry = OIDCProviderRegistry(control_http, app.state.secrets, settings)
     app.state.oidc_providers = registry
-    # The seed is best-effort for the same reason every startup read here is:
-    # under the test fixtures the schema does not exist yet, and the fallback
-    # (list_providers over an empty table) answers meanwhile.
     try:
         async with session_factory() as session:
-            await seed_from_env(session, settings, app.state.secrets)
+            await reseed_from_env(session, settings, app.state.secrets)
     except Exception:
-        logger.warning("could not seed identity providers at startup", exc_info=True)
+        # Fatal in production: a gateway serving a stale provider row is
+        # exactly the split ADR 0093 removes, so it must not come up looking
+        # healthy. Everywhere else — including under the test fixtures, where
+        # this runs before `Base.metadata.create_all()` and "no such table" is
+        # certain on every single test — it is logged and the process
+        # continues; `list_providers`' empty-table fallback answers meanwhile.
+        if settings.environment == "production":
+            raise
+        logger.error("could not re-seed identity providers at startup", exc_info=True)
 
     # An empty counter cache is not a failed read — it answers confidently with
     # zero, which would hand every group a fresh budget after Valkey is wiped.
