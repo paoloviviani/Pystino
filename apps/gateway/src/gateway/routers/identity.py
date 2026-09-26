@@ -114,4 +114,6 @@ async def whoami(principal: PrincipalDep) -> CallerIdentity:
         groups=groups,
         default_billing_group=default,
         billing_group=principal.billing_group.name,
+        sessions_valid_after=user.sessions_valid_after,
+        merged_at=user.merged_at,
     )

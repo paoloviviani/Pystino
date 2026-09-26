@@ -84,7 +84,35 @@ class TestIdentity:
             "groups": ["research"],
             "default_billing_group": "research",
             "billing_group": "research",
+            "sessions_valid_after": None,
+            "merged_at": None,
         }
+
+    async def test_sessions_valid_after_and_merged_at_are_read_from_the_row(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Both fields exist for stage b/c to write; this only pins that
+        `/v1/me` reads them rather than always answering `None` (ADR 0093
+        §3.1, §9.1)."""
+        valid_after = utcnow() - timedelta(minutes=5)
+        merged_at = utcnow() - timedelta(hours=1)
+        async with session_factory() as db:
+            row = await db.get(User, seeded.user.id)
+            assert row is not None
+            row.sessions_valid_after = valid_after
+            row.merged_at = merged_at
+            await db.commit()
+
+        response = await client.get("/v1/me", headers=auth(make_token(signing_key)))
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["sessions_valid_after"] is not None
+        assert body["merged_at"] is not None
 
     async def test_it_reports_the_group_the_request_chose(
         self,

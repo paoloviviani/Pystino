@@ -39,6 +39,7 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -1366,8 +1367,25 @@ def issue_session_token(user_id: uuid.UUID, *, secret: str, ttl_seconds: int) ->
     return jwt.encode({"alg": _SESSION_ALGORITHM}, claims, key)
 
 
-def verify_session_token(token: str, *, secret: str) -> uuid.UUID:
-    """Return the user id, or raise :class:`OIDCError`."""
+@dataclass(frozen=True)
+class SessionClaims:
+    """What a verified session token asserts: who, and since when.
+
+    `issued_at` is the disable cascade's own check (ADR 0093 §9.1):
+    `load_user_for_management` refuses a token whose `iat` predates the
+    user's `sessions_valid_after` — a session minted before a disable (or a
+    recovery, or a merge) is exactly the session a disable exists to end,
+    even though the JWT signature itself still verifies. Carried on the
+    token rather than looked up, so refusing a stale session costs no query
+    beyond the one that already loads the user.
+    """
+
+    user_id: uuid.UUID
+    issued_at: datetime
+
+
+def verify_session_token(token: str, *, secret: str) -> SessionClaims:
+    """Return the session's claims, or raise :class:`OIDCError`."""
     if not secret:
         raise OIDCError("GATEWAY_SESSION_SECRET is not configured")
     key = OctKey.import_key(secret)
@@ -1376,12 +1394,18 @@ def verify_session_token(token: str, *, secret: str) -> uuid.UUID:
         JWTClaimsRegistry(
             exp={"essential": True},
             sub={"essential": True},
+            iat={"essential": True},
             typ={"essential": True, "value": "gw-session"},
         ).validate(decoded.claims)
     except JoseError as exc:
         raise OIDCError(f"session token is not valid: {exc}") from exc
 
     try:
-        return uuid.UUID(str(decoded.claims["sub"]))
+        user_id = uuid.UUID(str(decoded.claims["sub"]))
     except (KeyError, ValueError) as exc:
         raise OIDCError("session token subject is not a user id") from exc
+    try:
+        issued_at = datetime.fromtimestamp(int(decoded.claims["iat"]), tz=UTC)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise OIDCError("session token carries no usable issued-at claim") from exc
+    return SessionClaims(user_id=user_id, issued_at=issued_at)

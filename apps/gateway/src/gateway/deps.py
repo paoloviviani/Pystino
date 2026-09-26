@@ -6,7 +6,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import Depends, Request
@@ -452,10 +452,18 @@ async def _bearer_client(
     return None, None
 
 
-async def load_user_for_management(session: AsyncSession, user_id: uuid.UUID) -> User:
+async def load_user_for_management(
+    session: AsyncSession, user_id: uuid.UUID, *, issued_at: datetime
+) -> User:
     stmt = select(User).where(User.id == user_id).options(selectinload(User.memberships))
     user = (await session.execute(stmt)).scalar_one_or_none()
     if user is None or not user.is_active:
+        raise AuthenticationError("Session is no longer valid.")
+    # ADR 0093 §9.1: a disable (or a break-glass recovery, or a merge)
+    # stamps `sessions_valid_after`, and a token minted before that instant is
+    # exactly the one a disable exists to end — no second query, since the
+    # comparison is against the row this function already loaded.
+    if user.sessions_valid_after is not None and issued_at < user.sessions_valid_after:
         raise AuthenticationError("Session is no longer valid.")
     return user
 
@@ -478,11 +486,11 @@ async def get_management_user(
         raise AuthenticationError("Not authenticated. Sign in at /auth/login.")
 
     try:
-        user_id = verify_session_token(token, secret=settings.session_secret.get_secret_value())
+        claims = verify_session_token(token, secret=settings.session_secret.get_secret_value())
     except OIDCError as exc:
         raise AuthenticationError("Session is not valid or has expired.") from exc
 
-    return await load_user_for_management(session, user_id)
+    return await load_user_for_management(session, claims.user_id, issued_at=claims.issued_at)
 
 
 async def get_admin_user(

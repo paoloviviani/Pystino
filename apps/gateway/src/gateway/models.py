@@ -435,6 +435,17 @@ class User(Base):
     email_normalized: Mapped[str | None] = mapped_column(String(320), index=True, default=None)
     email_verified: Mapped[bool | None] = mapped_column(Boolean, default=None)
 
+    # ADR 0093 §9.1: stamped to `now()` by the disable cascade. A console
+    # session token whose `iat` predates this is refused in
+    # `load_user_for_management` — the same clock a chat's session check
+    # compares against `session.createdAt` on its own side. Null for anyone
+    # never disabled.
+    sessions_valid_after: Mapped[datetime | None] = mapped_column(default=None)
+    # ADR 0093 §9.1/§3.1: the newest time another account was merged into this
+    # one (stage c writes it; the column lands now so `/v1/me`, which already
+    # returns it, has a real value to read instead of always `None`).
+    merged_at: Mapped[datetime | None] = mapped_column(default=None)
+
     # The user's own choice of which group to bill by default. Users change this
     # themselves; the gateway validates that they are still a member of it at
     # request time, so a stale value cannot be used to bill a group they left.
