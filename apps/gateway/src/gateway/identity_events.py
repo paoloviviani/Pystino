@@ -53,7 +53,10 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     # §6.2: "an identity.link audit row (actor login; detail: the matched
     # address and the new issuer)".
     IdentityEventAction.IDENTITY_LINK: frozenset({"matched_email", "issuer"}),
-    IdentityEventAction.IDENTITY_BIND: frozenset(),
+    # §13.4/§8.2: a migration-created, unbound entry claimed at its first
+    # real sign-in carries "claimed_unbound" so this row is distinguishable
+    # from the ordinary bind_bundled_login case, which never sees one.
+    IdentityEventAction.IDENTITY_BIND: frozenset({"claimed_unbound"}),
     IdentityEventAction.IDENTITY_DROP: frozenset(),
     # §7.1 step 5: "the identity_events user.merge with the summary and the
     # reason" — summary is the counts-per-table dict the preview also shows.
@@ -61,7 +64,10 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     IdentityEventAction.BREAK_GLASS: frozenset(),
     # §2 step 4: "the change is audited (idp.reseed, with the old and new
     # issuer)".
-    IdentityEventAction.IDP_RESEED: frozenset({"old_issuer", "new_issuer"}),
+    # §13.4: the bundled-users migration reuses this action for the group
+    # normalisation's own record, with "removed_groups" -- the distinct
+    # group names taken off any entry, across the whole file, in one run.
+    IdentityEventAction.IDP_RESEED: frozenset({"old_issuer", "new_issuer", "removed_groups"}),
     IdentityEventAction.BOOTSTRAP_ADMIN: frozenset(),
     IdentityEventAction.SESSIONS_REVOKE: frozenset(),
     IdentityEventAction.DEVICES_REVOKE: frozenset(),

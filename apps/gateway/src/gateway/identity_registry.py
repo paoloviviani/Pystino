@@ -285,6 +285,20 @@ class OIDCProviderRegistry:
         return client
 
 
+async def active_bundled_provider(session: AsyncSession) -> IdentityProvider | None:
+    """The one enabled row, or `None` on any other kind.
+
+    ADR 0093 §2 guarantees at most one enabled row deployment-wide. Shared
+    by the bundled-user admin routes and the first-start migration (§13.4)
+    so both agree on what "bundled" means from one query, not two that
+    could in principle disagree.
+    """
+    row = (
+        await session.execute(select(IdentityProvider).where(IdentityProvider.is_enabled.is_(True)))
+    ).scalar_one_or_none()
+    return row if row is not None and row.kind == "authelia" else None
+
+
 async def reseed_from_env(session: AsyncSession, settings: Settings, secrets: SecretBox) -> None:
     """Make the provider table agree with the environment. Runs on every start.
 

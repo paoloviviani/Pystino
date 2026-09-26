@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import uuid
 from datetime import UTC, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -14,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from gateway.config import Settings
 from gateway.directory.adapters import AdapterError, build_adapter
+from gateway.directory.authelia_users import UsersFile
 from gateway.directory.engine import SyncReport, apply_entries, record_run
 from gateway.identity_registry import record_from_row
 from gateway.models import DirectorySyncRun, IdentityProvider
@@ -28,6 +31,15 @@ LOCK_SECONDS = 600
 
 def decrypt_config(row: IdentityProvider, secrets: SecretBox) -> str | None:
     return secrets.decrypt(row.sync_config_encrypted) if row.sync_config_encrypted else None
+
+
+def bundled_users_file(row: IdentityProvider, secrets: SecretBox) -> UsersFile:
+    """The path lives in the provider's own sync-config blob (the same one
+    `decrypt_config` reads for pull-adapter settings), defaulting to the
+    compose mount point. Shared by the bundled-user admin routes and the
+    first-start migration (§13.4), so both resolve the same file."""
+    config = json.loads(decrypt_config(row, secrets) or "{}")
+    return UsersFile(Path(config.get("path") or "/authelia/users_database.yml"))
 
 
 async def run_pull(

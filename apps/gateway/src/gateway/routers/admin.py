@@ -20,14 +20,12 @@ Two rules the endpoints enforce rather than trust:
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
 import time
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import quote
 
@@ -53,12 +51,11 @@ from gateway.deps import (
     SettingsDep,
 )
 from gateway.directory.authelia_users import (
-    UsersFile,
     UsersFileError,
     UsersFileLockedError,
 )
 from gateway.directory.engine import add_manual_memberships
-from gateway.directory.service import decrypt_config
+from gateway.directory.service import bundled_users_file
 from gateway.email_config import effective_smtp
 from gateway.email_normalize import is_trusted_email
 from gateway.errors import (
@@ -69,6 +66,9 @@ from gateway.errors import (
     UpstreamUnavailableError,
 )
 from gateway.identity_events import record_event
+from gateway.identity_registry import (
+    active_bundled_provider,
+)
 from gateway.identity_registry import (
     list_providers as list_provider_records,
 )
@@ -2377,20 +2377,6 @@ async def _user_responses(
     ]
 
 
-async def _active_bundled_provider(session: AsyncSession) -> IdentityProvider | None:
-    """The one enabled row, or `None` on any other kind.
-
-    ADR 0093 §2 guarantees at most one enabled row deployment-wide. Soft,
-    for callers that run regardless of kind (the disable cascade fires for
-    every user) — `_bundled_provider` below is the hard version, for the
-    bundled-only routes.
-    """
-    row = (
-        await session.execute(select(IdentityProvider).where(IdentityProvider.is_enabled.is_(True)))
-    ).scalar_one_or_none()
-    return row if row is not None and row.kind == "authelia" else None
-
-
 async def _bundled_provider(session: AsyncSession) -> IdentityProvider:
     """The one enabled row, refusing anything but the bundled Authelia.
 
@@ -2398,20 +2384,12 @@ async def _bundled_provider(session: AsyncSession) -> IdentityProvider:
     operator on any other kind gets a clear refusal rather than a 404 that
     reads like a typo'd id.
     """
-    row = await _active_bundled_provider(session)
+    row = await active_bundled_provider(session)
     if row is None:
         raise BadRequestError(
             "This deployment's identity provider is not the bundled Authelia."
         )
     return row
-
-
-def _bundled_users_file(row: IdentityProvider, secrets: SecretBox) -> UsersFile:
-    """Same convention `directory.py`'s (removed in step 7) routes used: the
-    path lives in the provider's own sync-config blob, defaulting to the
-    compose mount point."""
-    config = json.loads(decrypt_config(row, secrets) or "{}")
-    return UsersFile(Path(config.get("path") or "/authelia/users_database.yml"))
 
 
 @router.post(
@@ -2436,7 +2414,7 @@ async def create_user(
     is worse than the create simply having failed outright.
     """
     provider = await _bundled_provider(session)
-    users_file = _bundled_users_file(provider, secrets)
+    users_file = bundled_users_file(provider, secrets)
 
     try:
         _authelia_user, password = users_file.create(
@@ -2553,7 +2531,7 @@ async def create_sign_in(
         raise NotFoundError(f"No user with id {user_id}.")
 
     provider = await _bundled_provider(session)
-    users_file = _bundled_users_file(provider, secrets)
+    users_file = bundled_users_file(provider, secrets)
 
     email = user.email or ""
     try:
@@ -2627,7 +2605,7 @@ async def reset_password(
     if entry is None:
         raise NotFoundError("This user has no bundled login to reset.")
 
-    users_file = _bundled_users_file(provider, secrets)
+    users_file = bundled_users_file(provider, secrets)
     try:
         password = users_file.reset_password(entry.external_id)
     except UsersFileLockedError as exc:
@@ -2694,7 +2672,7 @@ async def _bundled_entry_for(
     principle answer differently and nothing to `assert` about it staying
     the same between the two.
     """
-    provider = await _active_bundled_provider(session)
+    provider = await active_bundled_provider(session)
     if provider is None:
         return None
     entry = (
@@ -2756,7 +2734,7 @@ async def _sync_bundled_login(
     if found is None:
         return None
     provider, entry = found
-    users_file = _bundled_users_file(provider, secrets)
+    users_file = bundled_users_file(provider, secrets)
     action = IdentityEventAction.LOGIN_DISABLE if disabled else IdentityEventAction.LOGIN_ENABLE
     try:
         users_file.update(entry.external_id, disabled=disabled)

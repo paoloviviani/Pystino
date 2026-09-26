@@ -16,9 +16,14 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from gateway.accounting import DEFAULT_ESTIMATOR
 from gateway.config import Settings, get_settings, startup_warnings
 from gateway.db import create_engine, create_session_factory
+from gateway.directory.bundled_migration import migrate_bundled_directory
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.fx import FXService
-from gateway.identity_registry import OIDCProviderRegistry, reseed_from_env
+from gateway.identity_registry import (
+    OIDCProviderRegistry,
+    active_bundled_provider,
+    reseed_from_env,
+)
 from gateway.logging_config import configure_logging
 from gateway.oidc import sweep_env_admin_email_rule
 from gateway.oidc_policy import OIDCPolicyResolver
@@ -247,6 +252,21 @@ async def init_app_state(
         if settings.environment == "production":
             raise
         logger.error("could not re-seed identity providers at startup", exc_info=True)
+
+    # The bundled-users first-start migration (ADR 0093 §13.4): idempotent,
+    # so this runs unconditionally on every start rather than needing its
+    # own "have I done this before" marker. A no-op on an external IdP, or
+    # on a bundled deployment nothing here has ever touched.
+    try:
+        async with session_factory() as session:
+            provider = await active_bundled_provider(session)
+            if provider is not None:
+                await migrate_bundled_directory(session, provider, app.state.secrets)
+                await session.commit()
+    except Exception:
+        if settings.environment == "production":
+            raise
+        logger.error("could not run the bundled-users migration at startup", exc_info=True)
 
     try:
         async with session_factory() as session:

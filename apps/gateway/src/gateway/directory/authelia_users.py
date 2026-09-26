@@ -305,3 +305,31 @@ class UsersFile:
                 # Authelia refuses an empty users file; keep the last one (disable it instead).
                 raise UsersFileError("cannot delete the last user; disable them instead")
             self._save(data)
+
+    def normalize_groups(self) -> dict[str, list[str]]:
+        """Force every entry's `groups` to exactly `["users"]` (§8.3, §13.4).
+
+        Returns the groups actually *removed*, per login that had any beyond
+        `["users"]` — empty for a login that already matched exactly. The
+        lock and a read happen every call (cheap, and the only way to know
+        whether anything needs fixing), but the file is only rewritten when
+        some entry's `groups` differed from `["users"]` — which is what
+        keeps every start after the first a no-op write, and this safe to
+        call unconditionally on every boot rather than a one-shot migration
+        that has to remember it already ran.
+        """
+        with self._lock():
+            data = self._load()
+            removed: dict[str, list[str]] = {}
+            changed = False
+            for login, info in data["users"].items():
+                current = [str(g) for g in (info or {}).get("groups") or []]
+                if current == ["users"]:
+                    continue
+                changed = True
+                if extra := [g for g in current if g != "users"]:
+                    removed[login] = extra
+                info["groups"] = ["users"]
+            if changed:
+                self._save(data)
+            return removed
