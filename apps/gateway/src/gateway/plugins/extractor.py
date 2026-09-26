@@ -17,8 +17,11 @@ seeds the provider and its model, in the shape the manual path used), not a
 catalogue entry a caller picks: `/v1/models` leaves it out and the console's
 model list does not render it, the way search tiers are left out for the same
 reason. It is hidden, not unaccounted — usage meters to the ledger, an
-administrator can still grant, price or delete the row, and a caller whose
-grants reach it may ask for it by name.
+administrator can still grant or price the row, and a caller whose grants
+reach it may ask for it by name. It can be deactivated, never deleted
+(`routers/admin.py`'s `delete_provider`/`delete_model`, both 409): this row is
+the deployment's own infrastructure, and "deleted" would only mean "re-seeded
+absent, until the next fresh install brings it back" — not a real removal.
 
 Two claims it makes, both true by construction rather than by configuration:
 

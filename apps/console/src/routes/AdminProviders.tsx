@@ -160,20 +160,28 @@ export function AdminProviders() {
           >
             {provider.is_active ? "Deactivate" : "Activate"}
           </Button>
-          <Button
-            variant="ghost"
-            className="text-danger"
-            busy={remove.isPending && remove.variables === provider.id}
-            onClick={() =>
-              remove.mutate(provider.id, {
-                onSuccess: () => toast?.add({ title: "Provider deleted", type: "success" }),
-                onError: () =>
-                  toast?.add({ title: "Could not delete the provider", type: "error" }),
-              })
-            }
-          >
-            Delete
-          </Button>
+          {provider.kind === "internal" ? (
+            <Tooltip label="This deployment's own infrastructure — deactivate it instead of deleting it.">
+              <Button variant="ghost" className="text-danger" disabled>
+                Delete
+              </Button>
+            </Tooltip>
+          ) : (
+            <Button
+              variant="ghost"
+              className="text-danger"
+              busy={remove.isPending && remove.variables === provider.id}
+              onClick={() =>
+                remove.mutate(provider.id, {
+                  onSuccess: () => toast?.add({ title: "Provider deleted", type: "success" }),
+                  onError: () =>
+                    toast?.add({ title: "Could not delete the provider", type: "error" }),
+                })
+              }
+            >
+              Delete
+            </Button>
+          )}
         </div>
       ),
     },

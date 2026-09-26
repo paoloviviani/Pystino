@@ -39,7 +39,7 @@ from gateway.models import (
     UsageRecord,
 )
 from gateway.plugins.extractor import LocalExtractorPlugin
-from sqlalchemy import StaticPool, create_engine, insert, select
+from sqlalchemy import StaticPool, create_engine, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from test_admin import as_user, make_admin
 from test_ocr_surface import INLINE_DOCX, FakeExtractor
@@ -175,6 +175,28 @@ class TestSeed:
         assert after.base_url == "http://elsewhere:8080"
         assert after.kind == ProviderKind.PROVIDER
         assert _model_row(db_connection).is_public is False
+
+    def test_a_deactivated_provider_survives_a_reseed(self, db_connection: Any) -> None:
+        """The provider row cannot be deleted (`routers/admin.py`'s 409), so
+        deactivating it is the only way off — and this is what makes that
+        stick: a re-run of the seed, exactly as a fresh boot would run it,
+        must not read "provider present, inactive" as "provider absent" and
+        reactivate what an administrator turned off."""
+        seed_extractor(db_connection)
+        db_connection.commit()
+        db_connection.execute(
+            update(Provider).where(Provider.plugin == "extractor").values(is_active=False)
+        )
+        db_connection.execute(
+            update(ModelDef).where(ModelDef.name == MODEL_NAME).values(is_active=False)
+        )
+        db_connection.commit()
+
+        seed_extractor(db_connection)
+        db_connection.commit()
+
+        assert _provider_row(db_connection).is_active is False
+        assert _model_row(db_connection).is_active is False
 
     def test_a_deleted_model_is_never_backfilled(self, db_connection: Any) -> None:
         """The no-resurrection pin: provider present, model deliberately gone.
@@ -421,3 +443,104 @@ class TestServing:
         assert record.model_name == MODEL_NAME
         assert record.cost == Decimal(0)
         assert record.model_substituted is False
+
+
+class TestDeletionProtection:
+    """The local extractor can be deactivated, never deleted.
+
+    It is this deployment's own infrastructure, seeded once by migration 0041
+    and never re-created afterwards (`TestSeed`) — so "delete" would mean
+    nothing but a confusing 404 until the next fresh install, never a real
+    removal. Deactivation is the real off switch, and it must still work.
+    """
+
+    async def test_deleting_the_provider_is_409(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+    ) -> None:
+        admin = await make_admin(session_factory, seeded)
+        model = await add_extractor_pair(session)
+        as_user(app, admin)
+
+        response = await client.delete(f"/api/admin/providers/{model.provider_id}")
+        assert response.status_code == 409
+        assert "deactivated" in response.json()["error"]["message"]
+
+        # Refused, not half-done: the row is still there afterwards.
+        assert (await client.get("/api/admin/providers")).status_code == 200
+        listing = (await client.get("/api/admin/providers")).json()["items"]
+        assert any(item["name"] == "extractor" for item in listing)
+
+    async def test_deleting_the_model_row_is_409(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+    ) -> None:
+        admin = await make_admin(session_factory, seeded)
+        model = await add_extractor_pair(session)
+        as_user(app, admin)
+
+        response = await client.delete(f"/api/admin/models/{model.id}")
+        assert response.status_code == 409
+        assert "deactivated" in response.json()["error"]["message"]
+
+    async def test_deactivating_the_provider_still_works(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+    ) -> None:
+        admin = await make_admin(session_factory, seeded)
+        model = await add_extractor_pair(session)
+        as_user(app, admin)
+
+        response = await client.patch(
+            f"/api/admin/providers/{model.provider_id}", json={"is_active": False}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["is_active"] is False
+
+    async def test_reactivating_the_provider_works(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: Any,
+    ) -> None:
+        admin = await make_admin(session_factory, seeded)
+        model = await add_extractor_pair(session)
+        as_user(app, admin)
+
+        await client.patch(f"/api/admin/providers/{model.provider_id}", json={"is_active": False})
+        response = await client.patch(
+            f"/api/admin/providers/{model.provider_id}", json={"is_active": True}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["is_active"] is True
+
+    async def test_an_ordinary_provider_is_unaffected(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: Any,
+    ) -> None:
+        """The protection is scoped to `kind == internal`, not a blanket rule."""
+        as_user(app, await make_admin(session_factory, seeded))
+        created = (
+            await client.post(
+                "/api/admin/providers",
+                json={"name": "unrelated", "base_url": "https://x.test/v1"},
+            )
+        ).json()
+        assert (await client.delete(f"/api/admin/providers/{created['id']}")).status_code == 204

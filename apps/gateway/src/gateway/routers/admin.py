@@ -708,6 +708,16 @@ async def delete_provider(
     """
     provider = await _load_provider(session, provider_id)
 
+    if provider.kind == ProviderKind.INTERNAL:
+        # This deployment's own infrastructure (the local extractor is the one
+        # today), not a counterparty an administrator configured — there is
+        # nothing to "remove" here that the deployment would not immediately
+        # need back. Deactivating takes it out of service exactly as it would
+        # any other provider; deleting it would just be re-seeded as absent
+        # the next time a fresh install runs the same migration, which is not
+        # a real deletion, only a confusing detour through 404s until then.
+        raise ConflictError("the local extractor can be deactivated, not deleted")
+
     if provider.kind != ProviderKind.SEARCH:
         counts = await _model_counts(session)
         if (count := counts.get(provider_id, 0)) > 0:
@@ -949,7 +959,12 @@ async def delete_model(model_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     attribution to users and groups is untouched. Prices and access grants die
     with the model — they are meaningless without it.
     """
-    await _load_model(session, model_id)
+    model = await _load_model(session, model_id)
+    if model.provider is not None and model.provider.kind == ProviderKind.INTERNAL:
+        # The same protection as the provider row itself, and for the same
+        # reason: this is the deployment's own infrastructure, and "delete"
+        # would only be undone by the next fresh install's seed.
+        raise ConflictError("the local extractor can be deactivated, not deleted")
     # A model a search policy points at cannot go quietly either: the column
     # is ON DELETE SET NULL, which would silently unconfigure those groups'
     # unified search. Name them instead, so the administrator re-points or
