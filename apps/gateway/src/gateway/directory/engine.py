@@ -89,7 +89,7 @@ def _who(entry: Entry | DirectoryEntry) -> str:
     return entry.username or entry.email or entry.external_id
 
 
-async def _add_manual_memberships(
+async def add_manual_memberships(
     session: AsyncSession, user: User, names: Iterable[str]
 ) -> list[str]:
     """Pre-assigned groups become *manual* memberships: the console's, not the directory's."""
@@ -259,7 +259,7 @@ async def apply_entries(
             newly_linked = True
             if row.preassigned_groups:
                 await session.refresh(user, attribute_names=["memberships"])
-                added = await _add_manual_memberships(session, user, row.preassigned_groups)
+                added = await add_manual_memberships(session, user, row.preassigned_groups)
                 if added:
                     report.note("preassigned", _who(entry), groups=added)
         row.username = entry.username
@@ -381,7 +381,7 @@ async def link_at_login(
     row.user_id = user.id
     await session.refresh(user, attribute_names=["memberships"])
     if row.preassigned_groups:
-        await _add_manual_memberships(session, user, row.preassigned_groups)
+        await add_manual_memberships(session, user, row.preassigned_groups)
     report = SyncReport()
     entry = Entry(
         external_id=row.external_id,

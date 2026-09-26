@@ -56,11 +56,13 @@ from gateway.deployment_state import get_or_create_deployment_state, mark_bootst
 from gateway.email_normalize import is_trusted_email, normalize_email
 from gateway.identity_events import record_event
 from gateway.models import (
+    DirectoryEntry,
     Group,
     GroupSource,
     GroupSync,
     IdentityEventAction,
     IdentityEventActor,
+    IdentityProvider,
     Membership,
     MembershipSource,
     User,
@@ -627,6 +629,119 @@ def _identity_select(issuer: str, subject: str) -> Select[tuple[User]]:
         # needs. A lazy attribute touched later would raise MissingGreenlet
         # under asyncio rather than quietly costing a query.
         .options(selectinload(User.memberships))
+    )
+
+
+async def bind_bundled_login(
+    session: AsyncSession,
+    record: IdentityProvider,
+    *,
+    issuer: str,
+    subject: str,
+    preferred_username: str | None,
+    email: str | None,
+    email_verified: bool | None,
+) -> None:
+    """Bind an unknown ``(issuer, subject)`` to the console-created account its
+    login was made for (ADR 0093 §8.2), bundled Authelia only.
+
+    This replaces ``link_at_login``'s unlinked-entry path for this one kind:
+    that function claims a ``directory_entries`` row with no ``user_id`` yet,
+    which never describes a bundled entry — ``POST /admin/users`` and
+    ``POST /admin/users/{id}/sign-in`` bind the row to a user (pending or
+    real) at *creation* time (§8.2 step 4), not at the login that follows.
+    What is unknown here is not "whose entry is this" but "does this
+    signing-in identity belong to the user that entry already names".
+
+    Call this **before** ``provision_user``, unconditionally — it runs its
+    own ``_identity_select`` check and returns at once for an identity that
+    is already known, so it is never wrong to call regardless of what the
+    caller has or hasn't looked up yet. On a match it mutates the target
+    user's identity — replacing the pending pair, or adding/updating a
+    ``user_identities`` row — so ``provision_user``'s own ``_identity_select``
+    then finds this same person instead of creating a new one. It writes
+    nothing and returns quietly on every refusal: an unmatched login is an
+    ordinary new user, not an error. The extra query costs nothing this path
+    cares about — a browser login, not the ``/v1`` hot path
+    ``test_query_counts.py`` bounds.
+    """
+    if record.kind != "authelia":
+        return
+    if (await session.execute(_identity_select(issuer, subject))).scalar_one_or_none() is not None:
+        return
+    if not preferred_username:
+        return
+    row = (
+        await session.execute(
+            select(DirectoryEntry).where(
+                DirectoryEntry.provider_id == record.id,
+                DirectoryEntry.external_id == preferred_username,
+                DirectoryEntry.user_id.is_not(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None or row.user_id is None:
+        return
+    # §8.2: "when email_verified is True and a normalised email equals the
+    # entry's" — the literal boolean, and both sides run through the same
+    # normalisation before comparing (R2: exact-match comparison is how a
+    # homoglyph or a casing difference silently fails to match).
+    if email_verified is not True:
+        return
+    claim_email, claim_trusted = is_trusted_email(email or "")
+    entry_email, entry_trusted = is_trusted_email(row.email or "")
+    if not claim_trusted or not entry_trusted or claim_email != entry_email:
+        return
+
+    target = (
+        await session.execute(select(User).where(User.id == row.user_id))
+    ).scalar_one_or_none()
+    if target is None:
+        return
+
+    if target.issuer == PENDING_USER_ISSUER:
+        # The placeholder pair (§3.1) is replaced outright: it named nobody
+        # real, so there is nothing to keep a secondary record of.
+        target.issuer = issuer
+        target.subject = subject
+    else:
+        # Otherwise the identity is added — except when the target already
+        # holds one at *this* issuer (a lost `authelia-data` volume mints a
+        # new opaque subject for the same login, one of §8.2's own named
+        # cases): updating that identity's subject in place is what "the
+        # same person, the same directory, a new subject" means, and
+        # inserting a second row at the same issuer would violate
+        # `uq_user_identities_user_issuer` anyway.
+        existing = (
+            await session.execute(
+                select(UserIdentity).where(
+                    UserIdentity.user_id == target.id, UserIdentity.issuer == issuer
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.subject = subject
+            existing.matched_email = claim_email
+        else:
+            session.add(
+                UserIdentity(
+                    user_id=target.id,
+                    issuer=issuer,
+                    subject=subject,
+                    matched_email=claim_email,
+                )
+            )
+    await session.flush()
+
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.LOGIN,
+        actor_label=email or preferred_username,
+        action=IdentityEventAction.IDENTITY_BIND,
+        target_user_id=target.id,
+        target_label=email or preferred_username,
+        issuer=issuer,
+        subject=subject,
     )
 
 

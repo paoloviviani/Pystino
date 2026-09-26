@@ -33,6 +33,7 @@ from gateway.oidc import (
     OIDCClient,
     OIDCError,
     ProvisioningRefused,
+    bind_bundled_login,
     extract_groups,
     generate_pkce_pair,
     issue_session_token,
@@ -341,6 +342,20 @@ async def callback(
     if policy is not None:
         groups = policy.map_group_names(groups)
     try:
+        # Bundled-Authelia binding (ADR 0093 §8.2): a console-created account
+        # (pending, or an existing person given a fresh login) claims this
+        # sign-in by login name and verified email, before provision_user
+        # ever gets a chance to treat an unknown (issuer, subject) as a brand
+        # new person.
+        await bind_bundled_login(
+            session,
+            record,
+            issuer=str(claims["iss"]),
+            subject=str(claims["sub"]),
+            preferred_username=merged.get("preferred_username"),
+            email=merged.get("email"),
+            email_verified=merged.get("email_verified"),
+        )
         user = await provision_user(
             session,
             issuer=str(claims["iss"]),
