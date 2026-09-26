@@ -944,20 +944,35 @@ async def apply_env_admin_rules(
     ``email_verified``, and the email rule's whole safety is the *literal*
     boolean.
 
-    If either rule matches, admin is granted (or kept); "email" wins the
-    ``admin_rule`` label when both do, since it is the more specific of the
-    two. A revocation — refused when it would leave no active administrator,
-    audited as ``admin.refused_last`` — only ever touches
-    ``admin_source == "env"``, and only when *neither* rule matches now
-    (ADR 0093 §5.2): a person granted by one rule is not revoked just because
-    the other one, which never granted them anything, also fails to match.
+    If either rule matches, admin is granted when it was not already held —
+    "email" wins the ``admin_rule`` label when both match, since it is the
+    more specific of the two. A rule may only ever touch what a rule granted:
+    a match never converts a ``manual`` admin (console, CLI, bootstrap,
+    break-glass) to ``env`` provenance, and a mismatch never revokes one.
+    ``admin_rule`` itself is only ever relabelled at a sign-in
+    (``email_rule=True``) — never on ``/v1``, where the claim set that would
+    justify "email" is not there to have been checked, so the label could
+    otherwise flip on alternate requests depending on which claim happened to
+    be present.
+
+    A revocation is refused when it would leave no active administrator
+    (audited as ``admin.refused_last`` — but only at a sign-in; ``/v1`` only
+    logs, since a last admin whose claim lapsed would otherwise write an
+    audit row on every request), and never reaches an ``admin_rule=="email"``
+    grant at all on ``/v1``: only a sign-in, whose claims can carry the
+    literal ``email_verified``, or the startup sweep, may revoke what the
+    email rule gave.
     """
     matched_email = email_rule and _matches_email_rule(claims, settings)
     matched_claim = _matches_claim_rule(claims, settings, group_mappings)
+    rule = "email" if matched_email else "claim"
 
     if matched_email or matched_claim:
-        rule = "email" if matched_email else "claim"
-        if user.is_admin and user.admin_source == "env" and user.admin_rule == rule:
+        if user.is_admin:
+            if user.admin_source != "env":
+                return "unchanged"
+            if email_rule and user.admin_rule != rule:
+                user.admin_rule = rule
             return "unchanged"
         user.is_admin = True
         user.admin_source = "env"
@@ -977,17 +992,24 @@ async def apply_env_admin_rules(
 
     if not user.is_admin or user.admin_source != "env":
         return "unchanged"
+    if not email_rule and user.admin_rule == "email":
+        return "unchanged"
     if not await other_active_admin_exists(session, excluding=user.id):
-        await record_event(
-            session,
-            actor_type=IdentityEventActor.LOGIN,
-            actor_label=user.email or str(user.id),
-            actor_user_id=user.id,
-            action=IdentityEventAction.ADMIN_REFUSED_LAST,
-            target_user_id=user.id,
-            target_label=user.email or "",
-            reason="would leave no active administrator",
-        )
+        if email_rule:
+            await record_event(
+                session,
+                actor_type=IdentityEventActor.LOGIN,
+                actor_label=user.email or str(user.id),
+                actor_user_id=user.id,
+                action=IdentityEventAction.ADMIN_REFUSED_LAST,
+                target_user_id=user.id,
+                target_label=user.email or "",
+                reason="would leave no active administrator",
+            )
+        else:
+            logger.warning(
+                "not revoking admin from %s: they are the last active administrator", user.id
+            )
         return "kept-last-admin"
     revoked_rule = user.admin_rule
     user.is_admin = False
@@ -1224,6 +1246,14 @@ def _admin_diverges(
     Cheap — the claims are parsed, the row loaded — and it settles: after one
     provisioning the flag agrees with the token (or provenance forbids the
     change), so the hot path returns early again.
+
+    The revocation half checks ``admin_rule == "claim"`` specifically, not
+    just ``is_admin``: an ``admin_rule == "email"`` grant must never look like
+    a divergence here, or an unrelated reason to re-provision (a changed
+    group, a changed username) would reach ``apply_env_admin_rules`` with
+    ``email_rule=False`` and revoke it — the same protection that function
+    applies itself, kept here too so a future caller of either one alone
+    stays correct.
     """
     if group_sync is not GroupSync.EVERY_LOGIN:
         return False
