@@ -30,11 +30,16 @@ this plugin delegates rather than reimplementing — see the warning in
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gateway.accounting.cost import TokenCounts
 from gateway.models import ApiSurface
-from gateway.plugins.base import ProviderKind, ReportedCost, ServedBy
+from gateway.plugins.base import ProbeResult, ProviderKind, ReportedCost, ServedBy
+
+if TYPE_CHECKING:
+    import httpx
+
+    from gateway.upstream import OpenAICompatibleUpstream
 
 #: The version header Anthropic's API requires on every request. Pinned here
 #: rather than sent from a setting, because a plugin knowing its counterparty's
@@ -120,3 +125,10 @@ class AnthropicPlugin:
     def catalogue_tag_all(self) -> str | None:
         """No tag filter here, so no "everything" spelling is measured."""
         return None
+
+    async def probe(
+        self, upstream: OpenAICompatibleUpstream, client: httpx.AsyncClient
+    ) -> ProbeResult:
+        """``list_models()``, unchanged: this is still an OpenAI-shaped
+        catalogue endpoint, only the auth header differs."""
+        return await upstream.default_probe()

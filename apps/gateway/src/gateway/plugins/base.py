@@ -37,10 +37,15 @@ import enum
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from gateway.accounting.cost import TokenCounts
 from gateway.models import ApiSurface
+
+if TYPE_CHECKING:
+    import httpx
+
+    from gateway.upstream import OpenAICompatibleUpstream
 
 
 class ProviderKind(enum.StrEnum):
@@ -141,6 +146,28 @@ class CataloguePrice:
     per_image: Decimal | None = None
     currency: str = "EUR"
     sub_provider: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProbeResult:
+    """What a plugin's own connectivity check found.
+
+    The admin "Test" button used to mean one thing — ``GET /models`` — for every
+    provider, which is wrong for a counterparty that never serves such a route:
+    the local extractor answers only ``/healthz``, ``/extract`` and ``/detect``,
+    and a search backend has no catalogue at all. Each plugin now says how it
+    tests itself, and this is the shape it says it in — the same one
+    ``ProviderTestResponse`` renders, minus ``latency_ms``, which is measured
+    once around the whole call rather than reimplemented per plugin.
+    """
+
+    ok: bool
+    detail: str
+    status_code: int | None = None
+    model_count: int | None = None
+    #: A handful of results, as evidence the probe reached something real: model
+    #: ids for an OpenAI-compatible provider, result titles for a search backend.
+    sample: tuple[str, ...] = ()
 
 
 def bearer_headers(credential: str) -> dict[str, str]:
@@ -283,5 +310,28 @@ class ProviderPlugin(Protocol):
         ``scripts/check_cortecs_catalogue_tags.py``). Read with ``getattr`` at
         the call site, so an installed plugin omitting the method entirely
         behaves the same as one declaring ``None``.
+        """
+        ...
+
+    async def probe(
+        self, upstream: OpenAICompatibleUpstream, client: httpx.AsyncClient
+    ) -> ProbeResult:
+        """Check that this row works, the way its own counterparty is actually
+        served — never assuming every provider answers ``GET /models``.
+
+        ``upstream`` carries this row's credential and base URL exactly as a
+        real request would build them, so a probe through it exercises the
+        stored key and not a retyped one. ``client`` is the same throwaway
+        HTTP client, offered directly for a probe that is not a JSON call
+        ``upstream`` already knows how to make — the local extractor's
+        ``/healthz`` and raw-bytes ``/extract`` are the case that needs it.
+
+        Read with ``getattr`` at the call site (``OpenAICompatibleUpstream.probe``),
+        so a plugin omitting this — including every third-party one written
+        before it existed — falls back to the original check, ``list_models()``,
+        which is right for an OpenAI-compatible counterparty and wrong for
+        exactly two kinds already in this file: the local extractor, which
+        serves no such route at all, and a search backend, whose catalogue
+        does not exist because a search backend is not an inference endpoint.
         """
         ...

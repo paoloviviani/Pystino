@@ -773,12 +773,18 @@ async def test_provider(
     session: SessionDep,
     providers: ProvidersDep,
 ) -> ProviderTestResponse:
-    """Call the provider's ``/models`` and report what came back.
+    """Ask the provider's own plugin to check the row, and report what it found.
 
     Run against the row **as stored**, credential included, so it exercises
     exactly what a real request would send. A wrong base URL or a stale key
     should be found when it is entered, not by a user's request failing an hour
     later.
+
+    What "check the row" means is the plugin's to decide (``ProviderPlugin.probe``,
+    ``plugins/base.py``): ``GET /models`` for an OpenAI-compatible counterparty,
+    but not for one that never serves such a route — the local extractor and a
+    search backend both answer that with a 404 that reads as "the provider is
+    down" for one working exactly as documented.
 
     Never raises for a provider-side failure: "it did not work, and here is why"
     is the useful answer, and an exception would make the console show a generic
@@ -793,7 +799,7 @@ async def test_provider(
 
     started = time.monotonic()
     try:
-        result = await upstream.list_models()
+        result = await upstream.probe(client)
     except Exception as exc:
         return ProviderTestResponse(
             ok=False,
@@ -804,30 +810,12 @@ async def test_provider(
         await client.aclose()
 
     latency = int((time.monotonic() - started) * 1000)
-    if result.status_code >= 400:
-        hint = ""
-        if result.status_code in (401, 403):
-            hint = " — check the API key"
-        elif result.status_code == 404:
-            hint = " — check the base URL includes the version path, e.g. /v1"
-        return ProviderTestResponse(
-            ok=False,
-            status_code=result.status_code,
-            detail=f"the provider answered {result.status_code}{hint}",
-            latency_ms=latency,
-        )
-
-    ids = [
-        entry.get("id")
-        for entry in (result.payload or {}).get("data", [])
-        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
-    ]
     return ProviderTestResponse(
-        ok=True,
+        ok=result.ok,
         status_code=result.status_code,
-        detail=f"reachable; the provider offers {len(ids)} model(s)",
-        model_count=len(ids),
-        sample=[entry for entry in ids[:5] if entry],
+        detail=result.detail,
+        model_count=result.model_count,
+        sample=list(result.sample),
         latency_ms=latency,
     )
 

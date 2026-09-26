@@ -28,7 +28,7 @@ import httpx
 import orjson
 
 from gateway.config import UpstreamSettings
-from gateway.plugins.base import ProviderPlugin, bearer_headers
+from gateway.plugins.base import ProbeResult, ProviderPlugin, bearer_headers
 
 #: Anthropic requires an API version on every request and rejects one without
 #: it. Harmless on providers that proxy the shape and ignore the header, so it
@@ -119,6 +119,13 @@ class OpenAICompatibleUpstream:
         # to — so a caller that has no provider row, such as a test or a probe
         # built from settings alone, behaves as before.
         self._plugin = plugin
+
+    @property
+    def base_url(self) -> str:
+        """The address this client sends to. Read by a probe that needs to
+        name it in a failure message, or reach a route ``post_json`` does not
+        know (the local extractor's ``/healthz``)."""
+        return self._settings.base_url
 
     def _headers(self, *, request_id: str | None = None) -> dict[str, str]:
         headers = {
@@ -285,6 +292,58 @@ class OpenAICompatibleUpstream:
             raw=raw,
             headers=dict(response.headers),
         )
+
+    async def default_probe(self) -> ProbeResult:
+        """The original connection test: does ``GET /models`` answer.
+
+        Right for an OpenAI-compatible counterparty, which is what every
+        provider used to be assumed to be — and the fallback for a plugin
+        that says nothing about how to test itself, so a third-party plugin
+        written before ``probe()`` existed keeps testing exactly as before.
+        """
+        try:
+            result = await self.list_models()
+        except Exception as exc:
+            return ProbeResult(ok=False, detail=f"could not reach {self.base_url}: {exc}")
+
+        if result.status_code >= 400:
+            hint = ""
+            if result.status_code in (401, 403):
+                hint = " — check the API key"
+            elif result.status_code == 404:
+                hint = " — check the base URL includes the version path, e.g. /v1"
+            return ProbeResult(
+                ok=False,
+                status_code=result.status_code,
+                detail=f"the provider answered {result.status_code}{hint}",
+            )
+
+        ids = [
+            entry.get("id")
+            for entry in (result.payload or {}).get("data", [])
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+        ]
+        return ProbeResult(
+            ok=True,
+            status_code=result.status_code,
+            detail=f"reachable; the provider offers {len(ids)} model(s)",
+            model_count=len(ids),
+            sample=tuple(entry for entry in ids[:5] if entry),
+        )
+
+    async def probe(self, client: httpx.AsyncClient) -> ProbeResult:
+        """Check the row works, deferring to the plugin's own idea of how.
+
+        ``client`` is the same throwaway client this ``OpenAICompatibleUpstream``
+        was built with (``ProviderRegistry.build_probe``) — handed through
+        rather than reached via a private attribute, for a plugin whose probe
+        is not one of the JSON calls this class already knows how to make.
+        """
+        probe_fn = getattr(self._plugin, "probe", None)
+        if callable(probe_fn):
+            result: ProbeResult = await probe_fn(self, client)
+            return result
+        return await self.default_probe()
 
     async def chat_completion(
         self, payload: Mapping[str, Any], *, request_id: str | None = None

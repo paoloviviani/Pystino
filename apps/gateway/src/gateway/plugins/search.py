@@ -63,7 +63,14 @@ and kept on failure.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Protocol, TypedDict, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, runtime_checkable
+
+from gateway.plugins.base import ProbeResult
+
+if TYPE_CHECKING:
+    import httpx
+
+    from gateway.upstream import OpenAICompatibleUpstream
 
 
 class UnifiedSearchResult(TypedDict):
@@ -129,3 +136,76 @@ class SearchPlugin(Protocol):
         keeps Discover honest about a vendor with no ``/models`` endpoint.
         """
         return None
+
+
+#: A query with no meaning beyond exercising the endpoint. Every backend here
+#: runs it at max_results=1 — the smallest real search that still tells the
+#: admin something, rather than the cheapest possible no-op.
+_PROBE_QUERY = "Pystino connection test"
+
+
+async def probe_search_backend(
+    plugin: SearchPlugin, upstream: OpenAICompatibleUpstream, client: httpx.AsyncClient
+) -> ProbeResult:
+    """A real, minimal search — the admin "Test" button for a backend with no
+    catalogue endpoint to list.
+
+    ``GET /models`` does not exist on a search vendor's API — Linkup, Exa, Jina
+    and DuckDuckGo all answer that with a 404 — so testing a search backend the
+    way an OpenAI-compatible one is tested produced "the provider answered 404,
+    check the base URL" for a row working exactly as documented. The unified
+    route's own mechanics run instead: the vendor's own request shape at its
+    default depth, JSON or the DuckDuckGo form, through the row's own
+    credential — ``upstream`` already attaches it, the same way ``list_models()``
+    does, so this is not a second auth path to keep in step with the first.
+    """
+    extra_headers = dict(plugin.search_headers()) or None
+    build_form = getattr(plugin, "build_search_form", None)
+    read_text = getattr(plugin, "read_search_results_text", None)
+    is_challenge = getattr(plugin, "is_search_challenge", None)
+
+    try:
+        if callable(build_form) and callable(read_text):
+            response = await upstream.post_form(
+                plugin.search_path, build_form(_PROBE_QUERY, 1), extra_headers=extra_headers
+            )
+        else:
+            response = await upstream.post_json(
+                plugin.search_path,
+                plugin.build_search_body(_PROBE_QUERY, 1),
+                extra_headers=extra_headers,
+            )
+    except Exception as exc:
+        return ProbeResult(ok=False, detail=f"could not reach {upstream.base_url}: {exc}")
+
+    if response.status_code >= 400:
+        hint = ""
+        if response.status_code in (401, 403):
+            hint = " — check the API key"
+        elif response.status_code == 429:
+            hint = " — rate-limited by the provider"
+        return ProbeResult(
+            ok=False,
+            status_code=response.status_code,
+            detail=f"the provider answered {response.status_code}{hint}",
+        )
+
+    if callable(read_text):
+        text = response.raw.decode("utf-8", errors="replace")
+        if callable(is_challenge) and is_challenge(text):
+            return ProbeResult(
+                ok=False,
+                status_code=response.status_code,
+                detail=f"{plugin.name} answered with a bot challenge, not results",
+            )
+        results = read_text(text, 1)
+    else:
+        results = plugin.read_search_results(response.payload)
+
+    return ProbeResult(
+        ok=True,
+        status_code=response.status_code,
+        detail=f"reachable; a test search returned {len(results)} result(s)",
+        model_count=len(results),
+        sample=tuple(entry["title"] for entry in results[:5] if entry.get("title")),
+    )
