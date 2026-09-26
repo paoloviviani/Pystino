@@ -12,7 +12,12 @@ import {
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import {
+  useCreateBundledSignIn,
+  useCreateBundledUser,
   useDeleteUser,
+  useIdentityEvents,
+  useIdentityProviders,
+  useResetBundledPassword,
   useUpdateUser,
   useUsers,
 } from "../lib/admin";
@@ -24,11 +29,36 @@ import {
   MUTED,
   PAGE,
   ROW_ACTIONS,
+  SECRET,
+  SECRET_DETAIL,
+  SECRET_ROW,
 } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
-import type { AdminUser } from "../lib/types";
+import type { AdminUser, IdentityProvider } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
+
+/**
+ * The one enabled provider, when it is the bundled Authelia (ADR 0093 §2:
+ * exactly one row is ever enabled). Every bundled-only action on this page —
+ * Add user, Create sign-in, Reset password — reads this rather than a row id,
+ * since there is never more than one to act on.
+ */
+function useBundledProvider(): IdentityProvider | undefined {
+  const providers = useIdentityProviders();
+  return providers.data?.find((provider) => provider.is_enabled && provider.kind === "authelia");
+}
+
+/** Whether this person can already sign in through the bundled row, so the
+ * row offers Reset password instead of Create sign-in (§8.1). Bundled login
+ * is not a fact `UserAdminResponse` states directly — the account's own
+ * identity pair, or one of its linked ones, naming the bundled issuer is what
+ * `bind_bundled_login` itself tests, so this mirrors that rather than
+ * inventing a second answer to the same question. */
+function hasBundledLogin(user: AdminUser, bundled: IdentityProvider | undefined): boolean {
+  if (!bundled) return false;
+  return user.issuer === bundled.issuer || user.linked_identities.includes(bundled.issuer);
+}
 
 
 export function AdminUsers() {
@@ -40,9 +70,20 @@ export function AdminUsers() {
   const users = useUsers(paged.page);
   const update = useUpdateUser();
   const remove = useDeleteUser();
+  const bundled = useBundledProvider();
+  const providers = useIdentityProviders();
+  // Only meaningful once the identity providers have loaded — before that,
+  // "no bundled provider" and "haven't checked yet" would otherwise look
+  // identical, hiding every bundled action for a moment on every page load.
+  const knowsProviders = providers.data !== undefined;
 
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [deleting, setDeleting] = useState<AdminUser | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [signingIn, setSigningIn] = useState<AdminUser | null>(null);
+  const [resetting, setResetting] = useState<AdminUser | null>(null);
+  const [togglingActive, setTogglingActive] = useState<AdminUser | null>(null);
+  const [viewingActivity, setViewingActivity] = useState<AdminUser | null>(null);
 
   const page = users.data;
   const rows = page?.items ?? [];
@@ -131,6 +172,26 @@ export function AdminUsers() {
           <Button variant="secondary" onClick={() => setEditing(user)}>
             Edit
           </Button>
+          <Button variant="ghost" onClick={() => setViewingActivity(user)}>
+            Activity
+          </Button>
+          {/* Bundled-only (§8.1): a login belongs to the bundled Authelia, so
+              neither action means anything against an external IdP, which
+              owns its own accounts entirely. */}
+          {knowsProviders && bundled ? (
+            hasBundledLogin(user, bundled) ? (
+              <Button variant="ghost" onClick={() => setResetting(user)}>
+                Reset password
+              </Button>
+            ) : (
+              <Button variant="ghost" onClick={() => setSigningIn(user)}>
+                Create sign-in
+              </Button>
+            )
+          ) : null}
+          <Button variant="ghost" onClick={() => setTogglingActive(user)}>
+            {user.is_active ? "Disable" : "Enable"}
+          </Button>
           {/* Thin red text, never filled: the same row-level delete as every
               other screen — filled red belongs to the confirm dialog, not to
               a control that sits beside Edit all day. */}
@@ -151,9 +212,14 @@ export function AdminUsers() {
     <div className={PAGE}>
       <PageHeader
         title="Users"
-        subtitle="People arrive at their first sign-in, or before it through directory sync
-          (Settings → Identity providers → Directory). The bundled Authelia's people are
-          added under People there."
+        subtitle={
+          knowsProviders && bundled
+            ? "People arrive at their first sign-in, or you can add one directly below."
+            : "Accounts live at the identity provider — this deployment cannot add a login or reset its password here. Disable and Enable still apply on the gateway side."
+        }
+        actions={
+          knowsProviders && bundled ? <Button onClick={() => setAdding(true)}>Add user</Button> : null
+        }
       />
 
       {update.error ? (
@@ -215,6 +281,20 @@ export function AdminUsers() {
       <EditUserDialog user={editing} onClose={() => setEditing(null)} />
 
       <DeleteUserDialog user={deleting} onClose={() => setDeleting(null)} />
+
+      <AddUserDialog open={adding} onClose={() => setAdding(false)} />
+
+      <CreateSignInDialog user={signingIn} onClose={() => setSigningIn(null)} />
+
+      <ResetPasswordDialog user={resetting} onClose={() => setResetting(null)} />
+
+      <DisableEnableDialog
+        user={togglingActive}
+        bundled={bundled}
+        onClose={() => setTogglingActive(null)}
+      />
+
+      <ActivityDialog user={viewingActivity} onClose={() => setViewingActivity(null)} />
 
     </div>
   );
@@ -278,6 +358,395 @@ function formatDate(iso: string): string {
 }
 
 /**
+ * The one-time password, shown once, with the note §8.1 requires: Authelia
+ * cannot force a change at the person's first sign-in, so the operator has to
+ * choose how it reaches them and what happens after.
+ */
+function MintedPasswordNotice({ password }: { password: string }) {
+  const [copied, setCopied] = useState<boolean | null>(null);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(password);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <>
+      <div className={SECRET_ROW}>
+        <code className={SECRET}>{password}</code>
+        <Button onClick={copy}>{copied ? "Copied" : "Copy"}</Button>
+      </div>
+      {copied === false && (
+        <p className="text-sm text-warn">Could not reach the clipboard; copy it by hand.</p>
+      )}
+      <p className={SECRET_DETAIL}>
+        Share it over a one-time channel (a password manager share, or in person). Authelia
+        can't force a change at first sign-in; ask them to change it from the sign-in page's
+        reset link (needs SMTP) or keep it.
+      </p>
+    </>
+  );
+}
+
+/**
+ * Add a person to the bundled directory (§8.1/§8.2). Groups here are console
+ * groups — manual memberships — never the Authelia file's own, which is
+ * always `["users"]` (§8.3): editing it stopped being on offer at all.
+ */
+function AddUserDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const create = useCreateBundledUser();
+  const [login, setLogin] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [groups, setGroups] = useState("");
+
+  const close = () => {
+    create.reset();
+    setLogin("");
+    setDisplayName("");
+    setEmail("");
+    setGroups("");
+    onClose();
+  };
+
+  const created = create.data;
+
+  return (
+    <Dialog
+      open={open}
+      title="Add user"
+      onClose={close}
+      footer={
+        created ? (
+          <Button variant="primary" onClick={close}>
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button onClick={close}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={!login.trim() || !email.trim()}
+              busy={create.isPending}
+              onClick={() =>
+                create.mutate({
+                  login: login.trim(),
+                  display_name: displayName.trim() || undefined,
+                  email: email.trim(),
+                  groups: groups
+                    .split(",")
+                    .map((g) => g.trim())
+                    .filter(Boolean),
+                })
+              }
+            >
+              Add user
+            </Button>
+          </>
+        )
+      }
+    >
+      {create.error ? (
+        <Notice tone="danger" title="Could not add the user">
+          {create.error instanceof Error ? create.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      {created ? (
+        <MintedPasswordNotice password={created.password} />
+      ) : (
+        <div className={FORM}>
+          <Input
+            label="Login"
+            value={login}
+            onChange={(event) => setLogin(event.target.value)}
+            hint="The name this person signs in with."
+          />
+          <Input
+            label="Display name"
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+          />
+          <Input
+            label="Email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+          <Input
+            label="Groups"
+            value={groups}
+            onChange={(event) => setGroups(event.target.value)}
+            placeholder="comma separated"
+            hint="Console groups — the same manual membership an administrator grants anywhere else."
+          />
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+/**
+ * A bundled login for an existing gateway user who has none — the
+ * after-switch and after-break-glass case (§8.1).
+ */
+function CreateSignInDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
+  const create = useCreateBundledSignIn();
+  const [login, setLogin] = useState("");
+
+  const close = () => {
+    create.reset();
+    setLogin("");
+    onClose();
+  };
+
+  const created = create.data;
+
+  return (
+    <Dialog
+      open={user !== null}
+      title={`Create sign-in — ${user?.display_name || user?.email || user?.subject}`}
+      onClose={close}
+      footer={
+        created ? (
+          <Button variant="primary" onClick={close}>
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button onClick={close}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={!login.trim()}
+              busy={create.isPending}
+              onClick={() => user && create.mutate({ userId: user.id, login: login.trim() })}
+            >
+              Create sign-in
+            </Button>
+          </>
+        )
+      }
+    >
+      {create.error ? (
+        <Notice tone="danger" title="Could not create the sign-in">
+          {create.error instanceof Error ? create.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      {created ? (
+        <MintedPasswordNotice password={created.password} />
+      ) : (
+        <Input
+          label="Login"
+          value={login}
+          onChange={(event) => setLogin(event.target.value)}
+          hint="The name this person will sign in with. Their existing account, groups and history are unchanged."
+        />
+      )}
+    </Dialog>
+  );
+}
+
+/** Mints a fresh one-time password for the user's bundled login (§8.1). */
+function ResetPasswordDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
+  const reset = useResetBundledPassword();
+
+  const close = () => {
+    reset.reset();
+    onClose();
+  };
+
+  const result = reset.data;
+
+  return (
+    <Dialog
+      open={user !== null}
+      title={`Reset password — ${user?.display_name || user?.email || user?.subject}`}
+      onClose={close}
+      footer={
+        result ? (
+          <Button variant="primary" onClick={close}>
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button onClick={close}>Cancel</Button>
+            <Button
+              variant="primary"
+              busy={reset.isPending}
+              onClick={() => user && reset.mutate(user.id)}
+            >
+              Reset password
+            </Button>
+          </>
+        )
+      }
+    >
+      {reset.error ? (
+        <Notice tone="danger" title="Could not reset the password">
+          {reset.error instanceof Error ? reset.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      {result ? (
+        <MintedPasswordNotice password={result.password} />
+      ) : (
+        <p>
+          This mints a new one-time password for their bundled login. The old one stops
+          working immediately.
+        </p>
+      )}
+    </Dialog>
+  );
+}
+
+/**
+ * Disable and Enable, as their own dialog rather than a checkbox in Edit —
+ * the consequences are the whole point of asking first (ADR 0093 §9.1).
+ */
+function DisableEnableDialog({
+  user,
+  bundled,
+  onClose,
+}: {
+  user: AdminUser | null;
+  bundled: IdentityProvider | undefined;
+  onClose: () => void;
+}) {
+  const update = useUpdateUser();
+  const toast = useOptionalToast();
+
+  const close = () => {
+    update.reset();
+    onClose();
+  };
+
+  // Same shape null-guard as every other dialog here: `open` follows `user`,
+  // and everything inside reads it through `?.` rather than returning early,
+  // so the hooks above run on every render regardless.
+  const disabling = user?.is_active ?? true;
+  const verb = disabling ? "Disable" : "Enable";
+
+  const save = () =>
+    user &&
+    update.mutate(
+      { id: user.id, is_active: !user.is_active },
+      {
+        onSuccess: (updated) => {
+          if (updated.authelia_sync === "failed") {
+            toast?.add({
+              title: updated.authelia_sync_message ?? "The bundled login could not be updated",
+              type: "error",
+            });
+          } else {
+            toast?.add({ title: `Account ${disabling ? "disabled" : "enabled"}`, type: "success" });
+          }
+          close();
+        },
+        onError: () => toast?.add({ title: `Could not ${verb.toLowerCase()} the account`, type: "error" }),
+      },
+    );
+
+  return (
+    <Dialog
+      open={user !== null}
+      title={`${verb} ${user?.display_name || user?.email || user?.subject || "this account"}?`}
+      onClose={close}
+      footer={
+        <>
+          <Button onClick={close}>Cancel</Button>
+          <Button variant={disabling ? "danger" : "primary"} busy={update.isPending} onClick={save}>
+            {verb}
+          </Button>
+        </>
+      }
+    >
+      {update.error ? (
+        <Notice tone="danger" title={`Could not ${verb.toLowerCase()} the account`}>
+          {update.error instanceof Error ? update.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      {disabling ? (
+        <div className={FORM}>
+          <p>
+            Their console session, chat sessions and machine links are refused within about
+            a minute. Refresh credentials and minted API keys are revoked at once.
+          </p>
+          <p>
+            Personal API keys are kept but stop admitting requests while the account is
+            disabled — they return automatically if you re-enable it.
+          </p>
+          {user && hasBundledLogin(user, bundled) ? (
+            <p>Their bundled Authelia login is disabled too, under the same action.</p>
+          ) : (
+            <p>
+              This does not disable the person at the identity provider — do that there too,
+              or they can still authenticate even though the gateway refuses them.
+            </p>
+          )}
+        </div>
+      ) : (
+        <div className={FORM}>
+          <p>
+            They can sign in again immediately, and personal API keys admit requests again.
+            Sessions, minted keys and devices stay revoked — they sign in again and re-enroll
+            rather than resuming automatically.
+          </p>
+          {user && hasBundledLogin(user, bundled) ? (
+            <p>Their bundled Authelia login is re-enabled too, under the same action.</p>
+          ) : null}
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+/** What happened to this person, and what they did (§8.1): `user_id` matches
+ * either side of an `identity_events` row. */
+function ActivityDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
+  const events = useIdentityEvents(user?.id ?? null);
+
+  return (
+    <Dialog
+      open={user !== null}
+      title={`Activity — ${user?.display_name || user?.email || user?.subject}`}
+      onClose={onClose}
+      footer={<Button onClick={onClose}>Close</Button>}
+    >
+      {events.isPending ? (
+        <Spinner label="Loading activity" />
+      ) : events.error ? (
+        <Notice tone="danger" title="Could not load activity">
+          {events.error instanceof Error ? events.error.message : "Unknown error."}
+        </Notice>
+      ) : events.data && events.data.items.length > 0 ? (
+        <ul className="flex flex-col gap-3">
+          {events.data.items.map((event) => (
+            <li key={event.id} className="border-b border-line pb-2 last:border-none">
+              <div className="flex items-center justify-between gap-2">
+                <span className={CODE}>{event.action}</span>
+                <span className={`${MUTED} text-sm`}>{formatDate(event.at)}</span>
+              </div>
+              <div className={`${MUTED} text-sm`}>
+                {event.actor_label || event.actor_type}
+                {event.reason ? ` — ${event.reason}` : ""}
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className={MUTED}>No activity recorded yet.</p>
+      )}
+    </Dialog>
+  );
+}
+
+/**
  * Everything an administrator may change about one account, in one place
  * instead of a scattered Enable button and a password endpoint with no door.
  *
@@ -307,7 +776,6 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
   const update = useUpdateUser();
   const toast = useOptionalToast();
 
-  const [isActive, setIsActive] = useState(user?.is_active ?? true);
   const [isAdmin, setIsAdmin] = useState(user?.is_admin ?? false);
   const [email, setEmail] = useState(user?.email ?? "");
   const [displayName, setDisplayName] = useState(user?.display_name ?? "");
@@ -319,7 +787,6 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
   const [seededFor, setSeededFor] = useState(userKey);
   if (seededFor !== userKey) {
     setSeededFor(userKey);
-    setIsActive(user?.is_active ?? true);
     setIsAdmin(user?.is_admin ?? false);
     setEmail(user?.email ?? "");
     setDisplayName(user?.display_name ?? "");
@@ -346,14 +813,12 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
     if (username !== (user.username ?? "")) profileChanges.username = username.trim() || null;
   }
   const profileDirty = Object.keys(profileChanges).length > 0;
-  const dirty =
-    user !== null &&
-    (isActive !== user.is_active || isAdmin !== user.is_admin || profileDirty);
+  const dirty = user !== null && (isAdmin !== user.is_admin || profileDirty);
 
   const save = () =>
     user &&
     update.mutate(
-      { id: user.id, is_active: isActive, is_admin: isAdmin, ...profileChanges },
+      { id: user.id, is_admin: isAdmin, ...profileChanges },
       {
         onSuccess: () => toast?.add({ title: "User updated", type: "success" }),
         onError: (caught: unknown) =>
@@ -452,22 +917,6 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
             />
           </div>
         </div>
-
-        <label className={CHECK_ITEM}>
-          <input
-            type="checkbox"
-            checked={isActive}
-            disabled={!user}
-            onChange={(event) => setIsActive(event.target.checked)}
-          />
-          <span>
-            Account active
-            <span className="mt-0.5 block text-xs text-ink-faint">
-              A disabled account cannot sign in, and its keys stop admitting
-              requests.
-            </span>
-          </span>
-        </label>
 
         <label className={CHECK_ITEM}>
           <input

@@ -6,8 +6,11 @@ import type {
   AdminModel,
   AdminProvider,
   AdminUser,
+  BundledUserCreateInput,
+  BundledUserCreated,
   CatalogueDiscovery,
   CatalogueTags,
+  IdentityEvent,
   LimitRule,
   ModelImportResponse,
   OidcPolicy,
@@ -57,6 +60,7 @@ export const adminKeys = {
   limits: ["admin", "limits"] as const,
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
   users: ["admin", "users"] as const,
+  identityEvents: (userId: string) => ["admin", "identity-events", userId] as const,
   email: ["admin", "email"] as const,
   identityProviders: ["admin", "identity-providers"] as const,
   syncRuns: (id: string) => ["admin", "identity-providers", id, "runs"] as const,
@@ -823,7 +827,57 @@ export function useUpdateUser() {
   });
 }
 
+/** Add user (ADR 0093 §8.1/§8.2), bundled Authelia only. Groups are console
+ * groups — manual memberships — never the Authelia file's own, which is
+ * always `["users"]` (§8.3). */
+export function useCreateBundledUser() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: BundledUserCreateInput) =>
+      request<BundledUserCreated>("/api/admin/users", { method: "POST", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
 
+/** Create sign-in for an existing gateway user with no bundled login yet —
+ * the after-switch and after-break-glass case (§8.1). */
+export function useCreateBundledSignIn() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, login }: { userId: string; login: string }) =>
+      request<BundledUserCreated>(`/api/admin/users/${userId}/sign-in`, {
+        method: "POST",
+        body: { login },
+      }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
+
+/** Mints a fresh one-time password for the user's bundled login (§8.1). Works
+ * with or without SMTP configured — the admin-issued reset is not the self
+ * service flow. */
+export function useResetBundledPassword() {
+  return useMutation({
+    mutationFn: (userId: string) =>
+      request<{ password: string }>(`/api/admin/users/${userId}/reset-password`, {
+        method: "POST",
+      }),
+  });
+}
+
+/** The Activity list on a user's row: what they did, and what was done to
+ * them (`GET /admin/identity-events?user_id=` matches either side). */
+export function useIdentityEvents(userId: string | null) {
+  return useQuery({
+    queryKey: adminKeys.identityEvents(userId ?? "none"),
+    queryFn: () =>
+      request<Page<IdentityEvent>>(
+        `/api/admin/identity-events?${pageParams({ limit: 50 }, { user_id: userId ?? "" })}`,
+      ),
+    enabled: userId !== null,
+    retry: retryUnlessRejected,
+  });
+}
 
 // -- Settings: email + identity providers (ADR 0051) --------------------------
 

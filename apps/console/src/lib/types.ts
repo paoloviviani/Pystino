@@ -201,6 +201,41 @@ export interface AdminUser {
   default_billing_group: string | null;
   active_key_count: number;
   last_login_at: string | null;
+  /** Set only by `PATCH /admin/users/{id}` when it just tried to sync the
+   * bundled Authelia's own `disabled` flag and that write failed — the
+   * gateway side of the same action already stands regardless (ADR 0093
+   * §9.1). Null on every other response, including a successful sync. */
+  authelia_sync: "failed" | null;
+  authelia_sync_message: string | null;
+}
+
+/** `POST /admin/users`, bundled Authelia only (ADR 0093 §8.1/§8.2). */
+export interface BundledUserCreateInput {
+  login: string;
+  display_name?: string;
+  email: string;
+  groups?: string[];
+}
+
+/** Includes the one-time password, shown once (§8.1). */
+export interface BundledUserCreated extends AdminUser {
+  password: string;
+}
+
+/** The audit trail `record_event` writes to (ADR 0093 §3.1). */
+export interface IdentityEvent {
+  id: string;
+  at: string;
+  actor_type: "user" | "cli" | "login" | "system";
+  actor_user_id: string | null;
+  actor_label: string;
+  action: string;
+  target_user_id: string | null;
+  target_label: string;
+  issuer: string | null;
+  subject: string | null;
+  detail: Record<string, unknown>;
+  reason: string | null;
 }
 
 export interface LimitRule {
