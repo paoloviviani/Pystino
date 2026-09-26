@@ -1358,6 +1358,18 @@ class MergeResponse(BaseModel):
     bundled_logins_disabled: list[str]
 
 
+class ChatSharedResource(BaseModel):
+    """One resource of this person that someone else can see, named, with who
+    can see it (§9.2: "every resource of the user that someone else can see,
+    named, with who can see it") -- passed through from the chat's own
+    erasure preview verbatim, not recomputed here."""
+
+    kind: str
+    id: str
+    title: str
+    audience: str
+
+
 class DeletePreviewResponse(BaseModel):
     """``GET /admin/users/{id}/delete-preview`` (ADR 0093 §9.2). The dialog
     shows this verbatim before the confirmation.
@@ -1372,10 +1384,13 @@ class DeletePreviewResponse(BaseModel):
     #: than blocking the preview on it.
     chat_counts: dict[str, int] | None
     chat_reachable: bool
-    #: Shares the chat's own preview reports (its `sharedConversations`
-    #: count) plus legacy shares nobody's login could ever be attributed to
-    #: -- the two figures the chat's preview endpoint actually returns.
-    #: `DELETE` refuses without `confirm_shared_loss` while this is true.
+    #: Named and audienced, per `ChatSharedResource`'s own doc comment.
+    #: `DELETE` refuses without `confirm_shared_loss` while this (or the
+    #: legacy count below) is non-empty.
+    shared: list[ChatSharedResource]
+    #: `bool(shared) or bool(chat_unattributed_legacy_shares)` -- kept
+    #: alongside `shared` rather than left for the console to recompute, since
+    #: the legacy count is a system-wide caveat with no resource to name.
     shared_with_others: bool
     chat_unattributed_legacy_shares: int
 

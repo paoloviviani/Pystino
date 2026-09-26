@@ -254,6 +254,16 @@ export interface MergeResult {
   bundled_logins_disabled: string[];
 }
 
+/** One resource of this person that someone else can see, named, with who
+ * can see it (ADR 0093 §9.2) — passed through from the chat's own erasure
+ * preview verbatim. */
+export interface ChatSharedResource {
+  kind: "shared_conversation" | "project" | "knowledge_base" | "assistant";
+  id: string;
+  title: string;
+  audience: string;
+}
+
 /** `GET /admin/users/{id}/delete-preview` (ADR 0093 §9.2). */
 export interface DeletePreview {
   user_id: string;
@@ -262,6 +272,7 @@ export interface DeletePreview {
   /** `null` means the chat could not be reached at all. */
   chat_counts: Record<string, number> | null;
   chat_reachable: boolean;
+  shared: ChatSharedResource[];
   shared_with_others: boolean;
   chat_unattributed_legacy_shares: number;
 }

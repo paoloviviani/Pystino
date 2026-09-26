@@ -164,6 +164,7 @@ from gateway.schemas import (
     CatalogueDiscoveryResponse,
     CatalogueDriftRow,
     CatalogueTagsResponse,
+    ChatSharedResource,
     DeletePreviewResponse,
     DeleteUserRequest,
     DeleteUserResponse,
@@ -3086,6 +3087,20 @@ async def _gateway_delete_counts(session: AsyncSession, user_id: uuid.UUID) -> d
     return counts
 
 
+def _chat_shared_resources(chat_preview: dict[str, Any] | None) -> list[ChatSharedResource]:
+    """The chat preview's own `shared` list, typed -- an unreachable chat (or
+    one running before this list existed) reports none, which is exactly
+    "nothing known to be shared" rather than a distinct case to handle."""
+    raw = (chat_preview or {}).get("shared")
+    if not isinstance(raw, list):
+        return []
+    resources: list[ChatSharedResource] = []
+    for item in raw:
+        if isinstance(item, dict):
+            resources.append(ChatSharedResource(**item))
+    return resources
+
+
 async def _user_identities_for_erasure(
     session: AsyncSession, user: User
 ) -> list[dict[str, str]]:
@@ -3121,7 +3136,7 @@ async def delete_preview(
     )
     chat_counts = chat_preview.get("counts") if chat_preview else None
     legacy = chat_preview.get("unattributed_legacy_shares") if chat_preview else 0
-    shared_conversations = (chat_counts or {}).get("sharedConversations", 0)
+    shared = _chat_shared_resources(chat_preview)
 
     return DeletePreviewResponse(
         user_id=user.id,
@@ -3129,7 +3144,8 @@ async def delete_preview(
         bundled_login=bundled[1].external_id if bundled else None,
         chat_counts=chat_counts if isinstance(chat_counts, dict) else None,
         chat_reachable=chat_preview is not None,
-        shared_with_others=bool(shared_conversations) or bool(legacy),
+        shared=shared,
+        shared_with_others=bool(shared) or bool(legacy),
         chat_unattributed_legacy_shares=int(legacy or 0),
     )
 
@@ -3235,7 +3251,7 @@ async def delete_user(
     chat_preview = await preview_chat_erasure(
         settings, http, gateway_user_id=user.id, identities=identities
     )
-    shared = bool((chat_preview or {}).get("counts", {}).get("sharedConversations")) or bool(
+    shared = bool(_chat_shared_resources(chat_preview)) or bool(
         (chat_preview or {}).get("unattributed_legacy_shares")
     )
     if shared and not body.confirm_shared_loss:

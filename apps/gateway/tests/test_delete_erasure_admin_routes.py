@@ -49,13 +49,23 @@ SEED_ONE_USER = """users:
 """
 
 
-def _fake_chat(counts: dict[str, int] | None, *, unattributed: int = 0) -> httpx.AsyncClient:
+def _fake_chat(
+    counts: dict[str, int] | None,
+    *,
+    unattributed: int = 0,
+    shared: list[dict[str, str]] | None = None,
+) -> httpx.AsyncClient:
     def handler(request: httpx.Request) -> httpx.Response:
         if counts is None:
             return httpx.Response(503)
         if request.url.path.endswith("/preview"):
             return httpx.Response(
-                200, json={"counts": counts, "unattributed_legacy_shares": unattributed}
+                200,
+                json={
+                    "counts": counts,
+                    "unattributed_legacy_shares": unattributed,
+                    "shared": shared or [],
+                },
             )
         body = json.loads(request.read())
         return httpx.Response(
@@ -93,9 +103,10 @@ class TestDeletePreview:
         body = response.json()
         assert body["chat_reachable"] is False
         assert body["chat_counts"] is None
+        assert body["shared"] == []
         assert body["shared_with_others"] is False
 
-    async def test_shared_conversations_flip_shared_with_others(
+    async def test_named_shares_flip_shared_with_others(
         self,
         app: FastAPI,
         client: Any,
@@ -104,7 +115,17 @@ class TestDeletePreview:
     ) -> None:
         admin = await make_admin(session_factory, seeded)
         as_user(app, admin)
-        app.state.control_http = _fake_chat({"conversations": 5, "sharedConversations": 2})
+        shared = [
+            {
+                "kind": "shared_conversation",
+                "id": "s1",
+                "title": "A chat",
+                "audience": "anyone with the link",
+            }
+        ]
+        app.state.control_http = _fake_chat(
+            {"conversations": 5, "sharedConversations": 2}, shared=shared
+        )
         app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
         app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
         victim_id = await _victim(session_factory)
@@ -114,6 +135,7 @@ class TestDeletePreview:
         body = response.json()
         assert body["chat_reachable"] is True
         assert body["chat_counts"] == {"conversations": 5, "sharedConversations": 2}
+        assert body["shared"] == shared
         assert body["shared_with_others"] is True
 
 
@@ -145,7 +167,17 @@ class TestDeleteRefusals:
     ) -> None:
         admin = await make_admin(session_factory, seeded)
         as_user(app, admin)
-        app.state.control_http = _fake_chat({"sharedConversations": 1})
+        app.state.control_http = _fake_chat(
+            {"sharedConversations": 1},
+            shared=[
+                {
+                    "kind": "shared_conversation",
+                    "id": "s1",
+                    "title": "A chat",
+                    "audience": "anyone with the link",
+                }
+            ],
+        )
         app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
         app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
         victim_id = await _victim(session_factory)
@@ -167,7 +199,17 @@ class TestDeleteRefusals:
     ) -> None:
         admin = await make_admin(session_factory, seeded)
         as_user(app, admin)
-        app.state.control_http = _fake_chat({"sharedConversations": 1})
+        app.state.control_http = _fake_chat(
+            {"sharedConversations": 1},
+            shared=[
+                {
+                    "kind": "shared_conversation",
+                    "id": "s1",
+                    "title": "A chat",
+                    "audience": "anyone with the link",
+                }
+            ],
+        )
         app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
         app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
         victim_id = await _victim(session_factory)

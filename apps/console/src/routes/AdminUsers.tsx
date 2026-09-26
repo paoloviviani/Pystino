@@ -417,20 +417,31 @@ function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: 
             billed — only the name on the per-user breakdown goes.
           </p>
           {preview.data.shared_with_others && (
-            <label className={CHECK_ITEM}>
-              <input
-                type="checkbox"
-                checked={confirmSharedLoss}
-                onChange={(event) => setConfirmSharedLoss(event.target.checked)}
-              />
-              <span>
-                This account has content shared with others (
-                {preview.data.chat_unattributed_legacy_shares > 0
-                  ? "including some that can no longer be attributed to anyone"
-                  : "conversations shared with other people"}
-                ). I understand it will disappear for them too.
-              </span>
-            </label>
+            <>
+              {preview.data.shared.length > 0 && (
+                <ul className={CHECK_ITEM}>
+                  {preview.data.shared.map((resource) => (
+                    <li key={`${resource.kind}:${resource.id}`}>
+                      {resource.title} — {resource.audience}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <label className={CHECK_ITEM}>
+                <input
+                  type="checkbox"
+                  checked={confirmSharedLoss}
+                  onChange={(event) => setConfirmSharedLoss(event.target.checked)}
+                />
+                <span>
+                  This account has content shared with others (
+                  {preview.data.chat_unattributed_legacy_shares > 0
+                    ? "including some that can no longer be attributed to anyone"
+                    : "shared with other people, named above"}
+                  ). I understand it will disappear for them too.
+                </span>
+              </label>
+            </>
           )}
         </div>
       ) : null}
