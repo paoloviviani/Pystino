@@ -2991,6 +2991,7 @@ async def merge_preview(
         ],
         resulting_is_admin=preview.resulting_is_admin,
         bundled_logins_disabled=preview.bundled_logins_disabled,
+        duplicate_rules_dropped=preview.duplicate_rules_dropped,
         chat_note=preview.chat_note,
     )
 
@@ -3055,6 +3056,7 @@ async def merge_user(
             IdentityRef(issuer=i.issuer, subject=i.subject) for i in summary.identities_dropped
         ],
         bundled_logins_disabled=summary.bundled_logins_disabled,
+        duplicate_rules_dropped=summary.duplicate_rules_dropped,
     )
 
 

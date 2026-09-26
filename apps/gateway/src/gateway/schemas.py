@@ -1338,6 +1338,11 @@ class MergePreviewResponse(BaseModel):
     identities_dropped: list[IdentityRef]
     resulting_is_admin: bool
     bundled_logins_disabled: list[str]
+    #: A `limit_rules`/`redaction_rules` row the source holds that collides
+    #: with one the target already has (same metric/window/period, or -- for
+    #: `redaction_rules` -- any at all): kept as the target's, the source's
+    #: dropped rather than moved. Already excluded from `counts`.
+    duplicate_rules_dropped: int
     chat_note: str
 
 
@@ -1356,6 +1361,7 @@ class MergeResponse(BaseModel):
     counts: dict[str, int]
     identities_dropped: list[IdentityRef]
     bundled_logins_disabled: list[str]
+    duplicate_rules_dropped: int
 
 
 class ChatSharedResource(BaseModel):

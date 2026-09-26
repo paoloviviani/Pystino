@@ -237,6 +237,10 @@ export interface MergePreview {
   identities_dropped: IdentityRef[];
   resulting_is_admin: boolean;
   bundled_logins_disabled: string[];
+  /** A limit/redaction rule the source held that collided with one the
+   * target already had: kept as the target's, the source's dropped rather
+   * than moved. Already excluded from `counts`. */
+  duplicate_rules_dropped: number;
   chat_note: string;
 }
 
@@ -252,6 +256,7 @@ export interface MergeResult {
   counts: Record<string, number>;
   identities_dropped: IdentityRef[];
   bundled_logins_disabled: string[];
+  duplicate_rules_dropped: number;
 }
 
 /** One resource of this person that someone else can see, named, with who

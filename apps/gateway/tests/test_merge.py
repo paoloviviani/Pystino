@@ -326,6 +326,138 @@ class TestScopeIdUser:
         assert group_rule.scope_id == group.id, "not user-scoped, untouched"
         assert user_redaction.scope_id == target.id
 
+    async def test_a_duplicate_limit_rule_is_kept_on_the_target_not_moved(
+        self, session: AsyncSession
+    ) -> None:
+        """Same metric, window and period on both sides: reassigning the
+        source's row would collide with `uq_limit_rules_identity` and roll
+        the whole merge back (§7.1's own "never a raw rollback"). Keep-target
+        instead: the source's duplicate is dropped, counted, not moved."""
+        source = await make_user(session)
+        target = await make_user(session)
+        source_rule = LimitRule(
+            scope=LimitScope.USER,
+            scope_id=source.id,
+            metric=LimitMetric.TOKENS,
+            window_seconds=3600,
+            limit_value=Decimal(1000),
+        )
+        target_rule = LimitRule(
+            scope=LimitScope.USER,
+            scope_id=target.id,
+            metric=LimitMetric.TOKENS,
+            window_seconds=3600,
+            limit_value=Decimal(2000),
+        )
+        # A non-colliding source rule (different metric): must still move.
+        distinct_rule = LimitRule(
+            scope=LimitScope.USER,
+            scope_id=source.id,
+            metric=LimitMetric.REQUESTS,
+            window_seconds=3600,
+            limit_value=Decimal(50),
+        )
+        session.add_all([source_rule, target_rule, distinct_rule])
+        await session.commit()
+
+        preview = await compute_merge_preview(
+            session, source_id=source.id, target_id=target.id, actor_id=uuid.uuid4()
+        )
+        assert preview.counts["limit_rules"] == 1, "only the non-colliding rule would move"
+        assert preview.duplicate_rules_dropped == 1
+
+        summary = await merge_users(
+            session,
+            source_id=source.id,
+            target_id=target.id,
+            actor_id=uuid.uuid4(),
+            actor_label="admin",
+            reason="test",
+        )
+        await session.commit()
+
+        assert summary.counts["limit_rules"] == 1
+        assert summary.duplicate_rules_dropped == 1
+
+        remaining = (await session.execute(select(LimitRule))).scalars().all()
+        by_id = {row.id: row for row in remaining}
+        assert source_rule.id not in by_id, "the duplicate is gone, not reassigned"
+        await session.refresh(target_rule)
+        await session.refresh(distinct_rule)
+        assert target_rule.limit_value == Decimal(2000), "the target's own value stands"
+        assert distinct_rule.scope_id == target.id, "the non-colliding rule still moved"
+
+    async def test_a_duplicate_user_redaction_rule_is_kept_on_the_target(
+        self, session: AsyncSession
+    ) -> None:
+        """`redaction_rules` allows at most one user-scoped row per user, so
+        any existing target row makes the source's a duplicate outright."""
+        source = await make_user(session)
+        target = await make_user(session)
+        source_rule = RedactionRule(scope=RedactionScope.USER, scope_id=source.id, policy={})
+        target_rule = RedactionRule(scope=RedactionScope.USER, scope_id=target.id, policy={})
+        session.add_all([source_rule, target_rule])
+        await session.commit()
+
+        preview = await compute_merge_preview(
+            session, source_id=source.id, target_id=target.id, actor_id=uuid.uuid4()
+        )
+        assert preview.counts["redaction_rules"] == 0
+        assert preview.duplicate_rules_dropped == 1
+
+        summary = await merge_users(
+            session,
+            source_id=source.id,
+            target_id=target.id,
+            actor_id=uuid.uuid4(),
+            actor_label="admin",
+            reason="test",
+        )
+        await session.commit()
+
+        assert summary.duplicate_rules_dropped == 1
+        remaining = (await session.execute(select(RedactionRule))).scalars().all()
+        assert [row.id for row in remaining] == [target_rule.id]
+
+    async def test_the_merge_never_raises_on_a_duplicate(self, session: AsyncSession) -> None:
+        """The property the fix exists for: no raw rollback, whatever the
+        database's own unique index would otherwise have refused."""
+        source = await make_user(session)
+        target = await make_user(session)
+        session.add_all(
+            [
+                LimitRule(
+                    scope=LimitScope.USER,
+                    scope_id=source.id,
+                    metric=LimitMetric.TOKENS,
+                    window_seconds=3600,
+                    limit_value=Decimal(1),
+                ),
+                LimitRule(
+                    scope=LimitScope.USER,
+                    scope_id=target.id,
+                    metric=LimitMetric.TOKENS,
+                    window_seconds=3600,
+                    limit_value=Decimal(2),
+                ),
+                RedactionRule(scope=RedactionScope.USER, scope_id=source.id, policy={}),
+                RedactionRule(scope=RedactionScope.USER, scope_id=target.id, policy={}),
+            ]
+        )
+        await session.commit()
+
+        # No exception here is the assertion: a merge that still issued the
+        # blanket UPDATE would raise IntegrityError and this would fail.
+        await merge_users(
+            session,
+            source_id=source.id,
+            target_id=target.id,
+            actor_id=uuid.uuid4(),
+            actor_label="admin",
+            reason="test",
+        )
+        await session.commit()
+
 
 class TestUnionMemberships:
     async def test_no_conflict_moves_the_row(self, session: AsyncSession) -> None:

@@ -84,6 +84,15 @@ class MergeRule:
     table: str
     column: str
     kind: MergeRuleKind
+    #: `SCOPE_ID_USER` only: the columns beyond `scope`/`scope_id` that make
+    #: up the row's real identity for collision purposes -- the same columns
+    #: the table's own partial-unique index covers, so a row this would
+    #: reassign onto a key the target already holds is detected and dropped
+    #: (keep-target) *before* the UPDATE, rather than left for the database
+    #: to refuse mid-merge. Empty means `scope_id` alone is the whole key
+    #: (`redaction_rules`: at most one user-scoped row can ever exist), so
+    #: any existing target row makes every one of the source's a duplicate.
+    duplicate_key_columns: tuple[str, ...] = ()
 
 
 #: ADR 0093 §7.1's own table, verbatim. Order follows the design's, not the
@@ -94,7 +103,12 @@ MERGE_RULES: tuple[MergeRule, ...] = (
     MergeRule("user_model_access", "user_id", MergeRuleKind.UNION_MODEL_ACCESS),
     MergeRule("api_keys", "user_id", MergeRuleKind.REASSIGN),
     MergeRule("usage_records", "user_id", MergeRuleKind.REASSIGN),
-    MergeRule("limit_rules", "scope_id", MergeRuleKind.SCOPE_ID_USER),
+    MergeRule(
+        "limit_rules",
+        "scope_id",
+        MergeRuleKind.SCOPE_ID_USER,
+        duplicate_key_columns=("metric", "window_seconds", "period"),
+    ),
     MergeRule("redaction_rules", "scope_id", MergeRuleKind.SCOPE_ID_USER),
     MergeRule("email_settings", "updated_by", MergeRuleKind.REASSIGN),
     MergeRule("identity_providers", "created_by", MergeRuleKind.REASSIGN),
@@ -181,6 +195,11 @@ class MergePreview:
     identities_dropped: list[IdentityRef]
     resulting_is_admin: bool
     bundled_logins_disabled: list[str]
+    #: A `limit_rules`/`redaction_rules` row the source holds that collides
+    #: with one the target already has under the same natural key (§7.1
+    #: fix): kept as the target's, the source's dropped rather than moved.
+    #: Already excluded from `counts` -- these never reach the target.
+    duplicate_rules_dropped: int = 0
     chat_note: str = (
         "the chat folds this person's conversations into the target at their next activity"
     )
@@ -192,6 +211,7 @@ class MergeSummary:
     counts: dict[str, int]
     identities_dropped: list[IdentityRef]
     bundled_logins_disabled: list[str]
+    duplicate_rules_dropped: int = 0
     #: What the router needs to actually perform the disable, after it
     #: commits this transaction -- `None` when nothing needs disabling.
     #: `bundled_logins_disabled` above is the same fact, shaped for display.
@@ -282,12 +302,73 @@ async def _bundled_login_to_disable(
 
 async def _count(session: AsyncSession, rule: MergeRule, source_id: uuid.UUID) -> int:
     table = Base.metadata.tables[rule.table]
-    stmt = select(func.count()).select_from(table)
-    if rule.kind is MergeRuleKind.SCOPE_ID_USER:
-        stmt = stmt.where(table.c.scope == "user", table.c.scope_id == source_id)
-    else:
-        stmt = stmt.where(table.c[rule.column] == source_id)
+    stmt = select(func.count()).select_from(table).where(table.c[rule.column] == source_id)
     return (await session.execute(stmt)).scalar_one()
+
+
+async def _scope_id_user_partition(
+    session: AsyncSession, rule: MergeRule, source_id: uuid.UUID, target_id: uuid.UUID
+) -> tuple[list[uuid.UUID], list[uuid.UUID]]:
+    """Which of `source_id`'s `scope="user"` rows in this table may simply be
+    reassigned, and which collide with a row `target_id` already holds under
+    the same natural key (`rule.duplicate_key_columns`) and must be dropped
+    instead. Read-only, so both the preview and the real apply call it --
+    the preview shows exactly what the apply will do, not an approximation
+    of it. Returns `(moving_ids, dropping_ids)`.
+    """
+    table = Base.metadata.tables[rule.table]
+    key_columns = [table.c[name] for name in rule.duplicate_key_columns]
+
+    target_rows = (
+        await session.execute(
+            select(table.c.id, *key_columns).where(
+                table.c.scope == "user", table.c.scope_id == target_id
+            )
+        )
+    ).all()
+    taken = {tuple(row[1:]) for row in target_rows}
+
+    source_rows = (
+        await session.execute(
+            select(table.c.id, *key_columns).where(
+                table.c.scope == "user", table.c.scope_id == source_id
+            )
+        )
+    ).all()
+
+    moving: list[uuid.UUID] = []
+    dropping: list[uuid.UUID] = []
+    for row in source_rows:
+        key = tuple(row[1:])
+        if key in taken:
+            dropping.append(row[0])
+        else:
+            moving.append(row[0])
+            # A later source row sharing this key would otherwise also read
+            # as "not yet taken" and collide with the one just approved.
+            taken.add(key)
+    return moving, dropping
+
+
+async def _apply_scope_id_user(
+    session: AsyncSession, rule: MergeRule, source_id: uuid.UUID, target_id: uuid.UUID
+) -> tuple[int, int]:
+    """Reassigns what `_scope_id_user_partition` says may move, deletes what
+    it says would collide. Never issues the single blanket UPDATE a
+    duplicate would make the database refuse, so a merge that finds one
+    never surfaces a raw rollback (§7.1) -- it degrades to keep-target
+    instead, silently from the database's point of view and counted from
+    the caller's. Returns `(moved, dropped)`.
+    """
+    table = Base.metadata.tables[rule.table]
+    moving, dropping = await _scope_id_user_partition(session, rule, source_id, target_id)
+    if dropping:
+        await session.execute(sa_delete(table).where(table.c.id.in_(dropping)))
+    if moving:
+        await session.execute(
+            update(table).where(table.c.id.in_(moving)).values(scope_id=target_id)
+        )
+    return len(moving), len(dropping)
 
 
 async def compute_merge_preview(
@@ -306,8 +387,16 @@ async def compute_merge_preview(
     dropped_issuers = {i.issuer for i in dropped}
 
     counts: dict[str, int] = {}
+    duplicate_rules_dropped = 0
     for rule in MERGE_RULES:
         if rule.kind is MergeRuleKind.IDENTITIES:
+            continue
+        if rule.kind is MergeRuleKind.SCOPE_ID_USER:
+            rule_moving, rule_dropping = await _scope_id_user_partition(
+                session, rule, source.id, target.id
+            )
+            counts[rule.table] = counts.get(rule.table, 0) + len(rule_moving)
+            duplicate_rules_dropped += len(rule_dropping)
             continue
         counts[rule.table] = counts.get(rule.table, 0) + await _count(session, rule, source.id)
     counts["user_identities"] = len(identities)
@@ -322,6 +411,7 @@ async def compute_merge_preview(
         identities_dropped=dropped,
         resulting_is_admin=target.is_admin or source.is_admin,
         bundled_logins_disabled=[disable[1]] if disable else [],
+        duplicate_rules_dropped=duplicate_rules_dropped,
     )
 
 
@@ -433,6 +523,7 @@ async def merge_users(
     disable = await _bundled_login_to_disable(session, source, dropped_issuers)
 
     counts: dict[str, int] = {"user_identities": len(identities)}
+    duplicate_rules_dropped = 0
     await _apply_identities(session, source, target, moving)
 
     for rule in MERGE_RULES:
@@ -442,6 +533,10 @@ async def merge_users(
             counts[rule.table] = await _merge_memberships(session, source, target)
         elif rule.kind is MergeRuleKind.UNION_MODEL_ACCESS:
             counts[rule.table] = await _merge_model_access(session, source.id, target.id)
+        elif rule.kind is MergeRuleKind.SCOPE_ID_USER:
+            moved, rule_dropped = await _apply_scope_id_user(session, rule, source.id, target.id)
+            counts[rule.table] = counts.get(rule.table, 0) + moved
+            duplicate_rules_dropped += rule_dropped
         else:
             counts[rule.table] = counts.get(rule.table, 0) + await _apply_generic(
                 session, rule, source.id, target.id
@@ -465,6 +560,8 @@ async def merge_users(
     target.sessions_valid_after = utcnow()
 
     summary = dict(counts)
+    if duplicate_rules_dropped:
+        summary["duplicate_rules_dropped"] = duplicate_rules_dropped
     session.add(
         UserMerge(
             source_user_id=source.id,
@@ -494,6 +591,7 @@ async def merge_users(
         counts=counts,
         identities_dropped=dropped,
         bundled_logins_disabled=[disable[1]] if disable else [],
+        duplicate_rules_dropped=duplicate_rules_dropped,
         login_to_disable=disable,
     )
 
@@ -502,13 +600,6 @@ async def _apply_generic(
     session: AsyncSession, rule: MergeRule, source_id: uuid.UUID, target_id: uuid.UUID
 ) -> int:
     table = Base.metadata.tables[rule.table]
-    if rule.kind is MergeRuleKind.SCOPE_ID_USER:
-        result = await session.execute(
-            update(table)
-            .where(table.c.scope == "user", table.c.scope_id == source_id)
-            .values(scope_id=target_id)
-        )
-        return cast(CursorResult[Any], result).rowcount or 0
     if rule.kind is MergeRuleKind.REASSIGN:
         result = await session.execute(
             update(table).where(table.c[rule.column] == source_id).values({rule.column: target_id})

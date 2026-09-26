@@ -586,6 +586,13 @@ function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: (
               {preview.data.identities_dropped.map((i) => i.issuer).join(", ")}.
             </Notice>
           )}
+          {preview.data.duplicate_rules_dropped > 0 && (
+            <p className="text-sm text-ink-muted">
+              {preview.data.duplicate_rules_dropped} duplicate rule
+              {preview.data.duplicate_rules_dropped > 1 ? "s" : ""} dropped: the target already has
+              an equivalent one, so the source's is kept off rather than moved.
+            </p>
+          )}
           {preview.data.bundled_logins_disabled.length > 0 && (
             <p className="text-sm text-ink-muted">
               Bundled login{preview.data.bundled_logins_disabled.length > 1 ? "s" : ""} disabled:{" "}

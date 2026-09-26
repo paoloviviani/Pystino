@@ -155,6 +155,7 @@ class TestMergeEndpoint:
         )
         assert preview.status_code == 200, preview.text
         assert preview.json()["counts"] is not None
+        assert preview.json()["duplicate_rules_dropped"] == 0
 
         response = await client.post(
             f"/api/admin/users/{source.id}/merge",
@@ -162,6 +163,7 @@ class TestMergeEndpoint:
         )
         assert response.status_code == 200, response.text
         assert response.json()["target_id"] == str(target.id)
+        assert response.json()["duplicate_rules_dropped"] == 0
 
         async with session_factory() as session:
             assert await session.get(User, source.id) is None
