@@ -41,6 +41,7 @@ from gateway.routers import (
     embeddings,
     health,
     identity,
+    identity_events,
     images,
     me,
     messages,
@@ -356,6 +357,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router)
     app.include_router(me.router)
     app.include_router(admin.router)
+    app.include_router(identity_events.router)
     app.include_router(directory.router)
     app.include_router(scim.router)
 

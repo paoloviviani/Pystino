@@ -25,6 +25,7 @@ from typing import Any, ClassVar
 
 import sqlalchemy as sa
 from sqlalchemy import (
+    DDL,
     JSON,
     Boolean,
     CheckConstraint,
@@ -36,6 +37,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -1511,6 +1513,171 @@ class DirectorySyncRun(Base):
     finished_at: Mapped[datetime | None] = mapped_column(default=None)
     started_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+
+
+class IdentityEventActor(enum.StrEnum):
+    """Who caused an `identity_events` row (ADR 0093 §3.1)."""
+
+    #: A signed-in person, acting from the console — an administrator, or (for
+    #: `admin.refused_last`) themselves.
+    USER = "user"
+    #: A CLI command run inside the gateway container: `pystino admin
+    #: grant|revoke`, `pystino break-glass`.
+    CLI = "cli"
+    #: One of the two sign-in doors (§4.1): the console callback or
+    #: `POST /v1/session/announce`. Distinct from `USER` because nobody is at
+    #: the console yet — the actor is the identity that just signed in, which
+    #: may be the target of its own row (a link, a bootstrap grant).
+    LOGIN = "login"
+    #: The gateway itself, unattended: startup (`idp.reseed`, the admin-email
+    #: sweep).
+    SYSTEM = "system"
+
+
+class IdentityEventAction(enum.StrEnum):
+    """What happened (ADR 0093 §3.1). The full set the design names — a later
+    stage's call site is added to `gateway.identity_events.DETAIL_ALLOWLIST`,
+    not to this enum, which is already exhaustive."""
+
+    USER_CREATE = "user.create"
+    USER_UPDATE = "user.update"
+    USER_DISABLE = "user.disable"
+    USER_ENABLE = "user.enable"
+    USER_DELETE = "user.delete"
+    ADMIN_GRANT = "admin.grant"
+    ADMIN_REVOKE = "admin.revoke"
+    ADMIN_REFUSED_LAST = "admin.refused_last"
+    PASSWORD_RESET = "password.reset"  # noqa: S105 -- an action name, not a credential
+    LOGIN_CREATE = "login.create"
+    LOGIN_DELETE = "login.delete"
+    LOGIN_DISABLE = "login.disable"
+    IDENTITY_LINK = "identity.link"
+    IDENTITY_BIND = "identity.bind"
+    IDENTITY_DROP = "identity.drop"
+    USER_MERGE = "user.merge"
+    BREAK_GLASS = "break_glass"
+    IDP_RESEED = "idp.reseed"
+    BOOTSTRAP_ADMIN = "bootstrap.admin"
+    SESSIONS_REVOKE = "sessions.revoke"
+    DEVICES_REVOKE = "devices.revoke"
+
+
+#: Raised by both dialects' triggers, so a caller sees the same reason whether
+#: the database driving the test suite is SQLite or the one behind a
+#: deployment is PostgreSQL.
+_IDENTITY_EVENTS_APPEND_ONLY_MESSAGE = "identity_events is append-only (ADR 0093)"
+
+#: PostgreSQL has no bare "raise on write" trigger primitive, so the function
+#: is the trigger body; SQLite's `RAISE(ABORT, …)` needs no function at all.
+#: Every string here is exactly one statement, deliberately: `cursor.execute`
+#: refuses more than one at a time on SQLite (`sqlite3.ProgrammingError: You
+#: can only execute one statement at a time`), which is also why each is its
+#: own `event.listen` / `op.execute` call below rather than one script.
+#:
+#: These live here, not only in the migration, because the unit suite builds
+#: its schema from `Base.metadata.create_all()` (see `tests/conftest.py`) and
+#: never runs Alembic — a trigger only the migration knew how to create would
+#: be untested by every test in this repository.
+IDENTITY_EVENTS_POSTGRES_FUNCTION_SQL = f"""
+CREATE OR REPLACE FUNCTION identity_events_append_only() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION '{_IDENTITY_EVENTS_APPEND_ONLY_MESSAGE}';
+END;
+$$ LANGUAGE plpgsql;
+"""
+
+IDENTITY_EVENTS_POSTGRES_TRIGGER_SQL = """
+CREATE TRIGGER identity_events_append_only
+BEFORE UPDATE OR DELETE ON identity_events
+FOR EACH ROW EXECUTE FUNCTION identity_events_append_only();
+"""
+
+IDENTITY_EVENTS_SQLITE_NO_UPDATE_TRIGGER_SQL = f"""
+CREATE TRIGGER identity_events_no_update
+BEFORE UPDATE ON identity_events
+BEGIN
+    SELECT RAISE(ABORT, '{_IDENTITY_EVENTS_APPEND_ONLY_MESSAGE}');
+END;
+"""
+
+IDENTITY_EVENTS_SQLITE_NO_DELETE_TRIGGER_SQL = f"""
+CREATE TRIGGER identity_events_no_delete
+BEFORE DELETE ON identity_events
+BEGIN
+    SELECT RAISE(ABORT, '{_IDENTITY_EVENTS_APPEND_ONLY_MESSAGE}');
+END;
+"""
+
+
+class IdentityEvent(Base):
+    """One append-only fact about an identity (ADR 0093 §3.1, closing R8).
+
+    "Append-only" is a database guarantee here, not a convention among the
+    routes that touch the table — unlike `OIDCPolicyConfig` and
+    `DirectorySyncRun`, which stay insert-only because nothing calls
+    `.update()` on them, not because anything stops it. An audit trail is
+    exactly the table where that difference matters: see the trigger SQL
+    above, attached to this table's `after_create` event just below, and
+    executed again — from the same strings — by migration 0047.
+
+    No foreign key on `actor_user_id` or `target_user_id`. A user who is later
+    merged away or deleted must not take their history with them: the point of
+    an audit row is that it outlives the account it describes. `actor_label`
+    and `target_label` freeze the email or login name at the time, the same
+    reason `UserIdentity.matched_email` is frozen rather than joined live.
+    """
+
+    __tablename__ = "identity_events"
+    __table_args__ = (
+        Index("ix_identity_events_actor_user", "actor_user_id", "at"),
+        Index("ix_identity_events_target_user", "target_user_id", "at"),
+        Index("ix_identity_events_action", "action", "at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    at: Mapped[datetime] = mapped_column(default=utcnow)
+    actor_type: Mapped[IdentityEventActor] = mapped_column(
+        _enum(IdentityEventActor, "identity_event_actor_type")
+    )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+    actor_label: Mapped[str] = mapped_column(String(320), default="")
+    action: Mapped[IdentityEventAction] = mapped_column(
+        _enum(IdentityEventAction, "identity_event_action")
+    )
+    target_user_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+    target_label: Mapped[str] = mapped_column(String(320), default="")
+    issuer: Mapped[str | None] = mapped_column(String(512), default=None)
+    subject: Mapped[str | None] = mapped_column(String(255), default=None)
+    #: Per-action allowlisted keys only — enforced by `record_event`, never by
+    #: this column. Never a password, digest, token or secret.
+    detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default=text("'{}'"))
+    #: An operator's stated reason. Optional in general; `record_event`
+    #: requires it for `user.merge` and `break_glass`, where it is the only
+    #: record of *why* an irreversible or emergency action happened.
+    reason: Mapped[str | None] = mapped_column(Text, default=None)
+
+    def __repr__(self) -> str:
+        return f"<IdentityEvent {self.action} {self.actor_label} -> {self.target_label}>"
+
+
+# SQLAlchemy 2.0.52's `DDL.__init__` itself carries no annotations (unlike the
+# rest of the library, which is why it is not in the mypy overrides above) —
+# hence the ignores below, each confined to this one constructor call.
+for _statement in (IDENTITY_EVENTS_POSTGRES_FUNCTION_SQL, IDENTITY_EVENTS_POSTGRES_TRIGGER_SQL):
+    event.listen(
+        IdentityEvent.__table__,
+        "after_create",
+        DDL(_statement).execute_if(dialect="postgresql"),  # type: ignore[no-untyped-call]
+    )
+for _statement in (
+    IDENTITY_EVENTS_SQLITE_NO_UPDATE_TRIGGER_SQL,
+    IDENTITY_EVENTS_SQLITE_NO_DELETE_TRIGGER_SQL,
+):
+    event.listen(
+        IdentityEvent.__table__,
+        "after_create",
+        DDL(_statement).execute_if(dialect="sqlite"),  # type: ignore[no-untyped-call]
     )
 
 
