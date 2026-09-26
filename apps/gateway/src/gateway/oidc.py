@@ -745,6 +745,80 @@ async def bind_bundled_login(
     )
 
 
+async def claim_unbound_bundled_login(
+    session: AsyncSession,
+    record: IdentityProvider,
+    user: User,
+    *,
+    preferred_username: str | None,
+    email: str | None,
+    email_verified: bool | None,
+) -> None:
+    """Claim a migration-created, unbound ``directory_entries`` row at the
+    first real sign-in it was always going to need (ADR 0093 §13.4/§8.2).
+
+    A users-file login that pre-dates stage (b) and never signed in has no
+    gateway user for `migrate_bundled_directory` to bind in advance, so that
+    migration leaves its entry's `user_id` null. `bind_bundled_login` cannot
+    close that gap itself: it only ever matches an *already-bound* row, by
+    its own design, because the entries it was written for (console-created
+    pending users and fresh sign-ins) are bound at creation. So the ordinary
+    new-user path runs first — `provision_user` creates `user` believing this
+    is a brand new person — and this claims the entry immediately after,
+    once there is a user row to claim it with.
+
+    Call this **after** `provision_user`, unconditionally: it self-gates on
+    `record.kind`, like `bind_bundled_login`, so stage (c)'s announce door can
+    call both without knowing which kind it is talking to. Matches on the
+    same rule as `bind_bundled_login` (`email_verified is True`, both sides'
+    normalised email equal) so one sentence describes when either function
+    binds an identity. A refusal is not an error — the entry stays unbound
+    for a later administrator to reconcile by hand — so it only logs why.
+    """
+    if record.kind != "authelia":
+        return
+    if not preferred_username:
+        return
+    entry = (
+        await session.execute(
+            select(DirectoryEntry).where(
+                DirectoryEntry.provider_id == record.id,
+                DirectoryEntry.external_id == preferred_username,
+                DirectoryEntry.user_id.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        return
+    if email_verified is not True:
+        logger.info(
+            "not claiming unbound directory entry %r: email unverified", preferred_username
+        )
+        return
+    claim_email, claim_trusted = is_trusted_email(email or "")
+    entry_email, entry_trusted = is_trusted_email(entry.email or "")
+    if not claim_trusted or not entry_trusted or claim_email != entry_email:
+        logger.info(
+            "not claiming unbound directory entry %r: email does not match", preferred_username
+        )
+        return
+
+    entry.user_id = user.id
+    await session.flush()
+
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.LOGIN,
+        actor_label=email or preferred_username,
+        action=IdentityEventAction.IDENTITY_BIND,
+        target_user_id=user.id,
+        target_label=email or preferred_username,
+        issuer=record.issuer,
+        subject=user.subject,
+        detail={"claimed_unbound": True},
+    )
+
+
 async def provision_user(
     session: AsyncSession,
     *,

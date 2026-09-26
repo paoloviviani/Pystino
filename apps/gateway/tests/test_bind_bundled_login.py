@@ -18,7 +18,7 @@ from gateway.models import (
     User,
     UserIdentity,
 )
-from gateway.oidc import PENDING_USER_ISSUER, bind_bundled_login
+from gateway.oidc import PENDING_USER_ISSUER, bind_bundled_login, claim_unbound_bundled_login
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -77,6 +77,27 @@ async def _bound_entry(
         username=login,
         email=user.email,
         user_id=user.id,
+    )
+    session.add(entry)
+    await session.commit()
+    return entry
+
+
+async def _unbound_entry(
+    session: AsyncSession,
+    provider: IdentityProvider,
+    *,
+    login: str = "frank",
+    email: str = "frank@example.org",
+) -> DirectoryEntry:
+    """As `migrate_bundled_directory` (§13.4) leaves a users-file login that
+    pre-dates stage (b) and has no gateway user yet to bind it to."""
+    entry = DirectoryEntry(
+        provider_id=provider.id,
+        external_id=login,
+        username=login,
+        email=email,
+        user_id=None,
     )
     session.add(entry)
     await session.commit()
@@ -302,3 +323,130 @@ class TestRefusals:
             await session.commit()
 
             assert (await session.execute(select(User))).scalars().all() == []
+
+
+class TestClaimsUnboundEntry:
+    """`claim_unbound_bundled_login` (§13.4/§8.2 seam): the migration leaves a
+    pre-existing file login's entry unbound, since it has no gateway user yet
+    — this is the first sign-in that gives it one to claim the entry with.
+    """
+
+    async def test_a_migration_created_unbound_entry_is_claimed_at_first_sign_in(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        async with session_factory() as session:
+            provider = await _provider(session)
+            entry = await _unbound_entry(session, provider)
+            # Stands in for `provision_user`'s ordinary new-user path, which
+            # runs before this function is ever called.
+            user = User(
+                issuer=ISS,
+                subject=NEW_SUBJECT,
+                email="frank@example.org",
+                email_normalized="frank@example.org",
+                display_name="Frank",
+                username="frank",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+
+            await claim_unbound_bundled_login(
+                session,
+                provider,
+                user,
+                preferred_username="frank",
+                email="frank@example.org",
+                email_verified=True,
+            )
+            await session.commit()
+
+            refreshed = (
+                await session.execute(select(DirectoryEntry).where(DirectoryEntry.id == entry.id))
+            ).scalar_one()
+            assert refreshed.user_id == user.id
+
+            event = (
+                await session.execute(
+                    select(IdentityEvent).where(
+                        IdentityEvent.action == IdentityEventAction.IDENTITY_BIND
+                    )
+                )
+            ).scalar_one()
+            assert event.target_user_id == user.id
+            assert event.detail == {"claimed_unbound": True}
+
+    async def test_a_mismatched_email_is_not_claimed(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        async with session_factory() as session:
+            provider = await _provider(session)
+            entry = await _unbound_entry(session, provider)
+            user = User(
+                issuer=ISS,
+                subject=NEW_SUBJECT,
+                email="someone-else@example.org",
+                email_normalized="someone-else@example.org",
+                username="frank",
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+
+            await claim_unbound_bundled_login(
+                session,
+                provider,
+                user,
+                preferred_username="frank",
+                email="someone-else@example.org",
+                email_verified=True,
+            )
+            await session.commit()
+
+            refreshed = (
+                await session.execute(select(DirectoryEntry).where(DirectoryEntry.id == entry.id))
+            ).scalar_one()
+            assert refreshed.user_id is None
+
+    async def test_an_already_bound_entry_is_never_reclaimed_by_a_different_user(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        async with session_factory() as session:
+            provider = await _provider(session)
+            owner = User(
+                issuer=ISS,
+                subject="owner-sub",
+                email="frank@example.org",
+                email_normalized="frank@example.org",
+                username="frank",
+            )
+            session.add(owner)
+            await session.commit()
+            await session.refresh(owner)
+            entry = await _bound_entry(session, provider, owner, login="frank")
+
+            impostor = User(
+                issuer=ISS,
+                subject="impostor-sub",
+                email="frank@example.org",
+                email_normalized="frank@example.org",
+                username="frank-2",
+            )
+            session.add(impostor)
+            await session.commit()
+            await session.refresh(impostor)
+
+            await claim_unbound_bundled_login(
+                session,
+                provider,
+                impostor,
+                preferred_username="frank",
+                email="frank@example.org",
+                email_verified=True,
+            )
+            await session.commit()
+
+            refreshed = (
+                await session.execute(select(DirectoryEntry).where(DirectoryEntry.id == entry.id))
+            ).scalar_one()
+            assert refreshed.user_id == owner.id

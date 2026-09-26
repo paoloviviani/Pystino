@@ -34,6 +34,7 @@ from gateway.oidc import (
     OIDCError,
     ProvisioningRefused,
     bind_bundled_login,
+    claim_unbound_bundled_login,
     extract_groups,
     generate_pkce_pair,
     issue_session_token,
@@ -388,6 +389,18 @@ async def callback(
             # works", ADR 0088) reads the same global mappings now — there is
             # no per-row copy left to disagree with it (ADR 0093 §3.4).
             group_mappings=policy.group_mappings if policy is not None else None,
+        )
+        # A users-file login that pre-dates stage (b) and never signed in has
+        # no gateway user to bind at migration time (§13.4), so its entry is
+        # left unbound; this is the first point a real user row exists to
+        # claim it with.
+        await claim_unbound_bundled_login(
+            session,
+            record,
+            user,
+            preferred_username=merged.get("preferred_username"),
+            email=merged.get("email"),
+            email_verified=merged.get("email_verified"),
         )
         # A directory whose subjects are unknown until first login (Authelia)
         # links its mirrored entry now: pre-assigned groups and directory
