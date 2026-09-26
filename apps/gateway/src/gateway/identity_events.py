@@ -45,7 +45,11 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     IdentityEventAction.PASSWORD_RESET: frozenset(),
     IdentityEventAction.LOGIN_CREATE: frozenset(),
     IdentityEventAction.LOGIN_DELETE: frozenset(),
-    IdentityEventAction.LOGIN_DISABLE: frozenset(),
+    # "result": "failed" on a login.disable/login.enable whose Authelia write
+    # itself failed -- the gateway-side half of the action still happened;
+    # this is the audit trail's own record that the two sides disagree.
+    IdentityEventAction.LOGIN_DISABLE: frozenset({"result"}),
+    IdentityEventAction.LOGIN_ENABLE: frozenset({"result"}),
     # §6.2: "an identity.link audit row (actor login; detail: the matched
     # address and the new issuer)".
     IdentityEventAction.IDENTITY_LINK: frozenset({"matched_email", "issuer"}),

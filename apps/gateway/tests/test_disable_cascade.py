@@ -231,6 +231,81 @@ class TestDisable:
             assert personal.revoked_at is None
 
 
+class TestAutheliaSyncFailure:
+    async def test_a_failed_write_is_reported_audited_and_retryable(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        provider, path = await _bundled_provider(session_factory, tmp_path)
+        target_id = await _target_with_credentials(session_factory, provider)
+
+        path.unlink()  # the users file is unreachable
+
+        response = await client.patch(
+            f"/api/admin/users/{target_id}", json={"is_active": False}
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        # The gateway-side half of the cascade still stands, even though the
+        # Authelia write failed.
+        assert body["is_active"] is False
+        assert body["authelia_sync"] == "failed"
+        assert "could not be updated" in body["authelia_sync_message"]
+
+        async with session_factory() as session:
+            row = (await session.execute(select(User).where(User.id == target_id))).scalar_one()
+            assert row.is_active is False
+            assert row.sessions_valid_after is not None
+
+            failed_events = (
+                (
+                    await session.execute(
+                        select(IdentityEvent).where(
+                            IdentityEvent.target_user_id == target_id,
+                            IdentityEvent.action == IdentityEventAction.LOGIN_DISABLE,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(failed_events) == 1
+            assert failed_events[0].detail == {"result": "failed"}
+
+        # Retry: PATCHing the same is_active value again re-attempts the
+        # Authelia write, with no other field needing to change first.
+        path.write_text(SEED)
+        retry = await client.patch(
+            f"/api/admin/users/{target_id}", json={"is_active": False}
+        )
+        assert retry.status_code == 200, retry.text
+        assert retry.json().get("authelia_sync") is None
+        assert yaml.safe_load(path.read_text())["users"]["target"]["disabled"] is True
+
+        async with session_factory() as session:
+            all_events = (
+                (
+                    await session.execute(
+                        select(IdentityEvent).where(
+                            IdentityEvent.target_user_id == target_id,
+                            IdentityEvent.action == IdentityEventAction.LOGIN_DISABLE,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert [e.detail for e in sorted(all_events, key=lambda e: e.at)] == [
+                {"result": "failed"},
+                {},
+            ]
+
+
 class TestEnable:
     async def test_reverses_only_the_flag_and_authelia_disabled(
         self,
@@ -270,3 +345,12 @@ class TestEnable:
                     select(RefreshCredential).where(RefreshCredential.user_id == target_id)
                 )
             ).scalar_one_or_none() is None
+
+            assert (
+                await session.execute(
+                    select(IdentityEvent).where(
+                        IdentityEvent.target_user_id == target_id,
+                        IdentityEvent.action == IdentityEventAction.LOGIN_ENABLE,
+                    )
+                )
+            ).scalar_one_or_none() is not None

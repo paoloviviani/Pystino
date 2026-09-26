@@ -1216,6 +1216,15 @@ class UserAdminResponse(BaseModel):
     default_billing_group: str | None
     active_key_count: int
     last_login_at: datetime | None
+    #: Set only by `PATCH /admin/users/{id}` when it just tried to sync
+    #: Authelia's own `disabled` flag and that write failed — the gateway
+    #: side of the same action already stands regardless. `None` on a
+    #: successful sync, and on every other response this schema serves
+    #: (the list, `create_user`, …), which never set it at all. The console
+    #: shows `authelia_sync_message` and resending the same PATCH is the
+    #: retry (ADR 0093 §9.1).
+    authelia_sync: Literal["failed"] | None = None
+    authelia_sync_message: str | None = None
 
 
 def _clean_optional_text(value: str | None) -> str | None:

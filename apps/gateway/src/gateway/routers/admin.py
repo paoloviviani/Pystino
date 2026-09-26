@@ -2683,27 +2683,35 @@ async def list_users(
     return page.page(await _user_responses(session, users), total)
 
 
-async def _bundled_entry_for(session: AsyncSession, user: User) -> DirectoryEntry | None:
-    """This user's entry under the *currently enabled* bundled provider,
-    never a stale one left over from a provider row an IdP switch disabled
-    (ADR 0093 §2 keeps every old row, never deletes it)."""
+async def _bundled_entry_for(
+    session: AsyncSession, user: User
+) -> tuple[IdentityProvider, DirectoryEntry] | None:
+    """This user's entry under the *currently enabled* bundled provider, and
+    that provider itself — never a stale entry left over from a provider row
+    an IdP switch disabled (ADR 0093 §2 keeps every old row, never deletes
+    it). Returned together, rather than making a caller re-fetch the
+    provider it just implied, so there is no second query that could in
+    principle answer differently and nothing to `assert` about it staying
+    the same between the two.
+    """
     provider = await _active_bundled_provider(session)
     if provider is None:
         return None
-    return (
+    entry = (
         await session.execute(
             select(DirectoryEntry).where(
                 DirectoryEntry.provider_id == provider.id, DirectoryEntry.user_id == user.id
             )
         )
     ).scalar_one_or_none()
+    return (provider, entry) if entry is not None else None
 
 
-async def _disable_cascade(
-    session: AsyncSession, admin: User, secrets: SecretBox, user: User
+async def _revoke_sessions_and_credentials(
+    session: AsyncSession, admin: User, user: User
 ) -> None:
-    """ADR 0093 §9.1: one disable ends every session and credential this
-    person already holds, not just requests from here on.
+    """ADR 0093 §9.1's gateway-side half of a disable: ends every session and
+    credential this person already holds, not just requests from here on.
 
     Personal API keys (`minted_by IS NULL`) are the one thing kept: they are
     refused while the user is inactive (the existing check in `deps.py`),
@@ -2729,45 +2737,62 @@ async def _disable_cascade(
         target_label=user.email or "",
     )
 
-    entry = await _bundled_entry_for(session, user)
-    if entry is None:
-        return
-    provider = await _active_bundled_provider(session)
-    assert provider is not None  # `_bundled_entry_for` already found one
+
+async def _sync_bundled_login(
+    session: AsyncSession, admin: User, secrets: SecretBox, user: User, *, disabled: bool
+) -> str | None:
+    """Sets Authelia's own `disabled` flag to match, auditing either
+    outcome. Returns the failure reason, or `None` on success or on nothing
+    bundled to sync (not itself a failure).
+
+    Deliberately idempotent and side-effect-free when there is nothing to
+    change: called on *every* PATCH that names `is_active`, whether or not
+    the value actually changed this time, so a PATCH resending the same
+    state is how a previous Authelia-side failure gets retried — the
+    console's "run the action again" is this exact call, not a special
+    retry path.
+    """
+    found = await _bundled_entry_for(session, user)
+    if found is None:
+        return None
+    provider, entry = found
     users_file = _bundled_users_file(provider, secrets)
+    action = IdentityEventAction.LOGIN_DISABLE if disabled else IdentityEventAction.LOGIN_ENABLE
     try:
-        users_file.update(entry.external_id, disabled=True)
+        users_file.update(entry.external_id, disabled=disabled)
     except UsersFileError as exc:
-        # The gateway-side half of the cascade (is_active, sessions_valid_after,
-        # the deletes above) already stands: Authelia still refuses this
-        # person at the next `/v1` call on `is_active` even if its own
-        # `disabled` flag never gets set. A login file the gateway cannot
-        # currently reach must not undo a disable that has already happened.
-        logger.warning("could not set Authelia disabled=true for %s: %s", entry.external_id, exc)
-        return
+        # The gateway-side state (is_active, sessions_valid_after, the
+        # deletes on a disable) already stands, committed or about to be by
+        # this same request: `is_active` alone still refuses the person at
+        # their next `/v1` call even if Authelia's own flag never gets set.
+        # A login file the gateway cannot currently reach must not undo a
+        # decision that has already happened — it only means Authelia's
+        # side of it is out of sync until a retry (or the next PATCH)
+        # reaches the file again.
+        logger.warning(
+            "could not set Authelia disabled=%s for %s: %s", disabled, entry.external_id, exc
+        )
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=action,
+            target_user_id=user.id,
+            target_label=entry.external_id,
+            detail={"result": "failed"},
+        )
+        return str(exc)
     await record_event(
         session,
         actor_type=IdentityEventActor.USER,
         actor_user_id=admin.id,
         actor_label=admin.email or "",
-        action=IdentityEventAction.LOGIN_DISABLE,
+        action=action,
         target_user_id=user.id,
         target_label=entry.external_id,
     )
-
-
-async def _enable_bundled_login(session: AsyncSession, secrets: SecretBox, user: User) -> None:
-    """Reverses the gateway flag and Authelia's `disabled` only (§9.1):
-    sessions, minted keys and devices stay revoked — the person signs in
-    again and galopin machines re-enroll."""
-    entry = await _bundled_entry_for(session, user)
-    if entry is None:
-        return
-    provider = await _active_bundled_provider(session)
-    assert provider is not None
-    users_file = _bundled_users_file(provider, secrets)
-    with contextlib.suppress(UsersFileError):
-        users_file.update(entry.external_id, disabled=False)
+    return None
 
 
 @router.patch("/users/{user_id}", response_model=UserAdminResponse)
@@ -2888,30 +2913,49 @@ async def update_user(
         )
         if fields["is_admin"]:
             await mark_bootstrap_consumed(session)
-    if "is_active" in fields and fields["is_active"] != was_active:
-        active_action = (
-            IdentityEventAction.USER_ENABLE
-            if fields["is_active"]
-            else IdentityEventAction.USER_DISABLE
+    authelia_sync_error: str | None = None
+    if "is_active" in fields:
+        target_active = fields["is_active"]
+        if target_active != was_active:
+            active_action = (
+                IdentityEventAction.USER_ENABLE
+                if target_active
+                else IdentityEventAction.USER_DISABLE
+            )
+            await record_event(
+                session,
+                actor_type=IdentityEventActor.USER,
+                actor_user_id=admin.id,
+                actor_label=admin.email or "",
+                action=active_action,
+                target_user_id=user.id,
+                target_label=user.email or "",
+            )
+            if not target_active:
+                await _revoke_sessions_and_credentials(session, admin, user)
+        # Attempted every time `is_active` is named, changed or not: this is
+        # what makes a previous Authelia-side failure retryable by sending
+        # the same PATCH again, with no other field having to change first.
+        authelia_sync_error = await _sync_bundled_login(
+            session, admin, secrets, user, disabled=not target_active
         )
-        await record_event(
-            session,
-            actor_type=IdentityEventActor.USER,
-            actor_user_id=admin.id,
-            actor_label=admin.email or "",
-            action=active_action,
-            target_user_id=user.id,
-            target_label=user.email or "",
-        )
-        if fields["is_active"]:
-            await _enable_bundled_login(session, secrets, user)
-        else:
-            await _disable_cascade(session, admin, secrets, user)
     await session.commit()
 
     # Not by re-reading the listing and picking a row out of it: the listing is
     # a page now, and the user just edited may not be on the page.
-    return (await _user_responses(session, [user]))[0]
+    response = (await _user_responses(session, [user]))[0]
+    if authelia_sync_error is not None:
+        verb = "disabled" if fields["is_active"] is False else "enabled"
+        response = response.model_copy(
+            update={
+                "authelia_sync": "failed",
+                "authelia_sync_message": (
+                    f"The account is {verb} here, but its Authelia login could not be "
+                    f"updated: {authelia_sync_error}. Retry, or run the action again."
+                ),
+            }
+        )
+    return response
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

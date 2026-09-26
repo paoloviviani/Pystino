@@ -1580,6 +1580,11 @@ class IdentityEventAction(enum.StrEnum):
     LOGIN_CREATE = "login.create"
     LOGIN_DELETE = "login.delete"
     LOGIN_DISABLE = "login.disable"
+    # Not in the design's own action list (ADR 0093 §3.1) -- added at the
+    # orchestrator's direction so a bundled login's re-enable is audited as
+    # symmetrically as its disable, rather than only the gateway-side
+    # user.enable standing for both halves of the action.
+    LOGIN_ENABLE = "login.enable"
     IDENTITY_LINK = "identity.link"
     IDENTITY_BIND = "identity.bind"
     IDENTITY_DROP = "identity.drop"
