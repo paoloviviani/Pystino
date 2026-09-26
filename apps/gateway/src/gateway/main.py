@@ -35,6 +35,7 @@ from gateway.quota import (
     ValkeyCounterStore,
 )
 from gateway.quota.notifications import QuotaNotifier
+from gateway.rate_limit import SlidingWindowLimiter
 from gateway.redaction.base import Redactor
 from gateway.redaction.resolver import RedactionResolver
 from gateway.routers import (
@@ -239,6 +240,13 @@ async def init_app_state(
     # way in.
     registry = OIDCProviderRegistry(control_http, app.state.secrets, settings)
     app.state.oidc_providers = registry
+    # ADR 0093 §4.1: `POST /v1/session/announce`'s own 10-per-minute ceiling,
+    # per (issuer, subject). On `app.state` rather than a module-level
+    # singleton for the same reason every other piece of shared state here
+    # is: one instance per running app, not one for the life of the process
+    # (a test builds a fresh app per test and must get a fresh limiter with
+    # it).
+    app.state.announce_limiter = SlidingWindowLimiter(max_calls=10, window_seconds=60)
     try:
         async with session_factory() as session:
             await reseed_from_env(session, settings, app.state.secrets)

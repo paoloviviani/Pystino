@@ -242,6 +242,15 @@ class OIDCSettings(BaseModel):
     # for why this is a string. Enforced on `/v1` once the re-seed lands.
     accepted_clients: str = ""
 
+    # ADR 0093 §4.1: which of `accepted_clients` is the chat, specifically.
+    # `POST /v1/session/announce` is the chat's own sign-in door and refuses a
+    # token whose `azp` (or `client_id`) names anything else — the console or
+    # galopin's machine client are accepted *callers of `/v1`*, but neither is
+    # entitled to run the sign-in sequence a login triggers. Compose fills
+    # this from `OIDC_CHAT_CLIENT_ID`, the same variable that feeds this
+    # gateway's slot in `accepted_clients`.
+    chat_client_id: str = ""
+
     def admin_email_list(self) -> list[str]:
         return _split_csv(self.admin_emails)
 

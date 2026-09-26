@@ -567,6 +567,38 @@ class UserIdentity(Base):
         return f"<UserIdentity {self.issuer}/{self.subject} -> {self.user_id}>"
 
 
+class UserMerge(Base):
+    """One completed merge (ADR 0093 §7.1): ``source_user_id`` no longer names
+    a row in ``users`` — the merge deletes it in the same transaction this
+    writes in — so both ids are kept **without** a foreign key, the same
+    choice ``identity_events`` makes for exactly the same reason. This table
+    is the record that a merge happened and what moved; ``identity_events``'
+    own ``user.merge`` row is the audit trail, kept even if this table were
+    ever pruned.
+
+    Resolution follows chains: if A was merged into B and B later into C,
+    ``merged_from`` for C reports both A and B — the chat asks for this by
+    walking from the *current* person backwards, not by remembering every
+    merge it has already seen, so it must find A here even though A's own
+    row only ever named B.
+    """
+
+    __tablename__ = "user_merges"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    source_user_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    target_user_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    merged_at: Mapped[datetime] = mapped_column(default=utcnow)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+    #: Counts per table, the same numbers the preview showed before the
+    #: operator confirmed.
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default=text("'{}'"))
+    reason: Mapped[str | None] = mapped_column(Text, default=None)
+
+    def __repr__(self) -> str:
+        return f"<UserMerge {self.source_user_id} -> {self.target_user_id}>"
+
+
 class Membership(Base):
     __tablename__ = "memberships"
 
