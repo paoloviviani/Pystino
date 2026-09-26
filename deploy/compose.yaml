@@ -155,11 +155,44 @@ services:
       GATEWAY_OIDC__SCOPES: '["openid","profile","email","groups"]'
       GATEWAY_OIDC__GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-groups}
       GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE: ${OIDC_AUDIENCE:-pystino-api}
-      GATEWAY_OIDC__LINK_LOCAL_BY_EMAIL: ${OIDC_LINK_LOCAL_BY_EMAIL:-false}
+      GATEWAY_OIDC__LINK_BY_EMAIL: ${OIDC_LINK_BY_EMAIL:-false}
       # `authelia` for the bundled IdP (.env writes it): the seeded provider
       # row then gets the users-file sync and the console's user management.
       GATEWAY_OIDC__KIND: ${OIDC_KIND:-generic}
+      # How far the directory's answer about groups reaches (ADR 0093 §1); the
+      # bundled Authelia's users file carries no groups claim worth polling,
+      # so it is forced to never regardless of what is set here.
+      GATEWAY_OIDC__GROUP_SYNC: ${OIDC_GROUP_SYNC:-every_login}
+      # Overrides the provider's own end_session_endpoint; empty uses discovery,
+      # or the bundled Authelia's own default when it publishes none.
+      GATEWAY_OIDC__LOGOUT_URL: ${OIDC_LOGOUT_URL:-}
+      # ADR 0093 §5: who is an administrator, from the environment rather than
+      # a console row. A comma-separated list of verified addresses, or a
+      # dotted claim path plus the comma-separated values that confer it —
+      # set one pair or the other, or neither with the bundled Authelia, which
+      # has its own bootstrap door below.
+      GATEWAY_OIDC__ADMIN_EMAILS: ${OIDC_ADMIN_EMAIL:-}
+      GATEWAY_OIDC__ADMIN_CLAIM: ${OIDC_ADMIN_CLAIM:-}
+      GATEWAY_OIDC__ADMIN_CLAIM_VALUES: ${OIDC_ADMIN_CLAIM_VALUE:-}
+      # ADR 0093 §2: a bearer token's azp (or client_id) must name one of
+      # these once an audience is set, or /v1 accepts a token minted for any
+      # purpose by any client the issuer will talk to. This deployment has
+      # one OIDC client of its own (the console); OIDC_MACHINE_CLIENT_ID is
+      # for an operator's own bearer-token client, empty unless set.
+      GATEWAY_OIDC__ACCEPTED_CLIENTS: ${OIDC_ACCEPTED_CLIENTS:-${OIDC_CONSOLE_CLIENT_ID:-pystino-console},${OIDC_MACHINE_CLIENT_ID:-}}
       GATEWAY_BOOTSTRAP_ADMIN_EMAIL: ${PYSTINO_BOOTSTRAP_ADMIN_EMAIL:-}
+      # The stack's one mail setting (ADR 0093 §1): quota notices, the
+      # console's "send test", and (with the bundled Authelia) its own
+      # self-service password reset. SMTP_ENABLED stays false until
+      # SMTP_HOST etc. are actually filled in, so an empty .env value never
+      # crashes SMTP with nothing to connect to.
+      GATEWAY_SMTP__ENABLED: ${SMTP_ENABLED:-false}
+      GATEWAY_SMTP__HOST: ${SMTP_HOST:-}
+      GATEWAY_SMTP__PORT: ${SMTP_PORT:-587}
+      GATEWAY_SMTP__USERNAME: ${SMTP_USERNAME:-}
+      GATEWAY_SMTP__PASSWORD: ${SMTP_PASSWORD:-}
+      GATEWAY_SMTP__FROM_ADDRESS: ${SMTP_FROM:-}
+      GATEWAY_SMTP__SECURITY: ${SMTP_SECURITY:-starttls}
     volumes:
       # The bundled Authelia's users file, which the console manages
       # and the authelia_file adapter reads. Empty when the profile is off.
