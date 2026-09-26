@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsonResponse } from "../test-helpers";
-import type { AdminUser, IdentityProvider } from "../lib/types";
+import type { AdminUser, DeletePreview, IdentityProvider, MergePreview } from "../lib/types";
 import { AdminUsers } from "./AdminUsers";
 
 /**
@@ -586,6 +586,215 @@ describe("AdminUsers disable and enable", () => {
 
     await waitFor(() => expect(seen.patches).toHaveLength(1));
     expect(seen.patches[0]!.body.is_active).toBe(true);
+  });
+});
+
+function deletePreview(overrides: Partial<DeletePreview> = {}): DeletePreview {
+  return {
+    user_id: "u0",
+    gateway_counts: { api_keys: 1 },
+    bundled_login: null,
+    chat_counts: { conversations: 2 },
+    chat_reachable: true,
+    shared: [],
+    shared_with_others: false,
+    chat_unattributed_legacy_shares: 0,
+    ...overrides,
+  };
+}
+
+/**
+ * The delete dialog's own gate (ADR 0093 §9.2): a shared resource must be
+ * acknowledged, not merely counted, before the account can be erased. What
+ * used to be easy to get wrong is the two states this covers — the tick box
+ * only exists, and only blocks the button, when the preview actually reports
+ * something shared.
+ */
+describe("AdminUsers delete dialog", () => {
+  function deleteRoutes(preview: DeletePreview, seen: { deletes: Record<string, unknown>[] }) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://console.test");
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/api/admin/identity-providers") {
+        return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.pathname === "/api/admin/identity-events") return jsonResponse([]);
+      if (url.pathname === "/api/admin/erasures/pending") return jsonResponse({ pending: 0 });
+      if (url.pathname === "/api/admin/users" && method === "GET") return jsonResponse([user(0)]);
+      if (url.pathname === "/api/admin/users/u0/delete-preview") return jsonResponse(preview);
+      if (url.pathname === "/api/admin/users/u0" && method === "DELETE") {
+        seen.deletes.push(JSON.parse(String(init?.body ?? "{}")));
+        return jsonResponse({ erasure_id: "e1", chat_erasure_done: true });
+      }
+      return jsonResponse([]);
+    });
+  }
+
+  it("disables Delete permanently until the shared-loss box is ticked, when shares exist", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    const seen = { deletes: [] as Record<string, unknown>[] };
+    vi.stubGlobal(
+      "fetch",
+      deleteRoutes(
+        deletePreview({
+          shared: [
+            {
+              kind: "shared_conversation",
+              id: "s1",
+              title: "A shared chat",
+              audience: "anyone with the link",
+            },
+          ],
+          shared_with_others: true,
+        }),
+        seen,
+      ),
+    );
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = screen.getByRole("dialog");
+
+    await waitFor(() => expect(within(dialog).getByText("A shared chat — anyone with the link")).toBeInTheDocument());
+    const confirmButton = within(dialog).getByRole("button", { name: "Delete permanently" });
+    expect(confirmButton).toBeDisabled();
+
+    await user_.click(within(dialog).getByRole("checkbox"));
+    expect(confirmButton).toBeEnabled();
+
+    await user_.click(confirmButton);
+    await waitFor(() => expect(seen.deletes).toHaveLength(1));
+    expect(seen.deletes[0]).toEqual({ confirm_shared_loss: true });
+  });
+
+  it("leaves Delete permanently enabled, with no tick box, when nothing is shared", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    const seen = { deletes: [] as Record<string, unknown>[] };
+    vi.stubGlobal("fetch", deleteRoutes(deletePreview(), seen));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = screen.getByRole("dialog");
+
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: "Delete permanently" })).toBeEnabled(),
+    );
+    expect(within(dialog).queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+});
+
+function mergePreview(overrides: Partial<MergePreview> = {}): MergePreview {
+  return {
+    source_id: "u0",
+    target_id: "u1",
+    counts: { api_keys: 1 },
+    identities_moving: [],
+    identities_dropped: [],
+    resulting_is_admin: false,
+    bundled_logins_disabled: [],
+    duplicate_rules_dropped: 0,
+    chat_note: "the chat folds this person's conversations into the target at their next activity",
+    ...overrides,
+  };
+}
+
+/**
+ * The merge dialog's own gate (ADR 0093 §7.1): irreversible, so the button
+ * stays off until the operator has typed the source's own address back,
+ * exactly, not merely selected a target and clicked through.
+ */
+describe("AdminUsers merge dialog", () => {
+  function mergeRoutes(preview: MergePreview, seen: { merges: Record<string, unknown>[] }) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), "http://console.test");
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/api/admin/identity-providers") {
+        return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.pathname === "/api/admin/identity-events") return jsonResponse([]);
+      if (url.pathname === "/api/admin/erasures/pending") return jsonResponse({ pending: 0 });
+      if (url.pathname === "/api/admin/users" && method === "GET") {
+        const q = url.searchParams.get("q") ?? "";
+        const everyone = [user(0), user(1)];
+        const matched = q
+          ? everyone.filter((entry) => entry.email?.includes(q))
+          : everyone;
+        return jsonResponse(matched);
+      }
+      if (url.pathname === "/api/admin/users/u0/merge-preview") return jsonResponse(preview);
+      if (url.pathname === "/api/admin/users/u0/merge" && method === "POST") {
+        seen.merges.push(JSON.parse(String(init?.body ?? "{}")));
+        return jsonResponse({
+          target_id: "u1",
+          counts: {},
+          identities_dropped: [],
+          bundled_logins_disabled: [],
+          duplicate_rules_dropped: 0,
+        });
+      }
+      return jsonResponse([]);
+    });
+  }
+
+  it("disables Merge, irreversibly until the typed confirmation matches the source", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    const seen = { merges: [] as Record<string, unknown>[] };
+    vi.stubGlobal("fetch", mergeRoutes(mergePreview(), seen));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getAllByRole("button", { name: "Merge into…" })[0]!);
+    const dialog = screen.getByRole("dialog");
+
+    await user_.type(within(dialog).getByPlaceholderText("Search by email, name or username"), "person-1");
+    await waitFor(() =>
+      expect(within(dialog).getByRole("button", { name: /person-1@example.org/ })).toBeInTheDocument(),
+    );
+    await user_.click(within(dialog).getByRole("button", { name: /person-1@example.org/ }));
+
+    await waitFor(() => expect(within(dialog).getByLabelText(/Type "/)).toBeInTheDocument());
+    const confirmButton = within(dialog).getByRole("button", { name: "Merge, irreversibly" });
+    expect(confirmButton).toBeDisabled();
+
+    await user_.type(within(dialog).getByLabelText(/Type "/), "not the right address");
+    await user_.type(within(dialog).getByLabelText("Reason"), "same person");
+    expect(confirmButton).toBeDisabled();
+
+    await user_.clear(within(dialog).getByLabelText(/Type "/));
+    await user_.type(within(dialog).getByLabelText(/Type "/), "person-0@example.org");
+    expect(confirmButton).toBeEnabled();
+
+    await user_.click(confirmButton);
+    await waitFor(() => expect(seen.merges).toHaveLength(1));
+    expect(seen.merges[0]).toMatchObject({
+      into: "u1",
+      confirm: "person-0@example.org",
+      reason: "same person",
+    });
+  });
+
+  it("stays disabled with a matching confirmation but no reason", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    const seen = { merges: [] as Record<string, unknown>[] };
+    vi.stubGlobal("fetch", mergeRoutes(mergePreview(), seen));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getAllByRole("button", { name: "Merge into…" })[0]!);
+    const dialog = screen.getByRole("dialog");
+
+    await user_.type(within(dialog).getByPlaceholderText("Search by email, name or username"), "person-1");
+    await user_.click(
+      await within(dialog).findByRole("button", { name: /person-1@example.org/ }),
+    );
+
+    await waitFor(() => expect(within(dialog).getByLabelText(/Type "/)).toBeInTheDocument());
+    await user_.type(within(dialog).getByLabelText(/Type "/), "person-0@example.org");
+
+    expect(within(dialog).getByRole("button", { name: "Merge, irreversibly" })).toBeDisabled();
+    expect(seen.merges).toHaveLength(0);
   });
 });
 
