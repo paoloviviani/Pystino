@@ -548,8 +548,10 @@ class OIDCClient:
             payload = response.json()
         except ValueError as exc:
             raise OIDCError("device authorization endpoint returned a non-JSON body") from exc
+        if not isinstance(payload, dict):
+            raise OIDCError("device authorization endpoint returned an unexpected body")
         for key in ("device_code", "user_code", "verification_uri"):
-            if not isinstance(payload, dict) or key not in payload:
+            if key not in payload:
                 raise OIDCError(f"device authorization response is missing {key!r}")
         return payload
 
