@@ -61,7 +61,9 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     # §7.1 step 5: "the identity_events user.merge with the summary and the
     # reason" — summary is the counts-per-table dict the preview also shows.
     IdentityEventAction.USER_MERGE: frozenset({"summary"}),
-    IdentityEventAction.BREAK_GLASS: frozenset(),
+    # §10 step 4: "the audit: break_glass, with actor_type=cli, the reason,
+    # the target, and whether the login was new".
+    IdentityEventAction.BREAK_GLASS: frozenset({"login_new"}),
     # §2 step 4: "the change is audited (idp.reseed, with the old and new
     # issuer)".
     # §13.4: the bundled-users migration reuses this action for the group

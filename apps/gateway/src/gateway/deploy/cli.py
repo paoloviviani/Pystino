@@ -1,5 +1,5 @@
-"""The `pystino` command line: bootstrap, release-pin, admin, idp check,
-email export-env, erasure list/retry.
+"""The `pystino` command line: bootstrap, release-pin, admin, break-glass,
+idp check, email export-env, erasure list/retry.
 
 Every command takes its answers as flags so CI and scripts never meet a prompt.
 
@@ -8,13 +8,16 @@ Writing `.env` and standing up a deployment is no longer this CLI's job
 deployment) and the separate `cerea-deploy` repository (the full stack, with
 its own `./configure`) are what an operator reads and edits directly. What
 stays here runs *inside* a deployment: `bootstrap` (the compose one-shot on
-every `up`), `admin grant|revoke` (break-glass), `idp check` (a live probe
-against the configured identity provider, ADR 0093 §11), `email
-export-env` (the mail configuration in force, for `./configure --import-smtp`,
-ADR 0093 §13.5) and `erasure list|retry` (the chat erasure queue the
-background retry loop already owns, for an operator who wants to see or
-force it from the host, ADR 0093 §9.3), plus `release-pin`, which a release
-of this repository runs against its own checkout.
+every `up`), `admin grant|revoke` (the ordinary-case recovery) and
+`break-glass` (the deeper one, ADR 0093 §10 — run by `./configure
+--break-glass` after it has already rewritten `.env` to the bundled
+Authelia), `idp check` (a live probe against the configured identity
+provider, ADR 0093 §11), `email export-env` (the mail configuration in
+force, for `./configure --import-smtp`, ADR 0093 §13.5) and `erasure
+list|retry` (the chat erasure queue the background retry loop already owns,
+for an operator who wants to see or force it from the host, ADR 0093 §9.3),
+plus `release-pin`, which a release of this repository runs against its own
+checkout.
 """
 
 from __future__ import annotations
@@ -56,6 +59,49 @@ def cmd_admin(args: argparse.Namespace) -> int:
             await engine.dispose()
         state = "is now" if user.is_admin else "is no longer"
         print(f"{user.email} ({user.issuer}) {state} an administrator")
+        return 0
+
+    return asyncio.run(run())
+
+
+def cmd_break_glass(args: argparse.Namespace) -> int:
+    import asyncio
+
+    from gateway.config import get_settings
+    from gateway.db import create_engine, create_session_factory
+    from gateway.deploy.admin import AdminCommandError, break_glass
+    from gateway.secrets import SecretBox
+
+    try:
+        user_id = uuid.UUID(args.user_id) if args.user_id else None
+    except ValueError:
+        print(f"break-glass: --user-id must be a UUID, got {args.user_id!r}")
+        return 2
+
+    async def run() -> int:
+        settings = get_settings()
+        engine = create_engine(settings)
+        secrets = SecretBox(settings.secret_key_list())
+        try:
+            async with create_session_factory(engine)() as session:
+                result = await break_glass(
+                    session,
+                    settings,
+                    secrets,
+                    email=args.email,
+                    login=args.login,
+                    user_id=user_id,
+                    reason=args.reason,
+                )
+        except AdminCommandError as exc:
+            print(f"break-glass: {exc}")
+            return 1
+        finally:
+            await engine.dispose()
+        # Printed once, to stdout only: never through `logging`, so it never
+        # reaches a log sink (ADR 0093 §10 step 5).
+        print(f"login:    {result.login}")
+        print(f"password: {result.password}")
         return 0
 
     return asyncio.run(run())
@@ -206,11 +252,20 @@ def build_parser() -> argparse.ArgumentParser:
     rp.add_argument("--check", action="store_true", help="fail if any image is unpinned")
     rp.set_defaults(func=cmd_release_pin)
 
-    adm = sub.add_parser("admin", help="(inside the gateway) break-glass admin grant/revoke")
+    adm = sub.add_parser("admin", help="(inside the gateway) ordinary-case admin grant/revoke")
     adm.add_argument("action", choices=("grant", "revoke"))
     adm.add_argument("email")
     adm.add_argument("--issuer", help="when the email names accounts at several issuers")
     adm.set_defaults(func=cmd_admin)
+
+    bg = sub.add_parser(
+        "break-glass", help="(inside the gateway) recover admin access to the bundled Authelia"
+    )
+    bg.add_argument("--email", required=True, help="the target account's address")
+    bg.add_argument("--login", help="the bundled login name; default: derived from the email")
+    bg.add_argument("--user-id", help="disambiguate when --email names several accounts")
+    bg.add_argument("--reason", required=True, help="why break-glass, for the audit row")
+    bg.set_defaults(func=cmd_break_glass)
 
     idp = sub.add_parser("idp", help="identity provider diagnostics")
     idp_sub = idp.add_subparsers(dest="idp_command", required=True)
