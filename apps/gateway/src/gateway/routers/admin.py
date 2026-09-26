@@ -83,6 +83,7 @@ from gateway.models import (
     IdentityEventAction,
     IdentityEventActor,
     IdentityProvider,
+    IdpAuthorizationCode,
     LimitMetric,
     LimitRule,
     LimitScope,
@@ -100,6 +101,7 @@ from gateway.models import (
     RedactionConfig,
     RedactionRule,
     RedactionScope,
+    RefreshCredential,
     UsageRecord,
     UsageSource,
     UsageStatus,
@@ -2375,18 +2377,29 @@ async def _user_responses(
     ]
 
 
-async def _bundled_provider(session: AsyncSession) -> IdentityProvider:
-    """The one enabled row, refusing anything but the bundled Authelia.
+async def _active_bundled_provider(session: AsyncSession) -> IdentityProvider | None:
+    """The one enabled row, or `None` on any other kind.
 
-    ADR 0093 §2 guarantees at most one enabled row deployment-wide, so there
-    is no id to take here the way `directory.py`'s routes take one: an
-    operator on any other kind gets a clear refusal rather than a 404 that
-    reads like a typo'd id.
+    ADR 0093 §2 guarantees at most one enabled row deployment-wide. Soft,
+    for callers that run regardless of kind (the disable cascade fires for
+    every user) — `_bundled_provider` below is the hard version, for the
+    bundled-only routes.
     """
     row = (
         await session.execute(select(IdentityProvider).where(IdentityProvider.is_enabled.is_(True)))
     ).scalar_one_or_none()
-    if row is None or row.kind != "authelia":
+    return row if row is not None and row.kind == "authelia" else None
+
+
+async def _bundled_provider(session: AsyncSession) -> IdentityProvider:
+    """The one enabled row, refusing anything but the bundled Authelia.
+
+    There is no id to take here the way `directory.py`'s routes take one: an
+    operator on any other kind gets a clear refusal rather than a 404 that
+    reads like a typo'd id.
+    """
+    row = await _active_bundled_provider(session)
+    if row is None:
         raise BadRequestError(
             "This deployment's identity provider is not the bundled Authelia."
         )
@@ -2670,6 +2683,93 @@ async def list_users(
     return page.page(await _user_responses(session, users), total)
 
 
+async def _bundled_entry_for(session: AsyncSession, user: User) -> DirectoryEntry | None:
+    """This user's entry under the *currently enabled* bundled provider,
+    never a stale one left over from a provider row an IdP switch disabled
+    (ADR 0093 §2 keeps every old row, never deletes it)."""
+    provider = await _active_bundled_provider(session)
+    if provider is None:
+        return None
+    return (
+        await session.execute(
+            select(DirectoryEntry).where(
+                DirectoryEntry.provider_id == provider.id, DirectoryEntry.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _disable_cascade(
+    session: AsyncSession, admin: User, secrets: SecretBox, user: User
+) -> None:
+    """ADR 0093 §9.1: one disable ends every session and credential this
+    person already holds, not just requests from here on.
+
+    Personal API keys (`minted_by IS NULL`) are the one thing kept: they are
+    refused while the user is inactive (the existing check in `deps.py`),
+    and re-enabling brings them back, which nothing minted here ever does —
+    a session, an authorization code and a minted key are all short-lived by
+    design, so there is no "bring it back" for any of them to mean.
+    """
+    user.sessions_valid_after = utcnow()
+    await session.execute(delete(RefreshCredential).where(RefreshCredential.user_id == user.id))
+    await session.execute(
+        delete(IdpAuthorizationCode).where(IdpAuthorizationCode.user_id == user.id)
+    )
+    await session.execute(
+        delete(ApiKey).where(ApiKey.user_id == user.id, ApiKey.minted_by.is_not(None))
+    )
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.SESSIONS_REVOKE,
+        target_user_id=user.id,
+        target_label=user.email or "",
+    )
+
+    entry = await _bundled_entry_for(session, user)
+    if entry is None:
+        return
+    provider = await _active_bundled_provider(session)
+    assert provider is not None  # `_bundled_entry_for` already found one
+    users_file = _bundled_users_file(provider, secrets)
+    try:
+        users_file.update(entry.external_id, disabled=True)
+    except UsersFileError as exc:
+        # The gateway-side half of the cascade (is_active, sessions_valid_after,
+        # the deletes above) already stands: Authelia still refuses this
+        # person at the next `/v1` call on `is_active` even if its own
+        # `disabled` flag never gets set. A login file the gateway cannot
+        # currently reach must not undo a disable that has already happened.
+        logger.warning("could not set Authelia disabled=true for %s: %s", entry.external_id, exc)
+        return
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.LOGIN_DISABLE,
+        target_user_id=user.id,
+        target_label=entry.external_id,
+    )
+
+
+async def _enable_bundled_login(session: AsyncSession, secrets: SecretBox, user: User) -> None:
+    """Reverses the gateway flag and Authelia's `disabled` only (§9.1):
+    sessions, minted keys and devices stay revoked — the person signs in
+    again and galopin machines re-enroll."""
+    entry = await _bundled_entry_for(session, user)
+    if entry is None:
+        return
+    provider = await _active_bundled_provider(session)
+    assert provider is not None
+    users_file = _bundled_users_file(provider, secrets)
+    with contextlib.suppress(UsersFileError):
+        users_file.update(entry.external_id, disabled=False)
+
+
 @router.patch("/users/{user_id}", response_model=UserAdminResponse)
 async def update_user(
     user_id: uuid.UUID,
@@ -2677,6 +2777,7 @@ async def update_user(
     admin: AdminUserDep,
     session: SessionDep,
     settings: SettingsDep,
+    secrets: SecretsDep,
 ) -> UserAdminResponse:
     """Deactivate a user, make one an administrator, or edit their profile.
 
@@ -2802,6 +2903,10 @@ async def update_user(
             target_user_id=user.id,
             target_label=user.email or "",
         )
+        if fields["is_active"]:
+            await _enable_bundled_login(session, secrets, user)
+        else:
+            await _disable_cascade(session, admin, secrets, user)
     await session.commit()
 
     # Not by re-reading the listing and picking a row out of it: the listing is
