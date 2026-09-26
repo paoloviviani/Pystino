@@ -23,7 +23,6 @@ import type {
   RedactionScope,
   RedactionStatus,
   EmailSettings,
-  EmailSettingsInput,
   EmailTestResult,
   GroupCreateInput,
   DirectoryPerson,
@@ -833,15 +832,6 @@ export function useEmailSettings() {
     queryKey: adminKeys.email,
     queryFn: () => request<EmailSettings>("/api/admin/email"),
     retry: retryUnlessRejected,
-  });
-}
-
-export function useUpdateEmailSettings() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (body: EmailSettingsInput) =>
-      request<EmailSettings>("/api/admin/email", { method: "PUT", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.email }),
   });
 }
 

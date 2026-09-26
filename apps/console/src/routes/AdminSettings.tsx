@@ -9,10 +9,9 @@
  */
 
 import { Badge, Button, Card, EmptyState, Input, Notice, Spinner } from "@llmp/ui";
-import { useEffect, useState } from "react";
-import type { FormEvent } from "react";
-import { useEmailSettings, useIdentityProviders, useTestEmail, useUpdateEmailSettings } from "../lib/admin";
-import type { EmailSettingsInput, IdentityProvider } from "../lib/types";
+import { useState } from "react";
+import { useEmailSettings, useIdentityProviders, useTestEmail } from "../lib/admin";
+import type { IdentityProvider } from "../lib/types";
 import { DirectoryDialog } from "./IdentityDirectory";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
@@ -38,48 +37,17 @@ export function AdminSettings() {
 
 // -- email ---------------------------------------------------------------------
 
+/**
+ * Read-only (ADR 0093 §1, §14): mail is one setting now, `GATEWAY_SMTP__*`,
+ * so there is nothing here for an administrator to edit — only "send test"
+ * stays, to prove whatever is configured actually works.
+ */
 function EmailCard() {
   const email = useEmailSettings();
-  const save = useUpdateEmailSettings();
   const test = useTestEmail();
   const toast = useOptionalToast();
 
-  const [host, setHost] = useState("");
-  const [port, setPort] = useState("587");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [fromAddress, setFromAddress] = useState("");
   const [testTo, setTestTo] = useState("");
-
-  useEffect(() => {
-    if (!email.data) return;
-    setHost(email.data.host);
-    setPort(String(email.data.port));
-    setUsername(email.data.username);
-    setFromAddress(email.data.from_address);
-  }, [email.data]);
-
-  const buildInput = (): EmailSettingsInput => ({
-    host: host.trim(),
-    port: Number(port) || 587,
-    username: username.trim(),
-    // An empty password field means "keep the stored one": the form never
-    // shows a password, so it cannot ask to re-type one it never saw.
-    password: password || undefined,
-    from_address: fromAddress.trim(),
-  });
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    save.mutate(buildInput(), {
-      onSuccess: () => toast?.add({ title: "Email settings saved", type: "success" }),
-      onError: (caught: unknown) =>
-        toast?.add({
-          title: caught instanceof Error ? caught.message : "Could not save the email settings",
-          type: "error",
-        }),
-    });
-  };
 
   if (email.isPending) {
     return (
@@ -92,79 +60,74 @@ function EmailCard() {
   return (
     <Card
       title="Email"
-      description="Used for password-reset links and quota notices. The password is
-        write-only: leave it blank to keep the stored one."
+      description="Configured in .env; change with ./configure. Used for quota notices
+        and the bundled Authelia's self-service password reset."
       actions={
-        <Badge tone={email.data?.source === "console" ? "accent" : "neutral"}>
-          {email.data?.source === "console" ? "set in the console" : "from the environment"}
-        </Badge>
+        email.data ? (
+          <Badge tone={email.data.enabled ? "ok" : "neutral"}>
+            {email.data.enabled ? "enabled" : "disabled"}
+          </Badge>
+        ) : null
       }
     >
-      <form className={FORM} onSubmit={submit}>
-        {email.error ? (
-          <Notice tone="danger" title="Could not load the email settings">
-            {email.error instanceof Error ? email.error.message : "Unknown error."}
-          </Notice>
-        ) : null}
-        <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(10rem,1fr))]">
-          <Input label="SMTP host" value={host} onChange={(e) => setHost(e.target.value)} />
-          <Input label="Port" value={port} onChange={(e) => setPort(e.target.value)} />
+      {email.error ? (
+        <Notice tone="danger" title="Could not load the email settings">
+          {email.error instanceof Error ? email.error.message : "Unknown error."}
+        </Notice>
+      ) : email.data ? (
+        <div className={FORM}>
+          <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(10rem,1fr))]">
+            <div>
+              <div className={DETAIL_LABEL}>SMTP host</div>
+              <div className={CODE}>{email.data.host || "(not set)"}</div>
+            </div>
+            <div>
+              <div className={DETAIL_LABEL}>Port</div>
+              <div className={CODE}>{email.data.port}</div>
+            </div>
+          </div>
+          <div>
+            <div className={DETAIL_LABEL}>Username</div>
+            <div className={CODE}>{email.data.username || "(none)"}</div>
+          </div>
+          <div>
+            <div className={DETAIL_LABEL}>Password</div>
+            <div className={CODE}>{email.data.has_password ? "set" : "(none)"}</div>
+          </div>
+          <div>
+            <div className={DETAIL_LABEL}>From address</div>
+            <div className={CODE}>{email.data.from_address || "(not set)"}</div>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <Input
+              label="Send a test email to"
+              value={testTo}
+              onChange={(e) => setTestTo(e.target.value)}
+            />
+            <Button
+              busy={test.isPending}
+              disabled={!testTo.trim()}
+              onClick={() =>
+                test.mutate(testTo.trim(), {
+                  onSuccess: (result) =>
+                    toast?.add({
+                      title: result.ok ? "Test email sent" : "Test email failed",
+                      description: result.detail,
+                      type: result.ok ? "success" : "error",
+                    }),
+                  onError: (caught: unknown) =>
+                    toast?.add({
+                      title: caught instanceof Error ? caught.message : "Test email failed",
+                      type: "error",
+                    }),
+                })
+              }
+            >
+              Send test
+            </Button>
+          </div>
         </div>
-        <Input
-          label="Username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          hint="Optional, when the server asks to log in."
-        />
-        <Input
-          label="Password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          hint={
-            email.data?.has_password
-              ? "Stored. Type to replace; leave blank to keep it."
-              : "Optional, when the server asks to log in."
-          }
-        />
-        <Input
-          label="From address"
-          value={fromAddress}
-          onChange={(e) => setFromAddress(e.target.value)}
-          hint={'RFC 5322: "Pystino <no-reply@example.org>".'}
-        />
-        <div className="flex flex-wrap items-end gap-2">
-          <Button type="submit" variant="primary" busy={save.isPending}>
-            Save
-          </Button>
-          <Input
-            label="Send a test email to"
-            value={testTo}
-            onChange={(e) => setTestTo(e.target.value)}
-          />
-          <Button
-            busy={test.isPending}
-            disabled={!testTo.trim()}
-            onClick={() =>
-              test.mutate(testTo.trim(), {
-                onSuccess: (result) =>
-                  toast?.add({
-                    title: result.ok ? "Test email sent" : "Test email failed",
-                    description: result.detail,
-                    type: result.ok ? "success" : "error",
-                  }),
-                onError: (caught: unknown) =>
-                  toast?.add({
-                    title: caught instanceof Error ? caught.message : "Test email failed",
-                    type: "error",
-                  }),
-              })
-            }
-          >
-            Send test
-          </Button>
-        </div>
-      </form>
+      ) : null}
     </Card>
   );
 }

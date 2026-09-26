@@ -64,7 +64,6 @@ from gateway.mail import MailDeliveryError, send_mail_async
 from gateway.models import (
     ApiKey,
     BillingMode,
-    EmailSettings,
     Group,
     GroupModelAccess,
     GroupSource,
@@ -136,7 +135,6 @@ from gateway.schemas import (
     CatalogueTagsResponse,
     DiscoveredModel,
     EmailSettingsResponse,
-    EmailSettingsUpdateRequest,
     EmailTestRequest,
     EmailTestResponse,
     GroupAdminResponse,
@@ -2691,7 +2689,13 @@ async def get_oidc_policy_view(
 async def get_email_settings(
     admin: AdminUserDep, session: SessionDep, request: Request
 ) -> EmailSettingsResponse:
-    """The mail configuration in force — the row's, or the environment's."""
+    """The mail configuration in force — the row's, or the environment's.
+
+    Read-only (ADR 0093 §1, §14): mail is one setting now (``GATEWAY_SMTP__*``),
+    so there is nothing here for an administrator to edit. The fold over an
+    old console-set ``EmailSettings`` row stays, for a deployment upgrading
+    from before this stage; nothing writes a new one.
+    """
     effective = await effective_smtp(session, request.app.state.settings, request.app.state.secrets)
     return EmailSettingsResponse(
         host=effective.host,
@@ -2702,34 +2706,6 @@ async def get_email_settings(
         source=effective.source,
         enabled=effective.enabled,
     )
-
-
-@router.put("/email", response_model=EmailSettingsResponse)
-async def set_email_settings(
-    payload: EmailSettingsUpdateRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    request: Request,
-) -> EmailSettingsResponse:
-    """Save the mail configuration as the console's decision.
-
-    One row; the password is write-only, and omitted means "keep the stored
-    one" — an edit that only fixes a port must not have to re-type a password
-    it was never shown.
-    """
-    row = await session.get(EmailSettings, 1)
-    if row is None:
-        row = EmailSettings(id=1)
-        session.add(row)
-    row.smtp_host = payload.host.strip()
-    row.smtp_port = payload.port
-    row.smtp_username = payload.username.strip()
-    if payload.password is not None:
-        row.smtp_password_encrypted = request.app.state.secrets.encrypt(payload.password)
-    row.smtp_from = payload.from_address.strip()
-    row.updated_by = admin.id
-    await session.commit()
-    return await get_email_settings(admin, session, request)
 
 
 @router.post("/email/test", response_model=EmailTestResponse)

@@ -1137,16 +1137,6 @@ class EmailSettingsResponse(BaseModel):
     enabled: bool
 
 
-class EmailSettingsUpdateRequest(BaseModel):
-    host: str = Field(min_length=1, max_length=255)
-    port: int = Field(default=587, ge=1, le=65535)
-    username: str = Field(default="", max_length=255)
-    # Write-only. Omitted means "keep the stored one" — an edit that only
-    # touches the port must not have to re-type a password it never saw.
-    password: str | None = Field(default=None, min_length=1, max_length=1024)
-    from_address: str = Field(min_length=3, max_length=255)
-
-
 class EmailTestRequest(BaseModel):
     to: str = Field(min_length=3, max_length=255)
 

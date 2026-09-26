@@ -772,14 +772,6 @@ export interface EmailSettings {
   enabled: boolean;
 }
 
-export interface EmailSettingsInput {
-  host: string;
-  port: number;
-  username?: string;
-  /** Write-only. Omitted means "keep the stored one". */
-  password?: string;
-  from_address: string;
-}
 
 export interface EmailTestResult {
   ok: boolean;
