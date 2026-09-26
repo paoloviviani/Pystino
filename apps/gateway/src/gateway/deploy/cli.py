@@ -1,4 +1,4 @@
-"""The `pystino` command line: bootstrap, release-pin, admin.
+"""The `pystino` command line: bootstrap, release-pin, admin, idp check.
 
 Every command takes its answers as flags so CI and scripts never meet a prompt.
 
@@ -7,8 +7,9 @@ Writing `.env` and standing up a deployment is no longer this CLI's job
 deployment) and the separate `cerea-deploy` repository (the full stack, with
 its own `./configure`) are what an operator reads and edits directly. What
 stays here runs *inside* a deployment: `bootstrap` (the compose one-shot on
-every `up`) and `admin grant|revoke` (break-glass), plus `release-pin`, which
-a release of this repository runs against its own checkout.
+every `up`), `admin grant|revoke` (break-glass) and `idp check` (a live probe
+against the configured identity provider, ADR 0093 §11), plus `release-pin`,
+which a release of this repository runs against its own checkout.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
-from gateway.deploy import bootstrap, envfile
+from gateway.deploy import bootstrap, envfile, idp_check
 
 #: This file is apps/gateway/src/gateway/deploy/cli.py; the repository root
 #: (holding deploy/release.env) is five levels up.
@@ -91,6 +92,12 @@ def build_parser() -> argparse.ArgumentParser:
     adm.add_argument("email")
     adm.add_argument("--issuer", help="when the email names accounts at several issuers")
     adm.set_defaults(func=cmd_admin)
+
+    idp = sub.add_parser("idp", help="identity provider diagnostics")
+    idp_sub = idp.add_subparsers(dest="idp_command", required=True)
+    check = idp_sub.add_parser("check", help="probe the configured identity provider live")
+    idp_check.build_arg_parser(check)
+    check.set_defaults(func=idp_check.cmd_idp_check)
 
     return parser
 

@@ -23,9 +23,12 @@ Three things here are configurable because every identity provider differs:
 * **Whether unknown groups are created.** Auto-creation is convenient; turning it
   off makes group membership an explicit administrative act.
 
-The device authorization flow itself — the endpoint dance that gets ``opencode`` a
-token in the first place — is still to come; what is here is the half that
-matters to the gateway, which is what to do with the token once it exists.
+The device authorization flow itself is only a diagnostic tool's, so far
+(``OIDCClient.start_device_flow``/``poll_device_token``, for
+``pystino idp check --device``, ADR 0093 §11); the endpoint dance that gets
+``opencode`` a token in the first place is still to come. What is here for
+sign-in is the half that matters to the gateway either way: what to do with
+the token once it exists.
 """
 
 from __future__ import annotations
@@ -515,6 +518,73 @@ class OIDCClient:
             logger.warning("userinfo request failed: %s", exc)
             return {}
         return payload if isinstance(payload, dict) else {}
+
+    async def start_device_flow(self, *, client_id: str, scope: str = "openid") -> dict[str, Any]:
+        """RFC 8628, first leg: get a ``device_code``/``user_code`` pair.
+
+        The half of the device flow this module's own docstring said was
+        "still to come" — ``pystino idp check --device`` (ADR 0093 §11) is
+        the first caller, standing in for ``opencode``'s own enrollment until
+        that lands.
+        """
+        metadata = await self.metadata()
+        if not metadata.device_authorization_endpoint:
+            raise OIDCError(
+                "this identity provider does not publish a device_authorization_endpoint"
+            )
+        try:
+            response = await self._http.post(
+                metadata.device_authorization_endpoint,
+                data={"client_id": client_id, "scope": scope},
+                headers=self._backchannel_headers(),
+            )
+        except httpx.HTTPError as exc:
+            raise OIDCError(f"device authorization endpoint unreachable: {exc}") from exc
+        if response.status_code >= 400:
+            raise OIDCError(
+                f"device authorization was refused: {response.status_code} {response.text}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise OIDCError("device authorization endpoint returned a non-JSON body") from exc
+        for key in ("device_code", "user_code", "verification_uri"):
+            if not isinstance(payload, dict) or key not in payload:
+                raise OIDCError(f"device authorization response is missing {key!r}")
+        return payload
+
+    async def poll_device_token(self, *, device_code: str, client_id: str) -> dict[str, Any]:
+        """One poll of the token endpoint for a device grant.
+
+        Exactly one request, so a caller can sleep and print progress between
+        calls rather than being blocked inside this method for the whole
+        wait. ``{"pending": "authorization_pending" | "slow_down"}`` is not an
+        error — the operator has not finished signing in yet.
+        """
+        metadata = await self.metadata()
+        data = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": device_code,
+            "client_id": client_id,
+        }
+        try:
+            response = await self._http.post(
+                metadata.token_endpoint, data=data, headers=self._backchannel_headers()
+            )
+        except httpx.HTTPError as exc:
+            raise OIDCError(f"token endpoint unreachable: {exc}") from exc
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise OIDCError("token endpoint returned a non-JSON body") from exc
+        if response.status_code >= 400:
+            error = payload.get("error") if isinstance(payload, dict) else None
+            if error in ("authorization_pending", "slow_down"):
+                return {"pending": error}
+            raise OIDCError(f"device grant failed: {error or response.text}")
+        if not isinstance(payload, dict) or "access_token" not in payload:
+            raise OIDCError("token endpoint returned an unexpected body")
+        return payload
 
 
 # A user created from the console before their first sign-in (ADR 0093 §3.1),
