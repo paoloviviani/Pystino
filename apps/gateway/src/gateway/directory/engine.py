@@ -120,6 +120,42 @@ async def add_manual_memberships(
     return added
 
 
+#: The group a bundled-Authelia user with nothing else lands in (ADR 0093,
+#: the redesign's own to-do): Authelia's token used to carry a `users` group
+#: and the gateway auto-created one from it, so a bundled sign-in was never
+#: groupless. `group_source=none` stopped that dead; console-authoritative
+#: groups mean nobody creates this one on the directory's behalf any more.
+BUNDLED_DEFAULT_GROUP_NAME = "users"
+
+
+async def ensure_bundled_default_group(session: AsyncSession, user: User) -> bool:
+    """Give a bundled-Authelia user with *no* membership at all the console's
+    ``users`` group (created the first time it's needed), so every bundled
+    account has somewhere to bill from the moment it exists — mirroring what
+    Authelia's own claim used to do automatically. A user who already holds
+    any membership, manual or otherwise, is left alone: this only fills the
+    gap the redesign opened, never overrides an administrator's own choice.
+
+    Callers: console `create_user`/`create_sign_in`, break-glass's pending
+    user, and `sign_in`'s bundled-login path (new accounts, and existing ones
+    each time they sign in, so a user provisioned before this existed still
+    gets one). Returns whether it added the group, since a caller that just
+    set a default billing group from a different source needs to know
+    whether this changed anything to re-check.
+    """
+    await session.refresh(user, attribute_names=["memberships"])
+    if user.memberships:
+        return False
+    await add_manual_memberships(session, user, [BUNDLED_DEFAULT_GROUP_NAME])
+    await session.refresh(user, attribute_names=["memberships"])
+    # Always the sole group right after being added from empty, but stated
+    # the same way as `provision_user`'s own rule rather than assumed.
+    if user.default_billing_group_id is None and len(user.memberships) == 1:
+        user.default_billing_group_id = user.memberships[0].group_id
+    await session.flush()
+    return True
+
+
 async def _oidc_group_names(session: AsyncSession, user: User) -> set[str]:
     await session.refresh(user, attribute_names=["memberships"])
     return {m.group.name for m in user.memberships if m.source == MembershipSource.OIDC}

@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gateway.config import Settings
 from gateway.deployment_state import mark_bootstrap_consumed
 from gateway.directory.authelia_users import LOGIN, UsersFile, UsersFileError, UsersFileLockedError
+from gateway.directory.engine import ensure_bundled_default_group
 from gateway.directory.service import bundled_users_file
 from gateway.email_normalize import is_trusted_email
 from gateway.identity_events import record_event
@@ -238,6 +239,12 @@ async def break_glass(
         target.admin_source = "manual"
         target.is_active = True
         target.deactivated_by = None
+        # A pending user has never had a membership (to-do item 1): being an
+        # administrator authenticates through the console's session cookie,
+        # never a billing group, but this person may still want to call
+        # `/v1` directly, and a fresh pending user has nothing to bill from
+        # otherwise.
+        await ensure_bundled_default_group(session, target)
         await mark_bootstrap_consumed(session)
         await record_event(
             session,

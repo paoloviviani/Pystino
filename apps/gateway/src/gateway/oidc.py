@@ -1499,10 +1499,18 @@ async def sign_in(
     # groups apply at once rather than at the next scheduled sync. Imported
     # here, not at module level: `directory.engine` imports from this module,
     # and a top-level import the other way would be a cycle.
-    from gateway.directory.engine import link_at_login
+    from gateway.directory.engine import ensure_bundled_default_group, link_at_login
 
     if record.sync_adapter != "none" and getattr(record, "source", "") != "environment":
         await link_at_login(session, record, user, claims, settings=settings.oidc)
+
+    # ADR 0093 to-do item 1: a bundled-Authelia sign-in with no membership at
+    # all — a brand new account, or one provisioned before this existed —
+    # gets the `users` group here, every sign-in, not just the first. An
+    # external IdP's groups are the claim's or the admin's to answer for, as
+    # today, so this only ever runs for the bundled provider.
+    if record.kind == "authelia":
+        await ensure_bundled_default_group(session, user)
 
     # OIDC-only deployments have no password door to make the first
     # administrator through; the configured address, verified, is it.

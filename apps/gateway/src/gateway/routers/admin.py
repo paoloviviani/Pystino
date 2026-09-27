@@ -54,7 +54,7 @@ from gateway.directory.authelia_users import (
     UsersFileError,
     UsersFileLockedError,
 )
-from gateway.directory.engine import add_manual_memberships
+from gateway.directory.engine import add_manual_memberships, ensure_bundled_default_group
 from gateway.directory.service import bundled_users_file
 from gateway.email_config import effective_smtp
 from gateway.email_normalize import is_trusted_email
@@ -2472,6 +2472,11 @@ async def create_user(
         await session.refresh(user, attribute_names=["memberships"])
 
         await add_manual_memberships(session, user, payload.groups)
+        # An operator who picked no groups still gets a person who can bill
+        # something (ADR 0093 to-do item 1) — the same `users` group a
+        # bundled sign-in's own token used to carry before the redesign made
+        # groups console-authoritative.
+        await ensure_bundled_default_group(session, user)
 
         session.add(
             DirectoryEntry(
@@ -2573,6 +2578,11 @@ async def create_sign_in(
                 user_id=user.id,
             )
         )
+        # This person may already have memberships from before a switch to
+        # the bundled Authelia — or may be a break-glass pending user with
+        # none at all; either way, this is one of the to-do's named call
+        # sites, so the same gap-filler runs here too.
+        await ensure_bundled_default_group(session, user)
         await record_event(
             session,
             actor_type=IdentityEventActor.USER,
