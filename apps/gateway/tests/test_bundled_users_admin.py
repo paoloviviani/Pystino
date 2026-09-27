@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from gateway.deps import get_management_user
 from gateway.models import (
     DirectoryEntry,
+    Group,
     IdentityEvent,
     IdentityEventAction,
     IdentityProvider,
@@ -160,6 +161,46 @@ class TestCreateUser:
                 IdentityEventAction.USER_CREATE,
                 IdentityEventAction.LOGIN_CREATE,
             }
+
+    async def test_no_groups_picked_still_gets_a_default_billing_group(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        """ADR 0093 to-do item 1: an operator who ticks no boxes still creates
+        someone who can bill something, the same as Authelia's own `users`
+        claim used to grant automatically before `group_source=none`."""
+        as_user(app, await make_admin(session_factory, seeded))
+        await _bundled_provider(session_factory, tmp_path)
+
+        response = await client.post(
+            "/api/admin/users",
+            json={
+                "login": "gina",
+                "display_name": "Gina",
+                "email": "gina@example.org",
+                "groups": [],
+            },
+        )
+        assert response.status_code == 201, response.text
+        user_id = uuid.UUID(response.json()["id"])
+
+        async with session_factory() as session:
+            user = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
+            memberships = (
+                (await session.execute(select(Membership).where(Membership.user_id == user.id)))
+                .scalars()
+                .all()
+            )
+            assert len(memberships) == 1
+            group = (
+                await session.execute(select(Group).where(Group.id == memberships[0].group_id))
+            ).scalar_one()
+            assert group.name == "users"
+            assert user.default_billing_group_id == group.id
 
     async def test_a_login_that_already_exists_writes_nothing_gateway_side(
         self,

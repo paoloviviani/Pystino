@@ -118,6 +118,14 @@ class TestTarget:
         assert user.is_admin and user.is_active and user.admin_source == "manual"
         assert user.issuer == "pystino:pending"
 
+        # ADR 0093 to-do item 1: a pending user has never had a membership,
+        # and being an administrator authenticates through the console's
+        # session cookie, never a billing group -- but this person may still
+        # want to call `/v1` directly.
+        await session.refresh(user, attribute_names=["memberships"])
+        assert {m.group.name for m in user.memberships} == {"users"}
+        assert user.default_billing_group_id == user.memberships[0].group_id
+
     async def test_one_match_is_used_outright(
         self, session: AsyncSession, tmp_path: Path
     ) -> None:

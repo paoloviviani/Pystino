@@ -166,6 +166,63 @@ class TestIdentity:
         assert response.status_code == 200, response.text
         assert response.json()["groups"] == ["dormant", "research"]
 
+    async def test_no_billing_group_at_all_is_still_200(
+        self,
+        client: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """ADR 0093 to-do item 2: this is the caller a bundled sign-in with
+        no membership at all produces, and it must not be the 403 a metered
+        route gives the same caller (`test_chat_completions.py`'s own
+        `test_no_group_anywhere_is_a_clear_403` pins that refusal still
+        holds) -- `/v1/me` authenticates them and reports null instead.
+        """
+        async with session_factory() as db:
+            user = User(
+                issuer="pystino:pending", subject="groupless", email="groupless@example.org"
+            )
+            db.add(user)
+            await db.flush()
+            generated = generate_api_key()
+            db.add(
+                ApiKey(
+                    user_id=user.id,
+                    prefix=generated.prefix,
+                    key_hash=generated.key_hash,
+                    name="groupless-key",
+                )
+            )
+            await db.commit()
+
+        response = await client.get(
+            "/v1/me", headers={"authorization": f"Bearer {generated.secret}"}
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["groups"] == []
+        assert body["default_billing_group"] is None
+        assert body["billing_group"] is None
+
+    async def test_me_identities_also_authenticates_with_no_billing_group(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The same caller `/v1/me` above answers for, through the other
+        identity door: it must authenticate, not 403 on a missing group."""
+        from conftest import BEARER_ISSUER
+
+        async with session_factory() as db:
+            user = User(issuer=BEARER_ISSUER, subject="groupless-2", email="g2@example.org")
+            db.add(user)
+            await db.commit()
+
+        token = make_token(signing_key, sub="groupless-2", email="g2@example.org")
+        response = await client.get("/v1/me/identities", headers=auth(token))
+        assert response.status_code == 200, response.text
+
 
 class TestAdminIsAFlagNotADerivation:
     """The flag is a console fact on the `/v1` surface too (ADR 0069).
