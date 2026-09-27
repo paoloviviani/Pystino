@@ -60,6 +60,40 @@ async def _seed_search_tier(
         await session.commit()
 
 
+async def _seed_internal_ocr_model(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded: Seeded,
+    *,
+    kind: ModelKind = ModelKind.OCR,
+    granted: bool = True,
+) -> None:
+    """An internal-provider model — the shape the local extractor seeds
+    itself in, minus the migration — granted to the seeded group by default so
+    a hidden-from-the-list assertion is about visibility, not access."""
+    from gateway.models import ModelDef
+
+    async with session_factory() as session:
+        provider = Provider(
+            name="extractor",
+            base_url="http://extractor:8080",
+            plugin="extractor",
+            kind=ProviderKind.INTERNAL,
+        )
+        session.add(provider)
+        await session.flush()
+        model = ModelDef(
+            name="markitdown",
+            upstream_model="markitdown",
+            provider_id=provider.id,
+            kind=kind,
+        )
+        session.add(model)
+        await session.flush()
+        if granted:
+            session.add(GroupModelAccess(group_id=seeded.group.id, model_id=model.id))
+        await session.commit()
+
+
 class TestUnauthenticatedListing:
     """ADR 0081: the list is public, a card's detail is not."""
 
@@ -91,6 +125,7 @@ class TestUnauthenticatedListing:
             "input_modalities",
             "output_modalities",
             "supported_features",
+            "local",
         }
 
     async def test_a_caller_with_no_grant_sees_nothing_once_authenticated(
@@ -228,3 +263,125 @@ class TestSearchStaysOffTheList:
         assert response.status_code == 200, response.text
         names = [entry["name"] for entry in response.json()["items"]]
         assert "linkup-standard" in names
+
+
+class TestInternalOcrListing:
+    """The local extractor is plumbing (`ProviderKind.INTERNAL`): invisible by
+    default, and offered — flagged — only to a caller that names OCR
+    explicitly. Pystino a940516 hid it from every listing to keep it out of a
+    chat picker; this is the opt-in a document-reader picker such as Cerea's
+    Knowledge screen needs, without undoing that."""
+
+    @pytest.mark.asyncio
+    async def test_the_default_listing_still_hides_it(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await _seed_internal_ocr_model(session_factory, seeded)
+        response = await client.get("/v1/models", headers=auth(make_token(signing_key)))
+        assert response.status_code == 200, response.text
+        names = [entry["id"] for entry in response.json()["data"]]
+        assert "markitdown" not in names
+
+    @pytest.mark.asyncio
+    async def test_include_ocr_shows_it_flagged(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        await _seed_internal_ocr_model(session_factory, seeded)
+        response = await client.get(
+            "/v1/models?include=ocr", headers=auth(make_token(signing_key))
+        )
+        assert response.status_code == 200, response.text
+        by_id = {entry["id"]: entry for entry in response.json()["data"]}
+        assert by_id["markitdown"]["local"] is True
+
+    @pytest.mark.asyncio
+    async def test_include_ocr_is_still_bounded_by_grants(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Asking by kind is visibility, not access — the same rule the search
+        opt-in follows."""
+        await _seed_internal_ocr_model(session_factory, seeded, granted=False)
+        response = await client.get(
+            "/v1/models?include=ocr", headers=auth(make_token(signing_key))
+        )
+        assert response.status_code == 200, response.text
+        names = [entry["id"] for entry in response.json()["data"]]
+        assert "markitdown" not in names
+
+    @pytest.mark.asyncio
+    async def test_a_non_ocr_internal_model_stays_hidden_even_with_include_ocr(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The opt-in is per kind, not per provider: an internal model of some
+        other kind must not ride along just because the request asked for OCR."""
+        await _seed_internal_ocr_model(session_factory, seeded, kind=ModelKind.CHAT)
+        response = await client.get(
+            "/v1/models?include=ocr,chat", headers=auth(make_token(signing_key))
+        )
+        assert response.status_code == 200, response.text
+        names = [entry["id"] for entry in response.json()["data"]]
+        assert "markitdown" not in names
+
+    @pytest.mark.asyncio
+    async def test_ordinary_ocr_models_are_not_flagged_local(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """``local`` names the internal provider, not the OCR kind — an
+        upstream OCR model rides the default list exactly as before, unflagged."""
+        from gateway.models import ModelDef
+        from gateway.secrets import SecretBox, hint_for
+
+        async with session_factory() as session:
+            key = "k"
+            provider = Provider(
+                name="cortecs-ocr",
+                base_url="https://api.cortecs.ai/v1",
+                api_key_encrypted=SecretBox(
+                    ["test-encryption-key-not-for-production"]
+                ).encrypt(key),
+                api_key_hint=hint_for(key),
+                plugin="cortecs",
+                kind=ProviderKind.ROUTER,
+            )
+            session.add(provider)
+            await session.flush()
+            model = ModelDef(
+                name="mistral-ocr-4.1",
+                upstream_model="mistral-ocr-4.1",
+                provider_id=provider.id,
+                kind=ModelKind.OCR,
+            )
+            session.add(model)
+            await session.flush()
+            session.add(GroupModelAccess(group_id=seeded.group.id, model_id=model.id))
+            await session.commit()
+
+        response = await client.get("/v1/models", headers=auth(make_token(signing_key)))
+        assert response.status_code == 200, response.text
+        by_id = {entry["id"]: entry for entry in response.json()["data"]}
+        assert by_id["mistral-ocr-4.1"]["local"] is False

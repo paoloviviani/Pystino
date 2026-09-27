@@ -756,6 +756,16 @@ async def delete_provider(
     """
     provider = await _load_provider(session, provider_id)
 
+    if provider.kind == ProviderKind.INTERNAL:
+        # This deployment's own infrastructure (the local extractor is the one
+        # today), not a counterparty an administrator configured — there is
+        # nothing to "remove" here that the deployment would not immediately
+        # need back. Deactivating takes it out of service exactly as it would
+        # any other provider; deleting it would just be re-seeded as absent
+        # the next time a fresh install runs the same migration, which is not
+        # a real deletion, only a confusing detour through 404s until then.
+        raise ConflictError("the local extractor can be deactivated, not deleted")
+
     if provider.kind != ProviderKind.SEARCH:
         counts = await _model_counts(session)
         if (count := counts.get(provider_id, 0)) > 0:
@@ -821,12 +831,18 @@ async def test_provider(
     session: SessionDep,
     providers: ProvidersDep,
 ) -> ProviderTestResponse:
-    """Call the provider's ``/models`` and report what came back.
+    """Ask the provider's own plugin to check the row, and report what it found.
 
     Run against the row **as stored**, credential included, so it exercises
     exactly what a real request would send. A wrong base URL or a stale key
     should be found when it is entered, not by a user's request failing an hour
     later.
+
+    What "check the row" means is the plugin's to decide (``ProviderPlugin.probe``,
+    ``plugins/base.py``): ``GET /models`` for an OpenAI-compatible counterparty,
+    but not for one that never serves such a route — the local extractor and a
+    search backend both answer that with a 404 that reads as "the provider is
+    down" for one working exactly as documented.
 
     Never raises for a provider-side failure: "it did not work, and here is why"
     is the useful answer, and an exception would make the console show a generic
@@ -841,7 +857,7 @@ async def test_provider(
 
     started = time.monotonic()
     try:
-        result = await upstream.list_models()
+        result = await upstream.probe(client)
     except Exception as exc:
         return ProviderTestResponse(
             ok=False,
@@ -852,30 +868,12 @@ async def test_provider(
         await client.aclose()
 
     latency = int((time.monotonic() - started) * 1000)
-    if result.status_code >= 400:
-        hint = ""
-        if result.status_code in (401, 403):
-            hint = " — check the API key"
-        elif result.status_code == 404:
-            hint = " — check the base URL includes the version path, e.g. /v1"
-        return ProviderTestResponse(
-            ok=False,
-            status_code=result.status_code,
-            detail=f"the provider answered {result.status_code}{hint}",
-            latency_ms=latency,
-        )
-
-    ids = [
-        entry.get("id")
-        for entry in (result.payload or {}).get("data", [])
-        if isinstance(entry, dict) and isinstance(entry.get("id"), str)
-    ]
     return ProviderTestResponse(
-        ok=True,
+        ok=result.ok,
         status_code=result.status_code,
-        detail=f"reachable; the provider offers {len(ids)} model(s)",
-        model_count=len(ids),
-        sample=[entry for entry in ids[:5] if entry],
+        detail=result.detail,
+        model_count=result.model_count,
+        sample=list(result.sample),
         latency_ms=latency,
     )
 
@@ -1009,7 +1007,12 @@ async def delete_model(model_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     attribution to users and groups is untouched. Prices and access grants die
     with the model — they are meaningless without it.
     """
-    await _load_model(session, model_id)
+    model = await _load_model(session, model_id)
+    if model.provider is not None and model.provider.kind == ProviderKind.INTERNAL:
+        # The same protection as the provider row itself, and for the same
+        # reason: this is the deployment's own infrastructure, and "delete"
+        # would only be undone by the next fresh install's seed.
+        raise ConflictError("the local extractor can be deactivated, not deleted")
     # A model a search policy points at cannot go quietly either: the column
     # is ON DELETE SET NULL, which would silently unconfigure those groups'
     # unified search. Name them instead, so the administrator re-points or

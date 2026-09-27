@@ -503,6 +503,13 @@ class ModelCard(BaseModel):
     # one listing covers chat, embedding and image models, and without this a
     # client has to guess and get a 400 to find out (ADR 0030).
     kind: str = "chat"
+    # True for a model behind a provider of kind `internal` — this deployment's
+    # own extractor is the case today. Never true in the default listing, which
+    # hides every internal-provider model outright; appears only on the ones
+    # `?include=ocr` chooses to show anyway. A caller building a picker needs
+    # this to tell "runs on this server, nothing leaves it" apart from an
+    # ordinary catalogue entry.
+    local: bool = False
 
 
 class ModelList(BaseModel):
