@@ -191,9 +191,13 @@ export function RedirectUri({ name }: { name: string }) {
  * Read-only (ADR 0093 §14): the row is a projection of the environment now,
  * re-seeded at every start, so there is nothing here for an administrator to
  * create, edit or delete — `./configure` is where a deployment's provider
- * changes. What is still console-owned is the directory mirror, which is a
- * decision about *this* console's own user list, not about the IdP, so
- * `DirectoryDialog` stays reachable from here.
+ * changes. What is still console-owned is user sync (the directory mirror),
+ * which is a decision about *this* console's own user list, not about the
+ * IdP, so `DirectoryDialog` stays reachable from here — for an external
+ * enabled provider only. The bundled Authelia needs none of it (the Users
+ * page manages its people outright, and the re-seed never overwrites a row's
+ * `sync_adapter`), and a disabled row syncs nothing, so neither offers the
+ * button or the sync badge.
  */
 function ProvidersCard() {
   const providers = useIdentityProviders();
@@ -263,6 +267,12 @@ function ProviderRow({
   provider: IdentityProvider;
   onDirectory: () => void;
 }) {
+  // User sync is an external, enabled provider's screen: the bundled Authelia
+  // has nothing to import — its people are managed on the Users page, and its
+  // seeded `authelia_file` adapter would otherwise badge every bundled
+  // deployment with a warning nobody can act on — and a disabled row (a
+  // provider the deployment moved away from) syncs nothing either way.
+  const syncable = provider.kind !== "authelia" && provider.is_enabled;
   return (
     <div className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-line p-4">
       <div className="min-w-0">
@@ -276,7 +286,7 @@ function ProviderRow({
           {provider.link_by_email && (
             <Badge tone="danger">links new sign-ins to existing accounts by verified email</Badge>
           )}
-          {provider.sync_adapter !== "none" && (
+          {syncable && provider.sync_adapter !== "none" && (
             <Badge tone={provider.sync_confirmed || provider.sync_adapter === "scim" ? "ok" : "warn"}>
               sync: {provider.sync_adapter}
               {provider.sync_confirmed || provider.sync_adapter === "scim" ? "" : " (awaiting review)"}
@@ -308,10 +318,11 @@ function ProviderRow({
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         {/* A row backed only by the environment fallback (no re-seed has run
-            yet) has no real id to call these endpoints with. */}
-        {provider.source === "console" && (
+            yet) has no real id to call these endpoints with, and a bundled or
+            disabled row has no user sync to open (see `syncable` above). */}
+        {provider.source === "console" && syncable && (
           <Button variant="ghost" onClick={onDirectory}>
-            Directory
+            User sync…
           </Button>
         )}
       </div>

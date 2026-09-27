@@ -1,6 +1,11 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import { RedirectUri } from "./AdminSettings";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
+import { MemoryRouter } from "react-router";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { IdentityProvider, OidcPolicy } from "../lib/types";
+import { AdminSettings, RedirectUri } from "./AdminSettings";
 
 /**
  * The callback URL shown while an identity provider is being added.
@@ -33,5 +38,183 @@ describe("RedirectUri", () => {
     render(<RedirectUri name="entra" />);
     expect(screen.getByText(/never a wildcard/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The providers card, and specifically which rows offer User sync.
+ *
+ * What used to be easy to get wrong: the bundled Authelia's row is seeded
+ * with an adapter it never runs (`authelia_file`, never confirmed), so the
+ * badge it produced was a warning every bundled deployment carried and could
+ * not act on — and its people are managed on the Users page, so there is
+ * nothing to import at all. A disabled row (a provider moved away from)
+ * syncs nothing either. Only an external, enabled row offers the screen.
+ */
+describe("AdminSettings providers card", () => {
+  function provider(overrides: Partial<IdentityProvider> = {}): IdentityProvider {
+    return {
+      id: "p1",
+      name: "keycloak",
+      issuer: "https://idp.test/realms/main",
+      client_id: "pystino-console",
+      has_client_secret: true,
+      scopes: ["openid"],
+      groups_claim: "groups",
+      fetch_userinfo: false,
+      group_mappings: [],
+      link_by_email: false,
+      group_sync: "never",
+      is_enabled: true,
+      source: "console",
+      user_count: 0,
+      internal_base_url: "",
+      logout_url: "",
+      default_logout_url: "",
+      kind: "keycloak",
+      group_source: "none",
+      admin_source: "console",
+      admin_claim: "",
+      admin_values: [],
+      subject_claim: "sub",
+      sync_adapter: "none",
+      sync_interval_minutes: 60,
+      sync_deprovision: "disable",
+      sync_create_users: true,
+      sync_confirmed: true,
+      capabilities: {
+        claims_groups: true,
+        pull_adapters: ["keycloak_admin"],
+        scim_push: false,
+        subject_before_login: true,
+        deprovision: true,
+        adapters: ["keycloak_admin"],
+      },
+      ...overrides,
+    };
+  }
+
+  const policy: OidcPolicy = {
+    auto_provision: true,
+    unknown_user_policy: "refuse",
+    groups_claim: "groups",
+    group_mappings: [],
+    source: "environment",
+    sources: {},
+    configured: null,
+    propagation_seconds: 10,
+  };
+
+  function renderScreen(element: ReactElement) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>{element}</MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  function fetchFor(providers: IdentityProvider[]) {
+    return vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://console.test").pathname;
+      if (url === "/api/admin/email") {
+        return new Response(
+          JSON.stringify({
+            host: "",
+            port: 0,
+            username: "",
+            from_address: "",
+            has_password: false,
+            source: "environment",
+            enabled: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url === "/api/admin/oidc/policy") {
+        return new Response(JSON.stringify(policy), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/sync/runs")) return new Response("[]", { status: 200 });
+      if (url.endsWith("/directory")) return new Response("[]", { status: 200 });
+      if (url === "/api/admin/identity-providers") {
+        return new Response(JSON.stringify(providers), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("offers User sync… on an external enabled provider", async () => {
+    vi.stubGlobal("fetch", fetchFor([provider()]));
+    renderScreen(<AdminSettings />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "User sync…" })).toBeInTheDocument(),
+    );
+  });
+
+  it("hides the button and the sync badge on the bundled Authelia, whatever its seeded adapter", async () => {
+    vi.stubGlobal(
+      "fetch",
+      fetchFor([
+        provider({
+          name: "authelia",
+          kind: "authelia",
+          sync_adapter: "authelia_file",
+          sync_confirmed: false,
+        }),
+      ]),
+    );
+    renderScreen(<AdminSettings />);
+
+    await waitFor(() => expect(screen.getAllByText("authelia").length).toBeGreaterThan(0));
+    expect(screen.queryByRole("button", { name: "User sync…" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/sync: authelia_file/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/awaiting review/)).not.toBeInTheDocument();
+  });
+
+  it("hides the button and the sync badge on a disabled row", async () => {
+    vi.stubGlobal(
+      "fetch",
+      fetchFor([
+        provider({
+          name: "old-idp",
+          is_enabled: false,
+          sync_adapter: "keycloak_admin",
+          sync_confirmed: true,
+        }),
+      ]),
+    );
+    renderScreen(<AdminSettings />);
+
+    await waitFor(() => expect(screen.getByText("old-idp")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "User sync…" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/sync: keycloak_admin/)).not.toBeInTheDocument();
+  });
+
+  it("the dialog opens under its new name and says the screen is optional", async () => {
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", fetchFor([provider()]));
+    renderScreen(<AdminSettings />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "User sync…" })).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: "User sync…" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("dialog", { name: "User sync — keycloak" })).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByText(/Optional\. Keeps this console's user list in step/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Off \(default\) — people appear at their first sign-in/)).toBeInTheDocument();
   });
 });
