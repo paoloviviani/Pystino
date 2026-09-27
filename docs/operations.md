@@ -69,7 +69,7 @@ export PYSTINO_LIVE_RESOLVE=127.0.0.1 GATEWAY_CA_BUNDLE=$PWD/caddy-root.crt
 uv run --project <checkout> python <checkout>/scripts/test_console_live.py
 ```
 
-The non-admin is added in the console (Settings → Identity providers → People).
+The non-admin is added in the console (the Users page).
 
 !!! warning "The demo cap exhausts legitimately"
 

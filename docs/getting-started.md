@@ -53,9 +53,9 @@ bundled Authelia with `AUTHELIA_ADMIN_USER` and the password behind
 `AUTHELIA_ADMIN_PASSWORD_DIGEST`; because its email
 (`AUTHELIA_ADMIN_EMAIL`/`PYSTINO_BOOTSTRAP_ADMIN_EMAIL`) matches, that first
 sign-in makes it the administrator. Everyone signs
-in through an OIDC provider — there is no password door. Other
-providers (GitLab, Entra ID, Keycloak, …) are added in the console's Settings
-screen; see [OIDC against any provider](oidc-generic-provider.md).
+in through an OIDC provider — there is no password door, and the provider is
+set in `deploy/.env`, not in the console; see
+[Identity](oidc-generic-provider.md).
 
 ## Reach it from another machine
 
