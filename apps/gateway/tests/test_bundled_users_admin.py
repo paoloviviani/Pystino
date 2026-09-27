@@ -120,6 +120,11 @@ class TestCreateUser:
         assert body["email"] == "frank@example.org"
         assert body["is_active"] is True
         assert body["is_admin"] is False
+        # Stated outright (§8): the login bound to this person at the bundled
+        # provider — which the console reads to offer Reset password rather
+        # than Create sign-in, since a pending user's issuer and linked
+        # identities answer "no login" and would offer the wrong action.
+        assert body["bundled_login"] == "frank"
 
         stored = yaml.safe_load(path.read_text())["users"]["frank"]
         assert stored["groups"] == ["users"]
@@ -299,6 +304,54 @@ class TestCreateSignIn:
             ).scalar_one()
             assert refreshed.issuer == "https://old.example.org"
 
+    async def test_refuses_a_user_who_already_has_a_bundled_login(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        """The Add-user case, accepted at the wrong door: the person was
+        created with a login already bound to them (§8.2 step 4), but their
+        pending state made the console offer Create sign-in. Creating a
+        second one here would leave them two working passwords and the
+        single-entry admin queries (reset, the disable sync) with an
+        impossible answer."""
+        as_user(app, await make_admin(session_factory, seeded))
+        provider, path = await _bundled_provider(session_factory, tmp_path)
+        created = await client.post(
+            "/api/admin/users",
+            json={"login": "lena", "display_name": "", "email": "lena@example.org", "groups": []},
+        )
+        assert created.status_code == 201
+
+        response = await client.post(
+            f"/api/admin/users/{created.json()['id']}/sign-in", json={"login": "lena-2"}
+        )
+        assert response.status_code == 409, response.text
+        assert response.json()["error"]["message"] == (
+            "They already sign in as 'lena'. Use Reset password."
+        )
+
+        # Nothing was written anywhere: no second entry, no second login.
+        async with session_factory() as session:
+            entries = (
+                (
+                    await session.execute(
+                        select(DirectoryEntry).where(
+                            DirectoryEntry.provider_id == provider.id,
+                            DirectoryEntry.user_id
+                            == uuid.UUID(created.json()["id"]),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert [entry.external_id for entry in entries] == ["lena"]
+        assert set(yaml.safe_load(path.read_text())["users"]) == {"admin", "lena"}
+
 
 class TestResetPassword:
     async def test_mints_a_fresh_password(
@@ -325,6 +378,50 @@ class TestResetPassword:
 
         stored = yaml.safe_load(path.read_text())["users"]["ivan"]
         assert PasswordHasher().verify(stored["password"], new_password)
+
+    async def test_works_for_a_signed_in_user_with_a_bound_login(
+        self,
+        app: FastAPI,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        """Disable and reset go through the one entry bound to the person —
+        the queries these routes answer with `scalar_one_or_none`, which a
+        duplicate binding (the old Create sign-in bug) turned into
+        MultipleResultsFound. With the partial unique index in place, one
+        person has one login and both routes keep working."""
+        as_user(app, await make_admin(session_factory, seeded))
+        _, path = await _bundled_provider(session_factory, tmp_path)
+        created = await client.post(
+            "/api/admin/users",
+            json={"login": "mona", "display_name": "", "email": "mona@example.org", "groups": []},
+        )
+        user_id = created.json()["id"]
+
+        # Their first sign-in: the pending pair is replaced by the real one
+        # (§8.2), exactly what `bind_bundled_login` does.
+        async with session_factory() as session:
+            user = (
+                await session.execute(select(User).where(User.id == uuid.UUID(user_id)))
+            ).scalar_one()
+            user.issuer = ISS
+            user.subject = "mona-sub"
+            await session.commit()
+
+        disabled = await client.patch(f"/api/admin/users/{user_id}", json={"is_active": False})
+        assert disabled.status_code == 200, disabled.text
+        assert disabled.json()["authelia_sync"] is None
+        assert yaml.safe_load(path.read_text())["users"]["mona"]["disabled"] is True
+
+        response = await client.post(f"/api/admin/users/{user_id}/reset-password")
+        assert response.status_code == 200, response.text
+        assert response.json()["password"]
+
+        # And the listing states the login outright.
+        listing = await client.get("/api/admin/users", params={"q": "mona"})
+        assert listing.json()["items"][0]["bundled_login"] == "mona"
 
     async def test_an_admin_edited_username_does_not_redirect_the_reset(
         self,

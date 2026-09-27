@@ -34,6 +34,7 @@ function user(index: number, overrides: Partial<AdminUser> = {}): AdminUser {
     is_admin: false,
     has_password: false,
     linked_identities: [],
+    bundled_login: null,
     membership_source: null,
     groups: ["research"],
     default_billing_group: "research",
@@ -155,6 +156,10 @@ function routes(
         id: `created-${everyone.length}`,
         email: String(payload.email ?? ""),
         display_name: String(payload.display_name ?? ""),
+        // The gateway binds the login to the new (pending) user at creation
+        // time (§8.2 step 4), so the created answer carries it outright.
+        username: String(payload.login ?? ""),
+        bundled_login: String(payload.login ?? ""),
         groups: (payload.groups as string[] | undefined) ?? [],
       });
       everyone.push(created);
@@ -204,6 +209,17 @@ function routes(
  */
 function pager() {
   return within(screen.getByRole("navigation", { name: "Pagination" }));
+}
+
+/**
+ * The topmost open dialog. The page's dialogs are siblings, each controlled
+ * by its own state, and a later sibling layers above the edit panel it was
+ * opened from — which is how Reset password, Activity and Merge into… live
+ * inside the panel without nesting dialogs.
+ */
+function topDialog(): HTMLElement {
+  const dialogs = screen.getAllByRole("dialog");
+  return dialogs[dialogs.length - 1]!;
 }
 
 function renderScreen(element: ReactElement) {
@@ -458,7 +474,8 @@ describe("AdminUsers edit dialog", () => {
  * enabled provider is an external IdP instead.
  */
 describe("AdminUsers bundled Authelia actions", () => {
-  it("offers Add user and Create sign-in while the bundled Authelia is active", async () => {
+  it("offers Add user, and Create sign-in inside the edit panel, while the bundled Authelia is active", async () => {
+    const user_ = userEvent.setup({ delay: null });
     vi.stubGlobal("fetch", routes(3, undefined, {}, [bundledProvider()]));
     renderScreen(<AdminUsers />);
 
@@ -466,21 +483,38 @@ describe("AdminUsers bundled Authelia actions", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Add user" })).toBeInTheDocument(),
     );
-    expect(screen.getAllByRole("button", { name: "Create sign-in" }).length).toBeGreaterThan(0);
+    // The row carries only the decisions now: no per-user tool buttons.
+    expect(screen.queryByRole("button", { name: "Create sign-in" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reset password" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Activity" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Merge into…" })).not.toBeInTheDocument();
+
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    expect(
+      within(topDialog()).getByRole("heading", { name: "Edit — Person 0" }),
+    ).toBeInTheDocument();
+    expect(
+      within(topDialog()).getByRole("button", { name: "Create sign-in" }),
+    ).toBeInTheDocument();
   });
 
   it("offers Reset password instead, for a person who already has one", async () => {
+    const user_ = userEvent.setup({ delay: null });
     vi.stubGlobal(
       "fetch",
       routes(1, undefined, { issuer: bundledProvider().issuer }, [bundledProvider()]),
     );
     renderScreen(<AdminUsers />);
 
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Reset password" })).toBeInTheDocument(),
-    );
-    expect(screen.queryByRole("button", { name: "Create sign-in" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(
+      within(topDialog()).getByRole("button", { name: "Reset password" }),
+    ).toBeInTheDocument();
+    expect(
+      within(topDialog()).queryByRole("button", { name: "Create sign-in" }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides every bundled action and explains accounts live at the identity provider, with an external IdP", async () => {
@@ -535,15 +569,166 @@ describe("AdminUsers bundled Authelia actions", () => {
     );
     renderScreen(<AdminUsers />);
 
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Reset password" })).toBeInTheDocument(),
-    );
-    await user_.click(screen.getByRole("button", { name: "Reset password" }));
-    const dialog = screen.getByRole("dialog");
-    await user_.click(within(dialog).getByRole("button", { name: "Reset password" }));
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getByRole("button", { name: "Edit" }));
+    await user_.click(within(topDialog()).getByRole("button", { name: "Reset password" }));
 
-    await waitFor(() => expect(within(dialog).getByText("one-time-pw-789")).toBeInTheDocument());
+    // The action's own dialog opens on top of the edit panel it came from.
+    const resetDialog = topDialog();
+    await user_.click(within(resetDialog).getByRole("button", { name: "Reset password" }));
+
+    await waitFor(() =>
+      expect(within(resetDialog).getByText("one-time-pw-789")).toBeInTheDocument(),
+    );
     expect(seen.posts).toHaveLength(1);
+  });
+
+  it("Add user prefills the login from the email's local part, and a hand edit stands", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    const seen: Seen = { users: [], patches: [], posts: [] };
+    vi.stubGlobal("fetch", routes(1, seen, {}, [bundledProvider()]));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Add user" })).toBeInTheDocument(),
+    );
+    await user_.click(screen.getByRole("button", { name: "Add user" }));
+    const dialog = screen.getByRole("dialog");
+
+    await user_.type(within(dialog).getByLabelText("Email"), "Fran O'Neill@example.org");
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText("Login")).toHaveValue("fran-o-neill"),
+    );
+
+    // A hand edit wins, and later email keystrokes stop overwriting it.
+    await user_.clear(within(dialog).getByLabelText("Login"));
+    await user_.type(within(dialog).getByLabelText("Login"), "nelli");
+    await user_.type(within(dialog).getByLabelText("Email"), ".uk");
+    expect(within(dialog).getByLabelText("Login")).toHaveValue("nelli");
+
+    await user_.click(within(dialog).getByRole("button", { name: "Add user" }));
+    await waitFor(() => expect(seen.posts).toHaveLength(1));
+    expect(seen.posts[0]!.body).toMatchObject({ login: "nelli" });
+  });
+
+  it("the created person's row shows the sign-in name and offers Reset password, not Create sign-in", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes(1, undefined, {}, [bundledProvider()]));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Add user" })).toBeInTheDocument(),
+    );
+    await user_.click(screen.getByRole("button", { name: "Add user" }));
+    const dialog = screen.getByRole("dialog");
+    await user_.type(within(dialog).getByLabelText("Email"), "frank@example.org");
+    await user_.click(within(dialog).getByRole("button", { name: "Add user" }));
+
+    await waitFor(() => expect(within(dialog).getByText("one-time-pw-123")).toBeInTheDocument());
+    // Both halves of what to send: the login, named, and the password.
+    expect(within(dialog).getByText(/Sign in as/)).toBeInTheDocument();
+    expect(within(dialog).getByText("frank")).toBeInTheDocument();
+    await user_.click(within(dialog).getByRole("button", { name: "Done" }));
+
+    // The row shows the login it now answers through; the panel offers Reset
+    // password — a pending user has had a login since the moment of
+    // creation, so Create sign-in would mint a second one.
+    await waitFor(() =>
+      expect(screen.getByText("sign-in: frank")).toBeInTheDocument(),
+    );
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[1]!);
+    expect(
+      within(topDialog()).getByRole("button", { name: "Reset password" }),
+    ).toBeInTheDocument();
+    expect(
+      within(topDialog()).queryByRole("button", { name: "Create sign-in" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces a taken login name plainly", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://console.test");
+        const method = init?.method ?? "GET";
+        if (url.pathname === "/api/admin/identity-providers") {
+          return new Response(JSON.stringify([bundledProvider()]), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url.pathname === "/api/admin/users" && method === "POST") {
+          return new Response(
+            JSON.stringify({ error: { message: "frank already exists" } }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          );
+        }
+        if (url.pathname === "/api/admin/identity-events") return jsonResponse([]);
+        if (url.pathname === "/api/admin/users" && method === "GET") {
+          return jsonResponse([user(0)]);
+        }
+        return jsonResponse([]);
+      }),
+    );
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Add user" })).toBeInTheDocument(),
+    );
+    await user_.click(screen.getByRole("button", { name: "Add user" }));
+    const dialog = screen.getByRole("dialog");
+    await user_.type(within(dialog).getByLabelText("Email"), "frank@example.org");
+    await user_.click(within(dialog).getByRole("button", { name: "Add user" }));
+
+    expect(
+      within(dialog).getByText(
+        "'frank' is already another person's sign-in name — pick a different one.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the gateway's refusal when Create sign-in meets a login that already exists", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input), "http://console.test");
+        const method = init?.method ?? "GET";
+        if (url.pathname === "/api/admin/identity-providers") {
+          return new Response(JSON.stringify([bundledProvider()]), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url.pathname === "/api/admin/identity-events") return jsonResponse([]);
+        if (url.pathname === "/api/admin/users" && method === "GET") {
+          // The listing predates the person's login: the console believes
+          // there is none, which is exactly how this action got offered.
+          return jsonResponse([user(0)]);
+        }
+        if (url.pathname.match(/^\/api\/admin\/users\/[^/]+\/sign-in$/)) {
+          return new Response(
+            JSON.stringify({
+              error: { message: "They already sign in as 'person-0'. Use Reset password." },
+            }),
+            { status: 409, headers: { "content-type": "application/json" } },
+          );
+        }
+        return jsonResponse([]);
+      }),
+    );
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getByRole("button", { name: "Edit" }));
+    await user_.click(within(topDialog()).getByRole("button", { name: "Create sign-in" }));
+    const dialog = topDialog();
+    await user_.click(within(dialog).getByRole("button", { name: "Create sign-in" }));
+
+    expect(
+      within(dialog).getByText("They already sign in as 'person-0'. Use Reset password."),
+    ).toBeInTheDocument();
   });
 });
 
@@ -745,8 +930,9 @@ describe("AdminUsers merge dialog", () => {
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getAllByRole("button", { name: "Merge into…" })[0]!);
-    const dialog = screen.getByRole("dialog");
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    await user_.click(within(topDialog()).getByRole("button", { name: "Merge into…" }));
+    const dialog = topDialog();
 
     await user_.type(within(dialog).getByPlaceholderText("Search by email, name or username"), "person-1");
     await waitFor(() =>
@@ -782,8 +968,9 @@ describe("AdminUsers merge dialog", () => {
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getAllByRole("button", { name: "Merge into…" })[0]!);
-    const dialog = screen.getByRole("dialog");
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    await user_.click(within(topDialog()).getByRole("button", { name: "Merge into…" }));
+    const dialog = topDialog();
 
     await user_.type(within(dialog).getByPlaceholderText("Search by email, name or username"), "person-1");
     await user_.click(
@@ -834,9 +1021,11 @@ describe("AdminUsers activity", () => {
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getByRole("button", { name: "Activity" }));
+    await user_.click(screen.getByRole("button", { name: "Edit" }));
+    await user_.click(within(topDialog()).getByRole("button", { name: "Activity" }));
+    const activity = topDialog();
 
-    await waitFor(() => expect(screen.getByText("user.disable")).toBeInTheDocument());
-    expect(screen.getByText("root@example.org")).toBeInTheDocument();
+    await waitFor(() => expect(within(activity).getByText("user.disable")).toBeInTheDocument());
+    expect(within(activity).getByText("root@example.org")).toBeInTheDocument();
   });
 });

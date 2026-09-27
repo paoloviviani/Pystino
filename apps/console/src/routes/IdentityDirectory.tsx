@@ -1,14 +1,17 @@
 /**
- * Directory sync, from a provider row (ADR 0088).
+ * User sync, from a provider row (ADR 0088) — optional, and external-only.
  *
- * Where an adapter is chosen and credentialed, where the forced first dry run
- * is looked at and confirmed, and where later runs are read — each run's own
- * list of changes, because "12 updated" is not something to approve.
+ * Keeps this console's user list in step with an identity provider: an
+ * adapter is chosen and credentialed here, the forced first dry run is looked
+ * at and confirmed here, and later runs are read here — each run's own list
+ * of changes, because "12 updated" is not something to approve. Preassigning
+ * groups and deactivating people the directory no longer lists are the same
+ * decision, not a separate screen.
  *
- * The bundled Authelia's own People dialog, which used to live in this file
- * too, is removed (ADR 0093 §14, correction 7): the gateway-edited users file
- * it drove is stage (b)'s to replace on the Users page, keyed on
- * `OIDC_KIND=authelia` rather than opened from here.
+ * The bundled Authelia never opens this dialog: its people are created,
+ * managed and removed on the Users page, so there is nothing for an adapter
+ * to pull or confirm — its row carries the seeded `authelia_file` adapter
+ * purely as inert state, which the Providers row therefore does not show.
  */
 
 import { Badge, Button, Dialog, Input, Notice, Select, Spinner } from "@llmp/ui";
@@ -28,10 +31,10 @@ import { useOptionalToast } from "../lib/toast";
 import { CODE, DETAIL_LABEL, FORM } from "../lib/layout";
 
 const ADAPTER_LABEL: Record<SyncAdapter, string> = {
-  none: "None — people appear at their first sign-in",
-  authelia_file: "Authelia users file (the bundled directory)",
-  keycloak_admin: "Keycloak admin API (a service-account client)",
-  scim: "SCIM 2.0 push — the identity provider sends changes here",
+  none: "Off (default) — people appear at their first sign-in",
+  authelia_file: "Authelia users file (not needed: the Users page manages bundled accounts)",
+  keycloak_admin: "Keycloak admin API — pulled on a schedule (service-account client)",
+  scim: "SCIM 2.0 — your identity provider pushes changes here",
 };
 
 function errorText(caught: unknown, fallback: string): string {
@@ -130,8 +133,14 @@ export function DirectoryDialog({
   };
 
   return (
-    <Dialog open={open} title={`Directory — ${provider.name}`} onClose={close} footer={<Button onClick={close}>Close</Button>}>
+    <Dialog open={open} title={`User sync — ${provider.name}`} onClose={close} footer={<Button onClick={close}>Close</Button>}>
       <div className={FORM}>
+        <p className="text-sm text-ink-muted">
+          Optional. Keeps this console's user list in step with your identity provider: people
+          exist, with their groups and pre-assigned access, before their first sign-in, and are
+          deactivated when removed there. You don't need this to add users — people appear at
+          their first sign-in.
+        </p>
         {!provider.capabilities.adapters.length && (
           <Notice tone="info" title="Just-in-time only">
             A {provider.kind} provider offers no way to list its users: OIDC itself has no listing
