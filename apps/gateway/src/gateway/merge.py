@@ -227,7 +227,16 @@ async def _load_pair(
     ids = sorted([source_id, target_id])
     stmt = select(User).where(User.id.in_(ids))
     if lock:
-        stmt = stmt.with_for_update()
+        # `of=User`, not a bare `with_for_update()`: `User.default_billing_group`
+        # is `lazy="joined"` on the model, so a plain `select(User)` always
+        # carries an implicit LEFT OUTER JOIN to `groups`. PostgreSQL refuses
+        # `FOR UPDATE` against the nullable side of an outer join outright
+        # (`FeatureNotSupportedError`) -- invisible on SQLite, which the unit
+        # suite runs on and which accepts the clause unconditionally, so this
+        # only ever failed against a real Postgres, every single confirmed
+        # merge, until an e2e script actually called the route (ADR 0093
+        # stage (d)).
+        stmt = stmt.with_for_update(of=User)
     rows = {u.id: u for u in (await session.execute(stmt)).scalars().all()}
     return rows.get(source_id), rows.get(target_id)
 
