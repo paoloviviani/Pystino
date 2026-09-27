@@ -565,7 +565,10 @@ class CallerIdentity(BaseModel):
     default_billing_group: str | None
     #: What *this* caller's requests bill right now, which is not always the
     #: default: a key may pin a group, and a bearer request may name one.
-    billing_group: str
+    #: Null for a caller with no usable group at all (ADR 0093 to-do item 2)
+    #: — this route authenticates but never requires one, unlike every
+    #: metered ``/v1`` route, which still refuses that caller outright.
+    billing_group: str | None
     #: A session the chat opened before this instant is no longer good: the
     #: account was disabled, merged into, or recovered (ADR 0093). Null when
     #: nothing has ever revoked this person's sessions.

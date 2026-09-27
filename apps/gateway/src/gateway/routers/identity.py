@@ -65,7 +65,7 @@ from fastapi import APIRouter, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gateway.deps import PrincipalDep, SessionDep, SettingsDep, _bearer_client
+from gateway.deps import AuthenticatedCallerDep, SessionDep, SettingsDep, _bearer_client
 from gateway.errors import AuthenticationError, PermissionError_, TooManyRequestsError
 from gateway.merges import resolve_merged_from
 from gateway.models import User, UserIdentity
@@ -166,44 +166,53 @@ async def announce(request: Request, session: SessionDep, settings: SettingsDep)
 
 
 @router.get("/me/identities", response_model=MeIdentities)
-async def my_identities(principal: PrincipalDep, session: SessionDep) -> MeIdentities:
+async def my_identities(caller: AuthenticatedCallerDep, session: SessionDep) -> MeIdentities:
     """Everything that names this person here (ADR 0093 §4.1): the primary
     pair, every linked identity, and every id ever merged into this one, so
     the chat can adopt or fold records it has not keyed on the gateway's id
     yet.
 
-    Access-token principals only, the same ``credential`` distinction
+    Access-token callers only, the same ``credential`` distinction
     ``/v1/me`` already draws: a personal API key is a program's credential,
     with no business listing the identities of the person who issued it. A
     *minted* credential (the house IdP's own access tokens, stored as ``gwa``
     rows) answers as the person it is proof of having signed in as, exactly
     like it does for ``is_admin`` there.
+
+    Authenticates via :data:`AuthenticatedCallerDep`, not ``PrincipalDep``
+    (ADR 0093 to-do item 2): this is an identity question, not a billing one,
+    and must answer for a caller with no billing group at all.
     """
-    by_key = principal.api_key is not None and principal.api_key.minted_by is None
+    by_key = caller.api_key is not None and caller.api_key.minted_by is None
     if by_key:
         raise PermissionError_(
             "An API key may not list its owner's identities. Sign in and use an "
             "access token instead."
         )
-    user = principal.user
+    user = caller.user
     identities = await _identities_for(session, user)
     merged_from = await resolve_merged_from(session, user.id)
     return MeIdentities(id=user.id, identities=identities, merged_from=merged_from)
 
 
 @router.get("/me", response_model=CallerIdentity)
-async def whoami(principal: PrincipalDep) -> CallerIdentity:
-    # No query. Authentication already loaded the user with its memberships —
-    # resolving the billing group is impossible without them — and each
-    # membership's group comes with it (`lazy="joined"`), so this route adds
-    # nothing to the round-trip budget `test_query_counts.py` pins.
-    user = principal.user
+async def whoami(caller: AuthenticatedCallerDep) -> CallerIdentity:
+    # No query. Authentication already loaded the user with its memberships,
+    # and each membership's group comes with it (`lazy="joined"`), so this
+    # route adds nothing to the round-trip budget `test_query_counts.py` pins.
+    #
+    # Authenticates via `AuthenticatedCallerDep`, not `PrincipalDep` (ADR 0093
+    # to-do item 2): resolving a billing group is exactly the thing this route
+    # must not require — a bundled user with no membership at all still has an
+    # identity to report, just no group to bill, and this is the route that
+    # tells them so instead of 403ing before they learn anything.
+    user = caller.user
     # Provenance, not shape (see the module docstring): a minted credential is
     # a session's proof and answers as its person; an issued key is a program's
     # credential and its owner's admin flag stays theirs to exercise by
     # signing in.
-    minted = principal.api_key is not None and principal.api_key.minted_by is not None
-    by_key = principal.api_key is not None and not minted
+    minted = caller.api_key is not None and caller.api_key.minted_by is not None
+    by_key = caller.api_key is not None and not minted
 
     # Every effective membership, including groups that are disabled. The
     # billable subset is `/v1/billing/groups`' question and it filters them for
@@ -238,7 +247,12 @@ async def whoami(principal: PrincipalDep) -> CallerIdentity:
         credential="api_key" if by_key else "access_token",
         groups=groups,
         default_billing_group=default,
-        billing_group=principal.billing_group.name,
+        # The same pinned-or-default group a metered request honouring
+        # `x-bill-to` would charge, resolved by `resolve_billing_group_or_none`
+        # instead of `resolve_billing_group` — null when nothing resolves,
+        # which the raising version would have 403'd on (ADR 0093 to-do
+        # item 2).
+        billing_group=caller.billing_group.name if caller.billing_group else None,
         sessions_valid_after=user.sessions_valid_after,
         merged_at=user.merged_at,
     )
