@@ -192,7 +192,7 @@ def main() -> int:
     if admin is None:
         skip(
             "the credentialed checks",
-            "set GATEWAY_LOCAL_ADMIN_PASSWORD in deploy/.env (ADR 0043)",
+            "set PYSTINO_LIVE_ADMIN_PASSWORD (see scripts/live_session.py)",
         )
         print()
         if FAILURES:

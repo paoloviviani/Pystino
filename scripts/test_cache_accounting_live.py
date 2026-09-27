@@ -120,7 +120,7 @@ def complete(secret: str, model: str) -> dict | None:
 def main() -> int:
     credentials = admin_credentials()
     if credentials is None:
-        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
+        print("FAILED: PYSTINO_LIVE_ADMIN_PASSWORD is not set (see scripts/live_session.py)")
         return 1
     dave = login(*credentials)
     if dave is None:
@@ -179,7 +179,7 @@ def main() -> int:
             "minted an API key",
             False,
             f"HTTP {status}: {body[:160]!r} — the signing-in account needs a "
-            "default billing group (`gateway passwd --group <group> <email>`)",
+            "default billing group (add them to one in the console)",
         )
         return 1
     secret = json.loads(body)["secret"]

@@ -36,16 +36,9 @@ visible.
 
 ## The live checks
 
-```bash
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml \
-  -f deploy/compose/docker-compose.redaction.yml up -d --build
-```
-
-Then, with the accounts created (`docker compose ... exec gateway gateway
-passwd admin@local`, and `--no-admin user@local` for the 403 checks) and
-`GATEWAY_LOCAL_ADMIN_PASSWORD` set in `deploy/.env`:
+Bring up a stack with the bundled Authelia (see
+[Deployment](deployment.md)); a development one with the fake upstream is the
+usual target.
 
 | Script | Covers |
 |---|---|
@@ -56,17 +49,27 @@ passwd admin@local`, and `--no-admin user@local` for the 403 checks) and
 | `test_surfaces_live.py` | responses, Anthropic messages, image generation |
 | `test_quota_race_live.py` | admission under concurrency, against real Valkey |
 | `test_cache_accounting_live.py` | a real cache hit, and what the ledger records |
-| `test_bill_to_live.py` | `x-bill-to` with a real access token: which group actually paid (ADR 0061) |
+| `test_bill_to_live.py` | `x-bill-to` with a real access token: which group actually paid |
 | `test_pystino_usage_live.py` | `GET /v1/pystino/usage` under both credentials, through real discovery and a live JWKS fetch |
-| `test_citations_live.py` | a citation that still quotes the right word after a real placeholder changed the offsets (ADR 0059) |
-| `test_web_search_live.py` | per-search billing through PostgreSQL's `Numeric`, including the CSV export's own column list (ADR 0058) |
+| `test_citations_live.py` | a citation that still quotes the right word after a real placeholder changed the offsets |
+| `test_web_search_live.py` | per-search billing through PostgreSQL's `Numeric`, including the CSV export's own column list |
 | `benchmark_live.py` | per-layer cost; reproduces [Measured performance](performance.md) |
-| `test_public_tls_live.py` | only with the proxy overlay: TLS, rotated credentials, and that nothing else is on a routable address |
+| `test_public_tls_live.py` | TLS, the IdP refusing a wrong password, a Secure session cookie, and that nothing else is on a routable address |
 
-They sign in with local password auth, so with the proxy overlay they also need
-Caddy's CA (see [Deployment](deployment.md#verify-what-is-exposed)) and
-`deploy/.env` sourced — they follow `PUBLIC_HOST` when it is set, and the
-session cookie is scoped to the origin the login happened on.
+They sign in the way a browser does — the gateway's OIDC login through the
+bundled Authelia (`scripts/live_session.py`) — so they run against the public
+origin, with the deployment's `.env` sourced for `PUBLIC_ORIGIN`:
+
+```bash
+cd <deploy dir>; set -a; . ./.env; set +a
+export PYSTINO_LIVE_ADMIN_PASSWORD=…        # the password behind AUTHELIA_ADMIN_PASSWORD_DIGEST
+export PYSTINO_LIVE_USER=… PYSTINO_LIVE_USER_PASSWORD=…   # optional non-admin
+# a trial stack with no DNS / on Caddy's internal CA:
+export PYSTINO_LIVE_RESOLVE=127.0.0.1 GATEWAY_CA_BUNDLE=$PWD/caddy-root.crt
+uv run --project <checkout> python <checkout>/scripts/test_console_live.py
+```
+
+The non-admin is added in the console (Settings → Identity providers → People).
 
 !!! warning "The demo cap exhausts legitimately"
 

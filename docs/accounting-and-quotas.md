@@ -23,7 +23,7 @@ fails in a specific, boring, expensive way.
 
 Every request writes one row to `usage_records` — before the upstream call, not
 after. The row carries the caller, the billing group, the requested and served
-models (which can differ behind a router — ADR 0028),
+models (which can differ behind a router),
 token counts, status, redaction provenance (`redaction_scope`,
 `redaction_rule_id`) and three cost figures.
 
@@ -36,8 +36,7 @@ prompts last month" is a number a data-protection review asks for).
 ## Running without a ledger
 
 A deployment that wants routing, keys, model access control and redaction — and
-does not care what anything cost — can turn the ledger off
-(ADR 0065):
+does not care what anything cost — can turn the ledger off:
 
 ```bash
 GATEWAY_ACCOUNTING__ENABLED=false
@@ -66,8 +65,8 @@ nobody is worse than no quota, because somebody configured it and believes in
 it. The asymmetry is deliberate: metering without quotas is fine, quotas
 without metering is incoherent.
 
-(Since ADR 0070 knowledge ingestion runs in the chat, metered through the
-embedding endpoint.) The consequence this section is here for: ingestion bills through
+(Knowledge ingestion runs in the chat, metered through the embedding
+endpoint.) The consequence this section is here for: ingestion bills through
 the same path, so an unmetered deployment records no indexing spend either — and
 a large ingestion run can cost more than the chat traffic it serves.
 
@@ -80,8 +79,7 @@ a large ingestion run can cost more than the chat traffic it serves.
 | `upstream_cost` | Always **the counterparty's** figure, when one is reported. |
 
 `cost_source` says which figure billed: our prices, or the counterparty's
-reported cost (billing mode is a per-provider choice,
-ADR 0032). Both figures are recorded in both
+reported cost (billing mode is a per-provider choice). Both figures are recorded in both
 modes, so a divergence is always reconstructable.
 
 `own_prices_fallback` is the value that must never appear silently: a
@@ -106,8 +104,7 @@ What *is* tolerated across names is **spelling**: there are four names for the
 cache-write quantity (`_CACHE_WRITE_KEYS`), because vendors name the same
 quantity differently. Reading only one would bill those tokens at the input
 rate. The distinction from the rule above is the point — those differ in
-meaning, these differ only in spelling. The measurements behind this are in
-[Cache accounting findings](cache-accounting-findings.md).
+meaning, these differ only in spelling.
 
 ## Money is a string, end to end
 
@@ -132,8 +129,7 @@ meaning, these differ only in spelling. The measurements behind this are in
 
 ## Quotas
 
-The quota engine (ADR 0009,
-ADR 0025) is reserve-then-settle over stacked,
+The quota engine is reserve-then-settle over stacked,
 multi-granularity rolling windows: global, group, user and API-key rules can
 all apply to one request, and **all of them must pass** — a permissive rule
 must not raise a ceiling someone else set.
@@ -147,16 +143,15 @@ must not raise a ceiling someone else set.
 - **Overrun policy:** the request that crosses the limit is *admitted* (it
   reserved before anyone knew); the **next** one gets a 429. There is no
   mid-stream cutoff via `max_tokens` clamping — that is a deliberate choice,
-  not a gap (ADR 0009).
+  not a gap.
 - **Billing periods are calendar-based** (monthly, etc.) and are *not* rolling
   windows; a rolling window and a billing period answer different questions and
-  the model keeps them apart (ADR 0024).
+  the model keeps them apart.
 - **Valkey holds the counters; it is never authoritative.** With Valkey gone,
   quotas fall back to the database and evaluate correctly, just more slowly.
   The counters rebuild from the ledger — which is also why flushing Valkey
   alone does **not** reset spent quota: clear both `usage_records` and the
-  counters, or let the gateway restart and rebuild
-  (ADR 0006).
+  counters, or let the gateway restart and rebuild.
 - An admin reset (`POST /api/admin/limits/{id}/reset`) zeroes a quota's
   *consumption* and requires a reason; billing history is never touched.
 

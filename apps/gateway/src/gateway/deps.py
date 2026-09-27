@@ -6,7 +6,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import Depends, Request
@@ -51,6 +51,30 @@ class Principal:
     @property
     def quota_subject(self) -> QuotaSubject:
         return QuotaSubject(user_id=self.user.id, group_id=self.billing_group.id)
+
+
+@dataclass(slots=True)
+class AuthenticatedCaller:
+    """A caller identified, and nothing more (ADR 0093 to-do item 2).
+
+    ``Principal`` always carries a billing group because every metered
+    ``/v1`` route needs one to charge and is right to refuse a caller who has
+    none. ``/v1/me`` and ``/v1/me/identities`` answer "who is this" — a
+    question a bundled-Authelia user with no membership at all can still
+    ask, and answering it must not run into the same refusal a chat
+    completion would. Kept as its own type rather than making
+    ``Principal.billing_group`` optional: every other consumer of
+    ``Principal`` (quotas, accounting, redaction scoping, ``x-bill-to``)
+    reads that field assuming it resolved, and Optional-ing it there would
+    trade one clear refusal for a null check scattered through all of them.
+    """
+
+    user: User
+    api_key: ApiKey | None = None
+    #: Same pin-or-default resolution as `Principal.billing_group`, just
+    #: never refused: null for a caller with nothing billable, where
+    #: `resolve_billing_group` would have raised instead.
+    billing_group: Group | None = None
 
 
 def get_settings_dep(request: Request) -> Settings:
@@ -209,6 +233,22 @@ def resolve_billing_group(user: User, *, pinned: Group | None = None) -> Group:
     return group
 
 
+def resolve_billing_group_or_none(user: User, *, pinned: Group | None = None) -> Group | None:
+    """Like :func:`resolve_billing_group`, but reports rather than refuses.
+
+    ``/v1/me`` and ``/v1/me/identities`` (ADR 0093 to-do item 2) authenticate
+    a caller with nothing billable at all and must still answer 200 — this
+    is the same pin-or-default resolution, minus the raise, so a pinned
+    ``x-bill-to`` group still reports back exactly as it would for a metered
+    route (see ``test_v1_me.py``'s ``test_it_reports_the_group_the_request_chose``),
+    and only the "nothing resolved" case turns into ``None`` instead of a 403.
+    """
+    group = pinned or user.default_billing_group
+    if group is None or not group.is_active or group.id not in user.group_ids():
+        return None
+    return group
+
+
 async def _touch_last_used(session: AsyncSession, api_key: ApiKey) -> None:
     now = utcnow()
     if api_key.last_used_at is not None and now - api_key.last_used_at < _LAST_USED_RESOLUTION:
@@ -345,19 +385,13 @@ async def get_optional_principal(
     return await get_principal(request, session)
 
 
-async def _bearer_principal(
-    request: Request, session: AsyncSession, token: str
-) -> Principal:
-    """Authenticate a ``/v1`` caller holding an OIDC access token.
+async def _authenticate_bearer_user(request: Request, session: AsyncSession, token: str) -> User:
+    """Validate an OIDC access token and return the synced user.
 
-    Reached only for a credential shaped like a JWT, so an API key never pays
-    for the signature work and a token never costs a database lookup on a prefix
-    it does not have.
-
-    The resulting principal is indistinguishable from a key-authenticated one
-    apart from ``api_key`` being None, which is the point: quotas, model access,
-    redaction scoping and the ledger all read the user and the group, and none of
-    them needs to know which credential arrived.
+    Split out of ``_bearer_principal`` (ADR 0093 to-do item 2) so
+    ``get_authenticated_caller`` can share every step of this — signature,
+    issuer routing, the sync that reconciles memberships — without also
+    resolving a billing group, which ``/v1/me`` must not require.
     """
     settings: Settings = request.app.state.settings
     if not settings.oidc.access_token_audience:
@@ -376,17 +410,15 @@ async def _bearer_principal(
     try:
         claims = await client.validate_access_token(token)
         # The same policy gate the browser login answers to (ADR 0048), folded
-        # with this provider's dialect: its group claim and mappings.
+        # with this provider's own group claim — the mappings are the global
+        # policy's alone now (ADR 0093 §3.4), so there is nothing of the
+        # provider's left to fold in for them.
         resolver = getattr(request.app.state, "oidc_policy", None)
         policy = resolver.policy if resolver is not None else None
         from dataclasses import replace as _dc_replace
 
         if policy is not None and provider is not None:
-            policy = _dc_replace(
-                policy,
-                groups_claim=provider.groups_claim,
-                group_mappings=provider.mappings_dict(),
-            )
+            policy = _dc_replace(policy, groups_claim=provider.groups_claim)
         user = await sync_user_from_claims(
             session,
             claims=claims,
@@ -397,17 +429,38 @@ async def _bearer_principal(
             # Without it this path would reconcile on every request for a
             # provider the operator set to leave groups alone.
             group_sync=provider.group_sync if provider is not None else GroupSync.EVERY_LOGIN,
+            group_source=provider.group_source if provider is not None else "claim",
+            group_mappings=policy.group_mappings if policy is not None else None,
         )
     except OIDCError as exc:
-        # Logged in full, returned as one word: the reason a token failed is a
-        # map of the validator for anyone holding a forged one.
-        logger.info("access token rejected: %s", exc)
+        # Logged in full, returned as one word: the reason a token failed is
+        # a map of the validator for anyone holding a forged one. WARNING, not
+        # INFO: the audience-mismatch case (a client with no audience mapper
+        # naming this gateway) fails every chat login with nothing but this
+        # line to say why, and it must be visible without log-level hunting.
+        logger.warning("access token rejected: %s", exc)
         raise AuthenticationError("Invalid API key provided.") from exc
 
     if not user.is_active:
         raise AuthenticationError("Invalid API key provided.")
 
     await session.commit()
+    return user
+
+
+async def _bearer_principal(request: Request, session: AsyncSession, token: str) -> Principal:
+    """Authenticate a ``/v1`` caller holding an OIDC access token.
+
+    Reached only for a credential shaped like a JWT, so an API key never pays
+    for the signature work and a token never costs a database lookup on a prefix
+    it does not have.
+
+    The resulting principal is indistinguishable from a key-authenticated one
+    apart from ``api_key`` being None, which is the point: quotas, model access,
+    redaction scoping and the ledger all read the user and the group, and none of
+    them needs to know which credential arrived.
+    """
+    user = await _authenticate_bearer_user(request, session, token)
 
     # The per-request choice (ADR 0061). Resolved after the sync above, so a
     # group the directory granted on *this* login is already billable — and
@@ -418,6 +471,63 @@ async def _bearer_principal(
     requested = requested_billing_group(request)
     pinned = _pin_from_header(user, requested) if requested else None
     return Principal(user=user, billing_group=resolve_billing_group(user, pinned=pinned))
+
+
+async def get_authenticated_caller(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> AuthenticatedCaller:
+    """Authenticate a ``/v1`` caller the same way :func:`get_principal` does,
+    but never resolve a billing group (ADR 0093 to-do item 2).
+
+    Exists only for ``/v1/me`` and ``/v1/me/identities``: every other ``/v1``
+    route needs a group to charge and keeps using :func:`get_principal`, which
+    is right to refuse a caller with none. ``x-bill-to`` still resolves the
+    same pinned group :func:`get_principal` would report — a client reading
+    ``/v1/me`` to show "what would this request bill" must see the same
+    answer a metered request honouring the header would act on — it just
+    never turns "nothing resolved" into a 403 the way ``resolve_billing_group``
+    does; :func:`resolve_billing_group_or_none` answers ``None`` instead.
+    """
+    secret = parse_authorization_header(request.headers.get("authorization"))
+    if not secret:
+        secret = request.headers.get("api-key")
+    if not secret:
+        raise AuthenticationError(
+            "You didn't provide an API key. Supply it in an Authorization header: "
+            "'Authorization: Bearer <key>'."
+        )
+
+    if looks_like_jwt(secret):
+        user = await _authenticate_bearer_user(request, session, secret)
+        requested = requested_billing_group(request)
+        pinned = _pin_from_header(user, requested) if requested else None
+        return AuthenticatedCaller(
+            user=user, billing_group=resolve_billing_group_or_none(user, pinned=pinned)
+        )
+
+    api_key = await resolve_api_key(session, secret)
+    requested = requested_billing_group(request)
+    if requested is not None and api_key.is_issued_key:
+        # Same refusal `get_principal` gives an issued key naming `x-bill-to`
+        # (see there for why): a credential's own pin is its answer, and this
+        # route is not the place that decision gets a second opinion.
+        raise PermissionError_(
+            "'x-bill-to' applies to callers authenticated with an OIDC token. An issued "
+            "API key bills the group it pins, or your default; mint a key for the group "
+            "you mean, or change your default billing group."
+        )
+    pinned = (
+        _pin_from_header(api_key.user, requested)
+        if requested is not None
+        else api_key.billing_group
+    )
+    await _touch_last_used(session, api_key)
+    return AuthenticatedCaller(
+        user=api_key.user,
+        api_key=api_key,
+        billing_group=resolve_billing_group_or_none(api_key.user, pinned=pinned),
+    )
 
 
 async def _bearer_client(
@@ -454,10 +564,22 @@ async def _bearer_client(
     return None, None
 
 
-async def load_user_for_management(session: AsyncSession, user_id: uuid.UUID) -> User:
+async def load_user_for_management(
+    session: AsyncSession, user_id: uuid.UUID, *, issued_at: datetime
+) -> User:
     stmt = select(User).where(User.id == user_id).options(selectinload(User.memberships))
     user = (await session.execute(stmt)).scalar_one_or_none()
     if user is None or not user.is_active:
+        raise AuthenticationError("Session is no longer valid.")
+    # ADR 0093 §9.1: a disable (or a merge) stamps `sessions_valid_after`,
+    # and a token minted before that instant is exactly the one a disable
+    # exists to end — no second query, since the comparison is against the
+    # row this function already loaded. Break-glass deliberately does NOT
+    # stamp it: it never demotes or disables anyone (§10), and bearer tokens
+    # from the switched-away provider are refused elsewhere, by provider
+    # enablement. Console cookies minted before a switch stay valid for
+    # their 8 h TTL; rotate `SESSION_SECRET` if compromise is suspected.
+    if user.sessions_valid_after is not None and issued_at < user.sessions_valid_after:
         raise AuthenticationError("Session is no longer valid.")
     return user
 
@@ -480,11 +602,11 @@ async def get_management_user(
         raise AuthenticationError("Not authenticated. Sign in at /auth/login.")
 
     try:
-        user_id = verify_session_token(token, secret=settings.session_secret.get_secret_value())
+        claims = verify_session_token(token, secret=settings.session_secret.get_secret_value())
     except OIDCError as exc:
         raise AuthenticationError("Session is not valid or has expired.") from exc
 
-    return await load_user_for_management(session, user_id)
+    return await load_user_for_management(session, claims.user_id, issued_at=claims.issued_at)
 
 
 async def get_admin_user(
@@ -507,6 +629,7 @@ AdminUserDep = Annotated[User, Depends(get_admin_user)]
 SettingsDep = Annotated[Settings, Depends(get_settings_dep)]
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 OptionalPrincipalDep = Annotated[Principal | None, Depends(get_optional_principal)]
+AuthenticatedCallerDep = Annotated[AuthenticatedCaller, Depends(get_authenticated_caller)]
 QuotaDep = Annotated[QuotaEngine, Depends(get_quota_engine)]
 RedactorDep = Annotated[Redactor, Depends(get_redactor)]
 ProvidersDep = Annotated[ProviderRegistry, Depends(get_providers)]

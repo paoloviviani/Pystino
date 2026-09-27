@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from conftest import (
     ABSENT,
+    BEARER_AUDIENCE,
     BEARER_ISSUER,
     Seeded,
     make_token,
@@ -28,7 +29,7 @@ from conftest import (
 )
 from fastapi import FastAPI
 from gateway.config import OIDCSettings, Settings
-from gateway.models import UsageRecord, User
+from gateway.models import Membership, OIDCPolicyConfig, UsageRecord, User
 from gateway.types import utcnow
 from helpers import completion_body
 from joserfc.jwk import RSAKey
@@ -234,6 +235,136 @@ class TestRefused:
 
         response = await client.get("/v1/models", headers=auth(make_token(signing_key)))
         assert response.status_code == 401
+
+
+class TestGroupMappingsAreGlobalOnly:
+    """ADR 0093 §3.4: the row's own `group_mappings` is no longer read on the
+    bearer path — only `oidc_config`, the global policy, is. Closes R9.
+
+    The row's own mapping is left at its default (empty) rather than set to a
+    *different* value and compared: `seed_identity_provider` caches a stub
+    client keyed by the row's `(id, updated_at)`, and writing to the row would
+    bump `updated_at` and evict it, replacing it with a real `OIDCClient`
+    built from the registry's own settings snapshot — a self-inflicted
+    failure unrelated to what this test is asking. Leaving the row's mapping
+    untouched and empty still distinguishes the two: an unmapped claim name
+    would pass through as its own name if the row (or nothing) were consulted,
+    and only becomes the global policy's local name if the global policy is
+    what actually ran.
+
+    Checked from the database after the call, not from the response body: a
+    request that changes its own caller's default billing group and then
+    resolves the billing group *in the same request* hits a pre-existing,
+    unrelated staleness bug (reported, not fixed here — see the final
+    report) — `User.default_billing_group` is `lazy="joined"`, loaded once
+    per request, and reassigning `default_billing_group_id` in memory during
+    reconciliation does not refresh it, so `resolve_billing_group` can still
+    see the group the request just moved the caller out of. The membership
+    row itself is written correctly either way, which is what this test is
+    actually asking about.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_global_mapping_is_applied(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        async with session_factory() as db:
+            db.add(OIDCPolicyConfig(group_mappings=[["idp-eng", "global-mapped"]]))
+            await db.commit()
+        await bearer_app.state.oidc_policy.refresh_once()
+
+        token = make_token(signing_key, groups=["idp-eng"])
+        await client.get("/v1/me", headers=auth(token))
+
+        async with session_factory() as db:
+            user = (await db.execute(select(User).where(User.subject == "subject-1"))).scalar_one()
+            memberships = (
+                (await db.execute(select(Membership).where(Membership.user_id == user.id)))
+                .scalars()
+                .all()
+            )
+            names = {m.group.name for m in memberships}
+        assert "global-mapped" in names
+        assert "idp-eng" not in names, "the raw claim name would appear unmapped"
+
+
+class TestAcceptedClients:
+    """ADR 0093 §2: `azp` (or `client_id`) must be in `ACCEPTED_CLIENTS`, once
+    that is set — the audience check alone only proves the token is *for*
+    this gateway, never that it was asked for by a client an administrator
+    actually trusts.
+
+    `bearer_app` is deliberately not used here: it seeds a row for
+    `BEARER_ISSUER` once, and seeding a second one for the same issuer with
+    different settings hits the unique index — each test seeds its own,
+    exactly the way `bearer_app` itself does.
+    """
+
+    async def _app(
+        self, app: FastAPI, signing_key: RSAKey, *, accepted_clients: str
+    ) -> FastAPI:
+        settings: Settings = app.state.settings
+        settings.oidc = OIDCSettings(
+            enabled=True,
+            issuer=BEARER_ISSUER,
+            client_id="llm-gateway",
+            groups_claim="groups",
+            access_token_audience=BEARER_AUDIENCE,
+            accepted_clients=accepted_clients,
+        )
+        await seed_identity_provider(app, app.state.session_factory, signing_key)
+        return app
+
+    @pytest.mark.asyncio
+    async def test_a_listed_azp_is_accepted(
+        self, app: FastAPI, client: Any, seeded: Seeded, signing_key: RSAKey
+    ) -> None:
+        await self._app(app, signing_key, accepted_clients="llm-chat,opencode")
+        response = await client.get("/v1/models", headers=auth(make_token(signing_key)))
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_an_unlisted_azp_is_refused(
+        self, app: FastAPI, client: Any, seeded: Seeded, signing_key: RSAKey
+    ) -> None:
+        await self._app(app, signing_key, accepted_clients="opencode")
+        response = await client.get("/v1/models", headers=auth(make_token(signing_key)))
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_client_id_is_read_when_azp_is_absent(
+        self, app: FastAPI, client: Any, seeded: Seeded, signing_key: RSAKey
+    ) -> None:
+        await self._app(app, signing_key, accepted_clients="llm-chat")
+        token = make_token(signing_key, azp=ABSENT, client_id="llm-chat")
+        response = await client.get("/v1/models", headers=auth(token))
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_neither_claim_still_passes_on_audience_alone(
+        self, app: FastAPI, client: Any, seeded: Seeded, signing_key: RSAKey
+    ) -> None:
+        await self._app(app, signing_key, accepted_clients="llm-chat")
+        token = make_token(signing_key, azp=ABSENT)
+        response = await client.get("/v1/models", headers=auth(token))
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_empty_accepted_clients_enforces_nothing(
+        self, app: FastAPI, client: Any, seeded: Seeded, signing_key: RSAKey
+    ) -> None:
+        """The default (unset `ACCEPTED_CLIENTS`) is today's behaviour exactly:
+        the audience check alone."""
+        await self._app(app, signing_key, accepted_clients="")
+        response = await client.get(
+            "/v1/models", headers=auth(make_token(signing_key, azp="anything-at-all"))
+        )
+        assert response.status_code == 200
 
 
 class TestNotConfigured:

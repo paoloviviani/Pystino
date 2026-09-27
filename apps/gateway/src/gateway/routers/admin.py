@@ -19,6 +19,7 @@ Two rules the endpoints enforce rather than trust:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 import uuid
@@ -31,14 +32,15 @@ from urllib.parse import quote
 from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from llmp_shared import EntitySpan, PlaceholderMap
-from pydantic import SecretStr
 from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
+from gateway import identity_policy
 from gateway.accounting.cost import select_price
 from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings, Settings
+from gateway.deployment_state import mark_bootstrap_consumed
 from gateway.deps import (
     AdminUserDep,
     ControlHttpDep,
@@ -48,29 +50,53 @@ from gateway.deps import (
     SessionDep,
     SettingsDep,
 )
+from gateway.directory.authelia_users import (
+    UsersFileError,
+    UsersFileLockedError,
+)
+from gateway.directory.engine import add_manual_memberships, ensure_bundled_default_group
+from gateway.directory.service import bundled_users_file
 from gateway.email_config import effective_smtp
+from gateway.email_normalize import is_trusted_email
+from gateway.erasure import attempt_erasure, preview_chat_erasure, queue_erasure
 from gateway.errors import (
     BadRequestError,
     ContentBlockedError,
     GatewayError,
+    ServiceUnavailableError,
     UpstreamUnavailableError,
+)
+from gateway.identity_events import record_event
+from gateway.identity_registry import (
+    active_bundled_provider,
 )
 from gateway.identity_registry import (
     list_providers as list_provider_records,
 )
-from gateway.identity_registry import (
-    record_from_row,
-)
 from gateway.mail import MailDeliveryError, send_mail_async
+from gateway.merge import (
+    MERGE_RULES,
+    MergeNotFound,
+    MergeRefused,
+    MergeRuleKind,
+    compute_merge_preview,
+    disable_dropped_bundled_login,
+    merge_users,
+)
 from gateway.models import (
     ApiKey,
+    Base,
     BillingMode,
-    EmailSettings,
+    ChatErasure,
+    ChatErasureStatus,
+    DirectoryEntry,
     Group,
     GroupModelAccess,
     GroupSource,
-    GroupSync,
+    IdentityEventAction,
+    IdentityEventActor,
     IdentityProvider,
+    IdpAuthorizationCode,
     LimitMetric,
     LimitRule,
     LimitScope,
@@ -88,6 +114,7 @@ from gateway.models import (
     RedactionConfig,
     RedactionRule,
     RedactionScope,
+    RefreshCredential,
     UsageRecord,
     UsageSource,
     UsageStatus,
@@ -95,9 +122,9 @@ from gateway.models import (
     UserIdentity,
     UserModelAccess,
 )
+from gateway.oidc import PENDING_USER_ISSUER, other_active_admin_exists
 from gateway.oidc_policy import environment_policy
 from gateway.pagination import Page, PageDep, count_of
-from gateway.passwords import hash_password, validate_password
 from gateway.periods import PeriodKind
 from gateway.plugins import registry as plugin_registry
 from gateway.pricing import (
@@ -132,12 +159,17 @@ from gateway.reporting import (
     resolve_period,
 )
 from gateway.schemas import (
+    BundledUserCreatedResponse,
+    BundledUserCreateRequest,
     CatalogueDiscoveryResponse,
     CatalogueDriftRow,
     CatalogueTagsResponse,
+    ChatSharedResource,
+    DeletePreviewResponse,
+    DeleteUserRequest,
+    DeleteUserResponse,
     DiscoveredModel,
     EmailSettingsResponse,
-    EmailSettingsUpdateRequest,
     EmailTestRequest,
     EmailTestResponse,
     GroupAdminResponse,
@@ -145,13 +177,15 @@ from gateway.schemas import (
     GroupMemberAddRequest,
     GroupSearchBackendRequest,
     GroupUsageRow,
-    IdentityProviderCreateRequest,
     IdentityProviderResponse,
-    IdentityProviderUpdateRequest,
+    IdentityRef,
     LimitRuleCreateRequest,
     LimitRuleResetRequest,
     LimitRuleResponse,
     LimitRuleUpdateRequest,
+    MergePreviewResponse,
+    MergeRequest,
+    MergeResponse,
     ModelAdminResponse,
     ModelCreateRequest,
     ModelImportRequest,
@@ -162,6 +196,8 @@ from gateway.schemas import (
     OidcPolicyChange,
     OidcPolicyResponse,
     OidcPolicyUpdateRequest,
+    PasswordResetResponse,
+    PendingErasuresResponse,
     PriceCreateRequest,
     PriceResponse,
     ProviderCreateRequest,
@@ -184,10 +220,9 @@ from gateway.schemas import (
     RedactionServiceHealth,
     RedactionStatusResponse,
     SearchBackendDeleteResponse,
+    SignInCreateRequest,
     UsageReport,
     UserAdminResponse,
-    UserCreateRequest,
-    UserPasswordRequest,
     UserUpdateRequest,
 )
 from gateway.secrets import SecretBox, SecretsUnavailableError, hint_for
@@ -232,6 +267,17 @@ class ConflictError(GatewayError):
     status_code = status.HTTP_409_CONFLICT
     error_type = "invalid_request_error"
     code = "already_exists"
+
+
+class LastAdminError(GatewayError):
+    """ADR 0093 §5.5: refuses whatever would leave zero active administrators,
+    self included. Distinct from `ConflictError`'s `already_exists` so a
+    console can tell "this address is taken" from "this would lock everyone
+    out" without parsing the message."""
+
+    status_code = status.HTTP_409_CONFLICT
+    error_type = "invalid_request_error"
+    code = "last_admin"
 
 
 class NotFoundError(GatewayError):
@@ -2353,6 +2399,265 @@ async def _user_responses(
     ]
 
 
+async def _bundled_provider(session: AsyncSession) -> IdentityProvider:
+    """The one enabled row, refusing anything but the bundled Authelia.
+
+    There is no id to take here the way `directory.py`'s routes take one: an
+    operator on any other kind gets a clear refusal rather than a 404 that
+    reads like a typo'd id.
+    """
+    row = await active_bundled_provider(session)
+    if row is None:
+        raise BadRequestError(
+            "This deployment's identity provider is not the bundled Authelia."
+        )
+    return row
+
+
+@router.post(
+    "/users", response_model=BundledUserCreatedResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_user(
+    payload: BundledUserCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+) -> BundledUserCreatedResponse:
+    """Add a person to the bundled directory (ADR 0093 §8.1/§8.2).
+
+    In order: the Authelia entry (so its own validation and "already exists"
+    refusal run before anything gateway-side is written), a **pending**
+    gateway user (§3.1 — the real ``(issuer, subject)`` arrives at their
+    first sign-in, via `bind_bundled_login`), the requested console groups as
+    manual memberships, and a `directory_entries` row bound to that user
+    *in advance* — the reverse of every other directory kind, where a row
+    exists unbound until a login claims it. If any gateway-side step fails,
+    the Authelia entry is removed again: a login with no account behind it
+    is worse than the create simply having failed outright.
+    """
+    provider = await _bundled_provider(session)
+    users_file = bundled_users_file(provider, secrets)
+
+    try:
+        _authelia_user, password = users_file.create(
+            payload.login, payload.email, payload.display_name
+        )
+    except UsersFileLockedError as exc:
+        raise ServiceUnavailableError(str(exc)) from exc
+    except UsersFileError as exc:
+        raise BadRequestError(str(exc), code="authelia_users") from exc
+
+    try:
+        normalized_email, _ = is_trusted_email(payload.email)
+        user = User(
+            issuer=PENDING_USER_ISSUER,
+            subject=str(uuid.uuid4()),
+            email=payload.email,
+            email_normalized=normalized_email,
+            display_name=payload.display_name or None,
+            username=payload.login,
+            # The administrator just set it; it must not revert at this
+            # person's first login the way an ordinary directory claim would
+            # (§3.1's own reasoning for the column, applied at creation
+            # rather than at a later PATCH).
+            admin_edited_fields=["email"],
+        )
+        session.add(user)
+        await session.flush()
+        # `add_manual_memberships` reads `user.memberships` synchronously; a
+        # brand-new row has never loaded that relationship, and touching it
+        # unloaded here would be an implicit lazy load outside the greenlet
+        # context asyncpg/aiosqlite need for one — MissingGreenlet, not a
+        # wrong answer, but a crash on every create.
+        await session.refresh(user, attribute_names=["memberships"])
+
+        await add_manual_memberships(session, user, payload.groups)
+        # An operator who picked no groups still gets a person who can bill
+        # something (ADR 0093 to-do item 1) — the same `users` group a
+        # bundled sign-in's own token used to carry before the redesign made
+        # groups console-authoritative.
+        await ensure_bundled_default_group(session, user)
+
+        session.add(
+            DirectoryEntry(
+                provider_id=provider.id,
+                external_id=payload.login,
+                username=payload.login,
+                email=payload.email,
+                user_id=user.id,
+            )
+        )
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.USER_CREATE,
+            target_user_id=user.id,
+            target_label=payload.email,
+        )
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.LOGIN_CREATE,
+            target_user_id=user.id,
+            target_label=payload.login,
+        )
+        await session.commit()
+    except IntegrityError as exc:
+        # A directory_entries row already bound to this login (a second
+        # admin racing the same name — the file's own "already exists" check
+        # ran first and passed, so this is the gateway-side race that ran
+        # after it) — same compensation, a clearer refusal than the bare
+        # constraint message.
+        await session.rollback()
+        with contextlib.suppress(UsersFileError):
+            users_file.delete(payload.login)
+        raise ConflictError(f"{payload.login!r} already exists.") from exc
+    except Exception:
+        await session.rollback()
+        # The file is in whatever state it was in before this route ran;
+        # the gateway-side failure is the error worth raising, not a
+        # cleanup that could not undo a create that never happened.
+        with contextlib.suppress(UsersFileError):
+            users_file.delete(payload.login)
+        raise
+
+    await session.refresh(user, attribute_names=["memberships"])
+    response = (await _user_responses(session, [user]))[0]
+    return BundledUserCreatedResponse(**response.model_dump(), password=password)
+
+
+@router.post(
+    "/users/{user_id}/sign-in",
+    response_model=BundledUserCreatedResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_sign_in(
+    user_id: uuid.UUID,
+    payload: SignInCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+) -> BundledUserCreatedResponse:
+    """A bundled login for an existing gateway user who has none (§8.1):
+    the after-a-switch and after-break-glass case, where the person already
+    has a chat history and memberships under this gateway id, just no way to
+    reach it while the bundled Authelia is what's configured.
+    """
+    user = (
+        await session.execute(
+            select(User)
+            .where(User.id == user_id)
+            .options(selectinload(User.memberships).selectinload(Membership.group))
+        )
+    ).scalar_one_or_none()
+    if user is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+
+    provider = await _bundled_provider(session)
+    users_file = bundled_users_file(provider, secrets)
+
+    email = user.email or ""
+    try:
+        _authelia_user, password = users_file.create(payload.login, email, user.display_name or "")
+    except UsersFileLockedError as exc:
+        raise ServiceUnavailableError(str(exc)) from exc
+    except UsersFileError as exc:
+        raise BadRequestError(str(exc), code="authelia_users") from exc
+
+    try:
+        session.add(
+            DirectoryEntry(
+                provider_id=provider.id,
+                external_id=payload.login,
+                username=payload.login,
+                email=email,
+                user_id=user.id,
+            )
+        )
+        # This person may already have memberships from before a switch to
+        # the bundled Authelia — or may be a break-glass pending user with
+        # none at all; either way, this is one of the to-do's named call
+        # sites, so the same gap-filler runs here too.
+        await ensure_bundled_default_group(session, user)
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.LOGIN_CREATE,
+            target_user_id=user.id,
+            target_label=payload.login,
+        )
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        with contextlib.suppress(UsersFileError):
+            users_file.delete(payload.login)
+        raise ConflictError(f"{payload.login!r} already exists.") from exc
+    except Exception:
+        await session.rollback()
+        with contextlib.suppress(UsersFileError):
+            users_file.delete(payload.login)
+        raise
+
+    response = (await _user_responses(session, [user]))[0]
+    return BundledUserCreatedResponse(**response.model_dump(), password=password)
+
+
+@router.post("/users/{user_id}/reset-password", response_model=PasswordResetResponse)
+async def reset_password(
+    user_id: uuid.UUID,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+) -> PasswordResetResponse:
+    """Mint a fresh one-time password for the user's bundled login (§8.1).
+
+    Works with or without SMTP configured, by decision (§8.4): the
+    admin-issued reset is the only reset this deployment has without it, and
+    stays available with it, since a lost password is not always a person
+    who still has their mailbox.
+    """
+    user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+
+    provider = await _bundled_provider(session)
+    entry = (
+        await session.execute(
+            select(DirectoryEntry).where(
+                DirectoryEntry.provider_id == provider.id, DirectoryEntry.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        raise NotFoundError("This user has no bundled login to reset.")
+
+    users_file = bundled_users_file(provider, secrets)
+    try:
+        password = users_file.reset_password(entry.external_id)
+    except UsersFileLockedError as exc:
+        raise ServiceUnavailableError(str(exc)) from exc
+    except UsersFileError as exc:
+        raise BadRequestError(str(exc), code="authelia_users") from exc
+
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.PASSWORD_RESET,
+        target_user_id=user.id,
+        target_label=user.email or "",
+    )
+    await session.commit()
+    return PasswordResetResponse(password=password)
+
+
 @router.get("/users", response_model=Page[UserAdminResponse])
 async def list_users(
     admin: AdminUserDep,
@@ -2388,6 +2693,118 @@ async def list_users(
     return page.page(await _user_responses(session, users), total)
 
 
+async def _bundled_entry_for(
+    session: AsyncSession, user: User
+) -> tuple[IdentityProvider, DirectoryEntry] | None:
+    """This user's entry under the *currently enabled* bundled provider, and
+    that provider itself — never a stale entry left over from a provider row
+    an IdP switch disabled (ADR 0093 §2 keeps every old row, never deletes
+    it). Returned together, rather than making a caller re-fetch the
+    provider it just implied, so there is no second query that could in
+    principle answer differently and nothing to `assert` about it staying
+    the same between the two.
+    """
+    provider = await active_bundled_provider(session)
+    if provider is None:
+        return None
+    entry = (
+        await session.execute(
+            select(DirectoryEntry).where(
+                DirectoryEntry.provider_id == provider.id, DirectoryEntry.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+    return (provider, entry) if entry is not None else None
+
+
+async def _revoke_sessions_and_credentials(
+    session: AsyncSession, admin: User, user: User
+) -> None:
+    """ADR 0093 §9.1's gateway-side half of a disable: ends every session and
+    credential this person already holds, not just requests from here on.
+
+    Personal API keys (`minted_by IS NULL`) are the one thing kept: they are
+    refused while the user is inactive (the existing check in `deps.py`),
+    and re-enabling brings them back, which nothing minted here ever does —
+    a session, an authorization code and a minted key are all short-lived by
+    design, so there is no "bring it back" for any of them to mean.
+    """
+    user.sessions_valid_after = utcnow()
+    await session.execute(delete(RefreshCredential).where(RefreshCredential.user_id == user.id))
+    await session.execute(
+        delete(IdpAuthorizationCode).where(IdpAuthorizationCode.user_id == user.id)
+    )
+    await session.execute(
+        delete(ApiKey).where(ApiKey.user_id == user.id, ApiKey.minted_by.is_not(None))
+    )
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.SESSIONS_REVOKE,
+        target_user_id=user.id,
+        target_label=user.email or "",
+    )
+
+
+async def _sync_bundled_login(
+    session: AsyncSession, admin: User, secrets: SecretBox, user: User, *, disabled: bool
+) -> str | None:
+    """Sets Authelia's own `disabled` flag to match, auditing either
+    outcome. Returns the failure reason, or `None` on success or on nothing
+    bundled to sync (not itself a failure).
+
+    Deliberately idempotent and side-effect-free when there is nothing to
+    change: called on *every* PATCH that names `is_active`, whether or not
+    the value actually changed this time, so a PATCH resending the same
+    state is how a previous Authelia-side failure gets retried — the
+    console's "run the action again" is this exact call, not a special
+    retry path.
+    """
+    found = await _bundled_entry_for(session, user)
+    if found is None:
+        return None
+    provider, entry = found
+    users_file = bundled_users_file(provider, secrets)
+    action = IdentityEventAction.LOGIN_DISABLE if disabled else IdentityEventAction.LOGIN_ENABLE
+    try:
+        users_file.update(entry.external_id, disabled=disabled)
+    except UsersFileError as exc:
+        # The gateway-side state (is_active, sessions_valid_after, the
+        # deletes on a disable) already stands, committed or about to be by
+        # this same request: `is_active` alone still refuses the person at
+        # their next `/v1` call even if Authelia's own flag never gets set.
+        # A login file the gateway cannot currently reach must not undo a
+        # decision that has already happened — it only means Authelia's
+        # side of it is out of sync until a retry (or the next PATCH)
+        # reaches the file again.
+        logger.warning(
+            "could not set Authelia disabled=%s for %s: %s", disabled, entry.external_id, exc
+        )
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=action,
+            target_user_id=user.id,
+            target_label=entry.external_id,
+            detail={"result": "failed"},
+        )
+        return str(exc)
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=action,
+        target_user_id=user.id,
+        target_label=entry.external_id,
+    )
+    return None
+
+
 @router.patch("/users/{user_id}", response_model=UserAdminResponse)
 async def update_user(
     user_id: uuid.UUID,
@@ -2395,6 +2812,7 @@ async def update_user(
     admin: AdminUserDep,
     session: SessionDep,
     settings: SettingsDep,
+    secrets: SecretsDep,
 ) -> UserAdminResponse:
     """Deactivate a user, make one an administrator, or edit their profile.
 
@@ -2434,181 +2852,335 @@ async def update_user(
         raise NotFoundError(f"No user with id {user_id}.")
 
     fields = payload.model_dump(exclude_unset=True)
+    # ADR 0093 §5.4: an invite is not a grant. A pending user (§3.1) has never
+    # signed in, so nothing has verified they are who the console typed in —
+    # the only way to become admin ahead of that is break-glass, which is a
+    # host-side recovery, not this route.
+    if fields.get("is_admin") and user.issuer == PENDING_USER_ISSUER:
+        raise BadRequestError(
+            "This account has not signed in yet. Grant admin after their first sign-in."
+        )
+    was_admin, was_active = user.is_admin, user.is_active
+    currently_active_admin = was_admin and was_active and user.issuer != PENDING_USER_ISSUER
+    loses_admin_or_active = fields.get("is_admin") is False or fields.get("is_active") is False
+    # The guard (ADR 0093 §5.5), self included: it is checked before anything
+    # is written, so a refused PATCH changes nothing at all, not "everything
+    # except the one field that would have locked everyone out".
+    if (
+        currently_active_admin
+        and loses_admin_or_active
+        and not await other_active_admin_exists(session, excluding=user.id)
+    ):
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.ADMIN_REFUSED_LAST,
+            target_user_id=user.id,
+            target_label=user.email or "",
+            reason="would leave no active administrator",
+        )
+        await session.commit()
+        raise LastAdminError(
+            "This would leave no active administrator. Make another account an "
+            "administrator first."
+        )
+
     for field, value in fields.items():
         setattr(user, field, value)
+    # Provenance (ADR 0088): what the console sets is the console's, so a
+    # provider deciding admin by claim can never undo it — and a console
+    # reactivation clears a directory deactivation.
+    if "is_admin" in fields:
+        user.admin_source = "manual"
+    if "is_active" in fields:
+        user.deactivated_by = None if fields["is_active"] else "manual"
     # A new list every time: SQLAlchemy does not see in-place mutation of a
     # JSON attribute, and an append the unit-of-work never flushes would make
     # the override exist only until the request ended — the edit would revert
     # at the next login exactly as if the column were not there.
     if edited := [field for field in _PROFILE_FIELDS if field in fields]:
-        user.admin_edited_fields = list(
-            dict.fromkeys([*(user.admin_edited_fields or []), *edited])
+        user.admin_edited_fields = list(dict.fromkeys([*(user.admin_edited_fields or []), *edited]))
+
+    # The audit trail (ADR 0093 §3.1): recorded from what actually changed,
+    # not from the request shape, so a PATCH that sets `is_admin` to the value
+    # it already held writes nothing.
+    if "is_admin" in fields and fields["is_admin"] != was_admin:
+        admin_action = (
+            IdentityEventAction.ADMIN_GRANT
+            if fields["is_admin"]
+            else IdentityEventAction.ADMIN_REVOKE
+        )
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=admin_action,
+            target_user_id=user.id,
+            target_label=user.email or "",
+        )
+        if fields["is_admin"]:
+            await mark_bootstrap_consumed(session)
+    authelia_sync_error: str | None = None
+    if "is_active" in fields:
+        target_active = fields["is_active"]
+        if target_active != was_active:
+            active_action = (
+                IdentityEventAction.USER_ENABLE
+                if target_active
+                else IdentityEventAction.USER_DISABLE
+            )
+            await record_event(
+                session,
+                actor_type=IdentityEventActor.USER,
+                actor_user_id=admin.id,
+                actor_label=admin.email or "",
+                action=active_action,
+                target_user_id=user.id,
+                target_label=user.email or "",
+            )
+            if not target_active:
+                await _revoke_sessions_and_credentials(session, admin, user)
+        # Attempted every time `is_active` is named, changed or not: this is
+        # what makes a previous Authelia-side failure retryable by sending
+        # the same PATCH again, with no other field having to change first.
+        authelia_sync_error = await _sync_bundled_login(
+            session, admin, secrets, user, disabled=not target_active
         )
     await session.commit()
 
     # Not by re-reading the listing and picking a row out of it: the listing is
     # a page now, and the user just edited may not be on the page.
-    return (await _user_responses(session, [user]))[0]
-
-
-async def _load_local_user(user_id: uuid.UUID, session: SessionDep) -> User:
-    """The user a password route was aimed at, or the error that stops it.
-
-    Only ``issuer="local"`` accounts may carry a password. Attaching one to a
-    directory user would create a second credential for an identity the IdP
-    is supposed to be authoritative about — a leaked local password would
-    then ride the issuer's group memberships without anything in the
-    directory having granted it.
-    """
-    user = (
-        await session.execute(
-            select(User)
-            .where(User.id == user_id)
-            .options(selectinload(User.memberships).selectinload(Membership.group))
+    response = (await _user_responses(session, [user]))[0]
+    if authelia_sync_error is not None:
+        verb = "disabled" if fields["is_active"] is False else "enabled"
+        response = response.model_copy(
+            update={
+                "authelia_sync": "failed",
+                "authelia_sync_message": (
+                    f"The account is {verb} here, but its Authelia login could not be "
+                    f"updated: {authelia_sync_error}. Retry, or run the action again."
+                ),
+            }
         )
-    ).scalar_one_or_none()
+    return response
+
+
+def _confirm_matches(user: User, confirm: str) -> bool:
+    """§7.1: "confirm must equal the source's email, or its id when it has
+    none." Compared exactly, not casefolded -- an operator copies this from
+    the preview they are looking at, so there is no directory-address
+    normalisation question here the way there is for an automatic match."""
+    expected = user.email or str(user.id)
+    return confirm == expected
+
+
+@router.get("/users/{user_id}/merge-preview", response_model=MergePreviewResponse)
+async def merge_preview(
+    user_id: uuid.UUID, into: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> MergePreviewResponse:
+    try:
+        preview = await compute_merge_preview(
+            session, source_id=user_id, target_id=into, actor_id=admin.id
+        )
+    except MergeNotFound as exc:
+        raise NotFoundError(str(exc)) from exc
+    except MergeRefused as exc:
+        raise BadRequestError(str(exc)) from exc
+    return MergePreviewResponse(
+        source_id=preview.source_id,
+        target_id=preview.target_id,
+        counts=preview.counts,
+        identities_moving=[
+            IdentityRef(issuer=i.issuer, subject=i.subject) for i in preview.identities_moving
+        ],
+        identities_dropped=[
+            IdentityRef(issuer=i.issuer, subject=i.subject) for i in preview.identities_dropped
+        ],
+        resulting_is_admin=preview.resulting_is_admin,
+        bundled_logins_disabled=preview.bundled_logins_disabled,
+        duplicate_rules_dropped=preview.duplicate_rules_dropped,
+        chat_note=preview.chat_note,
+    )
+
+
+@router.post("/users/{user_id}/merge", response_model=MergeResponse)
+async def merge_user(
+    user_id: uuid.UUID,
+    body: MergeRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+) -> MergeResponse:
+    """Irreversible (ADR 0093 §7.1): moves every table `gateway.merge`
+    knows about onto `body.into`, deletes `user_id`, and stamps the target's
+    `merged_at`/`sessions_valid_after` so both people's console sessions end
+    cleanly. The typed confirmation is checked against the source *before*
+    the transaction starts, on the same row the preview read, so a stale
+    preview (the source's email changed since) fails here rather than
+    confirming the wrong person.
+    """
+    source = await session.get(User, user_id)
+    if source is None:
+        raise NotFoundError(f"No user with id {user_id}.")
+    if not _confirm_matches(source, body.confirm):
+        raise BadRequestError(
+            "Type the source account's email (or its id, if it has none) to confirm."
+        )
+
+    try:
+        summary = await merge_users(
+            session,
+            source_id=user_id,
+            target_id=body.into,
+            actor_id=admin.id,
+            actor_label=admin.email or "",
+            reason=body.reason,
+        )
+    except MergeNotFound as exc:
+        await session.rollback()
+        raise NotFoundError(str(exc)) from exc
+    except MergeRefused as exc:
+        await session.rollback()
+        raise BadRequestError(str(exc)) from exc
+    await session.commit()
+
+    if summary.login_to_disable is not None:
+        provider_id, external_id = summary.login_to_disable
+        await disable_dropped_bundled_login(
+            session,
+            secrets,
+            provider_id=provider_id,
+            external_id=external_id,
+            target_id=summary.target_id,
+            actor_id=admin.id,
+            actor_label=admin.email or "",
+        )
+
+    return MergeResponse(
+        target_id=summary.target_id,
+        counts=summary.counts,
+        identities_dropped=[
+            IdentityRef(issuer=i.issuer, subject=i.subject) for i in summary.identities_dropped
+        ],
+        bundled_logins_disabled=summary.bundled_logins_disabled,
+        duplicate_rules_dropped=summary.duplicate_rules_dropped,
+    )
+
+
+#: A plain delete's own reading of the merge registry (ADR 0093 §9.2): every
+#: table whose rule means "this row is this person's and disappears with
+#: them" -- as opposed to `REASSIGN`/`SCOPE_ID_USER`, which describe a
+#: *merge*'s "move it to someone else" and have nothing to say about a solo
+#: delete, where rows simply survive, orphaned (`SET NULL`) or inert
+#: (`scope_id` unresolvable). One registry, so a table added to it for the
+#: merge guard is counted here too without a second list to keep in step.
+_DELETE_REMOVES = frozenset(
+    {
+        MergeRuleKind.DELETE,
+        MergeRuleKind.KEEP_TARGET_DELETE_SOURCE,
+        MergeRuleKind.UNION_MEMBERSHIPS,
+        MergeRuleKind.UNION_MODEL_ACCESS,
+        MergeRuleKind.IDENTITIES,
+    }
+)
+
+
+async def _gateway_delete_counts(session: AsyncSession, user_id: uuid.UUID) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for rule in MERGE_RULES:
+        if rule.kind not in _DELETE_REMOVES:
+            continue
+        table = Base.metadata.tables[rule.table]
+        stmt = select(func.count()).select_from(table).where(table.c[rule.column] == user_id)
+        counts[rule.table] = (await session.execute(stmt)).scalar_one()
+    return counts
+
+
+def _chat_shared_resources(chat_preview: dict[str, Any] | None) -> list[ChatSharedResource]:
+    """The chat preview's own `shared` list, typed -- an unreachable chat (or
+    one running before this list existed) reports none, which is exactly
+    "nothing known to be shared" rather than a distinct case to handle."""
+    raw = (chat_preview or {}).get("shared")
+    if not isinstance(raw, list):
+        return []
+    resources: list[ChatSharedResource] = []
+    for item in raw:
+        if isinstance(item, dict):
+            resources.append(ChatSharedResource(**item))
+    return resources
+
+
+async def _user_identities_for_erasure(
+    session: AsyncSession, user: User
+) -> list[dict[str, str]]:
+    """Every ``(issuer, subject)`` naming this person, the primary pair
+    included -- what the chat's own resolution needs, since an account it
+    never finished keying to ``gatewayUserId`` is only findable this way."""
+    linked = (
+        await session.execute(select(UserIdentity).where(UserIdentity.user_id == user.id))
+    ).scalars().all()
+    return [{"issuer": user.issuer, "subject": user.subject}] + [
+        {"issuer": row.issuer, "subject": row.subject} for row in linked
+    ]
+
+
+@router.get("/users/{user_id}/delete-preview", response_model=DeletePreviewResponse)
+async def delete_preview(
+    user_id: uuid.UUID,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    http: ControlHttpDep,
+) -> DeletePreviewResponse:
+    user = await session.get(User, user_id)
     if user is None:
         raise NotFoundError(f"No user with id {user_id}.")
-    if user.issuer != "local":
-        raise BadRequestError(
-            "Only local accounts (issuer 'local') can have a password. This user "
-            "signs in through the identity provider, which is authoritative for them."
-        )
-    return user
+
+    gateway_counts = await _gateway_delete_counts(session, user.id)
+    bundled = await _bundled_entry_for(session, user)
+    identities = await _user_identities_for_erasure(session, user)
+
+    chat_preview = await preview_chat_erasure(
+        settings, http, gateway_user_id=user.id, identities=identities
+    )
+    chat_counts = chat_preview.get("counts") if chat_preview else None
+    legacy = chat_preview.get("unattributed_legacy_shares") if chat_preview else 0
+    shared = _chat_shared_resources(chat_preview)
+
+    return DeletePreviewResponse(
+        user_id=user.id,
+        gateway_counts=gateway_counts,
+        bundled_login=bundled[1].external_id if bundled else None,
+        chat_counts=chat_counts if isinstance(chat_counts, dict) else None,
+        chat_reachable=chat_preview is not None,
+        shared=shared,
+        shared_with_others=bool(shared) or bool(legacy),
+        chat_unattributed_legacy_shares=int(legacy or 0),
+    )
 
 
-@router.put("/users/{user_id}/password", response_model=UserAdminResponse)
-async def set_user_password(
+@router.delete("/users/{user_id}", response_model=DeleteUserResponse)
+async def delete_user(
     user_id: uuid.UUID,
-    payload: UserPasswordRequest,
     admin: AdminUserDep,
     session: SessionDep,
     settings: SettingsDep,
-) -> UserAdminResponse:
-    """Set or reset a local account's password.
+    http: ControlHttpDep,
+    secrets: SecretsDep,
+    body: DeleteUserRequest = DeleteUserRequest(),
+) -> DeleteUserResponse:
+    """Delete an account everywhere (ADR 0093 §9.2, §9.3): the gateway's own
+    rows in one transaction with the ``chat_erasures`` row that records the
+    chat still owes an answer, then — after that commits — the bound
+    Authelia login, then one inline try at the chat itself. Anything short
+    of that inline try succeeding is not a failure of this request: the
+    retry loop has the row, and it does not give up.
 
-    A reset needs no knowledge of the old password: the caller is already an
-    authenticated administrator, and requiring the old value would make
-    "operator resets a locked-out account" impossible. Same trust level as
-    minting a key on someone's behalf.
-    """
-    user = await _load_local_user(user_id, session)
-    try:
-        validate_password(payload.password, settings.local_auth)
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-
-    credential = await session.get(LocalCredential, user.id)
-    if credential is None:
-        session.add(LocalCredential(user_id=user.id, password_hash=hash_password(payload.password)))
-    else:
-        credential.password_hash = hash_password(payload.password)
-    await session.commit()
-    return (await _user_responses(session, [user]))[0]
-
-
-@router.delete("/users/{user_id}/password", response_model=UserAdminResponse)
-async def clear_user_password(
-    user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
-) -> UserAdminResponse:
-    """Revoke an account's ability to sign in locally.
-
-    Row deletion, not an empty hash: "no credential" and "credential that
-    matches nothing" are different states, and only the first is honest about
-    what login will do.
-    """
-    user = await _load_local_user(user_id, session)
-    await session.execute(delete(LocalCredential).where(LocalCredential.user_id == user.id))
-    await session.commit()
-    return (await _user_responses(session, [user]))[0]
-
-
-@router.post("/users", response_model=UserAdminResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(
-    payload: UserCreateRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    settings: SettingsDep,
-) -> UserAdminResponse:
-    """Mint a local account (ADR 0048).
-
-    The console-shaped version of ``gateway passwd``: email, initial password,
-    optional groups and admin. Local only — an identity-provider account is
-    the IdP's to create, and a console-created directory user would be
-    overwritten or orphaned at the next login.
-    """
-    email = payload.email.strip().casefold()
-    if "@" not in email or email.startswith("@") or email.endswith("@"):
-        raise BadRequestError("A valid email address is required.")
-
-    existing = await session.execute(
-        select(User).where(User.issuer == "local", User.subject == email)
-    )
-    if existing.scalar_one_or_none() is not None:
-        raise BadRequestError(f"An account for {email} already exists.", code="account_exists")
-
-    try:
-        validate_password(payload.password, settings.local_auth)
-    except ValueError as exc:
-        raise BadRequestError(str(exc)) from exc
-
-    user = User(
-        issuer="local",
-        subject=email,
-        email=email,
-        display_name=payload.display_name or None,
-        is_admin=payload.is_admin,
-    )
-    session.add(user)
-    await session.flush()
-    # The credential at creation, not left for a second step: an account
-    # handed over with "your password is X" and no hash would answer every
-    # sign-in attempt with "incorrect email or password" — found by the
-    # end-to-end assertion in test_oidc_policy.py, not by the type checker.
-    # It needs the flush above: user.id does not exist before it.
-    session.add(LocalCredential(user_id=user.id, password_hash=hash_password(payload.password)))
-
-    # Group *names*, resolved or created. Created groups are "manual", not
-    # "oidc": an OIDC-sourced group that the IdP stops reporting is pruned from
-    # memberships at the next login, and a group an administrator typed into a
-    # form must not be subject to that reconciliation.
-    names: list[str] = []
-    for name in payload.groups:
-        cleaned = name.strip()
-        if cleaned and cleaned not in names:
-            names.append(cleaned)
-    groups: list[Group] = []
-    for name in names:
-        group = (
-            await session.execute(select(Group).where(Group.name == name))
-        ).scalar_one_or_none()
-        if group is None:
-            group = Group(name=name, source=GroupSource.MANUAL)
-            session.add(group)
-            await session.flush()
-        groups.append(group)
-    for group in groups:
-        session.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL))
-    # The same sole-group rule the login path applies: one group means it is
-    # the default, and the account can bill without a settings detour.
-    if len(groups) == 1:
-        user.default_billing_group_id = groups[0].id
-
-    await session.commit()
-    # _user_responses reads user.memberships, and nothing above has loaded it:
-    # a lazy load from async code is a MissingGreenlet on the *first* account
-    # created — the same trap provision_user documents and dodges. Explicit
-    # refresh rather than a hope.
-    await session.refresh(user, attribute_names=["memberships"])
-    return (await _user_responses(session, [user]))[0]
-
-
-@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(user_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
-    """Delete an account, keeping the ledger and leaving their rules inert.
-
-    What dies with the row: keys, memberships, refresh credentials and the
-    local password — all ``CASCADE``. What survives on purpose:
+    What dies with the gateway row: keys, memberships, refresh credentials
+    and the local password — all ``CASCADE``. What survives on purpose:
 
     * **The ledger.** ``usage_records.user_id`` is ``ON DELETE SET NULL``, so
       historical spend is never lost — the rows keep their amounts and groups,
@@ -2629,11 +3201,33 @@ async def delete_user(user_id: uuid.UUID, admin: AdminUserDep, session: SessionD
     if user is None:
         raise NotFoundError(f"No user with id {user_id}.")
 
-    # No last-admin guard is needed beyond the self-delete rule above: the
-    # caller is themselves an active administrator and never the target, so
-    # deleting one admin always leaves at least one — the account making the
-    # request. A guard counting "admins other than the target" could never
-    # fire, and a check that cannot fire is a lie in the code.
+    # The self-delete rule above already makes this unreachable — the caller
+    # is themselves an active administrator and never the target, so deleting
+    # one admin always leaves at least one. It is added anyway (ADR 0093
+    # §5.5): the guard has one implementation, shared with PATCH, the CLI, and
+    # the rule-driven revocations, rather than "this route doesn't need it".
+    if (
+        user.is_admin
+        and user.is_active
+        and user.issuer != PENDING_USER_ISSUER
+        and not await other_active_admin_exists(session, excluding=user.id)
+    ):
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.ADMIN_REFUSED_LAST,
+            target_user_id=user.id,
+            target_label=user.email or "",
+            reason="would leave no active administrator",
+        )
+        await session.commit()
+        raise LastAdminError(
+            "This would leave no active administrator. Make another account an "
+            "administrator first."
+        )
+
     published = await _published_by(session, user_id)
     if published:
         # Not a block on erasure — that would be a compliance bug rather than a
@@ -2656,8 +3250,71 @@ async def delete_user(user_id: uuid.UUID, admin: AdminUserDep, session: SessionD
             "everybody using them."
         )
 
+    if not settings.chat.erasure_url or not settings.chat.erasure_token.get_secret_value():
+        # A URL with no token is exactly as unusable as no URL at all: every
+        # call would be refused with 401, forever, by design — so this is
+        # the same refusal, not a distinct one, however the deployment ended
+        # up in the state. cerea-deploy sets the URL unconditionally on any
+        # preset that runs a local chat; the token is what an unconfigured
+        # deployment (an .env from before `./configure` minted one) lacks.
+        raise BadRequestError("this deployment's chat is not reachable from the gateway")
+
+    identities = await _user_identities_for_erasure(session, user)
+    chat_preview = await preview_chat_erasure(
+        settings, http, gateway_user_id=user.id, identities=identities
+    )
+    shared = bool(_chat_shared_resources(chat_preview)) or bool(
+        (chat_preview or {}).get("unattributed_legacy_shares")
+    )
+    if shared and not body.confirm_shared_loss:
+        raise BadRequestError(
+            "This account has content shared with others. Confirm you understand it will "
+            "disappear for them (confirm_shared_loss) to proceed."
+        )
+
+    bundled = await _bundled_entry_for(session, user)
+
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.USER_DELETE,
+        target_user_id=user.id,
+        target_label=user.email or "",
+    )
     await session.delete(user)
+    erasure = await queue_erasure(session, gateway_user_id=user.id, identities=identities)
     await session.commit()
+
+    if bundled is not None:
+        provider, entry = bundled
+        users_file = bundled_users_file(provider, secrets)
+        try:
+            users_file.delete(entry.external_id)
+        except UsersFileError as exc:
+            if "last user" in str(exc):
+                with contextlib.suppress(UsersFileError):
+                    users_file.update(entry.external_id, disabled=True)
+            else:
+                logger.warning(
+                    "could not remove bundled login %r on delete: %s", entry.external_id, exc
+                )
+
+    done = await attempt_erasure(session, settings, http, erasure)
+    return DeleteUserResponse(erasure_id=erasure.id, chat_erasure_done=done)
+
+
+@router.get("/erasures/pending", response_model=PendingErasuresResponse)
+async def pending_erasures(admin: AdminUserDep, session: SessionDep) -> PendingErasuresResponse:
+    """The Users page's own banner (ADR 0093 §9.3): "N erasures waiting for
+    the chat", shown while this is above zero."""
+    count = await session.scalar(
+        select(func.count())
+        .select_from(ChatErasure)
+        .where(ChatErasure.status == ChatErasureStatus.PENDING)
+    )
+    return PendingErasuresResponse(pending=count or 0)
 
 
 async def _published_by(session: AsyncSession, user_id: uuid.UUID) -> list[str]:
@@ -2738,7 +3395,13 @@ async def get_oidc_policy_view(
 async def get_email_settings(
     admin: AdminUserDep, session: SessionDep, request: Request
 ) -> EmailSettingsResponse:
-    """The mail configuration in force — the row's, or the environment's."""
+    """The mail configuration in force — the row's, or the environment's.
+
+    Read-only (ADR 0093 §1, §14): mail is one setting now (``GATEWAY_SMTP__*``),
+    so there is nothing here for an administrator to edit. The fold over an
+    old console-set ``EmailSettings`` row stays, for a deployment upgrading
+    from before this stage; nothing writes a new one.
+    """
     effective = await effective_smtp(session, request.app.state.settings, request.app.state.secrets)
     return EmailSettingsResponse(
         host=effective.host,
@@ -2749,34 +3412,6 @@ async def get_email_settings(
         source=effective.source,
         enabled=effective.enabled,
     )
-
-
-@router.put("/email", response_model=EmailSettingsResponse)
-async def set_email_settings(
-    payload: EmailSettingsUpdateRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    request: Request,
-) -> EmailSettingsResponse:
-    """Save the mail configuration as the console's decision.
-
-    One row; the password is write-only, and omitted means "keep the stored
-    one" — an edit that only fixes a port must not have to re-type a password
-    it was never shown.
-    """
-    row = await session.get(EmailSettings, 1)
-    if row is None:
-        row = EmailSettings(id=1)
-        session.add(row)
-    row.smtp_host = payload.host.strip()
-    row.smtp_port = payload.port
-    row.smtp_username = payload.username.strip()
-    if payload.password is not None:
-        row.smtp_password_encrypted = request.app.state.secrets.encrypt(payload.password)
-    row.smtp_from = payload.from_address.strip()
-    row.updated_by = admin.id
-    await session.commit()
-    return await get_email_settings(admin, session, request)
 
 
 @router.post("/email/test", response_model=EmailTestResponse)
@@ -2799,17 +3434,7 @@ async def test_email_settings(
         )
     try:
         await send_mail_async(
-            effective.__class__(
-                host=effective.host,
-                port=effective.port,
-                username=effective.username,
-                password=effective.password,
-                from_address=effective.from_address,
-                source=effective.source,
-                enabled=effective.enabled,
-            )
-            if False
-            else _smtp_like(effective),
+            effective.to_smtp_settings(),
             payload.to.strip(),
             "Pystino — test email",
             "This is a test message from the Pystino gateway, sent from the "
@@ -2821,24 +3446,10 @@ async def test_email_settings(
     return EmailTestResponse(ok=True, detail="The message was handed to the mail server.")
 
 
-def _smtp_like(effective: Any) -> Any:
-    """Adapt the effective config to the shape send_mail_async reads."""
-    from gateway.config import PasswordResetSettings
-
-    return PasswordResetSettings(
-        enabled=True,
-        smtp_host=effective.host,
-        smtp_port=effective.port,
-        smtp_username=effective.username,
-        smtp_password=SecretStr(effective.password),
-        smtp_from=effective.from_address,
-    )
-
-
 # -- identity providers (ADR 0051) ---------------------------------------------
 
 
-def _idp_response(record: Any) -> IdentityProviderResponse:
+def _idp_response(record: Any, *, user_count: int = 0) -> IdentityProviderResponse:
     return IdentityProviderResponse(
         id=record.id,
         name=record.name,
@@ -2851,10 +3462,26 @@ def _idp_response(record: Any) -> IdentityProviderResponse:
         group_mappings=[
             OidcMappingRule(idp=idp, local=local) for idp, local in record.group_mappings.items()
         ],
-        link_local_by_email=record.link_local_by_email,
+        link_by_email=record.link_by_email,
         group_sync=record.group_sync.value,
         is_enabled=record.is_enabled,
         source=record.source,
+        internal_base_url=record.internal_base_url,
+        logout_url=record.logout_url,
+        default_logout_url=identity_policy.default_logout_url(record.kind, record.issuer),
+        kind=record.kind,
+        group_source=record.group_source,
+        admin_source=record.admin_source,
+        admin_claim=record.admin_claim,
+        admin_values=list(record.admin_values),
+        subject_claim=record.subject_claim,
+        sync_adapter=record.sync_adapter,
+        sync_interval_minutes=record.sync_interval_minutes,
+        sync_deprovision=record.sync_deprovision,
+        sync_create_users=record.sync_create_users,
+        sync_confirmed=record.sync_confirmed,
+        capabilities=identity_policy.capabilities(record.kind).as_dict(),
+        user_count=user_count,
     )
 
 
@@ -2862,112 +3489,20 @@ def _idp_response(record: Any) -> IdentityProviderResponse:
 async def list_identity_providers(
     admin: AdminUserDep, session: SessionDep, request: Request
 ) -> list[IdentityProviderResponse]:
-    """Every configured identity provider, rows and any environment fallback."""
+    """Every configured identity provider, rows and any environment fallback.
+
+    Read-only (ADR 0093 §14): the provider row is a projection of the
+    environment now, re-seeded at every start, so there is nothing here for an
+    administrator to create, edit or delete. ``./configure`` is where this
+    changes.
+    """
     settings: Settings = request.app.state.settings
     records = await list_provider_records(
         session, settings, request.app.state.secrets, enabled_only=False
     )
-    return [_idp_response(record) for record in records]
-
-
-@router.post(
-    "/identity-providers",
-    response_model=IdentityProviderResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def create_identity_provider(
-    payload: IdentityProviderCreateRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    request: Request,
-) -> IdentityProviderResponse:
-    """Add an identity provider. The secret is encrypted at rest (ADR 0027)."""
-    name = payload.name.strip()
-    issuer = payload.issuer.strip().rstrip("/")
-    clash = await session.execute(
-        select(IdentityProvider).where(
-            (IdentityProvider.name == name) | (IdentityProvider.issuer == issuer)
-        )
-    )
-    if clash.scalar_one_or_none() is not None:
-        raise BadRequestError(
-            "A provider with that name or issuer already exists.", code="provider_exists"
-        )
-    row = IdentityProvider(
-        name=name,
-        issuer=issuer,
-        client_id=payload.client_id.strip(),
-        client_secret_encrypted=request.app.state.secrets.encrypt(payload.client_secret),
-        scopes=payload.scopes or ["openid", "profile", "email"],
-        groups_claim=payload.groups_claim,
-        fetch_userinfo=payload.fetch_userinfo,
-        group_mappings=[[rule.idp, rule.local] for rule in payload.group_mappings],
-        link_local_by_email=payload.link_local_by_email,
-        group_sync=GroupSync(payload.group_sync),
-        is_enabled=True,
-        created_by=admin.id,
-    )
-    session.add(row)
-    await session.commit()
-    return _idp_response(record_from_row(row, request.app.state.secrets))
-
-
-@router.put("/identity-providers/{provider_id}", response_model=IdentityProviderResponse)
-async def update_identity_provider(
-    provider_id: uuid.UUID,
-    payload: IdentityProviderUpdateRequest,
-    admin: AdminUserDep,
-    session: SessionDep,
-    request: Request,
-) -> IdentityProviderResponse:
-    """Edit a provider. A secret that is not re-typed stays the stored one."""
-    row = await session.get(IdentityProvider, provider_id)
-    if row is None:
-        raise NotFoundError(f"No identity provider with id {provider_id}.")
-    fields = payload.model_dump(exclude_unset=True)
-    if fields.get("issuer"):
-        row.issuer = fields["issuer"].strip().rstrip("/")
-    if fields.get("client_id"):
-        row.client_id = fields["client_id"].strip()
-    if fields.get("client_secret"):
-        row.client_secret_encrypted = request.app.state.secrets.encrypt(fields["client_secret"])
-    if "scopes" in fields and fields["scopes"] is not None:
-        row.scopes = fields["scopes"]
-    if fields.get("groups_claim"):
-        row.groups_claim = fields["groups_claim"]
-    if "fetch_userinfo" in fields and fields["fetch_userinfo"] is not None:
-        row.fetch_userinfo = fields["fetch_userinfo"]
-    if "group_mappings" in fields and fields["group_mappings"] is not None:
-        row.group_mappings = [[rule.idp, rule.local] for rule in fields["group_mappings"]]
-    if "link_local_by_email" in fields and fields["link_local_by_email"] is not None:
-        # Turning it off stops *new* links; it does not undo the ones already
-        # made. Unlinking is deleting a `user_identities` row, and doing it
-        # implicitly here would silently split one person's account in two —
-        # spend, keys and quotas on one row, their next login on another.
-        row.link_local_by_email = fields["link_local_by_email"]
-    if "group_sync" in fields and fields["group_sync"] is not None:
-        # Takes effect at the next login, like every other field on this row:
-        # nothing here reaches back over memberships already granted.
-        row.group_sync = GroupSync(fields["group_sync"])
-    if "is_enabled" in fields and fields["is_enabled"] is not None:
-        row.is_enabled = fields["is_enabled"]
-    await session.commit()
-    return _idp_response(record_from_row(row, request.app.state.secrets))
-
-
-@router.delete("/identity-providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_identity_provider(
-    provider_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
-) -> None:
-    row = await session.get(IdentityProvider, provider_id)
-    if row is None:
-        raise NotFoundError(f"No identity provider with id {provider_id}.")
-    # A provider whose rows are gone comes back only from the environment
-    # fallback — which exists only while the table is empty. Deleting the last
-    # row therefore removes OIDC sign-in entirely, and that is what the
-    # operator asked for.
-    await session.delete(row)
-    await session.commit()
+    by_issuer = select(User.issuer, func.count(User.id)).group_by(User.issuer)
+    counts: dict[str, int] = dict((await session.execute(by_issuer)).tuples().all())
+    return [_idp_response(record, user_count=counts.get(record.issuer, 0)) for record in records]
 
 
 @router.put("/oidc/policy", response_model=OidcPolicyResponse)

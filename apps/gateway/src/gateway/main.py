@@ -14,14 +14,19 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from gateway.accounting import DEFAULT_ESTIMATOR
-from gateway.config import Settings, get_settings
+from gateway.config import Settings, get_settings, startup_warnings
 from gateway.db import create_engine, create_session_factory
+from gateway.directory.bundled_migration import migrate_bundled_directory
+from gateway.erasure import ErasureRetryLoop
 from gateway.errors import GatewayError, error_payload, gateway_error_handler
 from gateway.fx import FXService
-from gateway.identity_registry import OIDCProviderRegistry, seed_from_env
-from gateway.idp import IdpSigner
+from gateway.identity_registry import (
+    OIDCProviderRegistry,
+    active_bundled_provider,
+    reseed_from_env,
+)
 from gateway.logging_config import configure_logging
-from gateway.login_throttle import LoginThrottle
+from gateway.oidc import sweep_env_admin_email_rule
 from gateway.oidc_policy import OIDCPolicyResolver
 from gateway.providers import ProviderRegistry
 from gateway.quota import (
@@ -31,6 +36,7 @@ from gateway.quota import (
     ValkeyCounterStore,
 )
 from gateway.quota.notifications import QuotaNotifier
+from gateway.rate_limit import SlidingWindowLimiter
 from gateway.redaction.base import Redactor
 from gateway.redaction.resolver import RedactionResolver
 from gateway.routers import (
@@ -39,21 +45,21 @@ from gateway.routers import (
     billing,
     chat,
     console,
+    directory,
     embeddings,
     health,
     identity,
-    idp,
+    identity_events,
     images,
     me,
     messages,
     models,
     ocr,
     pystino,
+    scim,
     search,
-    tokens,
 )
 from gateway.routers import responses as responses_router
-from gateway.routers.auth import ResetRequestThrottle
 from gateway.secrets import SecretBox
 from gateway.upstream import build_http_client
 
@@ -104,6 +110,9 @@ async def init_app_state(
     fake transport injected, rather than a hand-built approximation of it that can
     drift from what production does.
     """
+    for message in startup_warnings(settings):
+        logger.warning(message)
+
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
 
@@ -191,14 +200,6 @@ async def init_app_state(
     except Exception:
         logger.warning("could not read the oidc policy at startup", exc_info=True)
     oidc_policy_resolver.start()
-    # The reset-email cooldown, armed only when the feature is: an absent
-    # throttle means POST /auth/password-reset answers 503, the same switch
-    # the login throttle is.
-    app.state.reset_throttle = (
-        ResetRequestThrottle(settings.local_auth.password_reset.request_cooldown_seconds)
-        if settings.local_auth.password_reset.enabled
-        else None
-    )
     app.state.token_estimator = DEFAULT_ESTIMATOR
     # Strong references to detached finalisation tasks (chat.py) and quota
     # notification sends; the notifier shares this set.
@@ -212,6 +213,19 @@ async def init_app_state(
     except Exception:
         logger.warning("could not read quota notification settings at startup", exc_info=True)
     notifier.start()
+    # Batch directory sync (ADR 0088 draft): scheduled pulls for providers
+    # whose adapter has been confirmed. A Valkey lock per provider keeps the
+    # workers from syncing the same directory twice.
+    from gateway.directory.service import DirectoryScheduler
+
+    app.state.directory_scheduler = DirectoryScheduler(
+        session_factory,
+        app.state.secrets,
+        control_http,
+        settings,
+        getattr(app.state, "valkey", None),
+    )
+    app.state.directory_scheduler.start()
     # The day's rate is fetched before serving, so the first USD-priced
     # request of the day does not wait on the rates API. Failure is the same
     # non-fatal story: the last known rate answers, or admission refuses
@@ -221,40 +235,64 @@ async def init_app_state(
     except Exception:
         logger.warning("could not fetch fx rates at startup", exc_info=True)
     fx_service.start()
-    # Identity providers (ADR 0051): rows seeded from the environment when the
-    # table is empty, and cached per-provider clients built on demand. The old
-    # single-client state is gone — the registry is the only way in.
+    # Identity providers (ADR 0093 §2): the table is re-seeded from the
+    # environment on every start, and cached per-provider clients are built on
+    # demand. The old single-client state is gone — the registry is the only
+    # way in.
     registry = OIDCProviderRegistry(control_http, app.state.secrets, settings)
     app.state.oidc_providers = registry
-    # The seed is best-effort for the same reason every startup read here is:
-    # under the test fixtures the schema does not exist yet, and the fallback
-    # (list_providers over an empty table) answers meanwhile.
+    # ADR 0093 §4.1: `POST /v1/session/announce`'s own 10-per-minute ceiling,
+    # per (issuer, subject). On `app.state` rather than a module-level
+    # singleton for the same reason every other piece of shared state here
+    # is: one instance per running app, not one for the life of the process
+    # (a test builds a fresh app per test and must get a fresh limiter with
+    # it).
+    app.state.announce_limiter = SlidingWindowLimiter(max_calls=10, window_seconds=60)
+    # ADR 0093 §9.3: retries a delete's chat call, exponential backoff,
+    # never gives up. The inline try after a delete commits covers the
+    # common case; this is what a chat that was down at that moment gets
+    # instead of losing the erasure.
+    app.state.erasure_retry_loop = ErasureRetryLoop(session_factory, settings)
+    app.state.erasure_retry_loop.start()
     try:
         async with session_factory() as session:
-            await seed_from_env(session, settings, app.state.secrets)
+            await reseed_from_env(session, settings, app.state.secrets)
     except Exception:
-        logger.warning("could not seed identity providers at startup", exc_info=True)
-    # The local-login throttle. Its presence *is* the feature switch: an
-    # absent throttle means POST /auth/login answers 503, and /auth/methods
-    # reports no local way in.
-    app.state.login_throttle = (
-        LoginThrottle(
-            max_failed_attempts=settings.local_auth.max_failed_attempts,
-            window_seconds=settings.local_auth.throttle_window_seconds,
-        )
-        if settings.local_auth.enabled
-        else None
-    )
-    # The house issuer's signing key (ADR 0068), armed only when the IdP is:
-    # built here so a malformed GATEWAY_IDP__SIGNING_KEY refuses the boot
-    # rather than the first login. The settings validator has already checked
-    # the key is present; this checks it is *readable*. Off means absent, so
-    # an unconfigured deployment builds no key material at all.
-    app.state.idp_signer = (
-        IdpSigner.from_pem(settings.idp.signing_key.get_secret_value())
-        if settings.idp.enabled
-        else None
-    )
+        # Fatal in production: a gateway serving a stale provider row is
+        # exactly the split ADR 0093 removes, so it must not come up looking
+        # healthy. Everywhere else — including under the test fixtures, where
+        # this runs before `Base.metadata.create_all()` and "no such table" is
+        # certain on every single test — it is logged and the process
+        # continues; `list_providers`' empty-table fallback answers meanwhile.
+        if settings.environment == "production":
+            raise
+        logger.error("could not re-seed identity providers at startup", exc_info=True)
+
+    # The bundled-users first-start migration (ADR 0093 §13.4): idempotent,
+    # so this runs unconditionally on every start rather than needing its
+    # own "have I done this before" marker. A no-op on an external IdP, or
+    # on a bundled deployment nothing here has ever touched.
+    try:
+        async with session_factory() as session:
+            provider = await active_bundled_provider(session)
+            if provider is not None:
+                await migrate_bundled_directory(session, provider, app.state.secrets)
+                await session.commit()
+    except Exception:
+        if settings.environment == "production":
+            raise
+        logger.error("could not run the bundled-users migration at startup", exc_info=True)
+
+    try:
+        async with session_factory() as session:
+            await sweep_env_admin_email_rule(session, settings.oidc)
+    except Exception:
+        # Same posture as the re-seed just above, and for the same reason: an
+        # email dropped from OIDC_ADMIN_EMAIL that silently keeps its admin
+        # is the quiet failure ADR 0093 §5.1 closes.
+        if settings.environment == "production":
+            raise
+        logger.error("could not sweep the env admin email rule at startup", exc_info=True)
 
     # An empty counter cache is not a failed read — it answers confidently with
     # zero, which would hand every group a fresh budget after Valkey is wiped.
@@ -275,7 +313,6 @@ async def init_app_state(
             "redaction_engine": settings.redaction.engine,
             "secret_key_configured": app.state.secrets.enabled,
             "oidc_enabled": settings.oidc.enabled,
-            "idp_enabled": settings.idp.enabled,
             "quota_enabled": settings.quota.enabled,
         },
     )
@@ -304,9 +341,13 @@ async def shutdown_app_state(app: FastAPI) -> None:
         await policy.stop()
     if (notifier := getattr(app.state, "quota_notifier", None)) is not None:
         await notifier.stop()
+    if (scheduler := getattr(app.state, "directory_scheduler", None)) is not None:
+        await scheduler.stop()
     if (fx := getattr(app.state, "fx", None)) is not None:
         await fx.stop()
         await fx.close()
+    if (erasure_loop := getattr(app.state, "erasure_retry_loop", None)) is not None:
+        await erasure_loop.stop()
     if (valkey := getattr(app.state, "valkey", None)) is not None:
         await valkey.aclose()
     await app.state.engine.dispose()
@@ -372,15 +413,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(identity.router)
     app.include_router(pystino.router)
     app.include_router(auth.router)
-    app.include_router(tokens.router)
     app.include_router(me.router)
     app.include_router(admin.router)
-    # The house issuer (ADR 0068). Registered only when enabled — off means
-    # the routes do not exist and discovery does not resolve, which is what
-    # "off means absent" has to mean for a federating surface. Discovery's
-    # well-known path must live at the root, so this router carries no prefix.
-    if resolved.idp.enabled:
-        app.include_router(idp.router)
+    app.include_router(identity_events.router)
+    app.include_router(directory.router)
+    app.include_router(scim.router)
 
     # Last, so a console route can never shadow an API one. Mounts only if the
     # assets are in the image and the setting allows it (ADR 0023).

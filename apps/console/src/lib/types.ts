@@ -31,11 +31,6 @@ export interface Me {
   has_password: boolean;
 }
 
-/** A self-service password change: the current one proves the person. */
-export interface MyPasswordChangeInput {
-  current_password: string;
-  new_password: string;
-}
 
 /** A self-service default billing group choice, from the caller's own groups. */
 export interface SetDefaultBillingGroupInput {
@@ -206,6 +201,107 @@ export interface AdminUser {
   default_billing_group: string | null;
   active_key_count: number;
   last_login_at: string | null;
+  /** Set only by `PATCH /admin/users/{id}` when it just tried to sync the
+   * bundled Authelia's own `disabled` flag and that write failed — the
+   * gateway side of the same action already stands regardless (ADR 0093
+   * §9.1). Null on every other response, including a successful sync. */
+  authelia_sync: "failed" | null;
+  authelia_sync_message: string | null;
+}
+
+/** `POST /admin/users`, bundled Authelia only (ADR 0093 §8.1/§8.2). */
+export interface BundledUserCreateInput {
+  login: string;
+  display_name?: string;
+  email: string;
+  groups?: string[];
+}
+
+/** Includes the one-time password, shown once (§8.1). */
+export interface BundledUserCreated extends AdminUser {
+  password: string;
+}
+
+/** One `(issuer, subject)` (ADR 0093). */
+export interface IdentityRef {
+  issuer: string;
+  subject: string;
+}
+
+/** `GET /admin/users/{source}/merge-preview?into=` (ADR 0093 §7.1). */
+export interface MergePreview {
+  source_id: string;
+  target_id: string;
+  counts: Record<string, number>;
+  identities_moving: IdentityRef[];
+  identities_dropped: IdentityRef[];
+  resulting_is_admin: boolean;
+  bundled_logins_disabled: string[];
+  /** A limit/redaction rule the source held that collided with one the
+   * target already had: kept as the target's, the source's dropped rather
+   * than moved. Already excluded from `counts`. */
+  duplicate_rules_dropped: number;
+  chat_note: string;
+}
+
+/** `POST /admin/users/{source}/merge` (ADR 0093 §7.1). */
+export interface MergeInput {
+  into: string;
+  confirm: string;
+  reason: string;
+}
+
+export interface MergeResult {
+  target_id: string;
+  counts: Record<string, number>;
+  identities_dropped: IdentityRef[];
+  bundled_logins_disabled: string[];
+  duplicate_rules_dropped: number;
+}
+
+/** One resource of this person that someone else can see, named, with who
+ * can see it (ADR 0093 §9.2) — passed through from the chat's own erasure
+ * preview verbatim. */
+export interface ChatSharedResource {
+  kind: "shared_conversation" | "project" | "knowledge_base" | "assistant";
+  id: string;
+  title: string;
+  audience: string;
+}
+
+/** `GET /admin/users/{id}/delete-preview` (ADR 0093 §9.2). */
+export interface DeletePreview {
+  user_id: string;
+  gateway_counts: Record<string, number>;
+  bundled_login: string | null;
+  /** `null` means the chat could not be reached at all. */
+  chat_counts: Record<string, number> | null;
+  chat_reachable: boolean;
+  shared: ChatSharedResource[];
+  shared_with_others: boolean;
+  chat_unattributed_legacy_shares: number;
+}
+
+/** `DELETE /admin/users/{id}` (ADR 0093 §9.2, §9.3). */
+export interface DeleteUserResult {
+  erasure_id: string;
+  chat_erasure_done: boolean;
+}
+
+/** The audit trail `record_event` writes to (ADR 0093 §3.1). */
+export interface IdentityEvent {
+  id: string;
+  at: string;
+  actor_type: "user" | "cli" | "login" | "system";
+  actor_user_id: string | null;
+  actor_label: string;
+  action: string;
+  target_user_id: string | null;
+  target_label: string;
+  issuer: string | null;
+  subject: string | null;
+  detail: Record<string, unknown>;
+  reason: string | null;
 }
 
 export interface LimitRule {
@@ -620,19 +716,6 @@ export interface SearchBackendDeleteResult {
   cleared_groups: string[];
 }
 
-/**
- * Minting a local account from the console (ADR 0048). Local only: an
- * identity-provider account is the IdP's to create, and one made here would
- * be overwritten or orphaned at the next login.
- */
-export interface UserCreateInput {
-  email: string;
-  password: string;
-  display_name?: string;
-  is_admin?: boolean;
-  /** Group *names*; a name that does not exist yet is created (source "manual"). */
-  groups?: string[];
-}
 
 /**
  * The identity policy in force (ADR 0048), as `GET /api/admin/oidc/policy`
@@ -675,12 +758,6 @@ export interface GroupCreateInput {
   description?: string;
 }
 
-/** The policy in force (ADR 0049): a reset link is only minted when the
- * deployment enabled the feature. */
-export interface PasswordResetEnabled {
-  local: boolean;
-  reset_available: boolean;
-}
 
 // -- Settings (ADR 0051) ------------------------------------------------------
 
@@ -699,28 +776,91 @@ export interface IdentityProvider {
   fetch_userinfo: boolean;
   group_mappings: { idp: string; local: string }[];
   /** Whether a login here may adopt the local account with the same verified
-   * address (ADR 0056). */
-  link_local_by_email: boolean;
+   * address (ADR 0056; the matcher itself is stage (c) — see ADR 0093 §3.2). */
+  link_by_email: boolean;
   /** How far this directory's answer about groups reaches (ADR 0057). It never
    * reaches a membership an administrator granted, in any of the three. */
   group_sync: GroupSync;
   is_enabled: boolean;
   source: "console" | "environment";
+  /** People signed in under this row's issuer (ADR 0093 §14). */
+  user_count: number;
+  /** Server-to-server base URL for the issuer (the bundled Authelia's
+   * internal address); empty when the issuer URL is reachable directly. */
+  internal_base_url: string;
+  /** Where signing out sends the browser to end the provider's own session;
+   * `{redirect}` is the page to come back to. Empty: discovery's
+   * end_session_endpoint, else `default_logout_url`. */
+  logout_url: string;
+  /** What an empty `logout_url` falls back to for this kind (Authelia). */
+  default_logout_url: string;
+  kind: IdentityKind;
+  /** Where the directory's answer about groups comes from (ADR 0088). */
+  group_source: GroupSource;
+  /** Who decides who is an administrator (ADR 0088). */
+  admin_source: AdminSource;
+  admin_claim: string;
+  admin_values: string[];
+  subject_claim: string;
+  sync_adapter: SyncAdapter;
+  sync_interval_minutes: number;
+  sync_deprovision: "disable" | "ignore";
+  sync_create_users: boolean;
+  sync_confirmed: boolean;
+  capabilities: IdentityCapabilities;
 }
 
-export interface IdentityProviderInput {
-  name?: string;
-  issuer?: string;
-  client_id?: string;
-  client_secret?: string;
-  scopes?: string[];
-  groups_claim?: string;
-  fetch_userinfo?: boolean;
-  group_mappings?: { idp: string; local: string }[];
-  link_local_by_email?: boolean;
-  group_sync?: GroupSync;
-  is_enabled?: boolean;
+export type IdentityKind =
+  | "generic"
+  | "authelia"
+  | "keycloak"
+  | "entra"
+  | "okta"
+  | "authentik"
+  | "google";
+export type GroupSource = "claim" | "directory" | "none";
+export type AdminSource = "console" | "claim";
+export type SyncAdapter = "none" | "authelia_file" | "keycloak_admin" | "scim";
+
+export interface IdentityCapabilities {
+  claims_groups: boolean;
+  pull_adapters: SyncAdapter[];
+  scim_push: boolean;
+  subject_before_login: boolean;
+  deprovision: boolean;
+  adapters: SyncAdapter[];
 }
+
+export interface SyncRun {
+  id: string;
+  trigger: "schedule" | "manual" | "push";
+  dry_run: boolean;
+  status: "ok" | "failed" | "needs_confirmation";
+  seen: number;
+  created: number;
+  linked: number;
+  updated: number;
+  deactivated: number;
+  reactivated: number;
+  changes: { change: string; who: string; [detail: string]: unknown }[];
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface DirectoryPerson {
+  id: string;
+  external_id: string;
+  username: string | null;
+  email: string | null;
+  display_name: string | null;
+  groups: string[];
+  active: boolean;
+  present: boolean;
+  preassigned_groups: string[];
+  user_id: string | null;
+}
+
 
 /** The SMTP configuration in force — the row's, or the environment's. */
 export interface EmailSettings {
@@ -733,14 +873,6 @@ export interface EmailSettings {
   enabled: boolean;
 }
 
-export interface EmailSettingsInput {
-  host: string;
-  port: number;
-  username?: string;
-  /** Write-only. Omitted means "keep the stored one". */
-  password?: string;
-  from_address: string;
-}
 
 export interface EmailTestResult {
   ok: boolean;

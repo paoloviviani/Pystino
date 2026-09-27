@@ -6,13 +6,20 @@ import type {
   AdminModel,
   AdminProvider,
   AdminUser,
+  BundledUserCreateInput,
+  BundledUserCreated,
   CatalogueDiscovery,
   CatalogueTags,
+  DeletePreview,
+  DeleteUserResult,
+  IdentityEvent,
   LimitRule,
+  MergeInput,
+  MergePreview,
+  MergeResult,
   ModelImportResponse,
   OidcPolicy,
   OidcPolicyInput,
-  UserCreateInput,
   ModelKind,
   Price,
   ProviderPlugin,
@@ -24,12 +31,13 @@ import type {
   RedactionScope,
   RedactionStatus,
   EmailSettings,
-  EmailSettingsInput,
   EmailTestResult,
   GroupCreateInput,
+  DirectoryPerson,
   IdentityProvider,
-  IdentityProviderInput,
   SearchBackendDeleteResult,
+  SyncAdapter,
+  SyncRun,
   UsageReport,
 } from "./types";
 
@@ -57,8 +65,12 @@ export const adminKeys = {
   limits: ["admin", "limits"] as const,
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
   users: ["admin", "users"] as const,
+  pendingErasures: ["admin", "erasures", "pending"] as const,
+  identityEvents: (userId: string) => ["admin", "identity-events", userId] as const,
   email: ["admin", "email"] as const,
   identityProviders: ["admin", "identity-providers"] as const,
+  syncRuns: (id: string) => ["admin", "identity-providers", id, "runs"] as const,
+  directory: (id: string) => ["admin", "identity-providers", id, "directory"] as const,
   oidcPolicy: ["admin", "oidc-policy"] as const,
   redaction: ["admin", "redaction"] as const,
   redactionRules: ["admin", "redaction", "rules"] as const,
@@ -821,21 +833,55 @@ export function useUpdateUser() {
   });
 }
 
-export function useSetUserPassword() {
+/** Add user (ADR 0093 §8.1/§8.2), bundled Authelia only. Groups are console
+ * groups — manual memberships — never the Authelia file's own, which is
+ * always `["users"]` (§8.3). */
+export function useCreateBundledUser() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, password }: { id: string; password: string }) =>
-      request<AdminUser>(`/api/admin/users/${id}/password`, { method: "PUT", body: { password } }),
+    mutationFn: (body: BundledUserCreateInput) =>
+      request<BundledUserCreated>("/api/admin/users", { method: "POST", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
   });
 }
 
-export function useClearUserPassword() {
+/** Create sign-in for an existing gateway user with no bundled login yet —
+ * the after-switch and after-break-glass case (§8.1). */
+export function useCreateBundledSignIn() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) =>
-      request<AdminUser>(`/api/admin/users/${id}/password`, { method: "DELETE" }),
+    mutationFn: ({ userId, login }: { userId: string; login: string }) =>
+      request<BundledUserCreated>(`/api/admin/users/${userId}/sign-in`, {
+        method: "POST",
+        body: { login },
+      }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
+
+/** Mints a fresh one-time password for the user's bundled login (§8.1). Works
+ * with or without SMTP configured — the admin-issued reset is not the self
+ * service flow. */
+export function useResetBundledPassword() {
+  return useMutation({
+    mutationFn: (userId: string) =>
+      request<{ password: string }>(`/api/admin/users/${userId}/reset-password`, {
+        method: "POST",
+      }),
+  });
+}
+
+/** The Activity list on a user's row: what they did, and what was done to
+ * them (`GET /admin/identity-events?user_id=` matches either side). */
+export function useIdentityEvents(userId: string | null) {
+  return useQuery({
+    queryKey: adminKeys.identityEvents(userId ?? "none"),
+    queryFn: () =>
+      request<Page<IdentityEvent>>(
+        `/api/admin/identity-events?${pageParams({ limit: 50 }, { user_id: userId ?? "" })}`,
+      ),
+    enabled: userId !== null,
+    retry: retryUnlessRejected,
   });
 }
 
@@ -846,15 +892,6 @@ export function useEmailSettings() {
     queryKey: adminKeys.email,
     queryFn: () => request<EmailSettings>("/api/admin/email"),
     retry: retryUnlessRejected,
-  });
-}
-
-export function useUpdateEmailSettings() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (body: EmailSettingsInput) =>
-      request<EmailSettings>("/api/admin/email", { method: "PUT", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.email }),
   });
 }
 
@@ -876,49 +913,66 @@ export function useIdentityProviders() {
   });
 }
 
-export function useCreateIdentityProvider() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (body: IdentityProviderInput & { name: string; issuer: string; client_id: string; client_secret: string }) =>
-      request<IdentityProvider>("/api/admin/identity-providers", { method: "POST", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
-  });
-}
-
-export function useUpdateIdentityProvider() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, ...body }: IdentityProviderInput & { id: string }) =>
-      request<IdentityProvider>(`/api/admin/identity-providers/${id}`, {
-        method: "PUT",
-        body,
-      }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
-  });
-}
-
-export function useDeleteIdentityProvider() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      request<void>(`/api/admin/identity-providers/${id}`, { method: "DELETE" }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
-  });
-}
-
-export function useCreateUser() {
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: (body: UserCreateInput) =>
-      request<AdminUser>("/api/admin/users", { method: "POST", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
-  });
-}
+// Creating, editing and deleting a provider row went with those routes (ADR
+// 0093 §14): the row is a projection of the environment now, re-seeded at
+// every start, so there is nothing left for these to write to.
 
 export function useDeleteUser() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => request<void>(`/api/admin/users/${id}`, { method: "DELETE" }),
+    mutationFn: ({ id, confirmSharedLoss }: { id: string; confirmSharedLoss: boolean }) =>
+      request<DeleteUserResult>(`/api/admin/users/${id}`, {
+        method: "DELETE",
+        body: { confirm_shared_loss: confirmSharedLoss },
+      }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.users });
+      client.invalidateQueries({ queryKey: adminKeys.pendingErasures });
+    },
+  });
+}
+
+/** `GET /admin/users/{id}/delete-preview` (ADR 0093 §9.2): shown before the
+ * confirmation, verbatim -- the dialog does not summarise or recompute it. */
+export function useDeletePreview(userId: string | undefined) {
+  return useQuery({
+    queryKey: [...adminKeys.users, "delete-preview", userId],
+    queryFn: () => request<DeletePreview>(`/api/admin/users/${userId}/delete-preview`),
+    enabled: Boolean(userId),
+  });
+}
+
+/** `GET /admin/erasures/pending` (ADR 0093 §9.3): the Users page's own
+ * banner, "N erasures waiting for the chat". Polled, not just fetched once
+ * -- the retry loop resolves rows in the background, off-screen, and the
+ * banner is meant to reflect that without a manual refresh. */
+export function usePendingErasures() {
+  return useQuery({
+    queryKey: adminKeys.pendingErasures,
+    queryFn: () => request<{ pending: number }>("/api/admin/erasures/pending"),
+    refetchInterval: 30_000,
+  });
+}
+
+/** `GET /admin/users/{source}/merge-preview?into=` (ADR 0093 §7.1). Only
+ * fetched once both accounts are chosen -- there is nothing to preview
+ * before then, and the endpoint itself would 404/400 on a half-made pair. */
+export function useMergePreview(sourceId: string | undefined, targetId: string | undefined) {
+  return useQuery({
+    queryKey: [...adminKeys.users, "merge-preview", sourceId, targetId],
+    queryFn: () =>
+      request<MergePreview>(
+        `/api/admin/users/${sourceId}/merge-preview?into=${encodeURIComponent(targetId ?? "")}`
+      ),
+    enabled: Boolean(sourceId && targetId),
+  });
+}
+
+export function useMergeUser() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sourceId, ...body }: MergeInput & { sourceId: string }) =>
+      request<MergeResult>(`/api/admin/users/${sourceId}/merge`, { method: "POST", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
   });
 }
@@ -976,3 +1030,111 @@ export function useAdminReport(query: ReportQuery) {
   });
 }
 
+
+
+// --- directory sync, SCIM and the bundled Authelia's users (ADR 0088) -------
+
+export function useSyncRuns(providerId: string, enabled = true) {
+  return useQuery({
+    queryKey: adminKeys.syncRuns(providerId),
+    queryFn: () => request<SyncRun[]>(`/api/admin/identity-providers/${providerId}/sync/runs`),
+    enabled,
+    retry: retryUnlessRejected,
+  });
+}
+
+export function useDirectory(providerId: string, enabled = true) {
+  return useQuery({
+    queryKey: adminKeys.directory(providerId),
+    queryFn: () => request<DirectoryPerson[]>(`/api/admin/identity-providers/${providerId}/directory`),
+    enabled,
+    retry: retryUnlessRejected,
+  });
+}
+
+/**
+ * Directory sync: the one console-owned corner of a provider row left (ADR
+ * 0093 §14) — adapter, poll interval, credentials. `config` omitted leaves
+ * stored credentials alone; an explicit `{}` clears them.
+ */
+export function useSetSyncConfig() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string;
+      sync_adapter?: SyncAdapter;
+      sync_interval_minutes?: number;
+      config?: Record<string, string>;
+    }) =>
+      request<{ has_config: boolean; sync_adapter: SyncAdapter; sync_interval_minutes: number }>(
+        `/api/admin/identity-providers/${id}/sync-config`,
+        { method: "PUT", body },
+      ),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
+  });
+}
+
+export function useTestSync() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<{ total: number; sample: { username: string | null; email: string | null; groups: string[]; active: boolean }[] }>(
+        `/api/admin/identity-providers/${id}/sync/test`,
+        { method: "POST" },
+      ),
+  });
+}
+
+export function useRunSync() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, dryRun, force }: { id: string; dryRun: boolean; force?: boolean }) =>
+      request<{ run: SyncRun; confirmed: boolean }>(`/api/admin/identity-providers/${id}/sync`, {
+        method: "POST",
+        body: { dry_run: dryRun, force: force ?? false },
+      }),
+    onSuccess: (_result, { id }) => {
+      client.invalidateQueries({ queryKey: adminKeys.syncRuns(id) });
+      client.invalidateQueries({ queryKey: adminKeys.directory(id) });
+      client.invalidateQueries({ queryKey: adminKeys.users });
+    },
+  });
+}
+
+export function useConfirmSync() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<{ confirmed: boolean }>(`/api/admin/identity-providers/${id}/sync/confirm`, {
+        method: "POST",
+      }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
+  });
+}
+
+export function usePreassignGroups() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, entryId, groups }: { id: string; entryId: string; groups: string[] }) =>
+      request<{ preassigned_groups: string[] }>(
+        `/api/admin/identity-providers/${id}/directory/${entryId}/preassigned`,
+        { method: "PUT", body: { groups } },
+      ),
+    onSuccess: (_result, { id }) => client.invalidateQueries({ queryKey: adminKeys.directory(id) }),
+  });
+}
+
+export function useMintScimToken() {
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<{ token: string; endpoint: string }>(`/api/admin/identity-providers/${id}/scim-token`, {
+        method: "POST",
+      }),
+  });
+}
+
+// The People dialog these once served is removed (ADR 0093 §14, correction
+// 7); the routes stay for stage (b) to build the Users-page replacement
+// against.

@@ -1,0 +1,119 @@
+# Publish the Pystino images — from main and release tags only (the GitHub free
+# plan's Action minutes are the budget; PRs never build images).
+#
+# Packages are PRIVATE while the repository is: pushed with GITHUB_TOKEN from a
+# private repository they inherit its visibility, and pulling needs
+# `docker login ghcr.io` with a read:packages token. Going public later is the
+# package's own setting (Package settings → Danger Zone → Change visibility).
+#
+# Lean on minutes (container images on ghcr.io are currently not billed for
+# storage or bandwidth, so the pruning below is tidiness, not budget):
+#   - path filters: a push that touches none of the images' inputs runs nothing;
+#   - the GHA layer cache: an image whose inputs did not change rebuilds from
+#     cache in well under a minute;
+#   - main → `edge` + `sha-<short>`, vX.Y.Z → `X.Y.Z` + `X.Y` (never
+#     overwritten); releases pin by digest (`pystino release-pin`);
+#   - ONE job building the two images in sequence, no matrix: every job is
+#     billed rounded up to a whole minute, and separate jobs would pay
+#     checkout, buildx and login twice; the cleanup rides in the same job.
+#     The proxy and Authelia are no longer built here (ADR 0091): they run
+#     stock images, configured by files a deployment repository mounts;
+#   - the newest five untagged versions per image are kept, older ones pruned;
+#   - no provenance/SBOM attestations (they are stored as untagged manifests,
+#     and pruning those would break the images).
+name: images
+
+# Publishing is ON HOLD until the images are ready to be the release artefact
+# (a few more days of development, 2026-09-24): manual runs only. To publish
+# on every push to main and on release tags, replace the two `on:` lines below
+# with this one line:
+# on: {workflow_dispatch: {}, push: {branches: [main], tags: ["v*.*.*"], paths: [apps/gateway/**, apps/console/**, packages/**, services/redaction/**, uv.lock, pnpm-lock.yaml, .dockerignore, .github/workflows/images.yml]}}
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false # never cancel a push half-way
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      # The GHA layer cache needs the runtime token, which actions get and
+      # plain `run` steps do not; this exports it to the build step below.
+      - uses: crazy-max/ghaction-github-runtime@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        env:
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          short=${SHA::7}
+          # image | context | Dockerfile | build args | tag suffix
+          while IFS='|' read -r image context file args suffix; do
+            tags=()
+            if [ "$REF" = refs/heads/main ]; then
+              tags+=(-t "$REGISTRY/$image:edge$suffix" -t "$REGISTRY/$image:sha-$short$suffix")
+            elif [[ "$REF" == refs/tags/v* ]]; then
+              version=${REF_NAME#v}
+              if docker buildx imagetools inspect "$REGISTRY/$image:$version$suffix" >/dev/null 2>&1; then
+                echo "::error::$image:$version$suffix already exists; a release tag is immutable"; exit 1
+              fi
+              tags+=(-t "$REGISTRY/$image:$version$suffix" -t "$REGISTRY/$image:${version%.*}$suffix")
+            else
+              tags+=(-t "$REGISTRY/$image:sha-$short$suffix")
+            fi
+            build_args=(--build-arg "CONSOLE_BUILD_SHA=$SHA")
+            for arg in $args; do build_args+=(--build-arg "$arg"); done
+            echo "::group::$image"
+            docker buildx build --push --provenance=false --sbom=false \
+              -f "$file" "${build_args[@]}" "${tags[@]}" \
+              --label org.opencontainers.image.revision="$SHA" \
+              --label org.opencontainers.image.source="https://github.com/${{ github.repository }}" \
+              --label org.opencontainers.image.licenses=EUPL-1.2 \
+              --cache-from "type=gha,scope=$image" --cache-to "type=gha,mode=max,scope=$image" \
+              --metadata-file "$RUNNER_TEMP/$image.json" "$context"
+            digest=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/$image.json")
+            echo "$image$suffix@$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "::endgroup::"
+          done <<'IMAGES'
+          pystino-gateway|.|apps/gateway/Dockerfile|INCLUDE_CONSOLE=true|
+          pystino-redaction|.|services/redaction/Dockerfile|SPACY_MODELS=|-pattern
+          IMAGES
+      - name: Prune untagged versions (keep five per image)
+        if: github.ref == 'refs/heads/main'
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: pystino-gateway
+          package-type: container
+          delete-only-untagged-versions: "true"
+          min-versions-to-keep: 5
+      - if: github.ref == 'refs/heads/main'
+        uses: actions/delete-package-versions@v5
+        with: {package-name: pystino-redaction, package-type: container, delete-only-untagged-versions: "true", min-versions-to-keep: 5}
+
+  # A release names every image by digest; refuse a tag that does not.
+  release-pins:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: {enable-cache: true}
+      - run: uv run --package gateway pystino release-pin --check

@@ -6,23 +6,27 @@ compose route is the one that gets you a billed completion and a console.
 
 ## Run the stack
 
+`deploy/compose.yaml` from this checkout, with a fake upstream so no provider
+account is needed (the full set of options is in [Deployment](deployment.md)):
+
 ```bash
-cp deploy/.env.example deploy/.env
-# edit deploy/.env: set POSTGRES_PASSWORD, GATEWAY_SESSION_SECRET,
-# and GATEWAY_UPSTREAM__API_KEY
-docker compose -f deploy/compose/docker-compose.yml up --build
+cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
+# fill in deploy/.env: TLS_MODE=internal, PUBLIC_ORIGIN=https://dev.example.test:8443,
+# SITE_ADDRESS=https://dev.example.test, TLS_DIRECTIVE='tls internal', HTTPS_PORT=8443,
+# then mint every secret and, for the bundled Authelia, its digests — the comment above
+# each variable in deploy/.env.example names the exact command.
+export PYSTINO_SRC="$PWD"    # the fake upstream (deploy/dev/smoke.yml) needs it
+cd deploy && docker compose -f compose.yaml -f dev/smoke.yml up -d --wait
 ```
 
-That starts PostgreSQL and Valkey, runs migrations once, and starts the gateway
-on `localhost:8000`. The base compose file publishes **127.0.0.1 only** — that
-is deliberate, and [Deployment](deployment.md) covers what it takes to change
-it.
+`dev.example.test` must resolve to this machine for a browser (a hosts entry
+is enough). The gateway itself also listens on `127.0.0.1:8000`, loopback
+only.
 
 ## Create something to talk to
 
 ```bash
-docker compose -f deploy/compose/docker-compose.yml exec gateway \
-  gateway seed --model my-model --upstream-model gpt-4o-mini
+docker compose exec gateway gateway seed --model my-model --upstream-model gpt-4o-mini
 ```
 
 It prints an API key (once) and a ready-made `curl`. Any OpenAI client works:
@@ -40,39 +44,18 @@ client.chat.completions.create(
 The request is redacted, admitted against the caller's quotas, metered and
 settled into the ledger. Streaming works the same way, with `stream=True` or
 `stream_options={"include_usage": true}` — the gateway forces usage out of the
-upstream either way (ADR 0007).
-
-## Try it without a provider key
-
-`docker-compose.smoke.yml` adds a fake OpenAI-compatible upstream, so the whole
-topology can be exercised with no provider account:
-
-```bash
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml up --build
-```
-
-It is a separate overlay on purpose: a fake upstream in the base file would be
-one careless `-f` away from production.
+upstream either way.
 
 ## Sign in to the console
 
-Enable local sign-in and create the first administrator — it prompts, so
-nothing lands in shell history:
-
-```bash
-docker compose --env-file deploy/.env \
-  -f deploy/compose/docker-compose.yml \
-  -f deploy/compose/docker-compose.smoke.yml exec gateway \
-  gateway passwd admin@local
-```
-
-The console is at <http://localhost:8000/console>. Sign in with the account you
-just created. OIDC against GitLab, Entra ID or any other provider is a `.env`
-change, not a new component — see
-[OIDC against any provider](oidc-generic-provider.md). Local authentication and
-OIDC are two doors into the same session (ADR 0043).
+The console is at `https://dev.example.test:8443/console`. Sign in through the
+bundled Authelia with `AUTHELIA_ADMIN_USER` and the password behind
+`AUTHELIA_ADMIN_PASSWORD_DIGEST`; because its email
+(`AUTHELIA_ADMIN_EMAIL`/`PYSTINO_BOOTSTRAP_ADMIN_EMAIL`) matches, that first
+sign-in makes it the administrator. Everyone signs
+in through an OIDC provider — there is no password door. Other
+providers (GitLab, Entra ID, Keycloak, …) are added in the console's Settings
+screen; see [OIDC against any provider](oidc-generic-provider.md).
 
 ## Reach it from another machine
 
@@ -126,4 +109,4 @@ uv run gateway serve --reload
   contains, and how a cost is computed.
 - [Operations](operations.md) — the live checks, and what they can only find
   against a running stack.
-- [Deployment](deployment.md) — overlays, TLS, and the loopback-only rule.
+- [Deployment](deployment.md) — TLS, identity, upgrades and backups.

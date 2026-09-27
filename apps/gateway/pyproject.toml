@@ -10,7 +10,7 @@ authors = [{ name = "Paolo Viviani" }]
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",       # brings uvloop + httptools
-    "httpx>=0.28",                   # see https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0013-upstream-http-client.md
+    "httpx>=0.28",                   # the upstream client: async, streaming, HTTP/2
     "sqlalchemy[asyncio]>=2.0.36,<2.1",  # 2.1 is beta as of 2026-08; do not ship it
     "asyncpg>=0.30",
     "alembic>=1.14",
@@ -18,7 +18,10 @@ dependencies = [
     "pydantic-settings>=2.6",
     "redis>=5.2",                    # protocol client; talks to Valkey. ADR 0006
     "joserfc>=1.0",                  # JOSE/JWT. authlib.jose is deprecated. ADR 0011
-    "pwdlib[argon2]>=0.2",           # password hashing for local login. ADR 0043
+    # Argon2id digests for the bundled Authelia (client secrets, the first
+    # user, console-managed users). MIT. Replaces pwdlib, which wrapped it for
+    # the local-password door that ADR 0088 removed.
+    "argon2-cffi>=23.1",
     "orjson>=3.10",
     "llmp-shared",
     "google-re2>=1.1.20251105",
@@ -32,10 +35,19 @@ dependencies = [
     # own (verified at source, 0.0.32). Without it FastAPI refuses to *build*
     # the route, at import time — so this is not an optional extra.
     "python-multipart>=0.0.20",
+    # MIT. Already present at runtime through uvicorn[standard]; declared
+    # because the console reads and writes Authelia's users file (bundled IdP
+    # sync, directory/authelia_users.py) and should not depend on another
+    # package's extras to do it.
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]
 gateway = "gateway.cli:main"
+# Deployment: bootstrap, release-pin, admin (ADR 0091). Writing .env and
+# standing up a deployment is deploy/.env.example (this repository) or
+# cerea-deploy's ./configure (the full stack), not this CLI.
+pystino = "gateway.deploy.cli:main"
 
 [tool.uv.sources]
 llmp-shared = { workspace = true }

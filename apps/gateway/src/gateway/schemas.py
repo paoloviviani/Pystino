@@ -565,14 +565,53 @@ class CallerIdentity(BaseModel):
     default_billing_group: str | None
     #: What *this* caller's requests bill right now, which is not always the
     #: default: a key may pin a group, and a bearer request may name one.
-    billing_group: str
+    #: Null for a caller with no usable group at all (ADR 0093 to-do item 2)
+    #: — this route authenticates but never requires one, unlike every
+    #: metered ``/v1`` route, which still refuses that caller outright.
+    billing_group: str | None
+    #: A session the chat opened before this instant is no longer good: the
+    #: account was disabled, merged into, or recovered (ADR 0093). Null when
+    #: nothing has ever revoked this person's sessions.
+    sessions_valid_after: datetime | None = None
+    #: The newest time another account was merged into this one. A chat that
+    #: has not folded its records since then asks `/v1/me/identities`.
+    merged_at: datetime | None = None
 
 
-class MyPasswordChangeRequest(BaseModel):
-    """A self-service password change: the current one proves the person."""
+class IdentityRef(BaseModel):
+    """One ``(issuer, subject)`` that signs in as a gateway user (ADR 0093)."""
 
-    current_password: str = Field(min_length=1, max_length=1024)
-    new_password: str = Field(min_length=1, max_length=1024)
+    issuer: str
+    subject: str
+
+
+class MeIdentities(BaseModel):
+    """``GET /v1/me/identities``: everything that names this person here.
+
+    The chat keys its own records on the gateway's ``id`` and uses the rest to
+    adopt records it has not keyed yet (``identities``) and to fold records of
+    accounts merged into this one (``merged_from``, chains resolved).
+    """
+
+    id: uuid.UUID
+    identities: list[IdentityRef]
+    merged_from: list[uuid.UUID]
+
+
+class SessionAnnounce(MeIdentities):
+    """``POST /v1/session/announce``: the chat's sign-in door (ADR 0093).
+
+    Called by the chat's login callback with the fresh access token (``azp``
+    must be the chat client). The gateway fetches userinfo itself and runs
+    the same sign-in sequence as the console callback — links, bindings,
+    admin rules, bootstrap — then answers who this is. A disabled account
+    answers 403, never this body.
+    """
+
+    is_active: bool
+    is_admin: bool
+    sessions_valid_after: datetime | None = None
+    merged_at: datetime | None = None
 
 
 class SetDefaultBillingGroupRequest(BaseModel):
@@ -1064,43 +1103,31 @@ class IdentityProviderResponse(BaseModel):
     groups_claim: str
     fetch_userinfo: bool
     group_mappings: list[OidcMappingRule]
-    link_local_by_email: bool
+    link_by_email: bool
     group_sync: Literal["every_login", "first_login", "never"]
     is_enabled: bool
     source: str
-
-
-class IdentityProviderCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]*$")
-    issuer: str = Field(min_length=8, max_length=512)
-    client_id: str = Field(min_length=1, max_length=255)
-    client_secret: str = Field(min_length=1, max_length=1024)
-    scopes: list[str] | None = None
-    groups_claim: str = Field(default="groups", min_length=1, max_length=255)
-    fetch_userinfo: bool = True
-    group_mappings: list[OidcMappingRule] = Field(default_factory=list)
-    # Off unless asked for, in the request as on the row: a client that omits
-    # the field is not consenting to it (ADR 0056).
-    link_local_by_email: bool = False
-    # The sync stance of ADR 0069: the directory answers once, at
-    # provisioning, and the gateway owns everything after. A client that
-    # wants the directory to keep answering chooses every_login explicitly.
-    group_sync: Literal["every_login", "first_login", "never"] = "first_login"
-
-
-class IdentityProviderUpdateRequest(BaseModel):
-    """A provider edit. `client_secret` omitted means "keep the stored one"."""
-
-    issuer: str | None = Field(default=None, min_length=8, max_length=512)
-    client_id: str | None = Field(default=None, min_length=1, max_length=255)
-    client_secret: str | None = Field(default=None, min_length=1, max_length=1024)
-    scopes: list[str] | None = None
-    groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
-    fetch_userinfo: bool | None = None
-    group_mappings: list[OidcMappingRule] | None = None
-    link_local_by_email: bool | None = None
-    group_sync: Literal["every_login", "first_login", "never"] | None = None
-    is_enabled: bool | None = None
+    internal_base_url: str = ""
+    logout_url: str = ""
+    #: What signing out will use when logout_url is empty (shown as a hint).
+    default_logout_url: str = ""
+    kind: str = "generic"
+    group_source: Literal["claim", "directory", "none"] = "claim"
+    admin_source: Literal["console", "claim"] = "console"
+    admin_claim: str = "groups"
+    admin_values: list[str] = Field(default_factory=list)
+    subject_claim: str = "sub"
+    sync_adapter: str = "none"
+    sync_interval_minutes: int = 60
+    sync_deprovision: Literal["disable", "ignore"] = "disable"
+    sync_create_users: bool = True
+    sync_confirmed: bool = False
+    #: What this kind of directory can do; the console shows only these controls.
+    capabilities: dict[str, Any] = Field(default_factory=dict)
+    #: People signed in under this row's issuer, disabled or not (ADR 0093
+    #: §14): what tells an operator a disabled previous row is still worth
+    #: keeping the read-only card open on, versus one nobody ever used.
+    user_count: int = 0
 
 
 class EmailSettingsResponse(BaseModel):
@@ -1111,16 +1138,6 @@ class EmailSettingsResponse(BaseModel):
     has_password: bool
     source: str
     enabled: bool
-
-
-class EmailSettingsUpdateRequest(BaseModel):
-    host: str = Field(min_length=1, max_length=255)
-    port: int = Field(default=587, ge=1, le=65535)
-    username: str = Field(default="", max_length=255)
-    # Write-only. Omitted means "keep the stored one" — an edit that only
-    # touches the port must not have to re-type a password it never saw.
-    password: str | None = Field(default=None, min_length=1, max_length=1024)
-    from_address: str = Field(min_length=3, max_length=255)
 
 
 class EmailTestRequest(BaseModel):
@@ -1202,10 +1219,15 @@ class UserAdminResponse(BaseModel):
     default_billing_group: str | None
     active_key_count: int
     last_login_at: datetime | None
-
-
-class UserPasswordRequest(BaseModel):
-    password: str = Field(min_length=1, max_length=1024)
+    #: Set only by `PATCH /admin/users/{id}` when it just tried to sync
+    #: Authelia's own `disabled` flag and that write failed — the gateway
+    #: side of the same action already stands regardless. `None` on a
+    #: successful sync, and on every other response this schema serves
+    #: (the list, `create_user`, …), which never set it at all. The console
+    #: shows `authelia_sync_message` and resending the same PATCH is the
+    #: retry (ADR 0093 §9.1).
+    authelia_sync: Literal["failed"] | None = None
+    authelia_sync_message: str | None = None
 
 
 def _clean_optional_text(value: str | None) -> str | None:
@@ -1270,24 +1292,137 @@ class UserUpdateRequest(BaseModel):
     )
 
 
-class UserCreateRequest(BaseModel):
-    """Mint a local account from the console.
+class BundledUserCreateRequest(BaseModel):
+    """``POST /admin/users``, bundled Authelia only (ADR 0093 §8.1/§8.2).
 
-    Local only, deliberately: an identity-provider account is the IdP's to
-    create (that is what provisioning means), and a console-created directory
-    user would be overwritten or orphaned at the next login. A local account
-    is keyed by its email — the same convention ``gateway passwd`` and the
-    login query follow — so the email is the subject, not merely a label.
+    ``groups`` are console groups — ``manual`` memberships, granted the same
+    way a pre-assigned directory group is — never Authelia file groups, which
+    stop being administrator-editable at all (§8.3, every entry is
+    ``["users"]``). The shape check here is deliberately shallow, the same
+    one ``UserUpdateRequest.email`` applies; ``UsersFile.create``'s stricter
+    §6.1 validator is what actually decides whether the login file will
+    accept the address, and duplicating its rules into the request schema
+    would only let the two quietly disagree later.
     """
 
-    email: str = Field(min_length=3, max_length=255)
-    password: str = Field(min_length=1, max_length=1024)
-    display_name: str | None = Field(default=None, max_length=255)
-    is_admin: bool = False
-    # Group *names*, not ids — the caller thinks in names, and a name that does
-    # not exist yet is created (source "manual"), which is what an operator
-    # naming a group in a form means.
-    groups: list[str] = Field(default_factory=list)
+    login: str = Field(min_length=1, max_length=64)
+    display_name: str = Field(default="", max_length=255)
+    email: Annotated[str, AfterValidator(_well_formed_email)] = Field(max_length=320)
+    groups: list[str] = Field(default_factory=list, max_length=100)
+
+
+class BundledUserCreatedResponse(UserAdminResponse):
+    """Includes the one-time password, shown once (§8.1)."""
+
+    password: str
+
+
+class SignInCreateRequest(BaseModel):
+    """``POST /admin/users/{id}/sign-in``: a bundled login for an existing
+    gateway user who has none yet (§8.1's "Create sign-in" — the
+    after-a-switch and after-break-glass case)."""
+
+    login: str = Field(min_length=1, max_length=64)
+
+
+class PasswordResetResponse(BaseModel):
+    password: str
+
+
+class MergePreviewResponse(BaseModel):
+    """``GET /admin/users/{source}/merge-preview?into=`` (ADR 0093 §7.1): the
+    dry run the console shows before an operator can even reach the typed
+    confirmation."""
+
+    source_id: uuid.UUID
+    target_id: uuid.UUID
+    counts: dict[str, int]
+    identities_moving: list[IdentityRef]
+    identities_dropped: list[IdentityRef]
+    resulting_is_admin: bool
+    bundled_logins_disabled: list[str]
+    #: A `limit_rules`/`redaction_rules` row the source holds that collides
+    #: with one the target already has (same metric/window/period, or -- for
+    #: `redaction_rules` -- any at all): kept as the target's, the source's
+    #: dropped rather than moved. Already excluded from `counts`.
+    duplicate_rules_dropped: int
+    chat_note: str
+
+
+class MergeRequest(BaseModel):
+    """``POST /admin/users/{source}/merge``. ``confirm`` must equal the
+    source's email, or its id when it has none -- typed by hand, not a
+    checkbox, because this is irreversible."""
+
+    into: uuid.UUID
+    confirm: str
+    reason: str = Field(min_length=1)
+
+
+class MergeResponse(BaseModel):
+    target_id: uuid.UUID
+    counts: dict[str, int]
+    identities_dropped: list[IdentityRef]
+    bundled_logins_disabled: list[str]
+    duplicate_rules_dropped: int
+
+
+class ChatSharedResource(BaseModel):
+    """One resource of this person that someone else can see, named, with who
+    can see it (§9.2: "every resource of the user that someone else can see,
+    named, with who can see it") -- passed through from the chat's own
+    erasure preview verbatim, not recomputed here."""
+
+    kind: str
+    id: str
+    title: str
+    audience: str
+
+
+class DeletePreviewResponse(BaseModel):
+    """``GET /admin/users/{id}/delete-preview`` (ADR 0093 §9.2). The dialog
+    shows this verbatim before the confirmation.
+    """
+
+    user_id: uuid.UUID
+    gateway_counts: dict[str, int]
+    #: The bundled Authelia login bound to this account, if any.
+    bundled_login: str | None
+    #: `None` when the chat could not be reached at all -- shown as "chat
+    #: counts unavailable; the erasure will be queued and retried" rather
+    #: than blocking the preview on it.
+    chat_counts: dict[str, int] | None
+    chat_reachable: bool
+    #: Named and audienced, per `ChatSharedResource`'s own doc comment.
+    #: `DELETE` refuses without `confirm_shared_loss` while this (or the
+    #: legacy count below) is non-empty.
+    shared: list[ChatSharedResource]
+    #: `bool(shared) or bool(chat_unattributed_legacy_shares)` -- kept
+    #: alongside `shared` rather than left for the console to recompute, since
+    #: the legacy count is a system-wide caveat with no resource to name.
+    shared_with_others: bool
+    chat_unattributed_legacy_shares: int
+
+
+class DeleteUserRequest(BaseModel):
+    #: Required (true) once the preview reports `shared_with_others`;
+    #: otherwise ignored. §9.2: "delete isn't refused because of shares... the
+    #: tick box makes the consequence explicit instead."
+    confirm_shared_loss: bool = False
+
+
+class DeleteUserResponse(BaseModel):
+    erasure_id: uuid.UUID
+    #: Whether the chat confirmed inline, right after the commit -- `False`
+    #: means it is `pending` and the retry loop has it now.
+    chat_erasure_done: bool
+
+
+class PendingErasuresResponse(BaseModel):
+    """``GET /admin/erasures/pending`` (ADR 0093 §9.3): the Users page's own
+    banner, "N erasures waiting for the chat", while any are pending."""
+
+    pending: int
 
 
 class OidcMappingRule(BaseModel):

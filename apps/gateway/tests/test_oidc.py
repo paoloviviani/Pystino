@@ -398,9 +398,13 @@ class TestProvisioning:
 
 class TestSessionTokens:
     def test_round_trip(self) -> None:
+        from gateway.types import utcnow
+
         user_id = uuid.uuid4()
         token = issue_session_token(user_id, secret=SECRET, ttl_seconds=3600)
-        assert verify_session_token(token, secret=SECRET) == user_id
+        claims = verify_session_token(token, secret=SECRET)
+        assert claims.user_id == user_id
+        assert claims.issued_at <= utcnow()
 
     def test_wrong_secret_is_rejected(self) -> None:
         token = issue_session_token(uuid.uuid4(), secret=SECRET, ttl_seconds=3600)

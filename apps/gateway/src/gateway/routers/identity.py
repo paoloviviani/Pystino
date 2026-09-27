@@ -58,27 +58,164 @@ holding gets that answer from a support ticket instead.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import logging
+from dataclasses import replace as _dc_replace
 
-from gateway.deps import PrincipalDep
-from gateway.schemas import CallerIdentity
+from fastapi import APIRouter, Request
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from gateway.deps import AuthenticatedCallerDep, SessionDep, SettingsDep, _bearer_client
+from gateway.errors import AuthenticationError, PermissionError_, TooManyRequestsError
+from gateway.merges import resolve_merged_from
+from gateway.models import User, UserIdentity
+from gateway.oidc import OIDCError, ProvisioningRefused, sign_in
+from gateway.schemas import CallerIdentity, IdentityRef, MeIdentities, SessionAnnounce
+from gateway.security import parse_authorization_header
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["pystino"])
 
 
+async def _identities_for(session: AsyncSession, user: User) -> list[IdentityRef]:
+    """The primary (issuer, subject) plus every linked ``user_identities`` row."""
+    refs = [IdentityRef(issuer=user.issuer, subject=user.subject)]
+    rows = (
+        await session.execute(select(UserIdentity).where(UserIdentity.user_id == user.id))
+    ).scalars().all()
+    refs.extend(IdentityRef(issuer=row.issuer, subject=row.subject) for row in rows)
+    return refs
+
+
+@router.post("/session/announce", response_model=SessionAnnounce)
+async def announce(request: Request, session: SessionDep, settings: SettingsDep) -> SessionAnnounce:
+    """The chat's sign-in door (ADR 0093 §4.1, §4.3): called with the fresh
+    access token its own login callback just received. Runs the full sign-in
+    sequence — link, bind, provision, the admin rules, the bootstrap — and
+    answers who this is. Never trusts a claim in the request body: there is
+    none. The token itself is the only input, and its claims are read only
+    after the gateway has validated the signature and fetched userinfo with
+    it itself.
+    """
+    token = parse_authorization_header(request.headers.get("authorization"))
+    if not token:
+        raise AuthenticationError("Supply the access token as 'Authorization: Bearer <token>'.")
+
+    client, record = await _bearer_client(request, session, token)
+    if client is None or record is None:
+        raise AuthenticationError("Invalid or unrecognised access token.")
+
+    try:
+        claims = await client.validate_access_token(token)
+    except OIDCError as exc:
+        # WARNING, not INFO: an audience mismatch here means the chat client
+        # has no audience mapper naming this gateway, and every chat login
+        # fails with only this line to say why.
+        logger.warning("announce: token rejected: %s", exc)
+        raise AuthenticationError("Invalid or unrecognised access token.") from exc
+
+    azp = claims.get("azp") or claims.get("client_id")
+    if not settings.oidc.chat_client_id or azp != settings.oidc.chat_client_id:
+        raise AuthenticationError("This token was not issued to the chat client.")
+
+    issuer = str(claims["iss"])
+    subject = str(claims["sub"])
+    if not request.app.state.announce_limiter.allow((issuer, subject)):
+        raise TooManyRequestsError("Too many announce calls for this identity. Try again shortly.")
+
+    merged: dict[str, object] = dict(claims)
+    merged.update(await client.fetch_userinfo(token))
+
+    global_policy = getattr(request.app.state, "oidc_policy", None)
+    policy = (
+        _dc_replace(global_policy.policy, groups_claim=record.groups_claim)
+        if global_policy is not None
+        else None
+    )
+
+    try:
+        result = await sign_in(
+            session,
+            record,
+            issuer=issuer,
+            subject=subject,
+            claims=merged,
+            settings=settings,
+            policy=policy,
+        )
+    except ProvisioningRefused as exc:
+        await session.commit()
+        raise PermissionError_(str(exc)) from exc
+    await session.commit()
+
+    user = result.user
+    if not user.is_active:
+        raise PermissionError_(
+            "This account is not enabled. Ask an administrator to enable it, then sign in again."
+        )
+
+    identities = await _identities_for(session, user)
+    merged_from = await resolve_merged_from(session, user.id)
+    return SessionAnnounce(
+        id=user.id,
+        identities=identities,
+        merged_from=merged_from,
+        is_active=user.is_active,
+        is_admin=user.is_admin,
+        sessions_valid_after=user.sessions_valid_after,
+        merged_at=user.merged_at,
+    )
+
+
+@router.get("/me/identities", response_model=MeIdentities)
+async def my_identities(caller: AuthenticatedCallerDep, session: SessionDep) -> MeIdentities:
+    """Everything that names this person here (ADR 0093 §4.1): the primary
+    pair, every linked identity, and every id ever merged into this one, so
+    the chat can adopt or fold records it has not keyed on the gateway's id
+    yet.
+
+    Access-token callers only, the same ``credential`` distinction
+    ``/v1/me`` already draws: a personal API key is a program's credential,
+    with no business listing the identities of the person who issued it. A
+    *minted* credential (the house IdP's own access tokens, stored as ``gwa``
+    rows) answers as the person it is proof of having signed in as, exactly
+    like it does for ``is_admin`` there.
+
+    Authenticates via :data:`AuthenticatedCallerDep`, not ``PrincipalDep``
+    (ADR 0093 to-do item 2): this is an identity question, not a billing one,
+    and must answer for a caller with no billing group at all.
+    """
+    by_key = caller.api_key is not None and caller.api_key.minted_by is None
+    if by_key:
+        raise PermissionError_(
+            "An API key may not list its owner's identities. Sign in and use an "
+            "access token instead."
+        )
+    user = caller.user
+    identities = await _identities_for(session, user)
+    merged_from = await resolve_merged_from(session, user.id)
+    return MeIdentities(id=user.id, identities=identities, merged_from=merged_from)
+
+
 @router.get("/me", response_model=CallerIdentity)
-async def whoami(principal: PrincipalDep) -> CallerIdentity:
-    # No query. Authentication already loaded the user with its memberships —
-    # resolving the billing group is impossible without them — and each
-    # membership's group comes with it (`lazy="joined"`), so this route adds
-    # nothing to the round-trip budget `test_query_counts.py` pins.
-    user = principal.user
+async def whoami(caller: AuthenticatedCallerDep) -> CallerIdentity:
+    # No query. Authentication already loaded the user with its memberships,
+    # and each membership's group comes with it (`lazy="joined"`), so this
+    # route adds nothing to the round-trip budget `test_query_counts.py` pins.
+    #
+    # Authenticates via `AuthenticatedCallerDep`, not `PrincipalDep` (ADR 0093
+    # to-do item 2): resolving a billing group is exactly the thing this route
+    # must not require — a bundled user with no membership at all still has an
+    # identity to report, just no group to bill, and this is the route that
+    # tells them so instead of 403ing before they learn anything.
+    user = caller.user
     # Provenance, not shape (see the module docstring): a minted credential is
     # a session's proof and answers as its person; an issued key is a program's
     # credential and its owner's admin flag stays theirs to exercise by
     # signing in.
-    minted = principal.api_key is not None and principal.api_key.minted_by is not None
-    by_key = principal.api_key is not None and not minted
+    minted = caller.api_key is not None and caller.api_key.minted_by is not None
+    by_key = caller.api_key is not None and not minted
 
     # Every effective membership, including groups that are disabled. The
     # billable subset is `/v1/billing/groups`' question and it filters them for
@@ -113,5 +250,12 @@ async def whoami(principal: PrincipalDep) -> CallerIdentity:
         credential="api_key" if by_key else "access_token",
         groups=groups,
         default_billing_group=default,
-        billing_group=principal.billing_group.name,
+        # The same pinned-or-default group a metered request honouring
+        # `x-bill-to` would charge, resolved by `resolve_billing_group_or_none`
+        # instead of `resolve_billing_group` — null when nothing resolves,
+        # which the raising version would have 403'd on (ADR 0093 to-do
+        # item 2).
+        billing_group=caller.billing_group.name if caller.billing_group else None,
+        sessions_valid_after=user.sessions_valid_after,
+        merged_at=user.merged_at,
     )

@@ -23,9 +23,12 @@ Three things here are configurable because every identity provider differs:
 * **Whether unknown groups are created.** Auto-creation is convenient; turning it
   off makes group membership an explicit administrative act.
 
-The device authorization flow itself — the endpoint dance that gets ``opencode`` a
-token in the first place — is still to come; what is here is the half that
-matters to the gateway, which is what to do with the token once it exists.
+The device authorization flow itself is only a diagnostic tool's, so far
+(``OIDCClient.start_device_flow``/``poll_device_token``, for
+``pystino idp check --device``, ADR 0093 §11); the endpoint dance that gets
+``opencode`` a token in the first place is still to come. What is here for
+sign-in is the half that matters to the gateway either way: what to do with
+the token once it exists.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -43,15 +47,22 @@ from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import KeySet, OctKey
 from joserfc.jwt import JWTClaimsRegistry
-from sqlalchemy import Select, and_, or_, select
+from sqlalchemy import Select, and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from gateway.config import OIDCSettings
+from gateway.config import OIDCSettings, Settings
+from gateway.deployment_state import get_or_create_deployment_state, mark_bootstrap_consumed
+from gateway.email_normalize import is_trusted_email, normalize_email
+from gateway.identity_events import record_event
 from gateway.models import (
+    DirectoryEntry,
     Group,
     GroupSource,
     GroupSync,
+    IdentityEventAction,
+    IdentityEventActor,
+    IdentityProvider,
     Membership,
     MembershipSource,
     User,
@@ -210,30 +221,76 @@ class OIDCClient:
         self._metadata: OIDCMetadata | None = None
         self._jwks: KeySet | None = None
         self._jwks_fetched_at: float = 0.0
+        # ADR 0093 §2: a token with neither claim still passes on audience
+        # alone, but it is worth one note per client, not one per request.
+        self._warned_no_client_claim = False
+
+    def _backchannel_headers(self) -> dict[str, str]:
+        """Forwarded headers naming the public issuer, for internal-URL calls.
+
+        Authelia derives its issuer — and so every endpoint in discovery and
+        the `iss` of what it mints — from these headers; called on its internal
+        address without them it answers nothing at all (verified against
+        4.39.22). Empty when there is no internal URL, so an external IdP sees
+        exactly the requests it always did.
+        """
+        if not self._settings.internal_base_url:
+            return {}
+        public = httpx.URL(self._settings.issuer)
+        host = public.host if public.port is None else f"{public.host}:{public.port}"
+        return {"x-forwarded-proto": public.scheme, "x-forwarded-host": host}
+
+    def _backchannel_url(self, url: str | None) -> str | None:
+        """Rewrite a public endpoint onto the internal base, when one is set.
+
+        Only endpoints under the public issuer move. Anything else — an IdP
+        that serves JWKS from a CDN — is left alone, because rewriting a URL we
+        do not understand would send the request somewhere it was never meant
+        to go.
+        """
+        internal = self._settings.internal_base_url.rstrip("/")
+        public = self._settings.issuer.rstrip("/")
+        if not url or not internal or not url.startswith(public):
+            return url
+        return internal + url[len(public) :]
 
     async def metadata(self) -> OIDCMetadata:
         if self._metadata is not None:
             return self._metadata
-        url = f"{self._settings.issuer}/.well-known/openid-configuration"
+        base = (self._settings.internal_base_url or self._settings.issuer).rstrip("/")
+        url = f"{base}/.well-known/openid-configuration"
         try:
-            response = await self._http.get(url)
+            response = await self._http.get(url, headers=self._backchannel_headers())
             response.raise_for_status()
             document = response.json()
         except (httpx.HTTPError, ValueError) as exc:
             raise OIDCError(f"could not fetch OIDC discovery document from {url}: {exc}") from exc
 
         try:
+            # The browser-facing endpoints (authorization, end_session) stay as
+            # the IdP published them; only what this server calls itself moves
+            # onto the internal URL.
             self._metadata = OIDCMetadata(
                 issuer=document["issuer"],
                 authorization_endpoint=document["authorization_endpoint"],
-                token_endpoint=document["token_endpoint"],
-                jwks_uri=document["jwks_uri"],
-                userinfo_endpoint=document.get("userinfo_endpoint"),
+                token_endpoint=self._backchannel_url(document["token_endpoint"]) or "",
+                jwks_uri=self._backchannel_url(document["jwks_uri"]) or "",
+                userinfo_endpoint=self._backchannel_url(document.get("userinfo_endpoint")),
                 device_authorization_endpoint=document.get("device_authorization_endpoint"),
                 end_session_endpoint=document.get("end_session_endpoint"),
             )
         except KeyError as exc:
             raise OIDCError(f"discovery document is missing {exc}") from exc
+        published = self._metadata.issuer.rstrip("/")
+        if self._settings.internal_base_url and published != self._settings.issuer.rstrip("/"):
+            # The one misconfiguration the forwarded headers can produce: the
+            # IdP ignored them and answered as its internal self. Every token
+            # would then fail the issuer check with a message about the token,
+            # not about this, so say it here.
+            raise OIDCError(
+                f"discovery via {base} reports issuer {published!r}, not "
+                f"{self._settings.issuer!r}: the IdP did not honour X-Forwarded-Host/Proto"
+            )
         return self._metadata
 
     async def jwks(self, *, force: bool = False) -> KeySet:
@@ -249,7 +306,7 @@ class OIDCClient:
 
         metadata = await self.metadata()
         try:
-            response = await self._http.get(metadata.jwks_uri)
+            response = await self._http.get(metadata.jwks_uri, headers=self._backchannel_headers())
             response.raise_for_status()
             self._jwks = KeySet.import_key_set(response.json())
         except (httpx.HTTPError, ValueError, JoseError) as exc:
@@ -293,7 +350,9 @@ class OIDCClient:
             data["client_secret"] = secret
 
         try:
-            response = await self._http.post(metadata.token_endpoint, data=data)
+            response = await self._http.post(
+                metadata.token_endpoint, data=data, headers=self._backchannel_headers()
+            )
         except httpx.HTTPError as exc:
             raise OIDCError(f"token endpoint unreachable: {exc}") from exc
 
@@ -416,7 +475,35 @@ class OIDCClient:
                 "the client needs an audience mapper naming this gateway"
             )
 
+        self._check_accepted_client(token.claims)
+
         return dict(token.claims)
+
+    def _check_accepted_client(self, claims: dict[str, Any]) -> None:
+        """ADR 0093 §2: the audience check alone answers "for this gateway",
+        never "asked for by a client we trust" — `aud` is a membership test,
+        so any client an administrator gave an audience mapper can mint a
+        token that passes it. `azp` (or, lacking that, `client_id`) is who
+        actually asked, and it must be one of `ACCEPTED_CLIENTS` once that is
+        configured; empty means the operator has not set it yet, the same
+        escape hatch `GATEWAY_OIDC__ACCEPTED_CLIENTS`'s own startup check
+        gives outside production.
+        """
+        accepted = self._settings.accepted_client_list()
+        if not accepted:
+            return
+        client = claims.get("azp") or claims.get("client_id")
+        if client is None:
+            if not self._warned_no_client_claim:
+                logger.warning(
+                    "access tokens from %s carry neither azp nor client_id; "
+                    "ACCEPTED_CLIENTS cannot be enforced for it, only the audience",
+                    self._settings.issuer,
+                )
+                self._warned_no_client_claim = True
+            return
+        if client not in accepted:
+            raise OIDCError(f"access token client {client!r} is not in ACCEPTED_CLIENTS")
 
     async def fetch_userinfo(self, access_token: str) -> dict[str, Any]:
         metadata = await self.metadata()
@@ -425,7 +512,7 @@ class OIDCClient:
         try:
             response = await self._http.get(
                 metadata.userinfo_endpoint,
-                headers={"authorization": f"Bearer {access_token}"},
+                headers={"authorization": f"Bearer {access_token}", **self._backchannel_headers()},
             )
             response.raise_for_status()
             payload = response.json()
@@ -435,10 +522,89 @@ class OIDCClient:
             return {}
         return payload if isinstance(payload, dict) else {}
 
+    async def start_device_flow(self, *, client_id: str, scope: str = "openid") -> dict[str, Any]:
+        """RFC 8628, first leg: get a ``device_code``/``user_code`` pair.
 
-# The issuer of an account whose door is a password (ADR 0043). Spelled out
-# here because this module now has to *avoid* matching it as a directory.
-_LOCAL_ISSUER = "local"
+        The half of the device flow this module's own docstring said was
+        "still to come" — ``pystino idp check --device`` (ADR 0093 §11) is
+        the first caller, standing in for ``opencode``'s own enrollment until
+        that lands.
+        """
+        metadata = await self.metadata()
+        if not metadata.device_authorization_endpoint:
+            raise OIDCError(
+                "this identity provider does not publish a device_authorization_endpoint"
+            )
+        try:
+            response = await self._http.post(
+                metadata.device_authorization_endpoint,
+                data={"client_id": client_id, "scope": scope},
+                headers=self._backchannel_headers(),
+            )
+        except httpx.HTTPError as exc:
+            raise OIDCError(f"device authorization endpoint unreachable: {exc}") from exc
+        if response.status_code >= 400:
+            raise OIDCError(
+                f"device authorization was refused: {response.status_code} {response.text}"
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise OIDCError("device authorization endpoint returned a non-JSON body") from exc
+        if not isinstance(payload, dict):
+            raise OIDCError("device authorization endpoint returned an unexpected body")
+        for key in ("device_code", "user_code", "verification_uri"):
+            if key not in payload:
+                raise OIDCError(f"device authorization response is missing {key!r}")
+        return payload
+
+    async def poll_device_token(self, *, device_code: str, client_id: str) -> dict[str, Any]:
+        """One poll of the token endpoint for a device grant.
+
+        Exactly one request, so a caller can sleep and print progress between
+        calls rather than being blocked inside this method for the whole
+        wait. ``{"pending": "authorization_pending" | "slow_down"}`` is not an
+        error — the operator has not finished signing in yet.
+        """
+        metadata = await self.metadata()
+        data = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+            "device_code": device_code,
+            "client_id": client_id,
+        }
+        try:
+            response = await self._http.post(
+                metadata.token_endpoint, data=data, headers=self._backchannel_headers()
+            )
+        except httpx.HTTPError as exc:
+            raise OIDCError(f"token endpoint unreachable: {exc}") from exc
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise OIDCError("token endpoint returned a non-JSON body") from exc
+        if response.status_code >= 400:
+            error = payload.get("error") if isinstance(payload, dict) else None
+            if error in ("authorization_pending", "slow_down"):
+                return {"pending": error}
+            raise OIDCError(f"device grant failed: {error or response.text}")
+        if not isinstance(payload, dict) or "access_token" not in payload:
+            raise OIDCError("token endpoint returned an unexpected body")
+        return payload
+
+
+# A user created from the console before their first sign-in (ADR 0093 §3.1),
+# with a placeholder `(issuer, subject)` until the bind at that person's first
+# sign-in (§8.2) replaces it. Nothing creates one yet — that is stage (b) —
+# but `other_active_admin_exists` below already excludes it, so that stage
+# does not have to touch this function to stay correct, and it can never be
+# made an administrator ahead of time (§5.4): an invite is not a grant.
+PENDING_USER_ISSUER = "pystino:pending"
+
+#: Serializes every last-admin guard against its peers until the surrounding
+#: transaction commits, so concurrent demotes/disables cannot both pass the
+#: check (ADR 0093 §5.5). Postgres only; arbitrary but fixed, and distinct
+#: from the re-seed lock in `identity_registry` (93_002_001).
+_LAST_ADMIN_ADVISORY_LOCK_KEY = 93_002_005
 
 
 def _identity_select(issuer: str, subject: str) -> Select[tuple[User]]:
@@ -472,87 +638,285 @@ def _identity_select(issuer: str, subject: str) -> Select[tuple[User]]:
     )
 
 
-async def _adopt_local_account(
+async def bind_bundled_login(
+    session: AsyncSession,
+    record: IdentityProvider,
+    *,
+    issuer: str,
+    subject: str,
+    preferred_username: str | None,
+    email: str | None,
+    email_verified: bool | None,
+) -> None:
+    """Bind an unknown ``(issuer, subject)`` to the console-created account its
+    login was made for (ADR 0093 §8.2), bundled Authelia only.
+
+    This replaces ``link_at_login``'s unlinked-entry path for this one kind:
+    that function claims a ``directory_entries`` row with no ``user_id`` yet,
+    which never describes a bundled entry — ``POST /admin/users`` and
+    ``POST /admin/users/{id}/sign-in`` bind the row to a user (pending or
+    real) at *creation* time (§8.2 step 4), not at the login that follows.
+    What is unknown here is not "whose entry is this" but "does this
+    signing-in identity belong to the user that entry already names".
+
+    Call this **before** ``provision_user``, unconditionally — it runs its
+    own ``_identity_select`` check and returns at once for an identity that
+    is already known, so it is never wrong to call regardless of what the
+    caller has or hasn't looked up yet. On a match it mutates the target
+    user's identity — replacing the pending pair, or adding/updating a
+    ``user_identities`` row — so ``provision_user``'s own ``_identity_select``
+    then finds this same person instead of creating a new one. It writes
+    nothing and returns quietly on every refusal: an unmatched login is an
+    ordinary new user, not an error. The extra query costs nothing this path
+    cares about — a browser login, not the ``/v1`` hot path
+    ``test_query_counts.py`` bounds.
+    """
+    if record.kind != "authelia":
+        return
+    if (await session.execute(_identity_select(issuer, subject))).scalar_one_or_none() is not None:
+        return
+    if not preferred_username:
+        return
+    row = (
+        await session.execute(
+            select(DirectoryEntry).where(
+                DirectoryEntry.provider_id == record.id,
+                DirectoryEntry.external_id == preferred_username,
+                DirectoryEntry.user_id.is_not(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None or row.user_id is None:
+        return
+    # §8.2: "when email_verified is True and a normalised email equals the
+    # entry's" — the literal boolean, and both sides run through the same
+    # normalisation before comparing (R2: exact-match comparison is how a
+    # homoglyph or a casing difference silently fails to match).
+    if email_verified is not True:
+        return
+    claim_email, claim_trusted = is_trusted_email(email or "")
+    entry_email, entry_trusted = is_trusted_email(row.email or "")
+    if not claim_trusted or not entry_trusted or claim_email != entry_email:
+        return
+
+    target = (
+        await session.execute(select(User).where(User.id == row.user_id))
+    ).scalar_one_or_none()
+    if target is None:
+        return
+
+    if target.issuer == PENDING_USER_ISSUER:
+        # The placeholder pair (§3.1) is replaced outright: it named nobody
+        # real, so there is nothing to keep a secondary record of.
+        target.issuer = issuer
+        target.subject = subject
+    else:
+        # Otherwise the identity is added — except when the target already
+        # holds one at *this* issuer (a lost `authelia-data` volume mints a
+        # new opaque subject for the same login, one of §8.2's own named
+        # cases): updating that identity's subject in place is what "the
+        # same person, the same directory, a new subject" means, and
+        # inserting a second row at the same issuer would violate
+        # `uq_user_identities_user_issuer` anyway.
+        existing = (
+            await session.execute(
+                select(UserIdentity).where(
+                    UserIdentity.user_id == target.id, UserIdentity.issuer == issuer
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.subject = subject
+            existing.matched_email = claim_email
+        else:
+            session.add(
+                UserIdentity(
+                    user_id=target.id,
+                    issuer=issuer,
+                    subject=subject,
+                    matched_email=claim_email,
+                )
+            )
+    await session.flush()
+
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.LOGIN,
+        actor_label=email or preferred_username,
+        action=IdentityEventAction.IDENTITY_BIND,
+        target_user_id=target.id,
+        target_label=email or preferred_username,
+        issuer=issuer,
+        subject=subject,
+    )
+
+
+async def claim_unbound_bundled_login(
+    session: AsyncSession,
+    record: IdentityProvider,
+    user: User,
+    *,
+    preferred_username: str | None,
+    email: str | None,
+    email_verified: bool | None,
+) -> None:
+    """Claim a migration-created, unbound ``directory_entries`` row at the
+    first real sign-in it was always going to need (ADR 0093 §13.4/§8.2).
+
+    A users-file login that pre-dates stage (b) and never signed in has no
+    gateway user for `migrate_bundled_directory` to bind in advance, so that
+    migration leaves its entry's `user_id` null. `bind_bundled_login` cannot
+    close that gap itself: it only ever matches an *already-bound* row, by
+    its own design, because the entries it was written for (console-created
+    pending users and fresh sign-ins) are bound at creation. So the ordinary
+    new-user path runs first — `provision_user` creates `user` believing this
+    is a brand new person — and this claims the entry immediately after,
+    once there is a user row to claim it with.
+
+    Call this **after** `provision_user`, unconditionally: it self-gates on
+    `record.kind`, like `bind_bundled_login`, so stage (c)'s announce door can
+    call both without knowing which kind it is talking to. Matches on the
+    same rule as `bind_bundled_login` (`email_verified is True`, both sides'
+    normalised email equal) so one sentence describes when either function
+    binds an identity. A refusal is not an error — the entry stays unbound
+    for a later administrator to reconcile by hand — so it only logs why.
+    """
+    if record.kind != "authelia":
+        return
+    if not preferred_username:
+        return
+    entry = (
+        await session.execute(
+            select(DirectoryEntry).where(
+                DirectoryEntry.provider_id == record.id,
+                DirectoryEntry.external_id == preferred_username,
+                DirectoryEntry.user_id.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        return
+    if email_verified is not True:
+        logger.info(
+            "not claiming unbound directory entry %r: email unverified", preferred_username
+        )
+        return
+    claim_email, claim_trusted = is_trusted_email(email or "")
+    entry_email, entry_trusted = is_trusted_email(entry.email or "")
+    if not claim_trusted or not entry_trusted or claim_email != entry_email:
+        logger.info(
+            "not claiming unbound directory entry %r: email does not match", preferred_username
+        )
+        return
+
+    entry.user_id = user.id
+    await session.flush()
+
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.LOGIN,
+        actor_label=email or preferred_username,
+        action=IdentityEventAction.IDENTITY_BIND,
+        target_user_id=user.id,
+        target_label=email or preferred_username,
+        issuer=record.issuer,
+        subject=user.subject,
+        detail={"claimed_unbound": True},
+    )
+
+
+#: ADR 0093 §6.2, in the order the design numbers them: each refusal logs a
+#: WARNING naming its own number, so a declined link is a one-line diagnosis
+#: rather than a search through the eight conditions.
+async def link_by_email(
     session: AsyncSession,
     *,
     issuer: str,
     subject: str,
     email: str | None,
-    email_verified: bool | None,
+    email_verified: object,
 ) -> User | None:
-    """The local account this directory identity may adopt, or ``None``.
+    """Attach an unknown ``(issuer, subject)`` to the one existing account
+    whose verified email matches (ADR 0093 §6.2).
 
-    Linking is off unless an operator turned it on for this provider, and the
-    caller has already established that. What is decided here is whether the
-    claims earn it.
+    Call this only for an identity :func:`bind_bundled_login` left unmatched,
+    and only when the caller has already checked ``OIDC_LINK_BY_EMAIL`` is on
+    — this function does not read settings, so it never has to be told twice
+    what the switch was for. Never call it from the plain ``/v1`` path: a
+    bearer claim set may lack ``email_verified``, and that path's identity is
+    never a stranger this rule should be deciding about.
 
-    **A verified address, or nothing.** ``email_verified`` absent is treated as
-    unverified, never as consent: a provider that does not say has not said
-    yes, and reading silence as verification is what would turn an ``email``
-    claim into a password for the account it names. This is the single property
-    that makes the feature tolerable — see ADR 0056.
-
-    The match is on ``(issuer="local", subject=<address>)``, which is unique by
-    construction, and not on ``users.email``, which is neither unique nor
-    stable. Every refusal is logged with its reason: a login that quietly
-    creates a second account instead of linking is exactly the confusion an
-    operator would otherwise debug from the outside.
+    On success, adds a ``user_identities`` row for the target and writes the
+    ``identity.link`` audit event; the caller still has to run
+    :func:`provision_user` afterwards; over the same ``(issuer, subject)`` it
+    will find the row just added rather than provisioning a second person.
+    Every refusal just returns ``None`` — an unmatched login is an ordinary
+    new user, not an error.
     """
-    if not email:
-        logger.warning(
-            "account linking declined for %s/%s: the claims carry no email", issuer, subject
-        )
-        return None
     if email_verified is not True:
+        logger.warning("link-by-email declined (1): email_verified is not the literal true")
+        return None
+    claim_email, trusted = is_trusted_email(email or "")
+    if not trusted:
+        logger.warning("link-by-email declined (2): %r is not a trusted ASCII address", email)
+        return None
+
+    candidates = (
+        await session.execute(select(User).where(User.email_normalized == claim_email))
+    ).scalars().all()
+    if len(candidates) != 1:
         logger.warning(
-            "account linking declined for %s at %s: email_verified is %r — an unverified "
-            "address is a claim, not proof that the person owns it",
-            email,
-            issuer,
-            email_verified,
+            "link-by-email declined (3): %d account(s) hold %r, need exactly one",
+            len(candidates),
+            claim_email,
         )
         return None
+    target = candidates[0]
 
-    # Local subjects are casefolded addresses: that is what `local_login`
-    # looks up, so it is what a link has to agree with.
-    address = email.strip().casefold()
-    local = (await session.execute(_identity_select(_LOCAL_ISSUER, address))).scalar_one_or_none()
-    if local is None:
-        # Not a refusal. There is simply no local account by that name, and
-        # the caller goes on to create the ordinary new one.
+    if not (target.email_verified is True or "email" in (target.admin_edited_fields or [])):
+        logger.warning(
+            "link-by-email declined (4): %s's stored address was never itself verified", target.id
+        )
         return None
-
-    held = (
+    if not target.is_active:
+        logger.warning("link-by-email declined (5): %s is not active", target.id)
+        return None
+    if target.is_admin:
+        logger.warning("link-by-email declined (6): %s is an administrator", target.id)
+        return None
+    if target.issuer == PENDING_USER_ISSUER:
+        logger.warning("link-by-email declined (7): %s is a pending user", target.id)
+        return None
+    existing_at_issuer = (
         await session.execute(
             select(UserIdentity).where(
-                UserIdentity.user_id == local.id, UserIdentity.issuer == issuer
+                UserIdentity.user_id == target.id, UserIdentity.issuer == issuer
             )
         )
     ).scalar_one_or_none()
-    if held is not None:
-        # One person, one identity per directory. A second subject arriving
-        # from the same issuer for the same address is not the same person
-        # twice — it is a directory that reassigned the address, or two
-        # accounts in it, and adopting on the strength of the address alone
-        # would hand the second one everything the first one has.
+    if target.issuer == issuer or existing_at_issuer is not None:
         logger.warning(
-            "account linking declined for %s/%s: local account %s is already linked to "
-            "%s at this provider",
-            issuer,
-            subject,
-            local.id,
-            held.subject,
+            "link-by-email declined (8): %s already has an identity at this issuer", target.id
         )
         return None
 
     session.add(
-        UserIdentity(user_id=local.id, issuer=issuer, subject=subject, matched_email=address)
+        UserIdentity(user_id=target.id, issuer=issuer, subject=subject, matched_email=claim_email)
     )
     await session.flush()
-    logger.info(
-        "linked identity %s/%s to local account %s (%s)", issuer, subject, local.id, address
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.LOGIN,
+        actor_label=claim_email,
+        action=IdentityEventAction.IDENTITY_LINK,
+        target_user_id=target.id,
+        target_label=claim_email,
+        issuer=issuer,
+        subject=subject,
+        detail={"matched_email": claim_email, "issuer": issuer},
     )
-    return local
+    logger.info("link-by-email: %s/%s linked to existing user %s", issuer, subject, target.id)
+    return target
 
 
 async def provision_user(
@@ -570,9 +934,11 @@ async def provision_user(
     username: str | None = None,
     touch_login: bool = True,
     policy: OIDCPolicy | None = None,
-    allow_local_link: bool = False,
     email_verified: bool | None = None,
     group_sync: GroupSync = GroupSync.EVERY_LOGIN,
+    group_source: str = "claim",
+    claims: dict[str, Any] | None = None,
+    group_mappings: dict[str, str] | None = None,
 ) -> User:
     """Create or update a user and reconcile their group memberships.
 
@@ -595,33 +961,22 @@ async def provision_user(
     was treating *all* membership as the directory's to answer for, which made
     an administrator's own grant last until the person next signed in.
 
-    ``allow_local_link`` is this provider's ``link_local_by_email`` switch and
-    defaults to off, so every caller that does not pass it keeps the behaviour
-    it always had. Note where it is *not* passed: an access token on ``/v1``
-    resolves an existing link but never creates one (ADR 0056). Linking is a
-    decision about who an account belongs to, and the browser callback is the
-    only door that sees the full claim set — userinfo included, which is where
-    several providers put ``email_verified``.
+    Linking is not this function's decision any more (ADR 0093 §6): the
+    matcher that used to live here only ever adopted ``issuer="local"``
+    accounts, which §3.2 removes as unsound (a login at *any* other directory
+    with the same address would have adopted it too). §6's cross-issuer rule
+    is :func:`link_by_email`, run by :func:`sign_in` *before* this function,
+    over an identity this function's own ``_identity_select`` would otherwise
+    have treated as brand new — so a successful link simply means this call
+    finds an existing user rather than creating one, with nothing left here
+    to gate.
     """
     user = (await session.execute(_identity_select(issuer, subject))).scalar_one_or_none()
 
     # "First" for `group_sync=first_login`: the first login of this identity
-    # here, which is the login that creates the account *or* the one that
-    # adopts an existing local one — both are the first time this directory
-    # has anything to say about it.
+    # here, which is the login that creates the account or the first one to
+    # see it (stage (c) restores the adopted case).
     first_login_here = user is None
-
-    if user is None and allow_local_link:
-        # An adopted account is not a new one, so this runs *before* the
-        # auto-provisioning gate below: refusing to create strangers is a
-        # rule about strangers, and this person already has a row here.
-        user = await _adopt_local_account(
-            session,
-            issuer=issuer,
-            subject=subject,
-            email=email,
-            email_verified=email_verified,
-        )
 
     if user is None and policy is not None and not policy.auto_provision:
         # Automatic provisioning is off (ADR 0048). Two answers, the operator's
@@ -651,6 +1006,7 @@ async def provision_user(
             issuer=issuer,
             subject=subject,
             email=email,
+            email_normalized=normalize_email(email) if email else None,
             display_name=display_name,
             username=username,
         )
@@ -668,10 +1024,21 @@ async def provision_user(
         edited = set(user.admin_edited_fields or [])
         if email is not None and "email" not in edited:
             user.email = email
+            user.email_normalized = normalize_email(email)
         if display_name is not None and "display_name" not in edited:
             user.display_name = display_name
         if username is not None and "username" not in edited:
             user.username = username
+
+    # `email_verified` (ADR 0093 §3.1) tracks the *last sign-in's* claim, not
+    # whatever the email above happens to be — so it is written whenever a
+    # caller has an answer, even one that leaves `email` untouched (an
+    # administrator's edited address that the directory keeps re-asserting
+    # unverified is exactly the case this must still record). Left alone when
+    # a caller has none: a plain `/v1` claim set that omits it must not erase
+    # what the last real login established.
+    if email_verified is not None:
+        user.email_verified = email_verified is True
 
     # A `/v1` call made with an access token is not a login, and recording it as
     # one would make "last seen" mean two different things on the same column.
@@ -681,11 +1048,27 @@ async def provision_user(
     # `never` does not even resolve the claim's group names: with nothing to
     # apply them to, creating groups from them would leave a directory's
     # vocabulary lying around in a deployment that decided not to use it.
-    if group_sync is GroupSync.EVERY_LOGIN or (
+    # How often the directory's answer applies (ADR 0057) — to groups and, when
+    # the provider decides admin by claim, to the admin flag (ADR 0088).
+    directory_answers = group_sync is GroupSync.EVERY_LOGIN or (
         group_sync is GroupSync.FIRST_LOGIN and first_login_here
-    ):
+    )
+    # `group_source` says *where* that answer comes from: the token here, the
+    # directory mirror (applied by a sync run, never from a token), or nowhere.
+    if directory_answers and group_source == "claim":
         groups = await _resolve_groups(session, group_names, settings)
         await _reconcile_memberships(session, user, groups)
+    # The env admin rules (ADR 0093 §5): a door (`touch_login`) always
+    # re-evaluates both, full claim set and all; a plain `/v1` bearer call
+    # only reconciles the claim rule, and only when the directory's answer
+    # would apply anyway (`directory_answers`) — the email rule needs
+    # `email_verified`'s literal boolean, which a bearer claim set may not
+    # carry, and re-checking it on every request would put a write on the hot
+    # path for no gain `_admin_diverges` does not already cover.
+    if claims is not None and (touch_login or directory_answers):
+        await apply_env_admin_rules(
+            session, user, claims, settings, group_mappings=group_mappings, email_rule=touch_login
+        )
 
     # Everything below reads the *effective* membership set, not the token's
     # answer. They are no longer the same thing: a manual grant is a real
@@ -722,6 +1105,445 @@ async def provision_user(
     return user
 
 
+async def other_active_admin_exists(session: AsyncSession, *, excluding: uuid.UUID) -> bool:
+    """Would at least one active administrator remain, other than ``excluding``?
+
+    "Active" (ADR 0093 §5.5) means signed in, ``is_admin``, ``is_active``, and
+    not the placeholder identity a console invite creates before someone's
+    first sign-in (``PENDING_USER_ISSUER``). This is the one query every
+    last-admin guard shares — the console's PATCH and DELETE routes, the CLI's
+    ``admin revoke``, and the two rule-driven revocations below — so that
+    "who counts as an active administrator" cannot drift between them.
+
+    Under Postgres the check takes a transaction-scoped advisory lock first,
+    so two guards running at once (two admins demoting each other, a console
+    demotion racing a rule-driven revocation at sign-in) serialize instead of
+    both seeing "another admin exists" and both committing — the last-admin
+    rule must never depend on READ COMMITTED interleaving. SQLite has no
+    advisory locks and a single-process test needs none, exactly like the
+    re-seed guard in `identity_registry`.
+    """
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"), {"key": _LAST_ADMIN_ADVISORY_LOCK_KEY}
+        )
+    result = await session.execute(
+        select(User.id)
+        .where(
+            User.is_admin.is_(True),
+            User.is_active.is_(True),
+            User.issuer != PENDING_USER_ISSUER,
+            User.id != excluding,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def apply_admin_answer(session: AsyncSession, user: User, is_admin: bool) -> str:
+    """Apply a directory sync's answer about the admin flag, within provenance.
+
+    The batch counterpart to `apply_env_admin_rules` below: this is a pull
+    adapter's mirrored group membership (`directory/engine.py`), read from the
+    directory mirror rather than a fresh claim, but the same provenance rule
+    applies — grants are recorded as ``admin_source="env"`` (ADR 0093 §5;
+    "oidc" before it, migration 0050), ``admin_rule="claim"``, and a
+    revocation only touches a flag a rule granted. Refused when it would
+    leave no active administrator, which is the one way a directory glitch
+    could lock everyone out of the console. Returns what happened, for sync
+    reports.
+    """
+    if is_admin:
+        if user.is_admin:
+            return "unchanged"
+        user.is_admin = True
+        user.admin_source = "env"
+        user.admin_rule = "claim"
+        await mark_bootstrap_consumed(session)
+        return "granted"
+    if not user.is_admin or user.admin_source != "env":
+        return "unchanged"
+    if not await other_active_admin_exists(session, excluding=user.id):
+        logger.warning(
+            "not revoking admin from %s: they are the last active administrator", user.id
+        )
+        return "kept-last-admin"
+    user.is_admin = False
+    user.admin_rule = None
+    return "revoked"
+
+
+def _matches_email_rule(claims: dict[str, Any], settings: OIDCSettings) -> bool:
+    """ADR 0093 §5.1. The literal boolean, an ASCII address, and list
+    membership — all three, or it does not grant."""
+    allowed = settings.admin_email_list()
+    if not allowed or claims.get("email_verified") is not True:
+        return False
+    email = claims.get("email")
+    if not isinstance(email, str):
+        return False
+    normalized, trusted = is_trusted_email(email)
+    if not trusted:
+        return False
+    return normalized in {normalize_email(candidate) for candidate in allowed}
+
+
+def _matches_claim_rule(
+    claims: dict[str, Any], settings: OIDCSettings, mappings: dict[str, str] | None
+) -> bool:
+    """ADR 0093 §5.2. The existing `AdminRule` shape, fed from `.env`."""
+    values = settings.admin_claim_value_list()
+    if not (settings.admin_claim and values):
+        return False
+    from gateway.identity_policy import AdminRule
+
+    rule = AdminRule(claim=settings.admin_claim, values=frozenset(values))
+    return rule.matches(claims, mappings)
+
+
+async def apply_env_admin_rules(
+    session: AsyncSession,
+    user: User,
+    claims: dict[str, Any],
+    settings: OIDCSettings,
+    *,
+    group_mappings: dict[str, str] | None = None,
+    email_rule: bool = True,
+) -> str:
+    """The ``.env`` admin rules (ADR 0093 §5.1, §5.2), evaluated from claims.
+
+    Never reads the provider row — ``OIDC_ADMIN_EMAIL``, ``OIDC_ADMIN_CLAIM``
+    and ``OIDC_ADMIN_CLAIM_VALUE`` are read from ``settings`` directly, which
+    is what lets stage c's announce door call this unchanged. ``email_rule``
+    is off for a plain ``/v1`` bearer call: its claim set may lack
+    ``email_verified``, and the email rule's whole safety is the *literal*
+    boolean.
+
+    If either rule matches, admin is granted when it was not already held —
+    "email" wins the ``admin_rule`` label when both match, since it is the
+    more specific of the two. A rule may only ever touch what a rule granted:
+    a match never converts a ``manual`` admin (console, CLI, bootstrap,
+    break-glass) to ``env`` provenance, and a mismatch never revokes one.
+    ``admin_rule`` itself is only ever relabelled at a sign-in
+    (``email_rule=True``) — never on ``/v1``, where the claim set that would
+    justify "email" is not there to have been checked, so the label could
+    otherwise flip on alternate requests depending on which claim happened to
+    be present.
+
+    A revocation is refused when it would leave no active administrator
+    (audited as ``admin.refused_last`` — but only at a sign-in; ``/v1`` only
+    logs, since a last admin whose claim lapsed would otherwise write an
+    audit row on every request), and never reaches an ``admin_rule=="email"``
+    grant at all on ``/v1``: only a sign-in, whose claims can carry the
+    literal ``email_verified``, or the startup sweep, may revoke what the
+    email rule gave.
+    """
+    matched_email = email_rule and _matches_email_rule(claims, settings)
+    matched_claim = _matches_claim_rule(claims, settings, group_mappings)
+    rule = "email" if matched_email else "claim"
+
+    if matched_email or matched_claim:
+        if user.is_admin:
+            if user.admin_source != "env":
+                return "unchanged"
+            if email_rule and user.admin_rule != rule:
+                user.admin_rule = rule
+            return "unchanged"
+        user.is_admin = True
+        user.admin_source = "env"
+        user.admin_rule = rule
+        await mark_bootstrap_consumed(session)
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.LOGIN,
+            actor_label=user.email or str(user.id),
+            actor_user_id=user.id,
+            action=IdentityEventAction.ADMIN_GRANT,
+            target_user_id=user.id,
+            target_label=user.email or "",
+            detail={"rule": rule},
+        )
+        return "granted"
+
+    if not user.is_admin or user.admin_source != "env":
+        return "unchanged"
+    if not email_rule and user.admin_rule == "email":
+        return "unchanged"
+    if not await other_active_admin_exists(session, excluding=user.id):
+        if email_rule:
+            await record_event(
+                session,
+                actor_type=IdentityEventActor.LOGIN,
+                actor_label=user.email or str(user.id),
+                actor_user_id=user.id,
+                action=IdentityEventAction.ADMIN_REFUSED_LAST,
+                target_user_id=user.id,
+                target_label=user.email or "",
+                reason="would leave no active administrator",
+            )
+        else:
+            logger.warning(
+                "not revoking admin from %s: they are the last active administrator", user.id
+            )
+        return "kept-last-admin"
+    revoked_rule = user.admin_rule
+    user.is_admin = False
+    user.admin_rule = None
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.LOGIN,
+        actor_label=user.email or str(user.id),
+        actor_user_id=user.id,
+        action=IdentityEventAction.ADMIN_REVOKE,
+        target_user_id=user.id,
+        target_label=user.email or "",
+        detail={"rule": revoked_rule} if revoked_rule else {},
+    )
+    return "revoked"
+
+
+async def sweep_env_admin_email_rule(session: AsyncSession, settings: OIDCSettings) -> None:
+    """ADR 0093 §5.1's startup sweep: only ever revokes, and only the email
+    rule's own grants. There is no fresh claim set to re-check the claim rule
+    with at startup — that can only happen at a person's next sign-in
+    (`apply_env_admin_rules`), which this leaves entirely alone.
+    """
+    allowed = {normalize_email(candidate) for candidate in settings.admin_email_list()}
+    candidates = (
+        await session.execute(
+            select(User).where(
+                User.is_admin.is_(True),
+                User.admin_source == "env",
+                User.admin_rule == "email",
+            )
+        )
+    ).scalars()
+    for user in candidates:
+        if user.email_normalized in allowed:
+            continue
+        if not await other_active_admin_exists(session, excluding=user.id):
+            await record_event(
+                session,
+                actor_type=IdentityEventActor.SYSTEM,
+                actor_label="system",
+                action=IdentityEventAction.ADMIN_REFUSED_LAST,
+                target_user_id=user.id,
+                target_label=user.email or "",
+                reason="would leave no active administrator",
+            )
+            continue
+        user.is_admin = False
+        user.admin_rule = None
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.SYSTEM,
+            actor_label="system",
+            action=IdentityEventAction.ADMIN_REVOKE,
+            target_user_id=user.id,
+            target_label=user.email or "",
+            detail={"rule": "email"},
+        )
+    await session.commit()
+
+
+async def promote_bootstrap_admin(
+    session: AsyncSession,
+    user: User,
+    *,
+    bootstrap_email: str,
+    email: str | None,
+    email_verified: object,
+    kind: str,
+) -> bool:
+    """Make ``user`` the first administrator, if everything lines up.
+
+    All five must hold: the environment's provider kind is ``authelia`` — an
+    external IdP names its own admins through ``OIDC_ADMIN_EMAIL`` /
+    ``OIDC_ADMIN_CLAIM`` instead (ADR 0093 §5), and this variable is inert
+    there, with a startup warning rather than a silent behaviour change; a
+    bootstrap address is configured; this login's email matches it
+    (case-insensitively); the provider says the address is verified — the
+    literal boolean ``True``, the same strictness account linking uses (ADR
+    0056), because otherwise an ``email`` claim would be a password; and the
+    bootstrap has not already fired.
+
+    That last condition used to be "no active administrator exists", which
+    let deactivating every admin re-arm this door — a hidden recovery path and
+    a hidden takeover path (review correction 2, R1). It is now
+    ``deployment_state.bootstrap_admin_consumed_at``, set here and by every
+    other path that can produce the deployment's first administrator
+    (``gateway.deployment_state.mark_bootstrap_consumed``), so it can be
+    consulted once and never re-armed for the life of the deployment.
+
+    Called from the browser callback only. A ``/v1`` bearer call never
+    promotes anyone, for the reason it never links: only the callback sees the
+    full claim set.
+    """
+    if kind != "authelia":
+        return False
+    wanted = bootstrap_email.strip().casefold()
+    if not wanted or not email or email.strip().casefold() != wanted:
+        return False
+    if email_verified is not True:
+        logger.warning(
+            "bootstrap admin %s signed in but email_verified=%r; not promoting",
+            email,
+            email_verified,
+        )
+        return False
+    if user.is_admin:
+        return False
+    state = await get_or_create_deployment_state(session)
+    if state.bootstrap_admin_consumed_at is not None:
+        return False
+    user.is_admin = True
+    await mark_bootstrap_consumed(session)
+    logger.warning("bootstrap admin: %s is now the first administrator", email)
+    return True
+
+
+@dataclass
+class SignInResult:
+    """What a sign-in door needs to answer, whatever its own response shape."""
+
+    user: User
+    groups: list[str]
+
+
+async def sign_in(
+    session: AsyncSession,
+    record: IdentityProvider,
+    *,
+    issuer: str,
+    subject: str,
+    claims: dict[str, Any],
+    settings: Settings,
+    policy: OIDCPolicy | None = None,
+) -> SignInResult:
+    """The one sequence every sign-in door runs (ADR 0093 §4.1): the console
+    callback and ``POST /v1/session/announce``. Both see the full claim set —
+    ``claims`` merged with userinfo where the provider needs that — which is
+    what lets them link, bind, apply the email admin rule and fire the
+    bootstrap. A plain ``/v1`` bearer call never reaches here; it runs
+    :func:`sync_user_from_claims` instead, on whatever claims its token
+    happened to carry.
+
+    ``issuer``/``subject`` are taken from the caller separately from
+    ``claims`` rather than read off it here: the console callback's merged
+    claim set folds in userinfo, whose own ``sub`` a provider is not
+    guaranteed to echo byte-for-byte, so identity is decided from the ID
+    token alone while everything else — email, name, groups — reads the
+    merged set.
+
+    The order is the design's own, and it is order, not a checklist: binding
+    a bundled login and linking by email must both be settled *before*
+    :func:`provision_user` ever asks "have I seen this identity before",
+    because each one's whole job is to make that question answer "yes" for
+    an identity that would otherwise look brand new.
+    """
+    email = claims.get("email")
+    email_verified = claims.get("email_verified")
+    preferred_username = claims.get("preferred_username")
+    display_name = claims.get("name") or claims.get("preferred_username")
+    username = preferred_username if isinstance(preferred_username, str) else None
+
+    groups = extract_groups(claims, settings.oidc, policy)
+    if policy is not None:
+        groups = policy.map_group_names(groups)
+
+    # ADR 0093 §8.2: a console-created account's login claims this identity
+    # by login name and verified email, before anything below gets a chance
+    # to treat it as a stranger.
+    await bind_bundled_login(
+        session,
+        record,
+        issuer=issuer,
+        subject=subject,
+        preferred_username=preferred_username,
+        email=email,
+        email_verified=email_verified,
+    )
+
+    # ADR 0093 §6.2: only for an identity still unknown after the bind above,
+    # and only when the operator turned the switch on. A hit here means the
+    # `provision_user` call below finds an existing person instead of
+    # creating one, through the `user_identities` row this just added.
+    known = (
+        await session.execute(_identity_select(issuer, subject))
+    ).scalar_one_or_none()
+    if known is None and settings.oidc.link_by_email:
+        await link_by_email(
+            session,
+            issuer=issuer,
+            subject=subject,
+            email=email if isinstance(email, str) else None,
+            email_verified=email_verified,
+        )
+
+    user = await provision_user(
+        session,
+        issuer=issuer,
+        subject=subject,
+        email=email if isinstance(email, str) else None,
+        display_name=display_name if isinstance(display_name, str) else None,
+        username=username,
+        group_names=groups,
+        settings=settings.oidc,
+        policy=policy,
+        # Raw, not coerced: several providers put `email_verified` on
+        # userinfo only, and coercing a non-boolean here would make this the
+        # one gate that treats "an email claim" as good enough to trust.
+        email_verified=email_verified,
+        group_sync=record.group_sync,
+        group_source=record.group_source,
+        claims=claims,
+        group_mappings=policy.group_mappings if policy is not None else None,
+    )
+
+    # ADR 0093 §13.4/§8.2: a migration-created, unbound login claims itself
+    # at the first real sign-in it gets, now that `provision_user` has given
+    # it a user row to claim with.
+    await claim_unbound_bundled_login(
+        session,
+        record,
+        user,
+        preferred_username=preferred_username,
+        email=email,
+        email_verified=email_verified,
+    )
+
+    # A directory whose subjects are unknown until first login (Authelia)
+    # links its mirrored entry now, so pre-assigned groups and directory
+    # groups apply at once rather than at the next scheduled sync. Imported
+    # here, not at module level: `directory.engine` imports from this module,
+    # and a top-level import the other way would be a cycle.
+    from gateway.directory.engine import ensure_bundled_default_group, link_at_login
+
+    if record.sync_adapter != "none" and getattr(record, "source", "") != "environment":
+        await link_at_login(session, record, user, claims, settings=settings.oidc)
+
+    # ADR 0093 to-do item 1: a bundled-Authelia sign-in with no membership at
+    # all — a brand new account, or one provisioned before this existed —
+    # gets the `users` group here, every sign-in, not just the first. An
+    # external IdP's groups are the claim's or the admin's to answer for, as
+    # today, so this only ever runs for the bundled provider.
+    if record.kind == "authelia":
+        await ensure_bundled_default_group(session, user)
+
+    # OIDC-only deployments have no password door to make the first
+    # administrator through; the configured address, verified, is it.
+    await promote_bootstrap_admin(
+        session,
+        user,
+        bootstrap_email=settings.bootstrap_admin_email,
+        email=email if isinstance(email, str) else None,
+        email_verified=email_verified,
+        kind=settings.oidc.kind,
+    )
+
+    return SignInResult(user=user, groups=groups)
+
+
 async def sync_user_from_claims(
     session: AsyncSession,
     *,
@@ -729,6 +1551,8 @@ async def sync_user_from_claims(
     settings: OIDCSettings,
     policy: OIDCPolicy | None = None,
     group_sync: GroupSync = GroupSync.EVERY_LOGIN,
+    group_source: str = "claim",
+    group_mappings: dict[str, str] | None = None,
 ) -> User:
     """Resolve an access token's claims to the user row it names.
 
@@ -796,7 +1620,11 @@ async def sync_user_from_claims(
             or user.username == username
             or "username" in (user.admin_edited_fields or [])
         )
-        and not _claims_diverge(user, group_names, settings, policy, group_sync)
+        and (
+            group_source != "claim"
+            or not _claims_diverge(user, group_names, settings, policy, group_sync)
+        )
+        and not _admin_diverges(user, claims, group_sync, settings, group_mappings)
     ):
         return user
 
@@ -812,7 +1640,43 @@ async def sync_user_from_claims(
         touch_login=False,
         policy=policy,
         group_sync=group_sync,
+        group_source=group_source,
+        claims=claims,
+        group_mappings=group_mappings,
     )
+
+
+def _admin_diverges(
+    user: User,
+    claims: dict[str, Any],
+    group_sync: GroupSync,
+    settings: OIDCSettings,
+    mappings: dict[str, str] | None,
+) -> bool:
+    """Would this token change the admin flag? Only asked on every-login sync.
+
+    The claim rule only — never the email rule, whose claim set a bearer
+    token may not carry (ADR 0093 §5.1) — built fresh from ``settings`` each
+    call rather than threaded through as an ``AdminRule``, so this and
+    ``apply_env_admin_rules`` can never disagree about what the rule is.
+
+    Cheap — the claims are parsed, the row loaded — and it settles: after one
+    provisioning the flag agrees with the token (or provenance forbids the
+    change), so the hot path returns early again.
+
+    The revocation half checks ``admin_rule == "claim"`` specifically, not
+    just ``is_admin``: an ``admin_rule == "email"`` grant must never look like
+    a divergence here, or an unrelated reason to re-provision (a changed
+    group, a changed username) would reach ``apply_env_admin_rules`` with
+    ``email_rule=False`` and revoke it — the same protection that function
+    applies itself, kept here too so a future caller of either one alone
+    stays correct.
+    """
+    if group_sync is not GroupSync.EVERY_LOGIN:
+        return False
+    if _matches_claim_rule(claims, settings, mappings):
+        return not user.is_admin
+    return user.is_admin and user.admin_source == "env" and user.admin_rule == "claim"
 
 
 def _claims_diverge(
@@ -948,8 +1812,25 @@ def issue_session_token(user_id: uuid.UUID, *, secret: str, ttl_seconds: int) ->
     return jwt.encode({"alg": _SESSION_ALGORITHM}, claims, key)
 
 
-def verify_session_token(token: str, *, secret: str) -> uuid.UUID:
-    """Return the user id, or raise :class:`OIDCError`."""
+@dataclass(frozen=True)
+class SessionClaims:
+    """What a verified session token asserts: who, and since when.
+
+    `issued_at` is the disable cascade's own check (ADR 0093 §9.1):
+    `load_user_for_management` refuses a token whose `iat` predates the
+    user's `sessions_valid_after` — a session minted before a disable (or a
+    recovery, or a merge) is exactly the session a disable exists to end,
+    even though the JWT signature itself still verifies. Carried on the
+    token rather than looked up, so refusing a stale session costs no query
+    beyond the one that already loads the user.
+    """
+
+    user_id: uuid.UUID
+    issued_at: datetime
+
+
+def verify_session_token(token: str, *, secret: str) -> SessionClaims:
+    """Return the session's claims, or raise :class:`OIDCError`."""
     if not secret:
         raise OIDCError("GATEWAY_SESSION_SECRET is not configured")
     key = OctKey.import_key(secret)
@@ -958,12 +1839,18 @@ def verify_session_token(token: str, *, secret: str) -> uuid.UUID:
         JWTClaimsRegistry(
             exp={"essential": True},
             sub={"essential": True},
+            iat={"essential": True},
             typ={"essential": True, "value": "gw-session"},
         ).validate(decoded.claims)
     except JoseError as exc:
         raise OIDCError(f"session token is not valid: {exc}") from exc
 
     try:
-        return uuid.UUID(str(decoded.claims["sub"]))
+        user_id = uuid.UUID(str(decoded.claims["sub"]))
     except (KeyError, ValueError) as exc:
         raise OIDCError("session token subject is not a user id") from exc
+    try:
+        issued_at = datetime.fromtimestamp(int(decoded.claims["iat"]), tz=UTC)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise OIDCError("session token carries no usable issued-at claim") from exc
+    return SessionClaims(user_id=user_id, issued_at=issued_at)

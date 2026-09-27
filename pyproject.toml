@@ -1,6 +1,5 @@
 # Workspace root. This is a "virtual" root: it is not itself an installable
 # package, it only ties the Python members together and holds shared tool config.
-# See https://example.invalid/viviani/ai-stack/-/blob/main/docs/adr/0002-monorepo-tooling.md
 [tool.uv.workspace]
 members = ["apps/gateway", "packages/shared-py"]
 
@@ -79,7 +78,7 @@ exclude = ['migrations/versions/.*']
 # These ship no type information as of the versions pinned in apps/gateway.
 # `re2` is Google's RE2 binding, used for operator-written patterns because it
 # cannot backtrack — see ADR 0038 and the measurement in it.
-module = ["joserfc.*", "redis.*", "re2.*"]
+module = ["joserfc.*", "redis.*", "re2.*", "yaml.*", "asyncpg.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

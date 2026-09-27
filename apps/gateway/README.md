@@ -8,23 +8,17 @@ surface, the two authentication schemes, and the streaming traps with the file
 that handles each. This file is the package's own README — what it is made of,
 how to run it, and what it does not do.
 
-**ADRs are cited by number and never linked.** The decision record is internal;
-a URL into it promises a source the reader cannot open and advertises a private
-repository's address.
 
 ## What it serves
 
 - `/v1` — the metered surfaces (chat completions, responses, Anthropic
-  messages, embeddings, image generation, OCR, web search), plus models, files,
-  vector stores, billing groups and `pystino/usage`. One dependency
+  messages, embeddings, image generation, OCR, web search), plus models,
+  billing groups, `/v1/me` and `pystino/usage`. One dependency
   authenticates all of them and takes either an API key or an OIDC access
-  token (ADR 0040).
+  token.
 - `/api/me` and `/api/admin` — the management API, session cookie only.
   `/docs` is the generated Swagger over the same schemas; the human surface is
-  the React console at `/console` (ADR 0022, ADR 0023).
-- `/oauth/*` and `/.well-known/openid-configuration` — the house IdP
-  (ADR 0068), registered first-party clients only, off unless
-  `GATEWAY_IDP__ENABLED`. See [docs/idp.md](../../docs/idp.md).
+  the React console at `/console`.
 - `/healthz`, `/readyz` — liveness with no dependencies, readiness with one DB
   round trip.
 
@@ -40,7 +34,6 @@ src/gateway/
   types.py          Money (Numeric, never float) and UTC-safe datetimes
   security.py       API key generation, SHA-256 hashing, verification
   oidc.py           discovery, PKCE, ID token validation, group claim mapping
-  idp.py            the house issuer: codes, tokens, JWKS, userinfo
   access.py         who may reach which model, by group or personal grant
   upstream.py       the provider client, with read timeout deliberately None
   sse/              event-boundary parsing and the transform pipeline
@@ -48,7 +41,7 @@ src/gateway/
   quota/            rolling windows, counter stores, reserve-then-settle
   redaction/        the interface, the buffering rewriter, the resolver
   plugins/          provider and search-backend plugins: facts about a
-                    counterparty, never arithmetic (ADR 0032)
+                    counterparty, never arithmetic
   routers/          HTTP endpoints, with _metered.py the shared
                     resolve → reserve → record → settle path every metered
                     /v1 route goes through so the ordering cannot drift
@@ -64,7 +57,7 @@ uv run gateway seed          # prints an API key, shown once
 uv run gateway serve --reload
 ```
 
-Or `docker compose -f deploy/compose/docker-compose.yml up` for the whole stack.
+Or `docker compose -f deploy/compose.yaml up -d --wait` for the Pystino-only deployment (see `deploy/.env.example`).
 
 ## Testing
 
@@ -109,42 +102,38 @@ Stated plainly, so none of these is a surprise later.
 
 - **OIDC against providers other than Keycloak and Authelia.** The full
   redirect flow is verified end to end against Keycloak 26.7 and Authelia
-  4.39.22 — the two versions the bundled overlays pin — but Entra ID, Google
-  and others differ in exactly the places ADR 0011 makes configurable: where
+  4.39.22, but Entra ID, Google
+  and others differ in exactly the places the OIDC settings make configurable: where
   groups live, whether they appear in the ID token at all, how they are named.
   Re-run the same checks against the real provider before going live; the
   checklist is in [docs/oidc-generic-provider.md](../../docs/oidc-generic-provider.md).
-- **Load behaviour beyond one small box.** The measured numbers in
-  [docs/performance.md](../../docs/performance.md) cover a 2-core and a 5-core
-  host with everything co-resident. The arithmetic in ADR 0004 says Python is
-  not the constraint; profile before scaling.
+- **Load behaviour beyond one small box.** It has been measured on 2-core and
+  5-core hosts with everything co-resident; profile before scaling.
 - **The Cortecs catalogue envelope.** The pricing *fields* were verified against
   the documentation; the JSON shape wrapping the model list was not seen live.
-  The parser accepts several plausible shapes and reports what it cannot read
-  (ADR 0014).
+  The parser accepts several plausible shapes and reports what it cannot read.
 
 **Deliberately not implemented**
 
 - **Device authorization endpoints of the gateway's own.** The coding-agent
   enrollment that would have needed them authenticates against the deployment's
   identity provider instead, and keeps a refresh credential rather than a
-  minted key (ADR 0040, ADR 0061) — see
+  minted key — see
   [docs/coding-agents.md](../../docs/coding-agents.md). Nothing is waiting on
   this.
-- **Reranking.** The embedding half of ADR 0020 is served; `/v1/rerank` is not,
-  and has no OpenAI-compatible shape to copy.
+- **Reranking.** `/v1/embeddings` is served; `/v1/rerank` is not, and has no
+  OpenAI-compatible shape to copy.
 - **Image editing and variations** (`/v1/images/edits`,
   `/v1/images/variations`). They take multipart uploads, which the redaction
-  layer has no story for (ADR 0030).
+  layer has no story for.
 - **Server-side conversation state on `/v1/responses`.** `previous_response_id`
   and `store` are refused: a stored prefix is billed on every follow-up and this
   gateway would have no record of what it contained.
 - **Retrying an upstream request without `stream_options`** when a provider
   rejects unknown parameters. A provider that does gets a plugin whose
-  `prepare_payload` never adds it, which costs nothing at request time
-  (ADR 0028, ADR 0032).
+  `prepare_payload` never adds it, which costs nothing at request time.
 - **A hard mid-stream quota ceiling via `max_tokens` clamping.** The chosen
-  policy admits the request that crosses the limit (ADR 0009).
+  policy admits the request that crosses the limit.
 
 **Known operational sharp edges**
 
@@ -158,7 +147,6 @@ Stated plainly, so none of these is a surprise later.
 - **Counters rebuild from the ledger only at startup.** If Valkey is wiped while
   the gateway keeps running, the cache reports zero and quotas are briefly too
   permissive until the gateway restarts. An empty cache is not a failed read, so
-  nothing detects it at runtime. Restart the gateway after any cache loss
-  (ADR 0006).
+  nothing detects it at runtime. Restart the gateway after any cache loss.
 - **Redaction rules are loaded per request.** Cacheable if it ever shows up in a
   profile.

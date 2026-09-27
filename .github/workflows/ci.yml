@@ -1,0 +1,103 @@
+# The one PR workflow for Pystino (it folds in the checks thin-agent/main
+# parked here as ci.yml: pytest, ruff, mypy; the Go job moved to the chat repository with galopin).
+#
+# Sized for the GitHub free plan's Action minutes:
+#   - PRs and manual runs only — no push-to-main run (what merges was checked
+#     on its PR), no matrix;
+#   - docs-only changes run nothing; a cheap `changes` job then runs only the
+#     suites whose inputs changed (a gateway PR never runs the console, and
+#     vice versa);
+#   - uv/pnpm caches; a newer push to the same PR cancels the run.
+# Image builds are images.yml (main and tags); the stack bring-up is stack.yml
+# (release PRs, on demand, weekly).
+name: ci
+
+on:
+  pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      gateway: ${{ steps.filter.outputs.gateway }}
+      console: ${{ steps.filter.outputs.console }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            gateway:
+              - "apps/gateway/**"
+              - "packages/shared-py/**"
+              - "services/**"
+              - "deploy/**"
+              - "uv.lock"
+              - "pyproject.toml"
+              - ".github/workflows/ci.yml"
+            console:
+              - "apps/console/**"
+              - "packages/ui/**"
+              - "pnpm-lock.yaml"
+              - ".github/workflows/ci.yml"
+
+  gateway:
+    needs: changes
+    if: needs.changes.outputs.gateway == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: {enable-cache: true, python-version: "3.13"}
+      - run: uv sync --locked
+      # Lint only, never --fix: a check, not a rewrite.
+      - run: uv run ruff check .
+      - run: uv run mypy apps/gateway/src services
+      - run: uv run pytest -q -p no:cacheprovider
+      - name: deploy/compose.yaml resolves for every profile; the Caddyfile adapts in every TLS mode
+        run: |
+          set -eu
+          cat > "$RUNNER_TEMP/placeholder.env" <<'EOF'
+          POSTGRES_PASSWORD=x
+          GATEWAY_SECRET_KEY=x
+          GATEWAY_SESSION_SECRET=x
+          PUBLIC_ORIGIN=https://stack.example.org
+          SITE_ADDRESS=https://stack.example.org
+          EOF
+          for profiles in "" authelia redaction "authelia,redaction"; do
+            COMPOSE_PROFILES="$profiles" docker compose -f deploy/compose.yaml \
+              --env-file "$RUNNER_TEMP/placeholder.env" config -q
+          done
+          for spec in "https://stack.example.org|" "https://10.0.0.5|tls internal" "http://:80|"; do
+            docker run --rm -e SITE_ADDRESS="${spec%%|*}" -e TLS_DIRECTIVE="${spec#*|}" \
+              -v "$PWD/deploy/caddy:/etc/caddy:ro" -v "$PWD/deploy/proxy.d:/etc/caddy.d:ro" \
+              caddy:2.11-alpine caddy adapt --config /etc/caddy/Caddyfile >/dev/null
+          done
+          deploy/pin.py --check
+
+  console:
+    needs: changes
+    if: needs.changes.outputs.console == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 24, cache: pnpm}
+      - run: pnpm install --frozen-lockfile --filter "@llmp/console..."
+      - run: pnpm --filter @llmp/console typecheck
+      - run: pnpm --filter @llmp/console test

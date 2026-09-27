@@ -102,7 +102,7 @@ def main() -> int:
     print("=== signing in as the local admin ===")
     credentials = admin_credentials()
     if credentials is None:
-        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
+        print("FAILED: PYSTINO_LIVE_ADMIN_PASSWORD is not set (see scripts/live_session.py)")
         return 1
     dave = login(*credentials)
     if dave is None:
@@ -213,8 +213,8 @@ def main() -> int:
     else:
         skip(
             "a completion is routed and billed to a member",
-            "GATEWAY_LOCAL_USER_EMAIL/PASSWORD are not set — create one with "
-            "`gateway passwd --no-admin <email>`, add them to a group, and grant "
+            "PYSTINO_LIVE_USER/_PASSWORD are not set — add a person in the console "
+            "(Identity providers → People), add them to a group, and grant "
             "the group the smoke model",
         )
         alice = None

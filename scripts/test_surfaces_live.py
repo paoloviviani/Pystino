@@ -168,7 +168,7 @@ def main() -> int:
     print("=== signing in ===")
     credentials = admin_credentials()
     if credentials is None:
-        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
+        print("FAILED: PYSTINO_LIVE_ADMIN_PASSWORD is not set (see scripts/live_session.py)")
         return 1
     dave = login(*credentials)
     if dave is None:
@@ -186,7 +186,7 @@ def main() -> int:
 
         skip(
             "a non-admin session for minting the key",
-            "GATEWAY_LOCAL_USER_EMAIL/PASSWORD are not set — using the admin's",
+            "PYSTINO_LIVE_USER/_PASSWORD are not set — using the admin's",
         )
         alice = dave
 

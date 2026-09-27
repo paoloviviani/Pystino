@@ -25,6 +25,7 @@ from typing import Any, ClassVar
 
 import sqlalchemy as sa
 from sqlalchemy import (
+    DDL,
     JSON,
     Boolean,
     CheckConstraint,
@@ -36,6 +37,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -409,6 +411,40 @@ class User(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # Who set `is_admin` (ADR 0088, provenance widened by ADR 0093 §5): "manual"
+    # (console, CLI, bootstrap) or "env" (an env admin rule — `OIDC_ADMIN_EMAIL`
+    # or `OIDC_ADMIN_CLAIM`/`_VALUES`; the old value was "oidc", migrated by
+    # 0050). A rule may only revoke what a rule granted — the same provenance
+    # memberships follow.
+    admin_source: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
+    # Which env rule granted it — "email" or "claim" — so a revocation sweep
+    # scoped to one rule (§5.1: the email list) never touches what the other
+    # granted. Null unless `admin_source == "env"`.
+    admin_rule: Mapped[str | None] = mapped_column(String(8), default=None)
+    # Who deactivated the account: "manual" or "directory" (a sync saw the
+    # person gone). A directory may only reactivate what it deactivated.
+    deactivated_by: Mapped[str | None] = mapped_column(String(16), default=None)
+
+    # The last sign-in's address, normalised (ADR 0093 §6.1), and whether that
+    # sign-in's provider asserted it verified — stored only when the claim was
+    # the literal `True`, otherwise `False` or `None`. Written wherever `email`
+    # is written. Not unique: two people can share an address across issuers,
+    # and a link decision refuses rather than guesses when that happens
+    # (stage c). `OIDC_ADMIN_EMAIL` reads both columns; the startup sweep
+    # (§5.1) can revoke what a fresh login is not there to re-evaluate.
+    email_normalized: Mapped[str | None] = mapped_column(String(320), index=True, default=None)
+    email_verified: Mapped[bool | None] = mapped_column(Boolean, default=None)
+
+    # ADR 0093 §9.1: stamped to `now()` by the disable cascade. A console
+    # session token whose `iat` predates this is refused in
+    # `load_user_for_management` — the same clock a chat's session check
+    # compares against `session.createdAt` on its own side. Null for anyone
+    # never disabled.
+    sessions_valid_after: Mapped[datetime | None] = mapped_column(default=None)
+    # ADR 0093 §9.1/§3.1: the newest time another account was merged into this
+    # one (stage c writes it; the column lands now so `/v1/me`, which already
+    # returns it, has a real value to read instead of always `None`).
+    merged_at: Mapped[datetime | None] = mapped_column(default=None)
 
     # The user's own choice of which group to bill by default. Users change this
     # themselves; the gateway validates that they are still a member of it at
@@ -460,7 +496,8 @@ class LocalCredential(Base):
     password ride an issuer's trust. That risk is real and has not gone away —
     what changed is who decides. An operator who runs the directory their local
     accounts were named after can now turn linking on **per identity provider**
-    (``IdentityProvider.link_local_by_email``, ADR 0056), and the link is
+    (``IdentityProvider.link_by_email``, ADR 0056, repurposed by ADR 0093 §2),
+    and the link is
     recorded as a ``UserIdentity`` row rather than by rewriting this row's key.
     Read that ADR before touching either side: the guarantee that makes it
     tolerable is that a verified email is required, and it is what stops an
@@ -528,6 +565,83 @@ class UserIdentity(Base):
 
     def __repr__(self) -> str:
         return f"<UserIdentity {self.issuer}/{self.subject} -> {self.user_id}>"
+
+
+class UserMerge(Base):
+    """One completed merge (ADR 0093 §7.1): ``source_user_id`` no longer names
+    a row in ``users`` — the merge deletes it in the same transaction this
+    writes in — so both ids are kept **without** a foreign key, the same
+    choice ``identity_events`` makes for exactly the same reason. This table
+    is the record that a merge happened and what moved; ``identity_events``'
+    own ``user.merge`` row is the audit trail, kept even if this table were
+    ever pruned.
+
+    Resolution follows chains: if A was merged into B and B later into C,
+    ``merged_from`` for C reports both A and B — the chat asks for this by
+    walking from the *current* person backwards, not by remembering every
+    merge it has already seen, so it must find A here even though A's own
+    row only ever named B.
+    """
+
+    __tablename__ = "user_merges"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    source_user_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    target_user_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    merged_at: Mapped[datetime] = mapped_column(default=utcnow)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+    #: Counts per table, the same numbers the preview showed before the
+    #: operator confirmed.
+    summary: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default=text("'{}'"))
+    reason: Mapped[str | None] = mapped_column(Text, default=None)
+
+    def __repr__(self) -> str:
+        return f"<UserMerge {self.source_user_id} -> {self.target_user_id}>"
+
+
+class ChatErasureStatus(enum.StrEnum):
+    PENDING = "pending"
+    DONE = "done"
+
+
+class ChatErasure(Base):
+    """One person's chat-side erasure, tracked from the same transaction that
+    deletes them here to the chat's own confirmation (ADR 0093 §9.2, §9.3).
+
+    ``id`` is the ``erasure_id`` sent to the chat and is what makes a repeat
+    delivery idempotent on its side. ``gateway_user_id`` carries no foreign
+    key, deliberately: the gateway row it names is deleted in the very same
+    transaction that inserts this one, so by the time anything reads this
+    table the person it is about no longer exists here at all -- the point
+    of the column is to *tell the chat who to erase*, not to reference a row.
+    ``identities`` is the same reason: the chat resolves its own records by
+    ``(issuer, subject)`` as well as by ``gatewayUserId``, for an account it
+    never finished keying, so both must be captured before the delete rather
+    than looked up again afterwards.
+    """
+
+    __tablename__ = "chat_erasures"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    gateway_user_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    identities: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)
+    status: Mapped[ChatErasureStatus] = mapped_column(
+        _enum(ChatErasureStatus, "chat_erasure_status"),
+        default=ChatErasureStatus.PENDING,
+        server_default=text("'pending'"),
+    )
+    attempts: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    # Null means "not attempted yet" -- the inline, post-commit try runs
+    # before anything ever reads this column, so it never has to mean "due
+    # now" as well as "not yet scheduled".
+    next_attempt_at: Mapped[datetime | None] = mapped_column(default=None)
+    last_error: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    done_at: Mapped[datetime | None] = mapped_column(default=None)
+    chat_counts: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
+
+    def __repr__(self) -> str:
+        return f"<ChatErasure {self.id} {self.status} attempts={self.attempts}>"
 
 
 class Membership(Base):
@@ -1360,12 +1474,12 @@ class IdentityProvider(Base):
     groups_claim: Mapped[str] = mapped_column(String(255), default="groups")
     fetch_userinfo: Mapped[bool] = mapped_column(Boolean, default=True)
     group_mappings: Mapped[list[list[str]]] = mapped_column(JSON, default=list)
-    # May a login here adopt a local account with the same verified address
-    # (ADR 0056)? Per provider and off by default, because it is this
-    # directory's word that gets to name an existing account: an operator
-    # trusts the corporate IdP their local accounts were named after, and
-    # says nothing about the next one added.
-    link_local_by_email: Mapped[bool] = mapped_column(
+    # May an unknown identity at this issuer attach to an existing account by
+    # verified email (ADR 0056, repurposed by ADR 0093 §2 into the
+    # cross-issuer rule `OIDC_LINK_BY_EMAIL` names)? A display copy of
+    # `GATEWAY_OIDC__LINK_BY_EMAIL`, written by `reseed_from_env`: the linking
+    # rule itself reads the setting, not this column (stage c).
+    link_by_email: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
     # How far this directory's answer about groups reaches (ADR 0057).
@@ -1373,6 +1487,52 @@ class IdentityProvider(Base):
         _enum(GroupSync, "group_sync"),
         default=GroupSync.EVERY_LOGIN,
         server_default=text("'every_login'"),
+    )
+    # The back-channel base URL (OIDCSettings.internal_base_url): where this
+    # server reaches the issuer when the public URL would hairpin through the
+    # proxy. Empty for an IdP reachable at its issuer.
+    internal_base_url: Mapped[str] = mapped_column(
+        String(512), default="", server_default=text("''")
+    )
+    # Where signing out sends the browser to end the provider's own session,
+    # overriding what discovery says. `{redirect}` is replaced by the
+    # URL-encoded page to come back to. Empty: the provider's
+    # end_session_endpoint, or the kind's default (Authelia publishes none).
+    logout_url: Mapped[str] = mapped_column(String(512), default="", server_default=text("''"))
+    # --- identity policy (ADR 0088) -------------------------------------
+    # What kind of directory this is: decides which capabilities (claims,
+    # pull adapter, SCIM push, subject known before login) the console offers.
+    kind: Mapped[str] = mapped_column(String(32), default="generic", server_default="generic")
+    # Where the directory's answer about groups comes from: the token's claim,
+    # the directory mirror a sync adapter fills, or nowhere (console only).
+    # *How often* it is applied stays `group_sync`.
+    group_source: Mapped[str] = mapped_column(String(16), default="claim", server_default="claim")
+    # Who decides who is an administrator: this console (ADR 0069's default),
+    # or a claim/group from this directory — with provenance on the user row,
+    # so the directory can only revoke an admin flag it granted.
+    admin_source: Mapped[str] = mapped_column(
+        String(16), default="console", server_default="console"
+    )
+    admin_claim: Mapped[str] = mapped_column(String(255), default="groups", server_default="groups")
+    admin_values: Mapped[list[str]] = mapped_column(JSON, default=list, server_default=text("'[]'"))
+    # The claim that identifies a person here. `sub` everywhere except where a
+    # directory's `sub` is pairwise per application (Entra: use `oid`).
+    subject_claim: Mapped[str] = mapped_column(String(64), default="sub", server_default="sub")
+    # Batch sync (ADR 0088): the adapter, its credentials (encrypted, ADR
+    # 0027's box), its schedule, and what "gone from the directory" does.
+    sync_adapter: Mapped[str] = mapped_column(String(32), default="none", server_default="none")
+    sync_config_encrypted: Mapped[str | None] = mapped_column(Text, default=None)
+    sync_interval_minutes: Mapped[int] = mapped_column(default=60, server_default=text("60"))
+    sync_deprovision: Mapped[str] = mapped_column(
+        String(16), default="disable", server_default="disable"
+    )
+    sync_create_users: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=text("true")
+    )
+    # Set when the first run of an adapter (always a dry run) has been
+    # reviewed and the adapter may apply changes.
+    sync_confirmed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
     )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
@@ -1383,6 +1543,284 @@ class IdentityProvider(Base):
 
     def __repr__(self) -> str:
         return f"<IdentityProvider name={self.name!r} issuer={self.issuer!r}>"
+
+
+class DirectoryEntry(Base):
+    """What a directory last said about one person (ADR 0088 draft).
+
+    A mirror, written by a sync adapter (pull) or by SCIM (push), and the only
+    input the reconciler reads for `group_source=directory`. Kept separate from
+    `users` because a directory can name people who have never signed in — and
+    for Authelia, whose `sub` is an opaque id minted at first login, cannot even
+    say which `(issuer, subject)` they will be. An entry is linked to a user
+    (`user_id`) when the subject is known up front (Keycloak, SCIM) or at that
+    person's first login (by username and verified email).
+
+    `preassigned_groups` lets an administrator put someone in groups before
+    they have ever signed in; they become `manual` memberships at link time.
+    """
+
+    __tablename__ = "directory_entries"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "external_id", name="uq_directory_entries_provider_ext"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("identity_providers.id", ondelete="CASCADE"), index=True
+    )
+    #: The directory's own key: Keycloak/SCIM id (= the OIDC subject), or the
+    #: Authelia login name.
+    external_id: Mapped[str] = mapped_column(String(255))
+    username: Mapped[str | None] = mapped_column(String(255), default=None)
+    email: Mapped[str | None] = mapped_column(String(320), default=None)
+    display_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    groups: Mapped[list[str]] = mapped_column(JSON, default=list)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: False once a sync no longer sees the person; the row is kept for audit.
+    present: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    preassigned_groups: Mapped[list[str]] = mapped_column(
+        JSON, default=list, server_default=text("'[]'")
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None, index=True
+    )
+    first_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+
+class DirectorySyncRun(Base):
+    """One pull or push application, with what it changed (or would have)."""
+
+    __tablename__ = "directory_sync_runs"
+    __table_args__ = (
+        Index("ix_directory_sync_runs_provider_started", "provider_id", "started_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("identity_providers.id", ondelete="CASCADE")
+    )
+    trigger: Mapped[str] = mapped_column(String(16))  # schedule | manual | push
+    dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: ok | failed | needs_confirmation (the mass-deactivation valve tripped)
+    status: Mapped[str] = mapped_column(String(24), default="ok")
+    seen: Mapped[int] = mapped_column(default=0)
+    created: Mapped[int] = mapped_column(default=0)
+    linked: Mapped[int] = mapped_column(default=0)
+    updated: Mapped[int] = mapped_column(default=0)
+    deactivated: Mapped[int] = mapped_column(default=0)
+    reactivated: Mapped[int] = mapped_column(default=0)
+    #: The individual changes (capped), for the console's diff view.
+    changes: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    error: Mapped[str | None] = mapped_column(Text, default=None)
+    started_at: Mapped[datetime] = mapped_column(default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    started_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+
+
+class IdentityEventActor(enum.StrEnum):
+    """Who caused an `identity_events` row (ADR 0093 §3.1)."""
+
+    #: A signed-in person, acting from the console — an administrator, or (for
+    #: `admin.refused_last`) themselves.
+    USER = "user"
+    #: A CLI command run inside the gateway container: `pystino admin
+    #: grant|revoke`, `pystino break-glass`.
+    CLI = "cli"
+    #: One of the two sign-in doors (§4.1): the console callback or
+    #: `POST /v1/session/announce`. Distinct from `USER` because nobody is at
+    #: the console yet — the actor is the identity that just signed in, which
+    #: may be the target of its own row (a link, a bootstrap grant).
+    LOGIN = "login"
+    #: The gateway itself, unattended: startup (`idp.reseed`, the admin-email
+    #: sweep).
+    SYSTEM = "system"
+
+
+class IdentityEventAction(enum.StrEnum):
+    """What happened (ADR 0093 §3.1). The full set the design names — a later
+    stage's call site is added to `gateway.identity_events.DETAIL_ALLOWLIST`,
+    not to this enum, which is already exhaustive."""
+
+    USER_CREATE = "user.create"
+    USER_UPDATE = "user.update"
+    USER_DISABLE = "user.disable"
+    USER_ENABLE = "user.enable"
+    USER_DELETE = "user.delete"
+    ADMIN_GRANT = "admin.grant"
+    ADMIN_REVOKE = "admin.revoke"
+    ADMIN_REFUSED_LAST = "admin.refused_last"
+    PASSWORD_RESET = "password.reset"  # noqa: S105 -- an action name, not a credential
+    LOGIN_CREATE = "login.create"
+    LOGIN_DELETE = "login.delete"
+    LOGIN_DISABLE = "login.disable"
+    # Not in the design's own action list (ADR 0093 §3.1) -- added at the
+    # orchestrator's direction so a bundled login's re-enable is audited as
+    # symmetrically as its disable, rather than only the gateway-side
+    # user.enable standing for both halves of the action.
+    LOGIN_ENABLE = "login.enable"
+    IDENTITY_LINK = "identity.link"
+    IDENTITY_BIND = "identity.bind"
+    IDENTITY_DROP = "identity.drop"
+    USER_MERGE = "user.merge"
+    BREAK_GLASS = "break_glass"
+    IDP_RESEED = "idp.reseed"
+    BOOTSTRAP_ADMIN = "bootstrap.admin"
+    SESSIONS_REVOKE = "sessions.revoke"
+    DEVICES_REVOKE = "devices.revoke"
+    # ADR 0093 §9.3, stage (c)'s own addition: not in §3.1's original list,
+    # written before the erasure design existed. The chat side of a delete
+    # is retried indefinitely in the background, so its outcome needs an
+    # audit trail of its own -- the gateway-side `user.delete` above fires
+    # once, at the request that started it.
+    CHAT_ERASURE_DONE = "chat.erasure_done"
+    CHAT_ERASURE_RETRYING = "chat.erasure_retrying"
+
+
+#: Raised by both dialects' triggers, so a caller sees the same reason whether
+#: the database driving the test suite is SQLite or the one behind a
+#: deployment is PostgreSQL.
+_IDENTITY_EVENTS_APPEND_ONLY_MESSAGE = "identity_events is append-only (ADR 0093)"
+
+#: PostgreSQL has no bare "raise on write" trigger primitive, so the function
+#: is the trigger body; SQLite's `RAISE(ABORT, …)` needs no function at all.
+#: Every string here is exactly one statement, deliberately: `cursor.execute`
+#: refuses more than one at a time on SQLite (`sqlite3.ProgrammingError: You
+#: can only execute one statement at a time`), which is also why each is its
+#: own `event.listen` / `op.execute` call below rather than one script.
+#:
+#: These live here, not only in the migration, because the unit suite builds
+#: its schema from `Base.metadata.create_all()` (see `tests/conftest.py`) and
+#: never runs Alembic — a trigger only the migration knew how to create would
+#: be untested by every test in this repository.
+IDENTITY_EVENTS_POSTGRES_FUNCTION_SQL = f"""
+CREATE OR REPLACE FUNCTION identity_events_append_only() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION '{_IDENTITY_EVENTS_APPEND_ONLY_MESSAGE}';
+END;
+$$ LANGUAGE plpgsql;
+"""
+
+IDENTITY_EVENTS_POSTGRES_TRIGGER_SQL = """
+CREATE TRIGGER identity_events_append_only
+BEFORE UPDATE OR DELETE ON identity_events
+FOR EACH ROW EXECUTE FUNCTION identity_events_append_only();
+"""
+
+IDENTITY_EVENTS_SQLITE_NO_UPDATE_TRIGGER_SQL = f"""
+CREATE TRIGGER identity_events_no_update
+BEFORE UPDATE ON identity_events
+BEGIN
+    SELECT RAISE(ABORT, '{_IDENTITY_EVENTS_APPEND_ONLY_MESSAGE}');
+END;
+"""
+
+IDENTITY_EVENTS_SQLITE_NO_DELETE_TRIGGER_SQL = f"""
+CREATE TRIGGER identity_events_no_delete
+BEFORE DELETE ON identity_events
+BEGIN
+    SELECT RAISE(ABORT, '{_IDENTITY_EVENTS_APPEND_ONLY_MESSAGE}');
+END;
+"""
+
+
+class DeploymentState(Base):
+    """One row, ``id=1``: facts about this deployment, not about any identity
+    (ADR 0093 §3.1). Just ``bootstrap_admin_consumed_at`` so far.
+
+    A table of its own rather than a column added to something existing,
+    because that one fact has no natural owner: not a `User`'s, since no
+    administrator may exist yet when it is set, and not the provider row's,
+    since a re-seeded issuer replaces that row while this fact must survive
+    unchanged. Read and write it through `gateway.deployment_state`, which
+    handles the row not existing yet (the unit suite's schema comes from
+    `Base.metadata.create_all()`, which creates no rows) — never construct or
+    query this class directly elsewhere.
+    """
+
+    __tablename__ = "deployment_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    #: Set the first time any administrator exists through any path (the
+    #: bootstrap, the console, the CLI, or an env rule), and never cleared.
+    #: `promote_bootstrap_admin` fires only while this is null — deactivating
+    #: every administrator afterwards must not make it fire again (ADR 0093
+    #: §5.3, closing review R1 / correction 2).
+    bootstrap_admin_consumed_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class IdentityEvent(Base):
+    """One append-only fact about an identity (ADR 0093 §3.1, closing R8).
+
+    "Append-only" is a database guarantee here, not a convention among the
+    routes that touch the table — unlike `OIDCPolicyConfig` and
+    `DirectorySyncRun`, which stay insert-only because nothing calls
+    `.update()` on them, not because anything stops it. An audit trail is
+    exactly the table where that difference matters: see the trigger SQL
+    above, attached to this table's `after_create` event just below, and
+    executed again — from the same strings — by migration 0047.
+
+    No foreign key on `actor_user_id` or `target_user_id`. A user who is later
+    merged away or deleted must not take their history with them: the point of
+    an audit row is that it outlives the account it describes. `actor_label`
+    and `target_label` freeze the email or login name at the time, the same
+    reason `UserIdentity.matched_email` is frozen rather than joined live.
+    """
+
+    __tablename__ = "identity_events"
+    __table_args__ = (
+        Index("ix_identity_events_actor_user", "actor_user_id", "at"),
+        Index("ix_identity_events_target_user", "target_user_id", "at"),
+        Index("ix_identity_events_action", "action", "at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    at: Mapped[datetime] = mapped_column(default=utcnow)
+    actor_type: Mapped[IdentityEventActor] = mapped_column(
+        _enum(IdentityEventActor, "identity_event_actor_type")
+    )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+    actor_label: Mapped[str] = mapped_column(String(320), default="")
+    action: Mapped[IdentityEventAction] = mapped_column(
+        _enum(IdentityEventAction, "identity_event_action")
+    )
+    target_user_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
+    target_label: Mapped[str] = mapped_column(String(320), default="")
+    issuer: Mapped[str | None] = mapped_column(String(512), default=None)
+    subject: Mapped[str | None] = mapped_column(String(255), default=None)
+    #: Per-action allowlisted keys only — enforced by `record_event`, never by
+    #: this column. Never a password, digest, token or secret.
+    detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default=text("'{}'"))
+    #: An operator's stated reason. Optional in general; `record_event`
+    #: requires it for `user.merge` and `break_glass`, where it is the only
+    #: record of *why* an irreversible or emergency action happened.
+    reason: Mapped[str | None] = mapped_column(Text, default=None)
+
+    def __repr__(self) -> str:
+        return f"<IdentityEvent {self.action} {self.actor_label} -> {self.target_label}>"
+
+
+# SQLAlchemy 2.0.52's `DDL.__init__` itself carries no annotations (unlike the
+# rest of the library, which is why it is not in the mypy overrides above) —
+# hence the ignores below, each confined to this one constructor call.
+for _statement in (IDENTITY_EVENTS_POSTGRES_FUNCTION_SQL, IDENTITY_EVENTS_POSTGRES_TRIGGER_SQL):
+    event.listen(
+        IdentityEvent.__table__,
+        "after_create",
+        DDL(_statement).execute_if(dialect="postgresql"),  # type: ignore[no-untyped-call]
+    )
+for _statement in (
+    IDENTITY_EVENTS_SQLITE_NO_UPDATE_TRIGGER_SQL,
+    IDENTITY_EVENTS_SQLITE_NO_DELETE_TRIGGER_SQL,
+):
+    event.listen(
+        IdentityEvent.__table__,
+        "after_create",
+        DDL(_statement).execute_if(dialect="sqlite"),  # type: ignore[no-untyped-call]
+    )
 
 
 class FXRate(Base):

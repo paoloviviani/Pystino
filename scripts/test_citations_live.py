@@ -54,7 +54,7 @@ def main() -> int:
     credentials = admin_credentials()
     people = user_credentials()
     if credentials is None or people is None:
-        print("set GATEWAY_LOCAL_ADMIN_PASSWORD and GATEWAY_LOCAL_USER_* in deploy/.env")
+        print("set PYSTINO_LIVE_ADMIN_PASSWORD and PYSTINO_LIVE_USER/_PASSWORD")
         return 1
     session = login(*credentials)
     user = login(*people)

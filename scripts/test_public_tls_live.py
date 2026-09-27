@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the claims docker-compose.proxy.yml makes about a public deployment.
+"""Check the claims the stack's proxy makes about a public deployment.
 
 The other live scripts ask whether the platform works. This one asks whether it
 is *only* what it is supposed to be, which is the question that matters once the
@@ -7,23 +7,20 @@ stack has an address the world can reach — and the one no unit test can answer
 because every assertion here is about sockets, certificates and the credentials
 a browser really sends.
 
-    docker compose --env-file deploy/.env \\
-      -f deploy/compose/docker-compose.yml \\
-      -f deploy/compose/docker-compose.smoke.yml \\
-      -f deploy/compose/docker-compose.redaction.yml \\
-      -f deploy/compose/docker-compose.proxy.yml up -d --build
+    cd <deploy dir>; set -a; . ./.env; set +a
+    PYSTINO_LIVE_ADMIN_PASSWORD=… uv run --project <checkout> \\
+      python <checkout>/scripts/test_public_tls_live.py
 
-    docker compose ... exec proxy cat \\
-      /data/caddy/pki/authorities/local/root.crt > deploy/tls/caddy-root.crt
-
-    set -a; . deploy/.env; set +a
-    ./scripts/test_public_tls_live.py
+    # TLS_MODE=internal only: trust Caddy's own CA explicitly
+    docker compose exec proxy cat /data/caddy/pki/authorities/local/root.crt > caddy-root.crt
+    GATEWAY_CA_BUNDLE=$PWD/caddy-root.crt …
 
 What it asserts:
 
 * the public origin serves TLS, and the certificate verifies — against the CA
-  file, never against an unverified context, because a check that skips
-  verification passes against anything that answers on the address;
+  file when one is given, else the system store; never an unverified context,
+  because a check that skips verification passes against anything that
+  answers on the address;
 * the three holes CLAUDE.md's fourth ground rule is about are closed: no
   plaintext, a Secure cookie, and no management credential that anyone could
   have read in the repository — a wrong password is refused over TLS;
@@ -39,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import ssl
 import sys
@@ -54,8 +52,8 @@ from live_session import (
     GATEWAY,
     admin_credentials,
     login,
-    new_session,
     request,
+    sign_in,
     user_credentials,
 )
 
@@ -121,13 +119,12 @@ def main() -> int:
     host, port = parsed.hostname or "", parsed.port or 443
 
     print(f"=== the certificate on {host}:{port} ===")
-    if not Path(CA_BUNDLE).exists():
-        print(f"  no CA file at {CA_BUNDLE}. Export it first:")
-        print("    docker compose ... exec proxy cat \\")
-        print("      /data/caddy/pki/authorities/local/root.crt > deploy/tls/caddy-root.crt")
+    if CA_BUNDLE and not Path(CA_BUNDLE).exists():
+        print(f"  no CA file at {CA_BUNDLE} (GATEWAY_CA_BUNDLE). Export it first:")
+        print("    docker compose exec proxy cat /data/caddy/pki/authorities/local/root.crt")
         return 2
-
-    context = ssl.create_default_context(cafile=CA_BUNDLE)
+    trusted = "the CA file" if CA_BUNDLE else "the system store"
+    context = ssl.create_default_context(cafile=CA_BUNDLE or None)
     try:
         # server_hostname is what verification is done against. For an IP it is
         # not sent as SNI — that is forbidden — but it is still the name the
@@ -140,11 +137,11 @@ def main() -> int:
             certificate = tls.getpeercert()
             version = tls.version()
     except (OSError, ssl.SSLError) as exc:
-        check("the certificate verifies against the CA file", False, str(exc))
+        check(f"the certificate verifies against {trusted}", False, str(exc))
         return 1
 
     names = [value for kind, value in certificate.get("subjectAltName", ())]
-    check("the certificate verifies against the CA file", True, f"names: {', '.join(names)}")
+    check(f"the certificate verifies against {trusted}", True, f"names: {', '.join(names)}")
     check("it covers the address people type", host in names, host)
     check(
         "the negotiated protocol is TLS 1.2 or better",
@@ -172,11 +169,6 @@ def main() -> int:
             8000: "the gateway, without TLS",
             8081: "the fake upstream",
             int(os.environ.get("CHAT_PORT", "8100")): "the chat service, without TLS",
-            # The relay rides the origin itself (Caddy routes /ws to it), so
-            # it publishes nothing extra and needs no entry here: daemons
-            # outside dial <origin>/ws through the same TLS the browser gets.
-            # Identity-blind by design (ADR 0085) — no secret, no identity,
-            # no plaintext — so sharing the origin's port is not a hole.
             # The development Keycloak (docker-compose.keycloak.yml). It is
             # deliberately not published — a browser reaches it through Caddy
             # at /idp on the origin above — and this line is what keeps that
@@ -210,39 +202,40 @@ def main() -> int:
             )
         # Not vanity: without it the three checks above would also pass on a host
         # where nothing at all was listening on a routable address.
-        check(f"the proxy does answer on {address}:{port}", port_open(address, port))
+        # Behind an edge (TLS_MODE=upstream) the proxy serves plain HTTP on
+        # HTTP_PORT and the public port is the edge's, not this host's.
+        own = port
+        if os.environ.get("TLS_MODE") == "upstream":
+            own = int(os.environ.get("HTTP_PORT", "80"))
+        check(f"the proxy does answer on {address}:{own}", port_open(address, own))
 
     print()
     print("=== what a browser is given ===")
-    # A wrong password must be refused, over TLS, with the same answer any wrong
-    # credential gets. This replaced Keycloak's admin/admin check when the IdP
-    # left the stack: the management credential that must not be guessable is
-    # now the local admin's, and its real password lives in deploy/.env — which
-    # is not in the repository, and whose workingness the sign-in below proves.
-    status, _, _ = request(
-        new_session(),
-        f"{GATEWAY}/auth/login",
-        json_body={"email": "admin@local", "password": "not-the-password-1"},
-    )
-    check("a wrong password is refused over TLS", status in {401, 429}, f"HTTP {status}")
-
+    # A wrong password must be refused, over TLS, by the identity provider:
+    # there is no password door on the gateway any more (ADR 0088), so the
+    # credential that must not be guessable is the IdP's.
     credentials = admin_credentials()
     if credentials is None:
-        print("FAILED: GATEWAY_LOCAL_ADMIN_PASSWORD is not set (source deploy/.env)")
+        print("FAILED: PYSTINO_LIVE_ADMIN_PASSWORD is not set (see scripts/live_session.py)")
         return 1
-    status, headers, _ = request(
-        new_session(),
-        f"{GATEWAY}/auth/login",
-        json_body={"email": credentials[0], "password": credentials[1]},
+    wrong = sign_in(credentials[0], "not-the-password-1")
+    check(
+        "a wrong password is refused over TLS",
+        wrong.opener is None and wrong.first_factor_status in {401, 403, 429},
+        f"first factor HTTP {wrong.first_factor_status}",
     )
-    cookie = headers.get("set-cookie", "")
-    if not check("signing in succeeds over the public origin", status == 200, f"HTTP {status}"):
+    right = sign_in(*credentials)
+    cookie = right.session_cookie
+    signed_in = right.opener is not None
+    if not check("signing in succeeds over the public origin", signed_in, right.error):
         return 1
     # Without Secure the session cookie travels on any downgrade to http, which
     # is the whole reason GATEWAY_SESSION_COOKIE_SECURE exists — and it is only
     # correct to set because something is terminating TLS in front.
-    check("and the session cookie is Secure", "secure" in cookie.lower(), cookie[:80])
-    check("and HttpOnly", "httponly" in cookie.lower(), cookie[:80])
+    # Attributes only: the value is a live session and has no business in a log.
+    shown = re.sub(r"=[^;\n]*", "=…", cookie, count=1)[:120]
+    check("and the session cookie is Secure", "secure" in cookie.lower(), shown)
+    check("and HttpOnly", "httponly" in cookie.lower(), shown)
 
     print()
     print("=== a billed request, over TLS ===")
@@ -253,7 +246,7 @@ def main() -> int:
     else:
         skip(
             "a streamed completion is not buffered",
-            "GATEWAY_LOCAL_USER_EMAIL/PASSWORD are not set — minting a usable key "
+            "PYSTINO_LIVE_USER/_PASSWORD are not set — minting a usable key "
             "needs a member of a billing group, and the admin is in none",
         )
         return report()
