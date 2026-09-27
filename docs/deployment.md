@@ -39,12 +39,13 @@ that mints it (`openssl rand -hex 32`, or, for the bundled Authelia's
 digests, `docker run --rm authelia/authelia:4.39.22 authelia crypto hash
 generate …`).
 
-The first person to sign in with the email in `PYSTINO_BOOTSTRAP_ADMIN_EMAIL`,
-while no administrator exists, becomes one. With the bundled Authelia, the
+The first person to sign in with the email in `PYSTINO_BOOTSTRAP_ADMIN_EMAIL`
+becomes an administrator. That bootstrap is honoured once per deployment:
+once any administrator exists it never fires again, so deactivating every
+administrator does not re-arm it. With the bundled Authelia, the
 first account's password is whatever `AUTHELIA_ADMIN_PASSWORD_DIGEST` is a
 digest of — you chose it when you minted the digest, so there is nothing to
-read back afterwards (`docs/deployment.md` used to point at a printed
-password; there is no longer a process that prints one).
+read back afterwards.
 
 **Private images.** While the repository is private, so is its GHCR package:
 log the host in once with a token holding `read:packages` —
@@ -71,28 +72,35 @@ Three, chosen by `TLS_MODE` (`deploy/.env.example` has the exact
 
 People sign in through an OpenID Connect provider — the bundled Authelia or
 your own (`OIDC_ISSUER`, `OIDC_INTERNAL_BASE_URL`, `OIDC_CONSOLE_CLIENT_ID`/
-`_SECRET`). There is no password door. The stack currently signs both the
-console and the chat in against one provider; to combine several sources of
-users, federate them in your own IdP (Keycloak, Authentik and the like) and
-point the stack at it. For that provider, the console decides where groups
-come from (the token's claim, the directory, or the console
-only), how often the provider's answer applies, and whether admin comes from
-the console or from a claim. The bundled Authelia's people are managed in the
-console (Settings → Identity providers → People).
+`_SECRET`). There is no password door. One provider at a time, named by the
+`OIDC_*` variables in `deploy/.env`; the gateway re-reads them at every
+start and the console shows the provider read-only. To combine several
+sources of users, federate them in your own IdP (Keycloak, Authentik and the
+like) and point the stack at it. Who is an administrator, how groups sync,
+and linking accounts by email are all environment settings too — see
+[Identity](oidc-generic-provider.md) for every variable and what the gateway
+checks at startup.
 
 Servers never call the public origin: the gateway reaches the IdP at its
 internal URL (`OIDC_INTERNAL_BASE_URL`, `http://authelia:9091/authelia` for
 the bundled one), with forwarded headers naming the public issuer. There is no
 CA bundle to maintain.
 
-**The bundled Authelia's provider** is `kind=authelia` (from `OIDC_KIND`): its
-users file is on a volume the gateway mounts, so the users-file sync and the
-console's user management (People) are available. The sync starts unconfirmed:
-the first run is a dry run, and nothing is applied until an administrator
-confirms it.
+**The bundled Authelia's accounts** are managed from the console's Users
+page — add a user, create a sign-in, reset a password (a one-time password),
+disable, enable, delete, merge into. Groups and roles live in the console.
 
-Break-glass, when nobody can administer:
-`docker compose exec gateway pystino admin grant you@example.org`.
+Break-glass, when nobody can administer or the IdP is gone:
+
+```bash
+docker compose run --rm --no-deps gateway pystino break-glass \
+  --email you@example.org --reason "…"
+```
+
+It finds or creates the account, creates or re-enables their bundled login,
+grants admin, and prints a one-time password once. For someone who can
+already sign in, `docker compose exec gateway pystino admin grant
+you@example.org` grants admin without touching anything else.
 
 ## Upgrading
 
