@@ -211,6 +211,17 @@ function pager() {
   return within(screen.getByRole("navigation", { name: "Pagination" }));
 }
 
+/**
+ * The topmost open dialog. The page's dialogs are siblings, each controlled
+ * by its own state, and a later sibling layers above the edit panel it was
+ * opened from — which is how Reset password, Activity and Merge into… live
+ * inside the panel without nesting dialogs.
+ */
+function topDialog(): HTMLElement {
+  const dialogs = screen.getAllByRole("dialog");
+  return dialogs[dialogs.length - 1]!;
+}
+
 function renderScreen(element: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
@@ -463,7 +474,8 @@ describe("AdminUsers edit dialog", () => {
  * enabled provider is an external IdP instead.
  */
 describe("AdminUsers bundled Authelia actions", () => {
-  it("offers Add user and Create sign-in while the bundled Authelia is active", async () => {
+  it("offers Add user, and Create sign-in inside the edit panel, while the bundled Authelia is active", async () => {
+    const user_ = userEvent.setup({ delay: null });
     vi.stubGlobal("fetch", routes(3, undefined, {}, [bundledProvider()]));
     renderScreen(<AdminUsers />);
 
@@ -471,21 +483,38 @@ describe("AdminUsers bundled Authelia actions", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Add user" })).toBeInTheDocument(),
     );
-    expect(screen.getAllByRole("button", { name: "Create sign-in" }).length).toBeGreaterThan(0);
+    // The row carries only the decisions now: no per-user tool buttons.
+    expect(screen.queryByRole("button", { name: "Create sign-in" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reset password" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Activity" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Merge into…" })).not.toBeInTheDocument();
+
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    expect(
+      within(topDialog()).getByRole("heading", { name: "Edit — Person 0" }),
+    ).toBeInTheDocument();
+    expect(
+      within(topDialog()).getByRole("button", { name: "Create sign-in" }),
+    ).toBeInTheDocument();
   });
 
   it("offers Reset password instead, for a person who already has one", async () => {
+    const user_ = userEvent.setup({ delay: null });
     vi.stubGlobal(
       "fetch",
       routes(1, undefined, { issuer: bundledProvider().issuer }, [bundledProvider()]),
     );
     renderScreen(<AdminUsers />);
 
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Reset password" })).toBeInTheDocument(),
-    );
-    expect(screen.queryByRole("button", { name: "Create sign-in" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(
+      within(topDialog()).getByRole("button", { name: "Reset password" }),
+    ).toBeInTheDocument();
+    expect(
+      within(topDialog()).queryByRole("button", { name: "Create sign-in" }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides every bundled action and explains accounts live at the identity provider, with an external IdP", async () => {
@@ -540,14 +569,17 @@ describe("AdminUsers bundled Authelia actions", () => {
     );
     renderScreen(<AdminUsers />);
 
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Reset password" })).toBeInTheDocument(),
-    );
-    await user_.click(screen.getByRole("button", { name: "Reset password" }));
-    const dialog = screen.getByRole("dialog");
-    await user_.click(within(dialog).getByRole("button", { name: "Reset password" }));
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getByRole("button", { name: "Edit" }));
+    await user_.click(within(topDialog()).getByRole("button", { name: "Reset password" }));
 
-    await waitFor(() => expect(within(dialog).getByText("one-time-pw-789")).toBeInTheDocument());
+    // The action's own dialog opens on top of the edit panel it came from.
+    const resetDialog = topDialog();
+    await user_.click(within(resetDialog).getByRole("button", { name: "Reset password" }));
+
+    await waitFor(() =>
+      expect(within(resetDialog).getByText("one-time-pw-789")).toBeInTheDocument(),
+    );
     expect(seen.posts).toHaveLength(1);
   });
 
@@ -598,13 +630,19 @@ describe("AdminUsers bundled Authelia actions", () => {
     expect(within(dialog).getByText("frank")).toBeInTheDocument();
     await user_.click(within(dialog).getByRole("button", { name: "Done" }));
 
-    // The row shows the login it now answers through, and offers Reset
+    // The row shows the login it now answers through; the panel offers Reset
     // password — a pending user has had a login since the moment of
     // creation, so Create sign-in would mint a second one.
     await waitFor(() =>
       expect(screen.getByText("sign-in: frank")).toBeInTheDocument(),
     );
-    expect(screen.getByRole("button", { name: "Reset password" })).toBeInTheDocument();
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[1]!);
+    expect(
+      within(topDialog()).getByRole("button", { name: "Reset password" }),
+    ).toBeInTheDocument();
+    expect(
+      within(topDialog()).queryByRole("button", { name: "Create sign-in" }),
+    ).not.toBeInTheDocument();
   });
 
   it("surfaces a taken login name plainly", async () => {
@@ -683,8 +721,9 @@ describe("AdminUsers bundled Authelia actions", () => {
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getByRole("button", { name: "Create sign-in" }));
-    const dialog = screen.getByRole("dialog");
+    await user_.click(screen.getByRole("button", { name: "Edit" }));
+    await user_.click(within(topDialog()).getByRole("button", { name: "Create sign-in" }));
+    const dialog = topDialog();
     await user_.click(within(dialog).getByRole("button", { name: "Create sign-in" }));
 
     expect(
@@ -891,8 +930,9 @@ describe("AdminUsers merge dialog", () => {
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getAllByRole("button", { name: "Merge into…" })[0]!);
-    const dialog = screen.getByRole("dialog");
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    await user_.click(within(topDialog()).getByRole("button", { name: "Merge into…" }));
+    const dialog = topDialog();
 
     await user_.type(within(dialog).getByPlaceholderText("Search by email, name or username"), "person-1");
     await waitFor(() =>
@@ -928,8 +968,9 @@ describe("AdminUsers merge dialog", () => {
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getAllByRole("button", { name: "Merge into…" })[0]!);
-    const dialog = screen.getByRole("dialog");
+    await user_.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    await user_.click(within(topDialog()).getByRole("button", { name: "Merge into…" }));
+    const dialog = topDialog();
 
     await user_.type(within(dialog).getByPlaceholderText("Search by email, name or username"), "person-1");
     await user_.click(
@@ -980,9 +1021,11 @@ describe("AdminUsers activity", () => {
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getByRole("button", { name: "Activity" }));
+    await user_.click(screen.getByRole("button", { name: "Edit" }));
+    await user_.click(within(topDialog()).getByRole("button", { name: "Activity" }));
+    const activity = topDialog();
 
-    await waitFor(() => expect(screen.getByText("user.disable")).toBeInTheDocument());
-    expect(screen.getByText("root@example.org")).toBeInTheDocument();
+    await waitFor(() => expect(within(activity).getByText("user.disable")).toBeInTheDocument());
+    expect(within(activity).getByText("root@example.org")).toBeInTheDocument();
   });
 });

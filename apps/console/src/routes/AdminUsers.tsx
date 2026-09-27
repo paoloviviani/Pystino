@@ -220,35 +220,20 @@ export function AdminUsers() {
       header: "",
       render: (user) => (
         <div className={ROW_ACTIONS}>
+          {/* The entry point: Reset password, Activity and Merge into… live
+              inside the panel this opens, so the row carries only the
+              decisions, not every tool. */}
           <Button variant="secondary" onClick={() => setEditing(user)}>
             Edit
           </Button>
-          <Button variant="ghost" onClick={() => setViewingActivity(user)}>
-            Activity
-          </Button>
-          {/* Bundled-only (§8.1): a login belongs to the bundled Authelia, so
-              neither action means anything against an external IdP, which
-              owns its own accounts entirely. */}
-          {knowsProviders && bundled ? (
-            hasBundledLogin(user, bundled) ? (
-              <Button variant="ghost" onClick={() => setResetting(user)}>
-                Reset password
-              </Button>
-            ) : (
-              <Button variant="ghost" onClick={() => setSigningIn(user)}>
-                Create sign-in
-              </Button>
-            )
-          ) : null}
           <Button variant="ghost" onClick={() => setTogglingActive(user)}>
             {user.is_active ? "Disable" : "Enable"}
           </Button>
-          <Button variant="ghost" onClick={() => setMerging(user)}>
-            Merge into…
-          </Button>
           {/* Thin red text, never filled: the same row-level delete as every
               other screen — filled red belongs to the confirm dialog, not to
-              a control that sits beside Edit all day. */}
+              a control that sits beside Edit all day. Destructive actions
+              stay visible on the row, one click away, rather than hiding
+              behind the edit panel. */}
           <Button
             variant="ghost"
             className="text-danger"
@@ -339,7 +324,16 @@ export function AdminUsers() {
       </Card>
 
 
-      <EditUserDialog user={editing} onClose={() => setEditing(null)} />
+      <EditUserDialog
+        user={editing}
+        bundled={bundled}
+        knowsProviders={knowsProviders}
+        onResetPassword={setResetting}
+        onCreateSignIn={setSigningIn}
+        onViewActivity={setViewingActivity}
+        onMerge={setMerging}
+        onClose={() => setEditing(null)}
+      />
 
       <DeleteUserDialog user={deleting} onClose={() => setDeleting(null)} />
 
@@ -1096,7 +1090,7 @@ function ActivityDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
  * Everything an administrator may change about one account, in one place
  * instead of a scattered Enable button and a password endpoint with no door.
  *
- * Four facts shape it:
+ * Five facts shape it:
  *
  * - **The issuer decides the offers.** A local account can have its password
  *   set, cleared, and re-set here; a directory account's credentials belong
@@ -1117,8 +1111,33 @@ function ActivityDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
  *   touching it — which is what the hint on a directory account's fields
  *   says, because a note that promises less than the behaviour delivers is
  *   how an operator stops reading the notes.
+ * - **The person's other actions live here.** Reset password (or Create
+ *   sign-in, per whether they already hold a bundled login), Activity and
+ *   Merge into… moved in from the row, which kept only the decisions
+ *   (Disable/Enable, Delete). Each opens its own dialog on top of this one —
+ *   the page's existing stack, where every dialog is a sibling controlled by
+ *   its own state and the later sibling layers above — so nothing about
+ *   those flows changed but their address.
  */
-function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
+function EditUserDialog({
+  user,
+  bundled,
+  knowsProviders,
+  onResetPassword,
+  onCreateSignIn,
+  onViewActivity,
+  onMerge,
+  onClose,
+}: {
+  user: AdminUser | null;
+  bundled: IdentityProvider | undefined;
+  knowsProviders: boolean;
+  onResetPassword: (user: AdminUser) => void;
+  onCreateSignIn: (user: AdminUser) => void;
+  onViewActivity: (user: AdminUser) => void;
+  onMerge: (user: AdminUser) => void;
+  onClose: () => void;
+}) {
   const update = useUpdateUser();
   const toast = useOptionalToast();
 
@@ -1290,9 +1309,48 @@ function EditUserDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
           </span>
         </label>
 
+        {/* The person's other actions, moved in from the row (which keeps
+            only Edit, Disable/Enable and Delete). Each opens its own dialog
+            on top of this one — the page's existing stack — so every flow
+            keeps its dialog, its copy and its confirmations; only its
+            address changed. */}
+        <div>
+          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">Actions</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {/* Bundled-only (§8.1): a login belongs to the bundled Authelia,
+                so neither action means anything against an external IdP,
+                which owns its own accounts entirely. Everything is gated on
+                `user` too — a dialog's children are evaluated whether it is
+                open or not, and the closed state carries null. */}
+            {user && knowsProviders && bundled ? (
+              hasBundledLogin(user, bundled) ? (
+                <Button variant="ghost" onClick={() => onResetPassword(user)}>
+                  Reset password
+                </Button>
+              ) : (
+                <Button variant="ghost" onClick={() => onCreateSignIn(user)}>
+                  Create sign-in
+                </Button>
+              )
+            ) : null}
+            <Button
+              variant="ghost"
+              disabled={!user}
+              onClick={() => user && onViewActivity(user)}
+            >
+              Activity
+            </Button>
+            <Button variant="ghost" disabled={!user} onClick={() => user && onMerge(user)}>
+              Merge into…
+            </Button>
+          </div>
+        </div>
+
         <p className="m-0 text-sm text-ink-muted">
-          Passwords belong to the identity provider; for the bundled Authelia they are managed
-          under Settings → Identity providers → People.
+          Passwords belong to the identity provider.
+          {knowsProviders && bundled
+            ? " For the bundled Authelia, the actions above mint one and reset it."
+            : ""}
         </p>
       </div>
     </Dialog>
