@@ -202,9 +202,9 @@ user, admin, password, link, merge, break-glass, provider re-seed and
 bootstrap actions, with the actor, the target, and the reason when one was
 given. It is kept forever; archive it with SQL when it grows.
 
-Read it at `GET /admin/identity-events?user_id=…&action=…&before=…`, newest
-first; `user_id` matches either side of an action. The Users page shows the
-same trail per person.
+Read it at `GET /api/admin/identity-events?user_id=…&action=…&before=…`,
+newest first; `user_id` matches either side of an action. The Users page
+shows the same trail per person.
 
 ## The command line
 
