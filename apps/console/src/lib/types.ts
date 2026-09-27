@@ -194,6 +194,14 @@ export interface AdminUser {
   /** Directories that also name this account, by issuer (ADR 0056). A linked
    * account has two doors, and one of them is not on this screen otherwise. */
   linked_identities: string[];
+  /** The login at the enabled bundled provider this account answers through —
+   * the `external_id` of the directory entry bound to this user there. Null
+   * when the enabled provider is external, or the person has no bundled
+   * login. Stated outright rather than inferred from `issuer` and
+   * `linked_identities`: a person the console created has a login from the
+   * moment of creation, before either field could say so — inferring "no
+   * login" there offered Create sign-in for someone who already had one. */
+  bundled_login: string | null;
   /** Who granted this person's membership of the group being listed (ADR 0057).
    * Only the group-members listing answers it; null everywhere else. */
   membership_source: "manual" | "oidc" | null;

@@ -54,14 +54,48 @@ function useBundledProvider(): IdentityProvider | undefined {
 }
 
 /** Whether this person can already sign in through the bundled row, so the
- * row offers Reset password instead of Create sign-in (§8.1). Bundled login
- * is not a fact `UserAdminResponse` states directly — the account's own
- * identity pair, or one of its linked ones, naming the bundled issuer is what
- * `bind_bundled_login` itself tests, so this mirrors that rather than
- * inventing a second answer to the same question. */
+ * row offers Reset password instead of Create sign-in (§8.1). The gateway
+ * states the bundled login outright (`bundled_login`) — the directory entry
+ * bound to this user at the enabled bundled provider — because a person the
+ * console created has a login from the moment of creation, while still
+ * pending: no issuer of their own and no linked identity, so the pair those
+ * two fields used to answer from wrongly read "no login", offered Create
+ * sign-in, and a second acceptance gave one person two working passwords.
+ * The issuer check stays as a fallback for an answer from a gateway predating
+ * the field. */
 function hasBundledLogin(user: AdminUser, bundled: IdentityProvider | undefined): boolean {
   if (!bundled) return false;
+  if (user.bundled_login !== null) return true;
   return user.issuer === bundled.issuer || user.linked_identities.includes(bundled.issuer);
+}
+
+/**
+ * The login a new sign-in starts from: the email's local part, made into a
+ * name the sign-in page accepts. The derivation rules are `deploy/admin.py`'s
+ * `_derive_login`'s, replicated here because the console cannot import them —
+ * lowercase, then anything outside [a-z0-9._-] becomes "-", leading
+ * separators stripped, a leading non-alphanumeric prefixed with "u", and a
+ * 64-character cap. The half that checks the name is not already taken in the
+ * users file stays server-side, where the file is.
+ */
+function deriveLogin(email: string): string {
+  const local = email.split("@", 1)[0] || "user";
+  const derived = local.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "-");
+  const stripped = derived.replace(/^[-._]+/, "") || "user";
+  const prefixed = /^[a-z0-9]/.test(stripped) ? stripped : `u${stripped}`;
+  return prefixed.slice(0, 64);
+}
+
+/** The sign-in page's own shape, as the field's standing help text. */
+const LOGIN_HINT = "The name they'll type on the sign-in page. Lowercase letters, digits, '.', '_' or '-'.";
+
+/** The gateway refuses a login another person already holds — from the users
+ * file ("{login} already exists") or the directory mirror ("'{login}' already
+ * exists."). Either way the sentence an administrator needs is the same. */
+function takenName(error: unknown, login: string): string | null {
+  const message = error instanceof Error ? error.message : "";
+  if (!login.trim() || !message.includes("already exists")) return null;
+  return `'${login.trim()}' is already another person's sign-in name — pick a different one.`;
 }
 
 
@@ -101,13 +135,25 @@ export function AdminUsers() {
         <>
           <div>{user.display_name || user.username || user.email || user.subject}</div>
           <div className={MUTED}>{user.email ?? user.subject}</div>
+          {/* The login this person answers through at the bundled provider
+              (§8): the name an administrator needs when sending a one-time
+              password, named as what it is rather than left to be recognised
+              inside the username line, which the person's directory entry may
+              or may not share. */}
+          {user.bundled_login ? (
+            <div className={`${MUTED} ${CODE}`}>sign-in: {user.bundled_login}</div>
+          ) : null}
           {/* The directory's own name for this person, shown when it is not
               already the line above. An account created in Keycloak as
               `chat@local` with the address `chat@example.org` was listed only
               by the address, so searching for the name it was made under found
               nothing — which reads as a missing account rather than a missing
-              label. */}
-          {user.username && user.username !== user.email && user.username !== user.display_name ? (
+              label. Suppressed when it is the bundled login: the sign-in line
+              above already carries that exact value. */}
+          {user.username &&
+          user.username !== user.email &&
+          user.username !== user.display_name &&
+          user.username !== user.bundled_login ? (
             <div className={`${MUTED} ${CODE}`}>{user.username}</div>
           ) : null}
           {/* Identity is (issuer, subject), not email. Two rows can therefore
@@ -630,9 +676,11 @@ function formatDate(iso: string): string {
 /**
  * The one-time password, shown once, with the note §8.1 requires: Authelia
  * cannot force a change at the person's first sign-in, so the operator has to
- * choose how it reaches them and what happens after.
+ * choose how it reaches them and what happens after. Both halves of what to
+ * send are named — the login and the password — because a password without
+ * the name it unlocks is half a message.
  */
-function MintedPasswordNotice({ password }: { password: string }) {
+function MintedPasswordNotice({ login, password }: { login: string; password: string }) {
   const [copied, setCopied] = useState<boolean | null>(null);
 
   const copy = async () => {
@@ -646,6 +694,9 @@ function MintedPasswordNotice({ password }: { password: string }) {
 
   return (
     <>
+      <p>
+        Sign in as <strong>{login}</strong> with this password:
+      </p>
       <div className={SECRET_ROW}>
         <code className={SECRET}>{password}</code>
         <Button onClick={copy}>{copied ? "Copied" : "Copy"}</Button>
@@ -670,6 +721,10 @@ function MintedPasswordNotice({ password }: { password: string }) {
 function AddUserDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const create = useCreateBundledUser();
   const [login, setLogin] = useState("");
+  // The login prefills from the email until the administrator edits it by
+  // hand; after that the typed value wins and later keystrokes in the email
+  // stop overwriting it.
+  const [loginByHand, setLoginByHand] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [groups, setGroups] = useState("");
@@ -677,6 +732,7 @@ function AddUserDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const close = () => {
     create.reset();
     setLogin("");
+    setLoginByHand(false);
     setDisplayName("");
     setEmail("");
     setGroups("");
@@ -684,6 +740,7 @@ function AddUserDialog({ open, onClose }: { open: boolean; onClose: () => void }
   };
 
   const created = create.data;
+  const taken = takenName(create.error, login);
 
   return (
     <Dialog
@@ -722,30 +779,39 @@ function AddUserDialog({ open, onClose }: { open: boolean; onClose: () => void }
     >
       {create.error ? (
         <Notice tone="danger" title="Could not add the user">
-          {create.error instanceof Error ? create.error.message : "Unknown error."}
+          {taken ?? (create.error instanceof Error ? create.error.message : "Unknown error.")}
         </Notice>
       ) : null}
 
       {created ? (
-        <MintedPasswordNotice password={created.password} />
+        <MintedPasswordNotice login={created.bundled_login ?? login.trim()} password={created.password} />
       ) : (
         <div className={FORM}>
+          {/* Email sits above Login because Login derives from it: the
+              prefill has to be visible happening, in the direction forms are
+              read, not appear retroactively in a field above the one typed. */}
+          <Input
+            label="Email"
+            type="email"
+            value={email}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              if (!loginByHand) setLogin(deriveLogin(event.target.value));
+            }}
+          />
           <Input
             label="Login"
             value={login}
-            onChange={(event) => setLogin(event.target.value)}
-            hint="The name this person signs in with."
+            onChange={(event) => {
+              setLogin(event.target.value);
+              setLoginByHand(true);
+            }}
+            hint={LOGIN_HINT}
           />
           <Input
             label="Display name"
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}
-          />
-          <Input
-            label="Email"
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
           />
           <Input
             label="Groups"
@@ -768,6 +834,15 @@ function CreateSignInDialog({ user, onClose }: { user: AdminUser | null; onClose
   const create = useCreateBundledSignIn();
   const [login, setLogin] = useState("");
 
+  // Prefilled from the person's email's local part, then left editable — the
+  // same derivation Add user uses, so both doors suggest the same name.
+  const userKey = user?.id ?? "none";
+  const [seededFor, setSeededFor] = useState(userKey);
+  if (seededFor !== userKey) {
+    setSeededFor(userKey);
+    setLogin(user ? deriveLogin(user.email ?? "") : "");
+  }
+
   const close = () => {
     create.reset();
     setLogin("");
@@ -775,6 +850,7 @@ function CreateSignInDialog({ user, onClose }: { user: AdminUser | null; onClose
   };
 
   const created = create.data;
+  const taken = takenName(create.error, login);
 
   return (
     <Dialog
@@ -803,18 +879,18 @@ function CreateSignInDialog({ user, onClose }: { user: AdminUser | null; onClose
     >
       {create.error ? (
         <Notice tone="danger" title="Could not create the sign-in">
-          {create.error instanceof Error ? create.error.message : "Unknown error."}
+          {taken ?? (create.error instanceof Error ? create.error.message : "Unknown error.")}
         </Notice>
       ) : null}
 
       {created ? (
-        <MintedPasswordNotice password={created.password} />
+        <MintedPasswordNotice login={created.bundled_login ?? login.trim()} password={created.password} />
       ) : (
         <Input
           label="Login"
           value={login}
           onChange={(event) => setLogin(event.target.value)}
-          hint="The name this person will sign in with. Their existing account, groups and history are unchanged."
+          hint={LOGIN_HINT}
         />
       )}
     </Dialog>
@@ -863,7 +939,7 @@ function ResetPasswordDialog({ user, onClose }: { user: AdminUser | null; onClos
       ) : null}
 
       {result ? (
-        <MintedPasswordNotice password={result.password} />
+        <MintedPasswordNotice login={user?.bundled_login ?? user?.username ?? ""} password={result.password} />
       ) : (
         <p>
           This mints a new one-time password for their bundled login. The old one stops

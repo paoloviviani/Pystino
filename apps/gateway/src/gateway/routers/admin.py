@@ -2374,6 +2374,28 @@ async def _user_responses(
     ).all():
         linked.setdefault(user_id, []).append(issuer)
 
+    # One lookup for the page, like the rest: the login each of these people
+    # answers through at the *enabled* bundled provider (ADR 0093 §8), stated
+    # outright because a pending user's issuer and linked identities cannot
+    # answer it. The partial unique index on (provider_id, user_id) keeps the
+    # map single-valued; a deployment whose provider is external gets no
+    # entries and an all-None column.
+    bundled_logins: dict[uuid.UUID, str] = {}
+    bundled_provider = await active_bundled_provider(session)
+    if bundled_provider is not None and ids:
+        for user_id, external_id in (
+            await session.execute(
+                select(DirectoryEntry.user_id, DirectoryEntry.external_id).where(
+                    DirectoryEntry.provider_id == bundled_provider.id,
+                    DirectoryEntry.user_id.in_(ids),
+                )
+            )
+        ).all():
+            # Unreachable in practice — the filter is `user_id.in_(ids)` —
+            # but the column is nullable, and the map's key is not.
+            if user_id is not None:
+                bundled_logins[user_id] = external_id
+
     return [
         UserAdminResponse(
             id=user.id,
@@ -2386,6 +2408,7 @@ async def _user_responses(
             is_admin=user.is_admin,
             has_password=user.id in with_password,
             linked_identities=linked.get(user.id, []),
+            bundled_login=bundled_logins.get(user.id),
             membership_source=(
                 None if membership_in is None else ("manual" if user.id in granted_here else "oidc")
             ),
@@ -2561,6 +2584,25 @@ async def create_sign_in(
         raise NotFoundError(f"No user with id {user_id}.")
 
     provider = await _bundled_provider(session)
+    # Refused before anything is written anywhere: every Add-user user is
+    # created with a directory entry already bound to them (§8.2 step 4) —
+    # their pending state made the console offer this action when it should
+    # have offered Reset password, and accepting it here would mint a second
+    # login and a second bound entry (one person, two working passwords, and
+    # a `scalar_one_or_none` on their next disable or reset that now finds
+    # two rows). The partial unique index is the backstop; this is the
+    # readable refusal.
+    existing = (
+        await session.execute(
+            select(DirectoryEntry).where(
+                DirectoryEntry.provider_id == provider.id, DirectoryEntry.user_id == user.id
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise ConflictError(
+            f"They already sign in as '{existing.external_id}'. Use Reset password."
+        )
     users_file = bundled_users_file(provider, secrets)
 
     email = user.email or ""

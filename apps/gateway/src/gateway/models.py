@@ -1563,6 +1563,21 @@ class DirectoryEntry(Base):
     __tablename__ = "directory_entries"
     __table_args__ = (
         UniqueConstraint("provider_id", "external_id", name="uq_directory_entries_provider_ext"),
+        # One login per person per directory. Unbound rows (nobody has claimed
+        # the login yet) are exempt — a directory lists many people who have
+        # never signed in, and they all hold user_id NULL. Without this, a
+        # second bound entry for the same person was creatable (the console's
+        # mislabelled Create sign-in did exactly that), leaving one person
+        # with two working passwords and an admin query that expected one row
+        # finding two.
+        Index(
+            "uq_directory_entries_provider_user",
+            "provider_id",
+            "user_id",
+            unique=True,
+            sqlite_where=text("user_id IS NOT NULL"),
+            postgresql_where=text("user_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()

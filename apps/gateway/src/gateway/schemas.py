@@ -1216,6 +1216,17 @@ class UserAdminResponse(BaseModel):
     # linked account has two doors, and an operator reading a user screen that
     # says only "has a password" would not know the second one exists.
     linked_identities: list[str] = Field(default_factory=list)
+    # The login at the enabled bundled provider this account answers through
+    # (ADR 0093 §8): the `external_id` of the directory entry bound to this
+    # user there — the key every Authelia operation goes through. Null when
+    # the deployment's enabled provider is external, or this person has no
+    # bundled login. A pending user (§3.1) has neither an issuer of its own
+    # nor a linked identity, yet carries a login from the moment it was
+    # created — which is exactly why this is stated outright rather than left
+    # for the console to infer from `issuer`/`linked_identities` (whose answer
+    # wrongly says "no login", and one more Create sign-in then makes a second
+    # login and a second directory entry for the same person).
+    bundled_login: str | None = None
     groups: list[str]
     # Who granted *this* person's membership of the group being listed (ADR
     # 0057): "manual" for an administrator's grant, "oidc" for the directory's.
