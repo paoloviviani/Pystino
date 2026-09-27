@@ -433,9 +433,12 @@ async def _authenticate_bearer_user(request: Request, session: AsyncSession, tok
             group_mappings=policy.group_mappings if policy is not None else None,
         )
     except OIDCError as exc:
-        # Logged in full, returned as one word: the reason a token failed is a
-        # map of the validator for anyone holding a forged one.
-        logger.info("access token rejected: %s", exc)
+        # Logged in full, returned as one word: the reason a token failed is
+        # a map of the validator for anyone holding a forged one. WARNING, not
+        # INFO: the audience-mismatch case (a client with no audience mapper
+        # naming this gateway) fails every chat login with nothing but this
+        # line to say why, and it must be visible without log-level hunting.
+        logger.warning("access token rejected: %s", exc)
         raise AuthenticationError("Invalid API key provided.") from exc
 
     if not user.is_active:
@@ -568,10 +571,14 @@ async def load_user_for_management(
     user = (await session.execute(stmt)).scalar_one_or_none()
     if user is None or not user.is_active:
         raise AuthenticationError("Session is no longer valid.")
-    # ADR 0093 §9.1: a disable (or a break-glass recovery, or a merge)
-    # stamps `sessions_valid_after`, and a token minted before that instant is
-    # exactly the one a disable exists to end — no second query, since the
-    # comparison is against the row this function already loaded.
+    # ADR 0093 §9.1: a disable (or a merge) stamps `sessions_valid_after`,
+    # and a token minted before that instant is exactly the one a disable
+    # exists to end — no second query, since the comparison is against the
+    # row this function already loaded. Break-glass deliberately does NOT
+    # stamp it: it never demotes or disables anyone (§10), and bearer tokens
+    # from the switched-away provider are refused elsewhere, by provider
+    # enablement. Console cookies minted before a switch stay valid for
+    # their 8 h TTL; rotate `SESSION_SECRET` if compromise is suspected.
     if user.sessions_valid_after is not None and issued_at < user.sessions_valid_after:
         raise AuthenticationError("Session is no longer valid.")
     return user

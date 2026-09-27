@@ -109,7 +109,10 @@ async def announce(request: Request, session: SessionDep, settings: SettingsDep)
     try:
         claims = await client.validate_access_token(token)
     except OIDCError as exc:
-        logger.info("announce: token rejected: %s", exc)
+        # WARNING, not INFO: an audience mismatch here means the chat client
+        # has no audience mapper naming this gateway, and every chat login
+        # fails with only this line to say why.
+        logger.warning("announce: token rejected: %s", exc)
         raise AuthenticationError("Invalid or unrecognised access token.") from exc
 
     azp = claims.get("azp") or claims.get("client_id")

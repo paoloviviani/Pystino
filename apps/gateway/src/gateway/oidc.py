@@ -47,7 +47,7 @@ from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import KeySet, OctKey
 from joserfc.jwt import JWTClaimsRegistry
-from sqlalchemy import Select, and_, or_, select
+from sqlalchemy import Select, and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -600,6 +600,12 @@ class OIDCClient:
 # made an administrator ahead of time (§5.4): an invite is not a grant.
 PENDING_USER_ISSUER = "pystino:pending"
 
+#: Serializes every last-admin guard against its peers until the surrounding
+#: transaction commits, so concurrent demotes/disables cannot both pass the
+#: check (ADR 0093 §5.5). Postgres only; arbitrary but fixed, and distinct
+#: from the re-seed lock in `identity_registry` (93_002_001).
+_LAST_ADMIN_ADVISORY_LOCK_KEY = 93_002_005
+
 
 def _identity_select(issuer: str, subject: str) -> Select[tuple[User]]:
     """The one query that resolves ``(issuer, subject)`` to a person.
@@ -1108,7 +1114,19 @@ async def other_active_admin_exists(session: AsyncSession, *, excluding: uuid.UU
     last-admin guard shares — the console's PATCH and DELETE routes, the CLI's
     ``admin revoke``, and the two rule-driven revocations below — so that
     "who counts as an active administrator" cannot drift between them.
+
+    Under Postgres the check takes a transaction-scoped advisory lock first,
+    so two guards running at once (two admins demoting each other, a console
+    demotion racing a rule-driven revocation at sign-in) serialize instead of
+    both seeing "another admin exists" and both committing — the last-admin
+    rule must never depend on READ COMMITTED interleaving. SQLite has no
+    advisory locks and a single-process test needs none, exactly like the
+    re-seed guard in `identity_registry`.
     """
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"), {"key": _LAST_ADMIN_ADVISORY_LOCK_KEY}
+        )
     result = await session.execute(
         select(User.id)
         .where(
