@@ -13,12 +13,17 @@ tests use values that survive a float round-trip.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
+
+if TYPE_CHECKING:
+    import asyncpg
 import orjson
 import pytest
 import pytest_asyncio
@@ -159,6 +164,141 @@ def fake_upstream() -> FakeUpstream:
 # --------------------------------------------------------------------------
 
 
+# --- TEST_DATABASE_URL: a fresh Postgres database per test ------------------
+#
+# The app fixture starts the application's own background loops (resolvers,
+# notifier, fx, erasure retry) on its engine, so a schema reset run in-loop
+# races them: a poller's open transaction holds a lock the reset waits for,
+# and every later reader queues behind it — a client-side cycle the
+# deadlock detector never fires on. The fix is the design the SQLite leg
+# always had: never reset in-loop, give every test a database nothing else
+# has touched. One template database is built per session (schema only, no
+# connections open when copied), each test gets a copy in tens of
+# milliseconds, and teardown drops it WITH (FORCE) so a leaked session can
+# never hang the run.
+
+_ADMIN_URL = os.environ.get("TEST_DATABASE_URL")
+_TEST_DB_PREFIX = "t_gwtest_"
+
+
+def _admin_connect() -> asyncpg.Connection:
+    """A blocking connection to the server for CREATE/DROP DATABASE (asyncpg,
+    the suite's own driver; psycopg is not a dependency of this project)."""
+    import asyncpg
+
+    parsed = _parse_admin_url()
+    return asyncpg.connect(
+        host=parsed["host"], port=parsed["port"], user=parsed["user"], password=parsed["password"]
+    )
+
+
+def _parse_admin_url() -> dict:
+    """postgresql+asyncpg://user:pw@host:port/db -> the pieces asyncpg wants."""
+    import re
+    import urllib.parse
+
+    match = re.match(r"postgresql\+asyncpg://([^:]+):([^@]+)@([^:/]+)(?::(\d+))?/(.+)", _ADMIN_URL)
+    if not match:
+        raise ValueError("TEST_DATABASE_URL must be postgresql+asyncpg://user:pw@host:port/db")
+    return {
+        "user": urllib.parse.unquote(match.group(1)),
+        "password": urllib.parse.unquote(match.group(2)),
+        "host": match.group(3),
+        "port": int(match.group(4) or 5432),
+        "database": match.group(5),
+    }
+
+
+def _template_name() -> str:
+    return f"{_TEST_DB_PREFIX}template"
+
+
+def _ensure_template() -> None:
+    """Build the session's template database once (schema, then disconnect).
+
+    CREATE DATABASE ... TEMPLATE needs the template to have no open
+    connections, so the schema engine is disposed before returning. A
+    template left by a previous run is reused (created only if missing).
+    """
+    import asyncio
+
+    async def _create_if_missing() -> bool:
+        import asyncpg
+
+        admin = await _admin_connect()
+        try:
+            try:
+                await admin.execute(f"CREATE DATABASE {_template_name()}")
+                return True
+            except asyncpg.DuplicateDatabaseError:
+                return False
+        finally:
+            await admin.close()
+
+    if asyncio.run(_create_if_missing()):
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        parsed = _parse_admin_url()
+        engine = create_async_engine(
+            f"postgresql+asyncpg://{parsed['user']}:{parsed['password']}"
+            f"@{parsed['host']}:{parsed['port']}/{_template_name()}"
+        )
+
+        async def _build() -> None:
+            async with engine.begin() as connection:
+                await connection.run_sync(Base.metadata.create_all)
+
+        asyncio.run(_build())
+        engine.sync_engine.dispose()
+
+
+def _external_test_database() -> str | None:
+    """A fresh database for this test, or None (the SQLite leg).
+
+    Called once per test by the settings fixture, BEFORE create_app: no
+    application loop ever sees a database another test touched, and no
+    schema reset runs in-loop. Teardown drops it WITH (FORCE) so a leaked
+    session can never hang the run; the atexit backstop covers a teardown
+    that never ran.
+    """
+    if not _ADMIN_URL:
+        return None
+    import asyncio
+    import atexit
+    import uuid
+
+    _ensure_template()
+    db = f"{_TEST_DB_PREFIX}{uuid.uuid4().hex[:12]}"
+
+    async def _create() -> None:
+
+        admin = await _admin_connect()
+        try:
+            await admin.execute(f"CREATE DATABASE {db} TEMPLATE {_template_name()}")
+        finally:
+            await admin.close()
+
+    asyncio.run(_create())
+    parsed = _parse_admin_url()
+    url = (
+        f"postgresql+asyncpg://{parsed['user']}:{parsed['password']}"
+        f"@{parsed['host']}:{parsed['port']}/{db}"
+    )
+
+    def _drop() -> None:
+        async def _run() -> None:
+            a = await _admin_connect()
+            try:
+                await a.execute(f"DROP DATABASE IF EXISTS {db} WITH (FORCE)")
+            finally:
+                await a.close()
+
+        asyncio.run(_run())
+
+    atexit.register(_drop)
+    return url
+
+
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     # A file per test rather than ":memory:". In-memory SQLite needs a single
@@ -168,7 +308,14 @@ def settings(tmp_path: Path) -> Settings:
     return Settings(
         environment="dev",
         log_json=False,
-        database_url=f"sqlite+aiosqlite:///{tmp_path / 'gateway-test.db'}",
+        # TEST_DATABASE_URL runs against a real Postgres, one fresh
+        # database per test (copied from a session-scoped template): the
+        # Postgres equivalent of the per-test temp-file SQLite below, and
+        # the only way to exercise advisory locks, FOR UPDATE and SKIP
+        # LOCKED, which SQLite silently no-ops. Unset stays on the
+        # temp-file, which is what CI runs. See _external_test_database.
+        database_url=_external_test_database()
+        or f"sqlite+aiosqlite:///{tmp_path / 'gateway-test.db'}",
         # Empty means "no shared counter store": the in-memory store is used,
         # which is exactly right for a single-process test.
         valkey_url="",
@@ -272,11 +419,7 @@ async def seeded(session_factory: async_sessionmaker[AsyncSession]) -> Seeded:
         await db.flush()
         # This user's issuer is a directory, so the membership is one a login
         # made — which is what keeps the revocation tests meaningful (ADR 0057).
-        db.add(
-            Membership(
-                user_id=user.id, group_id=group.id, source=MembershipSource.OIDC
-            )
-        )
+        db.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.OIDC))
 
         # Every model needs a provider now (ADR 0027); the fake upstream is one.
         # Its credential is stored the way a real one is — encrypted — so the
@@ -556,7 +699,6 @@ async def seed_identity_provider(
     async with session_factory() as session:
         session.add(row)
         await session.commit()
-
 
     record = record_from_row(row, box)
     origin = "http://gateway"
