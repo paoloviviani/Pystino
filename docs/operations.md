@@ -133,8 +133,10 @@ None blocking; all recorded so they are not rediscovered as surprises.
 
 ## Where decisions live
 
-Every significant decision is an ADR in docs/adr/, with the
-licence, version and CVE evidence behind it and the date it was checked. The
+Every significant decision is an ADR — a dated design record with the
+licence, version and CVE evidence behind it and the date it was checked.
+The ADRs are kept with the project's private planning material rather than
+in this repository; ask the maintainers for a specific decision. The
 conventions: number sequentially, never renumber, never delete — **supersede
 instead**, and say which ADR supersedes which. An ADR whose decision was
 reversed is more useful than one that was quietly removed, because the

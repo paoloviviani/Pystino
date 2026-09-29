@@ -78,8 +78,41 @@ the browser case:
   enough for this use case. With your own Keycloak, register an
   `opencode-enrollment` client in the same shape as above.
 
+## Machine credentials, and how access ends
+
+An enrolled machine holds two credentials: an access token that lives an hour,
+and a **long-lived refresh token** (90 days on the bundled Authelia's
+`agent_machine` profile, above) that galopin's shim uses to mint the next one.
+Neither is ever handed to opencode.
+
+Access ends in three ways, and they differ in how fast and how permanently:
+
+- **Revocation at the identity provider** ends the machine's `/v1` access and its
+  chat link together, within one access-token lifetime, because both use the
+  same enrolment credential.
+- **Disabling or deleting the account** in the console is faster. The Users page
+  says so when you confirm: console sessions, chat sessions and machine links
+  are refused **within about a minute**, and refresh credentials and minted
+  API keys are revoked at once. The minute is the chat's revalidation cadence:
+  every live machine link is re-checked against the gateway (`GET /v1/me`) once
+  a minute, and a refused account **revokes the device** (it is tombstoned, and
+  its link is closed) rather than merely disconnecting it. With the bundled
+  Authelia, disabling the account disables its login too, under the same
+  action; with an external provider, disable the person there as well, or they
+  can still authenticate.
+- **Re-enabling does not resume a revoked machine.** Its device stays revoked, so
+  a **fresh `galopin enroll`** is required. A machine enrolled before the
+  account's sessions were last invalidated is treated the same way.
+
+A gateway that is briefly unreachable is not a refusal: the chat keeps
+serving for up to five minutes after the last good answer, and after that
+closes the link **without** revoking the device, so the machine reconnects by
+itself once the gateway answers again.
+
 ## Where the rest of it is documented
 
-The machine agent, the `/code` panel and the machine link are the chat's. See the chat
-repository's `agent/` (galopin's code and `PROTOCOL.md`), `docs/agent-machines.md`
-(installing and running a machine) and `docs/code-panel.md` (operators).
+The machine agent, the `/code` panel and the machine link are the chat's. See
+Cerea's [Agent machines](https://github.com/paoloviviani/Cerea/blob/main/docs/agent-machines.md)
+(installing, pairing and running a machine, and the machine policy),
+[The `/code` panel](https://github.com/paoloviviani/Cerea/blob/main/docs/code-panel.md)
+(operators) and `agent/PROTOCOL.md` in the same repository.

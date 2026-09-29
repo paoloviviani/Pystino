@@ -55,7 +55,7 @@ bundled Authelia with `AUTHELIA_ADMIN_USER` and the password behind
 sign-in makes it the administrator. Everyone signs
 in through an OIDC provider — there is no password door, and the provider is
 set in `deploy/.env`, not in the console; see
-[Identity](oidc-generic-provider.md).
+[Identity](identity.md).
 
 ## Reach it from another machine
 

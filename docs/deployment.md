@@ -78,7 +78,7 @@ start and the console shows the provider read-only. To combine several
 sources of users, federate them in your own IdP (Keycloak, Authentik and the
 like) and point the stack at it. Who is an administrator, how groups sync,
 and linking accounts by email are all environment settings too — see
-[Identity](oidc-generic-provider.md) for every variable and what the gateway
+[Identity](identity.md) for every variable and what the gateway
 checks at startup.
 
 Servers never call the public origin: the gateway reaches the IdP at its
@@ -87,20 +87,12 @@ the bundled one), with forwarded headers naming the public issuer. There is no
 CA bundle to maintain.
 
 **The bundled Authelia's accounts** are managed from the console's Users
-page — add a user, create a sign-in, reset a password (a one-time password),
-disable, enable, delete, merge into. Groups and roles live in the console.
+page; see [Bundled accounts](bundled-accounts.md). Groups and roles live in
+the console.
 
-Break-glass, when nobody can administer or the IdP is gone:
-
-```bash
-docker compose run --rm --no-deps gateway pystino break-glass \
-  --email you@example.org --reason "…"
-```
-
-It finds or creates the account, creates or re-enables their bundled login,
-grants admin, and prints a one-time password once. For someone who can
-already sign in, `docker compose exec gateway pystino admin grant
-you@example.org` grants admin without touching anything else.
+**Break-glass**, when nobody can administer or the IdP is gone, is one
+command; its preconditions, what it changes and what to do if the deployment
+itself may be compromised are in [Identity: break-glass](identity.md#break-glass).
 
 ## Upgrading
 
