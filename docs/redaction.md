@@ -2,8 +2,7 @@
 
 Redaction is the layer between the caller's prompt and the upstream provider:
 detected entities are replaced with deterministic placeholders before any text
-leaves the building, and restored (or not) in the answer shown to the reader.
-PII never reaches the upstream.
+leaves the building, and restored (or not) in the answer the person reads. With a rule in force, what it matches never reaches the upstream. The shipped default has no rules, so nothing is redacted until an administrator writes one.
 
 It is also **~90% of the CPU**. Detection is named-entity recognition and
 scales with prompt length — roughly 0.1ms of CPU per prompt token, against a
@@ -135,15 +134,15 @@ still advertised.
 ## What happens to a detected entity: the policy model
 
 For each entity type, a policy names a **mode** — two independent questions, what
-the model sees and what the reader gets back:
+the model sees and what the person gets back:
 
-| Mode | Upstream sees | Reader gets back |
+| Mode | Upstream sees | The person gets back |
 |---|---|---|
 | `off` | the real value | the real value |
 | `anonymise_restore` | `<PERSON_xxxx>`, stable | the real value, restored |
 | `anonymise` | `<PERSON_xxxx>`, stable | the placeholder |
 | `redact` | `<PERSON>` — lossy, two people collapse into one label | the label |
-| `block` | nothing — the request is refused | a 403 that never quotes the matched text |
+| `block` | nothing — the request is refused | an error saying which kind of value was blocked and by which rule, never the value itself (HTTP 403) |
 
 `block` exists for values whose *presence* is the incident — a pasted API key —
 where silently replacing it would tell nobody it happened. The 403 names the

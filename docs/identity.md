@@ -22,9 +22,7 @@ group means here, under **Settings**) and the people themselves (the
 
 If you need several sources of users, federate them in your own IdP
 (Keycloak, Authentik and the like) and point the stack at it. **If you need
-multi-factor authentication, that is also the IdP's job**: the bundled
-Authelia is password-only, so put a Keycloak (or any IdP that does MFA) in
-front and point the stack at it.
+multi-factor authentication, that is also the IdP's job**: the bundled Authelia is password-only, so switch the stack to a Keycloak (or any IdP that does MFA) instead.
 
 | Variable | Gateway setting | Meaning |
 |---|---|---|
@@ -230,8 +228,7 @@ It rewrites `.env` to the bundled Authelia (your external settings survive in
 the `.env.bak-<timestamp>` it makes, and nowhere else), starts PostgreSQL and
 runs the bootstrap, runs `pystino break-glass` in a one-off gateway container,
 brings the stack up, and prints the sign-in URL, the login and a one-time
-password, once. Agent machines re-enroll afterwards, because their tokens name
-the old issuer. In a Pystino-only deployment, edit `deploy/.env` to the
+password, once. Each person with an agent machine has to re-enroll it afterwards, because its tokens name the old issuer; tell them before you switch. In a Pystino-only deployment, edit `deploy/.env` to the
 bundled Authelia yourself, then run the command that step wraps:
 
 ```bash

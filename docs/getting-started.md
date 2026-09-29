@@ -52,10 +52,7 @@ The console is at `https://dev.example.test:8443/console`. Sign in through the
 bundled Authelia with `AUTHELIA_ADMIN_USER` and the password behind
 `AUTHELIA_ADMIN_PASSWORD_DIGEST`; because its email
 (`AUTHELIA_ADMIN_EMAIL`/`PYSTINO_BOOTSTRAP_ADMIN_EMAIL`) matches, that first
-sign-in makes it the administrator. Everyone signs
-in through an OIDC provider — there is no password door, and the provider is
-set in `deploy/.env`, not in the console; see
-[Identity](identity.md).
+sign-in makes it the administrator. The gateway itself has no password form: even this first sign-in goes through the bundled Authelia's page, and the provider is set in `deploy/.env`, not in the console; see [Identity](identity.md).
 
 ## Reach it from another machine
 
