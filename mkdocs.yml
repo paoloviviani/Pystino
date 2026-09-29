@@ -78,5 +78,7 @@ nav:
   - Operations:
       - operations.md
       - "Measured performance": performance.md
-  - Guides:
-      - "Identity: the OIDC provider": oidc-generic-provider.md
+  - Identity:
+      - identity.md
+      - "Bundled accounts": bundled-accounts.md
+      - "The OIDC provider": oidc-generic-provider.md

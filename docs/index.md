@@ -36,8 +36,10 @@ is a `/v1` client of this gateway and a separate repository.
   only tighten.
 - [Deployment](deployment.md): the Pystino-only compose deployment, TLS,
   identity, upgrades and backups.
-- [Identity](oidc-generic-provider.md): the bundled Authelia, or your own
-  issuer.
+- [Identity](identity.md): one provider from `.env`, who is an administrator,
+  linking, merging, and break-glass. [Bundled accounts](bundled-accounts.md)
+  is the Users page; [the OIDC provider](oidc-generic-provider.md) is
+  registering your own issuer.
 - [Coding agents](coding-agents.md): what the gateway provides to agents on
   people's own machines.
 - [Operations](operations.md) and [Measured performance](performance.md):
