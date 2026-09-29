@@ -63,8 +63,8 @@ this password", with a Copy button.
 
     Share it over a one-time channel (a password manager share, or in
     person). Authelia cannot force a change at first sign-in: ask the person
-    to change it from the sign-in page's reset link, which needs SMTP, or to
-    keep it.
+    to change it from the sign-in page's reset link, where reset is enabled (it
+    needs SMTP, below), or to keep it.
 
 ### The edit panel's Actions
 
@@ -84,10 +84,13 @@ everywhere, chat included (see [Merging and deleting accounts](identity.md#mergi
 
 ### Signing in and resetting a password
 
-Passwords belong to the identity provider. With **SMTP configured** (the
-`SMTP_*` variables in `.env`), people reset their own password from the
-sign-in page, through Authelia; the same setting sends quota notices. Without
-it, only an administrator can, by issuing a one-time password.
+Passwords belong to the identity provider. **With SMTP configured** (the
+`SMTP_*` variables in `.env`) on the full stack (cerea-deploy), the bundled
+Authelia enables self-service reset: people reset their own password from the
+sign-in page, and the same setting sends quota notices. Without SMTP, and in
+this repository's own Pystino-only `deploy/` (whose Authelia configuration keeps
+password reset switched off), only an administrator can, by issuing a one-time
+password from the edit panel.
 
 ### With an external provider
 

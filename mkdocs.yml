@@ -75,6 +75,7 @@ nav:
   - Redaction: redaction.md
   - Deployment: deployment.md
   - Coding agents: coding-agents.md
+  - Console: console.md
   - Operations:
       - operations.md
       - "Measured performance": performance.md

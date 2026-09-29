@@ -42,8 +42,24 @@ is a `/v1` client of this gateway and a separate repository.
   registering your own issuer.
 - [Coding agents](coding-agents.md): what the gateway provides to agents on
   people's own machines.
+- [The console](console.md): a map of the admin screens, and which page
+  explains each.
 - [Operations](operations.md) and [Measured performance](performance.md):
   verifying a change, the live checks, and what the gateway costs.
+
+## The rest of the stack
+
+Pystino is one of three repositories. **[Cerea](https://github.com/paoloviviani/Cerea)**
+is the chat, with its own [documentation](https://github.com/paoloviviani/Cerea/tree/main/docs)
+(using it, the agent machines, configuration). **cerea-deploy** is the
+deployment that runs both, [with its README](https://github.com/paoloviviani/cerea-deploy#readme)
+as the runbook.
+
+## Versions
+
+This site follows `main` and is not versioned per release. What changed between releases, and which Pystino and Cerea
+versions a given release of the stack pins together, is recorded in
+[cerea-deploy's CHANGELOG](https://github.com/paoloviviani/cerea-deploy/blob/main/CHANGELOG.md).
 
 ## Licence
 
