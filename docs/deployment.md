@@ -9,19 +9,41 @@ Caddy and Authelia configuration mounted into their stock images.
 moving to it later is: copy this `.env` and the compose project name over,
 `./configure` again to add the chat's secrets, then `docker compose up -d`.
 
+## Serving chats you don't deploy here
+
+A central Pystino can serve chat deployments that live elsewhere: each one
+(the `satellite` preset in cerea-deploy) runs only the chat, pointed here
+with `OPENAI_BASE_URL` at this gateway's public `/v1`, signing people in
+against this gateway's identity provider, and reading this gateway's
+ledger with each person's own token. Quotas, accounting and model access
+stay central, administered here.
+
+Two limits are structural, and worth knowing before you promise anything:
+
+- **One chat client.** `GATEWAY_OIDC__CHAT_CLIENT_ID` is a single value, and
+  `/v1/session/announce` refuses tokens issued to any other client. Several
+  satellite chats must share that one client id, with each chat's redirect
+  URI registered on it. `GATEWAY_OIDC__ACCEPTED_CLIENTS` names the clients
+  that may sign in at all — add each satellite's identity-provider client
+  if it differs from the bundled one.
+- **Erasure reaches one chat.** `GATEWAY_CHAT__ERASURE_URL` is a single
+  URL: deleting a person here erases their data on _that_ chat, not on any
+  other satellite deployment. A person's data on a second chat must be
+  erased there, by its operator.
+
 ## What runs
 
 `deploy/compose.yaml` builds nothing: every service names an image, and
 add-ons are compose **profiles** chosen by `COMPOSE_PROFILES` in `.env`.
 
-| Service | Profile | What it is |
-|---|---|---|
-| `postgres` | always | the gateway's database (with pgvector) |
-| `bootstrap` | always | one-shot on every `up`: the bundled Authelia's signing key and first user — created only if absent, never overwritten |
-| `valkey`, `migrate`, `gateway` | always | the gateway and its console; there is no `gateway` profile here, because the gateway is the only thing this deployment serves |
-| `proxy` | always | stock Caddy, reading `deploy/caddy/` (mounted read-only) |
-| `authelia` | `authelia` | the bundled identity provider at `/authelia`, stock image, reading `deploy/authelia/` |
-| `redaction`, `extractor` | `redaction` | Presidio, pattern-only in the published image |
+| Service                        | Profile     | What it is                                                                                                                    |
+| ------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `postgres`                     | always      | the gateway's database (with pgvector)                                                                                        |
+| `bootstrap`                    | always      | one-shot on every `up`: the bundled Authelia's signing key and first user — created only if absent, never overwritten         |
+| `valkey`, `migrate`, `gateway` | always      | the gateway and its console; there is no `gateway` profile here, because the gateway is the only thing this deployment serves |
+| `proxy`                        | always      | stock Caddy, reading `deploy/caddy/` (mounted read-only)                                                                      |
+| `authelia`                     | `authelia`  | the bundled identity provider at `/authelia`, stock image, reading `deploy/authelia/`                                         |
+| `redaction`, `extractor`       | `redaction` | Presidio, pattern-only in the published image                                                                                 |
 
 ## Setting up
 
