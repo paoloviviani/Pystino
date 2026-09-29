@@ -100,8 +100,7 @@ Access ends in three ways, and they differ in how fast and how permanently:
   Authelia, disabling the account disables its login too, under the same
   action; with an external provider, disable the person there as well, or they
   can still authenticate.
-- **Re-enabling does not resume a revoked machine.** Its device stays revoked, so
-  a **fresh `galopin enroll`** is required. A machine enrolled before the
+- **Re-enabling does not resume a revoked machine.** Its device stays revoked: the person has to re-enroll it by running the pairing command again on that machine. Tell them when you re-enable the account. A machine enrolled before the
   account's sessions were last invalidated is treated the same way.
 
 A gateway that is briefly unreachable is not a refusal: the chat keeps

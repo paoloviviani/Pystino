@@ -33,10 +33,7 @@ through, which is why `_metered.begin` takes `fx` and `session_factory` rather
 than a `Request`: a background task has no request, and a second copy of the
 money code would make indexing spend invisible to every report.
 
-Two things this table used to get wrong, corrected here rather than quietly:
-`/v1/ocr` was missing entirely, and `PUT /api/me/redaction` was listed but has
-never existed — a user's own redaction policy is a scoped rule set by an
-administrator, not something a user can weaken.
+
 
 **`/v1` and `/api` differ, and that is the whole asymmetry.** One dependency
 (`deps.get_principal`) authenticates every `/v1` route, and it takes either
