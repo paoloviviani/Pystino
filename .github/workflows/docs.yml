@@ -1,0 +1,52 @@
+# Publish the documentation site to GitHub Pages.
+#
+# Runs on pushes to main that touch the docs or the site config, and on
+# demand. The build is `--strict`: a broken link fails the publish rather
+# than shipping a lying page (the site's own rule, mkdocs.yml's header).
+#
+# Sized for the GitHub free plan (see ci.yml's header): one job, no matrix,
+# a plain `mkdocs build` into `public/` (no mkdocs gh-deploy, which would
+# push a branch we do not want), published with actions/upload-pages-artifact
+# + deploy-pages.
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # GitHub Pages deploys from the default branch only.
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The docs' dependency set is the project's own (pyproject + uv lock),
+      # so plain `uv run mkdocs build` resolves the pinned mkdocs-material.
+      - uses: astral-sh/setup-uv@v5
+      - run: uv run mkdocs build --strict --site-dir public
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

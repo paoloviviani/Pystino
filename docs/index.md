@@ -50,7 +50,7 @@ is a `/v1` client of this gateway and a separate repository.
 ## The rest of the stack
 
 Pystino is one of three repositories. **[Cerea](https://github.com/paoloviviani/Cerea)**
-is the chat, with its own [documentation](https://github.com/paoloviviani/Cerea/tree/main/docs)
+is the chat, with its own [documentation](https://paoloviviani.github.io/Cerea/)
 (using it, the agent machines, configuration). **cerea-deploy** is the
 deployment that runs both, [with its README](https://github.com/paoloviviani/cerea-deploy#readme)
 as the runbook.

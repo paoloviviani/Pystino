@@ -111,7 +111,7 @@ itself once the gateway answers again.
 ## Where the rest of it is documented
 
 The machine agent, the `/code` panel and the machine link are the chat's. See
-Cerea's [Agent machines](https://github.com/paoloviviani/Cerea/blob/main/docs/agent-machines.md)
+Cerea's [Agent machines](https://paoloviviani.github.io/Cerea/agent-machines/)
 (installing, pairing and running a machine, and the machine policy),
-[The `/code` panel](https://github.com/paoloviviani/Cerea/blob/main/docs/code-panel.md)
+[The `/code` panel](https://paoloviviani.github.io/Cerea/code-panel/)
 (operators) and `agent/PROTOCOL.md` in the same repository.

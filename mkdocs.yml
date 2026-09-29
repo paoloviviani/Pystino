@@ -7,6 +7,10 @@
 # metadata on 2026-08-31 (ADR 0001's inbound licence policy).
 
 site_name: Pystino
+# GitHub Pages (the docs workflow publishes on docs/mkdocs changes):
+# https://paoloviviani.github.io/Pystino/ — canonical, so strict builds
+# generate honest absolute links.
+site_url: https://paoloviviani.github.io/Pystino/
 site_description: >
   A self-hosted model gateway: OpenAI-compatible, with per-user and
   per-group accounting, quotas and redaction, and the console that operates it.
