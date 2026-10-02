@@ -5,7 +5,7 @@ description = "OpenAI-compatible LLM gateway with accounting, quotas and policy"
 readme = "README.md"
 requires-python = ">=3.13"
 license = "EUPL-1.2"
-authors = [{ name = "Paolo Viviani" }]
+authors = [{ name = "Paolo Viviani", email = "paolo.viviani@ik.me" }]
 
 dependencies = [
     "fastapi>=0.115",
