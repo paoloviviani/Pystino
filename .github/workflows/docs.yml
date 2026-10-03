@@ -30,7 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     # GitHub Pages deploys from the default branch only.
     if: github.ref == 'refs/heads/main'
+    # A job-level block replaces the workflow's, so contents: read is repeated
+    # here: without it the token cannot read this (private) repository and
+    # checkout answers "repository not found".
     permissions:
+      contents: read
       pages: write
       id-token: write
     environment:
