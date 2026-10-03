@@ -265,7 +265,7 @@
 
   --colour-text: #f5f5f5;
   --colour-text-muted: #a3a3a3;
-  --colour-text-faint: #737373;
+  --colour-text-faint: #8a8a8a;
   --colour-text-inverse: #18181b;
 
   --colour-accent: #60a5fa;
@@ -372,45 +372,55 @@
  * form controls inherit the page font (preflight does most of this; these keep
  * the file honest when imported alone), and the html element carries the
  * family so the fallback path needs no other file.
+ *
+ * These sit in `@layer base`, where Tailwind's own preflight lives, and that
+ * is load-bearing rather than tidiness: an UNLAYERED author rule beats every
+ * layered rule whatever its position, so the bare `img, picture, svg
+ * { display: block }` that used to sit here silently defeated `hidden`,
+ * `dark:hidden` and `dark:block` on every img — which is how the logo's
+ * light/dark variants came out rendering side by side. Layered, the utilities
+ * win again, exactly as they do against preflight.
  */
-html {
-  font-family: var(--font-sans);
-  -webkit-text-size-adjust: 100%;
-}
+@layer base {
+	html {
+		font-family: var(--font-sans);
+		-webkit-text-size-adjust: 100%;
+	}
 
-body {
-  min-height: 100vh;
-  background: var(--colour-bg);
-  color: var(--colour-text);
-  font-family: var(--font-sans);
-  font-size: var(--text-base);
-  line-height: var(--leading-normal);
-  -webkit-font-smoothing: antialiased;
-}
+	body {
+		min-height: 100vh;
+		background: var(--colour-bg);
+		color: var(--colour-text);
+		font-family: var(--font-sans);
+		font-size: var(--text-base);
+		line-height: var(--leading-normal);
+		-webkit-font-smoothing: antialiased;
+	}
 
-img,
-picture,
-svg {
-  display: block;
-  max-width: 100%;
-}
+	img,
+	picture,
+	svg {
+		display: block;
+		max-width: 100%;
+	}
 
-input,
-button,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
+	input,
+	button,
+	textarea,
+	select {
+		font: inherit;
+		color: inherit;
+	}
 }
 
 /* Honour a reader who has asked the operating system for less motion. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
 }
