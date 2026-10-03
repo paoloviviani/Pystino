@@ -21,7 +21,7 @@ What it asserts:
   file when one is given, else the system store; never an unverified context,
   because a check that skips verification passes against anything that
   answers on the address;
-* the three holes CLAUDE.md's fourth ground rule is about are closed: no
+* the three holes AGENTS.md's fourth ground rule is about are closed: no
   plaintext, a Secure cookie, and no management credential that anyone could
   have read in the repository — a wrong password is refused over TLS;
 * nothing else of this stack is on a routable interface — PostgreSQL, Valkey,

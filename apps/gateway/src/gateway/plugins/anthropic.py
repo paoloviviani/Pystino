@@ -24,7 +24,7 @@ The token conventions it needs are already right: ``/v1/messages`` reports
 *includes* them, and ``cache_creation_input_tokens`` is one of the four spellings
 of cache writes. Both live in ``accounting/cost.py``, dispatched by surface, so
 this plugin delegates rather than reimplementing — see the warning in
-``CLAUDE.md`` about not merging those two readers.
+``AGENTS.md`` about not merging those two readers.
 """
 
 from __future__ import annotations

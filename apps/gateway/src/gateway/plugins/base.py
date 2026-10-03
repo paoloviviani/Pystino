@@ -297,7 +297,7 @@ class ProviderPlugin(Protocol):
         Some counterparties slice their catalogue by a tag and *default* the
         filter when none is sent — the reference router ships ``tag=Instruct``
         unless told otherwise, which is how whole kinds of model sat unseen
-        (CLAUDE.md). Where such a counterparty also recognises a value meaning
+        (AGENTS.md). Where such a counterparty also recognises a value meaning
         "everything", this returns it, so the tag vocabulary the discovery
         dialog offers can be read from one live fetch instead of a list
         compiled by hand — a compiled list goes stale the first time the

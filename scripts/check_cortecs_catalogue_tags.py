@@ -3,7 +3,7 @@
 
 The gateway hard-won knowledge that the endpoint **defaults to
 ``tag=Instruct``** — an unfiltered request is a filtered one, which is how
-eleven embedding models and three OCR models sat unseen (CLAUDE.md). The
+eleven embedding models and three OCR models sat unseen (AGENTS.md). The
 discovery dialog asks the operator for a tag, and free text there is a
 vocabulary the operator has to already know. A dropdown needs the *list* of
 tags, and no documentation names one.

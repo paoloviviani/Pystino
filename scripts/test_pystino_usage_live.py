@@ -17,7 +17,7 @@ than more of the same in `apps/gateway/tests/test_pystino_usage.py`:
 
 The endpoint itself spends nothing — it is a read of `usage_records` and
 `limit_rules`, not a metered `/v1` route — so the demo user's EUR 1/hour cap
-(CLAUDE.md) does not constrain this file the way it constrains the surface
+(AGENTS.md) does not constrain this file the way it constrains the surface
 scripts. Nothing here calls a model.
 
 Usage:
@@ -100,7 +100,7 @@ def access_token() -> str | None:
     Built from ``GATEWAY_OIDC__ISSUER`` / ``__CLIENT_ID`` / ``__CLIENT_SECRET``
     on purpose, not from ``CHAT_OPENID_CONFIG``: that variable is JSON, and
     ``set -a; . deploy/.env; set +a`` strips its quotes, leaving a value no
-    JSON parser accepts (the trap CLAUDE.md records under "Sourcing
+    JSON parser accepts (the trap AGENTS.md records under "Sourcing
     deploy/.env mangles CHAT_OPENID_CONFIG"). The three ``GATEWAY_OIDC__*``
     variables are plain strings and survive sourcing unharmed. The gateway's
     own console client works for this because `deploy/keycloak/setup.sh` sets

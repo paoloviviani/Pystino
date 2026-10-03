@@ -253,7 +253,7 @@ class Metered:
         the same number — unchanged. Writing 502 into ``upstream_status`` there
         would send whoever reconciles the bill looking for a failure on the
         vendor's side that never happened, which is the same class of mistake
-        as the estimated-usage disclosure recorded in CLAUDE.md.
+        as the estimated-usage disclosure recorded in AGENTS.md.
         """
         actuals = await self.accounting.finalise(
             status=UsageStatus.UPSTREAM_ERROR,
@@ -305,7 +305,7 @@ class Metered:
         Streaming is deliberately **not** routed through here: its
         finalisation already runs in the body iterator's ``finally``, and the
         open cancellation bug there needs ``spawn_finalisation`` and its own
-        tests (see CLAUDE.md), not a different response class.
+        tests (see AGENTS.md), not a different response class.
         """
         return BackgroundTask(self._settle_quietly, upstream_status)
 
