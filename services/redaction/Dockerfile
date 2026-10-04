@@ -81,6 +81,15 @@ RUN set -eux; \
 
 FROM python:3.13-slim AS runtime
 
+# antiword reads legacy binary Word (.doc), which no Python library in the tree
+# can (llmp_redaction/documents.py). GPL-2.0 and run as a separate process, never
+# linked. It brings its own mapping files, including the UTF-8 one the extractor
+# asks for, so Italian accents survive. Pinned by the base image's Debian
+# release rather than by version, as Debian only carries one.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends antiword \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --system --gid 1001 detect \
     && useradd --system --uid 1001 --gid detect --no-create-home detect
 

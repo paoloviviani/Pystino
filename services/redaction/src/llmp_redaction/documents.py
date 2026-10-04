@@ -45,13 +45,35 @@ Two things are pinned deliberately when constructing it:
   an ML classifier. Passing the type the caller declared keeps the decision with
   the caller and out of a model's hands; the alternative is a document whose
   handling depends on what a classifier guessed it was.
+
+## What the bytes say beats what the client said
+
+The container format is read from the file's first bytes, not from the declared
+type or the extension. The case that forced this was an old binary `.doc` saved
+as `menu.doc.docx`: declared Word 2007, actually an OLE2 compound file, which
+the OOXML reader rejects as "not a zip". Bytes decide between ZIP (OOXML) and
+CFB (OLE2, the pre-2007 formats and password-protected OOXML); the declared type
+only breaks ties among formats that share a container, and is the only signal
+for PDF.
+
+Legacy Word `.doc` has no markitdown converter at all, so it goes to `antiword`
+(GPL-2.0, run as a separate process rather than linked, and installed by the
+image rather than by pip). Pre-2007 Excel is read by markitdown through xlrd.
+Old PowerPoint `.ppt` and password-protected Office files are refused, each with
+a reason that names the format and the next step.
 """
 
 from __future__ import annotations
 
 import io
 import logging
+import os
+import shutil
+import struct
+import subprocess
+import tempfile
 import zipfile
+from enum import StrEnum
 from typing import Final
 
 from llmp_shared import ExtractionKind, ExtractionResponse
@@ -111,6 +133,147 @@ _BY_EXTENSION: Final[dict[str, str]] = {
 _ZIP_BACKED: Final = frozenset({_DOCX, _XLSX, _PPTX})
 
 SUPPORTED_MEDIA_TYPES: Final = tuple(sorted(_ACCEPTED))
+
+
+#: The two containers an Office file can arrive in.
+_ZIP_MAGIC: Final = b"PK\x03\x04"
+_CFB_MAGIC: Final = bytes.fromhex("d0cf11e0a1b11ae1")
+
+#: antiword is a C program parsing hostile bytes; a wall-clock limit is the only
+#: defence against an input that makes it spin. Generous for a 25 MB document.
+ANTIWORD_TIMEOUT_SECONDS: Final = 30
+
+#: Rendering a legacy .doc to UTF-8 needs antiword's own mapping file, which
+#: the Debian package installs. Without `-m` it prints ISO-8859-1 on a POSIX
+#: locale and every accent in an Italian document becomes mojibake downstream.
+_ANTIWORD_MAPPING: Final = "UTF-8.txt"
+
+ANTIWORD_MISSING: Final = "Old Word .doc files need antiword in the extractor image"
+
+
+class _Container(StrEnum):
+    ZIP = "zip"
+    CFB = "cfb"
+
+
+class _Legacy(StrEnum):
+    """What a CFB file is, from the streams at the root of the container."""
+
+    WORD = "word"
+    EXCEL = "excel"
+    POWERPOINT = "powerpoint"
+    ENCRYPTED = "encrypted"
+    OTHER = "other"
+
+
+def _container(data: bytes) -> _Container | None:
+    if data.startswith(_CFB_MAGIC):
+        return _Container.CFB
+    if data.startswith(_ZIP_MAGIC):
+        return _Container.ZIP
+    return None
+
+
+def _cfb_root_streams(data: bytes) -> set[str] | None:
+    """Names of the entries directly under the root of a compound file.
+
+    A minimal reader rather than a dependency: just the header, the FAT chain
+    and the directory, which is all it takes to tell Word from Excel. Returns
+    None for anything malformed or truncated, and never reads outside ``data``.
+    Only the root's own children count: an Excel chart embedded in a PowerPoint
+    deck carries a `Workbook` stream too, deeper down, and must not win.
+    """
+    try:
+        shift = struct.unpack_from("<H", data, 30)[0]
+        if shift not in (9, 12):
+            return None
+        size = 1 << shift
+        fat_count = struct.unpack_from("<I", data, 44)[0]
+        dir_start = struct.unpack_from("<I", data, 48)[0]
+        difat_start = struct.unpack_from("<I", data, 68)[0]
+        difat_count = struct.unpack_from("<I", data, 72)[0]
+        total = len(data) // size
+
+        def sector(index: int) -> bytes:
+            start = (index + 1) * size
+            chunk = data[start : start + size]
+            if len(chunk) != size:
+                raise ValueError("sector outside the file")
+            return chunk
+
+        fat_sectors = list(struct.unpack_from("<109I", data, 76))
+        next_difat = difat_start
+        for _ in range(min(difat_count, total)):
+            block = struct.unpack(f"<{size // 4}I", sector(next_difat))
+            fat_sectors.extend(block[:-1])
+            next_difat = block[-1]
+        fat: list[int] = []
+        for index in fat_sectors[: min(fat_count, total)]:
+            fat.extend(struct.unpack(f"<{size // 4}I", sector(index)))
+
+        directory = b""
+        index, hops = dir_start, 0
+        while index < 0xFFFFFFFA and hops <= total:
+            directory += sector(index)
+            index = fat[index]
+            hops += 1
+    except (struct.error, ValueError, IndexError):
+        return None
+
+    def entry(number: int) -> tuple[str, int, int, int, int] | None:
+        offset = number * 128
+        if offset + 128 > len(directory):
+            return None
+        length = struct.unpack_from("<H", directory, offset + 64)[0]
+        name = directory[offset : offset + max(length - 2, 0)].decode("utf-16-le", "replace")
+        left, right, child = struct.unpack_from("<III", directory, offset + 68)
+        return name, directory[offset + 66], left, right, child
+
+    root = entry(0)
+    if root is None or root[1] != 5:
+        return None
+    names: set[str] = set()
+    pending, seen = [root[4]], set[int]()
+    while pending:
+        number = pending.pop()
+        if number >= 0xFFFFFFFA or number in seen:
+            continue
+        seen.add(number)
+        found = entry(number)
+        if found is None:
+            continue
+        names.add(found[0])
+        pending.extend((found[2], found[3]))
+    return names
+
+
+def _legacy_kind(data: bytes) -> _Legacy:
+    names = _cfb_root_streams(data) or set()
+    if "EncryptedPackage" in names:
+        return _Legacy.ENCRYPTED
+    if "WordDocument" in names:
+        return _Legacy.WORD
+    if names & {"Workbook", "Book"}:
+        return _Legacy.EXCEL
+    if "PowerPoint Document" in names:
+        return _Legacy.POWERPOINT
+    return _Legacy.OTHER
+
+
+def _ooxml_type(data: bytes) -> str | None:
+    """Which OOXML format a zip is, from its parts, or None if none of them."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = set(archive.namelist())
+    except zipfile.BadZipFile:
+        return None
+    if "word/document.xml" in names:
+        return _DOCX
+    if "xl/workbook.xml" in names:
+        return _XLSX
+    if "ppt/presentation.xml" in names:
+        return _PPTX
+    return None
 
 
 def media_type_for(media_type: str | None, filename: str | None) -> str | None:
@@ -182,6 +345,67 @@ def _converter() -> object:
     return MarkItDown(enable_builtins=True, enable_plugins=False)
 
 
+def _antiword(data: bytes) -> ExtractionResponse:
+    """Text from a legacy Word document, via the antiword binary.
+
+    A subprocess with no shell, an argument list, a wall-clock limit and a
+    scratch directory that is removed afterwards. antiword wants a seekable
+    file, and OLE2 cannot be streamed through a pipe. `-w 0` turns off its
+    80-column wrapping, which would otherwise break a name or an IBAN across
+    two lines and past the detector.
+    """
+    binary = shutil.which("antiword")
+    if binary is None:
+        return ExtractionResponse(kind=ExtractionKind.UNSUPPORTED, detail=ANTIWORD_MISSING)
+    with tempfile.TemporaryDirectory(prefix="extract-") as scratch:
+        path = os.path.join(scratch, "document.doc")
+        with open(path, "wb") as handle:
+            handle.write(data)
+        try:
+            done = subprocess.run(  # noqa: S603 - fixed argv, no shell, our own temp path
+                [binary, "-w", "0", "-m", _ANTIWORD_MAPPING, path],
+                capture_output=True,
+                timeout=ANTIWORD_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("antiword timed out after %ss", ANTIWORD_TIMEOUT_SECONDS)
+            return ExtractionResponse(
+                kind=ExtractionKind.UNREADABLE,
+                detail=f"reading the old Word .doc took longer than {ANTIWORD_TIMEOUT_SECONDS}s",
+            )
+        except OSError as exc:
+            logger.warning("could not run antiword: %s", type(exc).__name__)
+            return ExtractionResponse(kind=ExtractionKind.UNSUPPORTED, detail=ANTIWORD_MISSING)
+    if done.returncode != 0:
+        # antiword's stderr is its own fixed vocabulary, not document content,
+        # but only the cases a caller can act on are passed on.
+        stderr = done.stderr.decode("utf-8", "replace").lower()
+        logger.warning("antiword exited %s", done.returncode)
+        if "encrypted" in stderr:
+            detail = "this old Word .doc is password-protected; remove the password and resend"
+        elif "mapping file" in stderr:
+            detail = "the extractor image is missing antiword's UTF-8 mapping file"
+        else:
+            detail = (
+                "the old Word .doc could not be read; it may be corrupt or from a very old Word"
+            )
+        return ExtractionResponse(kind=ExtractionKind.UNREADABLE, detail=detail)
+    return _clip(done.stdout.decode("utf-8", "replace"), "antiword")
+
+
+def _refuse_legacy(kind: _Legacy) -> ExtractionResponse:
+    reasons = {
+        _Legacy.POWERPOINT: "old PowerPoint .ppt (pre-2007) is not supported; save as .pptx",
+        _Legacy.ENCRYPTED: "this Office file is password-protected; remove the password and resend",
+        _Legacy.OTHER: (
+            "this is an old Office/OLE file that is not a Word, Excel or PowerPoint "
+            "document the extractor can read"
+        ),
+    }
+    return ExtractionResponse(kind=ExtractionKind.UNSUPPORTED, detail=reasons[kind])
+
+
 def extract(
     data: bytes, *, media_type: str | None = None, filename: str | None = None
 ) -> ExtractionResponse:
@@ -197,13 +421,45 @@ def extract(
             detail=f"{len(data)} bytes exceeds the {MAX_BYTES}-byte inspection limit",
         )
 
-    resolved = media_type_for(media_type, filename)
-    if resolved is None:
-        return ExtractionResponse(
-            kind=ExtractionKind.UNSUPPORTED,
-            detail=f"no extractor for {media_type or 'an unnamed type'}",
-        )
+    declared = media_type_for(media_type, filename)
+    container = _container(data)
 
+    if container is _Container.CFB:
+        # Whatever the client called it: a `.docx` that is really a Word 97
+        # file lands here, and so does an `.xls` saved as `.xlsx`.
+        legacy = _legacy_kind(data)
+        if legacy is _Legacy.WORD:
+            return _antiword(data)
+        if legacy is not _Legacy.EXCEL:
+            return _refuse_legacy(legacy)
+        resolved: str | None = _XLS
+    elif container is _Container.ZIP:
+        # A zip is OOXML, and its parts say which. The declared type only
+        # matters if the parts do not say.
+        resolved = _ooxml_type(data) or (declared if declared in _ZIP_BACKED else None)
+        if resolved is None:
+            return ExtractionResponse(
+                kind=ExtractionKind.UNSUPPORTED,
+                detail="this is a ZIP archive, not a Word, Excel or PowerPoint document",
+            )
+    else:
+        resolved = declared
+        if resolved is None:
+            return ExtractionResponse(
+                kind=ExtractionKind.UNSUPPORTED,
+                detail=f"no extractor for {media_type or 'an unnamed type'}",
+            )
+        if resolved in _ZIP_BACKED or resolved in {_DOC, _XLS}:
+            names = {_DOC: "Word .doc", _XLS: "Excel .xls"}
+            return ExtractionResponse(
+                kind=ExtractionKind.UNREADABLE,
+                detail=(
+                    f"the file is declared as {names.get(resolved, _ACCEPTED[resolved])} "
+                    "but its contents are not an Office document (corrupt, or a different format)"
+                ),
+            )
+
+    assert resolved is not None  # every branch above either set it or returned
     if resolved in _ZIP_BACKED and (problem := _zip_problem(data)):
         return ExtractionResponse(kind=ExtractionKind.UNREADABLE, detail=problem)
 

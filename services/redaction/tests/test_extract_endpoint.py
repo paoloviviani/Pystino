@@ -98,3 +98,36 @@ def test_an_unsupported_type_is_named_not_guessed(client: TestClient) -> None:
     body = response.json()
     assert body["kind"] == ExtractionKind.UNSUPPORTED
     assert "image/png" in body["detail"]
+
+
+def test_a_legacy_word_file_labelled_docx_is_read_or_explained(client: TestClient) -> None:
+    """The reported case, end to end: the response body carries either the text
+    or the specific reason — never a bare 'unsupported'."""
+    import shutil
+
+    from legacy_office import FIXTURE
+
+    response = client.post(
+        "/extract",
+        content=FIXTURE.read_bytes(),
+        headers={"content-type": DOCX, "x-filename": "menu.doc.docx"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    if shutil.which("antiword"):
+        assert body["kind"] == ExtractionKind.TEXT
+        assert "caffè" in body["text"]
+    else:
+        assert body["kind"] == ExtractionKind.UNSUPPORTED
+        assert "antiword" in body["detail"]
+
+
+def test_a_refusal_reason_is_in_the_response_body(client: TestClient) -> None:
+    from legacy_office import ppt_bytes
+
+    response = client.post(
+        "/extract", content=ppt_bytes(), headers={"content-type": "application/vnd.ms-powerpoint"}
+    )
+    body = response.json()
+    assert body["kind"] == ExtractionKind.UNSUPPORTED
+    assert ".ppt" in body["detail"] and ".pptx" in body["detail"]

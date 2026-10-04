@@ -112,6 +112,36 @@ Two consequences worth knowing:
 - a plugin that does not read a cost reports none, which is the safe default —
   see [Accounting and quotas](accounting-and-quotas.md#three-cost-figures-one-meaning-each).
 
+## Document extraction: which formats are read
+
+`POST /v1/ocr` against the deployment's own extractor reads documents that
+travel with the request (a base64 data URI; URLs are refused, not fetched). The
+extractor decides the format from the file's **bytes**, not from the declared
+type or the file name, so a legacy `.doc` renamed to `.docx` is still read.
+
+| Format | Read? | How |
+|---|---|---|
+| Word `.docx` | yes | markitdown (mammoth) |
+| Word `.doc` (pre-2007, binary) | yes | `antiword`, installed in the extractor image |
+| Excel `.xlsx`, `.xls` | yes | markitdown (openpyxl, xlrd) |
+| PowerPoint `.pptx` | yes | markitdown (python-pptx) |
+| PDF with a text layer | yes | markitdown (pdfminer) |
+| PowerPoint `.ppt` (pre-2007) | no | refused: save as `.pptx` |
+| Password-protected Office files | no | refused: remove the password |
+| Scans and images | no | refused as `no_text_layer`: use an OCR model |
+
+A document that is not read is never returned as an empty success. The response
+is a `422` whose `error.code` names the class (`unsupported_document`,
+`unreadable_document`, `no_text_layer`, `document_too_large`) and whose
+`error.message` carries the extractor's specific reason, for example
+*"old PowerPoint .ppt (pre-2007) is not supported; save as .pptx"*. An image
+that predates the antiword package (a custom build without it) answers
+*"Old Word .doc files need antiword in the extractor image"* for `.doc` files.
+
+Legacy `.doc` extraction runs `antiword -w 0 -m UTF-8.txt` as a separate
+process with a 30-second limit and no shell; antiword is GPL-2.0 and is
+executed, not linked.
+
 ## Things that are easy to get wrong, and where they are handled
 
 | Trap | Where |
