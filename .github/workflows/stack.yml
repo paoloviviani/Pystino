@@ -1,24 +1,17 @@
 # The tag-time drift guard (ADR 0091): does a released Pystino tag actually
 # come up, alone (deploy/compose.yaml) and inside the full stack
-# (cerea-deploy)? Expensive — an image build, a checkout of a second private
+# (cerea-deploy)? Expensive — an image build, a checkout of a second
 # repository, two real compose bring-ups — so it runs only on release tags
 # and by hand, never on a push to main or a PR (GitHub free plan). There is
 # no fresh-install/upgrade pair here any more: `pystino init` and `upgrade`
 # are gone (ADR 0091), and cerea-deploy's own CI (a separate repository)
 # covers `./configure` and `tools/pin --check` on every push there.
 #
-# Two things this workflow needs that it cannot arrange by itself:
-#
-#   - a repository secret CEREA_DEPLOY_TOKEN: a fine-grained, read-only
-#     personal access token scoped to contents:read on the private
-#     paoloviviani/cerea-deploy repository. Create it at
-#     github.com/settings/tokens, then add it here under this repository's
-#     Settings -> Secrets and variables -> Actions.
-#   - the paoloviviani/Cerea package (ghcr.io/paoloviviani/cerea) must grant
-#     this repository's Actions access to pull it: that package's own
-#     Settings -> Manage Actions access -> add this repository. Without it
-#     the Cerea pull below fails with "denied", and the job fails on
-#     purpose, naming this fix.
+# cerea-deploy is public and is checked out anonymously: no secret is needed.
+# The Cerea image (ghcr.io/paoloviviani/cerea) is pulled with this run's
+# GITHUB_TOKEN; if that package is private, it must grant this repository's
+# Actions access (its Settings -> Manage Actions access), or the pull below
+# fails with "denied" and the job says so.
 #
 # Untested in CI as written (this agent cannot run Actions): validated with a
 # YAML parser and read carefully, not exercised end to end.
@@ -84,7 +77,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: paoloviviani/cerea-deploy
-          token: ${{ secrets.CEREA_DEPLOY_TOKEN }}
           path: cerea-deploy
       - uses: actions/download-artifact@v4
         with: {name: gateway-image, path: "${{ runner.temp }}"}
