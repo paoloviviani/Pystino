@@ -333,7 +333,7 @@ class TestAccumulation:
         )
         record_id = await accounting.begin()
 
-        for fragment in ['{"query":', '"eupl ', 'licence"}']:
+        for fragment in ['{"query":', '"apache ', 'licence"}']:
             accounting.observe_payload(
                 {
                     "choices": [
@@ -360,7 +360,7 @@ class TestAccumulation:
         row = await fetch(session_factory, record_id)
         assert row.assistant_text is not None
         stored = orjson.loads(row.assistant_text)
-        assert stored["0"]["tool_calls"][0]["arguments"] == '{"query":"eupl licence"}'
+        assert stored["0"]["tool_calls"][0]["arguments"] == '{"query":"apache licence"}'
         assert stored["0"]["tool_calls"][0]["name"] == "search"
 
     async def test_multiple_choices_are_stored_losslessly(

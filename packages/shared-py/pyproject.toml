@@ -3,7 +3,7 @@ name = "llmp-shared"
 version = "0.1.0"
 description = "Contracts shared between the gateway and the out-of-process services"
 requires-python = ">=3.13"
-license = "EUPL-1.2"
+license = "Apache-2.0"
 authors = [{ name = "Paolo Viviani", email = "paolo.viviani@ik.me" }]
 
 # Deliberately tiny. Anything that both the gateway and a sidecar service must

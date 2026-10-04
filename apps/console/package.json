@@ -2,7 +2,7 @@
   "name": "@llmp/console",
   "version": "0.1.0",
   "private": true,
-  "license": "EUPL-1.2",
+  "license": "Apache-2.0",
   "description": "Operator and self-service console, built into the gateway image. See docs/adr/0023-admin-console.md",
   "type": "module",
   "scripts": {

@@ -21,4 +21,4 @@ private vulnerability reporting (Security tab) or an issue labelled
 Copyright in this project's own contributions is claimed to the
 extent it subsists under applicable law; portions may not be eligible
 for protection. This does not affect the copyright of third-party
-code, which remains with its owners under the licences in LICENCE.
+code, which remains with its owners under the licences in LICENSE.

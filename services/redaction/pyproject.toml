@@ -13,7 +13,7 @@ version = "0.1.0"
 description = "PII detection service: spans in, spans out. A reference implementation of the llmp detection contract."
 readme = "README.md"
 requires-python = ">=3.13"
-license = "EUPL-1.2"
+license = "Apache-2.0"
 dependencies = [
     "fastapi>=0.141,<0.142",
     "uvicorn[standard]>=0.42,<0.43",

@@ -15,4 +15,4 @@ Thanks for helping. A short conversation first saves work on both sides.
 - **Security issues** go to [SECURITY.md](SECURITY.md), not to a public issue.
 
 By contributing you agree that your contribution is licensed under the
-EUPL-1.2, the licence of this repository.
+Apache-2.0, the licence of this repository.
