@@ -4,7 +4,7 @@ version = "0.2.4"
 description = "OpenAI-compatible LLM gateway with accounting, quotas and policy"
 readme = "README.md"
 requires-python = ">=3.13"
-license = "EUPL-1.2"
+license = "Apache-2.0"
 authors = [{ name = "Paolo Viviani", email = "paolo.viviani@ik.me" }]
 
 dependencies = [

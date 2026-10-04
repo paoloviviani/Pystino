@@ -126,6 +126,6 @@ The documentation site is `docs/` (`uv run mkdocs build --strict`). Start at
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and, for vulnerabilities,
 [SECURITY.md](SECURITY.md). Pystino is Copyright 2026 Paolo Viviani and
-licensed under the [EUPL-1.2](LICENCE); third-party notices are in
+licensed under the [Apache-2.0](LICENSE); attributions are in
 [NOTICE](NOTICE). How this code was written is disclosed in
 [AI-DISCLOSURE.md](AI-DISCLOSURE.md).

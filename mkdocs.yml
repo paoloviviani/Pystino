@@ -16,7 +16,7 @@ site_description: >
   per-group accounting, quotas and redaction, and the console that operates it.
 repo_url: https://github.com/paoloviviani/Pystino
 repo_name: paoloviviani/Pystino
-copyright: Copyright &copy; Paolo Viviani — <a href="https://github.com/paoloviviani/Pystino/blob/main/LICENCE">EUPL-1.2</a>
+copyright: Copyright &copy; Paolo Viviani — <a href="https://github.com/paoloviviani/Pystino/blob/main/LICENSE">Apache-2.0</a>
 
 strict: true
 

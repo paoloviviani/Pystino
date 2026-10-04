@@ -65,6 +65,6 @@ versions a given release of the stack pins together, is recorded in
 
 ## Licence
 
-[EUPL-1.2](https://github.com/paoloviviani/Pystino/blob/main/LICENCE) for all
+[Apache-2.0](https://github.com/paoloviviani/Pystino/blob/main/LICENSE) for all
 first-party code. Dependencies must be OSI-licensed, without a CLA or an
 open-core model.

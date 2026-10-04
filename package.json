@@ -1,7 +1,7 @@
 {
   "name": "pystino",
   "private": true,
-  "license": "EUPL-1.2",
+  "license": "Apache-2.0",
   "packageManager": "pnpm@11.21.0",
   "engines": {
     "node": ">=24"

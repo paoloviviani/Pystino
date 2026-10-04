@@ -3,7 +3,7 @@
 
 A separate script rather than a background job inside the gateway: pricing changes
 are a deliberate administrative act, and running it on a timer inside the request
-path would mean a provider's catalogue could silently change what the foundation
+path would mean a provider's catalogue could silently change what the organisation
 charges its own groups.
 
     # see what would change, without writing anything (the default)

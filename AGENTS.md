@@ -6,7 +6,7 @@ changing anything: it is the context that is not recoverable from the code.
 
 ## Ground rules
 
-1. **EUPL-1.2 for all first-party code.** Ask before adopting anything with a
+1. **Apache-2.0 for all first-party code.** Ask before adopting anything with a
    non-OSI licence, a CLA, or an open-core model.
 2. **Where you are unsure whether a library or version is current, say so.**
    Check at source rather than from memory; several choices here turned on

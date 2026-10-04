@@ -86,7 +86,7 @@ jobs:
               -f "$file" "${build_args[@]}" "${tags[@]}" \
               --label org.opencontainers.image.revision="$SHA" \
               --label org.opencontainers.image.source="https://github.com/${{ github.repository }}" \
-              --label org.opencontainers.image.licenses=EUPL-1.2 \
+              --label org.opencontainers.image.licenses=Apache-2.0 \
               --cache-from "type=gha,scope=$image" --cache-to "type=gha,mode=max,scope=$image" \
               --metadata-file "$RUNNER_TEMP/$image.json" "$context"
             digest=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/$image.json")
