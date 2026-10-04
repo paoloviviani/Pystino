@@ -58,8 +58,8 @@ _REFUSALS: dict[ExtractionKind, tuple[str, str]] = {
     ),
     ExtractionKind.UNSUPPORTED: (
         "unsupported_document",
-        "The local extractor does not read this format. It handles Word, "
-        "Excel, PowerPoint and PDF.",
+        "The local extractor does not read this format. It handles Word "
+        "(.docx and legacy .doc), Excel (.xlsx and .xls), PowerPoint (.pptx) and PDF.",
     ),
     ExtractionKind.TOO_LARGE: (
         "document_too_large",
@@ -119,6 +119,16 @@ def as_ocr_response(outcome: ExtractionResponse, *, model_name: str) -> dict[str
         code, message = _REFUSALS.get(
             outcome.kind, ("document_not_read", "The document could not be read.")
         )
+        if outcome.detail:
+            # The extractor knows *why* — "old PowerPoint .ppt is not supported;
+            # save as .pptx" — and the generic sentence above does not. Dropping
+            # it sent callers to guess which of the five causes it was. It is
+            # safe to forward: the service never puts document content in it.
+            reason = outcome.detail.strip().rstrip(".")
+            if outcome.kind is ExtractionKind.UNSUPPORTED:
+                message = f"The local extractor cannot read this document: {reason}."
+            else:
+                message = f"{message} Reason: {reason}."
         raise DocumentRefused(message, code=code)
 
     page: dict[str, Any] = {"index": 0, "markdown": outcome.text}

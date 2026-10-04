@@ -9,9 +9,11 @@ why", and `Extraction.inspected` is what separates them.
 from __future__ import annotations
 
 import io
+import shutil
 import zipfile
 
 import pytest
+from legacy_office import FIXTURE, FIXTURE_TEXT, build_cfb, doc_bytes, ppt_bytes, xls_bytes
 from llmp_redaction.documents import MAX_BYTES, extract, media_type_for
 
 # markitdown is services/redaction's dependency, not the gateway's, and the root
@@ -203,3 +205,162 @@ class TestTypeResolution:
 
     def test_an_unknown_type_and_name_resolve_to_nothing(self) -> None:
         assert media_type_for("application/x-thing", "data.bin") is None
+
+
+TEXTBOX_RUN = (
+    '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+    'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+    'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+    'xmlns:v="urn:schemas-microsoft-com:vml" '
+    'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">'
+    "<w:r><mc:AlternateContent>"
+    '<mc:Choice Requires="wps"><w:drawing><wp:anchor><wps:wsp><wps:txbx><w:txbxContent>'
+    "<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
+    "</w:txbxContent></wps:txbx></wps:wsp></wp:anchor></w:drawing></mc:Choice>"
+    "<mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent>"
+    "<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
+    "</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback>"
+    "</mc:AlternateContent></w:r></w:p>"
+)
+
+
+def docx_with_textbox(body: str, boxed: str) -> bytes:
+    """A real .docx whose second paragraph holds a text box, written the way
+    Word 2010+ writes one: a DrawingML choice with a VML fallback."""
+    source = zipfile.ZipFile(io.BytesIO(docx_bytes(body)))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as target:
+        for item in source.infolist():
+            content = source.read(item.filename)
+            if item.filename == "word/document.xml":
+                xml = content.decode("utf-8")
+                xml = xml.replace("<w:sectPr", TEXTBOX_RUN.format(text=boxed) + "<w:sectPr", 1)
+                content = xml.encode("utf-8")
+            target.writestr(item, content)
+    return out.getvalue()
+
+
+class TestOOXMLStillRead:
+    def test_a_text_box_does_not_stop_the_body_being_read(self) -> None:
+        data = docx_with_textbox("Corpo del documento", "Nel riquadro")
+        result = extract(data, media_type=DOCX)
+        assert result.kind is ExtractionKind.TEXT
+        assert "Corpo del documento" in result.text
+
+    def test_a_zip_is_read_by_its_parts_not_its_label(self) -> None:
+        """A real .docx sent as `application/msword` is still a .docx."""
+        result = extract(docx_bytes(f"Invoice {IBAN}"), media_type="application/msword")
+        assert result.kind is ExtractionKind.TEXT
+        assert IBAN in result.text
+
+    def test_a_corrupt_docx_names_what_was_wrong(self) -> None:
+        result = extract(b"definitely not office", media_type=DOCX)
+        assert result.kind is ExtractionKind.UNREADABLE
+        assert ".docx" in result.detail and "not an Office document" in result.detail
+
+
+class TestLegacyOffice:
+    """Pre-2007 files are OLE2 compound files, not zips. The container is read
+    from the bytes, so a label cannot send one to the wrong reader."""
+
+    def test_the_committed_fixture_is_what_the_generator_writes(self) -> None:
+        assert FIXTURE.read_bytes() == doc_bytes(FIXTURE_TEXT)
+
+    def test_a_legacy_word_document_is_read_by_antiword(self) -> None:
+        if shutil.which("antiword") is None:
+            pytest.skip("antiword is installed in the extractor image, not on this host")
+        result = extract(FIXTURE.read_bytes(), media_type="application/msword")
+        assert result.kind is ExtractionKind.TEXT
+        assert result.extractor == "antiword"
+        assert IBAN in result.text
+        assert "Luca Bianchi" in result.text
+
+    def test_italian_accents_survive(self) -> None:
+        if shutil.which("antiword") is None:
+            pytest.skip("antiword is installed in the extractor image, not on this host")
+        result = extract(FIXTURE.read_bytes(), media_type="application/msword")
+        assert "àèéìòù ÀÈÉÌÒÙ" in result.text
+        assert "Menù" in result.text and "Perché è già così" in result.text
+
+    def test_the_same_bytes_declared_docx_are_still_a_legacy_doc(self) -> None:
+        """The reported case: `MENU ... .doc.docx`."""
+        if shutil.which("antiword") is None:
+            pytest.skip("antiword is installed in the extractor image, not on this host")
+        result = extract(
+            FIXTURE.read_bytes(),
+            media_type=DOCX,
+            filename="MENU' autunno inverno non vidimato 2021 2022.doc.docx",
+        )
+        assert result.kind is ExtractionKind.TEXT
+        assert result.extractor == "antiword"
+        assert "caffè" in result.text
+
+    def test_the_label_does_not_matter_even_when_missing(self) -> None:
+        if shutil.which("antiword") is None:
+            pytest.skip("antiword is installed in the extractor image, not on this host")
+        result = extract(FIXTURE.read_bytes(), media_type="application/octet-stream")
+        assert result.extractor == "antiword"
+
+    def test_lines_are_not_wrapped(self) -> None:
+        if shutil.which("antiword") is None:
+            pytest.skip("antiword is installed in the extractor image, not on this host")
+        long_line = "parola " * 40 + IBAN
+        data = doc_bytes(long_line)
+        result = extract(data, media_type="application/msword")
+        assert IBAN in result.text and "\n" not in result.text.strip()
+
+    def test_without_antiword_the_reason_says_so(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(shutil, "which", lambda _name: None)
+        result = extract(FIXTURE.read_bytes(), media_type="application/msword")
+        assert result.kind is ExtractionKind.UNSUPPORTED
+        assert not result.inspected
+        assert result.detail == "Old Word .doc files need antiword in the extractor image"
+
+    def test_antiword_that_hangs_is_cut_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import subprocess
+
+        def hang(*_args: object, **_kwargs: object) -> None:
+            raise subprocess.TimeoutExpired("antiword", 1)
+
+        monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/antiword")
+        monkeypatch.setattr(subprocess, "run", hang)
+        result = extract(FIXTURE.read_bytes(), media_type="application/msword")
+        assert result.kind is ExtractionKind.UNREADABLE
+        assert "took longer" in result.detail
+
+    def test_a_legacy_excel_file_is_still_read(self) -> None:
+        data = xls_bytes([["nome", "iban"], ["Luca Bianchi", f"{IBAN} è"]])
+        result = extract(data, media_type="application/vnd.ms-excel")
+        assert result.kind is ExtractionKind.TEXT
+        assert IBAN in result.text and "Luca Bianchi" in result.text
+
+    def test_a_legacy_excel_file_labelled_xlsx_is_still_read(self) -> None:
+        result = extract(xls_bytes([["a", "Luca Bianchi"]]), media_type=XLSX, filename="x.xlsx")
+        assert result.kind is ExtractionKind.TEXT
+        assert "Luca Bianchi" in result.text
+
+    def test_a_legacy_powerpoint_file_is_refused_by_name(self) -> None:
+        result = extract(ppt_bytes(), media_type="application/vnd.ms-powerpoint")
+        assert result.kind is ExtractionKind.UNSUPPORTED
+        assert not result.inspected
+        assert ".ppt" in result.detail and "save as .pptx" in result.detail
+
+    def test_a_legacy_powerpoint_file_labelled_pptx_is_refused_by_name(self) -> None:
+        result = extract(ppt_bytes(), media_type=PPTX)
+        assert ".ppt" in result.detail
+
+    def test_a_password_protected_office_file_says_so(self) -> None:
+        locked = build_cfb({"EncryptedPackage": b"x", "EncryptionInfo": b"x"})
+        result = extract(locked, media_type=DOCX)
+        assert result.kind is ExtractionKind.UNSUPPORTED
+        assert "password-protected" in result.detail
+
+    def test_an_unknown_compound_file_is_refused(self) -> None:
+        result = extract(build_cfb({"Something": b"x"}), media_type=DOCX)
+        assert result.kind is ExtractionKind.UNSUPPORTED
+        assert "OLE" in result.detail
+
+    def test_a_truncated_compound_file_does_not_raise(self) -> None:
+        result = extract(FIXTURE.read_bytes()[:700], media_type=DOCX)
+        assert not result.inspected
+        assert result.detail

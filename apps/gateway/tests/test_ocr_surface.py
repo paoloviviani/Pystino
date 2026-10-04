@@ -814,6 +814,70 @@ class TestLocalBackend:
         # It names the next step rather than just failing.
         assert "OCR model" in body["error"]["message"]
 
+    async def test_the_extractors_reason_reaches_the_caller(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        """The extractor says *why* — which format, what to do — and a generic
+        "not supported" in its place sends the caller guessing."""
+        extractor = FakeExtractor()
+        extractor.set(
+            kind="unsupported",
+            text="",
+            extractor="",
+            pages=0,
+            detail="old PowerPoint .ppt (pre-2007) is not supported; save as .pptx",
+        )
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded, name="local-ppt")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 422
+        error = response.json()["error"]
+        assert error["code"] == "unsupported_document"
+        assert "old PowerPoint .ppt" in error["message"]
+        assert "save as .pptx" in error["message"]
+
+    async def test_an_unreadable_documents_reason_is_appended_to_the_generic_text(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        extractor = FakeExtractor()
+        extractor.set(
+            kind="unreadable",
+            text="",
+            extractor="",
+            pages=0,
+            detail="this old Word .doc is password-protected; remove the password and resend",
+        )
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded, name="local-locked")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        message = response.json()["error"]["message"]
+        assert "could not be opened" in message
+        assert "password-protected" in message
+
     async def test_a_refused_document_is_not_charged(
         self,
         app: Any,
