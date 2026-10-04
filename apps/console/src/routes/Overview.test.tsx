@@ -422,7 +422,7 @@ describe("Overview", () => {
       const link = screen.getByRole("link", { name: "How it works" });
       expect(link).toHaveAttribute(
         "href",
-        expect.stringMatching(/coding-agents\.md#point-opencode-at-the-gateway-with-a-script$/),
+        "https://paoloviviani.github.io/Pystino/coding-agents/#point-opencode-at-the-gateway-with-a-script",
       );
     });
 
