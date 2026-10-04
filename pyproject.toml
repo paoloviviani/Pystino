@@ -101,7 +101,7 @@ ignore_missing_imports = true
 # satisfy a type checker would be the tail wagging the dog. `docx`, `openpyxl`
 # and `pptx` appear only in that service's tests, where they *write* the
 # fixtures the extractor then reads.
-module = ["markitdown.*", "pdfminer.*", "docx.*", "openpyxl.*", "pptx.*"]
+module = ["markitdown.*", "pdfminer.*", "docx.*", "openpyxl.*", "pptx.*", "pypdfium2.*", "PIL.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

@@ -364,3 +364,132 @@ class TestLegacyOffice:
         result = extract(FIXTURE.read_bytes()[:700], media_type=DOCX)
         assert not result.inspected
         assert result.detail
+
+
+def scan_pdf(pages: int, size: tuple[int, int] = (2000, 3000)) -> bytes:
+    """An image-only PDF: what a scanner produces, with no text layer."""
+    from PIL import Image, ImageDraw
+
+    images = []
+    for number in range(pages):
+        image = Image.new("RGB", size, "white")
+        ImageDraw.Draw(image).rectangle((100, 100, size[0] - 100, 400 + number), fill="black")
+        images.append(image)
+    buffer = io.BytesIO()
+    images[0].save(buffer, format="PDF", save_all=True, append_images=images[1:])
+    return buffer.getvalue()
+
+
+LONG_TEXT = "Il presente documento contiene del testo vero, non una fotografia di testo."
+
+
+def mixed_pdf(*parts: bytes) -> bytes:
+    """PDFs joined in order, so a typed page can sit among scanned ones."""
+    import pypdfium2 as pdfium
+
+    merged = pdfium.PdfDocument.new()
+    for part in parts:
+        merged.import_pages(pdfium.PdfDocument(part))
+    buffer = io.BytesIO()
+    merged.save(buffer)
+    return buffer.getvalue()
+
+
+class TestPdfPagesAsImages:
+    def test_a_scan_without_the_request_is_unchanged(self) -> None:
+        result = extract(scan_pdf(2), media_type="application/pdf")
+        assert result.kind is ExtractionKind.NO_TEXT_LAYER
+        assert result.page_images == []
+
+    def test_a_scan_returns_jpegs_scaled_to_the_long_side(self) -> None:
+        import base64
+
+        from PIL import Image
+
+        result = extract(scan_pdf(2), media_type="application/pdf", page_images=20)
+        # Still "not read": the pictures are for a model, not text.
+        assert result.kind is ExtractionKind.NO_TEXT_LAYER
+        assert not result.inspected
+        assert [image.page for image in result.page_images] == [1, 2]
+        assert result.pages == 2 and result.images_truncated is False
+        assert result.page_texts == ["", ""]
+        picture = Image.open(io.BytesIO(base64.b64decode(result.page_images[0].data)))
+        assert picture.format == "JPEG"
+        assert max(picture.size) == 1280  # the default long side
+        assert result.page_images[0].mime == "image/jpeg"
+
+    def test_the_long_side_is_the_callers_and_is_clamped(self) -> None:
+        import base64
+
+        from PIL import Image
+
+        def longest(requested: int) -> int:
+            result = extract(
+                scan_pdf(1), media_type="application/pdf", page_images=1, long_side=requested
+            )
+            data = base64.b64decode(result.page_images[0].data)
+            return int(max(Image.open(io.BytesIO(data)).size))
+
+        assert longest(900) == 900
+        assert longest(99999) == 2048
+
+    def test_each_page_is_judged_on_its_own(self) -> None:
+        """A typed cover sheet and two scanned pages: text for the first, pictures
+        for the others, in page order."""
+        pdf = mixed_pdf(pdf_bytes(LONG_TEXT), scan_pdf(2, (200, 300)))
+        result = extract(pdf, media_type="application/pdf", page_images=20)
+        assert result.kind is ExtractionKind.TEXT
+        assert "testo vero" in result.page_texts[0]
+        assert result.page_texts[1:] == ["", ""]
+        assert [image.page for image in result.page_images] == [2, 3]
+        assert result.pages == 3
+        # Partly unread, whatever the cover sheet said.
+        assert not result.inspected
+
+    def test_a_page_with_a_few_characters_is_still_a_picture(self) -> None:
+        """A page number on a scan is not a text layer."""
+        pdf = mixed_pdf(pdf_bytes("12"), scan_pdf(1, (200, 300)))
+        result = extract(pdf, media_type="application/pdf", page_images=20)
+        assert [image.page for image in result.page_images] == [1, 2]
+
+    def test_the_page_cap_truncates_and_says_so(self) -> None:
+        result = extract(scan_pdf(55, (200, 300)), media_type="application/pdf", page_images=99)
+        assert len(result.page_images) == 50  # clamped to the server cap
+        assert result.pages == 55
+        assert result.images_truncated is True
+
+    def test_a_smaller_request_is_honoured(self) -> None:
+        result = extract(scan_pdf(5, (200, 300)), media_type="application/pdf", page_images=2)
+        assert [image.page for image in result.page_images] == [1, 2]
+        assert result.images_truncated is True
+
+    def test_the_payload_cap_stops_early_and_marks_truncation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import llmp_redaction.documents as documents
+
+        one = extract(scan_pdf(1, (200, 300)), media_type="application/pdf", page_images=1)
+        monkeypatch.setattr(documents, "MAX_PAGE_IMAGE_BYTES", len(one.page_images[0].data) * 2 + 1)
+        result = extract(scan_pdf(5, (200, 300)), media_type="application/pdf", page_images=5)
+        assert len(result.page_images) == 2
+        assert result.images_truncated is True
+
+    def test_a_text_pdf_is_read_as_before(self) -> None:
+        result = extract(pdf_bytes(LONG_TEXT), media_type="application/pdf", page_images=20)
+        assert result.kind is ExtractionKind.TEXT
+        assert result.extractor == "markitdown"
+        assert result.page_images == [] and result.inspected
+
+    def test_a_scan_that_cannot_be_rendered_says_why(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import llmp_redaction.documents as documents
+
+        def fail(*_args: object, **_kwargs: object) -> None:
+            raise documents._RenderFailed
+
+        monkeypatch.setattr(documents, "_pdf_by_page", fail)
+        result = extract(scan_pdf(1, (200, 300)), media_type="application/pdf", page_images=5)
+        assert result.kind is ExtractionKind.NO_TEXT_LAYER
+        assert result.page_images == []
+        assert "could not be rendered" in result.detail

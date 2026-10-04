@@ -878,6 +878,95 @@ class TestLocalBackend:
         assert "could not be opened" in message
         assert "password-protected" in message
 
+    async def test_a_scan_returns_page_images_when_asked(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        """The frozen contract with the chat: 200, empty text, page images."""
+        extractor = FakeExtractor()
+        extractor.set(
+            kind="text",
+            text="Cover sheet",
+            extractor="pypdfium2",
+            pages=30,
+            page_texts=["Cover sheet", "", ""],
+            page_images=[
+                {"page": 2, "mime": "image/jpeg", "data": "QUJD"},
+                {"page": 3, "mime": "image/jpeg", "data": "REVG"},
+            ],
+            images_truncated=True,
+        )
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded, name="local-scan-images")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+                "page_images": {"max_pages": 500, "long_side": 9000},
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+        body = response.json()
+        # One entry per PDF page, in order: text where there is text.
+        assert [(p["index"], p["markdown"]) for p in body["pages"]] == [
+            (0, "Cover sheet"),
+            (1, ""),
+            (2, ""),
+        ]
+        assert body["page_images"] == [
+            {"page": 2, "mime": "image/jpeg", "data": "QUJD"},
+            {"page": 3, "mime": "image/jpeg", "data": "REVG"},
+        ]
+        assert body["usage_info"]["pages_processed"] == 3
+        assert body["page_count"] == 30
+        assert body["truncated"] is True
+        assert body["model"] == model.name
+        # Asked for 500 pages at 9000px: clamped to 50 at 2048 on the way out.
+        assert extractor.headers[-1]["x-page-images"] == "50"
+        assert extractor.headers[-1]["x-page-image-long-side"] == "2048"
+
+    async def test_a_scan_without_the_request_is_still_refused(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+    ) -> None:
+        extractor = FakeExtractor()
+        extractor.set(kind="no_text_layer", text="", extractor="markitdown", pages=3)
+        app.state.control_http = extractor.client()
+        model = await add_local_model(session, seeded, name="local-scan-plain")
+
+        response = await client.post(
+            "/v1/ocr",
+            json={
+                "model": model.name,
+                "document": {"type": "document_url", "document_url": INLINE_DOCX},
+            },
+            headers=seeded.auth,
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "no_text_layer"
+        assert "x-page-images" not in extractor.headers[-1]
+
+    async def test_page_images_are_not_forwarded_to_a_remote_provider(self) -> None:
+        from gateway.schemas import OcrRequest
+
+        request = OcrRequest.model_validate(
+            {
+                "model": "m",
+                "document": {"type": "document_url", "document_url": "https://x/y.pdf"},
+                "page_images": {"max_pages": 5},
+            }
+        )
+        assert "page_images" not in request.upstream_payload(upstream_model="up")
+
     async def test_a_refused_document_is_not_charged(
         self,
         app: Any,

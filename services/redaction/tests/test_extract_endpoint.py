@@ -131,3 +131,32 @@ def test_a_refusal_reason_is_in_the_response_body(client: TestClient) -> None:
     body = response.json()
     assert body["kind"] == ExtractionKind.UNSUPPORTED
     assert ".ppt" in body["detail"] and ".pptx" in body["detail"]
+
+
+def test_page_images_are_returned_only_when_asked_for(client: TestClient) -> None:
+    from test_documents import scan_pdf
+
+    pdf = scan_pdf(2, (200, 300))
+    plain = client.post("/extract", content=pdf, headers={"content-type": "application/pdf"})
+    assert plain.json()["page_images"] == []
+
+    asked = client.post(
+        "/extract",
+        content=pdf,
+        headers={
+            "content-type": "application/pdf",
+            "x-page-images": "20",
+            "x-page-image-long-side": "100",
+        },
+    )
+    body = asked.json()
+    assert body["kind"] == ExtractionKind.NO_TEXT_LAYER
+    assert [image["page"] for image in body["page_images"]] == [1, 2]
+    assert body["pages"] == 2 and body["images_truncated"] is False
+
+    junk = client.post(
+        "/extract",
+        content=pdf,
+        headers={"content-type": "application/pdf", "x-page-images": "lots"},
+    )
+    assert junk.json()["page_images"] == []

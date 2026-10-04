@@ -65,6 +65,7 @@ a reason that names the format and the next step.
 
 from __future__ import annotations
 
+import base64
 import io
 import logging
 import os
@@ -76,7 +77,7 @@ import zipfile
 from enum import StrEnum
 from typing import Final
 
-from llmp_shared import ExtractionKind, ExtractionResponse
+from llmp_shared import ExtractionKind, ExtractionResponse, PageImage
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,22 @@ MAX_CHARS: Final = 2_000_000
 #: small until you open it.
 MAX_MEMBER_BYTES: Final = 100 * 1024 * 1024
 
+
+#: Page images, for a PDF page that has no text of its own. The caps are the
+#: contract with the gateway and with Cerea; the byte cap is the extractor's own,
+#: so fifty dense pages cannot become a response nobody can hold in memory.
+MAX_PAGE_IMAGES: Final = 50
+DEFAULT_LONG_SIDE: Final = 1280
+MAX_LONG_SIDE: Final = 2048
+MIN_LONG_SIDE: Final = 64
+PAGE_IMAGE_JPEG_QUALITY: Final = 80
+MAX_PAGE_IMAGE_BYTES: Final = 15 * 1024 * 1024
+#: A page with more than this many non-whitespace characters has a text layer
+#: worth reading; at or below it, the page is a picture (or a page number on a
+#: scan, which is why the line is not zero).
+MIN_PAGE_TEXT_CHARS: Final = 40
+#: A page a few points wide would otherwise be scaled up without limit.
+_MAX_RENDER_SCALE: Final = 4.0
 
 _DOCX: Final = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _XLSX: Final = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -334,6 +351,85 @@ def _pdf_pages(data: bytes) -> int:
         return 0
 
 
+class _RenderFailed(Exception):
+    """pypdfium2 could not open or draw the document."""
+
+
+def _pdf_by_page(data: bytes, *, max_pages: int, long_side: int) -> ExtractionResponse | None:
+    """Read a PDF page by page, drawing the pages that carry no text.
+
+    pypdfium2 (Apache-2.0 / BSD-3-Clause, PDFium inside) rather than pdfminer,
+    which parses text and cannot draw. Each page is judged on its own: more than
+    `MIN_PAGE_TEXT_CHARS` non-whitespace characters and it is text, otherwise it
+    is an image. A scan with a typed cover sheet is therefore both, which is what
+    it is. Returns None when every page has text — the ordinary path then reads
+    the document exactly as it always has.
+
+    One page is drawn, encoded and released before the next, so memory is one
+    bitmap, not the document. At most `max_pages` image pages are returned and
+    their encoded total stays under `MAX_PAGE_IMAGE_BYTES`; past either, the
+    rest are dropped and `images_truncated` says so. Raises `_RenderFailed` for a
+    PDF pdfium cannot open (encrypted, damaged).
+    """
+    import pypdfium2 as pdfium
+
+    texts: list[str] = []
+    images: list[PageImage] = []
+    image_pages = 0
+    total = 0
+    chars = 0
+    try:
+        document = pdfium.PdfDocument(data)
+        try:
+            count = len(document)
+            for index in range(count):
+                page = document[index]
+                try:
+                    textpage = page.get_textpage()
+                    try:
+                        text = textpage.get_text_bounded()
+                    finally:
+                        textpage.close()
+                    if sum(1 for ch in text if not ch.isspace()) > MIN_PAGE_TEXT_CHARS:
+                        texts.append(text[: max(MAX_CHARS - chars, 0)])
+                        chars += len(texts[-1])
+                        continue
+                    texts.append("")
+                    image_pages += 1
+                    if len(images) >= max_pages or total >= MAX_PAGE_IMAGE_BYTES:
+                        continue
+                    width, height = page.get_size()
+                    scale = min(long_side / max(width, height, 1.0), _MAX_RENDER_SCALE)
+                    rendered = page.render(scale=scale).to_pil().convert("RGB")
+                finally:
+                    page.close()
+                buffer = io.BytesIO()
+                rendered.save(buffer, format="JPEG", quality=PAGE_IMAGE_JPEG_QUALITY)
+                encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+                if total + len(encoded) > MAX_PAGE_IMAGE_BYTES:
+                    total = MAX_PAGE_IMAGE_BYTES  # nothing later fits either
+                    continue
+                total += len(encoded)
+                images.append(PageImage(page=index + 1, mime="image/jpeg", data=encoded))
+        finally:
+            document.close()
+    except Exception as exc:
+        logger.warning("could not render PDF pages: %s", type(exc).__name__)
+        raise _RenderFailed from exc
+    if image_pages == 0:
+        return None
+    joined = "\n\n".join(text for text in texts if text)
+    return ExtractionResponse(
+        kind=ExtractionKind.TEXT if joined.strip() else ExtractionKind.NO_TEXT_LAYER,
+        text=joined,
+        extractor="pypdfium2",
+        pages=count,
+        page_texts=texts,
+        page_images=images,
+        images_truncated=len(images) < image_pages,
+    )
+
+
 def _converter() -> object:
     """One markitdown instance, built with the two settings that matter.
 
@@ -407,13 +503,24 @@ def _refuse_legacy(kind: _Legacy) -> ExtractionResponse:
 
 
 def extract(
-    data: bytes, *, media_type: str | None = None, filename: str | None = None
+    data: bytes,
+    *,
+    media_type: str | None = None,
+    filename: str | None = None,
+    page_images: int = 0,
+    long_side: int = DEFAULT_LONG_SIDE,
 ) -> ExtractionResponse:
     """Text from one document, with why it is what it is.
 
     Never raises for bad input. A document that cannot be read is a fact to
     report, because the caller has to answer "so do we forward this or not"
     either way, and an exception makes that answer "500".
+
+    ``page_images`` is how many image pages the caller will take from a PDF
+    (0 = none, clamped to `MAX_PAGE_IMAGES`), drawn with the longer side at
+    ``long_side`` pixels (clamped to `MAX_LONG_SIDE`). A page with no text of
+    its own comes back as a picture; a PDF with any such page is not "inspected"
+    however much text the others had.
     """
     if len(data) > MAX_BYTES:
         return ExtractionResponse(
@@ -463,6 +570,20 @@ def extract(
     if resolved in _ZIP_BACKED and (problem := _zip_problem(data)):
         return ExtractionResponse(kind=ExtractionKind.UNREADABLE, detail=problem)
 
+    render_failed = False
+    if resolved == _PDF and page_images > 0:
+        try:
+            by_page = _pdf_by_page(
+                data,
+                max_pages=min(page_images, MAX_PAGE_IMAGES),
+                long_side=min(max(long_side, MIN_LONG_SIDE), MAX_LONG_SIDE),
+            )
+        except _RenderFailed:
+            by_page = None
+            render_failed = True
+        if by_page is not None:
+            return by_page
+
     from markitdown import StreamInfo, UnsupportedFormatException
 
     stream_info = StreamInfo(mimetype=resolved, extension=_ACCEPTED[resolved])
@@ -489,5 +610,8 @@ def extract(
         # Counted even when no text came out: a scanned PDF has pages, and the
         # caller deciding what to do about `no_text_layer` wants to know whether
         # it is one page or two hundred.
-        return outcome.model_copy(update={"pages": _pdf_pages(data)})
+        update: dict[str, object] = {"pages": _pdf_pages(data)}
+        if render_failed and outcome.kind is ExtractionKind.NO_TEXT_LAYER:
+            update["detail"] = "this PDF is a scan and its pages could not be rendered"
+        return outcome.model_copy(update=update)
     return outcome

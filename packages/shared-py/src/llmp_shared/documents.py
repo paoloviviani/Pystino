@@ -36,6 +36,16 @@ class ExtractionKind(StrEnum):
     UNREADABLE = "unreadable"
 
 
+class PageImage(BaseModel):
+    """One rendered page of a document that has no text layer."""
+
+    #: 1-based, as a person counts pages.
+    page: int = Field(ge=1)
+    mime: str
+    #: The encoded image, base64.
+    data: str
+
+
 class ExtractionResponse(BaseModel):
     """What one document yielded."""
 
@@ -53,6 +63,16 @@ class ExtractionResponse(BaseModel):
     #: How many pages the extractor believes it read. Zero when the format has
     #: no pages — a spreadsheet does not — rather than a guess.
     pages: int = Field(default=0, ge=0)
+    #: Text per page of a PDF that was read page by page, empty for a page that
+    #: is a picture. Only set when the caller asked for page images.
+    page_texts: list[str] = Field(default_factory=list)
+    #: Pages that had no text of their own, drawn as pictures, only when the
+    #: caller asked for them. Drawing a page is not reading it: such a document
+    #: is not "inspected", and a model that looks at the pictures is the reader.
+    page_images: list[PageImage] = Field(default_factory=list)
+    #: True when more pages were pictures than ``page_images`` holds — cut at the
+    #: page cap or the payload cap — so a caller can say it saw only some.
+    images_truncated: bool = False
 
     @property
     def inspected(self) -> bool:
@@ -60,6 +80,7 @@ class ExtractionResponse(BaseModel):
 
         The predicate to branch on. ``kind is TEXT`` and nothing else: every
         other outcome means the content was not seen, and "not seen" must never
-        be reported to a user as "nothing found".
+        be reported to a user as "nothing found". A PDF with picture pages is
+        partly unread even though its other pages were text.
         """
-        return self.kind is ExtractionKind.TEXT
+        return self.kind is ExtractionKind.TEXT and not self.page_images

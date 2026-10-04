@@ -81,6 +81,8 @@ async def extract_document(
     media_type: str | None,
     filename: str | None = None,
     request_id: str | None = None,
+    page_images: int = 0,
+    long_side: int | None = None,
 ) -> ExtractionResponse:
     """Ask the extraction service to read one document.
 
@@ -95,6 +97,10 @@ async def extract_document(
         headers["x-filename"] = filename
     if request_id:
         headers["x-request-id"] = request_id
+    if page_images > 0:
+        headers["x-page-images"] = str(page_images)
+        if long_side:
+            headers["x-page-image-long-side"] = str(long_side)
 
     try:
         response = await client.post(
@@ -106,7 +112,14 @@ async def extract_document(
         raise UpstreamError(f"the extraction service could not be reached: {exc}") from exc
 
 
-def as_ocr_response(outcome: ExtractionResponse, *, model_name: str) -> dict[str, Any]:
+#: The caps on what the gateway will ask the extractor to draw.
+MAX_PAGE_IMAGES = 50
+MAX_LONG_SIDE = 2048
+
+
+def as_ocr_response(
+    outcome: ExtractionResponse, *, model_name: str, want_page_images: bool = False
+) -> dict[str, Any]:
     """The extraction outcome in the OCR response shape.
 
     Raises `DocumentRefused` for anything that was not read. That is the design
@@ -115,6 +128,25 @@ def as_ocr_response(outcome: ExtractionResponse, *, model_name: str) -> dict[str
     `pages` array — because an empty success is indistinguishable from a blank
     document, and a caller that indexes it has silently indexed nothing.
     """
+    if want_page_images and outcome.page_images:
+        # A PDF with pages that are pictures, and a caller that can read them:
+        # a 200 even when no page had text (the caller asked for exactly this),
+        # never the 422 below. `pages` has one entry per PDF page in order — text
+        # pages as today, picture pages with empty markdown — and the pictures
+        # are keyed by 1-based page number. `pages_processed` is what was done:
+        # pages read as text plus pages drawn.
+        texts = outcome.page_texts or [outcome.text]
+        return {
+            "model": model_name,
+            "pages": [{"index": i, "markdown": text} for i, text in enumerate(texts)],
+            "usage_info": {
+                "pages_processed": sum(1 for text in texts if text) + len(outcome.page_images)
+            },
+            "extractor": outcome.extractor,
+            "page_images": [image.model_dump() for image in outcome.page_images],
+            "page_count": outcome.pages,
+            "truncated": outcome.images_truncated,
+        }
     if outcome.kind is not ExtractionKind.TEXT:
         code, message = _REFUSALS.get(
             outcome.kind, ("document_not_read", "The document could not be read.")

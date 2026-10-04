@@ -238,6 +238,16 @@ async def extract_document(
                 data,
                 media_type=media_type,
                 request_id=request_id,
+                page_images=(
+                    min(body.page_images.max_pages, extraction.MAX_PAGE_IMAGES)
+                    if body.page_images
+                    else 0
+                ),
+                long_side=(
+                    min(body.page_images.long_side, extraction.MAX_LONG_SIDE)
+                    if body.page_images
+                    else None
+                ),
             )
         except UpstreamError as exc:
             # A local extractor that is down and a remote one that is down are
@@ -255,7 +265,9 @@ async def extract_document(
             # total "may not match the provider's invoice" for a request that
             # cost nothing and had no counterparty to invoice it.
             extracted = extraction.as_ocr_response(
-                outcome, model_name=model.upstream_model
+                outcome,
+                model_name=model.upstream_model,
+                want_page_images=body.page_images is not None,
             )
         except extraction.DocumentRefused as exc:
             # Nothing was read, so nothing is charged — and the row records the

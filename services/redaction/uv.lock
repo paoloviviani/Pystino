@@ -752,7 +752,9 @@ dependencies = [
     { name = "llmp-shared" },
     { name = "markitdown", extra = ["docx", "pdf", "pptx", "xls", "xlsx"] },
     { name = "orjson" },
+    { name = "pillow" },
     { name = "presidio-analyzer" },
+    { name = "pypdfium2" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -774,7 +776,9 @@ requires-dist = [
     { name = "markitdown", extras = ["docx", "pdf", "pptx", "xls", "xlsx"], specifier = ">=0.1.7,<0.2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
     { name = "orjson", specifier = ">=3.11,<4" },
+    { name = "pillow", specifier = ">=11,<13" },
     { name = "presidio-analyzer", specifier = ">=2.2.363,<3" },
+    { name = "pypdfium2", specifier = ">=4.30,<6" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
     { name = "python-docx", marker = "extra == 'dev'", specifier = ">=1.2,<2" },
