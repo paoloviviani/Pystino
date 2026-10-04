@@ -1135,6 +1135,13 @@ class IdentityProviderResponse(BaseModel):
     #: §14): what tells an operator a disabled previous row is still worth
     #: keeping the read-only card open on, versus one nobody ever used.
     user_count: int = 0
+    #: A disabled previous provider nobody signed in through can be removed
+    #: from the console. False for the enabled row, the environment fallback,
+    #: and any row `kept_reason` explains.
+    removable: bool = False
+    #: Why a disabled row is kept ("Kept: 3 people signed in with it ..."); empty
+    #: when it is removable, or when there is nothing to explain (enabled row).
+    kept_reason: str = ""
 
 
 class EmailSettingsResponse(BaseModel):

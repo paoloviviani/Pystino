@@ -793,6 +793,12 @@ export interface IdentityProvider {
   source: "console" | "environment";
   /** People signed in under this row's issuer (ADR 0093 §14). */
   user_count: number;
+  /** A disabled previous provider nobody signed in through: the console may
+   * offer to remove it. Never true for the enabled row. */
+  removable: boolean;
+  /** Why a disabled row is kept ("Kept: 3 people signed in with it ..."); empty
+   * when it is removable or there is nothing to explain. */
+  kept_reason: string;
   /** Server-to-server base URL for the issuer (the bundled Authelia's
    * internal address); empty when the issuer URL is reachable directly. */
   internal_base_url: string;

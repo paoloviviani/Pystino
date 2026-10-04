@@ -1441,6 +1441,24 @@ async def sign_in(
     because each one's whole job is to make that question answer "yes" for
     an identity that would otherwise look brand new.
     """
+    # Removing a spent provider checks "nobody signed in with it" and then
+    # deletes the row, and that is only true if nobody can sign in between. A
+    # share lock on the row, held to this transaction's commit, makes the
+    # removal's FOR UPDATE wait for us and then see the person we attach; and a
+    # row that has gone, or been disabled since the provider was resolved, ends
+    # the sign-in here. (SQLite has no row locks, and the test suite's one
+    # writer needs none.) A record with no row is the environment fallback.
+    if getattr(record, "source", "") == "console":
+        enabled = (
+            await session.execute(
+                select(IdentityProvider.is_enabled)
+                .where(IdentityProvider.id == record.id)
+                .with_for_update(read=True)
+            )
+        ).scalar_one_or_none()
+        if not enabled:
+            raise ProvisioningRefused("This identity provider is no longer available.")
+
     email = claims.get("email")
     email_verified = claims.get("email_verified")
     preferred_username = claims.get("preferred_username")
