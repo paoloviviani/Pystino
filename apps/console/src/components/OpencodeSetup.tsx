@@ -3,17 +3,17 @@ import { useState } from "react";
 import { SECRET, SECRET_DETAIL, SECRET_ROW } from "../lib/layout";
 
 /**
- * Where "how it works" points: the public repository, not this deployment.
+ * Where "how it works" points: the published documentation, not this deployment.
  *
  * Whether a deployment serves the documentation at all is the operator's
  * choice (the full stack does, under /docs/pystino/; a Pystino-only deployment
  * does not), so a same-origin relative link would be a 404 on some installs
- * and the console cannot tell which. The repository is the one address that
- * is the same everywhere. The anchor is the heading in docs/coding-agents.md
- * and has to move with it.
+ * and the console cannot tell which. The published site (GitHub Pages, built
+ * from docs/ by mkdocs) is the one address that is the same everywhere. The
+ * anchor is the heading in docs/coding-agents.md and has to move with it.
  */
 export const OPENCODE_DOCS_URL =
-  "https://github.com/paoloviviani/Pystino/blob/main/docs/coding-agents.md" +
+  "https://paoloviviani.github.io/Pystino/coding-agents/" +
   "#point-opencode-at-the-gateway-with-a-script";
 
 /**
