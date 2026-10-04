@@ -65,6 +65,8 @@ function bundledProvider(overrides: Partial<IdentityProvider> = {}): IdentityPro
     is_enabled: true,
     source: "environment",
     user_count: 0,
+    removable: false,
+    kept_reason: "",
     internal_base_url: "",
     logout_url: "",
     default_logout_url: "",

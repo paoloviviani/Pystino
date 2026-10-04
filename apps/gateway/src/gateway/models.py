@@ -1683,6 +1683,9 @@ class IdentityEventAction(enum.StrEnum):
     USER_MERGE = "user.merge"
     BREAK_GLASS = "break_glass"
     IDP_RESEED = "idp.reseed"
+    #: An administrator removed a disabled, never-used previous provider row
+    #: from the console. Plain VARCHAR(32) column, so no migration.
+    IDP_REMOVE = "idp.remove"
     BOOTSTRAP_ADMIN = "bootstrap.admin"
     SESSIONS_REVOKE = "sessions.revoke"
     DEVICES_REVOKE = "devices.revoke"

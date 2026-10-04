@@ -905,6 +905,17 @@ export function useTestEmail() {
   });
 }
 
+/** Remove a disabled, unused previous provider. The server re-checks
+ * everything the listing's `removable` said and answers 409 if it changed. */
+export function useRemoveIdentityProvider() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<void>(`/api/admin/identity-providers/${id}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
+  });
+}
+
 export function useIdentityProviders() {
   return useQuery({
     queryKey: adminKeys.identityProviders,

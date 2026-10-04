@@ -70,6 +70,11 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     # normalisation's own record, with "removed_groups" -- the distinct
     # group names taken off any entry, across the whole file, in one run.
     IdentityEventAction.IDP_RESEED: frozenset({"old_issuer", "new_issuer", "removed_groups"}),
+    # Removing a disabled, never-used previous provider from the console. The
+    # `issuer` column of the event carries the issuer; `name` is the
+    # `previous-<stamp>-<hex>` label the console showed, and `directory_entries`
+    # is how many unbound mirror rows died with it by cascade.
+    IdentityEventAction.IDP_REMOVE: frozenset({"name", "directory_entries"}),
     IdentityEventAction.BOOTSTRAP_ADMIN: frozenset(),
     IdentityEventAction.SESSIONS_REVOKE: frozenset(),
     IdentityEventAction.DEVICES_REVOKE: frozenset(),

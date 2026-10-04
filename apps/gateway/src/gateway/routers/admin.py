@@ -69,6 +69,8 @@ from gateway.errors import (
 from gateway.identity_events import record_event
 from gateway.identity_registry import (
     active_bundled_provider,
+    lock_reseed,
+    removal_blocker,
 )
 from gateway.identity_registry import (
     list_providers as list_provider_records,
@@ -3494,7 +3496,9 @@ async def test_email_settings(
 # -- identity providers (ADR 0051) ---------------------------------------------
 
 
-def _idp_response(record: Any, *, user_count: int = 0) -> IdentityProviderResponse:
+def _idp_response(
+    record: Any, *, user_count: int = 0, removable: bool = False, kept_reason: str = ""
+) -> IdentityProviderResponse:
     return IdentityProviderResponse(
         id=record.id,
         name=record.name,
@@ -3527,6 +3531,8 @@ def _idp_response(record: Any, *, user_count: int = 0) -> IdentityProviderRespon
         sync_confirmed=record.sync_confirmed,
         capabilities=identity_policy.capabilities(record.kind).as_dict(),
         user_count=user_count,
+        removable=removable,
+        kept_reason=kept_reason,
     )
 
 
@@ -3536,10 +3542,12 @@ async def list_identity_providers(
 ) -> list[IdentityProviderResponse]:
     """Every configured identity provider, rows and any environment fallback.
 
-    Read-only (ADR 0093 §14): the provider row is a projection of the
-    environment now, re-seeded at every start, so there is nothing here for an
-    administrator to create, edit or delete. ``./configure`` is where this
-    changes.
+    Read-only apart from removing a spent previous provider (ADR 0093 §14): the
+    provider row is a projection of the environment now, re-seeded at every
+    start, so there is nothing here for an administrator to create or edit.
+    ``./configure`` is where this changes. Each disabled row says whether it
+    can be removed (``removable``) or why it is kept (``kept_reason``), so the
+    console decides the button up front instead of discovering a 409.
     """
     settings: Settings = request.app.state.settings
     records = await list_provider_records(
@@ -3547,7 +3555,81 @@ async def list_identity_providers(
     )
     by_issuer = select(User.issuer, func.count(User.id)).group_by(User.issuer)
     counts: dict[str, int] = dict((await session.execute(by_issuer)).tuples().all())
-    return [_idp_response(record, user_count=counts.get(record.issuer, 0)) for record in records]
+    out: list[IdentityProviderResponse] = []
+    for record in records:
+        # The environment fallback has no row to remove, and an enabled row is
+        # the environment's; only a stored, disabled row is ever a candidate.
+        reason = ""
+        if record.source == "console" and not record.is_enabled:
+            reason = await removal_blocker(
+                session,
+                provider_id=record.id,
+                issuer=record.issuer,
+                is_enabled=record.is_enabled,
+            )
+        removable = record.source == "console" and not record.is_enabled and not reason
+        out.append(
+            _idp_response(
+                record,
+                user_count=counts.get(record.issuer, 0),
+                removable=removable,
+                kept_reason=reason,
+            )
+        )
+    return out
+
+
+@router.delete("/identity-providers/{provider_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_identity_provider(
+    provider_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> None:
+    """Remove a disabled previous provider nobody signed in through.
+
+    ``reseed_from_env`` keeps the old row when the deployment's IdP changes (so
+    people who signed in there can be linked back), which leaves an inactive
+    card behind for an IdP that was never used. This is the way to clear it.
+
+    Refused with 409 for an enabled row (the environment owns it) and for a row
+    anything still depends on; see :func:`removal_blocker`. The checks and the
+    delete share one transaction: the reseed advisory lock keeps a starting
+    worker from flipping ``is_enabled`` underneath, and ``FOR UPDATE`` on the
+    row keeps ``sign_in`` (which takes ``FOR SHARE`` on it) from attaching a
+    person between the count and the delete. Directory entries and sync runs
+    go by their ``ON DELETE CASCADE``.
+    """
+    await lock_reseed(session)
+    row = (
+        await session.execute(
+            select(IdentityProvider).where(IdentityProvider.id == provider_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise NotFoundError(f"No identity provider with id {provider_id}.")
+
+    blocker = await removal_blocker(
+        session, provider_id=row.id, issuer=row.issuer, is_enabled=row.is_enabled
+    )
+    if blocker:
+        raise ConflictError(blocker)
+
+    entries = (
+        await session.execute(
+            select(func.count(DirectoryEntry.id)).where(DirectoryEntry.provider_id == row.id)
+        )
+    ).scalar_one()
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.IDP_REMOVE,
+        issuer=row.issuer,
+        detail={"name": row.name, "directory_entries": entries},
+    )
+    # The ORM delete is enough for the cascades on PostgreSQL; SQLite enforces
+    # them only with the foreign_keys pragma, which `gateway.db` turns on.
+    await session.delete(row)
+    await session.commit()
 
 
 @router.put("/oidc/policy", response_model=OidcPolicyResponse)

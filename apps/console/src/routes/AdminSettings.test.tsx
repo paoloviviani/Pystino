@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
@@ -68,6 +68,8 @@ describe("AdminSettings providers card", () => {
       is_enabled: true,
       source: "console",
       user_count: 0,
+      removable: false,
+      kept_reason: "",
       internal_base_url: "",
       logout_url: "",
       default_logout_url: "",
@@ -115,7 +117,7 @@ describe("AdminSettings providers card", () => {
   }
 
   function fetchFor(providers: IdentityProvider[]) {
-    return vi.fn(async (input: RequestInfo | URL) => {
+    return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
       const url = new URL(String(input), "http://console.test").pathname;
       if (url === "/api/admin/email") {
         return new Response(
@@ -216,5 +218,81 @@ describe("AdminSettings providers card", () => {
       screen.getByText(/Optional\. Keeps this console's user list in step/),
     ).toBeInTheDocument();
     expect(screen.getByText(/Off \(default\) — people appear at their first sign-in/)).toBeInTheDocument();
+  });
+
+  /**
+   * Removing a spent previous provider. The API reports `removable`; the
+   * console offers the button only on a disabled row that says so, and shows
+   * the reason on one that does not.
+   */
+  describe("removing a previous provider", () => {
+    it("offers Remove on a disabled row the API says is removable", async () => {
+      vi.stubGlobal(
+        "fetch",
+        fetchFor([provider({ name: "previous-1", is_enabled: false, removable: true })]),
+      );
+      renderScreen(<AdminSettings />);
+
+      await waitFor(() => expect(screen.getByText("previous-1")).toBeInTheDocument());
+      expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument();
+    });
+
+    it("shows why a used row is kept, and no button", async () => {
+      vi.stubGlobal(
+        "fetch",
+        fetchFor([
+          provider({
+            name: "previous-2",
+            is_enabled: false,
+            removable: false,
+            user_count: 3,
+            kept_reason: "Kept: 3 people signed in with it, so they can be linked back.",
+          }),
+        ]),
+      );
+      renderScreen(<AdminSettings />);
+
+      await waitFor(() => expect(screen.getByText("previous-2")).toBeInTheDocument());
+      expect(screen.getByText(/Kept: 3 people signed in with it/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    });
+
+    it("never offers Remove on the enabled row, even if a response said removable", async () => {
+      vi.stubGlobal("fetch", fetchFor([provider({ removable: true })]));
+      renderScreen(<AdminSettings />);
+
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "User sync…" })).toBeInTheDocument(),
+      );
+      expect(screen.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    });
+
+    it("asks first, deletes only on confirm, and cancel deletes nothing", async () => {
+      const user = userEvent.setup({ delay: null });
+      const fetcher = fetchFor([
+        provider({ id: "gone-1", name: "previous-3", is_enabled: false, removable: true }),
+      ]);
+      vi.stubGlobal("fetch", fetcher);
+      renderScreen(<AdminSettings />);
+
+      const deletes = () =>
+        fetcher.mock.calls.filter(([, init]) => init?.method === "DELETE");
+
+      await waitFor(() => expect(screen.getByRole("button", { name: "Remove" })).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: "Remove" }));
+      const dialog = await screen.findByRole("dialog", { name: "Remove previous-3?" });
+      expect(deletes()).toHaveLength(0);
+
+      await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      expect(deletes()).toHaveLength(0);
+
+      await user.click(screen.getByRole("button", { name: "Remove" }));
+      const again = await screen.findByRole("dialog", { name: "Remove previous-3?" });
+      await user.click(within(again).getByRole("button", { name: "Remove" }));
+
+      await waitFor(() => expect(deletes()).toHaveLength(1));
+      expect(String(deletes()[0]?.[0])).toBe("/api/admin/identity-providers/gone-1");
+    });
   });
 });

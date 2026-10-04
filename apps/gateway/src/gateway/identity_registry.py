@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text, union, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.config import OIDCSettings, Settings
@@ -37,6 +37,7 @@ from gateway.models import (
     IdentityEventActor,
     IdentityProvider,
     User,
+    UserIdentity,
 )
 from gateway.oidc import OIDCClient
 
@@ -299,6 +300,89 @@ async def active_bundled_provider(session: AsyncSession) -> IdentityProvider | N
     return row if row is not None and row.kind == "authelia" else None
 
 
+async def lock_reseed(session: AsyncSession) -> None:
+    """Serialise with every other writer of the provider rows' enabled state.
+
+    A transaction-scoped advisory lock (PostgreSQL only; SQLite has one writer
+    anyway). `reseed_from_env` takes it, and so does removing a provider, so a
+    worker starting up cannot flip `is_enabled` between a removal's checks and
+    its delete.
+    """
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"), {"key": _RESEED_ADVISORY_LOCK_KEY}
+        )
+
+
+def _issuer_spellings(issuer: str) -> set[str]:
+    """The issuer with and without its trailing slash.
+
+    `deps.py` matches a token's `iss` to a provider slash-insensitively, so a
+    user may have been keyed under either spelling.
+    """
+    bare = issuer.rstrip("/")
+    return {issuer, bare, bare + "/"}
+
+
+async def people_at_issuer(session: AsyncSession, issuer: str) -> int:
+    """People with an account keyed on this issuer or a linked identity at it.
+
+    Distinct people, not rows: someone who is both a `users` row here and has
+    a `user_identities` row here counts once. Disabled accounts count; a
+    disabled person can still be re-enabled and linked back.
+    """
+    spellings = _issuer_spellings(issuer)
+    people = union(
+        select(User.id.label("uid")).where(User.issuer.in_(spellings)),
+        select(UserIdentity.user_id.label("uid")).where(UserIdentity.issuer.in_(spellings)),
+    ).subquery()
+    return (await session.execute(select(func.count()).select_from(people))).scalar_one()
+
+
+async def removal_blocker(
+    session: AsyncSession, *, provider_id: uuid.UUID, issuer: str, is_enabled: bool
+) -> str:
+    """Why this provider row cannot be removed, or "" when it can.
+
+    The one place the rule lives: the listing shows the answer up front and the
+    DELETE enforces it, so the console and the API cannot disagree. A removal
+    would leave dangling references in exactly these cases:
+
+    * the row is enabled: it is the environment's, and the environment decides;
+    * people signed in through it: `users.issuer` and `user_identities.issuer`
+      name the issuer by text with no foreign key, so the database would let
+      the row go and leave accounts nobody could link back;
+    * a directory entry is bound to an account (`directory_entries.user_id`):
+      the row's cascade would delete a person's login binding. Unbound entries
+      (people the directory listed who never signed in) cascade away freely.
+
+    `identity_events` also names the issuer, as history: it is an audit trail
+    and is kept by design, so it blocks nothing.
+    """
+    if is_enabled:
+        return "The environment owns this provider; it cannot be removed here."
+    people = await people_at_issuer(session, issuer)
+    if people:
+        return (
+            f"Kept: {people} {'person' if people == 1 else 'people'} signed in with it, "
+            "so they can be linked back."
+        )
+    bound = (
+        await session.execute(
+            select(func.count(DirectoryEntry.id)).where(
+                DirectoryEntry.provider_id == provider_id,
+                DirectoryEntry.user_id.is_not(None),
+            )
+        )
+    ).scalar_one()
+    if bound:
+        return (
+            f"Kept: {bound} directory login{' is' if bound == 1 else 's are'} bound to "
+            "accounts, which removing it would unbind."
+        )
+    return ""
+
+
 async def reseed_from_env(session: AsyncSession, settings: Settings, secrets: SecretBox) -> None:
     """Make the provider table agree with the environment. Runs on every start.
 
@@ -321,10 +405,7 @@ async def reseed_from_env(session: AsyncSession, settings: Settings, secrets: Se
     `environment == "production"`) — this function only ever raises or
     completes.
     """
-    if session.bind is not None and session.bind.dialect.name == "postgresql":
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(:key)"), {"key": _RESEED_ADVISORY_LOCK_KEY}
-        )
+    await lock_reseed(session)
 
     env_record = record_from_env(settings)
     if env_record is None:

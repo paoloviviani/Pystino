@@ -8,9 +8,14 @@
  * provisioning rule.
  */
 
-import { Badge, Button, Card, EmptyState, Input, Notice, Spinner } from "@llmp/ui";
+import { Badge, Button, Card, Dialog, EmptyState, Input, Notice, Spinner } from "@llmp/ui";
 import { useState } from "react";
-import { useEmailSettings, useIdentityProviders, useTestEmail } from "../lib/admin";
+import {
+  useEmailSettings,
+  useIdentityProviders,
+  useRemoveIdentityProvider,
+  useTestEmail,
+} from "../lib/admin";
 import type { IdentityProvider } from "../lib/types";
 import { DirectoryDialog } from "./IdentityDirectory";
 import { useOptionalToast } from "../lib/toast";
@@ -202,6 +207,7 @@ export function RedirectUri({ name }: { name: string }) {
 function ProvidersCard() {
   const providers = useIdentityProviders();
   const [directoryOf, setDirectoryOf] = useState<IdentityProvider | null>(null);
+  const [removing, setRemoving] = useState<IdentityProvider | null>(null);
 
   const rows = providers.data ?? [];
   const active = rows.filter((p) => p.is_enabled);
@@ -244,6 +250,7 @@ function ProvidersCard() {
                     key={provider.id}
                     provider={provider}
                     onDirectory={() => setDirectoryOf(provider)}
+                    onRemove={() => setRemoving(provider)}
                   />
                 ))}
               </div>
@@ -256,6 +263,7 @@ function ProvidersCard() {
         provider={rows.find((p) => p.id === directoryOf?.id) ?? null}
         onClose={() => setDirectoryOf(null)}
       />
+      <RemoveProviderDialog provider={removing} onClose={() => setRemoving(null)} />
     </Card>
   );
 }
@@ -263,9 +271,11 @@ function ProvidersCard() {
 function ProviderRow({
   provider,
   onDirectory,
+  onRemove,
 }: {
   provider: IdentityProvider;
   onDirectory: () => void;
+  onRemove?: () => void;
 }) {
   // User sync is an external, enabled provider's screen: the bundled Authelia
   // has nothing to import — its people are managed on the Users page, and its
@@ -312,6 +322,11 @@ function ProviderRow({
           {" · "}
           {provider.user_count} {provider.user_count === 1 ? "user" : "users"}
         </div>
+        {/* Said up front, so a kept row explains itself instead of offering a
+            button that would only answer 409. */}
+        {!provider.is_enabled && provider.kept_reason && (
+          <div className={`mt-1 text-sm ${MUTED}`}>{provider.kept_reason}</div>
+        )}
         <div className="mt-2 max-w-md">
           <RedirectUri name={provider.name} />
         </div>
@@ -325,7 +340,69 @@ function ProviderRow({
             User sync…
           </Button>
         )}
+        {onRemove && !provider.is_enabled && provider.removable && (
+          <Button variant="ghost" onClick={onRemove}>
+            Remove
+          </Button>
+        )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Removing a previous provider nobody ever signed in through. The server
+ * refuses anything else (and re-checks under a lock), so this only has to say
+ * what goes: the row, and its directory mirror and sync history. Bringing the
+ * issuer back is a `.env` change, which re-creates the row.
+ */
+function RemoveProviderDialog({
+  provider,
+  onClose,
+}: {
+  provider: IdentityProvider | null;
+  onClose: () => void;
+}) {
+  const remove = useRemoveIdentityProvider();
+  const toast = useOptionalToast();
+
+  return (
+    <Dialog
+      open={provider !== null}
+      title={`Remove ${provider?.name ?? "this provider"}?`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="danger"
+            busy={remove.isPending}
+            onClick={() =>
+              provider &&
+              remove.mutate(provider.id, {
+                onSuccess: () => {
+                  toast?.add({ title: "Identity provider removed", type: "success" });
+                  onClose();
+                },
+                onError: (error) =>
+                  toast?.add({
+                    title: "Could not remove the identity provider",
+                    description: error instanceof Error ? error.message : undefined,
+                    type: "error",
+                  }),
+              })
+            }
+          >
+            Remove
+          </Button>
+        </>
+      }
+    >
+      <p>
+        Nobody ever signed in through <span className={CODE}>{provider?.issuer}</span>, so
+        removing it unlinks no one. Its directory entries and sync history are deleted with
+        it. Pointing the deployment at this issuer again in .env creates it afresh.
+      </p>
+    </Dialog>
   );
 }

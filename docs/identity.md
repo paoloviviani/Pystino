@@ -87,6 +87,24 @@ the name `default`, so the callback path `/auth/callback/default` never
 changes. Identities are stored by issuer and subject, so switching back
 re-enables the earlier row with everyone's identities intact.
 
+### Removing a previous provider nobody used
+
+A disabled previous row stays on the Settings screen so people who signed in
+there can be linked back. When nobody ever did (a provider you tried and
+abandoned), **Remove** on the row clears it; the row's directory entries and
+sync history go with it, and the removal is audited (`idp.remove`). The console
+offers the button only where the gateway says the row is removable, and the
+API (`DELETE /api/admin/identity-providers/<id>`) answers `409` for anything
+else:
+
+- an enabled row, which is the environment's and can never be removed here;
+- a row with people: any account keyed on its issuer, or any linked identity at
+  it, even a disabled one, so they can still be linked back;
+- a row whose directory logins are bound to accounts.
+
+Removing a row loses nothing you cannot get back from `.env`: pointing the
+deployment at that issuer again creates the row afresh.
+
 Every other row is disabled, and the start logs one line per disabled row
 with its user count. The console keeps editing what the environment does not
 own: the provisioning policy and its group mappings, and directory sync on
@@ -200,7 +218,7 @@ reached, the erasure is recorded as pending and retried with a backoff
 Every identity action lands in `identity_events`, an append-only table the
 database itself protects: triggers refuse `UPDATE` and `DELETE`. It records
 user, admin, password, link, merge, break-glass, provider re-seed and
-bootstrap actions, with the actor, the target, and the reason when one was
+removal, and bootstrap actions, with the actor, the target, and the reason when one was
 given. It is kept forever; archive it with SQL when it grows.
 
 Read it at `GET /api/admin/identity-events?user_id=…&action=…&before=…`,
