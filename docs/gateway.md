@@ -130,6 +130,40 @@ type or the file name, so a legacy `.doc` renamed to `.docx` is still read.
 | Password-protected Office files | no | refused: remove the password |
 | Scans and images | no | refused as `no_text_layer`: use an OCR model |
 
+### PDFs with scanned pages: page images
+
+A PDF page with no text of its own is a picture. A caller with a vision model
+can ask the local extractor to draw those pages by adding
+`"page_images": {"max_pages": 20, "long_side": 1280}` to the `/v1/ocr` body
+(`max_pages` is clamped to 50, `long_side` to 2048, defaults 20 and 1280). Each
+page is judged on its own: more than about 40 non-whitespace characters and it
+is text, otherwise it is an image. When any page is an image the answer is a
+`200`, whether or not other pages had text:
+
+```json
+{
+  "pages": [{"index": 0, "markdown": "typed cover sheet"},
+            {"index": 1, "markdown": ""}, {"index": 2, "markdown": ""}],
+  "page_images": [{"page": 2, "mime": "image/jpeg", "data": "<base64>"},
+                  {"page": 3, "mime": "image/jpeg", "data": "<base64>"}],
+  "page_count": 3,
+  "truncated": false,
+  "usage_info": {"pages_processed": 3}
+}
+```
+
+`pages` has one entry per PDF page, in order, with empty markdown for the image
+pages; `page_images[].page` is 1-based. `truncated` is true when more pages were
+images than were returned (the page cap, or about 15 MB of encoded images).
+`pages_processed` counts pages read as text plus pages drawn. Without
+`page_images`, a scan is refused as before. A remote OCR model never receives
+the field. Drawing uses pypdfium2 (Apache-2.0 / BSD-3-Clause) in the extractor.
+
+The images are pictures, so **redaction cannot inspect them**: the policy
+applies to the text pages only. A deployment that relies on redaction to keep
+personal data from a caller should not grant that caller the local extractor
+with `page_images`.
+
 A document that is not read is never returned as an empty success. The response
 is a `422` whose `error.code` names the class (`unsupported_document`,
 `unreadable_document`, `no_text_layer`, `document_too_large`) and whose

@@ -30,7 +30,7 @@ from llmp_shared import (
 from pydantic import BaseModel, Field
 
 from llmp_redaction.detector import Detector
-from llmp_redaction.documents import extract
+from llmp_redaction.documents import DEFAULT_LONG_SIDE, extract
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +277,19 @@ def build_detector() -> Detector:
     return detector
 
 
+def _requested_page_images(header: str | None) -> int:
+    """How many page images the caller asked for with `X-Page-Images`.
+
+    Absent, malformed or non-positive all mean "none": the endpoint never
+    answers a 4xx for a document, and a header it cannot read is not a reason to
+    start. `extract` clamps the upper end.
+    """
+    try:
+        return max(int(header), 0) if header else 0
+    except ValueError:
+        return 0
+
+
 class HealthResponse(BaseModel):
     status: str
     engine: str
@@ -338,7 +351,9 @@ def create_app(detector: Detector | None = None) -> FastAPI:
         to a service whose job is to be small, and 25 MB of base64 in JSON is
         33 MB of JSON. `X-Filename` is optional and only consulted when the
         content type is unrecognised — several clients send
-        `application/octet-stream` for every upload.
+        `application/octet-stream` for every upload. `X-Page-Images: N` asks
+        for up to N pictures of PDF pages that have no text (long side from
+        `X-Page-Image-Long-Side`).
 
         Always 200 with an outcome, never 4xx for an unreadable document: "we
         could not read this" is an answer the caller has to act on, and an HTTP
@@ -358,6 +373,9 @@ def create_app(detector: Detector | None = None) -> FastAPI:
             data,
             media_type=request.headers.get("content-type"),
             filename=request.headers.get("x-filename"),
+            page_images=_requested_page_images(request.headers.get("x-page-images")),
+            long_side=_requested_page_images(request.headers.get("x-page-image-long-side"))
+            or DEFAULT_LONG_SIDE,
         )
         logger.info(
             "extracted %d bytes: %s (%s) in %dms",

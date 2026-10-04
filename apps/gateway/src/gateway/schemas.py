@@ -325,6 +325,15 @@ def _page_range_count(value: str) -> int:
     return end - start + 1
 
 
+class PageImagesRequest(BaseModel):
+    """Ask the local extractor for pictures of the PDF pages that have no text."""
+
+    #: Clamped to 50 on the way out; a larger value is not an error.
+    max_pages: int = Field(default=20, ge=1)
+    #: Longer side of each picture in pixels, clamped to 2048.
+    long_side: int = Field(default=1280, ge=1)
+
+
 class OcrRequest(BaseModel):
     """``POST /v1/ocr`` — the Cortecs and Mistral shape.
 
@@ -352,6 +361,11 @@ class OcrRequest(BaseModel):
     #: extractor accepts it and always answers with no images, which is a
     #: known behaviour rather than a silently ignored request.
     include_image_base64: bool | None = None
+    #: Local extractor only: pictures of the PDF pages that have no text, so a
+    #: vision model can read the scan; a PDF with any such page answers 200
+    #: instead of refusing. Declared so it is never forwarded to a remote
+    #: OCR provider, which reads the scan itself and would reject the field.
+    page_images: PageImagesRequest | None = None
 
     @field_validator("pages")
     @classmethod
@@ -376,6 +390,7 @@ class OcrRequest(BaseModel):
 
     def upstream_payload(self, *, upstream_model: str) -> dict[str, Any]:
         payload = self.model_dump(exclude_unset=True)
+        payload.pop("page_images", None)
         payload["model"] = upstream_model
         return payload
 

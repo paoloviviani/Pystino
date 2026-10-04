@@ -1,6 +1,6 @@
 """Contracts shared between the gateway and its out-of-process services."""
 
-from llmp_shared.documents import ExtractionKind, ExtractionResponse
+from llmp_shared.documents import ExtractionKind, ExtractionResponse, PageImage
 from llmp_shared.redaction import (
     PLACEHOLDER_RE,
     DetectionRequest,
@@ -22,6 +22,7 @@ __all__ = [
     "EntitySpan",
     "ExtractionKind",
     "ExtractionResponse",
+    "PageImage",
     "PlaceholderMap",
     "Restored",
     "TextEdit",

@@ -36,7 +36,11 @@ dependencies = [
     # which is a decision for whoever deploys this rather than a dependency to
     # acquire quietly (ADR 0001).
     "markitdown[docx,pdf,pptx,xls,xlsx]>=0.1.7,<0.2",
+    # Encodes the rendered page images (llmp_redaction/documents.py). Already in the
+    # tree via python-pptx; named because it is imported directly. MIT-CMU (HPND).
+    "pillow>=11,<13",
     "llmp-shared",
+    "pypdfium2>=4.30,<6",
 ]
 
 [project.optional-dependencies]
