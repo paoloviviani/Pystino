@@ -266,7 +266,7 @@ def _row(
     else:
         # A key with no label is a subject that has since been deleted. The spend
         # stays in the report — dropping it would silently change last month's
-        # total when someone leaves the foundation.
+        # total when someone leaves the organisation.
         label = labels.get(key) or (
             _DELETED_LABEL.get(group_by, str(key)) if isinstance(key, uuid.UUID) else str(key)
         )

@@ -7,7 +7,7 @@ budget and a monthly report agree by construction rather than by vigilance.
 
 Two things make this less trivial than it looks:
 
-* **Boundaries are local, not UTC.** A foundation's January starts at midnight in
+* **Boundaries are local, not UTC.** An organisation's January starts at midnight in
   its own timezone. Computing it in UTC misallocates an hour of spend at each end of
   every month, silently.
 * **DST.** Europe/Rome shifts twice a year, so a month is not a fixed number of
@@ -35,7 +35,7 @@ class PeriodKind(enum.StrEnum):
     YEAR = "year"
 
 
-# Calendar quarters and a January-December year, per the foundation's accounting.
+# Calendar quarters and a January-December year, per the organisation's accounting.
 # A fiscal year starting elsewhere would be a config field here, not a migration.
 _QUARTER_START_MONTH = {1: 1, 2: 4, 3: 7, 4: 10}
 

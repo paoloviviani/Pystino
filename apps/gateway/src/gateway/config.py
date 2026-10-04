@@ -900,7 +900,7 @@ class Settings(BaseSettings):
     valkey_url: str = "redis://localhost:6379/0"
 
     # Calendar boundaries for billing periods and calendar quotas are computed in
-    # this timezone, not UTC. A foundation's January starts at midnight locally, and
+    # this timezone, not UTC. An organisation's January starts at midnight locally, and
     # a UTC boundary misallocates an hour of spend at each end of every month.
     # One implementation serves both, which is what makes a monthly budget and a
     # monthly report agree (ADR 0024, ADR 0025).

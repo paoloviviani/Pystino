@@ -11,7 +11,7 @@ uv run python scripts/import_cortecs_pricing.py --apply     # write the prices
 
 Deliberately a script rather than a background job inside the gateway: pricing
 changes are an administrative act, and a provider's catalogue should not be able to
-silently change what the foundation charges its own groups.
+silently change what the organisation charges its own groups.
 
 It never creates models. Which models exist, and which groups may reach them, stays
 an administrative decision — the importer only prices models already in the

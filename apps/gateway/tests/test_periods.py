@@ -98,7 +98,7 @@ class TestDaylightSaving:
 
 class TestQuarterAndYear:
     def test_calendar_quarters(self) -> None:
-        """January-December, per the foundation's accounting."""
+        """January-December, per the organisation's accounting."""
         assert parse_period("2026-Q1").start == rome("2026-01-01T00:00")
         assert parse_period("2026-Q1").end == rome("2026-04-01T00:00")
         assert parse_period("2026-Q3").start == rome("2026-07-01T00:00")
