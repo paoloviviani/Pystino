@@ -949,6 +949,12 @@ class Settings(BaseSettings):
     transcript_flush_seconds: float = 2.0
     transcript_flush_chars: int = 2048
     persist_transcripts: bool = True
+    # How long a finished reply's text is kept on its usage row. The text is
+    # there so a suspended client can recover an answer, which is a matter of
+    # minutes; the row itself (tokens, cost) is kept regardless. 0 keeps the
+    # text forever, which is the behaviour before this setting existed.
+    transcript_retention_hours: float = Field(default=24.0, ge=0)
+    transcript_sweep_seconds: float = Field(default=600.0, gt=0)
 
     request_id_header: str = "x-request-id"
 
