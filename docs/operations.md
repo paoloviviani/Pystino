@@ -121,7 +121,8 @@ None blocking; all recorded so they are not rediscovered as surprises.
   disconnected mid-stream". The row knows — read `status` before believing the
   sentence.
 - **GDPR erasure is incomplete** — `assistant_text` is not covered by the
-  identity cascade. See [Gateway — known gaps](gateway.md#known-gaps).
+  identity cascade, but it is cleared after `GATEWAY_TRANSCRIPT_RETENTION_HOURS`
+  (24 by default). See [Gateway — known gaps](gateway.md#known-gaps).
 - **Counters rebuild only at startup**: a Valkey wipe while the gateway keeps
   running leaves quotas briefly too permissive. Restart the gateway after any
   cache loss.

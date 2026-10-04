@@ -196,7 +196,15 @@ Stated plainly, so none of them is a surprise later.
 - **GDPR erasure is incomplete.** Identity foreign keys use
   `ON DELETE SET NULL` so the financial ledger survives deleting a user — but
   `assistant_text` may itself contain personal data and is *not* cleared by
-  that. An erasure procedure has to blank it explicitly; none exists yet.
+  that. An erasure procedure has to blank it explicitly; none exists yet. What
+  does exist is retention: the text is cleared from every usage row after
+  `GATEWAY_TRANSCRIPT_RETENTION_HOURS` (default 24; `0` keeps it for ever), so
+  the exposure is bounded to that window. The row itself (tokens, cost,
+  timestamps) is kept. The sweep runs every `GATEWAY_TRANSCRIPT_SWEEP_SECONDS`
+  (default 600) and measures age from finalisation, or from the last streaming
+  flush for a row that never finalised, so an answer still being written is
+  never cleared. The text exists so a suspended client can recover an answer;
+  a recovery after the window finds the row but not the text.
 - **The redaction HMAC key must be backed up with the transcripts it
   labelled.** Losing or rotating it breaks cross-turn placeholder consistency
   for existing conversations.

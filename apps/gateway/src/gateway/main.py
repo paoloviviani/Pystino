@@ -39,6 +39,7 @@ from gateway.quota.notifications import QuotaNotifier
 from gateway.rate_limit import SlidingWindowLimiter
 from gateway.redaction.base import Redactor
 from gateway.redaction.resolver import RedactionResolver
+from gateway.retention import TranscriptRetentionLoop
 from gateway.routers import (
     admin,
     auth,
@@ -255,6 +256,11 @@ async def init_app_state(
     # instead of losing the erasure.
     app.state.erasure_retry_loop = ErasureRetryLoop(session_factory, settings)
     app.state.erasure_retry_loop.start()
+    # Clears reply text from old usage rows (retention.py). 0 hours means keep
+    # it, so no loop is started at all rather than one that does nothing.
+    if settings.transcript_retention_hours > 0:
+        app.state.transcript_retention_loop = TranscriptRetentionLoop(session_factory, settings)
+        app.state.transcript_retention_loop.start()
     try:
         async with session_factory() as session:
             await reseed_from_env(session, settings, app.state.secrets)
@@ -349,6 +355,8 @@ async def shutdown_app_state(app: FastAPI) -> None:
         await fx.close()
     if (erasure_loop := getattr(app.state, "erasure_retry_loop", None)) is not None:
         await erasure_loop.stop()
+    if (retention_loop := getattr(app.state, "transcript_retention_loop", None)) is not None:
+        await retention_loop.stop()
     if (valkey := getattr(app.state, "valkey", None)) is not None:
         await valkey.aclose()
     await app.state.engine.dispose()

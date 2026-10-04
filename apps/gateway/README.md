@@ -141,6 +141,8 @@ Stated plainly, so none of these is a surprise later.
   so the financial ledger survives deleting a user — but `assistant_text` may
   itself contain personal data and is *not* cleared by that. An erasure
   procedure has to blank it explicitly, and no such procedure exists yet.
+  Retention bounds it: the text is cleared after
+  `GATEWAY_TRANSCRIPT_RETENTION_HOURS` (default 24, `0` keeps it).
 - **The redaction HMAC key must be backed up with the transcripts it labelled.**
   Losing or rotating it breaks cross-turn placeholder consistency for existing
   conversations.
