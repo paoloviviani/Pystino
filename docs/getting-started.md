@@ -56,15 +56,19 @@ sign-in makes it the administrator. The gateway itself has no password form: eve
 
 ## Use it from opencode
 
-To point the [opencode](https://opencode.ai) coding agent at a running gateway,
-mint an API key in the console and run, with your gateway's address:
+[opencode](https://opencode.ai) is a coding agent that runs in your terminal.
+To point it at your gateway, mint an API key in the console (**API keys** on the
+Overview page, which also shows this command with your address filled in), then
+run this on the machine where you use opencode, replacing `llm.example.org` with
+your gateway's address:
 
 ```bash
-curl -fsSL https://dev.example.test:8443/opencode/install.sh | bash
+curl -fsSL https://llm.example.org/opencode/install.sh | bash
 ```
 
-It adds the gateway as a provider in opencode's global config, keeps the rest of
-that file, and backs it up first. See [Coding agents](coding-agents.md) for the
+It asks for the key, adds the gateway as a provider in opencode's global config,
+keeps the rest of that file, and backs it up first. Then start opencode and pick
+a model with `/models`. See [Coding agents](coding-agents.md) for the
 options, how to keep the key out of the file, and how to undo it.
 
 ## Reach it from another machine
