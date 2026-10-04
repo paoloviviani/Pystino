@@ -111,6 +111,7 @@ Live checks against a running stack are in `scripts/*_live.py`.
 
 The documentation site is `docs/` (`uv run mkdocs build --strict`). Start at
 [docs/index.md](docs/index.md):
+[configure opencode](docs/coding-agents.md#point-opencode-at-the-gateway-with-a-script) ·
 [getting started](docs/getting-started.md) ·
 [gateway](docs/gateway.md) ·
 [accounting and quotas](docs/accounting-and-quotas.md) ·

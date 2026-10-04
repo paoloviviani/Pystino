@@ -26,6 +26,8 @@ is a `/v1` client of this gateway and a separate repository.
 
 ## Where to go next
 
+- [Configure opencode with Pystino](coding-agents.md#point-opencode-at-the-gateway-with-a-script):
+  one command points the opencode coding agent at your gateway.
 - [Getting started](getting-started.md): run it, add a model, make a first
   billed request, sign in to the console.
 - [Gateway](gateway.md): every surface, the two authentication schemes, and

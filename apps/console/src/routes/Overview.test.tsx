@@ -404,6 +404,46 @@ describe("Overview", () => {
     });
   });
 
+  describe("Configure opencode", () => {
+    const setup = () => userEvent.setup({ delay: null, advanceTimers: vi.advanceTimersByTime });
+    const ONE_LINER = `curl -fsSL ${window.location.origin}/opencode/install.sh | bash`;
+
+    it("offers the one-liner for this console's own origin, and a way to read how it works", async () => {
+      vi.stubGlobal("fetch", keyRoutes([]));
+      renderScreen(<Overview me={ME} />);
+
+      await waitFor(() => expect(screen.getByText("API keys")).toBeInTheDocument());
+      expect(screen.getByText("Configure opencode with Pystino")).toBeInTheDocument();
+      const command = screen.getByLabelText("Command to configure opencode");
+      expect(command).toHaveTextContent(window.location.origin);
+      expect(command).toHaveTextContent("/opencode/install.sh");
+      expect(command.textContent).toBe(ONE_LINER);
+
+      const link = screen.getByRole("link", { name: "How it works" });
+      expect(link).toHaveAttribute(
+        "href",
+        expect.stringMatching(/coding-agents\.md#point-opencode-at-the-gateway-with-a-script$/),
+      );
+    });
+
+    it("shows it again, as the next step, once a key has been minted", async () => {
+      const user = setup();
+      vi.stubGlobal("fetch", keyRoutes([]));
+      renderScreen(<Overview me={ME} />);
+
+      await waitFor(() => expect(screen.getByText("API keys")).toBeInTheDocument());
+      await user.click(screen.getByRole("button", { name: "New key" }));
+      const dialog = within(await screen.findByRole("dialog"));
+      expect(dialog.queryByText("Next: configure opencode")).not.toBeInTheDocument();
+      await user.click(dialog.getByRole("button", { name: "Create" }));
+
+      await waitFor(() => expect(dialog.getByText("Next: configure opencode")).toBeInTheDocument());
+      expect(dialog.getByLabelText("Command to configure opencode").textContent).toBe(ONE_LINER);
+      // The command is not the secret: the key must still appear exactly once.
+      expect(screen.getAllByText("sk-live-THE-ONLY-COPY")).toHaveLength(1);
+    });
+  });
+
   it("shows the error the API gave rather than a generic one", async () => {
     vi.stubGlobal(
       "fetch",

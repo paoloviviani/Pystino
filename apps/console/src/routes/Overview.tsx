@@ -15,6 +15,7 @@ import {
   } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
+import { OpencodeSetup } from "../components/OpencodeSetup";
 import { PageHeader } from "../components/PageHeader";
 import { downloadCsv } from "../lib/api";
 import {
@@ -275,6 +276,10 @@ export function Overview({ me }: OverviewProps) {
             />
           </>
         )}
+      </Card>
+
+      <Card title="Configure opencode with Pystino">
+        <OpencodeSetup />
       </Card>
 
       <MintKeyDialog open={minting} me={me} onClose={() => setMinting(false)} />
@@ -613,6 +618,8 @@ function MintedSecret({ minted }: { minted: MintedApiKey }) {
         {minted.billing_group?.name ?? "your default group at request time"}
         {minted.expires_at ? `, expires ${formatDate(minted.expires_at)}` : ", never expires"}.
       </p>
+
+      <OpencodeSetup heading="Next: configure opencode" />
     </>
   );
 }

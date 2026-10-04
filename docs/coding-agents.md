@@ -28,10 +28,12 @@ holds no standing secret and shows up in the chat's `/code` panel.
 
 ## Point opencode at the gateway with a script
 
-1. In the console, mint an API key (**API keys**) and copy it. The script cannot
+1. In the console, mint an API key (**API keys** on the Overview page, which
+   also shows the command below with your address filled in) and copy it. The script cannot
    do this for you: minting needs a signed-in browser session, which a script
    holding a key does not have.
-2. Run, with your gateway's address:
+2. On the machine where you use opencode, run this, with your gateway's address
+   in place of `llm.example.org`:
 
     ```bash
     curl -fsSL https://llm.example.org/opencode/install.sh | bash
