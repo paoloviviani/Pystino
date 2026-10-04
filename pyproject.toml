@@ -54,6 +54,11 @@ ignore = [
 # Test credentials are not secrets, and test modules import their own helpers
 # by bare module name (pytest puts the test directory on sys.path).
 "**/tests/**" = ["S105", "S106", "S311"]
+# These two run the opencode setup script as a subprocess, which is the thing
+# under test: bash and a fixed script path, and the same blocking call inside an
+# async test (the fake gateway is a thread, so nothing waits on the event loop).
+"**/tests/test_opencode_install.py" = ["S603", "S606", "S607", "ASYNC221"]
+"**/tests/test_client_scripts_route.py" = ["S603", "S607", "ASYNC221"]
 # A one-shot CLI has no concurrency to block, so reading a file with pathlib
 # inside an async entry point is not the bug ASYNC240 is warning about.
 "**/scripts/**" = [

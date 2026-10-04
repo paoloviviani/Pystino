@@ -54,6 +54,19 @@ bundled Authelia with `AUTHELIA_ADMIN_USER` and the password behind
 (`AUTHELIA_ADMIN_EMAIL`/`PYSTINO_BOOTSTRAP_ADMIN_EMAIL`) matches, that first
 sign-in makes it the administrator. The gateway itself has no password form: even this first sign-in goes through the bundled Authelia's page, and the provider is set in `deploy/.env`, not in the console; see [Identity](identity.md).
 
+## Use it from opencode
+
+To point the [opencode](https://opencode.ai) coding agent at a running gateway,
+mint an API key in the console and run, with your gateway's address:
+
+```bash
+curl -fsSL https://dev.example.test:8443/opencode/install.sh | bash
+```
+
+It adds the gateway as a provider in opencode's global config, keeps the rest of
+that file, and backs it up first. See [Coding agents](coding-agents.md) for the
+options, how to keep the key out of the file, and how to undo it.
+
 ## Reach it from another machine
 
 On a server over SSH, forward that one port rather than exposing anything:

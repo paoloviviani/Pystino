@@ -44,6 +44,7 @@ from gateway.routers import (
     auth,
     billing,
     chat,
+    client_scripts,
     console,
     directory,
     embeddings,
@@ -401,6 +402,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_exception_handler(RequestValidationError, validation_error_handler)
 
     app.include_router(health.router)
+    app.include_router(client_scripts.router)
     app.include_router(chat.router)
     app.include_router(embeddings.router)
     app.include_router(responses_router.router)
