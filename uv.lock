@@ -620,7 +620,7 @@ wheels = [
 
 [[package]]
 name = "gateway"
-version = "0.2.4"
+version = "0.2.5"
 source = { editable = "apps/gateway" }
 dependencies = [
     { name = "alembic" },
