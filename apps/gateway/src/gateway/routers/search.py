@@ -23,8 +23,13 @@ to the reports built to catch it.
 
 Six things about the unified surface, each forced by the shape of the operation:
 
-**The backend is the group's, never the request's.** The body carries no
-backend, no depth, no tier. The policy names one backend anchor row; the
+**The backend is the group's unless the request names one it is granted.**
+The body carries no depth and no tier, and an optional ``backend`` — a model
+name, resolved exactly as the passthrough resolves ``/search/{backend}`` — so
+an application with its own setting (Cerea's admin screen) can choose among
+the backends its caller already holds. A name outside the caller's grants is
+a 404, never a fallback to the policy. Without one, the policy names one
+backend anchor row; the
 grant check runs against it exactly as the passthrough checks the backend in
 the path, so a policy pointing somewhere the group may not go is as invisible
 as a backend that does not exist: a 404, not a 403. A group with no policy
@@ -170,16 +175,25 @@ async def unified_search(
 ) -> JSONResponse:
     request_id = _metered.request_id_for(request, settings)
 
-    # The policy, not the request, names the backend. None means the group
-    # cannot use this route at all — a 404 with a message an administrator
-    # can act on, rather than a backend the caller could route around.
-    backend_id = principal.billing_group.search_model_id
-    if backend_id is None:
-        raise NotFoundError(
-            "No search provider is configured for your billing group.",
-            code="no_search_provider",
-        )
-    model, plugin = await _policy_backend(backend_id, principal, session)
+    if payload.backend is not None:
+        # A named backend, chosen by the caller's application (Cerea's admin
+        # setting). It resolves through the passthrough's own access-checked
+        # path, so it must be one this caller is granted: an ungranted or
+        # unknown name is a 404 and is *not* retried against the policy — a
+        # silent fallback would spend on a backend nobody asked for and hide a
+        # stale setting from whoever has to fix it.
+        model, plugin = await _backend(payload.backend, principal, session)
+    else:
+        # No name: the policy names the backend. None means the group cannot
+        # use this route at all — a 404 with a message an administrator can act
+        # on, rather than a backend the caller could route around.
+        backend_id = principal.billing_group.search_model_id
+        if backend_id is None:
+            raise NotFoundError(
+                "No search provider is configured for your billing group.",
+                code="no_search_provider",
+            )
+        model, plugin = await _policy_backend(backend_id, principal, session)
     upstream = await _metered.resolve_upstream(providers, model)
 
     # -- redaction ----------------------------------------------------------

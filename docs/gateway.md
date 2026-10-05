@@ -13,7 +13,7 @@ per-group model availability and a pluggable redaction layer.
 | `POST /v1/embeddings` | key or bearer | Embeddings, metered and redacted like a completion |
 | `POST /v1/images/generations` | key or bearer | Image generation, billed per picture or per token depending on the model |
 | `POST /v1/ocr` | key or bearer | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor |
-| `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina), metered per call. `POST /v1/search/{backend}` names one explicitly |
+| `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina), metered per call. The backend is the billing group's search policy, or the one the body names in an optional `backend` (a search model the caller is granted; an ungranted name is a 404, never a fallback to the policy). `POST /v1/search/{backend}` is the verbatim passthrough |
 | `GET /v1/models` | key, bearer or none | Models the caller may use, by group or personal grant, with capabilities |
 | `GET /v1/pystino/usage` | key or bearer | This caller's own spend, for a client that wants to show it without a console session |
 | `GET /v1/billing/groups` | key or bearer | Which groups this caller may bill, and which one paid for this request |
