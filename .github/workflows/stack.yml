@@ -36,8 +36,9 @@ env:
 jobs:
   # Built once, shared by both bring-ups below: a release tag's own gateway
   # image, under the local/ prefix both compose.yaml and cerea-deploy's
-  # compose.yaml treat as a build override. Redaction is not built — neither
-  # bring-up below turns its profile on.
+  # compose.yaml treat as a build override. The redaction image is built too, in
+  # its published -pattern flavour: cerea-deploy's homelab preset runs it as the
+  # local document reader (the `documents` profile, since cerea-deploy v0.3.13).
   build-gateway:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -58,7 +59,13 @@ jobs:
         run: |
           docker build -q -t "local/pystino-gateway:${{ steps.version.outputs.version }}" \
             --build-arg INCLUDE_CONSOLE=true -f apps/gateway/Dockerfile .
-      - run: docker save "local/pystino-gateway:${{ steps.version.outputs.version }}" -o "$RUNNER_TEMP/gateway.tar"
+      - name: Build the redaction image at this tag (the local document reader)
+        run: |
+          docker build -q -t "local/pystino-redaction:${{ steps.version.outputs.version }}-pattern" \
+            --build-arg SPACY_MODELS= -f services/redaction/Dockerfile .
+      - run: |
+          docker save "local/pystino-gateway:${{ steps.version.outputs.version }}" \
+            "local/pystino-redaction:${{ steps.version.outputs.version }}-pattern" -o "$RUNNER_TEMP/gateway.tar"
       - uses: actions/upload-artifact@v4
         with: {name: gateway-image, path: "${{ runner.temp }}/gateway.tar", retention-days: 1}
 
