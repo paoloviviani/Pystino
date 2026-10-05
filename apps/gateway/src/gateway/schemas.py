@@ -410,10 +410,11 @@ class SearchRequest(BaseModel):
     will trust. (A 400, not FastAPI's 422: this app rewrites validation errors
     into the OpenAI error shape every ``/v1`` client parses.)
 
-    There is no ``backend``, ``depth``, ``type`` or ``tier`` field, and that is
-    the design. Which backend runs is the billing group's policy
-    (``groups.search_model_id``) — one endpoint per group, resolved
-    server-side, never a request parameter — and it always runs at the
+    There is no ``depth``, ``type`` or ``tier`` field, and that is the design.
+    Which backend runs is the billing group's policy
+    (``groups.search_model_id``) unless the caller names one with the optional
+    ``backend`` (a model name it is granted — an ungranted name is a 404, never
+    a fallback). The backend always runs at the
     vendor's default depth: the ledger records no tier because none was asked
     for, and a ceiling counted in requests bounds volume, not spend. A caller
     that needs a dearer tier names the backend directly on the passthrough.
@@ -427,6 +428,9 @@ class SearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
     query: str = Field(min_length=1, max_length=2000)
+    #: A search backend by model name, among those the caller is granted.
+    #: Absent means the billing group's policy decides.
+    backend: str | None = Field(default=None, min_length=1, max_length=200)
     #: How many results to ask for. Ten is the most a rendered answer can use,
     #: and Exa's per-result charge above ten is invisible to this ledger — a
     #: bound here rather than none because the number multiplies a vendor's

@@ -211,6 +211,66 @@ class TestPolicyResolution:
         assert response.status_code == 404, response.text
         assert len(fake_upstream.bodies) == 0
 
+    async def test_a_named_granted_backend_overrides_the_policy(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """A caller that names a backend it is granted gets that one, even
+        with a policy pointing elsewhere; the ledger says which ran."""
+        policy = await add_backend(session, seeded)
+        await add_backend(session, seeded, plugin="exa")
+        await set_policy(session, seeded.group.id, policy)
+        fake_upstream.set_json(exa_body())
+
+        response = await client.post(
+            "/v1/search", json={"query": "anything", "backend": "exa"}, headers=seeded.auth
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["backend"] == "exa"
+        assert (await latest_record(session)).own_search_backend == "exa"
+
+    async def test_a_named_backend_needs_no_policy(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        await add_backend(session, seeded)
+        fake_upstream.set_json(linkup_body())
+
+        response = await client.post(
+            "/v1/search", json={"query": "anything", "backend": "linkup"}, headers=seeded.auth
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["backend"] == "linkup"
+
+    async def test_a_named_ungranted_backend_is_a_404_not_a_policy_fallback(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        fake_upstream: FakeUpstream,
+    ) -> None:
+        """The policy backend is granted and would work; the named one is not
+        granted, so the answer is a 404 and nothing runs or is counted."""
+        policy = await add_backend(session, seeded)
+        await add_backend(session, seeded, plugin="exa", granted=False)
+        await set_policy(session, seeded.group.id, policy)
+        fake_upstream.set_json(linkup_body())
+
+        for name in ("exa", "no-such-backend"):
+            response = await client.post(
+                "/v1/search", json={"query": "anything", "backend": name}, headers=seeded.auth
+            )
+            assert response.status_code == 404, response.text
+        assert len(fake_upstream.bodies) == 0
+        rows = (await session.execute(select(UsageRecord))).scalars().all()
+        assert rows == []
+
     async def test_unknown_fields_are_refused_not_dropped(
         self,
         client: httpx.AsyncClient,
