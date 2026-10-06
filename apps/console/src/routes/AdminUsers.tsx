@@ -493,7 +493,7 @@ function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: 
  * Merge one account into another (ADR 0093 §7.1). Irreversible, so the
  * shape follows the design's own: a target picker, then the preview (once
  * both ids are known), then a typed confirmation of the *source's* address
- * (or its id, if it has none) rather than a checkbox, plus a reason.
+ * (or its id, if it has none) rather than a checkbox, plus an optional reason.
  */
 function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: () => void }) {
   const [targetQuery, setTargetQuery] = useState("");
@@ -536,7 +536,7 @@ function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: (
           </Button>
           <Button
             variant="danger"
-            disabled={!user || !targetId || confirm !== expectedConfirm || !reason.trim()}
+            disabled={!user || !targetId || confirm !== expectedConfirm}
             busy={merge.isPending}
             onClick={() =>
               user &&
@@ -648,7 +648,7 @@ function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: (
             onChange={(event) => setConfirm(event.target.value)}
           />
           <Input
-            label="Reason"
+            label="Reason (optional)"
             value={reason}
             onChange={(event) => setReason(event.target.value)}
             placeholder="Why these are the same person"

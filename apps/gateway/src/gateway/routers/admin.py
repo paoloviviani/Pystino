@@ -2330,10 +2330,10 @@ async def reset_limit(
       scheduler, with a scheduler's failure modes, and can be driven from outside
       by calling this endpoint if it is ever wanted.
 
-    The reason is required and kept: the audit trail is the point.
+    The reason is optional; when given it is kept, since the audit trail is the point.
     """
     rule = await _load_rule(session, rule_id)
-    reset = QuotaReset(rule_id=rule.id, created_by=admin.id, reason=payload.reason)
+    reset = QuotaReset(rule_id=rule.id, created_by=admin.id, reason=payload.reason.strip())
     session.add(reset)
     await session.commit()
     await session.refresh(reset)
@@ -3175,7 +3175,7 @@ async def merge_user(
             target_id=body.into,
             actor_id=admin.id,
             actor_label=admin.email or "",
-            reason=body.reason,
+            reason=body.reason.strip(),
         )
     except MergeNotFound as exc:
         await session.rollback()
@@ -3785,7 +3785,7 @@ async def set_oidc_policy(
         unknown_user_policy=unknown,
         groups_claim=groups_claim,
         group_mappings=mappings,
-        reason=payload.reason,
+        reason=payload.reason.strip(),
         created_by=admin.id,
     )
     session.add(row)
@@ -4768,7 +4768,7 @@ async def create_redaction_rule(
         scope_id=payload.scope_id,
         policy=payload.policy.model_dump(mode="json"),
         is_active=payload.is_active,
-        reason=payload.reason,
+        reason=payload.reason.strip(),
         created_by=admin.id,
     )
     session.add(rule)

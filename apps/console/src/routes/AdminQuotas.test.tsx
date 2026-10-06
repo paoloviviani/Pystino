@@ -199,20 +199,48 @@ describe("AdminQuotas", () => {
     expect(within(dialog).getByText(/cannot be scheduled/)).toBeInTheDocument();
   });
 
-  it("will not submit a reset without a reason", async () => {
+  it("submits a reset with no reason: the field is optional", async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    vi.stubGlobal("fetch", routes([rule()]));
+    const fetchMock = routes([rule()]);
+    vi.stubGlobal("fetch", fetchMock);
     renderScreen(<AdminQuotas />);
 
     await waitFor(() => expect(screen.getByText("€31.40 of €50.00")).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "Reset" }));
 
     const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Reason (optional)")).toBeInTheDocument();
     const confirm = within(dialog).getByRole("button", { name: "Reset consumption" });
-    expect(confirm).toBeDisabled();
-
-    await user.type(within(dialog).getByLabelText("Reason"), "grant extension approved");
     expect(confirm).toBeEnabled();
+
+    await user.click(confirm);
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith("/reset") && init?.method === "POST",
+      );
+      expect(post).toBeDefined();
+      expect(JSON.parse(String(post![1]!.body))).toEqual({ reason: "" });
+    });
+  });
+
+  it("sends the reason when one is given", async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const fetchMock = routes([rule()]);
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen(<AdminQuotas />);
+
+    await waitFor(() => expect(screen.getByText("€31.40 of €50.00")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Reset" }));
+
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Reason (optional)"), "grant extension approved");
+    await user.click(within(dialog).getByRole("button", { name: "Reset consumption" }));
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).endsWith("/reset") && init?.method === "POST",
+      );
+      expect(JSON.parse(String(post![1]!.body))).toEqual({ reason: "grant extension approved" });
+    });
   });
 
   it("says plainly when nothing is capped", async () => {

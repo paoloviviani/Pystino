@@ -19,6 +19,7 @@ import pytest
 from gateway.config import OIDCSettings, Settings
 from gateway.deploy import admin as admin_module
 from gateway.deploy.admin import AdminCommandError, break_glass
+from gateway.deploy.cli import build_parser
 from gateway.deployment_state import get_or_create_deployment_state
 from gateway.directory.authelia_users import UsersFile
 from gateway.models import (
@@ -349,18 +350,33 @@ class TestAuditAndBootstrap:
         assert row.actor_type.value == "cli"
         assert row.detail == {"login_new": True}
 
-    async def test_reason_is_required(self, session: AsyncSession, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("reason", [None, "", "   "])
+    async def test_reason_is_optional(
+        self, session: AsyncSession, tmp_path: Path, reason: str | None
+    ) -> None:
         await _bundled_provider(session, tmp_path)
-        with pytest.raises(AdminCommandError, match="reason"):
-            await break_glass(
-                session,
-                NO_ENV_OIDC,
-                BOX,
-                email="ops@example.org",
-                login=None,
-                user_id=None,
-                reason="   ",
+        kwargs = {} if reason is None else {"reason": reason}
+        result = await break_glass(
+            session,
+            NO_ENV_OIDC,
+            BOX,
+            email="ops@example.org",
+            login=None,
+            user_id=None,
+            **kwargs,
+        )
+        assert result.login_created
+
+        row = (
+            await session.execute(
+                select(IdentityEvent).where(IdentityEvent.action == IdentityEventAction.BREAK_GLASS)
             )
+        ).scalar_one()
+        assert not row.reason
+
+    def test_the_cli_takes_break_glass_without_a_reason(self) -> None:
+        args = build_parser().parse_args(["break-glass", "--email", "ops@example.org"])
+        assert args.reason == ""
 
     async def test_the_password_is_never_logged(
         self, session: AsyncSession, tmp_path: Path, caplog: pytest.LogCaptureFixture

@@ -779,15 +779,21 @@ class TestAuditAndRecord:
         assert target.merged_at is not None
         assert target.sessions_valid_after is not None
 
-    async def test_a_reason_is_required(self, session: AsyncSession) -> None:
+    async def test_a_reason_is_optional(self, session: AsyncSession) -> None:
         source = await make_user(session)
         target = await make_user(session)
-        with pytest.raises(ValueError, match="requires a reason"):
-            await merge_users(
-                session,
-                source_id=source.id,
-                target_id=target.id,
-                actor_id=uuid.uuid4(),
-                actor_label="admin",
-                reason="",
+        await merge_users(
+            session,
+            source_id=source.id,
+            target_id=target.id,
+            actor_id=uuid.uuid4(),
+            actor_label="admin",
+        )
+        record = (await session.execute(select(UserMerge))).scalar_one()
+        assert not record.reason
+        event = (
+            await session.execute(
+                select(IdentityEvent).where(IdentityEvent.action == IdentityEventAction.USER_MERGE)
             )
+        ).scalar_one()
+        assert not event.reason

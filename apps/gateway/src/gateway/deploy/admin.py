@@ -140,7 +140,7 @@ async def break_glass(
     email: str,
     login: str | None,
     user_id: uuid.UUID | None,
-    reason: str,
+    reason: str = "",
 ) -> BreakGlassResult:
     """`pystino break-glass` (ADR 0093 §10), run inside the gateway container
     against the database and the `authelia-config` volume.
@@ -157,9 +157,6 @@ async def break_glass(
     only provider enabled flags (via the reseed above) and the target's
     admin/login state change, exactly as §10 promises.
     """
-    if not reason or not reason.strip():
-        raise AdminCommandError("--reason is required")
-
     await reseed_from_env(session, settings, secrets)
 
     normalized, _ = is_trusted_email(email)

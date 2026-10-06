@@ -510,7 +510,7 @@ async def merge_users(
     target_id: uuid.UUID,
     actor_id: uuid.UUID,
     actor_label: str,
-    reason: str,
+    reason: str = "",
 ) -> MergeSummary:
     """Runs the whole of ADR 0093 §7.1 in one transaction: identities, the
     per-table rules, the target's own admin flag and profile fallback, the

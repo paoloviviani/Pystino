@@ -519,7 +519,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
   );
 }
 
-/** Resetting requires a reason, and says plainly what a reset does not do. */
+/** Resetting takes an optional reason, and says plainly what a reset does not do. */
 function ResetDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () => void }) {
   const reset = useResetLimit();
   const toast = useOptionalToast();
@@ -551,7 +551,6 @@ function ResetDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () =>
           <Button
             variant="primary"
             busy={reset.isPending}
-            disabled={reason.trim().length < 3}
             onClick={submit}
           >
             Reset consumption
@@ -571,11 +570,11 @@ function ResetDialog({ rule, onClose }: { rule: LimitRule | null; onClose: () =>
       ) : null}
 
       <Input
-        label="Reason"
+        label="Reason (optional)"
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         placeholder="grant extension approved"
-        hint="Required and kept permanently."
+        hint="Kept permanently in the audit log when given."
       />
     </Dialog>
   );

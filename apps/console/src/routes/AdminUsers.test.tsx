@@ -947,7 +947,7 @@ describe("AdminUsers merge dialog", () => {
     expect(confirmButton).toBeDisabled();
 
     await user_.type(within(dialog).getByLabelText(/Type "/), "not the right address");
-    await user_.type(within(dialog).getByLabelText("Reason"), "same person");
+    await user_.type(within(dialog).getByLabelText("Reason (optional)"), "same person");
     expect(confirmButton).toBeDisabled();
 
     await user_.clear(within(dialog).getByLabelText(/Type "/));
@@ -963,7 +963,7 @@ describe("AdminUsers merge dialog", () => {
     });
   });
 
-  it("stays disabled with a matching confirmation but no reason", async () => {
+  it("merges with a matching confirmation and no reason", async () => {
     const user_ = userEvent.setup({ delay: null });
     const seen = { merges: [] as Record<string, unknown>[] };
     vi.stubGlobal("fetch", mergeRoutes(mergePreview(), seen));
@@ -982,8 +982,12 @@ describe("AdminUsers merge dialog", () => {
     await waitFor(() => expect(within(dialog).getByLabelText(/Type "/)).toBeInTheDocument());
     await user_.type(within(dialog).getByLabelText(/Type "/), "person-0@example.org");
 
-    expect(within(dialog).getByRole("button", { name: "Merge, irreversibly" })).toBeDisabled();
-    expect(seen.merges).toHaveLength(0);
+    const confirmButton = within(dialog).getByRole("button", { name: "Merge, irreversibly" });
+    expect(confirmButton).toBeEnabled();
+
+    await user_.click(confirmButton);
+    await waitFor(() => expect(seen.merges).toHaveLength(1));
+    expect(seen.merges[0]).toMatchObject({ confirm: "person-0@example.org", reason: "" });
   });
 });
 

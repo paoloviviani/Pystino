@@ -266,11 +266,11 @@ export function AdminRedactionRule() {
             placeholder="Rule name"
           />
           <input
-            aria-label="Reason"
+            aria-label="Reason (optional)"
             className={INPUT}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="Reason"
+            placeholder="Reason (optional)"
           />
           <div>
             <Button

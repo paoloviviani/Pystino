@@ -19,14 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.models import IdentityEvent, IdentityEventAction, IdentityEventActor
 
-#: These two are irreversible or run with nobody else watching: a merge moves
-#: another person's data with no undo but restoring a backup, and break-glass
-#: is what runs when normal recovery already failed. Neither leaves any other
-#: record of *why* it happened.
-_ACTIONS_REQUIRING_REASON = frozenset(
-    {IdentityEventAction.USER_MERGE, IdentityEventAction.BREAK_GLASS}
-)
-
 #: Per-action allowlist of `detail` keys. An action nothing calls yet keeps an
 #: empty set; the stage that first writes it adds the keys its call site
 #: needs, here, in the same commit — this dict is deliberately not filled in
@@ -130,9 +122,9 @@ async def record_event(
 
     Adds the row to `session` and flushes it, so the caller sees the same
     transaction rules as everything else it just wrote — the caller commits.
-    Raises `ValueError` for a `detail` key outside the action's allowlist, or a
-    missing `reason` on `user.merge` / `break_glass`, before anything is added
-    to the session.
+    Raises `ValueError` for a `detail` key outside the action's allowlist before
+    anything is added to the session. `reason` is optional for every action: it
+    is stripped, and a blank one is stored as NULL.
     """
     detail = dict(detail or {})
     allowed = DETAIL_ALLOWLIST[action]
@@ -141,8 +133,7 @@ async def record_event(
             f"identity_events detail for {action} may only contain {sorted(allowed)}, "
             f"got unexpected key(s) {sorted(extra)}"
         )
-    if action in _ACTIONS_REQUIRING_REASON and not (reason and reason.strip()):
-        raise ValueError(f"identity_events {action} requires a reason")
+    reason = (reason or "").strip() or None
 
     row = IdentityEvent(
         actor_type=actor_type,
