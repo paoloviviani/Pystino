@@ -14,6 +14,8 @@ import type {
   DeleteUserResult,
   IdentityEvent,
   LimitRule,
+  QuotaHealth,
+  QuotaReconcileResult,
   MergeInput,
   MergePreview,
   MergeResult,
@@ -63,6 +65,7 @@ export const adminKeys = {
   groups: ["admin", "groups"] as const,
   groupMembers: (groupId: string) => ["admin", "groups", groupId, "members"] as const,
   limits: ["admin", "limits"] as const,
+  quotaHealth: ["admin", "quota", "health"] as const,
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
   users: ["admin", "users"] as const,
   pendingErasures: ["admin", "erasures", "pending"] as const,
@@ -710,6 +713,25 @@ export function useDeleteLimit() {
   return useMutation({
     mutationFn: (id: string) => request<void>(`/api/admin/limits/${id}`, { method: "DELETE" }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.limits }),
+  });
+}
+
+export function useQuotaHealth() {
+  return useQuery({
+    queryKey: adminKeys.quotaHealth,
+    queryFn: () => request<QuotaHealth>("/api/admin/quota/health"),
+  });
+}
+
+/** Recompute every active rule's current window from the ledger. */
+export function useReconcileQuota() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => request<QuotaReconcileResult>("/api/admin/quota/reconcile", { method: "POST" }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.quotaHealth });
+      client.invalidateQueries({ queryKey: adminKeys.limits });
+    },
   });
 }
 

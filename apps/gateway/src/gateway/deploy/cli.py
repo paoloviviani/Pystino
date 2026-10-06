@@ -1,5 +1,5 @@
 """The `pystino` command line: bootstrap, release-pin, admin, break-glass,
-idp check, email export-env, erasure list/retry.
+idp check, email export-env, erasure list/retry, quota health.
 
 Every command takes its answers as flags so CI and scripts never meet a prompt.
 
@@ -220,6 +220,83 @@ def cmd_erasure_retry(args: argparse.Namespace) -> int:
     return asyncio.run(run())
 
 
+def cmd_quota_health(args: argparse.Namespace) -> int:
+    """Quota counters against the ledger, as JSON on stdout (the same figures as
+    ``GET /api/admin/quota/health``, without a browser session).
+
+    Read-only, and for ``cerea-deploy``'s ``tools/diagnose``, which runs it with
+    ``docker compose exec gateway`` so an operator can attach the result to a
+    report. Prints no secret: only rule names, ids and figures.
+    """
+    import asyncio
+    import json
+    from decimal import Decimal
+
+    from gateway.config import get_settings
+    from gateway.db import create_engine, create_session_factory
+    from gateway.quota import DatabaseCounterStore, InMemoryCounterStore, QuotaEngine
+    from gateway.quota.counters import ValkeyCounterStore
+
+    def plain(value: Decimal | None) -> str | None:
+        # Plain digits, never "1E-9": money is a string end to end.
+        return None if value is None else format(value, "f")
+
+    async def run() -> int:
+        settings = get_settings()
+        engine = create_engine(settings)
+        client = None
+        try:
+            store: object = InMemoryCounterStore()
+            if settings.valkey_url:
+                import redis.asyncio as redis_asyncio
+
+                client = redis_asyncio.from_url(settings.valkey_url, decode_responses=True)
+                store = ValkeyCounterStore(client)
+            factory = create_session_factory(engine)
+            quota = QuotaEngine(
+                store,  # type: ignore[arg-type]
+                settings=settings.quota,
+                fallback=DatabaseCounterStore(factory),
+                billing_timezone=settings.billing_timezone,
+            )
+            async with factory() as session:
+                health = await quota.health(session)
+        finally:
+            if client is not None:
+                await client.aclose()
+            await engine.dispose()
+        print(
+            json.dumps(
+                {
+                    "windows": [
+                        {
+                            "rule": w.rule.name,
+                            "rule_id": str(w.rule.id),
+                            "scope": w.rule.scope.value,
+                            "scope_id": str(w.rule.scope_id) if w.rule.scope_id else None,
+                            "metric": w.rule.metric.value,
+                            "window": w.rule.window_label,
+                            "window_id": w.window_id,
+                            "active": w.rule.is_active,
+                            "counter": plain(w.counter),
+                            "ledger": plain(w.ledger),
+                            "difference": plain(w.difference),
+                            "counter_ttl_seconds": w.counter_ttl_seconds,
+                            "stale_in_progress": w.stale_in_progress,
+                        }
+                        for w in health.windows
+                    ],
+                    "rebuild_lock_present": health.lock_present,
+                    "rebuild_lock_ttl_seconds": health.lock_ttl_seconds,
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    return asyncio.run(run())
+
+
 def cmd_release_pin(args: argparse.Namespace) -> int:
     from gateway.deploy import release
 
@@ -287,6 +364,13 @@ def build_parser() -> argparse.ArgumentParser:
     erasure_retry = erasure_sub.add_parser("retry", help="force one erasure's next attempt now")
     erasure_retry.add_argument("erasure_id")
     erasure_retry.set_defaults(func=cmd_erasure_retry)
+
+    quota = sub.add_parser("quota", help="quota counters")
+    quota_sub = quota.add_subparsers(dest="quota_command", required=True)
+    quota_health = quota_sub.add_parser(
+        "health", help="each rule's counter against the ledger, as JSON (read-only)"
+    )
+    quota_health.set_defaults(func=cmd_quota_health)
 
     return parser
 

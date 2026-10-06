@@ -84,6 +84,10 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     # this was, so the audit trail itself shows the cadence rather than just
     # a run of identical rows.
     IdentityEventAction.CHAT_ERASURE_RETRYING: frozenset({"attempts"}),
+    # `windows` is how many were recomputed, `corrected` how many of them
+    # changed: counts only, so the row says that drift was repaired and how
+    # much without carrying anyone's spend.
+    IdentityEventAction.QUOTA_RECONCILE: frozenset({"windows", "corrected"}),
 }
 
 #: Unconditional, whatever the action: the review's rule is "never a password,

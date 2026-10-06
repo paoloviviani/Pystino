@@ -34,7 +34,7 @@ from sqlalchemy.orm import selectinload
 
 from gateway.config import QuotaSettings
 from gateway.models import LimitMetric, LimitRule, LimitScope
-from gateway.periods import Period, PeriodKind, period_containing
+from gateway.periods import Period, period_containing
 from gateway.quota.counters import (
     CounterDelta,
     CounterStore,
@@ -53,21 +53,19 @@ logger = logging.getLogger(__name__)
 # QuotaEngine._verbose.
 _TRACEBACK_INTERVAL_SECONDS = 60.0
 
-# Presence of this key in the counter cache means "the cache still holds our
-# counters". It is lost exactly when the counters are. See
-# QuotaEngine.rebuild_if_cache_is_cold.
-_REBUILD_MARKER_KEY = "q:seeded"
+# Held for a minute by the one worker that rebuilds, so N workers starting together
+# run one ledger query between them. It is an election and nothing more: the
+# rebuild is a replace and so is idempotent, and whether the cache is cold is read
+# from the counters themselves, never from this key. (It used to be a permanent
+# "seeded" marker, and the marker was the bug: it was claimed only once a rule
+# existed, so counters written by live traffic after the first rule was created
+# looked cold at the next start and the ledger was added on top of them.)
+_REBUILD_LOCK_KEY = "q:rebuild-lock"
+_REBUILD_LOCK_SECONDS = 60
 
-# Approximate span of each calendar period, used only to size the rebuild marker's
-# TTL. Upper bounds on purpose: a marker that lives slightly too long is harmless,
-# one that expires early causes a needless rebuild.
-_CALENDAR_SPAN_SECONDS = {
-    PeriodKind.DAY: 86_400,
-    PeriodKind.WEEK: 7 * 86_400,
-    PeriodKind.MONTH: 31 * 86_400,
-    PeriodKind.QUARTER: 92 * 86_400,
-    PeriodKind.YEAR: 366 * 86_400,
-}
+# In-progress rows older than this are reported by the health view: a request does
+# not take half an hour, so one that has is a settle that never landed.
+_STALE_IN_PROGRESS_SECONDS = 30 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +184,37 @@ def _negate(delta: CounterDelta) -> CounterDelta:
         period=delta.period,
         reset_epoch=delta.reset_epoch,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class WindowHealth:
+    """One rule's current window as the counter and the ledger each see it."""
+
+    rule: LimitRule
+    window_id: str
+    counter: Decimal | None  # None: the counter store could not be read
+    ledger: Decimal
+    counter_ttl_seconds: int | None
+    stale_in_progress: int
+
+    @property
+    def difference(self) -> Decimal | None:
+        return None if self.counter is None else self.counter - self.ledger
+
+
+@dataclass(frozen=True, slots=True)
+class QuotaHealth:
+    windows: list[WindowHealth]
+    lock_present: bool
+    lock_ttl_seconds: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class Reconciled:
+    rule: LimitRule
+    window_id: str
+    before: Decimal
+    after: Decimal
 
 
 class QuotaEngine:
@@ -316,6 +345,33 @@ class QuotaEngine:
             for rule, total in zip(rules, totals, strict=True)
         }
 
+    def query_for(self, rule: LimitRule, moment: float) -> WindowQuery:
+        """The rule's current window as a counter query, reset watermark included."""
+        spec, period = self.window_for(rule, datetime.fromtimestamp(moment, tz=UTC))
+        return WindowQuery(
+            scope=ScopeRef(rule.scope, rule.scope_id),
+            metric=rule.metric,
+            spec=spec,
+            period=period,
+            reset_epoch=self.reset_epoch_for(rule),
+        )
+
+    async def _active_rules(self, session: AsyncSession) -> list[LimitRule]:
+        return list(
+            (
+                await session.execute(
+                    select(LimitRule)
+                    .where(LimitRule.is_active.is_(True))
+                    # Resets are read by query_for, and touching an unloaded
+                    # relationship from async code raises MissingGreenlet.
+                    .options(selectinload(LimitRule.resets))
+                    .execution_options(populate_existing=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
     async def seed_rule(self, rule: LimitRule, *, now: float | None = None) -> bool:
         """Prime a newly created rule's counter from the ledger.
 
@@ -335,17 +391,12 @@ class QuotaEngine:
             return False
 
         moment = now if now is not None else utcnow().timestamp()
-        spec, period = self.window_for(rule, datetime.fromtimestamp(moment, tz=UTC))
-        query = WindowQuery(
-            scope=ScopeRef(rule.scope, rule.scope_id),
-            metric=rule.metric,
-            spec=spec,
-            period=period,
-            reset_epoch=self.reset_epoch_for(rule),
-        )
+        query = self.query_for(rule, moment)
         try:
-            # Writes only if the ledger has something to write, so creating a rule
-            # for a scope with no history costs one query and no keys.
+            # A replace, so seeding is safe at any time: a rule created, edited or
+            # re-activated while its counter already carries traffic ends at the
+            # ledger's figure, not at the sum of both. A scope with no history
+            # costs one query and no keys.
             await self._fallback.rebuild_into(self._store, [query], now=moment)  # type: ignore[attr-defined]
         except Exception:
             logger.error(
@@ -360,7 +411,7 @@ class QuotaEngine:
     async def rebuild_if_cache_is_cold(
         self, session: AsyncSession, *, now: float | None = None
     ) -> bool:
-        """Repopulate the counter cache from the ledger if it looks freshly empty.
+        """Repopulate the counter cache from the ledger where it looks freshly empty.
 
         Why this exists, found by restarting Valkey under a running stack: the
         counter cache is disposable for *reads* — a failed read falls back to the
@@ -370,59 +421,55 @@ class QuotaEngine:
         cheerfully serves a group that is already over its limit. Observed: the
         ledger said €11.70 spent against a €10 ceiling while Valkey said €0.90.
 
-        The marker key is the trick. Its presence *in the cache* is a proxy for "the
-        cache still holds our data", because the two are lost together. So:
+        **Cold is read from the counters, per window: a counter that reads zero.**
+        This used to be a "seeded" marker key whose presence stood for "the cache
+        still holds our data", and it was wrong both ways. It was claimed only
+        when a rule already existed, so a deployment that created its first rule
+        and served traffic had counters and no marker; the next start took the
+        cache for cold and *added* the ledger onto the live counters, counting
+        everything since the rule was created twice (observed: €0.38 against a
+        ledger of €0.28). A marker is a second fact that has to be kept true in
+        step with the first, in every path that writes a counter; the counter is
+        the fact itself. Reading it cannot go stale, covers a partially lost
+        cache (one scope's keys expired or evicted, the rest intact) which the
+        marker could not, and needs no TTL sized to the longest window.
 
-        * fresh or wiped cache → marker absent → exactly one worker rebuilds;
-        * gateway restarted, cache intact → marker present → no rebuild, which is
-          correct because the counters are already right;
-        * buckets aged out naturally while the marker lived → no rebuild, also
-          correct, because that traffic is genuinely outside every window now.
+        Two things make a spurious rebuild harmless rather than merely rare: the
+        rebuild *replaces* (``CounterStore.replace``), so rebuilding a window
+        that was in fact warm gives the ledger's figure rather than a double;
+        and a window is rebuilt only where it reads zero, so a warm one is not
+        touched at all. A window with a zero counter and a zero ledger is
+        written as nothing, so an idle deployment costs one query per rule.
 
-        ``claim_once`` is atomic, so N workers starting together produce one rebuild
-        rather than N additive ones.
+        What this cannot see is a counter that is present but *wrong* — a stale
+        snapshot, a lost write. That is what :meth:`reconcile` is for.
 
-        Returns True if this process performed the rebuild.
+        ``claim_once`` elects one worker so N starting together run one ledger
+        query between them. It is an optimisation, not a safeguard.
+
+        Returns True if this process performed a rebuild, whether or not the
+        ledger had anything to write into the windows it found empty.
         """
         if not self._settings.enabled or self._fallback is None:
             return False
 
         moment = now if now is not None else utcnow().timestamp()
-
-        rules = list(
-            (
-                await session.execute(
-                    select(LimitRule)
-                    .where(LimitRule.is_active.is_(True))
-                    # Resets are read below, and touching an unloaded relationship
-                    # from async code raises MissingGreenlet — the same trap that
-                    # bit user provisioning once already.
-                    .options(selectinload(LimitRule.resets))
-                )
-            )
-            .scalars()
-            .all()
-        )
+        rules = await self._active_rules(session)
         if not rules:
             return False
 
-        # Generously longer than any window, so a rebuild happens only when the
-        # cache genuinely lost its contents rather than on every window rollover.
-        # A calendar rule has no window_seconds, so its span stands in — approximate
-        # is fine, this only sizes a TTL.
-        spans: list[int] = []
-        for rule in rules:
-            if rule.window_seconds is not None:
-                spans.append(rule.window_seconds)
-            elif rule.period is not None:
-                spans.append(_CALENDAR_SPAN_SECONDS[rule.period])
-            else:
-                # ck_limit_rules_one_window_kind forbids this; belt and braces.
-                spans.append(366 * 86_400)
-        marker_ttl = max(spans) * 4
-
+        queries = [self.query_for(rule, moment) for rule in rules]
         try:
-            claimed = await self._store.claim_once(_REBUILD_MARKER_KEY, ttl_seconds=marker_ttl)
+            current = await self._store.totals(queries, now=moment)
+            cold = [query for query, total in zip(queries, current, strict=True) if not total.units]
+            if not cold:
+                logger.debug("counter cache already warm; no rebuild needed")
+                return False
+            if not await self._store.claim_once(
+                _REBUILD_LOCK_KEY, ttl_seconds=_REBUILD_LOCK_SECONDS
+            ):
+                logger.debug("another worker is rebuilding the counter cache")
+                return False
         except Exception:
             logger.warning(
                 "could not check whether the counter cache is cold; skipping rebuild",
@@ -430,34 +477,122 @@ class QuotaEngine:
             )
             return False
 
-        if not claimed:
-            logger.debug("counter cache already warm; no rebuild needed")
-            return False
-
-        queries = [
-            WindowQuery(
-                scope=ScopeRef(rule.scope, rule.scope_id),
-                metric=rule.metric,
-                spec=spec,
-                period=period,
-                reset_epoch=self.reset_epoch_for(rule),
-            )
-            for rule in rules
-            for spec, period in [self.window_for(rule, utcnow())]
-        ]
-
         try:
-            await self._fallback.rebuild_into(self._store, queries, now=moment)  # type: ignore[attr-defined]
+            written = await self._fallback.rebuild_into(  # type: ignore[attr-defined]
+                self._store, cold, now=moment
+            )
         except Exception:
             logger.error("counter cache rebuild failed", exc_info=True)
             return False
 
-        logger.warning(
-            "counter cache was cold and has been rebuilt from the ledger "
-            "(%d rule scope(s)); quotas would otherwise have started from zero",
-            len(queries),
-        )
+        restored = sum(1 for total in written if total.units)
+        if restored:
+            logger.warning(
+                "counter cache was cold and has been rebuilt from the ledger "
+                "(%d window(s)); quotas would otherwise have started from zero",
+                restored,
+            )
         return True
+
+    async def reconcile(
+        self, session: AsyncSession, *, now: float | None = None
+    ) -> list[Reconciled]:
+        """Recompute every active rule's current window from the ledger, by replacing.
+
+        The repair for drift of any cause: a lost write, a stale snapshot, a
+        settle that never landed, the double count this module used to produce.
+        Same replace semantics as the cold-cache rebuild, so it is idempotent and
+        safe to run on a live system.
+
+        The trade-off, stated because it is the whole risk: the ledger is read,
+        then the counter is overwritten, and the two are not one transaction.
+        What happens in between is lost — an increment landing after the read
+        and a reservation held at that instant (counted by the counter, absent
+        from the ledger until it settles). The window is one ledger query long,
+        the loss is bounded by the traffic in flight over it, and it errs
+        *low*: the counter may briefly read under the truth, and the next
+        reconcile or the window rolling over repairs it. It never errs high, so
+        it cannot refuse a request that should have been admitted. Admission
+        keeps working throughout; nothing is locked.
+
+        Raises if the counter store cannot be written: a reconcile that silently
+        did nothing would report a repair it did not make.
+        """
+        if self._fallback is None:
+            raise QuotaUnavailable("no ledger to reconcile against")
+        moment = now if now is not None else utcnow().timestamp()
+        rules = await self._active_rules(session)
+        queries = [self.query_for(rule, moment) for rule in rules]
+        before = await self._store.totals(queries, now=moment)
+        written = await self._fallback.rebuild_into(  # type: ignore[attr-defined]
+            self._store, queries, now=moment
+        )
+        return [
+            Reconciled(
+                rule=rule,
+                window_id=query.window_id,
+                before=from_units(rule.metric, was.units),
+                after=from_units(rule.metric, now_.units),
+            )
+            for rule, query, was, now_ in zip(rules, queries, before, written, strict=True)
+        ]
+
+    async def health(self, session: AsyncSession, *, now: float | None = None) -> QuotaHealth:
+        """Read-only: each rule's current window, counter against ledger.
+
+        Reads only; nothing here writes a counter. A counter that cannot be read
+        is reported as unknown (``None``), never as zero, because "zero" is
+        exactly the confident wrong answer this view exists to catch.
+        """
+        if self._fallback is None:
+            raise QuotaUnavailable("no ledger to compare against")
+        moment = now if now is not None else utcnow().timestamp()
+        rules = list(
+            (
+                await session.execute(
+                    select(LimitRule)
+                    .options(selectinload(LimitRule.resets))
+                    .order_by(LimitRule.scope, LimitRule.metric)
+                    .execution_options(populate_existing=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        queries = [self.query_for(rule, moment) for rule in rules]
+        ledger = await self._fallback.totals(queries, now=moment)
+        stale = await self._fallback.stale_in_progress(  # type: ignore[attr-defined]
+            queries, now=moment, older_than_seconds=_STALE_IN_PROGRESS_SECONDS
+        )
+
+        counters: list[int | None] = [None] * len(queries)
+        ttls: list[int | None] = [None] * len(queries)
+        lock_present, lock_ttl = False, None
+        try:
+            counters = [t.units for t in await self._store.totals(queries, now=moment)]
+            ttls = await self._store.ttls(queries, now=moment)
+            lock_ttl = await self._store.key_ttl(_REBUILD_LOCK_KEY)
+            lock_present = lock_ttl is not None
+        except Exception:
+            logger.warning("counter store unreadable for the health view", exc_info=True)
+
+        return QuotaHealth(
+            windows=[
+                WindowHealth(
+                    rule=rule,
+                    window_id=query.window_id,
+                    counter=None if units is None else from_units(rule.metric, units),
+                    ledger=from_units(rule.metric, total.units),
+                    counter_ttl_seconds=ttl,
+                    stale_in_progress=count,
+                )
+                for rule, query, units, total, ttl, count in zip(
+                    rules, queries, counters, ledger, ttls, stale, strict=True
+                )
+            ],
+            lock_present=lock_present,
+            lock_ttl_seconds=lock_ttl,
+        )
 
     async def check_and_reserve(
         self,

@@ -329,6 +329,36 @@ export interface LimitRule {
   last_reset_at: string | null;
 }
 
+/** One rule's current window, counter against ledger (`GET /api/admin/quota/health`). */
+export interface QuotaWindowHealth {
+  rule_id: string;
+  rule_name: string;
+  scope: "global" | "group" | "user" | "api_key";
+  scope_id: string | null;
+  metric: "requests" | "tokens" | "cost" | "own_search_requests";
+  window_label: string;
+  is_active: boolean;
+  window_id: string;
+  /** Absent — not zero — when the counter store could not be read. */
+  counter_value: string | null;
+  ledger_total: string;
+  /** counter − ledger; positive means over-counted. */
+  difference: string | null;
+  counter_ttl_seconds: number | null;
+  stale_in_progress: number;
+}
+
+export interface QuotaHealth {
+  windows: QuotaWindowHealth[];
+  rebuild_lock_present: boolean;
+  rebuild_lock_ttl_seconds: number | null;
+}
+
+export interface QuotaReconcileResult {
+  reconciled: { rule_id: string; rule_name: string; window_id: string; before: string; after: string }[];
+  corrected: number;
+}
+
 export interface QuotaReset {
   id: string;
   rule_id: string;
