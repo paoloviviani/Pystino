@@ -25,6 +25,7 @@ from gateway.models import (
     LimitMetric,
     LimitRule,
     LimitScope,
+    QuotaReset,
     UsageRecord,
     UsageSource,
     UsageStatus,
@@ -32,6 +33,7 @@ from gateway.models import (
 )
 from gateway.periods import PeriodKind, parse_period
 from gateway.quota import DatabaseCounterStore, QuotaAmounts, QuotaExceeded, QuotaSubject
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
 from test_quota_engine import engine_for
@@ -723,8 +725,13 @@ class TestSeedingANewRule:
 
 
 class TestResetEndpoint:
-    async def test_a_reset_needs_a_reason(
-        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    @pytest.mark.parametrize("body", [{}, {"reason": ""}, {"reason": "   "}])
+    async def test_a_reset_needs_no_reason(
+        self,
+        admin_client: httpx.AsyncClient,
+        session: AsyncSession,
+        seeded: Seeded,
+        body: dict[str, str],
     ) -> None:
         rule = LimitRule(
             name="m",
@@ -737,12 +744,13 @@ class TestResetEndpoint:
         session.add(rule)
         await session.commit()
 
-        assert (
-            await admin_client.post(f"/api/admin/limits/{rule.id}/reset", json={})
-        ).status_code == 400
-        assert (
-            await admin_client.post(f"/api/admin/limits/{rule.id}/reset", json={"reason": ""})
-        ).status_code == 400
+        response = await admin_client.post(f"/api/admin/limits/{rule.id}/reset", json=body)
+        assert response.status_code == 200, response.text
+        assert response.json()["reason"] == ""
+
+        stored = (await session.execute(select(QuotaReset))).scalar_one()
+        assert stored.reason == ""
+        assert stored.created_by == seeded.user.id
 
     async def test_a_reset_records_who_and_why(
         self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded

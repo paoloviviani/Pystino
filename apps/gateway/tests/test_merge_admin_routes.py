@@ -15,8 +15,16 @@ from typing import Any
 import yaml
 from fastapi import FastAPI
 from gateway.deps import get_management_user
-from gateway.models import DirectoryEntry, IdentityProvider, User
+from gateway.models import (
+    DirectoryEntry,
+    IdentityEvent,
+    IdentityEventAction,
+    IdentityProvider,
+    User,
+    UserMerge,
+)
 from gateway.secrets import SecretBox
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 BOX = SecretBox(["test-encryption-key-not-for-production"])
@@ -170,6 +178,39 @@ class TestMergeEndpoint:
             remaining_target = await session.get(User, target.id)
             assert remaining_target is not None
             assert remaining_target.merged_at is not None
+
+    async def test_a_merge_needs_no_reason(
+        self,
+        app: FastAPI,
+        client: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        admin = await make_admin_caller(session_factory)
+        as_user(app, admin)
+        source = await make_user(
+            session_factory, email="source@example.org", issuer="https://idp.test", subject="s"
+        )
+        target = await make_user(
+            session_factory, email="target@example.org", issuer="https://idp.test", subject="t"
+        )
+
+        response = await client.post(
+            f"/api/admin/users/{source.id}/merge",
+            json={"into": str(target.id), "confirm": "source@example.org"},
+        )
+        assert response.status_code == 200, response.text
+
+        async with session_factory() as session:
+            merge_row = (await session.execute(select(UserMerge))).scalar_one()
+            assert not merge_row.reason
+            event = (
+                await session.execute(
+                    select(IdentityEvent).where(
+                        IdentityEvent.action == IdentityEventAction.USER_MERGE
+                    )
+                )
+            ).scalar_one()
+            assert not event.reason
 
     async def test_a_dropped_bundled_login_is_disabled_after_the_commit(
         self,

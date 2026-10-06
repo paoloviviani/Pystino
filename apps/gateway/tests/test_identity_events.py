@@ -67,28 +67,30 @@ class TestRecordEvent:
     @pytest.mark.parametrize(
         "action", [IdentityEventAction.USER_MERGE, IdentityEventAction.BREAK_GLASS]
     )
-    async def test_merge_and_break_glass_require_a_reason(
-        self, session: AsyncSession, action: IdentityEventAction
+    @pytest.mark.parametrize("reason", [None, "", "   "])
+    async def test_merge_and_break_glass_take_no_reason(
+        self, session: AsyncSession, action: IdentityEventAction, reason: str | None
     ) -> None:
-        with pytest.raises(ValueError, match="requires a reason"):
-            await record_event(
-                session,
-                actor_type=IdentityEventActor.USER,
-                actor_label="admin@example.org",
-                action=action,
-            )
+        row = await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_label="admin@example.org",
+            action=action,
+            reason=reason,
+        )
+        assert row.reason is None
 
-    async def test_a_blank_reason_is_not_a_reason(self, session: AsyncSession) -> None:
-        with pytest.raises(ValueError, match="requires a reason"):
-            await record_event(
-                session,
-                actor_type=IdentityEventActor.USER,
-                actor_label="admin@example.org",
-                action=IdentityEventAction.BREAK_GLASS,
-                reason="   ",
-            )
+    async def test_a_given_reason_is_stripped_and_kept(self, session: AsyncSession) -> None:
+        row = await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_label="admin@example.org",
+            action=IdentityEventAction.BREAK_GLASS,
+            reason="  lost every admin ",
+        )
+        assert row.reason == "lost every admin"
 
-    async def test_other_actions_do_not_require_a_reason(self, session: AsyncSession) -> None:
+    async def test_no_action_requires_a_reason(self, session: AsyncSession) -> None:
         row = await record_event(
             session,
             actor_type=IdentityEventActor.SYSTEM,

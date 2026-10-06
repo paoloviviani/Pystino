@@ -1445,7 +1445,9 @@ class MergeRequest(BaseModel):
 
     into: uuid.UUID
     confirm: str
-    reason: str = Field(min_length=1)
+    #: Optional. Kept in the audit trail when given; the typed ``confirm`` above
+    #: is the safeguard, not this.
+    reason: str = Field(default="", max_length=500)
 
 
 class MergeResponse(BaseModel):
@@ -1611,12 +1613,12 @@ class LimitRuleUpdateRequest(BaseModel):
 class LimitRuleResetRequest(BaseModel):
     """Set a rule's consumption back to zero, from now.
 
-    The reason is mandatory and stored: zeroing a spending cap is a financially
-    meaningful act, and "who raised whose budget, and why" is the first question
-    asked afterwards.
+    The reason is optional and stored when given: zeroing a spending cap is a
+    financially meaningful act, and "who raised whose budget, and why" is the
+    first question asked afterwards. The reset row records who and when either way.
     """
 
-    reason: str = Field(min_length=3, max_length=500)
+    reason: str = Field(default="", max_length=500)
 
 
 class QuotaResetResponse(BaseModel):
@@ -1849,10 +1851,7 @@ class RedactionEngineRequest(BaseModel):
     #: Independently enable Presidio named-entity recognition. Null preserves the
     #: detector deployment's default for compatibility.
     presidio_ner: bool | None = None
-    #: Required when the chosen engine redacts nothing, optional otherwise.
-    #: Checked in the route rather than here, because the rule depends on the
-    #: registry — which engines redact — and a schema that had to consult the
-    #: registry to validate one field would be the wrong place for it.
+    #: Optional for every engine, `noop` included; recorded when given.
     reason: str = Field(default="", max_length=500)
 
 

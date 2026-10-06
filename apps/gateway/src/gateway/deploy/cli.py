@@ -341,7 +341,7 @@ def build_parser() -> argparse.ArgumentParser:
     bg.add_argument("--email", required=True, help="the target account's address")
     bg.add_argument("--login", help="the bundled login name; default: derived from the email")
     bg.add_argument("--user-id", help="disambiguate when --email names several accounts")
-    bg.add_argument("--reason", required=True, help="why break-glass, for the audit row")
+    bg.add_argument("--reason", default="", help="why break-glass, for the audit row (optional)")
     bg.set_defaults(func=cmd_break_glass)
 
     idp = sub.add_parser("idp", help="identity provider diagnostics")

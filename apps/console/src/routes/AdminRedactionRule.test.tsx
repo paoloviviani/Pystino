@@ -379,7 +379,7 @@ describe("AdminRedactionRule", () => {
     expect(screen.getByText(/starts inactive/)).toBeInTheDocument();
 
     expect(screen.getByLabelText("Rule name")).toHaveValue("research group (copy)");
-    expect(screen.getByLabelText("Reason")).toHaveValue("handles patient data");
+    expect(screen.getByLabelText("Reason (optional)")).toHaveValue("handles patient data");
     expect(
       await within(screen.getByRole("group", { name: /PERSON/ })).findByRole("radio", {
         name: "Restore",

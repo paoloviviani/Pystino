@@ -153,7 +153,8 @@ must not raise a ceiling someone else set.
   alone does **not** reset spent quota: clear both `usage_records` and the
   counters, or let the gateway restart and rebuild.
 - An admin reset (`POST /api/admin/limits/{id}/reset`) zeroes a quota's
-  *consumption* and requires a reason; billing history is never touched.
+  *consumption*; a reason is optional and recorded in the audit log when given.
+  Billing history is never touched.
 
 ### Rebuilds replace; they never add
 

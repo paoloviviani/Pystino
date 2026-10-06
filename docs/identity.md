@@ -200,7 +200,7 @@ providers moves through a merge or break-glass instead, never a link.
 identities, memberships, model access, keys, spend history and rules onto
 another, in one transaction. An identity both accounts hold at one issuer is
 dropped, and named in the preview. The confirmation asks you to type the
-source's address, and a reason. The merge is irreversible: the undo is the
+source's address, and optionally a reason (recorded in the audit log when given). The merge is irreversible: the undo is the
 backup taken before it.
 
 **Delete** on the Users page erases the person everywhere, chat included: the
@@ -254,7 +254,7 @@ docker compose run --rm --no-deps gateway pystino break-glass \
   --email you@example.org --reason "…"
 ```
 
-`--reason` is required and lands in the audit trail. The command finds or
+`--reason` is optional; it is recorded in the audit log when given. The command finds or
 creates the account with that email, creates or re-enables their bundled
 login, grants admin (as `manual`, so no rule can take it back) and prints a
 one-time password once, to stdout, never to logs. Users, memberships, data and
@@ -283,7 +283,7 @@ not up:
 
 | Command | What it does |
 |---|---|
-| `pystino break-glass --email <address> --reason "<why>" [--login <name>]` | recover admin access when nobody can administer: find or create the account with that email, create or re-enable their bundled login, grant admin, and print a one-time password — once, to stdout, never to logs. Users, memberships, data and chat records are untouched. When the email names several accounts, it lists them and takes `--user-id`. |
+| `pystino break-glass --email <address> [--reason "<why>"] [--login <name>]` | recover admin access when nobody can administer: find or create the account with that email, create or re-enable their bundled login, grant admin, and print a one-time password — once, to stdout, never to logs. Users, memberships, data and chat records are untouched. When the email names several accounts, it lists them and takes `--user-id`. |
 | `pystino admin grant\|revoke <email> [--issuer <url>]` | the ordinary grant or revoke for someone who can already sign in (the account must exist, and an email held at several issuers needs `--issuer`); a revoke that would leave no active administrator is refused |
 | `pystino idp check [--discovery-only\|--device\|--token <jwt>] [--issuer <url>]` | probe the configured issuer: discovery and JWKS, and — with `--device`, which prints a URL to sign in at, or `--token`, which validates a pasted access token — the `sub`, the email and `email_verified` with its JSON type, the groups claim, the audience and client, and whether each admin rule would grant; exits non-zero when discovery fails, the audience is wrong, or no rule would grant |
 | `pystino erasure list` | the pending chat erasures: id, user, attempts, next attempt, last error |

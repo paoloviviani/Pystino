@@ -1816,9 +1816,8 @@ class IdentityEvent(Base):
     #: Per-action allowlisted keys only — enforced by `record_event`, never by
     #: this column. Never a password, digest, token or secret.
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default=text("'{}'"))
-    #: An operator's stated reason. Optional in general; `record_event`
-    #: requires it for `user.merge` and `break_glass`, where it is the only
-    #: record of *why* an irreversible or emergency action happened.
+    #: An operator's stated reason. Optional for every action; `record_event`
+    #: stores a blank one as NULL.
     reason: Mapped[str | None] = mapped_column(Text, default=None)
 
     def __repr__(self) -> str:

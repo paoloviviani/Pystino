@@ -247,7 +247,7 @@ def main() -> int:
     status, _ = api(
         dave, f"/api/admin/limits/{rule['id']}/reset", method="POST", json_body={"reason": ""}
     )
-    expect("a reset without a reason is refused", status == 400, f"HTTP {status}")
+    expect("a reset without a reason is accepted", status == 200, f"HTTP {status}")
 
     print()
     print("=== a non-admin sees only their own spend ===")

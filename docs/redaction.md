@@ -57,8 +57,8 @@ Installed engines are described by a registry; which one runs is an admin
 decision stored on an append-only `redaction_config` row. `RedactionResolver`
 polls it every 10 seconds, so a change reaches every worker without a restart
 and without a query on the request path. Switching to an engine that redacts
-*less* than the current one requires a written reason, kept permanently — the
-row is append-only, so the history of that decision survives.
+*less* than the current one takes an optional reason, kept permanently when
+given — the row is append-only, so the history of that decision survives.
 
 The shipped default is `noop`, which redacts nothing. Redaction being **on**
 must be a choice somebody made, never a default someone forgot about.

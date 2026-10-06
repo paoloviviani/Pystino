@@ -167,6 +167,21 @@ class TestTheRoute:
         response = await client.put(ENGINE_URL, json={"engine": "noop", "reason": "   "})
         assert response.status_code == 200
         assert response.json()["engine"] == "noop"
+        assert response.json()["configured"]["reason"] == ""
+
+    async def test_the_reason_may_be_omitted_altogether(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session: AsyncSession,
+        session_factory: object,
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))  # type: ignore[arg-type]
+        response = await client.put(ENGINE_URL, json={"engine": "noop"})
+        assert response.status_code == 200, response.text
+        row = (await session.execute(select(RedactionConfig))).scalar_one()
+        assert row.reason == ""
 
     async def test_a_reason_is_still_kept_when_one_is_given(
         self, app: object, client: httpx.AsyncClient, seeded: Seeded, session_factory: object

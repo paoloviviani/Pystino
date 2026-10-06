@@ -401,6 +401,23 @@ class TestOidcPolicyEndpoints:
         fetched = await client.get("/api/admin/oidc/policy", headers=admin_session)
         assert fetched.json()["auto_provision"] is False
 
+    async def test_put_needs_no_reason(
+        self,
+        client: httpx.AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        seeded: Any,
+        admin_session: dict[str, str],
+    ) -> None:
+        response = await client.put(
+            "/api/admin/oidc/policy", json={"auto_provision": False}, headers=admin_session
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["configured"]["reason"] == ""
+
+        async with session_factory() as session:
+            row = (await session.execute(select(OIDCPolicyConfig))).scalar_one()
+            assert row.reason == ""
+
     async def test_unknown_user_policy_requires_provisioning_off(
         self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]
     ) -> None:
