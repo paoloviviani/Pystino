@@ -155,6 +155,55 @@ must not raise a ceiling someone else set.
 - An admin reset (`POST /api/admin/limits/{id}/reset`) zeroes a quota's
   *consumption* and requires a reason; billing history is never touched.
 
+### Rebuilds replace; they never add
+
+Every path that fills a counter from the ledger (the start-up rebuild, seeding
+a new or re-activated rule, and reconcile) **sets** the counter to the
+ledger's figure. A calendar counter is overwritten with the period's own TTL;
+a rolling window has the buckets it reads deleted and the total written into the
+newest one. Because it is an overwrite, running it twice, or on a counter that
+is already right, changes nothing. (An earlier version added the ledger onto
+the counter, so a restart counted everything since the rule was created twice.)
+
+**Cold is read from the counters, not from a marker.** At start-up each active
+rule's current window is read; a window whose counter reads zero is rebuilt from
+the ledger and a window with a value is left alone. One worker is elected with a
+60-second `q:rebuild-lock` so N workers starting together run one ledger query,
+but nothing depends on the election. There is no permanent "seeded" marker any
+more: it was a second fact to keep true alongside the counters and it was not.
+An idle deployment costs one query per rule and writes nothing.
+
+**What a replace can lose.** The ledger is read, then the counter written; they
+are not one transaction and nothing is locked, so admission keeps working. An
+increment landing between the two, and a reservation in flight at that instant
+(counted by the counter, absent from the ledger until it settles), are
+overwritten. The window is one ledger query long, the loss is bounded by the
+traffic in flight over it, and it errs *low*, never high, so it cannot refuse a
+request that should have been admitted. The next reconcile or the window rolling
+over repairs it.
+
+### Quota health and reconcile
+
+`GET /api/admin/quota/health` (admin only, read-only) lists every rule's
+current window: the counter value, the ledger total, the **difference**
+(counter − ledger; positive means over-counted, which refuses early), the TTL of
+the counter key, the number of rows still `in_progress` after 30 minutes
+(excluded from the ledger total, and the first suspect for a difference), and
+whether the rebuild lock is held. A counter the store cannot read is reported as
+`null`, never as zero. The same figures are the **Quota health** panel on the
+Quotas page of the console. Without a browser session, `docker compose exec
+gateway pystino quota health` prints the same figures as JSON; it is what
+cerea-deploy's `tools/diagnose` attaches to a report.
+
+`POST /api/admin/quota/reconcile` (the panel's **Reconcile** button) recomputes
+every *active* rule's current window from the ledger with the replace semantics
+above and returns each window's before and after. It is recorded in the audit
+trail as `quota.reconcile` with the counts of windows and of windows corrected,
+and no figures. It is not run on a timer: drift should be rare now, and a
+periodic overwrite would trade a rare, visible, repairable difference for a
+steady small loss of in-flight traffic. Run it when the health panel shows a
+difference.
+
 ## Reconciliation
 
 The reports can compare our ledger against a provider's own dashboard, row by

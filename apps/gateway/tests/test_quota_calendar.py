@@ -439,7 +439,11 @@ class TestResets:
             period=PeriodKind.MONTH,
             limit="5",
         )
-        await spend(session, group_id=group.id, cost="9")
+        # Minutes old, not now: a reset's watermark is a whole second, so spend
+        # recorded in the same second as the reset still counts after it.
+        await spend(
+            session, group_id=group.id, cost="9", at=datetime.now(UTC) - timedelta(minutes=2)
+        )
 
         session.add(QuotaReset(rule_id=rule.id, reason="wipe test"))
         await session.commit()

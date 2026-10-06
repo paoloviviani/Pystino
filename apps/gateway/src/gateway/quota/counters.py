@@ -178,13 +178,48 @@ class CounterStore(Protocol):
         """
         ...
 
+    async def replace(self, values: Sequence[CounterDelta], *, now: float) -> None:
+        """Make each window hold exactly ``value.units``, whatever it held before.
+
+        The only write a rebuild may use. ``apply`` *adds*, and a rebuild that
+        adds the ledger total onto a counter that already carries live traffic
+        counts that traffic twice (found in production: €0.38 against a ledger
+        of €0.28). Here the ``units`` of each entry are the absolute figure, not
+        a change, and a rebuild is therefore idempotent: N workers, or the same
+        worker twice, write the same number.
+
+        * calendar window: the one counter is set, with the period's own TTL;
+        * rolling window: every bucket the window reads is deleted and the total
+          goes into the newest one;
+        * zero deletes, never writes a zero, so a scope with no history costs no
+          keys.
+
+        Not atomic with the ledger read the caller took the figure from, and
+        that is the accepted trade-off: an increment that lands between that
+        read and this write is overwritten, and a reservation in flight at that
+        instant (counted here, invisible to the ledger until it settles) is
+        dropped, so its later settle subtracts a reservation the counter no
+        longer holds. Both are bounded by what was in flight for the length of
+        one ledger query, err towards *under*-counting, and are repaired by the
+        next reconcile; see ``QuotaEngine.reconcile``.
+        """
+        ...
+
     async def claim_once(self, key: str, *, ttl_seconds: int) -> bool:
         """Atomically claim *key*, returning True only for the first caller.
 
-        Used to elect a single worker to rebuild a cold cache. Must be atomic
-        across processes, or every worker rebuilds and their writes sum to N times
-        the real total.
+        Used to elect one worker to rebuild a cold cache, so that N workers
+        starting together run one ledger query between them rather than N.
+        Correctness does not depend on it, because ``replace`` is idempotent.
         """
+        ...
+
+    async def key_ttl(self, key: str) -> int | None:
+        """Seconds left on *key*; ``-1`` if it never expires, ``None`` if absent."""
+        ...
+
+    async def ttls(self, queries: Sequence[WindowQuery], *, now: float) -> list[int | None]:
+        """Seconds left on each window's newest counter key, ``None`` if absent."""
         ...
 
 
@@ -332,6 +367,55 @@ class ValkeyCounterStore:
         )
         return bool(claimed)
 
+    async def key_ttl(self, key: str) -> int | None:
+        raw = int(await self._client.ttl(key))  # type: ignore[attr-defined]
+        return None if raw == -2 else raw
+
+    async def ttls(self, queries: Sequence[WindowQuery], *, now: float) -> list[int | None]:
+        if not queries:
+            return []
+        pipe = self._client.pipeline(transaction=False)  # type: ignore[attr-defined]
+        for query in queries:
+            if query.period is not None:
+                key = self._key(query.scope, query.metric, query.window_id, query.reset_epoch)
+            else:
+                assert query.spec is not None
+                key = self._key(
+                    query.scope,
+                    query.metric,
+                    query.window_id,
+                    query.reset_epoch,
+                    query.spec.bucket_index(now),
+                )
+            pipe.ttl(key)
+        return [None if int(raw) == -2 else int(raw) for raw in await pipe.execute()]
+
+    async def replace(self, values: Sequence[CounterDelta], *, now: float) -> None:
+        if not values:
+            return
+        # MULTI/EXEC, so a concurrent reader sees the window before or after the
+        # replacement and never half of it (buckets deleted, total not yet
+        # written), which would read as an empty window and admit a request.
+        pipe = self._client.pipeline(transaction=True)  # type: ignore[attr-defined]
+        for value in values:
+            if value.period is not None:
+                key, ttl = self._delta_key(value, now=now)
+                if value.units > 0:
+                    pipe.set(key, value.units, ex=ttl)
+                else:
+                    pipe.delete(key)
+                continue
+            assert value.spec is not None
+            stale = [
+                self._key(value.scope, value.metric, value.window_id, value.reset_epoch, index)
+                for index in value.spec.indices_for(now)
+            ]
+            pipe.delete(*stale)
+            if value.units > 0:
+                key, ttl = self._delta_key(value, now=now)
+                pipe.set(key, value.units, ex=ttl)
+        await pipe.execute()
+
     async def apply(self, deltas: Sequence[CounterDelta], *, now: float) -> None:
         if not deltas:
             return
@@ -372,7 +456,8 @@ class DatabaseCounterStore:
         async with self._session_factory() as session:
             return [await self._one(session, query, now) for query in queries]
 
-    async def _one(self, session: AsyncSession, query: WindowQuery, now: float) -> WindowTotal:
+    @staticmethod
+    def _bounds(query: WindowQuery, now: float) -> tuple[datetime, datetime | None]:
         if query.period is not None:
             since, until = query.period.start, query.period.end
         else:
@@ -386,7 +471,10 @@ class DatabaseCounterStore:
         if query.reset_epoch:
             watermark = datetime.fromtimestamp(query.reset_epoch, tz=UTC)
             since = max(since, watermark)
+        return since, until
 
+    async def _one(self, session: AsyncSession, query: WindowQuery, now: float) -> WindowTotal:
+        since, until = self._bounds(query, now)
         stmt = self._select_for(query, since, until)
         value = (await session.execute(stmt)).scalar_one_or_none()
         if value is None:
@@ -422,6 +510,10 @@ class DatabaseCounterStore:
             # Half-open, so consecutive periods neither overlap nor leave a gap.
             stmt = stmt.where(UsageRecord.created_at < until)
 
+        return self._scoped(stmt, query)
+
+    @staticmethod
+    def _scoped(stmt: Select[tuple[Any]], query: WindowQuery) -> Select[tuple[Any]]:
         match query.scope.scope:
             case LimitScope.GROUP:
                 stmt = stmt.where(UsageRecord.group_id == query.scope.scope_id)
@@ -494,29 +586,69 @@ class DatabaseCounterStore:
         # rebuilding into.
         return False
 
+    async def replace(self, values: Sequence[CounterDelta], *, now: float) -> None:
+        # Derived from usage_records: there is nothing to overwrite.
+        return None
+
+    async def key_ttl(self, key: str) -> int | None:
+        return None
+
+    async def ttls(self, queries: Sequence[WindowQuery], *, now: float) -> list[int | None]:
+        return [None for _ in queries]
+
+    async def stale_in_progress(
+        self, queries: Sequence[WindowQuery], *, now: float, older_than_seconds: int
+    ) -> list[int]:
+        """Per window, rows still ``in_progress`` after *older_than_seconds*.
+
+        These are the rows the ledger total excludes and a counter may still
+        carry (a reservation whose settle never landed), so they are the first
+        thing to look at when the two disagree.
+        """
+        cutoff = datetime.fromtimestamp(now - older_than_seconds, tz=UTC)
+        counts: list[int] = []
+        async with self._session_factory() as session:
+            for query in queries:
+                since, until = self._bounds(query, now)
+                stmt = select(func.count(UsageRecord.id)).where(
+                    UsageRecord.created_at >= since,
+                    UsageRecord.created_at < cutoff,
+                    UsageRecord.status == UsageStatus.IN_PROGRESS,
+                )
+                if until is not None:
+                    stmt = stmt.where(UsageRecord.created_at < until)
+                counts.append(int((await session.execute(self._scoped(stmt, query))).scalar_one()))
+        return counts
+
     async def rebuild_into(
         self,
         target: CounterStore,
         queries: Sequence[WindowQuery],
         *,
         now: float | None = None,
-    ) -> None:
-        """Repopulate *target* from the ledger.
+    ) -> list[WindowTotal]:
+        """Make *target* hold exactly what the ledger says for each window.
 
-        Run this after losing the counter cache. It writes each window's exact
-        total into the newest bucket rather than reconstructing history bucket by
-        bucket: the total is then correct now, and self-corrects as the
-        artificially-placed traffic ages out of the window.
+        Replaces, never adds. The first version of this called ``apply``, which
+        is an INCRBY: run against a counter that already carried live traffic it
+        counted that traffic twice. A rebuild is meant to be repeatable, and
+        only an overwrite is.
+
+        The total goes into the newest bucket rather than being spread over
+        history bucket by bucket: it is then correct now, and self-corrects as
+        the artificially-placed traffic ages out of the window.
+
+        Returns the totals it wrote, so a caller can report them.
         """
         moment = now if now is not None else utcnow().timestamp()
         totals = await self.totals(queries, now=moment)
-        deltas = [
-            # Every field of the window travels with the delta. Dropping `period`
-            # here made the rebuilt delta look rolling-with-no-spec, which failed for
-            # calendar rules; dropping `reset_epoch` would have written the total
-            # under the pre-reset key and quietly restored consumption a reset had
-            # cleared. Both are the kind of failure that only shows up in the hour
-            # after losing the cache.
+        values = [
+            # Every field of the window travels with the value. Dropping `period`
+            # made it look rolling-with-no-spec, which failed for calendar rules;
+            # dropping `reset_epoch` would have written the total under the
+            # pre-reset key and quietly restored consumption a reset had cleared.
+            # Both are the kind of failure that only shows up in the hour after
+            # losing the cache.
             CounterDelta(
                 scope=query.scope,
                 metric=query.metric,
@@ -526,9 +658,9 @@ class DatabaseCounterStore:
                 reset_epoch=query.reset_epoch,
             )
             for query, total in zip(queries, totals, strict=True)
-            if total.units
         ]
-        await target.apply(deltas, now=moment)
+        await target.replace(values, now=moment)
+        return totals
 
 
 class InMemoryCounterStore:
@@ -548,6 +680,27 @@ class InMemoryCounterStore:
             return False
         self._claims.add(key)
         return True
+
+    async def key_ttl(self, key: str) -> int | None:
+        return -1 if key in self._claims else None
+
+    async def ttls(self, queries: Sequence[WindowQuery], *, now: float) -> list[int | None]:
+        # No expiry clock here; ``expire_before`` stands in for it in tests.
+        return [-1 if self._totals([q], now=now)[0].units else None for q in queries]
+
+    async def replace(self, values: Sequence[CounterDelta], *, now: float) -> None:
+        for value in values:
+            slot = self._slot(value.scope, value.metric, value.window_id, value.reset_epoch)
+            if value.period is not None:
+                slot.clear()
+                if value.units > 0:
+                    slot[0] = value.units
+                continue
+            assert value.spec is not None
+            for index in value.spec.indices_for(now):
+                slot.pop(index, None)
+            if value.units > 0:
+                slot[value.spec.bucket_index(now)] = value.units
 
     def _slot(
         self, scope: ScopeRef, metric: LimitMetric, window_id: str, reset: int

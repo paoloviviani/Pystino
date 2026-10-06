@@ -148,6 +148,7 @@ from gateway.pricing import (
     fill_missing_prices as fill_prices_from_community,
 )
 from gateway.providers import ProviderConfigurationError
+from gateway.quota import QuotaUnavailable
 from gateway.redaction import Redactor
 from gateway.redaction import registry as redaction_registry
 from gateway.redaction.http import apply_spans
@@ -207,7 +208,11 @@ from gateway.schemas import (
     ProviderResponse,
     ProviderTestResponse,
     ProviderUpdateRequest,
+    QuotaHealthResponse,
+    QuotaReconcileEntry,
+    QuotaReconcileResponse,
     QuotaResetResponse,
+    QuotaWindowHealth,
     RedactionActivity,
     RedactionConfigChange,
     RedactionEngineOption,
@@ -2118,6 +2123,85 @@ async def list_limits(
     return page.slice([_limit_response(rule, current.get(rule.id)) for rule in rules])
 
 
+@router.get("/quota/health", response_model=QuotaHealthResponse)
+async def quota_health(
+    admin: AdminUserDep, session: SessionDep, quota: QuotaDep
+) -> QuotaHealthResponse:
+    """Each rule's current window, as the counter and as the ledger see it.
+
+    Read-only. The difference is the thing to look at: the ledger is the
+    truth and the counter a cache of it, so a non-zero difference is drift,
+    and ``POST /quota/reconcile`` is the repair. Carries no secrets: no key
+    names, no connection details, only figures and the ids the limits page
+    already lists.
+    """
+    try:
+        health = await quota.health(session)
+    except QuotaUnavailable as exc:
+        raise ServiceUnavailableError(str(exc)) from exc
+    return QuotaHealthResponse(
+        windows=[
+            QuotaWindowHealth(
+                rule_id=w.rule.id,
+                rule_name=w.rule.name,
+                scope=w.rule.scope.value,
+                scope_id=w.rule.scope_id,
+                metric=w.rule.metric.value,
+                window_label=w.rule.window_label,
+                is_active=w.rule.is_active,
+                window_id=w.window_id,
+                counter_value=w.counter,
+                ledger_total=w.ledger,
+                difference=w.difference,
+                counter_ttl_seconds=w.counter_ttl_seconds,
+                stale_in_progress=w.stale_in_progress,
+            )
+            for w in health.windows
+        ],
+        rebuild_lock_present=health.lock_present,
+        rebuild_lock_ttl_seconds=health.lock_ttl_seconds,
+    )
+
+
+@router.post("/quota/reconcile", response_model=QuotaReconcileResponse)
+async def quota_reconcile(
+    admin: AdminUserDep, session: SessionDep, quota: QuotaDep
+) -> QuotaReconcileResponse:
+    """Recompute every active rule's current window from the ledger.
+
+    Replaces the counters, never adds to them, so it is idempotent and safe on
+    a live system. What it can lose, and why that is acceptable, is written on
+    ``QuotaEngine.reconcile``. Audited as ``quota.reconcile``.
+    """
+    try:
+        done = await quota.reconcile(session)
+    except QuotaUnavailable as exc:
+        raise ServiceUnavailableError(str(exc)) from exc
+    corrected = sum(1 for entry in done if entry.before != entry.after)
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.QUOTA_RECONCILE,
+        detail={"windows": len(done), "corrected": corrected},
+    )
+    await session.commit()
+    return QuotaReconcileResponse(
+        reconciled=[
+            QuotaReconcileEntry(
+                rule_id=entry.rule.id,
+                rule_name=entry.rule.name,
+                window_id=entry.window_id,
+                before=entry.before,
+                after=entry.after,
+            )
+            for entry in done
+        ],
+        corrected=corrected,
+    )
+
+
 @router.post("/limits", response_model=LimitRuleResponse, status_code=status.HTTP_201_CREATED)
 async def create_limit(
     payload: LimitRuleCreateRequest, admin: AdminUserDep, session: SessionDep, quota: QuotaDep
@@ -2208,10 +2292,17 @@ async def update_limit(
     abandon the consumption recorded so far and read as a quota that reset itself.
     """
     rule = await _load_rule(session, rule_id)
+    was_active = rule.is_active
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(rule, field, value)
     await session.commit()
     await session.refresh(rule, attribute_names=["resets"])
+    if rule.is_active and not was_active:
+        # An inactive rule's counter is not maintained (only metrics an active
+        # rule watches get written), so re-activating one would read whatever
+        # was left. Replace it from the ledger; seeding is a replace, so this
+        # cannot double anything.
+        await quota.seed_rule(rule)
     current = await quota.current_values([rule])
     return _limit_response(rule, current.get(rule.id))
 

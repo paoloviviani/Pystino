@@ -699,6 +699,51 @@ class LimitRuleResponse(BaseModel):
     last_reset_at: datetime | None = None
 
 
+class QuotaWindowHealth(BaseModel):
+    """One rule's current window, counter against ledger (``GET /quota/health``)."""
+
+    rule_id: uuid.UUID
+    rule_name: str
+    scope: str
+    scope_id: uuid.UUID | None
+    metric: str
+    window_label: str
+    is_active: bool
+    # What the counter key is called for this window ("g3600", "p2026-10"), so an
+    # operator can find it in Valkey. The key itself is not returned.
+    window_id: str
+    # Null when the counter store could not be read: unknown, not zero.
+    counter_value: Money | None
+    ledger_total: Money
+    # counter - ledger. Positive means over-counted, which refuses early.
+    difference: Money | None
+    counter_ttl_seconds: int | None
+    # Rows in this window still in_progress after 30 minutes: excluded from
+    # the ledger total, and the first suspect when the two disagree.
+    stale_in_progress: int
+
+
+class QuotaHealthResponse(BaseModel):
+    windows: list[QuotaWindowHealth]
+    # The short-lived election key one worker holds while rebuilding a cold
+    # cache. Absent in normal running; there is no longer a permanent marker.
+    rebuild_lock_present: bool
+    rebuild_lock_ttl_seconds: int | None
+
+
+class QuotaReconcileEntry(BaseModel):
+    rule_id: uuid.UUID
+    rule_name: str
+    window_id: str
+    before: Money
+    after: Money
+
+
+class QuotaReconcileResponse(BaseModel):
+    reconciled: list[QuotaReconcileEntry]
+    corrected: int
+
+
 class MyLimitResponse(BaseModel):
     """One quota rule that constrains the caller, and how much of it is spent.
 

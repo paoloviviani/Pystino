@@ -1696,6 +1696,10 @@ class IdentityEventAction(enum.StrEnum):
     # once, at the request that started it.
     CHAT_ERASURE_DONE = "chat.erasure_done"
     CHAT_ERASURE_RETRYING = "chat.erasure_retrying"
+    # An administrator recomputed every active quota counter from the ledger.
+    # Not an identity change, but this is the repository's one append-only
+    # trail of administrator actions that override what the system believes.
+    QUOTA_RECONCILE = "quota.reconcile"
 
 
 #: Raised by both dialects' triggers, so a caller sees the same reason whether

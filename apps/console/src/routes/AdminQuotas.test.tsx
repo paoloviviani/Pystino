@@ -35,12 +35,15 @@ function rule(overrides: Partial<LimitRule> = {}): LimitRule {
   };
 }
 
-function routes(rules: LimitRule[]) {
+function routes(rules: LimitRule[], health: unknown = { windows: [] }) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     let payload: unknown = [];
     if (url.includes("/api/admin/limits") && url.includes("/resets")) payload = [];
+    else if (url.includes("/api/admin/quota/health")) payload = health;
+    else if (url.includes("/api/admin/quota/reconcile") && method === "POST")
+      payload = { reconciled: [], corrected: 1 };
     else if (url.includes("/api/admin/limits") && method === "GET") payload = rules;
     else if (url.includes("/api/admin/groups")) payload = [{ id: "g1", name: "research", description: null, source: "idp", is_active: true, member_count: 3, models: [] }];
     else if (url.includes("/api/admin/users")) payload = [];
@@ -219,5 +222,67 @@ describe("AdminQuotas", () => {
     await waitFor(() =>
       expect(screen.getByText("No quota rules. Nothing is capped.")).toBeInTheDocument(),
     );
+  });
+
+  describe("quota health", () => {
+    const drifted = {
+      windows: [
+        {
+          rule_id: "r1",
+          rule_name: "research monthly",
+          scope: "group",
+          scope_id: "g1",
+          metric: "cost",
+          window_label: "month",
+          is_active: true,
+          window_id: "p2026-10",
+          counter_value: "0.379800000000",
+          ledger_total: "0.283200000000",
+          difference: "0.096600000000",
+          counter_ttl_seconds: 86400,
+          stale_in_progress: 2,
+        },
+      ],
+      rebuild_lock_present: false,
+      rebuild_lock_ttl_seconds: null,
+    };
+
+    it("shows counter, ledger and the difference between them", async () => {
+      vi.stubGlobal("fetch", routes([rule()], drifted));
+      renderScreen(<AdminQuotas />);
+
+      expect(await screen.findByText("€0.38")).toBeInTheDocument();
+      expect(screen.getByText("€0.283")).toBeInTheDocument();
+      expect(screen.getByText("€0.097")).toBeInTheDocument();
+    });
+
+    it("does not call an unreadable counter zero", async () => {
+      const unreadable = {
+        ...drifted,
+        windows: [{ ...drifted.windows[0], counter_value: null, difference: null }],
+      };
+      vi.stubGlobal("fetch", routes([rule()], unreadable));
+      renderScreen(<AdminQuotas />);
+
+      expect((await screen.findAllByText("counter unavailable")).length).toBeGreaterThan(0);
+    });
+
+    it("reconciles on request", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const fetchMock = routes([rule()], drifted);
+      vi.stubGlobal("fetch", fetchMock);
+      renderScreen(<AdminQuotas />);
+
+      await user.click(await screen.findByRole("button", { name: "Reconcile" }));
+
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(
+            ([url, init]) =>
+              String(url).includes("/api/admin/quota/reconcile") && init?.method === "POST",
+          ),
+        ).toBe(true),
+      );
+    });
   });
 });

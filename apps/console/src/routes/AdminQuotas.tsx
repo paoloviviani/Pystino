@@ -21,13 +21,15 @@ import {
   useDeleteLimit,
   useGroups,
   useLimits,
+  useQuotaHealth,
+  useReconcileQuota,
   useResetLimit,
   useResets,
   useUsers,
 } from "../lib/admin";
 import { unitFor } from "../lib/metrics";
 import { usePaginated } from "../lib/paging";
-import type { LimitRule } from "../lib/types";
+import type { LimitRule, QuotaWindowHealth } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import { CHIPS, FORM_ROW, MUTED, NOWRAP, PAGE, ROW_ACTIONS } from "../lib/layout";
 import { useOptionalToast } from "../lib/toast";
@@ -196,10 +198,129 @@ export function AdminQuotas() {
         )}
       </Card>
 
+      <QuotaHealthPanel />
+
       <CreateRuleDialog open={creating} onClose={() => setCreating(false)} />
       <ResetDialog rule={resetting} onClose={() => setResetting(null)} />
       <HistoryDialog rule={history} onClose={() => setHistory(null)} />
     </div>
+  );
+}
+
+const ZERO = /^-?0+(\.0+)?$/;
+
+/**
+ * Counter against ledger, per rule, with the repair beside it.
+ *
+ * The ledger is the truth and the counter a cache of it, so a non-zero
+ * difference is drift. It is shown as a string comparison, never parsed: money
+ * is a string end to end here.
+ */
+function QuotaHealthPanel() {
+  const health = useQuotaHealth();
+  const reconcile = useReconcileQuota();
+  const toast = useOptionalToast();
+  const exact = useExactMoney();
+
+  const rows = Array.isArray(health.data?.windows) ? health.data.windows : [];
+
+  const show = (row: QuotaWindowHealth, value: string | null): string => {
+    if (value === null) return "unavailable";
+    return row.metric === "cost"
+      ? formatMoney(value, "EUR", { exact })
+      : Number(value).toLocaleString();
+  };
+
+  const columns: Column<QuotaWindowHealth>[] = [
+    {
+      key: "rule",
+      header: "Rule",
+      render: (row) => (
+        <>
+          <div>{row.rule_name || <em className={MUTED}>unnamed</em>}</div>
+          <div className={MUTED}>
+            {row.scope} · {row.metric} · {row.window_label}
+            {row.is_active ? "" : " · inactive"}
+          </div>
+        </>
+      ),
+    },
+    { key: "counter", header: "Counter", render: (row) => show(row, row.counter_value) },
+    { key: "ledger", header: "Ledger", render: (row) => show(row, row.ledger_total) },
+    {
+      key: "difference",
+      header: "Difference",
+      render: (row) =>
+        row.difference === null ? (
+          <Badge tone="warn">counter unavailable</Badge>
+        ) : ZERO.test(row.difference) ? (
+          <span className={MUTED}>none</span>
+        ) : (
+          <Badge tone="warn">{show(row, row.difference)}</Badge>
+        ),
+    },
+    {
+      key: "ttl",
+      header: "Counter TTL",
+      render: (row) =>
+        row.counter_ttl_seconds === null ? (
+          <span className={MUTED}>no counter</span>
+        ) : (
+          `${Math.round(row.counter_ttl_seconds / 3600)} h`
+        ),
+    },
+    {
+      key: "stale",
+      header: "Stuck in progress",
+      render: (row) => (row.stale_in_progress > 0 ? row.stale_in_progress : <span className={MUTED}>0</span>),
+    },
+  ];
+
+  return (
+    <Card flush>
+      <div className="flex items-center justify-between gap-4 p-5">
+        <div>
+          <h2 className="font-medium">Quota health</h2>
+          <p className={MUTED}>
+            What each counter holds against what the ledger says. A difference is drift;
+            Reconcile recomputes every active rule from the ledger.
+          </p>
+        </div>
+        <Button
+          busy={reconcile.isPending}
+          onClick={() =>
+            reconcile.mutate(undefined, {
+              onSuccess: (result) =>
+                toast?.add({
+                  title:
+                    result.corrected === 0
+                      ? "Counters already match the ledger"
+                      : `Corrected ${result.corrected} counter${result.corrected === 1 ? "" : "s"}`,
+                  type: "success",
+                }),
+              onError: () => toast?.add({ title: "Could not reconcile the counters", type: "error" }),
+            })
+          }
+        >
+          Reconcile
+        </Button>
+      </div>
+      {health.isPending ? (
+        <Spinner label="Loading quota health" />
+      ) : health.error ? (
+        <Notice tone="danger" title="Could not load quota health">
+          {health.error instanceof Error ? health.error.message : "Unknown error."}
+        </Notice>
+      ) : (
+        <Table
+          columns={columns}
+          rows={rows}
+          rowKey={(row) => `${row.rule_id}:${row.window_id}`}
+          empty="No quota rules to check."
+          caption="Counter and ledger totals for each rule's current window."
+        />
+      )}
+    </Card>
   );
 }
 
