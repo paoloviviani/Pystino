@@ -37,9 +37,10 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * Roboto, under the Apache License 2.0 — see `fonts/roboto-LICENSE.txt`,
- * fetched from the upstream repository and checked rather than assumed (ground
- * rules 1 and 2).
+ * Inter, under the SIL Open Font License 1.1 — see `fonts/inter-LICENSE.txt`,
+ * taken with the files from the Fontsource package (@fontsource-variable/inter
+ * 5.3.0), whose subsets cover the same ranges Roboto's did. Chosen over Roboto
+ * for legibility at the small sizes a chat's sidebar, menus and tables use.
  *
  * **Self-hosted, and variable.** One file per subset covers every weight from
  * 100 to 900, and no external request, which keeps the console's CSP and the
@@ -51,11 +52,11 @@
  * beats an invisible one.
  */
 @font-face {
-  font-family: "Roboto";
+  font-family: "Inter";
   /* `format("woff2")`, not `format("woff2-variations")`: the latter is the
    * older syntax and Safari refuses it. The `font-weight` range below is what
    * tells the browser this face is variable. */
-  src: url("./fonts/roboto-latin.woff2") format("woff2");
+  src: url("./fonts/inter-latin.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -65,8 +66,8 @@
 }
 
 @font-face {
-  font-family: "Roboto";
-  src: url("./fonts/roboto-latin-ext.woff2") format("woff2");
+  font-family: "Inter";
+  src: url("./fonts/inter-latin-ext.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -149,7 +150,7 @@
   --colour-danger-subtle: #fee2e2;
 
   /* -- typography -----------------------------------------------------------
-   * Roboto, then the platform's own UI face. The fallbacks are the faces each
+   * Inter, then the platform's own UI face. The fallbacks are the faces each
    * system already uses for its own interface, so a reader who blocks webfonts
    * gets the thing their OS considers most readable rather than Times.
    *
@@ -157,22 +158,25 @@
    * column is a functional requirement, not a style.
    */
   --font-sans:
-    "Roboto", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    "Inter", system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --font-mono:
     ui-monospace, "SF Mono", "Cascadia Mono", "DejaVu Sans Mono", Consolas, monospace;
 
-  /* 1rem base — what a browser's default assumes a reader wants. The top of
-   * the scale stays down: a page title is a heading, not a shape on a poster.
-   * `xxs` and `smd` are the chat's two extra steps, folded in so both apps
-   * share one scale rather than each extending it privately. */
-  --text-xs: 0.75rem;
-  --text-sm: 0.875rem;
-  --text-base: 1rem;
-  --text-md: 1.125rem;
-  --text-lg: 1.375rem;
-  --text-xl: 1.75rem;
-  --text-xxs: 0.625rem;
-  --text-smd: 0.94rem;
+  /* One pixel above the browser's 16px steps: at the stock sizes the chat's
+   * running text was 15px and its menus 12–14px, which read small on every
+   * screen. Each step is the stock size plus 1px (1/16rem), so the scale
+   * keeps its proportions. The top stays down: a page title is a heading,
+   * not a shape on a poster. `xxs` and `smd` are the chat's two extra steps,
+   * folded in so both apps share one scale rather than each extending it
+   * privately. */
+  --text-xs: 0.8125rem;
+  --text-sm: 0.9375rem;
+  --text-base: 1.0625rem;
+  --text-md: 1.1875rem;
+  --text-lg: 1.4375rem;
+  --text-xl: 1.8125rem;
+  --text-xxs: 0.6875rem;
+  --text-smd: 1rem;
 
   /* A variable font, so these are real instances rather than a synthetic bold.
    * Medium is the workhorse: headings and labels sit at 500, which reads as
