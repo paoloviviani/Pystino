@@ -13,6 +13,13 @@
 name: ci
 
 on:
+  # Every push to main too: merges skip the commit hook's formatting and
+  # nothing else tested main between releases.
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   pull_request:
     paths-ignore:
       - "docs/**"
