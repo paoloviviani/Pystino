@@ -710,9 +710,7 @@ class TestImport:
             ).scalar_one_or_none()
         assert found is not None
         price = (
-            await session.execute(
-                select(ModelPrice).where(ModelPrice.model_id == found.id)
-            )
+            await session.execute(select(ModelPrice).where(ModelPrice.model_id == found.id))
         ).scalar_one()
         assert price.currency == "USD"
 
@@ -839,9 +837,7 @@ class TestSearchBackendAnchor:
 
         async with session_factory() as session:
             anchor = (
-                await session.execute(
-                    select(ModelDef).where(ModelDef.name == "acme-search")
-                )
+                await session.execute(select(ModelDef).where(ModelDef.name == "acme-search"))
             ).scalar_one()
             assert anchor.kind == ModelKind.SEARCH
             assert anchor.upstream_model == "search"

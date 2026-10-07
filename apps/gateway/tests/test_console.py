@@ -86,9 +86,7 @@ class TestTheFrontDoor:
         assert response.headers["location"] == "/console"
 
     @pytest.mark.asyncio
-    async def test_and_it_actually_arrives(
-        self, console_client: httpx.AsyncClient
-    ) -> None:
+    async def test_and_it_actually_arrives(self, console_client: httpx.AsyncClient) -> None:
         response = await console_client.get("/", follow_redirects=True)
         assert response.status_code == 200
 

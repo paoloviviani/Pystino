@@ -60,9 +60,7 @@ class TestRecordEvent:
         for keys in DETAIL_ALLOWLIST.values():
             for key in keys:
                 lowered = key.lower()
-                assert not any(
-                    bad in lowered for bad in ("password", "digest", "token", "secret")
-                )
+                assert not any(bad in lowered for bad in ("password", "digest", "token", "secret"))
 
     @pytest.mark.parametrize(
         "action", [IdentityEventAction.USER_MERGE, IdentityEventAction.BREAK_GLASS]
@@ -222,9 +220,7 @@ class TestListIdentityEventsEndpoint:
         )
         await session.commit()
 
-        response = await client.get(
-            "/api/admin/identity-events", params={"action": "idp.reseed"}
-        )
+        response = await client.get("/api/admin/identity-events", params={"action": "idp.reseed"})
         assert response.status_code == 200
         body = response.json()
         assert body["total"] == 1

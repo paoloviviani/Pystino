@@ -161,9 +161,7 @@ async def break_glass(
 
     normalized, _ = is_trusted_email(email)
     candidates = list(
-        (
-            await session.execute(select(User).where(User.email_normalized == normalized))
-        ).scalars()
+        (await session.execute(select(User).where(User.email_normalized == normalized))).scalars()
     )
     if not candidates:
         target = User(

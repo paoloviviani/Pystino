@@ -154,7 +154,6 @@ def build_upstream_payload(
     return payload
 
 
-
 # response_model=None because this endpoint returns either a JSONResponse or a
 # StreamingResponse, and FastAPI would otherwise try to build a Pydantic response
 # model from that union. The response body is OpenAI's schema, not ours, and is
@@ -180,9 +179,7 @@ async def chat_completions(
     # model swap, all gateway-side. They moved to the chat (ADR 0067): a
     # client's own construction, assembled before this call, and the wire name
     # arriving here is always a plain model.
-    model = await _metered.resolve_model(
-        session, body.model, principal=principal, surface=SURFACE
-    )
+    model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
     upstream = await _metered.resolve_upstream(providers, model)
 
     # -- redaction (step 2) -------------------------------------------------
@@ -213,9 +210,7 @@ async def chat_completions(
         (body.model_extra or {}).get("tools"),
         default=settings.quota.default_max_web_searches,
     )
-    worst_case = TokenCounts(
-        prompt=prompt_tokens, completion=max_output, searches=search.reserved
-    )
+    worst_case = TokenCounts(prompt=prompt_tokens, completion=max_output, searches=search.reserved)
 
     # -- reserve, then open the usage row (steps 4-5) -----------------------
     metered = await _metered.begin(

@@ -100,9 +100,7 @@ class TestAdminSurface:
         await set_limit(session_factory, seeded, 4096)
         response = await client.get("/v1/models", headers=seeded.auth)
         assert response.status_code == 200
-        entry = next(
-            item for item in response.json()["data"] if item["id"] == "test-model"
-        )
+        entry = next(item for item in response.json()["data"] if item["id"] == "test-model")
         assert entry["max_input_tokens"] == 4096
 
 

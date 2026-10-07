@@ -146,9 +146,7 @@ class TestCachePricing:
         expensive mistake, and it stays invisible until the invoice lands.
         """
         counts = TokenCounts(prompt=1_000_000, cached_prompt=300_000, cache_write=100_000)
-        breakdown = compute_cost(
-            counts, price(input_per_mtok=Decimal("10"))
-        )
+        breakdown = compute_cost(counts, price(input_per_mtok=Decimal("10")))
         assert breakdown.cache_read_cost == Decimal(0)
         assert breakdown.cache_write_cost == Decimal(0)
         assert breakdown.input_cost == Decimal("10")

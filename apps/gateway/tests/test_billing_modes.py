@@ -256,9 +256,7 @@ class TestProviderReported:
         )
         session.add(GroupModelAccess(group_id=seeded.group.id, model_id=model.id))
         # The day's rate, seeded rather than fetched: 1 USD = 0.5 EUR, exactly.
-        session.add(
-            FXRate(base="USD", quote="EUR", rate=Decimal("0.5"), fetched_at=utcnow())
-        )
+        session.add(FXRate(base="USD", quote="EUR", rate=Decimal("0.5"), fetched_at=utcnow()))
         await session.commit()
 
         fake_upstream.set_json(completion(cost=7))

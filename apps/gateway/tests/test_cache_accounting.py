@@ -267,9 +267,7 @@ class TestBilling:
         Mtok. Billing the written slice at the input rate overcharges it ~20x.
         """
         counts = TokenCounts(prompt=1_000_000, completion=0, cache_write=1_000_000)
-        correct = compute_cost(
-            counts, price(input_rate="0.673", cache_write="0.034")
-        )
+        correct = compute_cost(counts, price(input_rate="0.673", cache_write="0.034"))
         as_if_unread = compute_cost(
             TokenCounts(prompt=1_000_000, completion=0),
             price(input_rate="0.673", cache_write="0.034"),

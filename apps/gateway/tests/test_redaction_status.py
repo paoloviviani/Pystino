@@ -108,16 +108,12 @@ class TestWarnings:
             model_entities=["PERSON"],
             family_partition=True,
         )
-        filtered = _effective_detector_entities(
-            service, pattern_matching=True, ner=False
-        )
+        filtered = _effective_detector_entities(service, pattern_matching=True, ner=False)
         assert filtered is not None
         assert filtered.entities == ["EMAIL_ADDRESS"]
         assert _effective_detector_entities(service, pattern_matching=None, ner=None) is service
 
-        notes = _redaction_warnings(
-            settings(), "http", filtered, policy_types=["PERSON"]
-        )
+        notes = _redaction_warnings(settings(), "http", filtered, policy_types=["PERSON"])
         assert any("PERSON" in note and "inert" in note for note in notes)
 
     def test_a_detector_without_a_family_partition_is_not_narrowed(self) -> None:
@@ -126,10 +122,7 @@ class TestWarnings:
         switches would otherwise look effective while changing nothing."""
         service = healthy()
         assert service.family_partition is False
-        assert (
-            _effective_detector_entities(service, pattern_matching=True, ner=False)
-            is service
-        )
+        assert _effective_detector_entities(service, pattern_matching=True, ner=False) is service
 
         notes = _redaction_warnings(
             settings(), "http", service, presidio_pattern_matching=True, presidio_ner=False
@@ -175,9 +168,7 @@ class TestWarnings:
         assert any("IBAN_CODE" in note and "inert" in note for note in notes)
 
     def test_admin_rules_the_service_serves_warn_nothing(self) -> None:
-        assert (
-            _redaction_warnings(settings(), "http", healthy(), policy_types=["PERSON"]) == []
-        )
+        assert _redaction_warnings(settings(), "http", healthy(), policy_types=["PERSON"]) == []
 
     def test_a_degraded_language_is_distinguished_from_an_absent_one(self) -> None:
         notes = _redaction_warnings(

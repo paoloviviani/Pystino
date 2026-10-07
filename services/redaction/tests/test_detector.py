@@ -190,9 +190,7 @@ class TestFiltering:
 
         assert capabilities.pattern_entities == ["SOME_FUTURE_PATTERN"]
         assert capabilities.model_entities == []
-        assert Detector.family_entities(capabilities, True, False) == [
-            "SOME_FUTURE_PATTERN"
-        ]
+        assert Detector.family_entities(capabilities, True, False) == ["SOME_FUTURE_PATTERN"]
         assert Detector.family_entities(capabilities, False, True) == []
         assert Detector.family_entities(capabilities, False, False) == []
 
@@ -366,9 +364,7 @@ class TestHttpSurface:
         response = await client.post("/detect", json={"texts": ["x"], "score_threshold": 2})
         assert response.status_code == 422
 
-    async def test_types_the_engine_cannot_serve_are_filtered_and_named(
-        self, client: Any
-    ) -> None:
+    async def test_types_the_engine_cannot_serve_are_filtered_and_named(self, client: Any) -> None:
         """A policy naming an entity the engine has no recogniser for must not
         500 — Presidio raises on such a request — and must not pass silently
         either. The servable types are still detected; the rest are named back.
@@ -387,9 +383,7 @@ class TestHttpSurface:
         assert body["findings"][0]["spans"][0]["entity_type"] == "PERSON"
         assert body["unsupported_types"] == ["IT_FISCAL_CODE"]
 
-    async def test_an_all_unservable_enumeration_skips_the_engine(
-        self, client: Any
-    ) -> None:
+    async def test_an_all_unservable_enumeration_skips_the_engine(self, client: Any) -> None:
         """Handing Presidio an empty `entities` list raises the same way an
         unknown type does, so the all-filtered case must not reach it at all —
         and still answers 200 with nothing found."""
@@ -483,9 +477,7 @@ class TestNlpEngineConfiguration:
         monkeypatch.delenv("REDACTION_NLP_ENGINE", raising=False)
         assert _nlp_engine_name() == "spacy"
 
-    def test_disabled_is_selected_by_the_environment(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_disabled_is_selected_by_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("REDACTION_NLP_ENGINE", "disabled")
         assert _nlp_engine_name() == "disabled"
 
@@ -504,17 +496,13 @@ class TestNlpEngineConfiguration:
         monkeypatch.setenv("REDACTION_LANGUAGES", "en,it")
         assert _configured_languages() == ["en", "it"]
 
-    def test_disabled_languages_default_to_english(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_disabled_languages_default_to_english(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("REDACTION_NLP_ENGINE", "disabled")
         monkeypatch.setenv("REDACTION_SPACY_MODELS", "")
         monkeypatch.delenv("REDACTION_LANGUAGES", raising=False)
         assert _configured_languages() == ["en"]
 
-    def test_spacy_languages_come_from_the_model_map(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_spacy_languages_come_from_the_model_map(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("REDACTION_SPACY_MODELS", "en=en_core_web_lg,it=it_core_news_lg")
         assert _configured_languages() == ["en", "it"]
 

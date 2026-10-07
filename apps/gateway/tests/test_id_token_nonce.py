@@ -32,9 +32,7 @@ def signing_key() -> RSAKey:
 
 @pytest.fixture
 def client(signing_key: RSAKey) -> OIDCClient:
-    return StubOIDCClient(
-        OIDCSettings(issuer=BEARER_ISSUER, client_id="llm-gateway"), signing_key
-    )
+    return StubOIDCClient(OIDCSettings(issuer=BEARER_ISSUER, client_id="llm-gateway"), signing_key)
 
 
 def id_token(key: RSAKey, *, nonce: str | None = None, **extra: Any) -> str:

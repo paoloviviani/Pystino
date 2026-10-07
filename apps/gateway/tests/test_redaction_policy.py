@@ -87,9 +87,7 @@ class TestTheDefaultPolicy:
 
     def test_a_rule_is_how_protection_is_turned_on(self) -> None:
         protective = RedactionPolicy(entities={"PERSON": EntityPolicy()})
-        result, count, placeholders = redact(
-            "ask Mario Rossi", [span(4, 15, "PERSON")], protective
-        )
+        result, count, placeholders = redact("ask Mario Rossi", [span(4, 15, "PERSON")], protective)
 
         assert count == 1
         assert "<PERSON_" in result

@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 #: ECB reference rates, via frankfurter.dev: no key, HTTP, daily publication.
 _DEFAULT_API = "https://api.frankfurter.dev/v1/latest"
 
- #: One fetch per day per pair; the rate is the whole day's decision input.
+#: One fetch per day per pair; the rate is the whole day's decision input.
 _REFRESH_SECONDS = 3600.0
 
 
@@ -161,9 +161,7 @@ class FXService:
 
     async def _fetch(self, base: str, quote: str) -> FXQuote | None:
         try:
-            response = await self._http.get(
-                self._api_url, params={"base": base, "symbols": quote}
-            )
+            response = await self._http.get(self._api_url, params={"base": base, "symbols": quote})
             response.raise_for_status()
             document = response.json()
             rate = document["rates"][quote]

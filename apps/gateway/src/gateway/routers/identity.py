@@ -82,8 +82,10 @@ async def _identities_for(session: AsyncSession, user: User) -> list[IdentityRef
     """The primary (issuer, subject) plus every linked ``user_identities`` row."""
     refs = [IdentityRef(issuer=user.issuer, subject=user.subject)]
     rows = (
-        await session.execute(select(UserIdentity).where(UserIdentity.user_id == user.id))
-    ).scalars().all()
+        (await session.execute(select(UserIdentity).where(UserIdentity.user_id == user.id)))
+        .scalars()
+        .all()
+    )
     refs.extend(IdentityRef(issuer=row.issuer, subject=row.subject) for row in rows)
     return refs
 
@@ -225,16 +227,13 @@ async def whoami(caller: AuthenticatedCallerDep) -> CallerIdentity:
     # confers admin through `admin_groups`, so hiding it would make this list
     # disagree with both `/v1/models` and the flag beside it.
     groups = sorted(
-        group.name
-        for membership in user.memberships
-        if (group := membership.group) is not None
+        group.name for membership in user.memberships if (group := membership.group) is not None
     )
     default = next(
         (
             group.name
             for membership in user.memberships
-            if (group := membership.group) is not None
-            and group.id == user.default_billing_group_id
+            if (group := membership.group) is not None and group.id == user.default_billing_group_id
         ),
         None,
     )

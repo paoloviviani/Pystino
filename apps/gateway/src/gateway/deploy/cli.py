@@ -163,12 +163,16 @@ def cmd_erasure_list(args: argparse.Namespace) -> int:
         try:
             async with create_session_factory(engine)() as session:
                 rows = (
-                    await session.execute(
-                        select(ChatErasure)
-                        .where(ChatErasure.status == ChatErasureStatus.PENDING)
-                        .order_by(ChatErasure.created_at)
+                    (
+                        await session.execute(
+                            select(ChatErasure)
+                            .where(ChatErasure.status == ChatErasureStatus.PENDING)
+                            .order_by(ChatErasure.created_at)
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
         finally:
             await engine.dispose()
         if not rows:

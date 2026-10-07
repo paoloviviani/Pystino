@@ -91,10 +91,6 @@ class TestMarkBootstrapConsumed:
         assert first == second
 
     async def test_the_row_does_not_exist_until_asked_for(self, session: AsyncSession) -> None:
-        assert (
-            await session.execute(select(DeploymentState))
-        ).scalar_one_or_none() is None
+        assert (await session.execute(select(DeploymentState))).scalar_one_or_none() is None
         await get_or_create_deployment_state(session)
-        assert (
-            await session.execute(select(DeploymentState))
-        ).scalar_one_or_none() is not None
+        assert (await session.execute(select(DeploymentState))).scalar_one_or_none() is not None

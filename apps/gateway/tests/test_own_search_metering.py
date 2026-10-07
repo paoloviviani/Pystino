@@ -194,9 +194,7 @@ class TestAdmission:
         self, session: AsyncSession
     ) -> None:
         group_id = uuid.uuid4()
-        await add_rule(
-            session, scope=LimitScope.GROUP, scope_id=group_id, metric=SEARCH, limit="5"
-        )
+        await add_rule(session, scope=LimitScope.GROUP, scope_id=group_id, metric=SEARCH, limit="5")
         quota = engine_for()
         subject = QuotaSubject(None, group_id)
 
@@ -230,9 +228,7 @@ class TestAdmission:
         them searched, so not one of them may consume the budget.
         """
         group_id = uuid.uuid4()
-        await add_rule(
-            session, scope=LimitScope.GROUP, scope_id=group_id, metric=SEARCH, limit="2"
-        )
+        await add_rule(session, scope=LimitScope.GROUP, scope_id=group_id, metric=SEARCH, limit="2")
         quota = engine_for()
         subject = QuotaSubject(None, group_id)
 
@@ -266,9 +262,7 @@ class TestAdmission:
         request.
         """
         group_id = uuid.uuid4()
-        await add_rule(
-            session, scope=LimitScope.GROUP, scope_id=group_id, metric=SEARCH, limit="3"
-        )
+        await add_rule(session, scope=LimitScope.GROUP, scope_id=group_id, metric=SEARCH, limit="3")
         await add_rule(
             session,
             scope=LimitScope.GROUP,
@@ -292,9 +286,7 @@ class TestAdmission:
         # one request of its hundred.
         assert [v.rule.metric for v in caught.value.violations] == [SEARCH]
 
-    async def test_every_applicable_rule_still_has_to_pass(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_every_applicable_rule_still_has_to_pass(self, session: AsyncSession) -> None:
         """Additive, like every other metric: a generous cost rule rescues nothing."""
         user_id = uuid.uuid4()
         await add_rule(
@@ -304,9 +296,7 @@ class TestAdmission:
             metric=LimitMetric.COST,
             limit="1000",
         )
-        await add_rule(
-            session, scope=LimitScope.USER, scope_id=user_id, metric=SEARCH, limit="1"
-        )
+        await add_rule(session, scope=LimitScope.USER, scope_id=user_id, metric=SEARCH, limit="1")
         quota = engine_for()
         subject = QuotaSubject(user_id, None)
 
@@ -333,12 +323,8 @@ class TestAdmission:
         await add_rule(
             session, scope=LimitScope.GROUP, scope_id=group_id, metric=SEARCH, limit="100"
         )
-        await add_rule(
-            session, scope=LimitScope.USER, scope_id=user_id, metric=SEARCH, limit="100"
-        )
-        await add_rule(
-            session, scope=LimitScope.API_KEY, scope_id=key_id, metric=SEARCH, limit="0"
-        )
+        await add_rule(session, scope=LimitScope.USER, scope_id=user_id, metric=SEARCH, limit="100")
+        await add_rule(session, scope=LimitScope.API_KEY, scope_id=key_id, metric=SEARCH, limit="0")
         quota = engine_for()
 
         # The key's rule is the tight one, and it is honoured.
@@ -384,9 +370,7 @@ class TestReserveAndSettle:
         assert (await store.totals([query], now=FIXED_NOW))[0].units == 10
 
         # It searched three times. The other seven go back.
-        await quota.settle(
-            reservation, QuotaAmounts(own_search_requests=Decimal(3)), now=FIXED_NOW
-        )
+        await quota.settle(reservation, QuotaAmounts(own_search_requests=Decimal(3)), now=FIXED_NOW)
         assert (await store.totals([query], now=FIXED_NOW))[0].units == 3
 
     async def test_a_request_that_searched_more_than_it_reserved_is_charged_for_all_of_them(
@@ -413,14 +397,10 @@ class TestReserveAndSettle:
             QuotaAmounts(own_search_requests=Decimal(2)),
             now=FIXED_NOW,
         )
-        await quota.settle(
-            reservation, QuotaAmounts(own_search_requests=Decimal(9)), now=FIXED_NOW
-        )
+        await quota.settle(reservation, QuotaAmounts(own_search_requests=Decimal(9)), now=FIXED_NOW)
         assert (await store.totals([query], now=FIXED_NOW))[0].units == 9
 
-    async def test_releasing_hands_back_every_reserved_search(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_releasing_hands_back_every_reserved_search(self, session: AsyncSession) -> None:
         """A request that never happened leaves no searches occupying the window."""
         group_id = uuid.uuid4()
         await add_rule(
@@ -447,9 +427,7 @@ class TestReserveAndSettle:
         next legitimate request is refused by traffic that never ran.
         """
         group_id = uuid.uuid4()
-        await add_rule(
-            session, scope=LimitScope.GROUP, scope_id=group_id, metric=SEARCH, limit="4"
-        )
+        await add_rule(session, scope=LimitScope.GROUP, scope_id=group_id, metric=SEARCH, limit="4")
         store = InMemoryCounterStore()
         quota = engine_for(store)
         subject = QuotaSubject(None, group_id)
@@ -458,9 +436,7 @@ class TestReserveAndSettle:
         reservation = await quota.check_and_reserve(
             session, subject, QuotaAmounts(own_search_requests=Decimal(4)), now=FIXED_NOW
         )
-        await quota.settle(
-            reservation, QuotaAmounts(own_search_requests=Decimal(4)), now=FIXED_NOW
-        )
+        await quota.settle(reservation, QuotaAmounts(own_search_requests=Decimal(4)), now=FIXED_NOW)
 
         for _ in range(10):
             with pytest.raises(QuotaExceeded):
@@ -553,9 +529,7 @@ class TestTheLedger:
             {
                 "id": "c1",
                 "object": "chat.completion",
-                "choices": [
-                    {"index": 0, "message": {"role": "assistant", "content": "hi"}}
-                ],
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}}],
                 "usage": {
                     "prompt_tokens": 100,
                     "completion_tokens": 50,
@@ -719,9 +693,7 @@ class TestTheRebuildSource:
         # The real clock, not FIXED_NOW: these rows carry `created_at = now`,
         # and a window measured backwards from 2023 contains none of them.
         total = (
-            await store.totals(
-                [search_query(group.id, window_seconds=3600)], now=time.time()
-            )
+            await store.totals([search_query(group.id, window_seconds=3600)], now=time.time())
         )[0]
         assert total.units == 6, "expected 3 rows x 2 of our searches, not 3 x 9 of theirs"
 
@@ -745,9 +717,7 @@ class TestTheRebuildSource:
 
         store = DatabaseCounterStore(session_factory)
         total = (
-            await store.totals(
-                [search_query(group.id, window_seconds=3600)], now=time.time()
-            )
+            await store.totals([search_query(group.id, window_seconds=3600)], now=time.time())
         )[0]
         assert total.units == 0
 
@@ -867,9 +837,7 @@ class TestTheSharedPipeline:
             assert metered.reservation.reserved[SEARCH] == 0
 
 
-async def principal_and_model(
-    session: AsyncSession, seeded: Seeded
-) -> tuple[Principal, ModelDef]:
+async def principal_and_model(session: AsyncSession, seeded: Seeded) -> tuple[Principal, ModelDef]:
     user = (await session.execute(select(User).where(User.id == seeded.user.id))).scalar_one()
     group = (await session.execute(select(Group).where(Group.id == seeded.group.id))).scalar_one()
     model = (

@@ -223,7 +223,6 @@ class TokenCounts:
         return cls(pages=max(0, reported or pages))
 
 
-
 def _search_requests(usage: dict[str, Any]) -> int:
     """Server-side web searches reported in a ``usage`` object.
 

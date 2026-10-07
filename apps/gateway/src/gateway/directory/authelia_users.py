@@ -120,9 +120,7 @@ def validate_authelia_email(email: str) -> str:
     """The normalised address, or raise `UsersFileError` naming why not (§6.1)."""
     normalized, trusted = is_trusted_email(email)
     if not trusted:
-        raise UsersFileError(
-            "a real email address is needed (the chat refuses local ones)"
-        )
+        raise UsersFileError("a real email address is needed (the chat refuses local ones)")
     if len(normalized) > 254:
         raise UsersFileError("the email address is too long (254 characters at most)")
     local, _, domain = normalized.partition("@")

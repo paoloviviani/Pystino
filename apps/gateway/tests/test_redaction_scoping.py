@@ -150,9 +150,7 @@ class TestTheCatchAll:
     def test_a_narrower_rule_tightens_it_and_takes_the_blame(self) -> None:
         user_id = uuid.uuid4()
         catch_all = self.rule(RedactionScope.ALL, None, PERSON=EntityPolicy())
-        theirs = self.rule(
-            RedactionScope.USER, user_id, PERSON=EntityPolicy(mode=EntityMode.BLOCK)
-        )
+        theirs = self.rule(RedactionScope.USER, user_id, PERSON=EntityPolicy(mode=EntityMode.BLOCK))
         effective = self.resolver_with(catch_all, theirs).policy_for(user_id=user_id)
 
         assert effective.policy.mode_for("PERSON") is EntityMode.BLOCK
@@ -162,12 +160,8 @@ class TestTheCatchAll:
 
     def test_a_narrower_rule_cannot_undo_it(self) -> None:
         user_id = uuid.uuid4()
-        catch_all = self.rule(
-            RedactionScope.ALL, None, PERSON=EntityPolicy(mode=EntityMode.REDACT)
-        )
-        wishful = self.rule(
-            RedactionScope.USER, user_id, PERSON=EntityPolicy(mode=EntityMode.OFF)
-        )
+        catch_all = self.rule(RedactionScope.ALL, None, PERSON=EntityPolicy(mode=EntityMode.REDACT))
+        wishful = self.rule(RedactionScope.USER, user_id, PERSON=EntityPolicy(mode=EntityMode.OFF))
         effective = self.resolver_with(catch_all, wishful).policy_for(user_id=user_id)
 
         assert effective.policy.mode_for("PERSON") is EntityMode.REDACT

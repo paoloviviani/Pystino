@@ -54,9 +54,7 @@ async def _second_group(
         db.add(group)
         await db.flush()
         db.add(
-            Membership(
-                user_id=seeded.user.id, group_id=group.id, source=MembershipSource.MANUAL
-            )
+            Membership(user_id=seeded.user.id, group_id=group.id, source=MembershipSource.MANUAL)
         )
         # The group must be able to use the model, or the refusal under test
         # would be indistinguishable from a model-access refusal.
@@ -379,7 +377,6 @@ class TestRefused:
             headers={"authorization": f"Bearer {minted.secret}", BILL_TO: "not-a-group"},
         )
         assert response.status_code == 403, response.text
-
 
     @pytest.mark.asyncio
     async def test_nothing_is_billed_when_the_header_is_refused(

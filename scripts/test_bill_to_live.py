@@ -73,10 +73,20 @@ def kcadm(*args: str) -> str:
     """
     container = os.environ.get("KEYCLOAK_CONTAINER", "llm-platform-keycloak-1")
     cmd = [
-        "docker", "exec", "-i", container, "/opt/keycloak/bin/kcadm.sh", *args,
-        "--server", "http://localhost:8080", "--realm", "master",
-        "--user", os.environ.get("KEYCLOAK_ADMIN_USER", "admin"),
-        "--password", os.environ.get("KEYCLOAK_ADMIN_PASSWORD", ""),
+        "docker",
+        "exec",
+        "-i",
+        container,
+        "/opt/keycloak/bin/kcadm.sh",
+        *args,
+        "--server",
+        "http://localhost:8080",
+        "--realm",
+        "master",
+        "--user",
+        os.environ.get("KEYCLOAK_ADMIN_USER", "admin"),
+        "--password",
+        os.environ.get("KEYCLOAK_ADMIN_PASSWORD", ""),
     ]
     out = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
     return out.stdout.strip().replace("\r", "")
@@ -90,14 +100,30 @@ def get_token(base: str, verify: str | bool) -> str | None:
         return None
 
     uuid = kcadm(
-        "get", "clients", "-r", realm, "-q", "clientId=pystino-chat",
-        "--fields", "id", "--format", "csv", "--noquotes",
+        "get",
+        "clients",
+        "-r",
+        realm,
+        "-q",
+        "clientId=pystino-chat",
+        "--fields",
+        "id",
+        "--format",
+        "csv",
+        "--noquotes",
     ).splitlines()
     if not uuid:
         return None
     secret = kcadm(
-        "get", f"clients/{uuid[0]}/client-secret", "-r", realm,
-        "--fields", "value", "--format", "csv", "--noquotes",
+        "get",
+        f"clients/{uuid[0]}/client-secret",
+        "-r",
+        realm,
+        "--fields",
+        "value",
+        "--format",
+        "csv",
+        "--noquotes",
     ).splitlines()
     if not secret:
         return None
@@ -143,8 +169,11 @@ def main() -> int:
     with httpx.Client(base_url=base, verify=verify, timeout=60) as http:
         print("\n=== GET /v1/billing/groups ===")
         response = http.get("/v1/billing/groups", headers=auth)
-        check("a bearer caller may list its billable groups", response.status_code == 200,
-              f"HTTP {response.status_code}")
+        check(
+            "a bearer caller may list its billable groups",
+            response.status_code == 200,
+            f"HTTP {response.status_code}",
+        )
         if response.status_code != 200:
             return 1
         body = response.json()
@@ -152,8 +181,11 @@ def main() -> int:
         defaults = [g["name"] for g in body["data"] if g["is_default"]]
         ok("groups", ", ".join(names) or "(none)")
         check("exactly one is the default", len(defaults) == 1, ", ".join(defaults))
-        check("it reports what this request bills", "billing_group" in body,
-              str(body.get("billing_group")))
+        check(
+            "it reports what this request bills",
+            "billing_group" in body,
+            str(body.get("billing_group")),
+        )
         check("the list is sorted by name", names == sorted(names))
 
         # The manual-membership case. Skipped rather than provisioned: this
@@ -171,8 +203,7 @@ def main() -> int:
             response = http.get("/v1/billing/groups", headers={**auth, "x-bill-to": target})
             check(
                 f"x-bill-to {target!r} changes what the request bills",
-                response.status_code == 200
-                and response.json().get("billing_group") == target,
+                response.status_code == 200 and response.json().get("billing_group") == target,
                 f"HTTP {response.status_code}, billing_group="
                 f"{response.json().get('billing_group') if response.status_code == 200 else '?'}",
             )
@@ -186,8 +217,11 @@ def main() -> int:
         response = http.get(
             "/v1/billing/groups", headers={**auth, "x-bill-to": "no-such-group-anywhere"}
         )
-        check("a group that does not exist is refused", response.status_code == 403,
-              f"HTTP {response.status_code}")
+        check(
+            "a group that does not exist is refused",
+            response.status_code == 403,
+            f"HTTP {response.status_code}",
+        )
 
         # Enumeration: a real group the caller does not hold must look identical
         # to one that does not exist, or the header lists the deployment.
@@ -214,8 +248,11 @@ def main() -> int:
                 "/v1/billing/groups",
                 headers={"Authorization": f"Bearer {key}", "x-bill-to": "research"},
             )
-            check("a key caller sending x-bill-to is refused", response.status_code == 403,
-                  f"HTTP {response.status_code}")
+            check(
+                "a key caller sending x-bill-to is refused",
+                response.status_code == 403,
+                f"HTTP {response.status_code}",
+            )
 
     print()
     if FAILURES:

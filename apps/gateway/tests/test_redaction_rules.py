@@ -241,9 +241,7 @@ class TestRuleCrud:
                 RedactionRule(scope=RedactionScope.USER, scope_id=uuid.uuid4(), policy=policy())
             )
         session.add(
-            RedactionRule(
-                scope=RedactionScope.GROUP, scope_id=seeded.group.id, policy=policy()
-            )
+            RedactionRule(scope=RedactionScope.GROUP, scope_id=seeded.group.id, policy=policy())
         )
         await session.commit()
 
@@ -710,9 +708,7 @@ class TestPreview:
         """An empty result under noop must not read as "nothing here to redact"."""
         await admin_client(app, session_factory, seeded)
 
-        response = await client.post(
-            "/api/admin/redaction/preview", json={"text": "Mario Rossi"}
-        )
+        response = await client.post("/api/admin/redaction/preview", json={"text": "Mario Rossi"})
 
         assert response.status_code == 200, response.text
         body = response.json()

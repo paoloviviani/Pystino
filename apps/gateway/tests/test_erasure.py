@@ -99,9 +99,7 @@ class TestAttemptErasure:
             return httpx.Response(503, json={"error": "down"})
 
         http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        row = await queue_erasure(
-            session, gateway_user_id=uuid.uuid4(), identities=[]
-        )
+        row = await queue_erasure(session, gateway_user_id=uuid.uuid4(), identities=[])
         await session.commit()
 
         done = await attempt_erasure(session, _settings(), http, row)
@@ -138,12 +136,16 @@ class TestAttemptErasure:
             await attempt_erasure(session, _settings(), http, row)
 
         events = (
-            await session.execute(
-                select(IdentityEvent).where(
-                    IdentityEvent.action == IdentityEventAction.CHAT_ERASURE_RETRYING
+            (
+                await session.execute(
+                    select(IdentityEvent).where(
+                        IdentityEvent.action == IdentityEventAction.CHAT_ERASURE_RETRYING
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert [e.detail["attempts"] for e in events] == [1, 10]
 
     async def test_a_repeat_after_done_is_idempotent(self, session: AsyncSession) -> None:

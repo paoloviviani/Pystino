@@ -68,9 +68,7 @@ def _fake_chat(
                 },
             )
         body = json.loads(request.read())
-        return httpx.Response(
-            200, json={"erasure_id": body["erasure_id"], "counts": counts}
-        )
+        return httpx.Response(200, json={"erasure_id": body["erasure_id"], "counts": counts})
 
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 

@@ -115,9 +115,7 @@ class TestEndsTheProvidersSession:
         # a domain and path match against a transport that has no real host, and
         # what is under test is the route reading `request.cookies`, not httpx's
         # matching rules.
-        response = await client.post(
-            "/auth/logout", headers={"cookie": f"gw_idt={token}"}
-        )
+        response = await client.post("/auth/logout", headers={"cookie": f"gw_idt={token}"})
         parameters = _query(response.json()["redirect_to"])
         assert parameters["id_token_hint"] == [token]
         assert "client_id" not in parameters
@@ -125,9 +123,7 @@ class TestEndsTheProvidersSession:
 
 class TestAlwaysDropsOurOwnSession:
     @pytest.mark.asyncio
-    async def test_the_cookies_go_even_with_no_provider(
-        self, client: httpx.AsyncClient
-    ) -> None:
+    async def test_the_cookies_go_even_with_no_provider(self, client: httpx.AsyncClient) -> None:
         """A deployment with no directory still has to be able to sign out.
 
         `redirect_to` is null here and that is the right answer: there is no

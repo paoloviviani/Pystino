@@ -40,7 +40,6 @@ from gateway.security import generate_api_key
 logger = logging.getLogger(__name__)
 
 
-
 async def _seed(
     *,
     group_name: str,

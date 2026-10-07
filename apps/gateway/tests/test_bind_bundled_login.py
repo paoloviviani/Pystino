@@ -212,9 +212,7 @@ class TestBindsAnExistingUser:
             )
             session.add(user)
             await session.commit()
-            session.add(
-                UserIdentity(user_id=user.id, issuer=ISS, subject="stale-subject")
-            )
+            session.add(UserIdentity(user_id=user.id, issuer=ISS, subject="stale-subject"))
             await session.commit()
             await _bound_entry(session, provider, user, login="erin")
 

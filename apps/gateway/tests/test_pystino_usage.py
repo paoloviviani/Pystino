@@ -170,9 +170,7 @@ class TestBearerCaller:
     ) -> None:
         await record(session, user_id=seeded.user.id, group_id=seeded.group.id, cost="3")
 
-        response = await client.get(
-            "/v1/pystino/usage", headers=auth(make_token(signing_key))
-        )
+        response = await client.get("/v1/pystino/usage", headers=auth(make_token(signing_key)))
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["usage"]["requests"] == 1

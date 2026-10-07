@@ -43,9 +43,7 @@ async def _door_login(session: AsyncSession, subject: str, claims: dict[str, obj
 
 class TestTheEmailRule:
     async def test_a_verified_listed_address_grants(self, session: AsyncSession) -> None:
-        user = await _door_login(
-            session, "a", {"email": "Ops@Example.org", "email_verified": True}
-        )
+        user = await _door_login(session, "a", {"email": "Ops@Example.org", "email_verified": True})
         assert user.is_admin
         assert user.admin_source == "env"
         assert user.admin_rule == "email"
@@ -120,9 +118,7 @@ class TestTheEmailRule:
     async def test_a_refusal_to_revoke_the_last_admin_is_audited(
         self, session: AsyncSession
     ) -> None:
-        user = await _door_login(
-            session, "a", {"email": "ops@example.org", "email_verified": True}
-        )
+        user = await _door_login(session, "a", {"email": "ops@example.org", "email_verified": True})
         assert user.is_admin
         again = await _door_login(
             session, "a", {"email": "ops@example.org", "email_verified": False}
@@ -171,12 +167,16 @@ class TestTheEmailRule:
         )
         assert not revoked.is_admin
         event = (
-            await session.execute(
-                select(IdentityEvent)
-                .where(IdentityEvent.action == IdentityEventAction.ADMIN_REVOKE)
-                .order_by(IdentityEvent.at.desc())
+            (
+                await session.execute(
+                    select(IdentityEvent)
+                    .where(IdentityEvent.action == IdentityEventAction.ADMIN_REVOKE)
+                    .order_by(IdentityEvent.at.desc())
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert event is not None
         assert event.detail == {"rule": "email"}
 

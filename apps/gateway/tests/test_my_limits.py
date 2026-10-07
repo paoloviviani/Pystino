@@ -65,13 +65,9 @@ class TestMyLimits:
         await add_rule(
             session_factory, name="my group", scope=LimitScope.GROUP, scope_id=seeded.group.id
         )
-        await add_rule(
-            session_factory, name="me", scope=LimitScope.USER, scope_id=seeded.user.id
-        )
+        await add_rule(session_factory, name="me", scope=LimitScope.USER, scope_id=seeded.user.id)
 
-        response = await client.get(
-            "/api/me/limits", headers=session_cookie(seeded.user.id, app)
-        )
+        response = await client.get("/api/me/limits", headers=session_cookie(seeded.user.id, app))
         assert response.status_code == 200, response.text
         assert {rule["name"] for rule in response.json()["items"]} == {"everyone", "my group", "me"}
 
@@ -98,13 +94,9 @@ class TestMyLimits:
         await add_rule(
             session_factory, name="their group", scope=LimitScope.GROUP, scope_id=other_group_id
         )
-        await add_rule(
-            session_factory, name="them", scope=LimitScope.USER, scope_id=other_user_id
-        )
+        await add_rule(session_factory, name="them", scope=LimitScope.USER, scope_id=other_user_id)
 
-        response = await client.get(
-            "/api/me/limits", headers=session_cookie(seeded.user.id, app)
-        )
+        response = await client.get("/api/me/limits", headers=session_cookie(seeded.user.id, app))
         assert [rule["name"] for rule in response.json()["items"]] == []
 
     @pytest.mark.asyncio
@@ -122,9 +114,7 @@ class TestMyLimits:
             scope_id=None,
             active=False,
         )
-        response = await client.get(
-            "/api/me/limits", headers=session_cookie(seeded.user.id, app)
-        )
+        response = await client.get("/api/me/limits", headers=session_cookie(seeded.user.id, app))
         assert [rule["name"] for rule in response.json()["items"]] == []
 
     @pytest.mark.asyncio
@@ -144,9 +134,7 @@ class TestMyLimits:
             scope=LimitScope.API_KEY,
             scope_id=seeded.api_key.id,
         )
-        response = await client.get(
-            "/api/me/limits", headers=session_cookie(seeded.user.id, app)
-        )
+        response = await client.get("/api/me/limits", headers=session_cookie(seeded.user.id, app))
         assert [rule["name"] for rule in response.json()["items"]] == []
 
     @pytest.mark.asyncio

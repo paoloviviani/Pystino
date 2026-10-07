@@ -15,7 +15,5 @@ class MistralPlugin(GenericOpenAIPlugin):
 
     name = "mistral"
     label = "Mistral (direct)"
-    description = (
-        "Mistral's own API, OpenAI-compatible. Billed from the configured prices."
-    )
+    description = "Mistral's own API, OpenAI-compatible. Billed from the configured prices."
     default_base_url: str | None = "https://api.mistral.ai/v1"

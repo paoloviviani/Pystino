@@ -37,7 +37,6 @@ from gateway.models import ApiSurface
 Rewrite = Callable[[str], str]
 
 
-
 #: ``(choice index, offset) -> offset``: where a position in the text a provider
 #: generated ended up in the text the caller is given. Identity when nothing was
 #: restored.

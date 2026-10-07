@@ -65,9 +65,7 @@ def send_mail(settings: SmtpSettings, to_address: str, subject: str, body: str) 
         server.send_message(message)
 
 
-async def send_mail_async(
-    settings: SmtpSettings, to_address: str, subject: str, body: str
-) -> None:
+async def send_mail_async(settings: SmtpSettings, to_address: str, subject: str, body: str) -> None:
     """The send off the event loop, so a slow mail server cannot stall a request."""
     try:
         await asyncio.to_thread(send_mail, settings, to_address, subject, body)

@@ -105,12 +105,16 @@ class TestAnIssuerSwitch:
         await reseed_from_env(session, _settings(OLD_ISSUER), BOX)
         await reseed_from_env(session, _settings(NEW_ISSUER), BOX)
         event = (
-            await session.execute(
-                select(IdentityEvent)
-                .where(IdentityEvent.action == IdentityEventAction.IDP_RESEED)
-                .order_by(IdentityEvent.at.desc())
+            (
+                await session.execute(
+                    select(IdentityEvent)
+                    .where(IdentityEvent.action == IdentityEventAction.IDP_RESEED)
+                    .order_by(IdentityEvent.at.desc())
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         assert event is not None
         assert event.detail == {"old_issuer": OLD_ISSUER, "new_issuer": NEW_ISSUER}
 

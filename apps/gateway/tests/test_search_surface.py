@@ -185,9 +185,7 @@ class TestPassthrough:
         body = linkup_request("european cloud providers", maxResults=7)
 
         fake_upstream.set_json(linkup_body())
-        response = await client.post(
-            "/v1/search/linkup", json=body, headers=seeded.auth
-        )
+        response = await client.post("/v1/search/linkup", json=body, headers=seeded.auth)
         assert response.status_code == 200, response.text
         assert fake_upstream.last_body == body
 
@@ -306,9 +304,7 @@ class TestMetering:
 
         for _ in range(2):
             assert (
-                await client.post(
-                    "/v1/search/linkup", json=linkup_request(), headers=seeded.auth
-                )
+                await client.post("/v1/search/linkup", json=linkup_request(), headers=seeded.auth)
             ).status_code == 200
 
         rows = (
@@ -360,9 +356,9 @@ class TestFailuresStillCount:
             provider = Provider(
                 name="dead",
                 base_url="http://127.0.0.1:9/v1",
-                api_key_encrypted=SecretBox(
-                    ["test-encryption-key-not-for-production"]
-                ).encrypt("k"),
+                api_key_encrypted=SecretBox(["test-encryption-key-not-for-production"]).encrypt(
+                    "k"
+                ),
                 plugin="linkup",
                 kind=ProviderKind.SEARCH,
             )
@@ -378,9 +374,7 @@ class TestFailuresStillCount:
             await session.flush()
             session.add(GroupModelAccess(group_id=seeded.group.id, model_id=anchor.id))
 
-        response = await client.post(
-            "/v1/search/dead", json=linkup_request(), headers=seeded.auth
-        )
+        response = await client.post("/v1/search/dead", json=linkup_request(), headers=seeded.auth)
         assert response.status_code == 502
         record = await latest_record(session)
         assert record.own_search_requests == 1
@@ -466,7 +460,5 @@ class TestAccess:
         """Nothing to forward is nothing to count, and the vendor would read
         the absence as its own 400."""
         await add_backend(session, seeded)
-        response = await client.post(
-            "/v1/search/linkup", headers=seeded.auth, content=b""
-        )
+        response = await client.post("/v1/search/linkup", headers=seeded.auth, content=b"")
         assert response.status_code == 400

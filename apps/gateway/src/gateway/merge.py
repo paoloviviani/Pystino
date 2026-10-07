@@ -122,9 +122,7 @@ MERGE_RULES: tuple[MergeRule, ...] = (
     MergeRule("idp_authorization_codes", "user_id", MergeRuleKind.DELETE),
     MergeRule("password_reset_tokens", "user_id", MergeRuleKind.DELETE),
     MergeRule("local_credentials", "user_id", MergeRuleKind.DELETE),
-    MergeRule(
-        "quota_notification_settings", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE
-    ),
+    MergeRule("quota_notification_settings", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
     MergeRule("quota_notification_state", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
 )
 
@@ -266,8 +264,10 @@ def _check_refusals(
 
 async def _source_identities(session: AsyncSession, source: User) -> list[IdentityRef]:
     linked = (
-        await session.execute(select(UserIdentity).where(UserIdentity.user_id == source.id))
-    ).scalars().all()
+        (await session.execute(select(UserIdentity).where(UserIdentity.user_id == source.id)))
+        .scalars()
+        .all()
+    )
     return [IdentityRef(source.issuer, source.subject)] + [
         IdentityRef(row.issuer, row.subject) for row in linked
     ]
@@ -275,8 +275,14 @@ async def _source_identities(session: AsyncSession, source: User) -> list[Identi
 
 async def _target_issuers(session: AsyncSession, target: User) -> set[str]:
     linked = (
-        await session.execute(select(UserIdentity.issuer).where(UserIdentity.user_id == target.id))
-    ).scalars().all()
+        (
+            await session.execute(
+                select(UserIdentity.issuer).where(UserIdentity.user_id == target.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return {target.issuer, *linked}
 
 
@@ -461,15 +467,19 @@ async def _merge_model_access(
     session: AsyncSession, source_id: uuid.UUID, target_id: uuid.UUID
 ) -> int:
     source_rows = (
-        await session.execute(select(UserModelAccess).where(UserModelAccess.user_id == source_id))
-    ).scalars().all()
+        (await session.execute(select(UserModelAccess).where(UserModelAccess.user_id == source_id)))
+        .scalars()
+        .all()
+    )
     target_model_ids = {
         r.model_id
         for r in (
             await session.execute(
                 select(UserModelAccess).where(UserModelAccess.user_id == target_id)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
     for row in source_rows:
         if row.model_id not in target_model_ids:
@@ -488,7 +498,9 @@ async def _apply_identities(
         (row.issuer, row.subject): row
         for row in (
             await session.execute(select(UserIdentity).where(UserIdentity.user_id == source.id))
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
     for identity in moving:
         row = linked_by_pair.get((identity.issuer, identity.subject))

@@ -69,8 +69,7 @@ async def check_discovery(client: OIDCClient, settings: OIDCSettings, report: Ch
         report.say(f"discovery: issuer {metadata.issuer!r} (matches OIDC_ISSUER)")
     else:
         report.fail(
-            f"discovery: issuer {metadata.issuer!r} does NOT match "
-            f"OIDC_ISSUER {settings.issuer!r}"
+            f"discovery: issuer {metadata.issuer!r} does NOT match OIDC_ISSUER {settings.issuer!r}"
         )
     report.say(f"  authorization_endpoint: {metadata.authorization_endpoint}")
     report.say(f"  token_endpoint: {metadata.token_endpoint}")
@@ -139,8 +138,7 @@ def _admin_rule_lines(
 
     if not email_rule_configured and not claim_rule_configured:
         lines.append(
-            "admin: no rule is configured (set ADMIN_EMAILS, or ADMIN_CLAIM "
-            "and ADMIN_CLAIM_VALUES)"
+            "admin: no rule is configured (set ADMIN_EMAILS, or ADMIN_CLAIM and ADMIN_CLAIM_VALUES)"
         )
     return lines, granted
 
@@ -170,9 +168,7 @@ async def check_token(
 
     email = claims.get("email")
     verified = claims.get("email_verified")
-    report.say(
-        f"  email: {email!r}, email_verified: {verified!r} ({type(verified).__name__})"
-    )
+    report.say(f"  email: {email!r}, email_verified: {verified!r} ({type(verified).__name__})")
     groups_value = resolve_claim(claims, settings.groups_claim)
     report.say(f"  groups claim {settings.groups_claim!r}: {groups_value!r}")
     aud = claims.get("aud")
@@ -323,12 +319,8 @@ def build_arg_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--issuer", help="override OIDC_ISSUER for this check")
     parser.add_argument("--internal-base-url", help="override OIDC_INTERNAL_BASE_URL")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--discovery-only", action="store_true", help="stop after discovery and JWKS"
-    )
-    mode.add_argument(
-        "--device", action="store_true", help="earn a token live via the device flow"
-    )
+    mode.add_argument("--discovery-only", action="store_true", help="stop after discovery and JWKS")
+    mode.add_argument("--device", action="store_true", help="earn a token live via the device flow")
     mode.add_argument("--token", help="check a pasted access token instead of signing in")
     parser.add_argument(
         "--client-id", help="the device flow's client id (default: OIDC_MACHINE_CLIENT_ID)"

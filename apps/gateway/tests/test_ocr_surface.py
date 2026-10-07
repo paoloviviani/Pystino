@@ -90,7 +90,6 @@ def install_detector(app: Any, findings: list[tuple[str, str]]) -> None:
     )
 
 
-
 async def add_ocr_model(
     session: AsyncSession,
     seeded: Seeded,
@@ -1174,9 +1173,7 @@ class TestResponseRedaction:
         """The local path is not a shortcut past the policy: a document read
         here still has its text inspected before it is handed over."""
         extractor = FakeExtractor()
-        extractor.set(
-            kind="text", text=f"Transfer to {IBAN}", extractor="markitdown", pages=1
-        )
+        extractor.set(kind="text", text=f"Transfer to {IBAN}", extractor="markitdown", pages=1)
         app.state.control_http = extractor.client()
         install_detector(app, [("IBAN_CODE", IBAN)])
         model = await add_local_model(session, seeded, name="local-redacted")
@@ -1233,9 +1230,15 @@ def test_the_wire_contract_accepts_the_ocr_kind() -> None:
     from gateway.schemas import ModelCreateRequest, ModelUpdateRequest
 
     for kind in ModelKind:
-        assert ModelCreateRequest(
-            name=f"m-{kind.value}", upstream_model="x", provider_id=uuid.uuid4(), kind=kind.value
-        ).kind == kind.value
+        assert (
+            ModelCreateRequest(
+                name=f"m-{kind.value}",
+                upstream_model="x",
+                provider_id=uuid.uuid4(),
+                kind=kind.value,
+            ).kind
+            == kind.value
+        )
         assert ModelUpdateRequest(kind=kind.value).kind == kind.value
 
 

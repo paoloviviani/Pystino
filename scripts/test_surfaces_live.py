@@ -378,8 +378,7 @@ def main() -> int:
             expect("it can be imported", status == 201, f"HTTP {status}")
             just_imported = status == 201
             catalogued = {
-                m["upstream_model"]: m
-                for m in api(dave, "/api/admin/models?limit=200")[1]["items"]
+                m["upstream_model"]: m for m in api(dave, "/api/admin/models?limit=200")[1]["items"]
             }
 
         imported = catalogued.get("upstream/big-model")

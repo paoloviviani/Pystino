@@ -46,8 +46,7 @@ DEFAULT_CATALOGUE_URL = "https://api.cortecs.ai/v1/models"
 #: LiteLLM's community-maintained price file (MIT), the source for the
 #: first-party APIs that publish no pricing of their own (ADR 0053).
 LITELLM_CATALOGUE_URL = (
-    "https://raw.githubusercontent.com/BerriAI/litellm/main/"
-    "model_prices_and_context_window.json"
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 )
 
 # Keys the catalogue might plausibly use, in order of preference.
@@ -274,9 +273,7 @@ def parse_litellm_catalogue(
     entries: Iterable[Any]
     if isinstance(payload, dict):
         entries = [
-            {**entry, "_id": key}
-            for key, entry in payload.items()
-            if isinstance(entry, dict)
+            {**entry, "_id": key} for key, entry in payload.items() if isinstance(entry, dict)
         ]
     elif isinstance(payload, list):
         entries = payload
@@ -304,11 +301,7 @@ def parse_litellm_catalogue(
         # refused instead, because guessing an image model into existence is
         # how a route starts serving the wrong kind of endpoint.
         mode = str(entry.get("mode", "chat")).lower()
-        kind = (
-            ModelKind.EMBEDDING
-            if mode == "embedding"
-            else ModelKind.CHAT
-        )
+        kind = ModelKind.EMBEDDING if mode == "embedding" else ModelKind.CHAT
 
         prices.append(
             CataloguePrice(
@@ -318,17 +311,14 @@ def parse_litellm_catalogue(
                 currency="USD",
                 cache_read_per_mtok=(
                     cache_read * scale
-                    if (
-                        cache_read := _as_decimal(entry.get("cache_read_input_token_cost"))
-                    ) is not None
+                    if (cache_read := _as_decimal(entry.get("cache_read_input_token_cost")))
+                    is not None
                     else None
                 ),
                 context_window=(
                     int(entry["max_input_tokens"])
                     if entry.get("max_input_tokens")
-                    else (
-                        int(entry["max_tokens"]) if entry.get("max_tokens") else None
-                    )
+                    else (int(entry["max_tokens"]) if entry.get("max_tokens") else None)
                 ),
                 kind=kind,
             )
@@ -442,7 +432,6 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
             output_rate = Decimal(0)
 
         kind = _kind_of(entry)
-
 
         # `context_size` is what the reference provider actually sends, and its
         # absence from this list is why every imported model had a null context
@@ -602,6 +591,7 @@ def kinds_by_id(payload: Any) -> dict[str, ModelKind]:
             continue
         kinds[str(raw_id)] = _kind_of(entry)
     return kinds
+
 
 def _differs(existing: ModelPrice | None, candidate: CataloguePrice) -> bool:
     """Whether *candidate* is a genuine change from the price now in force."""

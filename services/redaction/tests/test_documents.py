@@ -480,9 +480,7 @@ class TestPdfPagesAsImages:
         assert result.extractor == "markitdown"
         assert result.page_images == [] and result.inspected
 
-    def test_a_scan_that_cannot_be_rendered_says_why(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_a_scan_that_cannot_be_rendered_says_why(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import llmp_redaction.documents as documents
 
         def fail(*_args: object, **_kwargs: object) -> None:

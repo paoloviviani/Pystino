@@ -22,9 +22,7 @@ async def resolve_merged_from(session: AsyncSession, user_id: uuid.UUID) -> list
     into B and B was later merged into C, ``resolve_merged_from(C)`` returns
     both A and B, even though A's own row names only B.
     """
-    anchor = select(UserMerge.source_user_id.label("id")).where(
-        UserMerge.target_user_id == user_id
-    )
+    anchor = select(UserMerge.source_user_id.label("id")).where(UserMerge.target_user_id == user_id)
     chain = anchor.cte("merge_chain", recursive=True)
     chain = chain.union_all(
         select(UserMerge.source_user_id).where(UserMerge.target_user_id == chain.c.id)

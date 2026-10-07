@@ -509,9 +509,7 @@ async def reseed_from_env(session: AsyncSession, settings: Settings, secrets: Se
     )
     for row in disabled:
         count = (
-            await session.execute(
-                select(func.count(User.id)).where(User.issuer == row.issuer)
-            )
+            await session.execute(select(func.count(User.id)).where(User.issuer == row.issuer))
         ).scalar_one()
         logger.warning(
             "identity provider %r (%s, %d user%s) disabled: set it in .env to use it",

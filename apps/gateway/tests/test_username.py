@@ -55,9 +55,7 @@ async def test_a_new_directory_account_records_its_username(
     assert response.status_code == 200, response.text
 
     async with session_factory() as db:
-        user = (
-            await db.execute(select(User).where(User.subject == "kc-1"))
-        ).scalars().one()
+        user = (await db.execute(select(User).where(User.subject == "kc-1"))).scalars().one()
         # Both, separately. The display name is what to show; the username is
         # what the account was created as.
         assert user.display_name == "Chat Tester"
@@ -90,9 +88,7 @@ async def test_an_existing_account_acquires_its_username_on_the_next_request(
     # state of every account that predates the column.
     assert (await client.get("/v1/models", headers=bearer_auth(token))).status_code == 200
     async with session_factory() as db:
-        user = (
-            await db.execute(select(User).where(User.subject == "kc-2"))
-        ).scalars().one()
+        user = (await db.execute(select(User).where(User.subject == "kc-2"))).scalars().one()
         user.username = None
         await db.commit()
 
@@ -100,9 +96,7 @@ async def test_an_existing_account_acquires_its_username_on_the_next_request(
     # to notice and fill it.
     assert (await client.get("/v1/models", headers=bearer_auth(token))).status_code == 200
     async with session_factory() as db:
-        user = (
-            await db.execute(select(User).where(User.subject == "kc-2"))
-        ).scalars().one()
+        user = (await db.execute(select(User).where(User.subject == "kc-2"))).scalars().one()
         assert user.username == "someone@local"
 
 
@@ -127,9 +121,7 @@ async def test_a_directory_that_sends_no_name_still_gets_a_display_name(
     )
     assert (await client.get("/v1/models", headers=bearer_auth(token))).status_code == 200
     async with session_factory() as db:
-        user = (
-            await db.execute(select(User).where(User.subject == "kc-3"))
-        ).scalars().one()
+        user = (await db.execute(select(User).where(User.subject == "kc-3"))).scalars().one()
         assert user.display_name == "nameless@local"
         assert user.username == "nameless@local"
 
@@ -150,11 +142,7 @@ async def test_a_username_change_in_the_directory_is_picked_up(
     assert (await client.get("/v1/models", headers=bearer_auth(second))).status_code == 200
 
     async with session_factory() as db:
-        rows = (
-            (await db.execute(select(User).where(User.issuer == BEARER_ISSUER)))
-            .scalars()
-            .all()
-        )
+        rows = (await db.execute(select(User).where(User.issuer == BEARER_ISSUER))).scalars().all()
         matching = [user for user in rows if user.subject == "kc-4"]
         assert len(matching) == 1, "a rename must not fork the account"
         assert matching[0].username == "after@local"
@@ -184,18 +172,14 @@ async def test_an_admin_edited_username_is_left_alone_on_every_request(
     # The console edit, written the way the admin user-update route writes it:
     # the field and the record of the edit, together.
     async with session_factory() as db:
-        user = (
-            await db.execute(select(User).where(User.subject == "kc-6"))
-        ).scalars().one()
+        user = (await db.execute(select(User).where(User.subject == "kc-6"))).scalars().one()
         user.username = "edited@local"
         user.admin_edited_fields = ["username"]
         await db.commit()
 
     assert (await client.get("/v1/models", headers=bearer_auth(token))).status_code == 200
     async with session_factory() as db:
-        user = (
-            await db.execute(select(User).where(User.subject == "kc-6"))
-        ).scalars().one()
+        user = (await db.execute(select(User).where(User.subject == "kc-6"))).scalars().one()
         assert user.username == "edited@local"
 
 
@@ -225,9 +209,7 @@ async def test_the_admin_listing_finds_an_account_by_its_username(
         await db.commit()
 
     async with session_factory() as db:
-        admin = (
-            await db.execute(select(User).where(User.id == seeded.user.id))
-        ).scalars().one()
+        admin = (await db.execute(select(User).where(User.id == seeded.user.id))).scalars().one()
         admin.is_admin = True
         await db.commit()
         await db.refresh(admin, attribute_names=["memberships"])

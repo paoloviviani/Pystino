@@ -127,9 +127,7 @@ class TestTarget:
         assert {m.group.name for m in user.memberships} == {"users"}
         assert user.default_billing_group_id == user.memberships[0].group_id
 
-    async def test_one_match_is_used_outright(
-        self, session: AsyncSession, tmp_path: Path
-    ) -> None:
+    async def test_one_match_is_used_outright(self, session: AsyncSession, tmp_path: Path) -> None:
         await _bundled_provider(session, tmp_path)
         session.add(_user("https://old.example.org", "s1", "ops@example.org"))
         await session.commit()
@@ -172,9 +170,7 @@ class TestTarget:
             )
 
         target = (
-            await session.execute(
-                select(User).where(User.issuer == "https://b.example.org")
-            )
+            await session.execute(select(User).where(User.issuer == "https://b.example.org"))
         ).scalar_one()
         result = await break_glass(
             session,
@@ -253,10 +249,14 @@ class TestLogin:
         # The file has exactly one entry for "alice" -- reusing an entry
         # never creates a second directory_entries row for the same login.
         rows = (
-            await session.execute(
-                select(DirectoryEntry).where(DirectoryEntry.external_id == "alice")
+            (
+                await session.execute(
+                    select(DirectoryEntry).where(DirectoryEntry.external_id == "alice")
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(rows) == 1
 
     async def test_creates_a_derived_login_when_none_is_bound(

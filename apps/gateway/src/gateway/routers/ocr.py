@@ -279,14 +279,16 @@ async def extract_document(
             )
 
         metered.accounting.observe_payload(extracted)
-        if (blocked := await _redact_pages(
-            request,
-            extracted,
-            redactor=redactor,
-            principal=principal,
-            model=model,
-            metered=metered,
-        )) is not None:
+        if (
+            blocked := await _redact_pages(
+                request,
+                extracted,
+                redactor=redactor,
+                principal=principal,
+                model=model,
+                metered=metered,
+            )
+        ) is not None:
             return blocked
         # Our name for the caller, the extractor's own in the ledger.
         extracted["model"] = model.name
@@ -318,14 +320,16 @@ async def extract_document(
         metered.accounting.observe_payload(response.payload, headers=response.headers)
 
     body_out: dict[str, Any] = dict(response.payload or {})
-    if (blocked := await _redact_pages(
-        request,
-        body_out,
-        redactor=redactor,
-        principal=principal,
-        model=model,
-        metered=metered,
-    )) is not None:
+    if (
+        blocked := await _redact_pages(
+            request,
+            body_out,
+            redactor=redactor,
+            principal=principal,
+            model=model,
+            metered=metered,
+        )
+    ) is not None:
         return blocked
 
     # Our model name, not the counterparty's, exactly as every other route does:

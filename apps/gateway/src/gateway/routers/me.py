@@ -209,9 +209,7 @@ async def revoke_key(
 
 
 @router.delete("/me/keys/{key_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_key(
-    key_id: uuid.UUID, user: ManagementUserDep, session: SessionDep
-) -> None:
+async def delete_key(key_id: uuid.UUID, user: ManagementUserDep, session: SessionDep) -> None:
     """Delete a key outright, revoked or not.
 
     Distinct from revoking because a list of dead keys grows without limit and
@@ -325,9 +323,7 @@ async def set_my_notification_thresholds(
     group_ids = user.group_ids()
     conditions = [LimitRule.scope == LimitScope.GLOBAL]
     for group_id in group_ids or []:
-        conditions.append(
-            and_(LimitRule.scope == LimitScope.GROUP, LimitRule.scope_id == group_id)
-        )
+        conditions.append(and_(LimitRule.scope == LimitScope.GROUP, LimitRule.scope_id == group_id))
     conditions.append(and_(LimitRule.scope == LimitScope.USER, LimitRule.scope_id == user.id))
     applies = (
         await session.execute(

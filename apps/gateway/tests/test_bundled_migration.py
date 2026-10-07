@@ -98,9 +98,7 @@ async def test_memberships_oidc_to_manual_only_for_the_bundled_issuers_users(
         session.add_all([bundled_user, other_user])
         await session.flush()
         session.add(
-            Membership(
-                user_id=bundled_user.id, group_id=group.id, source=MembershipSource.OIDC
-            )
+            Membership(user_id=bundled_user.id, group_id=group.id, source=MembershipSource.OIDC)
         )
         session.add(
             Membership(user_id=other_user.id, group_id=group.id, source=MembershipSource.OIDC)
@@ -114,9 +112,7 @@ async def test_memberships_oidc_to_manual_only_for_the_bundled_issuers_users(
 
     async with session_factory() as session:
         bundled_membership = (
-            await session.execute(
-                select(Membership).where(Membership.user_id == bundled_user_id)
-            )
+            await session.execute(select(Membership).where(Membership.user_id == bundled_user_id))
         ).scalar_one()
         assert bundled_membership.source == MembershipSource.MANUAL
 

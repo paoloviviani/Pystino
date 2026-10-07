@@ -114,7 +114,8 @@ class FakeDetector:
             body = _json.loads(response.content)
             body["unsupported_types"] = types
             return httpx.Response(
-                response.status_code, content=_json.dumps(body).encode(),
+                response.status_code,
+                content=_json.dumps(body).encode(),
                 headers={"content-type": "application/json"},
             )
 
@@ -504,9 +505,7 @@ class TestResponseRestoration:
         outcome = await redactor.redact_request([{"role": "user", "content": "Mario Rossi"}])
         placeholder = outcome.messages[0]["content"]
 
-        restored = await redactor.restore_response(
-            f"I will contact {placeholder} today.", outcome
-        )
+        restored = await redactor.restore_response(f"I will contact {placeholder} today.", outcome)
         assert restored.text == "I will contact Mario Rossi today."
         # The edit is what a citation needs: where it happened, and by how much
         # the text after it moved (ADR 0059).

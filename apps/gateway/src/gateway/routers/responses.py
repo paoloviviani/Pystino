@@ -113,9 +113,7 @@ async def create_response(
         (body.model_extra or {}).get("tools"),
         default=settings.quota.default_max_web_searches,
     )
-    worst_case = TokenCounts(
-        prompt=prompt_tokens, completion=max_output, searches=search.reserved
-    )
+    worst_case = TokenCounts(prompt=prompt_tokens, completion=max_output, searches=search.reserved)
 
     metered = await _metered.begin(
         fx=request.app.state.fx,
@@ -175,9 +173,7 @@ async def create_response(
         restored = await redactor.restore_response(assembled, outcome)
         _rewrite_all(out, restored.text)
         if restored.moved:
-            reader_for(SURFACE).shift_citations(
-                out, lambda _choice, offset: restored.shift(offset)
-            )
+            reader_for(SURFACE).shift_citations(out, lambda _choice, offset: restored.shift(offset))
 
     return JSONResponse(
         status_code=response.status_code,

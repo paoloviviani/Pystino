@@ -67,9 +67,7 @@ class TestLinkByEmail:
             )
             assert result is None
 
-    async def test_declines_a_non_ascii_or_unparseable_address(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_declines_a_non_ascii_or_unparseable_address(self, session: AsyncSession) -> None:
         await make_target(session, email="Persön@example.org", email_verified=True)
         result = await link_by_email(
             session,
@@ -80,9 +78,7 @@ class TestLinkByEmail:
         )
         assert result is None
 
-    async def test_declines_when_no_account_holds_the_address(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_declines_when_no_account_holds_the_address(self, session: AsyncSession) -> None:
         result = await link_by_email(
             session,
             issuer="https://new-idp.test",
@@ -122,9 +118,7 @@ class TestLinkByEmail:
     ) -> None:
         """§6.2 condition 4's OR clause: an administrator vouching for the
         address is as good as the directory verifying it."""
-        target = await make_target(
-            session, email_verified=None, admin_edited_fields=["email"]
-        )
+        target = await make_target(session, email_verified=None, admin_edited_fields=["email"])
         result = await link_by_email(
             session,
             issuer="https://new-idp.test",
@@ -363,7 +357,5 @@ class TestBearerPathNeverLinks:
 
         assert user.id != target.id
         assert (
-            await session.execute(
-                select(UserIdentity).where(UserIdentity.user_id == target.id)
-            )
+            await session.execute(select(UserIdentity).where(UserIdentity.user_id == target.id))
         ).scalar_one_or_none() is None

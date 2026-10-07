@@ -104,7 +104,6 @@ def _echo(body: dict[str, Any]) -> str:
     return ""
 
 
-
 #: Appended to a searched answer, and then cited. A fixed marker so a live
 #: script can assert "the citation still quotes *this word*" rather than
 #: recomputing the arithmetic it is trying to check.

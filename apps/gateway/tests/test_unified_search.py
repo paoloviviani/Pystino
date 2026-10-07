@@ -170,9 +170,7 @@ class TestPolicyResolution:
         headers, same count. The whole path is exercised because a base URL
         that looked honoured while a cached client still pointed at the old
         host would be exactly the failure this shape can hide."""
-        anchor = await add_backend(
-            session, seeded, plugin="jina", base_url="https://eu.s.jina.ai"
-        )
+        anchor = await add_backend(session, seeded, plugin="jina", base_url="https://eu.s.jina.ai")
         await set_policy(session, seeded.group.id, anchor)
         fake_upstream.set_json(jina_body())
 

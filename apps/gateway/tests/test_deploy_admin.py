@@ -37,8 +37,10 @@ async def test_grant_marks_the_bootstrap_consumed_and_is_audited(session: AsyncS
     assert state.bootstrap_admin_consumed_at is not None
 
     row = (
-        await session.execute(select(IdentityEvent).order_by(IdentityEvent.at.desc()))
-    ).scalars().first()
+        (await session.execute(select(IdentityEvent).order_by(IdentityEvent.at.desc())))
+        .scalars()
+        .first()
+    )
     assert row is not None
     assert row.action == IdentityEventAction.ADMIN_GRANT
     assert row.target_user_id == user.id

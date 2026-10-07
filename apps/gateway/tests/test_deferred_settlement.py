@@ -160,10 +160,7 @@ class TestTheMechanism:
                 (b"host", b"gateway"),
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(payload)).encode()),
-                *[
-                    (key.lower().encode(), value.encode())
-                    for key, value in seeded.auth.items()
-                ],
+                *[(key.lower().encode(), value.encode()) for key, value in seeded.auth.items()],
             ],
             "client": ("127.0.0.1", 1234),
             "server": ("gateway", 80),

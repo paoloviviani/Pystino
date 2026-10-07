@@ -118,9 +118,7 @@ class QuotaNotifier:
         # Keep live memory for keys that still have subscriptions; a state row
         # whose settings are gone is dead weight, and a settings row without
         # state starts from zero, which is what "never announced" means.
-        self._announced = {
-            key: pct for key, pct in announced.items() if key[0] in subscriptions
-        }
+        self._announced = {key: pct for key, pct in announced.items() if key[0] in subscriptions}
 
     def observe(self, entries: list[tuple[LimitRule, int]]) -> None:
         """Admission's view of the rules it just measured.
@@ -149,9 +147,7 @@ class QuotaNotifier:
                     self._announced[key] = min(pct, 100)
                     self._schedule_send(rule, user_id, threshold, pct)
 
-    def _schedule_send(
-        self, rule: LimitRule, user_id: uuid.UUID, threshold: int, pct: int
-    ) -> None:
+    def _schedule_send(self, rule: LimitRule, user_id: uuid.UUID, threshold: int, pct: int) -> None:
         task = asyncio.create_task(self._send(rule, user_id, threshold, pct))
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
@@ -159,9 +155,7 @@ class QuotaNotifier:
     async def _send(self, rule: LimitRule, user_id: uuid.UUID, threshold: int, pct: int) -> None:
         try:
             async with self._session_factory() as session:
-                email = await session.scalar(
-                    select(User.email).where(User.id == user_id)
-                )
+                email = await session.scalar(select(User.email).where(User.id == user_id))
                 if not email:
                     # A user with no email address cannot be mailed; their
                     # thresholds stay configured and simply do nothing.
@@ -190,6 +184,7 @@ class QuotaNotifier:
             # its way into a flood, and must not take down its parent task.
             logger.exception("quota notification mail failed (rule %s)", rule.id)
 
+
 # -- user API ------------------------------------------------------------------
 
 
@@ -198,9 +193,9 @@ async def thresholds_for_user(
 ) -> dict[uuid.UUID, list[int]]:
     rows = (
         await session.execute(
-            select(
-                QuotaNotificationSetting.rule_id, QuotaNotificationSetting.threshold
-            ).where(QuotaNotificationSetting.user_id == user_id)
+            select(QuotaNotificationSetting.rule_id, QuotaNotificationSetting.threshold).where(
+                QuotaNotificationSetting.user_id == user_id
+            )
         )
     ).all()
     thresholds: dict[uuid.UUID, list[int]] = {}
@@ -220,11 +215,7 @@ async def replace_thresholds(
         )
     )
     for threshold in cleaned:
-        session.add(
-            QuotaNotificationSetting(
-                user_id=user_id, rule_id=rule_id, threshold=threshold
-            )
-        )
+        session.add(QuotaNotificationSetting(user_id=user_id, rule_id=rule_id, threshold=threshold))
     # A fresh decision clears the memory: if the usage is already past the new
     # threshold, the next poll announces it — which is what the user asked for.
     await session.execute(

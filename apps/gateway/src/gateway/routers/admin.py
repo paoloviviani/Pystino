@@ -2527,9 +2527,7 @@ async def _bundled_provider(session: AsyncSession) -> IdentityProvider:
     """
     row = await active_bundled_provider(session)
     if row is None:
-        raise BadRequestError(
-            "This deployment's identity provider is not the bundled Authelia."
-        )
+        raise BadRequestError("This deployment's identity provider is not the bundled Authelia.")
     return row
 
 
@@ -2855,9 +2853,7 @@ async def _bundled_entry_for(
     return (provider, entry) if entry is not None else None
 
 
-async def _revoke_sessions_and_credentials(
-    session: AsyncSession, admin: User, user: User
-) -> None:
+async def _revoke_sessions_and_credentials(session: AsyncSession, admin: User, user: User) -> None:
     """ADR 0093 §9.1's gateway-side half of a disable: ends every session and
     credential this person already holds, not just requests from here on.
 
@@ -3021,8 +3017,7 @@ async def update_user(
         )
         await session.commit()
         raise LastAdminError(
-            "This would leave no active administrator. Make another account an "
-            "administrator first."
+            "This would leave no active administrator. Make another account an administrator first."
         )
 
     for field, value in fields.items():
@@ -3251,15 +3246,15 @@ def _chat_shared_resources(chat_preview: dict[str, Any] | None) -> list[ChatShar
     return resources
 
 
-async def _user_identities_for_erasure(
-    session: AsyncSession, user: User
-) -> list[dict[str, str]]:
+async def _user_identities_for_erasure(session: AsyncSession, user: User) -> list[dict[str, str]]:
     """Every ``(issuer, subject)`` naming this person, the primary pair
     included -- what the chat's own resolution needs, since an account it
     never finished keying to ``gatewayUserId`` is only findable this way."""
     linked = (
-        await session.execute(select(UserIdentity).where(UserIdentity.user_id == user.id))
-    ).scalars().all()
+        (await session.execute(select(UserIdentity).where(UserIdentity.user_id == user.id)))
+        .scalars()
+        .all()
+    )
     return [{"issuer": user.issuer, "subject": user.subject}] + [
         {"issuer": row.issuer, "subject": row.subject} for row in linked
     ]
@@ -3362,8 +3357,7 @@ async def delete_user(
         )
         await session.commit()
         raise LastAdminError(
-            "This would leave no active administrator. Make another account an "
-            "administrator first."
+            "This would leave no active administrator. Make another account an administrator first."
         )
 
     published = await _published_by(session, user_id)

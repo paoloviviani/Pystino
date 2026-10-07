@@ -109,9 +109,7 @@ class TestDeleteKey:
     ) -> None:
         """The common pruning case: revoke today, delete once nobody needs it."""
         as_user(app, seeded.user)
-        assert (
-            await client.delete(f"/api/me/keys/{seeded.api_key.id}")
-        ).status_code == 200
+        assert (await client.delete(f"/api/me/keys/{seeded.api_key.id}")).status_code == 200
         assert (
             await client.delete(f"/api/me/keys/{seeded.api_key.id}/permanent")
         ).status_code == 204

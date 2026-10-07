@@ -67,9 +67,7 @@ def db_connection() -> Any:
 
 def _provider_row(connection: Any) -> Any:
     """The one provider row naming the extractor plugin, if any."""
-    return (
-        connection.execute(select(Provider).where(Provider.plugin == "extractor"))
-    ).first()
+    return (connection.execute(select(Provider).where(Provider.plugin == "extractor"))).first()
 
 
 def _model_row(connection: Any, name: str = MODEL_NAME) -> Any:

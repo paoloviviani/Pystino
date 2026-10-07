@@ -382,9 +382,7 @@ class _ShoutyRedactor:
 
         return passthrough
 
-    async def restore_response(
-        self, text: str, outcome: RedactionOutcome
-    ):  # type: ignore[no-untyped-def]
+    async def restore_response(self, text: str, outcome: RedactionOutcome):  # type: ignore[no-untyped-def]
         from gateway.redaction import Restored
 
         return Restored(text=text, restored=False)

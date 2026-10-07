@@ -262,9 +262,7 @@ class Metered:
             error_message=message,
         )
         await self.quota.settle(self.reservation, actuals)
-        return JSONResponse(
-            status_code=status_code, content=content if content is not None else {}
-        )
+        return JSONResponse(status_code=status_code, content=content if content is not None else {})
 
     async def completed(self, *, upstream_status: int | None = None) -> QuotaAmounts:
         actuals = await self.accounting.finalise(
@@ -273,9 +271,7 @@ class Metered:
         await self.quota.settle(self.reservation, actuals)
         return actuals
 
-    def completed_after_response(
-        self, *, upstream_status: int | None = None
-    ) -> BackgroundTask:
+    def completed_after_response(self, *, upstream_status: int | None = None) -> BackgroundTask:
         """The same work, run once the answer is already on its way out.
 
         Attach to the response instead of awaiting: a Starlette background task
@@ -318,7 +314,6 @@ class Metered:
                 "stays in_progress",
                 self.accounting.request_id,
             )
-
 
 
 @dataclass(frozen=True, slots=True)

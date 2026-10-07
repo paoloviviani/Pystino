@@ -39,9 +39,7 @@ class TestAnnounce:
         signing_key: RSAKey,
     ) -> None:
         _make_chat_aware(bearer_app)
-        response = await client.post(
-            "/v1/session/announce", headers=auth(make_token(signing_key))
-        )
+        response = await client.post("/v1/session/announce", headers=auth(make_token(signing_key)))
         assert response.status_code == 200, response.text
         body = response.json()
         assert body == {
@@ -68,9 +66,7 @@ class TestAnnounce:
         )
         assert response.status_code == 401, response.text
 
-    async def test_an_invalid_token_is_refused(
-        self, bearer_app: FastAPI, client: Any
-    ) -> None:
+    async def test_an_invalid_token_is_refused(self, bearer_app: FastAPI, client: Any) -> None:
         _make_chat_aware(bearer_app)
         response = await client.post(
             "/v1/session/announce", headers={"authorization": "Bearer not-a-jwt"}
@@ -97,9 +93,7 @@ class TestAnnounce:
             row.is_active = False
             await db.commit()
 
-        response = await client.post(
-            "/v1/session/announce", headers=auth(make_token(signing_key))
-        )
+        response = await client.post("/v1/session/announce", headers=auth(make_token(signing_key)))
         assert response.status_code == 403, response.text
 
     async def test_runs_the_full_sign_in_sequence_not_the_plain_v1_path(
@@ -165,9 +159,7 @@ class TestMyIdentities:
     async def test_the_primary_pair_with_no_links_or_merges(
         self, bearer_app: FastAPI, client: Any, seeded: Seeded, signing_key: RSAKey
     ) -> None:
-        response = await client.get(
-            "/v1/me/identities", headers=auth(make_token(signing_key))
-        )
+        response = await client.get("/v1/me/identities", headers=auth(make_token(signing_key)))
         assert response.status_code == 200, response.text
         assert response.json() == {
             "id": str(seeded.user.id),
@@ -194,9 +186,7 @@ class TestMyIdentities:
             )
             await db.commit()
 
-        response = await client.get(
-            "/v1/me/identities", headers=auth(make_token(signing_key))
-        )
+        response = await client.get("/v1/me/identities", headers=auth(make_token(signing_key)))
         assert response.status_code == 200, response.text
         pairs = {(i["issuer"], i["subject"]) for i in response.json()["identities"]}
         assert pairs == {

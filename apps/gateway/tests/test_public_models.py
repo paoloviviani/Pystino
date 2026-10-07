@@ -38,9 +38,7 @@ async def public_model(seeded, session: AsyncSession) -> ModelDef:
 
 
 @pytest_asyncio.fixture
-async def outsider(
-    seeded, session: AsyncSession
-) -> tuple[User, str]:
+async def outsider(seeded, session: AsyncSession) -> tuple[User, str]:
     """A user in a group that has no grants, plus their usable key.
 
     Deliberately *not* a groupless user: a groupless caller cannot bill anything,
@@ -168,9 +166,7 @@ class TestAdminToggle:
         assert created.json()["is_public"] is True
 
         model_id = created.json()["id"]
-        restricted = await client.patch(
-            f"/api/admin/models/{model_id}", json={"is_public": False}
-        )
+        restricted = await client.patch(f"/api/admin/models/{model_id}", json={"is_public": False})
         assert restricted.status_code == 200
         assert restricted.json()["is_public"] is False
 

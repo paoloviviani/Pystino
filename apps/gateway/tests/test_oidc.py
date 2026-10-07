@@ -203,9 +203,7 @@ class TestProvisioning:
         groups = {membership.group.name for membership in again.memberships}
         assert groups == {"research"}
 
-    async def test_only_the_edited_field_is_frozen(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_only_the_edited_field_is_frozen(self, session: AsyncSession) -> None:
         """A field the console never touched keeps following the directory.
 
         Freezing all three on any edit would be the heavy half of "the console

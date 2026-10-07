@@ -196,7 +196,6 @@ class DetectionResponse(BaseModel):
     unsupported_types: list[str] = Field(default_factory=list)
 
 
-
 @dataclass(frozen=True, slots=True)
 class TextEdit:
     """One substitution, in the coordinates of the text before it happened."""

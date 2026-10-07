@@ -84,9 +84,7 @@ class TestAccepted:
         assert response.status_code == 200
 
         async with session_factory() as db:
-            user = (
-                await db.execute(select(User).where(User.subject == "brand-new"))
-            ).scalar_one()
+            user = (await db.execute(select(User).where(User.subject == "brand-new"))).scalar_one()
             assert user.email == "new@example.org"
             # Provisioned into the group the token claims, and — being their only
             # group — it becomes the default they bill.
@@ -109,15 +107,11 @@ class TestAccepted:
         signing into the console while leaving them able to spend through the
         API, which is the half that costs money.
         """
-        response = await client.get(
-            "/v1/models", headers=auth(make_token(signing_key, groups=[]))
-        )
+        response = await client.get("/v1/models", headers=auth(make_token(signing_key, groups=[])))
         assert response.status_code == 403
 
         async with session_factory() as db:
-            user = (
-                await db.execute(select(User).where(User.subject == "subject-1"))
-            ).scalar_one()
+            user = (await db.execute(select(User).where(User.subject == "subject-1"))).scalar_one()
             assert user.default_billing_group_id is None
 
     @pytest.mark.asyncio
@@ -211,9 +205,7 @@ class TestRefused:
         none_header = (
             base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).rstrip(b"=").decode()
         )
-        response = await client.get(
-            "/v1/models", headers=auth(f"{none_header}.{payload}.")
-        )
+        response = await client.get("/v1/models", headers=auth(f"{none_header}.{payload}."))
         assert response.status_code == 401
 
     @pytest.mark.asyncio
@@ -227,9 +219,7 @@ class TestRefused:
     ) -> None:
         """Deactivating a user must stop them even while their token is valid."""
         async with session_factory() as db:
-            user = (
-                await db.execute(select(User).where(User.subject == "subject-1"))
-            ).scalar_one()
+            user = (await db.execute(select(User).where(User.subject == "subject-1"))).scalar_one()
             user.is_active = False
             await db.commit()
 
@@ -305,9 +295,7 @@ class TestAcceptedClients:
     exactly the way `bearer_app` itself does.
     """
 
-    async def _app(
-        self, app: FastAPI, signing_key: RSAKey, *, accepted_clients: str
-    ) -> FastAPI:
+    async def _app(self, app: FastAPI, signing_key: RSAKey, *, accepted_clients: str) -> FastAPI:
         settings: Settings = app.state.settings
         settings.oidc = OIDCSettings(
             enabled=True,

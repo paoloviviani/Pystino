@@ -54,8 +54,11 @@ async def make_row(
 
 class TestSweep:
     async def test_old_text_is_cleared_and_the_ledger_row_is_kept(
-        self, session: AsyncSession, session_factory: async_sessionmaker[AsyncSession],
-        settings: Settings, seeded: Seeded,
+        self,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        seeded: Seeded,
     ) -> None:
         old = await make_row(session, session_factory, settings, seeded, text="secret", age=2 * DAY)
         before = await fetch(session_factory, old)
@@ -71,8 +74,11 @@ class TestSweep:
         assert after.finalised_at == before.finalised_at
 
     async def test_recent_text_is_kept(
-        self, session: AsyncSession, session_factory: async_sessionmaker[AsyncSession],
-        settings: Settings, seeded: Seeded,
+        self,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        seeded: Seeded,
     ) -> None:
         fresh = await make_row(
             session, session_factory, settings, seeded, text="keep me", age=timedelta(hours=1)
@@ -81,21 +87,32 @@ class TestSweep:
         assert (await fetch(session_factory, fresh)).assistant_text == "keep me"
 
     async def test_a_stream_still_being_written_is_never_cleared(
-        self, session: AsyncSession, session_factory: async_sessionmaker[AsyncSession],
-        settings: Settings, seeded: Seeded,
+        self,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        seeded: Seeded,
     ) -> None:
         """The recovery path this column exists for: an unfinalised row whose
         last flush is recent is somebody's answer in progress."""
         live = await make_row(
-            session, session_factory, settings, seeded, text="partial", age=timedelta(minutes=1),
+            session,
+            session_factory,
+            settings,
+            seeded,
+            text="partial",
+            age=timedelta(minutes=1),
             finalise=False,
         )
         assert await sweep_assistant_text(session_factory, DAY) == 0
         assert (await fetch(session_factory, live)).assistant_text == "partial"
 
     async def test_an_abandoned_unfinalised_row_is_cleared_by_its_last_write(
-        self, session: AsyncSession, session_factory: async_sessionmaker[AsyncSession],
-        settings: Settings, seeded: Seeded,
+        self,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        seeded: Seeded,
     ) -> None:
         """A gateway that died mid-stream leaves `finalised_at` empty for ever;
         it must not keep its text for ever too."""
@@ -106,8 +123,11 @@ class TestSweep:
         assert (await fetch(session_factory, dead)).assistant_text is None
 
     async def test_it_is_idempotent(
-        self, session: AsyncSession, session_factory: async_sessionmaker[AsyncSession],
-        settings: Settings, seeded: Seeded,
+        self,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        seeded: Seeded,
     ) -> None:
         await make_row(session, session_factory, settings, seeded, text="x", age=2 * DAY)
         assert await sweep_assistant_text(session_factory, DAY) == 1
@@ -119,8 +139,11 @@ class TestLoopAndSettings:
         assert Settings().transcript_retention_hours == 24.0
 
     async def test_the_loop_sweeps_on_start(
-        self, session: AsyncSession, session_factory: async_sessionmaker[AsyncSession],
-        settings: Settings, seeded: Seeded,
+        self,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        settings: Settings,
+        seeded: Seeded,
     ) -> None:
         old = await make_row(session, session_factory, settings, seeded, text="x", age=2 * DAY)
         loop = TranscriptRetentionLoop(

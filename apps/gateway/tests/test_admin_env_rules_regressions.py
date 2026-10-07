@@ -31,9 +31,7 @@ def _email_settings() -> OIDCSettings:
 
 async def _count_events(session: AsyncSession, action: IdentityEventAction) -> int:
     return len(
-        (
-            await session.execute(select(IdentityEvent).where(IdentityEvent.action == action))
-        )
+        (await session.execute(select(IdentityEvent).where(IdentityEvent.action == action)))
         .scalars()
         .all()
     )

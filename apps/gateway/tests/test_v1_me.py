@@ -52,9 +52,7 @@ async def _granted_by_hand(
         db.add(group)
         await db.flush()
         db.add(
-            Membership(
-                user_id=seeded.user.id, group_id=group.id, source=MembershipSource.MANUAL
-            )
+            Membership(user_id=seeded.user.id, group_id=group.id, source=MembershipSource.MANUAL)
         )
         await db.commit()
         await db.refresh(group)
@@ -370,17 +368,13 @@ class TestApiKeys:
             )
             await db.commit()
 
-        response = await client.get(
-            "/v1/me", headers={"authorization": f"Bearer {minted.secret}"}
-        )
+        response = await client.get("/v1/me", headers={"authorization": f"Bearer {minted.secret}"})
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["is_admin"] is True
         assert body["credential"] == "access_token"
 
-    async def test_a_key_still_learns_its_own_identity(
-        self, client: Any, seeded: Seeded
-    ) -> None:
+    async def test_a_key_still_learns_its_own_identity(self, client: Any, seeded: Seeded) -> None:
         """Refusing the key outright was the alternative, and was not taken.
 
         Identity is not the privileged part — `/v1/billing/groups` already

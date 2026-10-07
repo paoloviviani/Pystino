@@ -54,9 +54,7 @@ async def _seed_search_tier(
         session.add(tier)
         await session.flush()
         if granted:
-            session.add(
-                GroupModelAccess(group_id=seeded.group.id, model_id=tier.id)
-            )
+            session.add(GroupModelAccess(group_id=seeded.group.id, model_id=tier.id))
         await session.commit()
 
 
@@ -97,9 +95,7 @@ async def _seed_internal_ocr_model(
 class TestUnauthenticatedListing:
     """ADR 0081: the list is public, a card's detail is not."""
 
-    async def test_no_credential_gets_the_full_catalogue(
-        self, client: Any, seeded: Seeded
-    ) -> None:
+    async def test_no_credential_gets_the_full_catalogue(self, client: Any, seeded: Seeded) -> None:
         """No group, no key at all — still 200, still the seeded model."""
         response = await client.get("/v1/models")
         assert response.status_code == 200, response.text
@@ -159,15 +155,11 @@ class TestUnauthenticatedListing:
             await db.commit()
             secret = generated.secret
 
-        response = await client.get(
-            "/v1/models", headers={"authorization": f"Bearer {secret}"}
-        )
+        response = await client.get("/v1/models", headers={"authorization": f"Bearer {secret}"})
         assert response.status_code == 200, response.text
         assert response.json()["data"] == []
 
-    async def test_an_invalid_credential_still_401s(
-        self, client: Any, seeded: Seeded
-    ) -> None:
+    async def test_an_invalid_credential_still_401s(self, client: Any, seeded: Seeded) -> None:
         """Presenting a bad key is not the same as presenting none."""
         response = await client.get(
             "/v1/models", headers={"authorization": "Bearer gwk_deadbeef_nope"}
@@ -188,9 +180,7 @@ class TestUnauthenticatedListing:
         names = [entry["id"] for entry in response.json()["data"]]
         assert names == ["test-model"]
 
-    async def test_the_detail_route_stays_authenticated(
-        self, client: Any, seeded: Seeded
-    ) -> None:
+    async def test_the_detail_route_stays_authenticated(self, client: Any, seeded: Seeded) -> None:
         response = await client.get("/v1/models/test-model")
         assert response.status_code == 401
 
@@ -297,9 +287,7 @@ class TestInternalOcrListing:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         await _seed_internal_ocr_model(session_factory, seeded)
-        response = await client.get(
-            "/v1/models?include=ocr", headers=auth(make_token(signing_key))
-        )
+        response = await client.get("/v1/models?include=ocr", headers=auth(make_token(signing_key)))
         assert response.status_code == 200, response.text
         by_id = {entry["id"]: entry for entry in response.json()["data"]}
         assert by_id["markitdown"]["local"] is True
@@ -316,9 +304,7 @@ class TestInternalOcrListing:
         """Asking by kind is visibility, not access — the same rule the search
         opt-in follows."""
         await _seed_internal_ocr_model(session_factory, seeded, granted=False)
-        response = await client.get(
-            "/v1/models?include=ocr", headers=auth(make_token(signing_key))
-        )
+        response = await client.get("/v1/models?include=ocr", headers=auth(make_token(signing_key)))
         assert response.status_code == 200, response.text
         names = [entry["id"] for entry in response.json()["data"]]
         assert "markitdown" not in names
@@ -361,9 +347,9 @@ class TestInternalOcrListing:
             provider = Provider(
                 name="cortecs-ocr",
                 base_url="https://api.cortecs.ai/v1",
-                api_key_encrypted=SecretBox(
-                    ["test-encryption-key-not-for-production"]
-                ).encrypt(key),
+                api_key_encrypted=SecretBox(["test-encryption-key-not-for-production"]).encrypt(
+                    key
+                ),
                 api_key_hint=hint_for(key),
                 plugin="cortecs",
                 kind=ProviderKind.ROUTER,

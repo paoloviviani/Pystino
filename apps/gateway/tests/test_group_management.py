@@ -28,9 +28,7 @@ from test_oidc_policy import admin_session as admin_session
 
 
 @pytest_asyncio.fixture
-async def manual_group(
-    client: httpx.AsyncClient, admin_session: dict[str, str]
-) -> dict[str, Any]:
+async def manual_group(client: httpx.AsyncClient, admin_session: dict[str, str]) -> dict[str, Any]:
     response = await client.post(
         "/api/admin/groups",
         json={"name": "contractors", "description": "Bought-in hands"},
@@ -91,10 +89,14 @@ class TestDeleteGroup:
         assert deleted.status_code == 204
         async with session_factory() as session:
             remaining = (
-                await session.execute(
-                    select(GroupModelAccess).where(GroupModelAccess.group_id == seeded.group.id)
+                (
+                    await session.execute(
+                        select(GroupModelAccess).where(GroupModelAccess.group_id == seeded.group.id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert remaining == []
 
     async def test_an_unknown_group_is_404(
@@ -184,9 +186,7 @@ class TestMembers:
         )
         assert removed.status_code == 204
         async with session_factory() as session:
-            refreshed = (
-                await session.execute(select(User).where(User.id == user_id))
-            ).scalar_one()
+            refreshed = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
             assert refreshed.default_billing_group_id is None
 
     async def test_membership_of_an_oidc_group_is_allowed(
@@ -289,9 +289,7 @@ class TestFirstGroupBecomesDefault:
         ).status_code == 204
 
         async with session_factory() as session:
-            refreshed = (
-                await session.execute(select(User).where(User.id == user_id))
-            ).scalar_one()
+            refreshed = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
             assert refreshed.default_billing_group_id == uuid.UUID(manual_group["id"])
 
     async def test_a_second_group_added_does_not_change_the_default(
@@ -328,9 +326,7 @@ class TestFirstGroupBecomesDefault:
         ).status_code == 204
 
         async with session_factory() as session:
-            refreshed = (
-                await session.execute(select(User).where(User.id == user_id))
-            ).scalar_one()
+            refreshed = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
             assert refreshed.default_billing_group_id == first_id
 
     async def test_a_second_group_added_before_any_default_does_not_pick_arbitrarily(
@@ -368,9 +364,7 @@ class TestFirstGroupBecomesDefault:
         ).status_code == 204
 
         async with session_factory() as session:
-            refreshed = (
-                await session.execute(select(User).where(User.id == user_id))
-            ).scalar_one()
+            refreshed = (await session.execute(select(User).where(User.id == user_id))).scalar_one()
             assert refreshed.default_billing_group_id is None
 
 
@@ -384,6 +378,4 @@ class TestAdminOnly:
         assert (
             await client.post("/api/admin/groups", json={"name": "x"}, headers=cookie)
         ).status_code == 403
-        assert (
-            await client.get("/api/admin/groups", headers=cookie)
-        ).status_code == 403
+        assert (await client.get("/api/admin/groups", headers=cookie)).status_code == 403

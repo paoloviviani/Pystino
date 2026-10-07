@@ -49,10 +49,15 @@ def api(opener, path, **kwargs):
     except (ValueError, TypeError):
         return status, body.decode("utf-8", "replace")
 
+
 FAILURES: list[str] = []
 COMPOSE = [
-    "docker", "compose", "--env-file", "deploy/.env",
-    "-f", "deploy/compose/docker-compose.yml",
+    "docker",
+    "compose",
+    "--env-file",
+    "deploy/.env",
+    "-f",
+    "deploy/compose/docker-compose.yml",
 ]
 # Long enough to cross the usual automatic-cache threshold, and identical between
 # the two calls so the second is a hit if the provider caches at all.
@@ -83,8 +88,17 @@ def expect(label: str, condition: bool, detail: str = "") -> None:
 def sql(query: str) -> str:
     result = subprocess.run(  # noqa: S603
         [
-            *COMPOSE, "exec", "-T", "postgres", "psql",
-            "-U", "gateway", "-d", "gateway", "-tAc", query,
+            *COMPOSE,
+            "exec",
+            "-T",
+            "postgres",
+            "psql",
+            "-U",
+            "gateway",
+            "-d",
+            "gateway",
+            "-tAc",
+            query,
         ],
         capture_output=True,
         text=True,
@@ -95,15 +109,21 @@ def sql(query: str) -> str:
 
 
 def complete(secret: str, model: str) -> dict | None:
-    body = json.dumps({
-        "model": model, "max_tokens": 5, "temperature": 0,
-        "messages": [
-            {"role": "system", "content": FILLER},
-            {"role": "user", "content": "Reply OK."},
-        ],
-    }).encode()
+    body = json.dumps(
+        {
+            "model": model,
+            "max_tokens": 5,
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": FILLER},
+                {"role": "user", "content": "Reply OK."},
+            ],
+        }
+    ).encode()
     req = urllib.request.Request(
-        f"{GATEWAY}/v1/chat/completions", data=body, method="POST",
+        f"{GATEWAY}/v1/chat/completions",
+        data=body,
+        method="POST",
         headers={"content-type": "application/json", "authorization": f"Bearer {secret}"},
     )
     try:
@@ -134,8 +154,10 @@ def main() -> int:
     wanted = sys.argv[1] if len(sys.argv) > 1 else None
 
     candidates = [
-        m for m in models
-        if m["is_active"] and m["kind"] == "chat"
+        m
+        for m in models
+        if m["is_active"]
+        and m["kind"] == "chat"
         and (wanted is None or m["name"] == wanted)
         # A cache-read price is the catalogue telling us this model caches.
         and (m.get("current_price") or {}).get("cache_read_per_mtok")
@@ -147,11 +169,15 @@ def main() -> int:
 
     model = candidates[0]
     provider = providers.get(model["provider_id"], {})
-    print(f"  using {model['name']} on {provider.get('name')} "
-          f"(cache read {model['current_price']['cache_read_per_mtok']}/Mtok)")
+    print(
+        f"  using {model['name']} on {provider.get('name')} "
+        f"(cache read {model['current_price']['cache_read_per_mtok']}/Mtok)"
+    )
     if not _reads_a_reported_cost(provider):
-        print(f"  note: {provider.get('name')} names no plugin that reads a reported "
-              "cost, so the reconciliation check is skipped")
+        print(
+            f"  note: {provider.get('name')} names no plugin that reads a reported "
+            "cost, so the reconciliation check is skipped"
+        )
 
     # The key bills to the signing-in account's default group, so that group
     # needs access to the model — a live deployment's real cache-priced model
@@ -169,8 +195,9 @@ def main() -> int:
         if status == 204:
             print(f"  granted {model['name']} to the key's billing group")
 
-    status, _, body = request(dave, f"{GATEWAY}/api/me/keys", method="POST",
-                              json_body={"name": "cache-accounting-live"})
+    status, _, body = request(
+        dave, f"{GATEWAY}/api/me/keys", method="POST", json_body={"name": "cache-accounting-live"}
+    )
     if status != 201:
         # A 400 here is almost always "no default billing group": the local
         # admin is in no group by design, and a key cannot be minted without
@@ -221,8 +248,10 @@ def main() -> int:
         expect("a usage row exists", False, "no rows")
         return 1
     prompt, stored_cached, written, cost, upstream, currency = row.split("|")
-    print(f"  prompt={prompt} cached={stored_cached} written={written} cost={cost} "
-          f"upstream={upstream or 'null'} {currency}")
+    print(
+        f"  prompt={prompt} cached={stored_cached} written={written} cost={cost} "
+        f"upstream={upstream or 'null'} {currency}"
+    )
 
     expect(
         "the cache read reached the ledger",

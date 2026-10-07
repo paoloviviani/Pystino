@@ -61,8 +61,12 @@ CONTAINERS = {
     "valkey": "llm-platform-valkey-1",
 }
 COMPOSE = [
-    "docker", "compose", "--env-file", "deploy/.env",
-    "-f", "deploy/compose/docker-compose.yml",
+    "docker",
+    "compose",
+    "--env-file",
+    "deploy/.env",
+    "-f",
+    "deploy/compose/docker-compose.yml",
 ]
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -74,7 +78,9 @@ def _cgroup(container: str) -> pathlib.Path | None:
     try:
         cid = subprocess.run(  # noqa: S603
             ["docker", "inspect", container, "--format", "{{.Id}}"],  # noqa: S607
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
     except (subprocess.CalledProcessError, FileNotFoundError):
         return None
@@ -115,9 +121,23 @@ def cpu_delta(before: dict[str, int], after: dict[str, int], n: int) -> dict[str
 
 def sql(query: str) -> str:
     result = subprocess.run(  # noqa: S603
-        [*COMPOSE, "exec", "-T", "postgres", "psql", "-U", "gateway", "-d", "gateway",
-         "-tAc", query],
-        capture_output=True, text=True, cwd=str(ROOT), check=False,
+        [
+            *COMPOSE,
+            "exec",
+            "-T",
+            "postgres",
+            "psql",
+            "-U",
+            "gateway",
+            "-d",
+            "gateway",
+            "-tAc",
+            query,
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+        check=False,
     )
     return result.stdout.strip()
 
@@ -133,32 +153,34 @@ def setup() -> str | None:
         return None
 
     _, _, body = request(admin, f"{GATEWAY}/api/admin/providers?limit=200")
-    fake = next(
-        (p for p in json.loads(body)["items"] if "fake-upstream" in p["base_url"]), None
-    )
+    fake = next((p for p in json.loads(body)["items"] if "fake-upstream" in p["base_url"]), None)
     if fake is None:
         print("  skipped: no provider points at the fake upstream in this deployment.")
         print("  Bring the smoke overlay up — a benchmark must not call a real provider.")
         return None
 
     _, _, body = request(admin, f"{GATEWAY}/api/admin/models?limit=200")
-    existing = next(
-        (m for m in json.loads(body)["items"] if m["name"] == BENCH_MODEL), None
-    )
+    existing = next((m for m in json.loads(body)["items"] if m["name"] == BENCH_MODEL), None)
     if existing is None:
         # Unpriced on purpose: cost is exactly zero, so a stray row cannot
         # distort a billing reconciliation even if cleanup fails.
         status, _, body = request(
-            admin, f"{GATEWAY}/api/admin/models", method="POST",
-            json_body={"name": BENCH_MODEL, "upstream_model": "upstream/smoke-model",
-                       "provider_id": fake["id"], "kind": "chat",
-                       # What `upstream/smoke-model` declares in the fake
-                       # upstream's catalogue. Omitting them left the row
-                       # advertising no capabilities at all on `/v1/models`
-                       # (ADR 0031), which a client reads as "can do nothing".
-                       "input_modalities": ["text"],
-                       "output_modalities": ["text"],
-                       "supported_features": ["tools", "json_mode"]},
+            admin,
+            f"{GATEWAY}/api/admin/models",
+            method="POST",
+            json_body={
+                "name": BENCH_MODEL,
+                "upstream_model": "upstream/smoke-model",
+                "provider_id": fake["id"],
+                "kind": "chat",
+                # What `upstream/smoke-model` declares in the fake
+                # upstream's catalogue. Omitting them left the row
+                # advertising no capabilities at all on `/v1/models`
+                # (ADR 0031), which a client reads as "can do nothing".
+                "input_modalities": ["text"],
+                "output_modalities": ["text"],
+                "supported_features": ["tools", "json_mode"],
+            },
         )
         if status != 201:
             print(f"  could not create the benchmark model: HTTP {status}")
@@ -170,12 +192,15 @@ def setup() -> str | None:
     # The admin's own group, so no other group's quota rules are involved.
     mine = next((g for g in groups if g["name"] == "platform-admins"), groups[0])
     request(
-        admin, f"{GATEWAY}/api/admin/groups/{mine['id']}/models/{existing['id']}",
+        admin,
+        f"{GATEWAY}/api/admin/groups/{mine['id']}/models/{existing['id']}",
         method="PUT",
     )
 
     status, _, body = request(
-        admin, f"{GATEWAY}/api/me/keys", method="POST",
+        admin,
+        f"{GATEWAY}/api/me/keys",
+        method="POST",
         json_body={"name": BENCH_KEY_NAME},
     )
     if status != 201:
@@ -280,10 +305,14 @@ async def probe(
         return ordered[min(len(ordered) - 1, int(q * len(ordered)))]
 
     return {
-        "n": n, "concurrency": concurrency, "errors": errors, "wall_s": elapsed,
+        "n": n,
+        "concurrency": concurrency,
+        "errors": errors,
+        "wall_s": elapsed,
         "rps": len(latencies) / elapsed if elapsed else 0.0,
         "p50": statistics.median(latencies) if latencies else 0.0,
-        "p95": quantile(latencies, 0.95), "p99": quantile(latencies, 0.99),
+        "p95": quantile(latencies, 0.95),
+        "p99": quantile(latencies, 0.99),
         "ttfb_p50": statistics.median(ttfbs) if ttfbs else None,
         "frames": statistics.median(frames) if frames else None,
         "cpu_ms": cpu_delta(before, after, len(latencies)),
@@ -311,8 +340,10 @@ def capacity(cpu_ms: float, label: str) -> None:
     for utilisation in (1.0, 0.7):
         per_core = 1000.0 / cpu_ms * utilisation
         at = "saturated" if utilisation == 1.0 else "70% utilised"
-        print(f"    {per_core:6.1f} req/s per core ({at})"
-              f"   → {per_core * 4:6.1f} on 4 cores, {per_core * 8:6.1f} on 8")
+        print(
+            f"    {per_core:6.1f} req/s per core ({at})"
+            f"   → {per_core * 4:6.1f} on 4 cores, {per_core * 8:6.1f} on 8"
+        )
 
 
 # -- modes ------------------------------------------------------------------
@@ -325,10 +356,16 @@ def chat(content: str = "hello there", **extra: Any) -> dict[str, Any]:
 async def ladder(client: httpx.AsyncClient, plain: httpx.AsyncClient) -> None:
     print("\n=== per-layer cost, concurrency 1 ===")
     print("  each row adds one layer to the one above, so the deltas attribute the cost")
-    show("upstream called directly", await probe(
-        plain, "POST", f"{UPSTREAM_DIRECT}/v1/chat/completions",
-        body={"model": "upstream/smoke-model", "messages": [{"role": "user", "content": "hi"}]},
-        n=150))
+    show(
+        "upstream called directly",
+        await probe(
+            plain,
+            "POST",
+            f"{UPSTREAM_DIRECT}/v1/chat/completions",
+            body={"model": "upstream/smoke-model", "messages": [{"role": "user", "content": "hi"}]},
+            n=150,
+        ),
+    )
     show("/healthz  (framework floor)", await probe(client, "GET", f"{GATEWAY}/healthz", n=150))
     show("/readyz   (+ database)", await probe(client, "GET", f"{GATEWAY}/readyz", n=100))
     show("/v1/models (+ auth, access)", await probe(client, "GET", f"{GATEWAY}/v1/models", n=150))
@@ -357,8 +394,13 @@ async def load(client: httpx.AsyncClient, steps: tuple[int, ...] = LOAD_STEPS) -
         # for a number somebody plans capacity from.
         bodies = [chat(f"hello there [{index}]") for index in range(count)]
         result = await probe(
-            client, "POST", f"{GATEWAY}/v1/chat/completions", bodies=bodies,
-            n=count, concurrency=concurrency)
+            client,
+            "POST",
+            f"{GATEWAY}/v1/chat/completions",
+            bodies=bodies,
+            n=count,
+            concurrency=concurrency,
+        )
         show(f"concurrency {concurrency}", result, wide=True)
         results.append((concurrency, result))
 
@@ -383,8 +425,14 @@ async def load(client: httpx.AsyncClient, steps: tuple[int, ...] = LOAD_STEPS) -
 
 async def stream(client: httpx.AsyncClient) -> None:
     print("\n=== streaming: cost against answer length ===")
-    result = await probe(client, "POST", f"{GATEWAY}/v1/chat/completions",
-                         body=chat(**{"stream": True}), n=120, stream=True)
+    result = await probe(
+        client,
+        "POST",
+        f"{GATEWAY}/v1/chat/completions",
+        body=chat(**{"stream": True}),
+        n=120,
+        stream=True,
+    )
     show(f"streamed ({result['frames']:.0f} frames)", result)
     print("\n  The committed fake upstream emits a fixed number of frames, so this")
     print("  cannot separate fixed cost from per-frame cost. Point it at an upstream")
@@ -401,12 +449,9 @@ async def redaction(client: httpx.AsyncClient) -> None:
         "IBAN IT60X0542811101000000123456, phone +39 011 123 4567, in Torino. "
     )
     for repeats, n in ((1, 40), (8, 30), (32, 20), (128, 10)):
-        bodies = [
-            chat(f"[{index}] " + sentence * repeats) for index in range(n)
-        ]
+        bodies = [chat(f"[{index}] " + sentence * repeats) for index in range(n)]
         approx_tokens = int(len(sentence) * repeats / 4)
-        result = await probe(client, "POST", f"{GATEWAY}/v1/chat/completions",
-                            bodies=bodies, n=n)
+        result = await probe(client, "POST", f"{GATEWAY}/v1/chat/completions", bodies=bodies, n=n)
         label = f"~{approx_tokens:,} prompt tokens"
         show(label, result)
     if HAVE_CPU:

@@ -341,8 +341,7 @@ class TestCreateSignIn:
                     await session.execute(
                         select(DirectoryEntry).where(
                             DirectoryEntry.provider_id == provider.id,
-                            DirectoryEntry.user_id
-                            == uuid.UUID(created.json()["id"]),
+                            DirectoryEntry.user_id == uuid.UUID(created.json()["id"]),
                         )
                     )
                 )

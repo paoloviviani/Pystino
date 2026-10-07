@@ -165,9 +165,9 @@ class TestTheChatCompletionsShape:
                 self.body(first, start=first.index(cited), end=first.index(cited) + 3, index=0)[
                     "choices"
                 ][0],
-                self.body(
-                    second, start=second.index(cited), end=second.index(cited) + 3, index=1
-                )["choices"][0],
+                self.body(second, start=second.index(cited), end=second.index(cited) + 3, index=1)[
+                    "choices"
+                ][0],
             ]
         }
         maps = {
@@ -290,9 +290,7 @@ class TestTheResponsesShape:
 
 
 class TestTheSurfacesWithNoOffsets:
-    @pytest.mark.parametrize(
-        "surface", [ApiSurface.MESSAGES, ApiSurface.IMAGES, ApiSurface.OCR]
-    )
+    @pytest.mark.parametrize("surface", [ApiSurface.MESSAGES, ApiSurface.IMAGES, ApiSurface.OCR])
     def test_they_move_nothing(self, surface: ApiSurface) -> None:
         """Anthropic's citations quote their source rather than index ours.
 
@@ -399,9 +397,9 @@ class TestThroughTheRoute:
         message = sent.json()["choices"][0]["message"]
         assert message["content"].startswith(NAME), "the name was not restored"
         citation = message["annotations"][0]["url_citation"]
-        assert (
-            message["content"][citation["start_index"] : citation["end_index"]] == cited
-        ), "the citation moved with the text"
+        assert message["content"][citation["start_index"] : citation["end_index"]] == cited, (
+            "the citation moved with the text"
+        )
 
     async def test_citations_are_untouched_when_nothing_is_redacted(
         self,

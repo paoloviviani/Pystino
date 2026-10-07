@@ -757,8 +757,10 @@ class TestLastAdminGuard:
 
         async with session_factory() as db:
             row = (
-                await db.execute(select(IdentityEvent).order_by(IdentityEvent.at.desc()))
-            ).scalars().first()
+                (await db.execute(select(IdentityEvent).order_by(IdentityEvent.at.desc())))
+                .scalars()
+                .first()
+            )
             assert row is not None
             assert row.action == IdentityEventAction.ADMIN_REFUSED_LAST
             assert row.target_user_id == admin.id
@@ -782,12 +784,16 @@ class TestLastAdminGuard:
 
         async with session_factory() as db:
             row = (
-                await db.execute(
-                    select(IdentityEvent)
-                    .where(IdentityEvent.target_user_id == other_id)
-                    .order_by(IdentityEvent.at.desc())
+                (
+                    await db.execute(
+                        select(IdentityEvent)
+                        .where(IdentityEvent.target_user_id == other_id)
+                        .order_by(IdentityEvent.at.desc())
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             assert row is not None
             assert row.action == IdentityEventAction.ADMIN_REVOKE
 
@@ -852,9 +858,7 @@ class TestUserProfileEdits:
         assert body["username"] == "renamed@local"
 
         async with session_factory() as db:
-            user = (
-                await db.execute(select(User).where(User.id == seeded.user.id))
-            ).scalar_one()
+            user = (await db.execute(select(User).where(User.id == seeded.user.id))).scalar_one()
             assert user.email == "renamed@example.org"
             # The record is what makes the edit durable: provisioning reads it
             # and leaves a listed field alone (test_oidc.py pins that half).
@@ -881,9 +885,7 @@ class TestUserProfileEdits:
         assert response.json()["email"] == "member@example.org"
 
         async with session_factory() as db:
-            user = (
-                await db.execute(select(User).where(User.id == seeded.user.id))
-            ).scalar_one()
+            user = (await db.execute(select(User).where(User.id == seeded.user.id))).scalar_one()
             assert user.admin_edited_fields == ["display_name"]
 
     async def test_an_explicit_null_clears_the_field(
@@ -894,9 +896,7 @@ class TestUserProfileEdits:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         await self._admin(app, session_factory, seeded)
-        response = await client.patch(
-            f"/api/admin/users/{seeded.user.id}", json={"username": None}
-        )
+        response = await client.patch(f"/api/admin/users/{seeded.user.id}", json={"username": None})
         assert response.status_code == 200
         assert response.json()["username"] is None
 
@@ -974,9 +974,7 @@ class TestUserProfileEdits:
         assert response.status_code == 200, response.text
 
         async with session_factory() as db:
-            user = (
-                await db.execute(select(User).where(User.id == seeded.user.id))
-            ).scalar_one()
+            user = (await db.execute(select(User).where(User.id == seeded.user.id))).scalar_one()
             assert user.issuer == "https://idp.test"
             assert user.subject == "subject-1"
 
@@ -1044,9 +1042,7 @@ class TestAdminIsAConsoleFact:
             await db.commit()
             target_id = target.id
 
-        response = await client.patch(
-            f"/api/admin/users/{target_id}", json={"is_admin": True}
-        )
+        response = await client.patch(f"/api/admin/users/{target_id}", json={"is_admin": True})
         assert response.status_code == 200, response.text
         assert response.json()["is_admin"] is True
 

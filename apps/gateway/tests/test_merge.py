@@ -257,12 +257,8 @@ class TestReassignDeleteAndKeepTarget:
         )
         session.add(rule)
         await session.flush()
-        session.add(
-            QuotaNotificationSetting(user_id=source.id, rule_id=rule.id, threshold=80)
-        )
-        session.add(
-            QuotaNotificationSetting(user_id=target.id, rule_id=rule.id, threshold=50)
-        )
+        session.add(QuotaNotificationSetting(user_id=source.id, rule_id=rule.id, threshold=80))
+        session.add(QuotaNotificationSetting(user_id=target.id, rule_id=rule.id, threshold=50))
         await session.commit()
 
         await merge_users(
@@ -593,9 +589,7 @@ class TestIdentities:
         self, session: AsyncSession
     ) -> None:
         source = await make_user(session, issuer="https://idp-a.test", subject="s")
-        session.add(
-            UserIdentity(user_id=source.id, issuer="https://idp-b.test", subject="s2")
-        )
+        session.add(UserIdentity(user_id=source.id, issuer="https://idp-b.test", subject="s2"))
         target = await make_user(session, issuer="https://idp-c.test", subject="s3")
         await session.commit()
 
@@ -610,15 +604,15 @@ class TestIdentities:
         await session.commit()
 
         rows = (
-            await session.execute(select(UserIdentity).where(UserIdentity.user_id == target.id))
-        ).scalars().all()
+            (await session.execute(select(UserIdentity).where(UserIdentity.user_id == target.id)))
+            .scalars()
+            .all()
+        )
         pairs = {(r.issuer, r.subject) for r in rows}
         assert pairs == {("https://idp-a.test", "s"), ("https://idp-b.test", "s2")}
         assert summary.identities_dropped == []
 
-    async def test_a_same_issuer_identity_is_dropped_not_moved(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_same_issuer_identity_is_dropped_not_moved(self, session: AsyncSession) -> None:
         source = await make_user(session, issuer="https://idp.test", subject="source-subject")
         target = await make_user(session, issuer="https://idp.test", subject="target-subject")
         await session.commit()
@@ -645,8 +639,10 @@ class TestIdentities:
         # The target keeps exactly its own identity; the source's vanished
         # with the row rather than creating a second (issuer, *) for target.
         rows = (
-            await session.execute(select(UserIdentity).where(UserIdentity.user_id == target.id))
-        ).scalars().all()
+            (await session.execute(select(UserIdentity).where(UserIdentity.user_id == target.id)))
+            .scalars()
+            .all()
+        )
         assert rows == []
 
 
@@ -685,8 +681,8 @@ class TestAdminAndProfile:
         )
         await session.commit()
         remaining_admins = (
-            await session.execute(select(User).where(User.is_admin.is_(True)))
-        ).scalars().all()
+            (await session.execute(select(User).where(User.is_admin.is_(True)))).scalars().all()
+        )
         assert len(remaining_admins) == 1
         assert remaining_admins[0].id == target.id
 
@@ -722,9 +718,7 @@ class TestNeverDeletesTheTargetsData:
         group = Group(name="targets-own-group")
         session.add(group)
         await session.flush()
-        session.add(
-            Membership(user_id=target.id, group_id=group.id, role=MembershipRole.MEMBER)
-        )
+        session.add(Membership(user_id=target.id, group_id=group.id, role=MembershipRole.MEMBER))
         session.add(
             ApiKey(user_id=target.id, prefix="gwk_target", key_hash="z" * 64, name="target's key")
         )

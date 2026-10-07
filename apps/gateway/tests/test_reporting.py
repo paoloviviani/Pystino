@@ -928,9 +928,7 @@ class TestOwnSearches:
             at=inside_this_month(),
         )
 
-        body = (
-            await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")
-        ).json()
+        body = (await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")).json()
         assert body["totals"]["searches"] == 9
         assert body["totals"]["own_searches"] == 2
 
@@ -962,9 +960,7 @@ class TestOwnSearches:
             session, group_id=seeded.group.id, cost="1", own_searches=4, at=inside_this_month()
         )
 
-        body = (
-            await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")
-        ).json()
+        body = (await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")).json()
         note = next(n for n in body["disclosures"] if "own search backends" in n)
         assert "counted, not priced" in note
         assert "4" in note
@@ -976,8 +972,6 @@ class TestOwnSearches:
             session, group_id=seeded.group.id, cost="1", searches=3, at=inside_this_month()
         )
 
-        body = (
-            await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")
-        ).json()
+        body = (await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")).json()
         assert body["totals"]["own_searches"] == 0
         assert not any("own search backends" in n for n in body["disclosures"])

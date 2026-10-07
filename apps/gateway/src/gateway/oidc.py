@@ -797,9 +797,7 @@ async def claim_unbound_bundled_login(
     if entry is None:
         return
     if email_verified is not True:
-        logger.info(
-            "not claiming unbound directory entry %r: email unverified", preferred_username
-        )
+        logger.info("not claiming unbound directory entry %r: email unverified", preferred_username)
         return
     claim_email, claim_trusted = is_trusted_email(email or "")
     entry_email, entry_trusted = is_trusted_email(entry.email or "")
@@ -862,8 +860,10 @@ async def link_by_email(
         return None
 
     candidates = (
-        await session.execute(select(User).where(User.email_normalized == claim_email))
-    ).scalars().all()
+        (await session.execute(select(User).where(User.email_normalized == claim_email)))
+        .scalars()
+        .all()
+    )
     if len(candidates) != 1:
         logger.warning(
             "link-by-email declined (3): %d account(s) hold %r, need exactly one",
@@ -1486,9 +1486,7 @@ async def sign_in(
     # and only when the operator turned the switch on. A hit here means the
     # `provision_user` call below finds an existing person instead of
     # creating one, through the `user_identities` row this just added.
-    known = (
-        await session.execute(_identity_select(issuer, subject))
-    ).scalar_one_or_none()
+    known = (await session.execute(_identity_select(issuer, subject))).scalar_one_or_none()
     if known is None and settings.oidc.link_by_email:
         await link_by_email(
             session,

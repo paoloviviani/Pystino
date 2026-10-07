@@ -97,9 +97,7 @@ def accessible_models(
         # at all, so the empty case still has to admit one. `where(false)`
         # rather than an early return of an empty list, so the caller still
         # gets a statement and this function has one shape.
-        return statement.where(
-            or_(ModelDef.is_public.is_(True), ModelDef.id.is_(None))
-        )
+        return statement.where(or_(ModelDef.is_public.is_(True), ModelDef.id.is_(None)))
 
     # The public flag is a column predicate alongside the grant EXISTS clauses,
     # not a third EXISTS: it reads off the row already being fetched, and

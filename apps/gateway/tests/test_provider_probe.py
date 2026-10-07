@@ -37,9 +37,7 @@ def _upstream(
     ``ProviderRegistry.build_probe`` builds one from a stored row — minus the
     database, which none of these tests need to touch a plugin's own logic."""
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    upstream = OpenAICompatibleUpstream(
-        UpstreamSettings(base_url=base_url), client, plugin=plugin
-    )
+    upstream = OpenAICompatibleUpstream(UpstreamSettings(base_url=base_url), client, plugin=plugin)
     return upstream, client
 
 
@@ -196,9 +194,7 @@ class TestSearchProbe:
             return httpx.Response(
                 200,
                 json={
-                    "results": [
-                        {"name": "Example", "url": "https://example.org", "content": "x"}
-                    ]
+                    "results": [{"name": "Example", "url": "https://example.org", "content": "x"}]
                 },
             )
 

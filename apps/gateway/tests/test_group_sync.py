@@ -79,16 +79,12 @@ async def add_by_hand(
     session: AsyncSession, user: User, name: str, *, source: GroupSource = GroupSource.MANUAL
 ) -> Group:
     """What the console's "add member" route does: a grant made here."""
-    group = (
-        await session.execute(select(Group).where(Group.name == name))
-    ).scalar_one_or_none()
+    group = (await session.execute(select(Group).where(Group.name == name))).scalar_one_or_none()
     if group is None:
         group = Group(name=name, source=source)
         session.add(group)
         await session.flush()
-    session.add(
-        Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL)
-    )
+    session.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL))
     await session.commit()
     return group
 
@@ -109,7 +105,7 @@ async def names(session: AsyncSession, user: User) -> set[str]:
             .where(Membership.user_id == user.id)
         )
     ).all()
-    return {name for name, in rows}
+    return {name for (name,) in rows}
 
 
 class TestAnAdministratorsGrantSurvives:
@@ -144,9 +140,7 @@ class TestAnAdministratorsGrantSurvives:
 
         user = await sign_in(session, groups=[], subject=SUBJECT)
         session.add(
-            Membership(
-                user_id=user.id, group_id=research.id, source=MembershipSource.MANUAL
-            )
+            Membership(user_id=user.id, group_id=research.id, source=MembershipSource.MANUAL)
         )
         await session.commit()
 
@@ -167,9 +161,7 @@ class TestTheDirectoryKeepsWhatItGranted:
         user = await sign_in(session, groups=["research"])
         assert await names(session, user) == {"research"}
 
-    async def test_even_in_a_group_an_administrator_created(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_even_in_a_group_an_administrator_created(self, session: AsyncSession) -> None:
         """The case that ruled out "whoever created the group owns it".
 
         An administrator creates "engineering" in the console; the directory
@@ -220,16 +212,12 @@ class TestSyncModes:
         assert await names(session, user) == set()
         assert user.default_billing_group_id is None
 
-    async def test_never_does_not_create_the_claim_s_groups(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_never_does_not_create_the_claim_s_groups(self, session: AsyncSession) -> None:
         """A vocabulary nobody uses should not be left lying in the database."""
         await sign_in(session, groups=["research"], group_sync=GroupSync.NEVER)
         assert (await session.execute(select(Group))).scalars().all() == []
 
-    async def test_never_leaves_an_administrators_grant_alone(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_never_leaves_an_administrators_grant_alone(self, session: AsyncSession) -> None:
         user = await sign_in(session, groups=[], group_sync=GroupSync.NEVER)
         await add_by_hand(session, user, "finance")
 
@@ -294,9 +282,7 @@ class TestDerivedState:
         user = await sign_in(session, groups=[], group_sync=GroupSync.NEVER)
         assert user.default_billing_group_id == group.id
 
-    async def test_a_manual_default_is_not_cleared_by_a_login(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_manual_default_is_not_cleared_by_a_login(self, session: AsyncSession) -> None:
         user = await sign_in(session, groups=["research"])
         finance = await add_by_hand(session, user, "finance")
         user.default_billing_group_id = finance.id
@@ -313,24 +299,18 @@ class TestDivergenceOnTheRequestPath:
     a write that would have stripped the administrator's grant.
     """
 
-    async def test_an_administrators_grant_is_not_a_divergence(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_an_administrators_grant_is_not_a_divergence(self, session: AsyncSession) -> None:
         user = await sign_in(session, groups=["research"])
         await add_by_hand(session, user, "finance")
         await session.refresh(user, attribute_names=["memberships"])
 
         assert _claims_diverge(user, ["research"], OIDCSettings()) is False
 
-    async def test_a_removal_in_the_directory_is_a_divergence(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_removal_in_the_directory_is_a_divergence(self, session: AsyncSession) -> None:
         user = await sign_in(session, groups=["research"])
         assert _claims_diverge(user, [], OIDCSettings()) is True
 
-    async def test_a_new_group_in_the_token_is_a_divergence(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_new_group_in_the_token_is_a_divergence(self, session: AsyncSession) -> None:
         user = await sign_in(session, groups=["research"])
         assert _claims_diverge(user, ["research", "finance"], OIDCSettings()) is True
 

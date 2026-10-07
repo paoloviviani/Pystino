@@ -156,9 +156,7 @@ class TestDisable:
         target_id = await _target_with_credentials(session_factory, provider)
 
         before = utcnow()
-        response = await client.patch(
-            f"/api/admin/users/{target_id}", json={"is_active": False}
-        )
+        response = await client.patch(f"/api/admin/users/{target_id}", json={"is_active": False})
         assert response.status_code == 200, response.text
         assert response.json()["is_active"] is False
 
@@ -246,9 +244,7 @@ class TestAutheliaSyncFailure:
 
         path.unlink()  # the users file is unreachable
 
-        response = await client.patch(
-            f"/api/admin/users/{target_id}", json={"is_active": False}
-        )
+        response = await client.patch(f"/api/admin/users/{target_id}", json={"is_active": False})
         assert response.status_code == 200, response.text
         body = response.json()
         # The gateway-side half of the cascade still stands, even though the
@@ -280,9 +276,7 @@ class TestAutheliaSyncFailure:
         # Retry: PATCHing the same is_active value again re-attempts the
         # Authelia write, with no other field needing to change first.
         path.write_text(SEED)
-        retry = await client.patch(
-            f"/api/admin/users/{target_id}", json={"is_active": False}
-        )
+        retry = await client.patch(f"/api/admin/users/{target_id}", json={"is_active": False})
         assert retry.status_code == 200, retry.text
         assert retry.json().get("authelia_sync") is None
         assert yaml.safe_load(path.read_text())["users"]["target"]["disabled"] is True
