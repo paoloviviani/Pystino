@@ -194,7 +194,7 @@ whether the rebuild lock is held. A counter the store cannot read is reported as
 `null`, never as zero. The same figures are the **Quota health** panel on the
 Quotas page of the console. Without a browser session, `docker compose exec
 gateway pystino quota health` prints the same figures as JSON; it is what
-cerea-deploy's `tools/diagnose` attaches to a report.
+The deploy kit's `tools/diagnose` attaches to a report.
 
 `POST /api/admin/quota/reconcile` (the panel's **Reconcile** button) recomputes
 every *active* rule's current window from the ledger with the replace semantics

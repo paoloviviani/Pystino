@@ -221,7 +221,7 @@ uv run mkdocs build --strict           # this site
   ceiling because the fake upstream bills a million tokens per request, which the
   scripts report as skipped.
 - **The full stack** is the `stack` workflow below; to try it by hand, run
-  cerea-deploy's `./configure` and `docker compose up` with
+  the deploy kit's `./configure` (in `kit/` of the Cerea repository) and `docker compose up` with
   `PYSTINO_REGISTRY=local` and your gateway image.
 
 A regression test must fail without the fix. A failure is "pre-existing" only
@@ -241,7 +241,7 @@ Four workflows in `.github/workflows/`.
 | `ci` | every push to `main` and every pull request (changes to `docs/**` and `*.md` are ignored), and by hand | a `changes` job decides what to run. **gateway** (when `apps/gateway`, `packages/shared-py`, `services`, `deploy`, `uv.lock`, `pyproject.toml` changed): `uv sync --locked`, `ruff check`, `mypy apps/gateway/src packages/shared-py/src services`, `pytest`, then `docker compose config` for every profile of `deploy/compose.yaml`, the Caddyfile adapting in all three TLS modes, and `deploy/pin.py --check`. **console** (when `apps/console`, `packages/ui`, `pnpm-lock.yaml` changed): `pnpm install --frozen-lockfile`, then `typecheck` and `test` for `packages/ui` and for the console. A manual run does both. |
 | `docs` | pushes to `main` that touch `docs/**` or `mkdocs.yml`, and by hand | `uv run mkdocs build --strict`, published to GitHub Pages at <https://paoloviviani.github.io/Pystino/> |
 | `images` | by hand (`workflow_dispatch`) only | builds and pushes `pystino-gateway` and `pystino-redaction` (the `-pattern` flavour) to GHCR; on a release tag, a second job runs `pystino release-pin --check` |
-| `stack` | a pushed `v*.*.*` tag, and by hand | builds the gateway and redaction images from the tag, brings up cerea-deploy's `main` with them and the Cerea image named in `deploy/release.env`, checks `/healthz` and `/chat/`, and brings up the Pystino-only `deploy/compose.yaml` too |
+| `stack` | a pushed `v*.*.*` tag, and by hand | builds the gateway and redaction images from the tag, brings up the deploy kit (`kit/` of the Cerea repository, `main`) with them and the Cerea image named in `deploy/release.env`, checks `/healthz` and `/chat/`, and brings up the Pystino-only `deploy/compose.yaml` too |
 
 One gap worth knowing: the commit hooks and `docs` links to other repositories
 are not checked by CI.
@@ -250,7 +250,7 @@ are not checked by CI.
 
 A release is a git tag `vX.Y.Z` (the version in `apps/gateway/pyproject.toml`
 and `uv.lock`, without the `v`), paired with a Cerea release. Pystino and Cerea
-are tagged separately; the kit that pins them is cerea-deploy.
+are tagged separately; the kit that pins them is Cerea's `kit/`, versioned with Cerea.
 
 1. **Green CI** on the commit to be tagged, and the live checks if the change
    touched the request path, money or SQL.
@@ -271,9 +271,10 @@ are tagged separately; the kit that pins them is cerea-deploy.
    refuses to overwrite a version that already exists (a release tag is
    immutable), then runs `pystino release-pin --check`. The packages are public:
    check that the image pulls with an empty Docker login.
-5. **Hand over to cerea-deploy**, which pins the new pair, runs its tests and
-   the fresh-kit sign-in (`E2E_OK`), writes its CHANGELOG entry and tags: see its
-   [CONTRIBUTING.md](https://github.com/paoloviviani/cerea-deploy/blob/main/CONTRIBUTING.md#releasing).
+5. **Hand over to Cerea**, whose release pins the new pair in `kit/`, runs the
+   kit's tests and the fresh-kit sign-in (`E2E_OK`), writes the kit's CHANGELOG
+   entry, tags and moves `stable`: see its
+   [CONTRIBUTING.md](https://github.com/paoloviviani/Cerea/blob/main/CONTRIBUTING.md#releasing).
    The sign-in check is `uv run python deploy/ci/e2e_login.py <kit dir> <password> --chat`
    from this repository; it prints `E2E_OK`.
 

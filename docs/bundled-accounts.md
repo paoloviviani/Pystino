@@ -31,7 +31,7 @@ account together.
   ([Identity](identity.md#one-provider-set-in-the-environment)).
 - It needs a **dotted host name** in this repository's `deploy/`: browsers
   refuse its session cookie on a dotless name, and `deploy/` has no way to
-  serve an IP address. cerea-deploy also accepts an IP address (with
+  serve an IP address. the deploy kit also accepts an IP address (with
   `--tls internal`); it refuses only single-word names such as `myserver`.
 
 ## The Users page
@@ -87,7 +87,7 @@ everywhere, chat included (see [Merging and deleting accounts](identity.md#mergi
 ### Signing in and resetting a password
 
 Passwords belong to the identity provider. **With SMTP configured** (the
-`SMTP_*` variables in `.env`) on the full stack (cerea-deploy), the bundled
+`SMTP_*` variables in `.env`) on the full stack (the deploy kit), the bundled
 Authelia enables self-service reset: people reset their own password from the
 sign-in page, and the same setting sends quota notices. Without SMTP, and in
 this repository's own Pystino-only `deploy/` (whose Authelia configuration keeps

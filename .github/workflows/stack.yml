@@ -1,13 +1,15 @@
 # The tag-time drift guard (ADR 0091): does a released Pystino tag actually
 # come up, alone (deploy/compose.yaml) and inside the full stack
-# (cerea-deploy)? Expensive — an image build, a checkout of a second
+# (the Cerea deploy kit)? Expensive — an image build, a checkout of a second
 # repository, two real compose bring-ups — so it runs only on release tags
 # and by hand, never on a push to main or a PR (GitHub free plan). There is
 # no fresh-install/upgrade pair here any more: `pystino init` and `upgrade`
-# are gone (ADR 0091), and cerea-deploy's own CI (a separate repository)
-# covers `./configure` and `tools/pin --check` on every push there.
+# are gone (ADR 0091), and the kit's own CI (Cerea's `kit` workflow) covers
+# `./configure` and `tools/pin --check` on every push there.
 #
-# cerea-deploy is public and is checked out anonymously: no secret is needed.
+# The kit lives in Cerea's kit/ directory (it was the separate cerea-deploy
+# repository); Cerea is public and only kit/ is checked out, anonymously: no
+# secret is needed.
 # The Cerea image (ghcr.io/paoloviviani/cerea) is pulled with this run's
 # GITHUB_TOKEN; if that package is private, it must grant this repository's
 # Actions access (its Settings -> Manage Actions access), or the pull below
@@ -35,10 +37,10 @@ env:
 
 jobs:
   # Built once, shared by both bring-ups below: a release tag's own gateway
-  # image, under the local/ prefix both compose.yaml and cerea-deploy's
+  # image, under the local/ prefix both compose.yaml and the deploy kit's
   # compose.yaml treat as a build override. The redaction image is built too, in
-  # its published -pattern flavour: cerea-deploy's homelab preset runs it as the
-  # local document reader (the `documents` profile, since cerea-deploy v0.3.13).
+  # its published -pattern flavour: the deploy kit's homelab preset runs it as the
+  # local document reader (the `documents` profile, since kit v0.3.13).
   build-gateway:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -70,7 +72,7 @@ jobs:
         with: {name: gateway-image, path: "${{ runner.temp }}/gateway.tar", retention-days: 1}
 
   # Inside the full stack: this tag's gateway plus the Cerea version this
-  # tag's deploy/release.env pins, brought up the way cerea-deploy documents.
+  # tag's deploy/release.env pins, brought up the way the deploy kit documents.
   full-stack:
     needs: build-gateway
     runs-on: ubuntu-latest
@@ -83,8 +85,9 @@ jobs:
         with: {path: pystino}
       - uses: actions/checkout@v4
         with:
-          repository: paoloviviani/cerea-deploy
-          path: cerea-deploy
+          repository: paoloviviani/Cerea
+          path: cerea
+          sparse-checkout: kit
       - uses: actions/download-artifact@v4
         with: {name: gateway-image, path: "${{ runner.temp }}"}
       - run: docker load -i "$RUNNER_TEMP/gateway.tar"
@@ -100,7 +103,7 @@ jobs:
           fi
       - run: echo "127.0.0.1 $HOST" | sudo tee -a /etc/hosts
       - name: ./configure the full stack against the local gateway and the pinned Cerea
-        working-directory: cerea-deploy
+        working-directory: cerea/kit
         run: |
           set -eu
           ./configure --non-interactive --origin "https://$HOST:8443" --admin-email ops@pystino.test \
@@ -108,7 +111,7 @@ jobs:
           ./configure --set PYSTINO_REGISTRY=local "PYSTINO_VERSION=$VERSION" \
             CEREA_REGISTRY=ghcr.io/paoloviviani "CEREA_VERSION=$CEREA_VERSION" PUBLIC_BIND=127.0.0.1
       - name: Bring up compose.yaml + dev/smoke.yaml (the fake upstream)
-        working-directory: cerea-deploy
+        working-directory: cerea/kit
         env:
           PYSTINO_SRC: ${{ github.workspace }}/pystino
         run: docker compose -f compose.yaml -f dev/smoke.yaml up -d --wait
@@ -120,10 +123,10 @@ jobs:
           case "$code" in 200|302) ;; *) echo "::error::GET /chat/ -> $code"; exit 1 ;; esac
       - name: Logs on failure
         if: failure()
-        working-directory: cerea-deploy
+        working-directory: cerea/kit
         run: docker compose logs --tail 100
 
-  # The Pystino-only deployment, the same way: no cerea-deploy checkout, no
+  # The Pystino-only deployment, the same way: no deploy-kit checkout, no
   # chat, secrets hand-minted the way deploy/.env.example documents (there is
   # no ./configure here by design — ADR 0091 decision 6).
   pystino-only:

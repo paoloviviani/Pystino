@@ -48,7 +48,7 @@ cd deploy && docker compose up -d --wait
 The first sign-in with `PYSTINO_BOOTSTRAP_ADMIN_EMAIL` becomes the
 administrator. Upgrading is `git pull && docker compose pull && docker
 compose up -d --wait`. For the full stack with the Cerea chat, use the
-**cerea-deploy** repository instead; it uses the same variable names, so a
+**deploy kit** instead (`kit/` in the [Cerea repository](https://github.com/paoloviviani/Cerea)); it uses the same variable names, so a
 `deploy/.env` carries over. Details: [docs/deployment.md](docs/deployment.md).
 
 ## Configuration

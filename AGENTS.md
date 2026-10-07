@@ -59,7 +59,7 @@ writes `.env`; every command takes its answers as flags, so none prompts:
 |---|---|
 | `bootstrap` | the one-shot compose service, run on every `up` |
 | `admin grant\|revoke <email> [--issuer]` | the ordinary-case admin recovery |
-| `break-glass --email …` | the deeper recovery to the bundled Authelia; prints a login and password once, to stdout only; cerea-deploy's `./configure --break-glass` runs it |
+| `break-glass --email …` | the deeper recovery to the bundled Authelia; prints a login and password once, to stdout only; the deploy kit's `./configure --break-glass` runs it |
 | `idp check` | a live probe of the configured identity provider |
 | `email export-env` | the mail configuration in force as `KEY=VALUE` lines, password included, for `./configure --import-smtp` |
 | `erasure list\|retry <id>` | the chat erasure queue the background retry loop owns: see it, or force one attempt now |
@@ -68,7 +68,7 @@ writes `.env`; every command takes its answers as flags, so none prompts:
 
 The separate `gateway` command (`gateway/cli.py`) is the development one:
 `serve` and `seed`. The chat, Cerea, and its machine agent, galopin, live in
-their own repository; the full-stack deployment lives in cerea-deploy.
+their own repository; the full-stack deployment lives in the Cerea repository's deploy kit (`kit/`).
 
 Inside the gateway, the pieces that carry the most weight:
 

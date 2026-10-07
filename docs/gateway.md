@@ -81,7 +81,7 @@ your own.
   a slow KDF would buy nothing on 256 bits of entropy, but revocation must be
   instant.
 - **OIDC** works against any provider. The gateway ships no identity
-  provider of its own; the deployments in `deploy/` and cerea-deploy can run
+  provider of its own; the deployments in `deploy/` and the deploy kit can run
   Authelia beside it, and any other issuer is the same `GATEWAY_OIDC__*`
   configuration from the gateway's side. Discovery is read once at
   startup, so changing any `GATEWAY_OIDC__*` value needs a restart. Users are

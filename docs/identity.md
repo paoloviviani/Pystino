@@ -6,7 +6,7 @@
 
 People sign in to the console, and to the chat when it is deployed, through
 OpenID Connect only. There is no password sign-in in the gateway itself. Use
-the [bundled Authelia](bundled-accounts.md) that `deploy/` (and cerea-deploy)
+the [bundled Authelia](bundled-accounts.md) that `deploy/` (and the deploy kit)
 can run beside the gateway, or bring [your own issuer](oidc-generic-provider.md).
 This page is everything the gateway decides *after* the provider has answered.
 
@@ -36,7 +36,7 @@ multi-factor authentication, that is also the IdP's job**: the bundled Authelia 
 | `OIDC_GROUPS_CLAIM` | `GATEWAY_OIDC__GROUPS_CLAIM` | which claim carries group membership (below) |
 | `OIDC_GROUP_SYNC` | `GATEWAY_OIDC__GROUP_SYNC` | how often the groups claim applies: `every_login`, `first_login` or `never` |
 | `OIDC_LOGOUT_URL` | `GATEWAY_OIDC__LOGOUT_URL` | for an issuer without `end_session_endpoint`: where the browser is sent to end the IdP session; `{redirect}` is where to land |
-| `OIDC_SCOPES_JSON` | `GATEWAY_OIDC__SCOPES` | the scopes the console asks for, as a JSON list; `["openid","profile","email","groups"]` unless the issuer does not offer one ([the `groups` scope](oidc-generic-provider.md#providers-that-reject-the-groups-scope)). cerea-deploy writes it from the issuer's discovery; `deploy/compose.yaml` here sets the default literally |
+| `OIDC_SCOPES_JSON` | `GATEWAY_OIDC__SCOPES` | the scopes the console asks for, as a JSON list; `["openid","profile","email","groups"]` unless the issuer does not offer one ([the `groups` scope](oidc-generic-provider.md#providers-that-reject-the-groups-scope)). the deploy kit writes it from the issuer's discovery; `deploy/compose.yaml` here sets the default literally |
 | `OIDC_ADMIN_EMAIL` | `GATEWAY_OIDC__ADMIN_EMAILS` | comma-separated addresses that confer admin (below) |
 | `OIDC_ADMIN_CLAIM`, `OIDC_ADMIN_CLAIM_VALUE` | `GATEWAY_OIDC__ADMIN_CLAIM`, `GATEWAY_OIDC__ADMIN_CLAIM_VALUES` | a claim path and the comma-separated values that confer admin (below) |
 | `OIDC_LINK_BY_EMAIL` | `GATEWAY_OIDC__LINK_BY_EMAIL` | a first sign-in attaches to the existing account with the same verified email; off by default (below) |
@@ -237,7 +237,7 @@ things have to be true before it can work, and they explain the two steps:
   switching `.env` to the bundled one first; and
 - you need shell access to the host, which already implies the database.
 
-With cerea-deploy, one command does both:
+With the deploy kit, one command does both:
 
 ```sh
 ./configure --break-glass --admin-email ops@example.org --reason "IdP outage"
