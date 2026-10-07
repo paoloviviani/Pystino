@@ -1,4 +1,4 @@
-# Install with:  uv run pre-commit install
+# Install with:  uvx pre-commit install   (pre-commit is not a project dependency)
 # Or use prek (Rust reimplementation, same config):  prek install
 default_language_version:
   python: python3.13
