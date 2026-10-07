@@ -34,15 +34,22 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "groups",
-        sa.Column(
-            "search_model_id",
-            sa.Uuid(),
-            sa.ForeignKey("models.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
-    )
+    # Batch mode, because SQLite cannot add a foreign key to an existing table:
+    # it copies the table instead, and needs the constraint named to do so. The
+    # name is the one PostgreSQL gave the unnamed constraint before this was
+    # batched (``<table>_<column>_fkey``), so databases that already ran this
+    # revision and ones that run it now end up with the same schema.
+    with op.batch_alter_table("groups") as batch:
+        batch.add_column(
+            sa.Column(
+                "search_model_id",
+                sa.Uuid(),
+                sa.ForeignKey(
+                    "models.id", ondelete="SET NULL", name="groups_search_model_id_fkey"
+                ),
+                nullable=True,
+            ),
+        )
 
 
 def downgrade() -> None:

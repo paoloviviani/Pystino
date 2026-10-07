@@ -43,10 +43,16 @@ _TABLES = [
 
 
 def upgrade() -> None:
+    # CASCADE is PostgreSQL's: it also drops the foreign keys other tables hold
+    # on the one going away. SQLite rejects the keyword (a syntax error), and
+    # has nothing to cascade: its foreign keys live in the child's own table
+    # definition, so dropping the child removes them. The order below is what
+    # matters on both, and it is unchanged.
+    cascade = " CASCADE" if op.get_bind().dialect.name == "postgresql" else ""
     # Children before parents: chunks name documents and bases, documents name
     # files and bases, blobs back files.
     for table in _TABLES:
-        op.execute(f'DROP TABLE IF EXISTS "{table}" CASCADE')
+        op.execute(f'DROP TABLE IF EXISTS "{table}"{cascade}')
 
 
 def downgrade() -> None:

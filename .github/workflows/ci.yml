@@ -72,7 +72,7 @@ jobs:
       - run: uv sync --locked
       # Lint only, never --fix: a check, not a rewrite.
       - run: uv run ruff check .
-      - run: uv run mypy apps/gateway/src services
+      - run: uv run mypy apps/gateway/src packages/shared-py/src services
       - run: uv run pytest -q -p no:cacheprovider
       - name: deploy/compose.yaml resolves for every profile; the Caddyfile adapts in every TLS mode
         run: |
@@ -106,5 +106,9 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: 24, cache: pnpm}
       - run: pnpm install --frozen-lockfile --filter "@llmp/console..."
+      # packages/ui is the console's dependency, so the install above has it;
+      # it is source-only (no build), so its own tsc and vitest are its checks.
+      - run: pnpm --filter @llmp/ui typecheck
+      - run: pnpm --filter @llmp/ui test
       - run: pnpm --filter @llmp/console typecheck
       - run: pnpm --filter @llmp/console test

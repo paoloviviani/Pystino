@@ -98,9 +98,9 @@ one to bill with `x-bill-to`.
 ```sh
 uv sync && pnpm install
 uv run pytest -q                                  # SQLite and a fake upstream: no services needed
-uv run ruff check . && uv run mypy apps/gateway/src services
+uv run ruff check . && uv run mypy apps/gateway/src packages/shared-py/src services
 pnpm -r test && pnpm -r typecheck                 # the console and the UI package
-./scripts/smoke_test.sh                           # end to end over real HTTP (broken on main, see CONTRIBUTING)
+./scripts/smoke_test.sh                           # end to end over real HTTP
 ```
 
 Toolchains, git hooks, every test layer, CI, releasing and the repository's
