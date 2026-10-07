@@ -142,9 +142,10 @@ the ones in `uv.lock`; the lockfile's versions are what CI and `uv run` use.
 
 There are no JavaScript hooks: Prettier and ESLint are not configured in this
 repository, and nothing lints or formats the console's TypeScript beyond `tsc`.
-The root `package.json` has a `lint` script (`pnpm -r lint`), but no workspace
-member defines one, so `pnpm lint` fails with `ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`
-and checks nothing.
+The root `package.json` has no `lint` script, on purpose: with no linter
+configured, a `pnpm -r lint` had nothing to run and failed with
+`ERR_PNPM_RECURSIVE_RUN_NO_SCRIPT`. Add the script back with the linter, not
+before.
 
 ## Formatting and linting
 
@@ -152,14 +153,13 @@ CI runs **lint only, never a rewrite**:
 
 ```sh
 uv run ruff check .                                   # E, W, F, I, B, UP, C4, SIM, RUF, ASYNC, S; line length 100
-uv run mypy apps/gateway/src services                 # strict, with the pydantic plugin
+uv run mypy apps/gateway/src packages/shared-py/src services   # strict, with the pydantic plugin
 ```
 
 Both are clean on `main`. `pyproject.toml` has the rule set and the per-file
 ignores; Alembic migrations are excluded from both tools. mypy needs the
-workspace installed, so run it through `uv run`. The commit hook also checks
-`packages/shared-py/src`, which CI does not; that command also passes today:
-`uv run mypy apps/gateway/src packages/shared-py/src`.
+workspace installed, so run it through `uv run`. CI and the commit hook agree
+on `packages/shared-py/src`; the hook leaves out `services`, which CI checks.
 
 **`ruff format` is not enforced, and the tree is not `ruff format`-clean**
 (with the locked ruff, `uv run ruff format --check .` reports 86 files that
@@ -237,14 +237,13 @@ Four workflows in `.github/workflows/`.
 
 | Workflow | Runs on | What it does |
 |---|---|---|
-| `ci` | every push to `main` and every pull request (changes to `docs/**` and `*.md` are ignored), and by hand | a `changes` job decides what to run. **gateway** (when `apps/gateway`, `packages/shared-py`, `services`, `deploy`, `uv.lock`, `pyproject.toml` changed): `uv sync --locked`, `ruff check`, `mypy apps/gateway/src services`, `pytest`, then `docker compose config` for every profile of `deploy/compose.yaml`, the Caddyfile adapting in all three TLS modes, and `deploy/pin.py --check`. **console** (when `apps/console`, `packages/ui`, `pnpm-lock.yaml` changed): `pnpm install --frozen-lockfile`, then the console's `typecheck` and `test`. A manual run does both. |
+| `ci` | every push to `main` and every pull request (changes to `docs/**` and `*.md` are ignored), and by hand | a `changes` job decides what to run. **gateway** (when `apps/gateway`, `packages/shared-py`, `services`, `deploy`, `uv.lock`, `pyproject.toml` changed): `uv sync --locked`, `ruff check`, `mypy apps/gateway/src packages/shared-py/src services`, `pytest`, then `docker compose config` for every profile of `deploy/compose.yaml`, the Caddyfile adapting in all three TLS modes, and `deploy/pin.py --check`. **console** (when `apps/console`, `packages/ui`, `pnpm-lock.yaml` changed): `pnpm install --frozen-lockfile`, then `typecheck` and `test` for `packages/ui` and for the console. A manual run does both. |
 | `docs` | pushes to `main` that touch `docs/**` or `mkdocs.yml`, and by hand | `uv run mkdocs build --strict`, published to GitHub Pages at <https://paoloviviani.github.io/Pystino/> |
 | `images` | by hand (`workflow_dispatch`) only | builds and pushes `pystino-gateway` and `pystino-redaction` (the `-pattern` flavour) to GHCR; on a release tag, a second job runs `pystino release-pin --check` |
 | `stack` | a pushed `v*.*.*` tag, and by hand | builds the gateway and redaction images from the tag, brings up cerea-deploy's `main` with them and the Cerea image named in `deploy/release.env`, checks `/healthz` and `/chat/`, and brings up the Pystino-only `deploy/compose.yaml` too |
 
-Two gaps worth knowing: the console job does not run the `packages/ui` tests or
-typecheck (run them yourself when you change it), and `ruff format`, the commit
-hooks and `docs` links to other repositories are not checked by CI.
+One gap worth knowing: `ruff format`, the commit hooks and `docs` links to other
+repositories are not checked by CI.
 
 ## Releasing
 

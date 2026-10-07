@@ -89,7 +89,7 @@ login happened on, so `localhost:8000` on both ends is what keeps it.
 uv sync
 uv run pytest -q                  # about 1,900 tests, SQLite, no services, no network
 uv run ruff check .
-uv run mypy apps/gateway/src services   # mypy is --strict
+uv run mypy apps/gateway/src packages/shared-py/src services   # mypy is --strict
 ```
 
 Tests run against SQLite and a fake upstream transport, so they need no

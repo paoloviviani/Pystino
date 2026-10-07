@@ -71,7 +71,7 @@ Inside the gateway, the pieces that carry the most weight:
 
 ```bash
 uv sync
-uv run ruff check . && uv run mypy apps/gateway/src services   # mypy is --strict
+uv run ruff check . && uv run mypy apps/gateway/src packages/shared-py/src services   # --strict
 uv run pytest -q                       # gateway tests: SQLite, a fake upstream, no services
 pnpm -r test && pnpm -r typecheck      # packages/ui and the console
 uv run mkdocs build --strict           # the docs site
@@ -80,7 +80,7 @@ uv run mkdocs build --strict           # the docs site
 Tests need no PostgreSQL, Valkey or network. Run pytest from the repository
 root; a single file is `uv run pytest apps/gateway/tests/test_cost.py -q`. The
 mypy pre-commit hook covers `apps/gateway/src` and `packages/shared-py/src`
-only, so run mypy on `services` by hand.
+only, so run mypy on `services` by hand; CI runs all three.
 
 **Migrations** are Alembic, under `apps/gateway/migrations`:
 `uv run alembic -c apps/gateway/alembic.ini revision -m "…"` to add one,

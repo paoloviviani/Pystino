@@ -7,10 +7,9 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "pnpm --filter @llmp/ui build && pnpm --filter @llmp/console build",
+    "build": "pnpm --filter @llmp/console build",
     "dev": "pnpm --filter @llmp/console dev",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck"
   }
 }

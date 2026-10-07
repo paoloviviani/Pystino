@@ -3,7 +3,7 @@
 ## Verifying a change
 
 ```bash
-uv run ruff check . && uv run mypy apps/gateway/src services   # mypy is --strict
+uv run ruff check . && uv run mypy apps/gateway/src packages/shared-py/src services
 uv run pytest -q                                               # about 1,900 tests, SQLite, no services
 pnpm -r test && pnpm -r typecheck                              # packages/ui + console
 ```
