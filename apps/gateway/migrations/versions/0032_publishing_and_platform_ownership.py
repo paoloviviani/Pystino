@@ -50,13 +50,15 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # batch_alter_table: PostgreSQL gets the same ALTER COLUMN; SQLite, which
+    # cannot alter a column's nullability, gets the table rebuilt.
     for table in ("knowledge_bases", "agents"):
-        op.alter_column(
-            table,
-            "owner_user_id",
-            existing_type=sa.Uuid(),
-            nullable=True,
-        )
+        with op.batch_alter_table(table) as batch:
+            batch.alter_column(
+                "owner_user_id",
+                existing_type=sa.Uuid(),
+                nullable=True,
+            )
 
 
 def downgrade() -> None:
@@ -79,10 +81,12 @@ def downgrade() -> None:
             f"{published} resource(s) are published to everyone. Downgrading would leave "
             "grants whose principal_id names nothing. Unpublish them first."
         )
+    # batch_alter_table: PostgreSQL gets the same ALTER COLUMN; SQLite, which
+    # cannot alter a column's nullability, gets the table rebuilt.
     for table in ("knowledge_bases", "agents"):
-        op.alter_column(
-            table,
-            "owner_user_id",
-            existing_type=sa.Uuid(),
-            nullable=False,
-        )
+        with op.batch_alter_table(table) as batch:
+            batch.alter_column(
+                "owner_user_id",
+                existing_type=sa.Uuid(),
+                nullable=False,
+            )
