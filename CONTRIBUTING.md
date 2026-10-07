@@ -133,12 +133,13 @@ What runs on a commit, on the staged files:
 | `trailing-whitespace`, `end-of-file-fixer` | all | fixes them |
 | `check-yaml`, `check-toml` | YAML, TOML | parses them |
 | `check-added-large-files`, `check-merge-conflict`, `detect-private-key` | all | refuses the commit |
-| `ruff --fix` | Python | lint, applying the safe fixes |
-| `ruff-format` | Python | **reformats the file** |
+| `ruff check --fix` | Python | lint, applying the safe fixes |
+| `ruff format` | Python | **reformats the file** |
 | `mypy` | `apps/gateway/src/` and `packages/shared-py/src/` | `--strict` type check, in an environment of its own |
 
-The hooks pin their own tool versions (ruff 0.7.4, mypy 1.13.0), which are not
-the ones in `uv.lock`; the lockfile's versions are what CI and `uv run` use.
+The two ruff hooks run `uv run ruff`, so they use the version in `uv.lock`, the
+same one CI uses. The mypy hook still pins its own (1.13.0) in an environment of
+its own; CI's `uv run mypy` is the one that counts.
 
 There are no JavaScript hooks: Prettier and ESLint are not configured in this
 repository, and nothing lints or formats the console's TypeScript beyond `tsc`.
@@ -149,26 +150,26 @@ before.
 
 ## Formatting and linting
 
-CI runs **lint only, never a rewrite**:
+CI **checks, never rewrites**:
 
 ```sh
 uv run ruff check .                                   # E, W, F, I, B, UP, C4, SIM, RUF, ASYNC, S; line length 100
+uv run ruff format --check .                          # the layout ruff format would produce
 uv run mypy apps/gateway/src packages/shared-py/src services   # strict, with the pydantic plugin
 ```
 
-Both are clean on `main`. `pyproject.toml` has the rule set and the per-file
-ignores; Alembic migrations are excluded from both tools. mypy needs the
-workspace installed, so run it through `uv run`. CI and the commit hook agree
-on `packages/shared-py/src`; the hook leaves out `services`, which CI checks.
+All three are clean on `main`. `pyproject.toml` has the rule set and the
+per-file ignores; Alembic migrations are excluded from both tools. mypy needs
+the workspace installed, so run it through `uv run`. CI and the commit hook
+agree on `packages/shared-py/src`; the hook leaves out `services`, which CI
+checks.
 
-**`ruff format` is not enforced, and the tree is not `ruff format`-clean**
-(with the locked ruff, `uv run ruff format --check .` reports 86 files that
-would change). Running it over the repository rewraps dozens of files that have
-nothing to do with your change, so the rule is: format only files you create.
-The pre-commit `ruff-format` hook does reformat every staged Python file, so a
-commit that touches an old file will rewrap all of it. Stage only the files you
-mean to reformat, or skip that one hook for the commit with
-`SKIP=ruff-format git commit`.
+**The tree is `ruff format`-clean** (it was formatted once, in the commit listed
+in `.git-blame-ignore-revs`). The pre-commit hook formats what you stage; without
+the hook, run `uv run ruff format <files>` before committing, or CI's
+`ruff format --check .` fails the push. To make `git blame` skip the formatting
+commit locally: `git config blame.ignoreRevsFile .git-blame-ignore-revs`
+(GitHub does it on its own).
 
 TypeScript: `pnpm -r typecheck` (`tsc --noEmit`) is the check. The console is
 styled with Tailwind utilities over the tokens, and the interaction layer
@@ -242,8 +243,8 @@ Four workflows in `.github/workflows/`.
 | `images` | by hand (`workflow_dispatch`) only | builds and pushes `pystino-gateway` and `pystino-redaction` (the `-pattern` flavour) to GHCR; on a release tag, a second job runs `pystino release-pin --check` |
 | `stack` | a pushed `v*.*.*` tag, and by hand | builds the gateway and redaction images from the tag, brings up cerea-deploy's `main` with them and the Cerea image named in `deploy/release.env`, checks `/healthz` and `/chat/`, and brings up the Pystino-only `deploy/compose.yaml` too |
 
-One gap worth knowing: `ruff format`, the commit hooks and `docs` links to other
-repositories are not checked by CI.
+One gap worth knowing: the commit hooks and `docs` links to other repositories
+are not checked by CI.
 
 ## Releasing
 

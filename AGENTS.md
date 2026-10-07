@@ -13,9 +13,10 @@ changing anything: it is the context that is not recoverable from the code.
    details found only in a provider's live schema.
 3. **Accounting and quota logic get tests specifically.** A wrong answer there
    is a wrong invoice, not a stack trace.
-4. **Never `ruff format` this repository.** Verification is `ruff check`; the
-   tree has never been `ruff format`-clean, and running it rewraps dozens of
-   unrelated files. Format only files you have just created.
+4. **The tree is `ruff format`-clean, and CI keeps it so.** Format what you
+   change with the locked ruff (`uv run ruff format <files>`; the pre-commit
+   hook does it on commit), and CI's `ruff format --check .` refuses anything
+   else. A formatting-only commit goes in `.git-blame-ignore-revs`.
 5. **Nothing but the proxy is published.** The compose file binds the gateway
    to `127.0.0.1`; the world reaches it through Caddy.
 

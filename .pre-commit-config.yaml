@@ -15,12 +15,20 @@ repos:
       - id: check-merge-conflict
       - id: detect-private-key
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.7.4
+  # ruff runs from the project's own environment (uv.lock), so the hook, CI
+  # and `uv run ruff` always agree on the version and so on the layout.
+  - repo: local
     hooks:
       - id: ruff
-        args: [--fix]
+        name: ruff check --fix
+        entry: uv run ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
       - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.13.0
