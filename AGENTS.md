@@ -50,11 +50,24 @@ are excluded from ruff and mypy.
 The gateway accepts a caller-supplied `x-request-id` and never returns the one
 it uses: a caller who wants a transcript tied to cost mints it and sends it.
 
-The deployment CLI in the gateway image (`pystino`) has three commands:
-`bootstrap` (the one-shot compose service), `admin grant|revoke`
-(break-glass) and `release-pin` (a maintainer tool). The chat, Cerea, and its
-machine agent, galopin, live in their own repository; the full-stack
-deployment lives in cerea-deploy.
+The deployment CLI in the gateway image (`pystino`, `gateway/deploy/cli.py`,
+whose `build_parser` is the list to trust) runs inside a deployment and never
+writes `.env`; every command takes its answers as flags, so none prompts:
+
+| Command | What it is |
+|---|---|
+| `bootstrap` | the one-shot compose service, run on every `up` |
+| `admin grant\|revoke <email> [--issuer]` | the ordinary-case admin recovery |
+| `break-glass --email …` | the deeper recovery to the bundled Authelia; prints a login and password once, to stdout only; cerea-deploy's `./configure --break-glass` runs it |
+| `idp check` | a live probe of the configured identity provider |
+| `email export-env` | the mail configuration in force as `KEY=VALUE` lines, password included, for `./configure --import-smtp` |
+| `erasure list\|retry <id>` | the chat erasure queue the background retry loop owns: see it, or force one attempt now |
+| `quota health` | each quota rule's counter against the ledger, as JSON; read-only |
+| `release-pin [--manifest] [--check]` | a maintainer tool: pin the release manifest's images by digest |
+
+The separate `gateway` command (`gateway/cli.py`) is the development one:
+`serve` and `seed`. The chat, Cerea, and its machine agent, galopin, live in
+their own repository; the full-stack deployment lives in cerea-deploy.
 
 Inside the gateway, the pieces that carry the most weight:
 
@@ -188,7 +201,7 @@ Traps when running them:
 - **There are two search counts; do not add them together.**
   `usage_records.search_count` is the counterparty's server-side search,
   billed per search. `usage_records.own_search_requests` is a call this gateway
-  made to its own search backends (Exa, Jina, Staan, Linkup), **counted, never
+  made to its own search backends (Linkup, Exa, Jina, DuckDuckGo), **counted, never
   priced**, and limited by the `OWN_SEARCH_REQUESTS` quota metric, which
   defaults to zero per request. A request ceiling bounds volume, not spend,
   and the quota form says so.
