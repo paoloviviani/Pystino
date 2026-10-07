@@ -61,6 +61,36 @@ A string claim is one group; it is never split on separators.
 `OIDC_GROUPS_CLAIM` names it, and [how it is applied](identity.md#groups) is
 `OIDC_GROUP_SYNC`.
 
+## Providers that reject the `groups` scope
+
+Some providers publish a `groups` *claim* but no `groups` *scope*, and answer a
+sign-in that asks for it with `invalid_scope`. Infomaniak's discovery lists
+`scopes_supported = openid, profile, email, phone`, for one. The gateway asks
+for the scopes in `GATEWAY_OIDC__SCOPES`, so the fix is to drop `groups` from
+that list and from the chat's `OIDC_SCOPES`, which are one setting spelled two
+ways (a JSON list for the gateway, words for the chat).
+
+With cerea-deploy, `./configure --idp external` reads the issuer's discovery
+document and asks only for the scopes it lists (`openid` always stays), writes
+both spellings (`OIDC_SCOPES` and `OIDC_SCOPES_JSON`) and says so when `groups`
+is dropped. `./configure --check` warns about a configured scope the issuer
+does not list, and `./configure --oidc-scopes 'openid profile email'` (or
+`--set OIDC_SCOPES=…`) sets them by hand. In `deploy/` here, edit the
+`GATEWAY_OIDC__SCOPES` line of `compose.yaml`.
+
+Without the scope, group-based features (group sync, quotas and billing by
+group, an admin claim rule on `groups`) work only if the provider puts a groups
+claim in its tokens regardless. `pystino idp check --device` prints the claim.
+With no groups claim, people sign in with no group memberships, and an admin
+rule by email still works.
+
+The machine client follows the same rule: galopin asks for `offline_access`
+only when the issuer lists it. A provider that grants refresh tokens without
+the scope is still asked, and `galopin enroll` stops with a message instead of
+enrolling a machine that would lose its sign-in within the hour, if no refresh
+token comes back. Enable refresh tokens for `opencode-enrollment` at the
+provider.
+
 ## Keycloak: the audience mapper
 
 A Keycloak access token carries **no `aud` claim at all** unless an audience

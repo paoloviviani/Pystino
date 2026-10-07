@@ -69,9 +69,10 @@ first account's password is whatever `AUTHELIA_ADMIN_PASSWORD_DIGEST` is a
 digest of — you chose it when you minted the digest, so there is nothing to
 read back afterwards.
 
-**Private images.** While the repository is private, so is its GHCR package:
-log the host in once with a token holding `read:packages` —
-`echo "$TOKEN" | docker login ghcr.io -u <github-user> --password-stdin`.
+**Images.** The gateway and redaction images are public on the GitHub
+Container Registry (`ghcr.io/paoloviviani/pystino-gateway`,
+`pystino-redaction`), at the version `deploy/compose.yaml` pins; `docker compose
+pull` needs no login.
 
 ## TLS modes
 

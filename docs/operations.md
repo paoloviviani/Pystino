@@ -4,8 +4,8 @@
 
 ```bash
 uv run ruff check . && uv run mypy apps/gateway/src services   # mypy is --strict
-uv run pytest -q                                               # ~1,500 tests, SQLite, no services
-pnpm -r test && pnpm -r typecheck                              # packages/ui + console + web
+uv run pytest -q                                               # about 1,900 tests, SQLite, no services
+pnpm -r test && pnpm -r typecheck                              # packages/ui + console
 ```
 
 Tests need no PostgreSQL, Valkey or network (SQLite + a fake upstream
