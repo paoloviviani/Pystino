@@ -85,7 +85,10 @@ only, so run mypy on `services` by hand.
 **Migrations** are Alembic, under `apps/gateway/migrations`:
 `uv run alembic -c apps/gateway/alembic.ini revision -m "…"` to add one,
 `… upgrade head` to apply. The compose `migrate` service runs them on every
-`up`.
+`up`. A migration must also run on SQLite (the smoke test and the quick start use
+it): branch on `op.get_bind().dialect.name`, as 0027 and 0047 do, and put any
+`ALTER` of a constraint through `op.batch_alter_table`. `test_migrations_sqlite.py`
+runs the whole chain there.
 
 **The console** is built into the gateway image (`INCLUDE_CONSOLE=true`);
 for development, `pnpm --filter console dev`. Without a Node toolchain on the

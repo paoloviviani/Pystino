@@ -104,14 +104,6 @@ streaming upstream, no Docker:
 ./scripts/smoke_test.sh
 ```
 
-!!! warning "Broken on `main` at the moment"
-
-    The script's first step, `alembic upgrade head` on SQLite, stops at
-    migration 0035, which runs `DROP TABLE IF EXISTS … CASCADE`, a statement
-    SQLite does not accept. Until that migration is fixed, use the compose
-    route above for an end-to-end run. The unit tests are not affected: they
-    build their schema directly.
-
 It starts everything on temporary ports, drives the endpoints, prints the
 resulting ledger and cleans up. It also demonstrates the quota overrun policy:
 the request that crosses the limit is admitted, the next one gets a 429.

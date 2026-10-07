@@ -61,12 +61,7 @@ fail instead of updating a lockfile. Use them when you want what CI will see.
 The quickest complete run is meant to need no services. `./scripts/smoke_test.sh`
 starts a fake upstream and the gateway on ports 9099 and 8099 with a temporary
 SQLite database, drives the endpoints, prints the ledger and cleans up. It needs
-`uv sync` first. **It is broken on `main` at the moment:** its first step,
-`alembic upgrade head` on SQLite, stops at migration 0035, which runs
-`DROP TABLE IF EXISTS … CASCADE`, a statement SQLite does not accept. The unit
-tests are not affected (they build the schema directly), and a PostgreSQL
-database migrates fine. Until it is fixed, use the compose deployment below for
-an end-to-end run.
+`uv sync` first.
 
 For a gateway you can click on, against a real PostgreSQL:
 
