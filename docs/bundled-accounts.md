@@ -29,8 +29,10 @@ account together.
   switched off in the rendered configuration. A second factor comes from an
   external IdP such as Keycloak, configured through the environment
   ([Identity](identity.md#one-provider-set-in-the-environment)).
-- It needs a **dotted host name**: browsers refuse its session cookie on an
-  IP address or a dotless name.
+- It needs a **dotted host name** in this repository's `deploy/`: browsers
+  refuse its session cookie on a dotless name, and `deploy/` has no way to
+  serve an IP address. cerea-deploy also accepts an IP address (with
+  `--tls internal`); it refuses only single-word names such as `myserver`.
 
 ## The Users page
 

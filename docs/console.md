@@ -25,7 +25,7 @@ the **Exact figures** toggle.
 | I want to… | Screen | Read |
 |---|---|---|
 | see what the deployment spent, by group, person, model or day | **Usage** | [Accounting and quotas](accounting-and-quotas.md#the-ledger) |
-| set a ceiling, see what it has consumed, or reset it on the record | **Quotas** | [Quotas](accounting-and-quotas.md#quotas) |
+| set a ceiling, see what it has consumed, check a counter against the ledger (**Quota health**, with **Reconcile**), or reset it on the record, with or without a reason | **Quotas** | [Quotas](accounting-and-quotas.md#quotas), [Quota health and reconcile](accounting-and-quotas.md#quota-health-and-reconcile) |
 | decide what is stripped from prompts before a provider sees them, and for whom | **Redaction** | [Redaction](redaction.md#operating-it) |
 | add a provider, its credentials and what it reports | **Providers** | [Providers and plugins](gateway.md#providers-and-plugins) |
 | change what models are on offer, who may use them and what they cost | **Models** | [Three cost figures](accounting-and-quotas.md#three-cost-figures-one-meaning-each) |
@@ -42,6 +42,10 @@ so the console shows it and offers **User sync…** only for an external provide
 ([User sync](oidc-generic-provider.md#user-sync)). What the console *does* edit
 is the provisioning policy: who may come to exist, which claim names their
 groups, and what an IdP group means here.
+
+**Reasons are optional.** Every form that offers one (resetting a quota, merging
+users, a redaction rule, the sign-in policy) labels the field *Reason
+(optional)*; a reason you give is kept in the audit log.
 
 A non-administrator who follows a bookmarked admin link is told they are not
 one, rather than shown a blank page; the API refuses them regardless.

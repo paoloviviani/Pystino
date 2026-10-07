@@ -8,7 +8,7 @@
 # upgrading is `git pull && docker compose pull && docker compose up -d`.
 #
 # For the full stack, with the chat, use the `cerea-deploy` repository
-# instead (private for now): same variable names and .env conventions, so
+# instead: same variable names and .env conventions, so
 # moving to it is carrying this .env and the project name over, then adding
 # the chat's secrets.
 #

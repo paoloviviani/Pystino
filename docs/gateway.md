@@ -13,12 +13,10 @@ per-group model availability and a pluggable redaction layer.
 | `POST /v1/embeddings` | key or bearer | Embeddings, metered and redacted like a completion |
 | `POST /v1/images/generations` | key or bearer | Image generation, billed per picture or per token depending on the model |
 | `POST /v1/ocr` | key or bearer | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor |
-| `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina), metered per call. The backend is the billing group's search policy, or the one the body names in an optional `backend` (a search model the caller is granted; an ungranted name is a 404, never a fallback to the policy). `POST /v1/search/{backend}` is the verbatim passthrough |
+| `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina, DuckDuckGo), metered per call. The backend is the billing group's search policy, or the one the body names in an optional `backend` (a search model the caller is granted; an ungranted name is a 404, never a fallback to the policy). `POST /v1/search/{backend}` is the verbatim passthrough |
 | `GET /v1/models` | key, bearer or none | Models the caller may use, by group or personal grant, with capabilities |
 | `GET /v1/pystino/usage` | key or bearer | This caller's own spend, for a client that wants to show it without a console session |
 | `GET /v1/billing/groups` | key or bearer | Which groups this caller may bill, and which one paid for this request |
-| `/v1/files` | key or bearer | Upload, list, download and delete the only content this gateway stores |
-| `/v1/vector_stores` | key or bearer | Knowledge bases: documents in, passages out, and who they are shared with |
 | `GET /auth/login`, `/auth/callback` | — | OIDC authorization-code login (PKCE) |
 | `/api/me/*` | session cookie | Identity, billing group, API keys, own usage and reports |
 | `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, reports |
@@ -28,11 +26,11 @@ Every metered `/v1` route shares one metering path — `routers/_metered.py` —
 resolve → reserve → record → settle cannot drift between surfaces.
 Seven routers import it today: chat, responses, messages, embeddings, images,
 ocr and search.
-That path is also what **knowledge-base ingestion** bills
-through, which is why `_metered.begin` takes `fx` and `session_factory` rather
-than a `Request`: a background task has no request, and a second copy of the
-money code would make indexing spend invisible to every report.
-
+`_metered.begin` takes `fx` and `session_factory` rather than a `Request`, so
+code with no request can bill through the same path: a second copy of the money
+code would make that spend invisible to every report. Knowledge-base ingestion
+is the chat's, not the gateway's: Cerea calls `/v1/embeddings` and `/v1/ocr`
+like any client, each metered to the signed-in person's own token.
 
 
 **`/v1` and `/api` differ, and that is the whole asymmetry.** One dependency
@@ -41,9 +39,9 @@ credential: a JWT in the `Authorization` header is verified against the issuer
 that minted it, anything else is looked up as an API key — so
 "accepts a key" and "accepts a bearer" are the same list, not two. `/api`
 accepts neither; it reads a session cookie and nothing else. That is why
-`/v1/billing/groups`, `/v1/files` and `/v1/vector_stores` are on `/v1` at all:
-a chat client holding a bearer token cannot reach a management route, so
-anything it needs has to live where it can be reached.
+`/v1/billing/groups` and `/v1/pystino/usage` are on `/v1` at all: a chat client
+holding a bearer token cannot reach a management route, so anything it needs
+has to live where it can be reached.
 
 The one credential-shaped distinction that survives is `x-bill-to`:
 a bearer caller may name the group to bill, an *issued* key may not — it
@@ -246,7 +244,9 @@ Stated plainly, so none of them is a surprise later.
   while the gateway keeps running, the cache reports zero and quotas are
   briefly too permissive until the gateway restarts. An empty cache is not a
   failed read, so nothing detects it at runtime. Restart the gateway after any
-  cache loss.
+  cache loss; a counter that has drifted from the ledger is shown by **Quota
+  health** on the console's Quotas page and corrected by **Reconcile** (see
+  [Accounting and quotas](accounting-and-quotas.md#quota-health-and-reconcile)).
 - **Load behaviour is measured on one small box only.** The gateway's own
   overhead per request is small next to upstream latency, but profile before
   scaling.

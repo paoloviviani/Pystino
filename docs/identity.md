@@ -36,6 +36,7 @@ multi-factor authentication, that is also the IdP's job**: the bundled Authelia 
 | `OIDC_GROUPS_CLAIM` | `GATEWAY_OIDC__GROUPS_CLAIM` | which claim carries group membership (below) |
 | `OIDC_GROUP_SYNC` | `GATEWAY_OIDC__GROUP_SYNC` | how often the groups claim applies: `every_login`, `first_login` or `never` |
 | `OIDC_LOGOUT_URL` | `GATEWAY_OIDC__LOGOUT_URL` | for an issuer without `end_session_endpoint`: where the browser is sent to end the IdP session; `{redirect}` is where to land |
+| `OIDC_SCOPES_JSON` | `GATEWAY_OIDC__SCOPES` | the scopes the console asks for, as a JSON list; `["openid","profile","email","groups"]` unless the issuer does not offer one ([the `groups` scope](oidc-generic-provider.md#providers-that-reject-the-groups-scope)). cerea-deploy writes it from the issuer's discovery; `deploy/compose.yaml` here sets the default literally |
 | `OIDC_ADMIN_EMAIL` | `GATEWAY_OIDC__ADMIN_EMAILS` | comma-separated addresses that confer admin (below) |
 | `OIDC_ADMIN_CLAIM`, `OIDC_ADMIN_CLAIM_VALUE` | `GATEWAY_OIDC__ADMIN_CLAIM`, `GATEWAY_OIDC__ADMIN_CLAIM_VALUES` | a claim path and the comma-separated values that confer admin (below) |
 | `OIDC_LINK_BY_EMAIL` | `GATEWAY_OIDC__LINK_BY_EMAIL` | a first sign-in attaches to the existing account with the same verified email; off by default (below) |
@@ -289,4 +290,3 @@ not up:
 | `pystino erasure list` | the pending chat erasures: id, user, attempts, next attempt, last error |
 | `pystino erasure retry <id>` | force one pending erasure's next attempt now, ignoring its backoff |
 | `pystino email export-env` | the mail configuration in force, as `SMTP_*` `KEY=VALUE` lines, password included — for moving console-era mail settings into the environment |
-

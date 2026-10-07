@@ -96,16 +96,20 @@ one to bill with `x-bill-to`.
 ## Development
 
 ```sh
-uv sync
+uv sync && pnpm install
 uv run pytest -q                                  # SQLite and a fake upstream: no services needed
-uv run ruff check . && uv run mypy apps/gateway/src packages/shared-py/src
-./scripts/smoke_test.sh                           # end to end over real HTTP, on temporary ports
+uv run ruff check . && uv run mypy apps/gateway/src services
+pnpm -r test && pnpm -r typecheck                 # the console and the UI package
+./scripts/smoke_test.sh                           # end to end over real HTTP (broken on main, see CONTRIBUTING)
 ```
 
-`deploy/dev/smoke.yml` adds a fake upstream to the compose deployment, and
-`deploy/dev/keycloak/` a Keycloak to develop the external-IdP paths against.
-The console is `apps/console` (React, pnpm), built into the gateway image.
-Live checks against a running stack are in `scripts/*_live.py`.
+Toolchains, git hooks, every test layer, CI, releasing and the repository's
+conventions are in [CONTRIBUTING.md](CONTRIBUTING.md), which is also the
+[Development](https://paoloviviani.github.io/Pystino/development/) page of the
+documentation. `deploy/dev/smoke.yml` adds a fake upstream to the compose
+deployment, and `deploy/dev/keycloak/` a Keycloak to develop the external-IdP
+paths against. The console is `apps/console` (React, pnpm), built into the
+gateway image. Live checks against a running stack are in `scripts/*_live.py`.
 
 ## Documentation
 
@@ -119,7 +123,8 @@ The documentation site is `docs/` (`uv run mkdocs build --strict`). Start at
 [deployment](docs/deployment.md) ·
 [identity](docs/oidc-generic-provider.md) ·
 [coding agents](docs/coding-agents.md) ·
-[operations](docs/operations.md). The gateway package has its own
+[operations](docs/operations.md) ·
+[development](docs/development.md). The gateway package has its own
 [README](apps/gateway/README.md).
 
 ## Contributing, security, licence

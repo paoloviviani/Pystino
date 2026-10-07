@@ -48,6 +48,8 @@ is a `/v1` client of this gateway and a separate repository.
   explains each.
 - [Operations](operations.md) and [Measured performance](performance.md):
   verifying a change, the live checks, and what the gateway costs.
+- [Development](development.md): toolchains, git hooks, every test layer, CI,
+  releasing, and the repository's conventions.
 
 ## The rest of the stack
 

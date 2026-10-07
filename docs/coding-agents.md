@@ -103,7 +103,7 @@ Pass them after `bash -s --`, or run the script from a file.
 |---|---|
 | `<address>` or `--base-url` | the gateway, if not the one the script came from; `/v1` is added if missing |
 | `--model <id>` | also make `pystino/<id>` opencode's default model |
-| `--install-opencode` | first install opencode, pinned to the version this setup was tested with, using opencode's own installer (`https://opencode.ai/install`) |
+| `--install-opencode` | first install opencode, pinned to the version this setup was tested with (1.18.34 at this writing; galopin's install line pins the same release), using opencode's own installer (`https://opencode.ai/install`) |
 | `--no-discover` | do not call the gateway; write a placeholder model to edit by hand |
 | `--yes` | do not ask for confirmation |
 

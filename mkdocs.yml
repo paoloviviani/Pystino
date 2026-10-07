@@ -58,7 +58,11 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
-  - pymdownx.snippets
+  # The Development page is CONTRIBUTING.md, included from the repository
+  # root; check_paths fails the strict build if the file is missing.
+  - pymdownx.snippets:
+      base_path: .
+      check_paths: true
   - pymdownx.superfences
 
 # Warnings fail the build (strict). "not_found" is the one that matters: it
@@ -83,6 +87,7 @@ nav:
   - Operations:
       - operations.md
       - "Measured performance": performance.md
+  - Development: development.md
   - Identity:
       - identity.md
       - "Bundled accounts": bundled-accounts.md
