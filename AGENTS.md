@@ -383,12 +383,9 @@ and report it with its output. Derived from `.github/workflows/images.yml`,
      `stable` and creates the GitHub release. It is done only when it prints
      `released v<version>`.
 
-**Not verified end to end** (this file was written without running a
-release): the `stack` workflow's checkout of Cerea's `kit/` instead of the
-archived `cerea-deploy` repository has not run on a tag yet, so watch the first
-release's `stack` run closely; `pystino release-pin` against the registries
-was not run while writing this. Every other step above matches the workflow
-files and the successful v0.3.1 and v0.3.2 runs.
+**Verified end to end** with v0.4.0 (2026-10-08): every step above ran as
+written, including `release-pin` against the registries and the `stack`
+workflow's sparse checkout of Cerea's `kit/` on the tag.
 
 ## Non-obvious things that will bite you
 
