@@ -456,6 +456,17 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(default=None)
+    #: The claimed group names the last provisioning could not resolve to an
+    #: active group (not imported yet, dismissed, or deactivated). Kept on the
+    #: row, which every `/v1` bearer call loads anyway, so that the divergence
+    #: check can tell "a name this login already looked at" from "a name it
+    #: has not": without it, one unimported name in a token makes every request
+    #: re-provision, forever. None means never recorded (rows from before it).
+    unresolved_group_names: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    #: When this person was put in the default group (GATEWAY_OIDC__DEFAULT_GROUP).
+    #: Once only: set, the grant never runs again, so an administrator who
+    #: takes someone out of that group is not overruled at their next sign-in.
+    default_group_granted_at: Mapped[datetime | None] = mapped_column(default=None)
 
     memberships: Mapped[list[Membership]] = relationship(
         back_populates="user", cascade="all, delete-orphan", lazy="selectin"
@@ -669,6 +680,46 @@ class Membership(Base):
 
     user: Mapped[User] = relationship(back_populates="memberships")
     group: Mapped[Group] = relationship(back_populates="memberships", lazy="joined")
+
+
+class SeenGroup(Base):
+    """A group name a directory reported that no group here carries.
+
+    Written at sign-in when `GATEWAY_OIDC__GROUP_IMPORT=manual`, instead of
+    creating the group: the console lists these under "Seen from your identity
+    provider" with Import (create the group) and Dismiss (stop listing it).
+    Keyed by issuer rather than by provider row because the issuer is what a
+    login knows for certain, and what a user row is keyed on. An imported name
+    is deleted from here: it is a group now, and resolves like any other.
+    """
+
+    __tablename__ = "seen_groups"
+    __table_args__ = (UniqueConstraint("issuer", "name", name="uq_seen_groups_issuer_name"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    issuer: Mapped[str] = mapped_column(String(512))
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    first_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(default=utcnow)
+    dismissed_at: Mapped[datetime | None] = mapped_column(default=None)
+
+
+class SeenGroupUser(Base):
+    """Who carried a seen group name at their last provisioning.
+
+    The count the console shows, and the list Import grants memberships to at
+    once (for a provider whose answer applies at every login), so importing
+    does not have to wait for everybody to sign in again.
+    """
+
+    __tablename__ = "seen_group_users"
+
+    seen_group_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("seen_groups.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
 
 
 class ApiKey(Base):
@@ -1700,6 +1751,11 @@ class IdentityEventAction(enum.StrEnum):
     # Not an identity change, but this is the repository's one append-only
     # trail of administrator actions that override what the system believes.
     QUOTA_RECONCILE = "quota.reconcile"
+    # A group name an identity provider reported, imported as a group from the
+    # console (GATEWAY_OIDC__GROUP_IMPORT=manual), dismissed, or listed again.
+    GROUP_IMPORT = "group.import"
+    GROUP_DISMISS = "group.dismiss"
+    GROUP_RESTORE = "group.restore"
 
 
 #: Raised by both dialects' triggers, so a caller sees the same reason whether

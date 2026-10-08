@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from conftest import Seeded
+from conftest import LEGACY_GROUPS, Seeded
 from gateway.config import OIDCSettings
 from gateway.models import (
     Group,
@@ -67,7 +67,7 @@ async def sign_in(
         email="person@example.org",
         display_name="Directory Person",
         group_names=groups,
-        settings=OIDCSettings(),
+        settings=OIDCSettings(**LEGACY_GROUPS),
         policy=policy,
         group_sync=group_sync,
     )
@@ -189,7 +189,7 @@ class TestSyncModes:
             email=None,
             display_name=None,
             group_names=["research"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
         assert await names(session, user) == {"research"}
@@ -304,22 +304,25 @@ class TestDivergenceOnTheRequestPath:
         await add_by_hand(session, user, "finance")
         await session.refresh(user, attribute_names=["memberships"])
 
-        assert _claims_diverge(user, ["research"], OIDCSettings()) is False
+        assert _claims_diverge(user, ["research"], OIDCSettings(**LEGACY_GROUPS)) is False
 
     async def test_a_removal_in_the_directory_is_a_divergence(self, session: AsyncSession) -> None:
         user = await sign_in(session, groups=["research"])
-        assert _claims_diverge(user, [], OIDCSettings()) is True
+        assert _claims_diverge(user, [], OIDCSettings(**LEGACY_GROUPS)) is True
 
     async def test_a_new_group_in_the_token_is_a_divergence(self, session: AsyncSession) -> None:
         user = await sign_in(session, groups=["research"])
-        assert _claims_diverge(user, ["research", "finance"], OIDCSettings()) is True
+        assert _claims_diverge(user, ["research", "finance"], OIDCSettings(**LEGACY_GROUPS)) is True
 
     @pytest.mark.parametrize("mode", [GroupSync.FIRST_LOGIN, GroupSync.NEVER])
     async def test_groups_are_not_compared_when_the_directory_does_not_set_them(
         self, session: AsyncSession, mode: GroupSync
     ) -> None:
         user = await sign_in(session, groups=["research"], group_sync=mode)
-        assert _claims_diverge(user, ["anything", "else"], OIDCSettings(), None, mode) is False
+        assert (
+            _claims_diverge(user, ["anything", "else"], OIDCSettings(**LEGACY_GROUPS), None, mode)
+            is False
+        )
 
     async def test_the_bearer_path_leaves_an_administrators_grant_alone(
         self, session: AsyncSession
@@ -331,7 +334,7 @@ class TestDivergenceOnTheRequestPath:
         resolved = await sync_user_from_claims(
             session,
             claims={"iss": IDP, "sub": SUBJECT, "groups": ["research"]},
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
         assert await names(session, resolved) == {"research", "finance"}

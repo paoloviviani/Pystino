@@ -160,6 +160,30 @@ export interface AdminModel {
   granted_to_users: string[];
 }
 
+/** A group name an identity provider reported that no group here carries
+    yet (GATEWAY_OIDC__GROUP_IMPORT=manual records these instead of creating
+    them). */
+export interface SeenGroup {
+  id: string;
+  name: string;
+  issuer: string;
+  /** The identity provider row with that issuer, by name. */
+  provider: string | null;
+  /** People whose last sign-in carried the name. */
+  people: number;
+  first_seen_at: string;
+  last_seen_at: string;
+  dismissed: boolean;
+}
+
+export interface SeenGroupImport {
+  group: AdminGroup;
+  members_added: number;
+  /** "now" when the recorded claims could be applied at once; "next_login"
+      when the provider's group answer only applies at a sign-in. */
+  applied: "now" | "next_login";
+}
+
 export interface AdminGroup {
   id: string;
   name: string;

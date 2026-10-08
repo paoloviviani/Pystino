@@ -35,6 +35,9 @@ multi-factor authentication, that is also the IdP's job**: the bundled Authelia 
 | `OIDC_AUDIENCE` | `GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE` | the audience `/v1` requires on OIDC access tokens; default `pystino-api` |
 | `OIDC_GROUPS_CLAIM` | `GATEWAY_OIDC__GROUPS_CLAIM` | which claim carries group membership (below) |
 | `OIDC_GROUP_SYNC` | `GATEWAY_OIDC__GROUP_SYNC` | how often the groups claim applies: `every_login`, `first_login` or `never` |
+| `OIDC_GROUP_IMPORT` | `GATEWAY_OIDC__GROUP_IMPORT` | what a claimed group name no group carries yet does: `manual` (default) lists it in the console to import, `auto` creates it ([Groups](#groups)) |
+| `OIDC_GROUP_ALLOWLIST` | `GATEWAY_OIDC__GROUP_ALLOWLIST` | advanced, optional: only these group names are considered at all; comma-separated or a JSON list, empty for every name |
+| `OIDC_DEFAULT_GROUP` | `GATEWAY_OIDC__DEFAULT_GROUP` | the group everyone joins once, `users` by default; empty turns it off ([the default group](#the-default-group)) |
 | `OIDC_LOGOUT_URL` | `GATEWAY_OIDC__LOGOUT_URL` | for an issuer without `end_session_endpoint`: where the browser is sent to end the IdP session; `{redirect}` is where to land |
 | `OIDC_SCOPES_JSON` | `GATEWAY_OIDC__SCOPES` | the scopes the console asks for, as a JSON list; `["openid","profile","email","groups"]` unless the issuer does not offer one ([the `groups` scope](oidc-generic-provider.md#providers-that-reject-the-groups-scope)). The deploy kit writes it from the issuer's discovery; `deploy/compose.yaml` here sets the default literally |
 | `OIDC_ADMIN_EMAIL` | `GATEWAY_OIDC__ADMIN_EMAILS` | comma-separated addresses that confer admin (below) |
@@ -124,6 +127,57 @@ else is console groups. Which claim carries the groups, and in which token it
 appears, depends on the provider: see
 [the per-provider table](oidc-generic-provider.md#groups-claim-by-provider).
 A string claim is one group; it is never split on separators.
+
+### Importing the provider's groups
+
+A directory reports every group a person is in, and most of them mean
+nothing here: with GitLab, one person's first sign-in used to create 67
+groups. `OIDC_GROUP_IMPORT` decides what a claimed name that no group
+carries does at a sign-in:
+
+- **`manual`** (the default): nothing is created. The name is recorded per
+  provider, and the console's **Groups** page lists it under *Seen from your
+  identity provider*, searchable, with how many people carry it and when it
+  was last seen. **Import** creates the group (source `oidc`, the same name)
+  and grants it straight away to the people recorded as carrying it when the
+  provider's `group_sync` is `every_login`; otherwise they get it at their
+  next sign-in, and the console says which. **Dismiss** stops listing it
+  (*Show dismissed* lists those, to import or restore).
+- **`auto`**: every name becomes a group at first sight, as before.
+
+Groups that already exist are granted from the claim in both modes, and
+membership sync for them works as before, so **an upgrade keeps every
+membership it was granting**: only new names stop becoming groups. The
+default for an upgraded deployment is `manual`, unless it had set the older
+`GATEWAY_OIDC__AUTO_CREATE_GROUPS`, which still applies (`true` is `auto`,
+`false` is `manual`; set together with `GROUP_IMPORT`, the two must agree).
+Names are recorded only at a sign-in (and by a directory sync run), never on
+a plain `/v1` request; a name already recorded for a person does not count as
+a change on that path, so the request stays write-free. The bundled Authelia
+is not affected: its provider never applies the groups claim.
+
+### The default group
+
+Everyone joins one group once, at their first sign-in, with any identity
+provider: `OIDC_DEFAULT_GROUP`, `users` unless set. A person who was here
+before the setting existed joins at their next sign-in. It exists so that a
+new person can use the chat before anything of theirs is imported: a request
+needs a group to bill, and this is it. It grants no model by itself:
+**restrict models by group, or keep them public**; a public model is what a
+person with only `users` can use.
+
+- The membership is the console's (`manual`), so no directory's sync removes
+  it, and it is granted once: an administrator who removes someone from it is
+  not overruled at their next sign-in. A membership the person already had in
+  that group (from a directory claim of the same name) is kept and becomes
+  the console's.
+- It is not a choice anyone made, so it never makes a person "multi-group":
+  someone in `users` and one other group bills that other group by default.
+  With several other groups and no default chosen, they bill `users` until
+  they choose, rather than being refused.
+- With the bundled Authelia it is the same `users` group its accounts always
+  had: no second group, and nobody's membership changes.
+- An empty value turns it off.
 
 ## Administrators
 

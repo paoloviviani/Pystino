@@ -54,6 +54,7 @@ from sqlalchemy.orm import selectinload
 from gateway.config import OIDCSettings, Settings
 from gateway.deployment_state import get_or_create_deployment_state, mark_bootstrap_consumed
 from gateway.email_normalize import is_trusted_email, normalize_email
+from gateway.group_import import grant_default_group, record_unresolved
 from gateway.identity_events import record_event
 from gateway.models import (
     DirectoryEntry,
@@ -1059,11 +1060,28 @@ async def provision_user(
     directory_answers = group_sync is GroupSync.EVERY_LOGIN or (
         group_sync is GroupSync.FIRST_LOGIN and first_login_here
     )
+    # The default group first, whatever the directory says (it is the
+    # console's membership, so the reconciliation below never touches it),
+    # and before the claim is resolved so a claim naming the same group finds
+    # it existing rather than recording it as unknown. A sign-in or the
+    # account's creation, never a plain `/v1` call on an existing account:
+    # that is the hot path, and a backfill can wait for the next sign-in.
+    if touch_login or first_login_here:
+        await grant_default_group(session, user, settings.default_group)
     # `group_source` says *where* that answer comes from: the token here, the
     # directory mirror (applied by a sync run, never from a token), or nowhere.
     if directory_answers and group_source == "claim":
-        groups = await _resolve_groups(session, group_names, settings)
+        groups, missing = await _resolve_group_names(session, group_names, settings)
         await _reconcile_memberships(session, user, groups)
+        resolved = {group.name for group in groups}
+        await record_unresolved(
+            session,
+            user,
+            issuer=issuer,
+            unresolved=[name for name in group_names if name not in resolved],
+            missing=missing,
+            touch_login=touch_login,
+        )
     # The env admin rules (ADR 0093 §5): a door (`touch_login`) always
     # re-evaluates both, full claim set and all; a plain `/v1` bearer call
     # only reconciles the claim rule, and only when the directory's answer
@@ -1101,8 +1119,21 @@ async def provision_user(
         and user.default_billing_group_id not in valid_group_ids
     ):
         user.default_billing_group_id = None
-    if user.default_billing_group_id is None and len(effective) == 1:
-        user.default_billing_group_id = effective[0].id
+    # The default group (GATEWAY_OIDC__DEFAULT_GROUP) is not a choice anyone
+    # made, so it does not count against "sole": someone in `users` and one
+    # directory group bills that group, as they did before `users` existed.
+    # It is the fallback instead: with no single other group to adopt (none,
+    # or several and nothing chosen yet) a person bills the default group
+    # rather than being refused, which is what it is for.
+    if user.default_billing_group_id is None:
+        chosen = [group for group in effective if group.name != settings.default_group]
+        fallback = [
+            group for group in effective if group.name == settings.default_group and group.is_active
+        ]
+        if len(chosen) == 1:
+            user.default_billing_group_id = chosen[0].id
+        elif fallback:
+            user.default_billing_group_id = fallback[0].id
 
     await session.flush()
     # Reload the relationship so callers see the reconciled membership set rather
@@ -1550,7 +1581,7 @@ async def sign_in(
     # external IdP's groups are the claim's or the admin's to answer for, as
     # today, so this only ever runs for the bundled provider.
     if record.kind == "authelia":
-        await ensure_bundled_default_group(session, user)
+        await ensure_bundled_default_group(session, user, settings.oidc.default_group)
 
     # OIDC-only deployments have no password door to make the first
     # administrator through; the configured address, verified, is it.
@@ -1711,9 +1742,12 @@ def _claims_diverge(
     """Does the token say something the stored row does not already reflect?
 
     Group *names* are compared rather than ids because that is what the token
-    carries, and a name the gateway has never seen is a divergence whether or
-    not it will end up creating a group: with ``auto_create_groups`` off it
-    resolves to nothing, and the comparison correctly settles on the next call.
+    carries. A name the last provisioning could not resolve (not imported yet
+    under ``group_import=manual``, or a deactivated group) is recorded on the
+    row as ``unresolved_group_names`` and is not a divergence: it would
+    resolve to nothing again, and counting it made every request from a
+    person in one unimported group re-provision, forever. Importing it grants
+    it at once (``group_import.import_seen_group``) or at the next sign-in.
 
     The question asked is "would a sync change anything" (ADR 0057), not
     "does the stored set equal the claimed set". This runs on every ``/v1``
@@ -1730,7 +1764,7 @@ def _claims_diverge(
     if group_sync is not GroupSync.EVERY_LOGIN:
         return False
     held = {membership.group.name for membership in user.memberships}
-    claimed = set(group_names)
+    claimed = set(group_names) - set(user.unresolved_group_names or [])
     granted = {
         membership.group.name
         for membership in user.memberships
@@ -1745,17 +1779,25 @@ def _claims_diverge(
     return bool(claimed - held or granted - claimed)
 
 
-async def _resolve_groups(
+async def _resolve_group_names(
     session: AsyncSession, names: list[str], settings: OIDCSettings
-) -> list[Group]:
+) -> tuple[list[Group], list[str]]:
+    """The active groups *names* resolve to, and the names no group carries.
+
+    Under ``group_import=auto`` a missing name is created here, as it always
+    was; under ``manual`` (the default) it is returned as missing for the
+    caller to record as seen. A group that exists resolves in both modes,
+    which is what lets an upgrade to ``manual`` keep every membership it was
+    already granting.
+    """
     if not names:
-        return []
+        return [], []
     existing = list(
         (await session.execute(select(Group).where(Group.name.in_(names)))).scalars().all()
     )
     by_name = {group.name: group for group in existing}
 
-    if settings.auto_create_groups:
+    if settings.group_import == "auto":
         for name in names:
             if name not in by_name:
                 group = Group(name=name, source=GroupSource.OIDC)
@@ -1763,7 +1805,9 @@ async def _resolve_groups(
                 by_name[name] = group
         await session.flush()
 
-    return [by_name[name] for name in names if name in by_name and by_name[name].is_active]
+    missing = [name for name in names if name not in by_name]
+    active = [by_name[name] for name in names if name in by_name and by_name[name].is_active]
+    return active, missing
 
 
 async def _reconcile_memberships(session: AsyncSession, user: User, groups: list[Group]) -> None:

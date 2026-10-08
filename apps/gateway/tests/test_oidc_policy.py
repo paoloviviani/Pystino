@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 import pytest
 import pytest_asyncio
+from conftest import LEGACY_GROUPS
 from gateway.config import OIDCSettings
 from gateway.models import ApiKey, Group, OIDCPolicyConfig, User
 from gateway.oidc import ProvisioningRefused, provision_user
@@ -36,14 +37,14 @@ from test_my_limits import session_cookie
 
 class TestEffectivePolicy:
     def test_no_row_means_the_environment(self) -> None:
-        settings = OIDCSettings(groups_claim="roles")
+        settings = OIDCSettings(**LEGACY_GROUPS, groups_claim="roles")
         policy = effective_policy(settings, None)
         assert policy.auto_provision is True
         assert policy.groups_claim == "roles"
         assert policy.source == "environment"
 
     def test_a_row_decides_only_what_it_names(self) -> None:
-        settings = OIDCSettings(groups_claim="groups")
+        settings = OIDCSettings(**LEGACY_GROUPS, groups_claim="groups")
         row = OIDCPolicyConfig(auto_provision=False)
         policy = effective_policy(settings, row)
         # auto_provision decided by the row; unknown-user policy and claim
@@ -57,7 +58,7 @@ class TestEffectivePolicy:
     def test_a_hand_mangled_row_does_not_crash_every_login(self) -> None:
         # The check constraint holds for anything written through the API; a
         # row edited by hand does not get to take the deployment down.
-        settings = OIDCSettings()
+        settings = OIDCSettings(**LEGACY_GROUPS)
         row = OIDCPolicyConfig(unknown_user_policy="nonsense")
         policy = effective_policy(settings, row)
         assert policy.unknown_user_policy == "refuse"
@@ -65,7 +66,7 @@ class TestEffectivePolicy:
 
     def test_mappings_fold_into_a_dictionary(self) -> None:
         row = OIDCPolicyConfig(group_mappings=[["idp-a", "local-one"], ["idp-b", "local-one"]])
-        policy = effective_policy(OIDCSettings(), row)
+        policy = effective_policy(OIDCSettings(**LEGACY_GROUPS), row)
         assert policy.group_mappings == {"idp-a": "local-one", "idp-b": "local-one"}
 
 
@@ -129,7 +130,7 @@ class TestProvisioningGate:
                     email=None,
                     display_name=None,
                     group_names=[],
-                    settings=OIDCSettings(),
+                    settings=OIDCSettings(**LEGACY_GROUPS),
                     touch_login=False,
                     policy=policy,
                 )
@@ -151,7 +152,7 @@ class TestProvisioningGate:
                 email="stranger@example.org",
                 display_name=None,
                 group_names=["research"],
-                settings=OIDCSettings(),
+                settings=OIDCSettings(**LEGACY_GROUPS),
                 touch_login=False,
                 policy=policy,
             )
@@ -193,7 +194,7 @@ class TestProvisioningGate:
                 email="known@example.org",
                 display_name=None,
                 group_names=[],
-                settings=OIDCSettings(),
+                settings=OIDCSettings(**LEGACY_GROUPS),
                 touch_login=False,
                 policy=policy,
             )
@@ -228,7 +229,7 @@ class TestProvisioningGate:
                 # local names, so a group the claim names lands under its
                 # local name — and confers nothing.
                 group_names=policy.map_group_names(["platform-admins"]),
-                settings=OIDCSettings(),
+                settings=OIDCSettings(**LEGACY_GROUPS),
                 touch_login=False,
                 policy=policy,
             )

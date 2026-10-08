@@ -35,6 +35,8 @@ import type {
   EmailSettings,
   EmailTestResult,
   GroupCreateInput,
+  SeenGroup,
+  SeenGroupImport,
   DirectoryPerson,
   IdentityProvider,
   SearchBackendDeleteResult,
@@ -64,6 +66,7 @@ export const adminKeys = {
   tags: ["admin", "models", "tags"] as const,
   groups: ["admin", "groups"] as const,
   groupMembers: (groupId: string) => ["admin", "groups", groupId, "members"] as const,
+  seenGroups: ["admin", "groups", "seen"] as const,
   limits: ["admin", "limits"] as const,
   quotaHealth: ["admin", "quota", "health"] as const,
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
@@ -766,6 +769,38 @@ export function useUsers(query: PageQuery = { limit: MAX_LIMIT }, enabled = true
     queryFn: () => request<Page<AdminUser>>(`/api/admin/users?${search}`),
     enabled,
     ...pagedOptions,
+  });
+}
+
+/** The seen-groups listing: a page, plus the two settings that explain it. */
+export interface SeenGroupPage extends Page<SeenGroup> {
+  group_import: "manual" | "auto";
+  default_group: string;
+}
+
+export function useSeenGroups(query: PageQuery, dismissed = false) {
+  const search = pageParams(query, dismissed ? { dismissed: "true" } : {});
+  return useQuery({
+    queryKey: pagedKey(adminKeys.seenGroups, search),
+    queryFn: () => request<SeenGroupPage>(`/api/admin/groups/seen?${search}`),
+    ...pagedOptions,
+  });
+}
+
+/** Import, dismiss or restore one seen name. Import invalidates every group
+ * listing (`adminKeys.groups` prefix-matches the seen one too) and the users,
+ * whose memberships it may just have changed. */
+export function useSeenGroupAction() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, action }: { id: string; action: "import" | "dismiss" | "restore" }) =>
+      request<SeenGroupImport | void>(`/api/admin/groups/seen/${id}/${action}`, {
+        method: "POST",
+      }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.groups });
+      client.invalidateQueries({ queryKey: adminKeys.users });
+    },
   });
 }
 

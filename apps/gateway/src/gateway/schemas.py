@@ -31,6 +31,7 @@ from pydantic import (
 )
 
 from gateway.config import RedactionPolicy
+from gateway.pagination import Page
 from gateway.plugins import registry as plugin_registry
 
 if TYPE_CHECKING:
@@ -1248,6 +1249,38 @@ class GroupAdminResponse(BaseModel):
     #: by model-row name. Null means no policy: the group cannot use the
     #: unified route at all.
     search_backend: str | None = None
+
+
+class SeenGroupResponse(BaseModel):
+    """A group name a directory reported that no group here carries yet."""
+
+    id: uuid.UUID
+    name: str
+    issuer: str
+    #: The identity provider row with that issuer, by name; null when none has.
+    provider: str | None
+    #: People whose last sign-in carried this name.
+    people: int
+    first_seen_at: datetime
+    last_seen_at: datetime
+    dismissed: bool
+
+
+class SeenGroupPage(Page[SeenGroupResponse]):
+    #: GATEWAY_OIDC__GROUP_IMPORT: "manual" lists names here; "auto" creates
+    #: them at sign-in, so this list only holds what was seen before a switch.
+    group_import: Literal["manual", "auto"]
+    #: GATEWAY_OIDC__DEFAULT_GROUP, empty when off: the console names it.
+    default_group: str
+
+
+class SeenGroupImportResponse(BaseModel):
+    group: GroupAdminResponse
+    #: People granted the group now, from what their last sign-in carried.
+    members_added: int
+    #: "now", or "next_login" when the provider's group answer does not apply
+    #: at every login and so cannot be applied from a past one.
+    applied: Literal["now", "next_login"]
 
 
 class GroupSearchBackendRequest(BaseModel):
