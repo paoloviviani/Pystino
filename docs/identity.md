@@ -30,7 +30,7 @@ multi-factor authentication, that is also the IdP's job**: the bundled Authelia 
 | `OIDC_INTERNAL_BASE_URL` | `GATEWAY_OIDC__INTERNAL_BASE_URL` | where the gateway reaches the issuer from inside the network (bundled Authelia: `http://authelia:9091/authelia`); empty means the issuer URL itself |
 | `OIDC_KIND` | `GATEWAY_OIDC__KIND` | `authelia` for the bundled one, `generic` otherwise (`keycloak`, `entra`, `okta`, `authentik`, `google` are recognised kinds) |
 | `OIDC_CONSOLE_CLIENT_ID`, `_SECRET` | `GATEWAY_OIDC__CLIENT_ID`, `_CLIENT_SECRET` | the console's client |
-| `OIDC_CHAT_CLIENT_ID`, `_SECRET` | `GATEWAY_OIDC__CHAT_CLIENT_ID` (id only) | the chat's client, when the chat is deployed; the id also tells the gateway which accepted client may announce chat sign-ins |
+| `OIDC_CHAT_CLIENT_ID`, `_SECRET` | `GATEWAY_OIDC__CHAT_CLIENT_ID`, `_CHAT_CLIENT_SECRET` | the chat's client, when the chat is deployed; the id also tells the gateway which accepted client may announce chat sign-ins. The gateway uses the secret only to introspect the chat's tokens at an IdP whose access tokens are opaque ([GitLab](oidc-generic-provider.md#worked-example-gitlab)) |
 | `OIDC_MACHINE_CLIENT_ID` | — | galopin's public client, `opencode-enrollment` by default: the device flow for agent machines |
 | `OIDC_AUDIENCE` | `GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE` | the audience `/v1` requires on OIDC access tokens; default `pystino-api` |
 | `OIDC_GROUPS_CLAIM` | `GATEWAY_OIDC__GROUPS_CLAIM` | which claim carries group membership (below) |
