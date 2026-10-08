@@ -19,19 +19,22 @@ account together.
   chat reach it at `http://authelia:9091/authelia`, with forwarded headers
   naming the public issuer, so no container needs to trust the proxy's
   certificate.
-- **Three clients:** `pystino-console` and `cerea` (confidential, consent
-  implied, since both are first-party) and `opencode-enrollment` (public,
-  for agent machines: loopback and device flows, with a long-lived refresh
-  token; see [Coding agents](coding-agents.md)). Access tokens are RS256 JWTs
+- **Its clients:** `pystino-console` (confidential, consent implied, since it
+  is first-party) and `opencode-enrollment` (public, for agent machines:
+  loopback and device flows, with a long-lived refresh token; see
+  [Coding agents](coding-agents.md)). The deploy kit's copy adds `cerea`, the
+  chat's confidential client; this repository's `deploy/` runs no chat, so it
+  has none. Access tokens are RS256 JWTs
   carrying the `pystino-api` audience and the `groups` claim, and live one
   hour.
-- **Password only**: the policy is one factor, and TOTP and WebAuthn are
-  switched off in the rendered configuration. A second factor comes from an
+- **Password only**: the access-control policy and every client's
+  authorization policy are `one_factor` (the deploy kit's copy also switches
+  TOTP and WebAuthn off). A second factor comes from an
   external IdP such as Keycloak, configured through the environment
   ([Identity](identity.md#one-provider-set-in-the-environment)).
 - It needs a **dotted host name** in this repository's `deploy/`: browsers
   refuse its session cookie on a dotless name, and `deploy/` has no way to
-  serve an IP address. the deploy kit also accepts an IP address (with
+  serve an IP address. The deploy kit also accepts an IP address (with
   `--tls internal`); it refuses only single-word names such as `myserver`.
 
 ## The Users page

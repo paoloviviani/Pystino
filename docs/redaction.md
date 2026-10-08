@@ -102,9 +102,9 @@ Three shapes, and all three work:
 
 | You want | How | What you get |
 |---|---|---|
-| **No redaction, no sidecar** | Leave `redaction` out of `COMPOSE_PROFILES` and the engine at `noop` | Nothing runs, and `noop` needs nothing |
-| **Pattern matching only, no NER** | Build the image with `SPACY_MODELS=` empty, run it with `REDACTION_NLP_ENGINE=disabled`, engine `http` | Presidio's pattern recognisers — cards, IBANs, emails, phone numbers, the Italian identifiers — at about 150MB and without the CPU cost that scales with prompt length |
-| **Everything** | The `redaction` profile with the NER image built locally (`SPACY_MODELS=en_core_web_lg`, never published) and `REDACTION_NLP_ENGINE=spacy` | NER for the configured languages on top of the patterns |
+| **No redaction, no sidecar** | Leave `redaction` out of `COMPOSE_PROFILES` and the engine at `noop` | Nothing runs, and `noop` needs nothing. The same profile also runs `extractor`, the local document reader behind `/v1/ocr`, so it goes too |
+| **Pattern matching only, no NER** | The `redaction` profile as shipped: the published `pystino-redaction:<version>-pattern` image (built with `SPACY_MODELS=` empty) and `REDACTION_NLP_ENGINE=disabled`, the `.env.example` default; engine `http` | Presidio's pattern recognisers — cards, IBANs, emails, phone numbers, the Italian identifiers — at about 150MB and without the CPU cost that scales with prompt length |
+| **Everything** | The `redaction` profile with the NER image built locally (`SPACY_MODELS=en_core_web_lg`, the Dockerfile's default; never published) named in `REDACTION_IMAGE`, and `REDACTION_NLP_ENGINE=spacy` | NER for the configured languages on top of the patterns |
 
 Two things to know before choosing the middle row.
 

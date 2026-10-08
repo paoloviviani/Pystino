@@ -17,9 +17,15 @@ per-group model availability and a pluggable redaction layer.
 | `GET /v1/models` | key, bearer or none | Models the caller may use, by group or personal grant, with capabilities |
 | `GET /v1/pystino/usage` | key or bearer | This caller's own spend, for a client that wants to show it without a console session |
 | `GET /v1/billing/groups` | key or bearer | Which groups this caller may bill, and which one paid for this request |
-| `GET /auth/login`, `/auth/callback` | — | OIDC authorization-code login (PKCE) |
+| `GET /v1/me` | key or bearer | Who is calling, their groups and `is_admin` (from effective memberships; never `true` for a key) |
+| `GET /v1/me/identities` | access token only | Every identity that names this person, including merged ones, for the chat |
+| `POST /v1/session/announce` | access token of the chat client | The chat's sign-in door: runs linking, provisioning and the admin rules, and answers who this is |
+| `GET /auth/login`, `/auth/callback/{provider}` | — | OIDC authorization-code login (PKCE); the provider is `default` for the one set in `.env` |
+| `GET /auth/methods`, `/auth/session`, `POST /auth/logout` | —, cookie, cookie | Which sign-in methods exist; whether a session cookie is still good; sign out, at the provider too |
 | `/api/me/*` | session cookie | Identity, billing group, API keys, own usage and reports |
-| `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, reports |
+| `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, reports, identity events |
+| `/scim/v2/{provider}/*` | the provider's SCIM token | SCIM 2.0 pushes from an external directory ([User sync](oidc-generic-provider.md#user-sync)) |
+| `GET /opencode/install.sh` | — | The opencode setup script ([Coding agents](coding-agents.md#point-opencode-at-the-gateway-with-a-script)) |
 | `GET /healthz`, `/readyz` | — | Liveness (no dependencies) and readiness (one DB round trip) |
 
 Every metered `/v1` route shares one metering path — `routers/_metered.py` — so
@@ -183,14 +189,15 @@ executed, not linked.
 | SSE must be parsed at `\n\n` boundaries, not network chunk boundaries | `sse/parser.py` |
 | A trailing `\r` split across chunks is ambiguous and must be held back | `sse/parser.py:_pop_line` |
 | httpx's 5s default read timeout kills long streams | `upstream.py:build_http_client` |
-| Client disconnect must close the upstream *and* still record accrued usage | `routers/chat.py:_spawn_finalisation` |
+| Client disconnect must close the upstream *and* still record accrued usage | `routers/chat.py:spawn_finalisation` |
+| A client that hangs up the instant the stream ends must not cancel the settling write | `routers/chat.py:settle_completed` |
 | Assistant output must be persisted as it streams, not only at the end | `accounting/recorder.py:maybe_flush` |
 | An absent usage frame must not be recorded as zero spend | `accounting/tokens.py` |
 | Concurrent requests must not each pass the same under-limit check | `quota/engine.py:check_and_reserve` |
 | Money must never touch a float, including inside the counter store | `types.py`, `quota/counters.py` |
 | A wiped counter cache reports zero spend, not an error, so every group gets a fresh budget | `quota/engine.py:rebuild_if_cache_is_cold` |
 | Editing a price would rewrite what past requests cost, so prices are append-only | `routers/admin.py:create_price` |
-| Deleting a model orphans the usage rows that reference it, so models only deactivate | `routers/admin.py` (no DELETE route) |
+| Deleting a model must not lose the spend recorded against it: `usage_records.model_id` is `ON DELETE SET NULL` and every row keeps `model_name` | `routers/admin.py:delete_model` |
 
 ## Layout
 
@@ -225,10 +232,12 @@ Stated plainly, so none of them is a surprise later.
   groups live, whether they appear in the ID token at all, how they are named.
   Test any new provider against your instance before relying on it; see the
   [OIDC guide](oidc-generic-provider.md) for the checklist.
-- **GDPR erasure is incomplete.** Identity foreign keys use
-  `ON DELETE SET NULL` so the financial ledger survives deleting a user — but
-  `assistant_text` may itself contain personal data and is *not* cleared by
-  that. An erasure procedure has to blank it explicitly; none exists yet. What
+- **GDPR erasure is incomplete.** Deleting a person (the Users page) removes
+  their account, keys, memberships and bundled login, and erases them from the
+  chat ([Merging and deleting accounts](identity.md#merging-and-deleting-accounts)).
+  Identity foreign keys on the ledger use `ON DELETE SET NULL`, so the financial
+  rows survive — but `assistant_text` on those rows may itself contain personal
+  data and is *not* cleared by the delete. Nothing blanks it on demand. What
   does exist is retention: the text is cleared from every usage row after
   `GATEWAY_TRANSCRIPT_RETENTION_HOURS` (default 24; `0` keeps it for ever), so
   the exposure is bounded to that window. The row itself (tokens, cost,

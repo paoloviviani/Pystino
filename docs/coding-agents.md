@@ -103,7 +103,7 @@ Pass them after `bash -s --`, or run the script from a file.
 |---|---|
 | `<address>` or `--base-url` | the gateway, if not the one the script came from; `/v1` is added if missing |
 | `--model <id>` | also make `pystino/<id>` opencode's default model |
-| `--install-opencode` | first install opencode, pinned to the version this setup was tested with (1.18.34 at this writing; galopin's install line pins the same release), using opencode's own installer (`https://opencode.ai/install`) |
+| `--install-opencode` | first install opencode, pinned to the version this setup was tested with (1.18.34 at this writing; galopin's install line pins the same release), using opencode's own installer (`https://opencode.ai/install`); `PYSTINO_OPENCODE_VERSION` in the environment overrides the pin |
 | `--no-discover` | do not call the gateway; write a placeholder model to edit by hand |
 | `--yes` | do not ask for confirmation |
 
@@ -140,15 +140,16 @@ unchanged, which Caddy does by default.
   The shim refreshes it before it expires, and opencode never holds it.
 - `x-bill-to: <group>`: the group chosen at enrolment, which must be one of the
   person's groups. Spend lands in the gateway ledger under that group,
-  where the console shows it. `/v1` has no usage endpoint of its own.
+  where the console shows it, and `GET /v1/pystino/usage` returns the
+  caller's own spend and quotas to anything holding the same token.
 - Revoking the grant at the IdP ends the machine's `/v1` access and its chat link
   together within one access-token lifetime, because both use the same enrolment
   credential.
 
 ## What the IdP side needs
 
-The bundled Authelia has a third OIDC client beside the console's and the chat's:
-`opencode-enrollment`. It is **public** — a binary on a user's machine cannot
+The bundled Authelia has an OIDC client for this beside the console's (and,
+in the deploy kit, the chat's): `opencode-enrollment`. It is **public** — a binary on a user's machine cannot
 keep a secret — so there is no client secret, `token_endpoint_auth_method` is
 `none`, and PKCE S256 is mandatory so a stolen code is useless without the
 verifier. Redirect URIs are loopback only.

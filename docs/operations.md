@@ -3,9 +3,11 @@
 ## Verifying a change
 
 ```bash
-uv run ruff check . && uv run mypy apps/gateway/src packages/shared-py/src services
+uv run ruff check . && uv run ruff format --check .
+uv run mypy apps/gateway/src packages/shared-py/src services   # --strict
 uv run pytest -q                                               # about 1,900 tests, SQLite, no services
 pnpm -r test && pnpm -r typecheck                              # packages/ui + console
+uv run mkdocs build --strict                                   # this site
 ```
 
 Tests need no PostgreSQL, Valkey or network (SQLite + a fake upstream
@@ -26,8 +28,10 @@ test passed through.
 ### The per-request database budget
 
 `apps/gateway/tests/test_query_counts.py` pins the SQL round trips per request:
-**3 SELECTs to authenticate** and **5 SELECTs + 2 writes for a metered
-request**. A regression here fails a test rather than a dashboard. Two habits
+**4 SELECTs for `GET /v1/models`** (the key with its user and group,
+memberships, the catalogue, and the agents the caller may reach) and
+**5 SELECTs + 2 writes for a metered request**; a bearer token may cost no more
+than a key. A regression here fails a test rather than a dashboard. Two habits
 keep it green: prefer `joinedload` over `selectinload` on many-to-one
 relations (the budget assumes it — one SELECT per relation is what was
 removed), and remember the two writes are by design, not a saving to go after:
@@ -71,13 +75,15 @@ uv run --project <checkout> python <checkout>/scripts/test_console_live.py
 
 The non-admin is added in the console (the Users page).
 
-!!! warning "The demo cap exhausts legitimately"
+!!! warning "A cost ceiling exhausts legitimately"
 
-    The demo user's cap is **EUR 1/hour** and the fake upstream bills ~1M
-    tokens per request. Several live scripts back to back will legitimately
-    exhaust it, reported as *skipped*, not failed. Flushing Valkey alone does
-    **not** reset it — the counters rebuild from the ledger, so clear both
-    `usage_records` and the Valkey counters.
+    The fake upstream bills ~1M tokens per request, so a small cost ceiling on
+    the test user's group (the scripts' comments assume EUR 1/hour; `gateway
+    seed` gives its group EUR 10/day) is spent after a few requests. Several
+    live scripts back to back will legitimately exhaust it, reported as
+    *skipped*, not failed. Flushing Valkey alone does **not** reset it — the
+    counters rebuild from the ledger, so clear both `usage_records` and the
+    Valkey counters, or raise the rule while testing.
 
 ## Performance, in one page
 
@@ -107,21 +113,12 @@ a benchmark cannot distort billing.
 
 None blocking; all recorded so they are not rediscovered as surprises.
 
-- **A stream settled at the moment the client disconnects can lose the write.**
-  The `completed` branch of the streaming `finally` awaits a database write
-  inside the request task; a client closing the connection at exactly the
-  wrong millisecond cancels it mid-write, leaving the row `in_progress` with
-  zero tokens for a request the provider served in full. The disconnect branch
-  beside it was already made cancellation-proof (the write is detached into a
-  task); the fix routes the completed branch through the same mechanism and
-  needs a session outside the request scope — its own piece of work with
-  tests.
 - **The estimated-usage disclosure blames the provider for every case.** It
   cannot yet tell "the provider reported no usage" from "the client
   disconnected mid-stream". The row knows — read `status` before believing the
   sentence.
-- **GDPR erasure is incomplete** — `assistant_text` is not covered by the
-  identity cascade, but it is cleared after `GATEWAY_TRANSCRIPT_RETENTION_HOURS`
+- **GDPR erasure is incomplete** — deleting a person does not blank
+  `assistant_text` on their ledger rows, but it is cleared after `GATEWAY_TRANSCRIPT_RETENTION_HOURS`
   (24 by default). See [Gateway — known gaps](gateway.md#known-gaps).
 - **Counters rebuild only at startup**: a Valkey wipe while the gateway keeps
   running leaves quotas briefly too permissive. Restart the gateway after any
