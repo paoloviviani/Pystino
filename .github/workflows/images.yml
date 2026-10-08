@@ -1,10 +1,9 @@
 # Publish the Pystino images — from main and release tags only (the GitHub free
 # plan's Action minutes are the budget; PRs never build images).
 #
-# Packages are PRIVATE while the repository is: pushed with GITHUB_TOKEN from a
-# private repository they inherit its visibility, and pulling needs
-# `docker login ghcr.io` with a read:packages token. Going public later is the
-# package's own setting (Package settings → Danger Zone → Change visibility).
+# The packages are public: `docker compose pull` and Cerea's contract workflow
+# pull them with no login (checked anonymously on 2026-10-08). Visibility is
+# each package's own setting on GitHub; never change it without the owner.
 #
 # Lean on minutes (container images on ghcr.io are currently not billed for
 # storage or bandwidth, so the pruning below is tidiness, not budget):

@@ -7,8 +7,8 @@
 # was tested with are the defaults below, so an install never names a version:
 # upgrading is `git pull && docker compose pull && docker compose up -d`.
 #
-# For the full stack, with the chat, use the `cerea-deploy` repository
-# instead: same variable names and .env conventions, so
+# For the full stack, with the chat, use the deploy kit (`kit/` in the Cerea
+# repository) instead: same variable names and .env conventions, so
 # moving to it is carrying this .env and the project name over, then adding
 # the chat's secrets.
 #

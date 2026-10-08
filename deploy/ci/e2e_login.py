@@ -1,4 +1,5 @@
-"""End-to-end sign-in through a Pystino stack (used by stack.yml and by hand).
+"""End-to-end sign-in through a Pystino stack, run by hand (no workflow runs it;
+Cerea's release runs its own copy, scripts/release/signin_check.py).
 
     uv run python deploy/ci/e2e_login.py <deploy dir> <first user's password> [--chat] [--real-dns]
 
