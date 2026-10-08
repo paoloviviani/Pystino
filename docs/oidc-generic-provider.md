@@ -152,7 +152,8 @@ an administrator has looked at what the adapter would do and confirmed it.
    group's or the instance's Applications page). Mark it confidential, with
    the console's redirect URI and the scopes `openid profile email`. `openid`
    is the one that carries group memberships. Copy the secret: it is shown
-   once. Add a second application for the chat if you deploy it.
+   once. Add a second application for the chat if you deploy it, also
+   confidential, with the chat's redirect URI and the same scopes.
 2. In `.env`, leave `authelia` out of `COMPOSE_PROFILES` and set:
 
    ```bash
@@ -163,6 +164,9 @@ an administrator has looked at what the adapter would do and confirmed it.
    OIDC_CONSOLE_CLIENT_SECRET='<secret>'
    OIDC_GROUPS_CLAIM='groups_direct'
    OIDC_ADMIN_EMAIL='you@example.org'
+   # with the chat:
+   OIDC_CHAT_CLIENT_ID='<chat application id>'
+   OIDC_CHAT_CLIENT_SECRET='<chat secret>'
    ```
 
    Group names arrive as full paths (`my-group/sub-group`); name group-based
@@ -180,6 +184,36 @@ What to know about GitLab:
 - **No `end_session_endpoint`.** Signing out ends the gateway's session only,
   and GitLab's own session persists: signing in again is one click.
 - **RS256 only**, which is what the gateway expects.
+- **Its access tokens are opaque**, not JWTs, so the gateway cannot read who
+  issued one or check a signature. It asks GitLab instead, at the
+  `introspection_endpoint` its discovery advertises (`/oauth/introspect`,
+  RFC 7662), authenticating with `client_secret_basic`. GitLab answers
+  `active: true` only to the application the token was issued to, so the
+  chat's tokens (the chat signing in through `POST /v1/session/announce`, and
+  every `/v1` call it then makes) are introspected with **the chat
+  application's own id and secret**: `OIDC_CHAT_CLIENT_SECRET` must reach the
+  gateway (`GATEWAY_OIDC__CHAT_CLIENT_SECRET`), not only the chat. Without it
+  every chat sign-in is refused, and the gateway log says
+  `inactive for client '<console id>'`. A token is accepted only when GitLab
+  says it is active, its `client_id` is the application that asked, and its
+  `exp` is in the future; it then counts as issued to that client (`azp`), so
+  `ACCEPTED_CLIENTS` and the chat-client check apply as they do to a JWT.
+  GitLab's answer carries no `sub`, so the gateway reads it from userinfo with
+  the same token: the person is `(issuer, GitLab user id)`, exactly what a
+  console sign-in produces, so console and chat land on the same account. The
+  chat's application needs the `openid` scope for that (`openid profile
+  email`, as above).
+- **Revocation takes up to a minute.** Answers are cached in the gateway,
+  keyed by a hash of the token (never the token), for 60 seconds or until the
+  token's own `exp`, whichever is sooner; a refusal is cached for 10 seconds.
+  A token revoked on GitLab therefore keeps working here for at most 60
+  seconds, and `/v1` calls do not reach GitLab on every request.
+- **Why a chat sign-in failed** is in `docker compose logs gateway`, one
+  WARNING per refusal beginning `announce: token rejected:` (or `access token
+  rejected:` for other `/v1` calls), naming the reason — not a JWT and no
+  provider vouched for it, inactive for a client, a client other than the
+  chat, an expired token, a client outside `ACCEPTED_CLIENTS` — and never the
+  token itself.
 - **Email** is present only for users with a public email on their profile.
   They can still sign in; the console shows the subject until an email
   appears.

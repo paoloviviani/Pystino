@@ -250,6 +250,14 @@ class OIDCSettings(BaseModel):
     # this from `OIDC_CHAT_CLIENT_ID`, the same variable that feeds this
     # gateway's slot in `accepted_clients`.
     chat_client_id: str = ""
+    # The chat client's secret, for one purpose only: introspecting (RFC 7662)
+    # the chat's access tokens at a provider whose tokens are opaque rather
+    # than JWTs (GitLab). Doorkeeper answers `active: true` only to the client a
+    # token was issued to, so the console's credentials cannot vouch for a
+    # chat token. Empty everywhere the chat's tokens are JWTs. Compose fills
+    # it from `OIDC_CHAT_CLIENT_SECRET`, the secret the chat itself signs in
+    # with.
+    chat_client_secret: SecretStr = SecretStr("")
 
     def admin_email_list(self) -> list[str]:
         return _split_csv(self.admin_emails)

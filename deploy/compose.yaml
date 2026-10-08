@@ -186,6 +186,10 @@ services:
       # refuses every token; a startup WARNING says so once an audience is
       # also set.
       GATEWAY_OIDC__CHAT_CLIENT_ID: ${OIDC_CHAT_CLIENT_ID:-}
+      # Only for an IdP whose access tokens are opaque (GitLab): the gateway
+      # introspects the chat's tokens with the chat's own credentials, since
+      # the provider answers only to the client a token was issued to.
+      GATEWAY_OIDC__CHAT_CLIENT_SECRET: ${OIDC_CHAT_CLIENT_SECRET:-}
       GATEWAY_BOOTSTRAP_ADMIN_EMAIL: ${PYSTINO_BOOTSTRAP_ADMIN_EMAIL:-}
       # The stack's one mail setting (ADR 0093 §1): quota notices, the
       # console's "send test", and (with the bundled Authelia) its own

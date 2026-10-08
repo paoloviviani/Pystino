@@ -112,6 +112,9 @@ class OIDCMetadata:
     # RP-initiated logout. Optional in the spec, so a provider without it means
     # the gateway can only drop its own session — see `logout`.
     end_session_endpoint: str | None = None
+    # RFC 7662, for providers whose access tokens are opaque (GitLab); see
+    # `gateway.introspection`.
+    introspection_endpoint: str | None = None
 
 
 def generate_pkce_pair() -> tuple[str, str]:
@@ -278,6 +281,9 @@ class OIDCClient:
                 userinfo_endpoint=self._backchannel_url(document.get("userinfo_endpoint")),
                 device_authorization_endpoint=document.get("device_authorization_endpoint"),
                 end_session_endpoint=document.get("end_session_endpoint"),
+                introspection_endpoint=self._backchannel_url(
+                    document.get("introspection_endpoint")
+                ),
             )
         except KeyError as exc:
             raise OIDCError(f"discovery document is missing {exc}") from exc

@@ -65,7 +65,7 @@ from fastapi import APIRouter, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from gateway.deps import AuthenticatedCallerDep, SessionDep, SettingsDep, _bearer_client
+from gateway.deps import AuthenticatedCallerDep, SessionDep, SettingsDep, validate_bearer_token
 from gateway.errors import AuthenticationError, PermissionError_, TooManyRequestsError
 from gateway.merges import resolve_merged_from
 from gateway.models import User, UserIdentity
@@ -102,32 +102,43 @@ async def announce(request: Request, session: SessionDep, settings: SettingsDep)
     """
     token = parse_authorization_header(request.headers.get("authorization"))
     if not token:
+        logger.warning("announce: rejected: no bearer token in the request")
         raise AuthenticationError("Supply the access token as 'Authorization: Bearer <token>'.")
 
-    client, record = await _bearer_client(request, session, token)
-    if client is None or record is None:
-        raise AuthenticationError("Invalid or unrecognised access token.")
-
+    # Every refusal below logs one WARNING with its reason, and never the
+    # token: a chat login that fails here has nothing else to say why, and
+    # `docker compose logs gateway` is all an operator has (an opaque GitLab
+    # token was once refused here with no line at all).
     try:
-        claims = await client.validate_access_token(token)
+        validated = await validate_bearer_token(request, session, token)
     except OIDCError as exc:
         # WARNING, not INFO: an audience mismatch here means the chat client
         # has no audience mapper naming this gateway, and every chat login
         # fails with only this line to say why.
         logger.warning("announce: token rejected: %s", exc)
         raise AuthenticationError("Invalid or unrecognised access token.") from exc
+    claims, client, record = validated.claims, validated.client, validated.record
 
     azp = claims.get("azp") or claims.get("client_id")
     if not settings.oidc.chat_client_id or azp != settings.oidc.chat_client_id:
+        logger.warning(
+            "announce: token rejected: issued to client %r, expected the chat client %r "
+            "(GATEWAY_OIDC__CHAT_CLIENT_ID)",
+            azp,
+            settings.oidc.chat_client_id,
+        )
         raise AuthenticationError("This token was not issued to the chat client.")
 
     issuer = str(claims["iss"])
     subject = str(claims["sub"])
     if not request.app.state.announce_limiter.allow((issuer, subject)):
+        logger.warning("announce: rate limited for %s/%s", issuer, subject)
         raise TooManyRequestsError("Too many announce calls for this identity. Try again shortly.")
 
     merged: dict[str, object] = dict(claims)
-    merged.update(await client.fetch_userinfo(token))
+    if not validated.introspected:
+        # An introspected token's claims were built from userinfo already.
+        merged.update(await client.fetch_userinfo(token))
 
     global_policy = getattr(request.app.state, "oidc_policy", None)
     policy = (
@@ -148,11 +159,13 @@ async def announce(request: Request, session: SessionDep, settings: SettingsDep)
         )
     except ProvisioningRefused as exc:
         await session.commit()
+        logger.warning("announce: sign-in refused for %s/%s: %s", issuer, subject, exc)
         raise PermissionError_(str(exc)) from exc
     await session.commit()
 
     user = result.user
     if not user.is_active:
+        logger.warning("announce: account %s is disabled", user.id)
         raise PermissionError_(
             "This account is not enabled. Ask an administrator to enable it, then sign in again."
         )

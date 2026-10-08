@@ -18,6 +18,7 @@ from gateway.accounting import TokenEstimator
 from gateway.config import Settings
 from gateway.errors import AuthenticationError, PermissionError_
 from gateway.identity_registry import list_providers
+from gateway.introspection import Candidate, IntrospectionCache, credentials_for, introspect
 from gateway.models import ApiKey, Group, GroupSync, User
 from gateway.oidc import OIDCClient, OIDCError, sync_user_from_claims
 from gateway.oidc_policy import OIDCPolicy
@@ -154,6 +155,17 @@ def get_estimator(request: Request) -> TokenEstimator:
     return estimator
 
 
+class _NoSuchKey(AuthenticationError):
+    """No key here has this credential's prefix — the one case in which a
+    non-JWT credential may be an IdP's opaque access token instead.
+
+    Same message as every other key failure, so nothing a caller sees
+    changes; only the bearer fallback (:func:`_may_be_opaque_token`)
+    tells it apart. A credential that *does* match a stored prefix is ours
+    and is never sent to an identity provider, wrong or not.
+    """
+
+
 async def resolve_api_key(session: AsyncSession, secret: str) -> ApiKey:
     """Look up and verify a presented key.
 
@@ -163,7 +175,7 @@ async def resolve_api_key(session: AsyncSession, secret: str) -> ApiKey:
     """
     prefix = extract_prefix(secret)
     if prefix is None:
-        raise AuthenticationError("Invalid API key provided.")
+        raise _NoSuchKey("Invalid API key provided.")
 
     # `joinedload` for the two many-to-one relations, not `selectinload`.
     #
@@ -186,7 +198,7 @@ async def resolve_api_key(session: AsyncSession, secret: str) -> ApiKey:
     )
     api_key = (await session.execute(stmt)).scalar_one_or_none()
     if api_key is None:
-        raise AuthenticationError("Invalid API key provided.")
+        raise _NoSuchKey("Invalid API key provided.")
 
     if not verify_api_key(secret, api_key.key_hash):
         raise AuthenticationError("Invalid API key provided.")
@@ -320,7 +332,12 @@ async def get_principal(
     if looks_like_jwt(secret):
         return await _bearer_principal(request, session, secret)
 
-    api_key = await resolve_api_key(session, secret)
+    try:
+        api_key = await resolve_api_key(session, secret)
+    except _NoSuchKey:
+        if not _may_be_opaque_token(request, secret):
+            raise
+        return await _bearer_principal(request, session, secret)
     requested = requested_billing_group(request)
     if requested is not None and api_key.is_issued_key:
         # Refused, not ignored, and refused for *every* issued key rather than
@@ -385,6 +402,95 @@ async def get_optional_principal(
     return await get_principal(request, session)
 
 
+def _may_be_opaque_token(request: Request, secret: str) -> bool:
+    """May a credential that is neither a JWT nor a stored key be an IdP's
+    opaque access token, worth asking the provider about?
+
+    Not when this deployment accepts no access tokens at all, and not when it
+    carries this deployment's key prefix: a mistyped key of ours is still a
+    key of ours, and it is not sent to an identity provider.
+    """
+    settings: Settings = request.app.state.settings
+    if not settings.oidc.access_token_audience:
+        return False
+    return not secret.startswith(f"{settings.api_key_prefix}_")
+
+
+@dataclass(slots=True)
+class BearerValidation:
+    """A bearer token the gateway has validated, and who vouched for it."""
+
+    claims: dict[str, Any]
+    client: OIDCClient
+    #: A `ProviderRecord`. `Any`, as `_bearer_client` has always returned it,
+    #: because `oidc.sign_in` is annotated with the `IdentityProvider` row
+    #: while both sign-in doors hand it a record; that mismatch predates this
+    #: and is not this change's to fix.
+    record: Any
+    #: True when the token was opaque and introspected: `claims` then already
+    #: include userinfo, fetched with the token, so callers need not fetch it
+    #: again.
+    introspected: bool = False
+
+
+def _introspection_cache(request: Request) -> IntrospectionCache:
+    cache: IntrospectionCache | None = getattr(request.app.state, "introspection_cache", None)
+    if cache is None:
+        cache = IntrospectionCache()
+        request.app.state.introspection_cache = cache
+    return cache
+
+
+async def validate_bearer_token(
+    request: Request, session: AsyncSession, token: str
+) -> BearerValidation:
+    """Validate an OIDC access token, JWT or opaque; raise ``OIDCError`` with
+    the reason.
+
+    A JWT is routed by its unverified `iss` and verified against that
+    provider's keys, as it always was. Anything else is an opaque token
+    (GitLab's are) and only its issuer can vouch for it: see
+    ``gateway.introspection`` for how the provider is chosen and bound. Both
+    branches end in claims of one shape, `iss`/`sub`/`azp`, so the
+    `ACCEPTED_CLIENTS`, chat-client and user-sync steps after this do not
+    know which kind arrived.
+
+    The reason in the error is for the log only; callers answer one word.
+    """
+    if looks_like_jwt(token):
+        client, record = await _bearer_client(request, session, token)
+        if client is None or record is None:
+            raise OIDCError("the token's issuer is not an enabled identity provider here")
+        return BearerValidation(await client.validate_access_token(token), client, record)
+
+    settings: Settings = request.app.state.settings
+    if not settings.oidc.access_token_audience:
+        raise OIDCError(
+            "access tokens are not accepted: GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE is empty"
+        )
+    registry = getattr(request.app.state, "oidc_providers", None)
+    if registry is None:
+        raise OIDCError("not a JWT, and no identity provider is configured")
+    records = await list_providers(session, settings, registry._secrets, enabled_only=True)
+    # The environment's provider first: it is where the chat signs in, so
+    # the likeliest issuer, and the one whose introspection sees the token
+    # first.
+    env_issuer = settings.oidc.issuer.rstrip("/")
+    records.sort(key=lambda r: r.issuer.rstrip("/") != env_issuer)
+    origin = str(request.base_url).rstrip("/")
+    candidates = [
+        Candidate(r, registry.client_for(r, origin), credentials_for(r, settings)) for r in records
+    ]
+    record, client, claims = await introspect(token, candidates, _introspection_cache(request))
+    # The one check `validate_access_token` makes that introspection does
+    # not: the client the token was issued to (`client_id` → `azp`) must be
+    # one this deployment accepts. There is no audience to test: an opaque
+    # token names none, and what stands in for it is that the provider
+    # vouched for the token to a client registered for this deployment.
+    client._check_accepted_client(claims)
+    return BearerValidation(claims, client, record, introspected=True)
+
+
 async def _authenticate_bearer_user(request: Request, session: AsyncSession, token: str) -> User:
     """Validate an OIDC access token and return the synced user.
 
@@ -398,17 +504,19 @@ async def _authenticate_bearer_user(request: Request, session: AsyncSession, tok
         # Deliberately the same message a bad key gets. A deployment that does
         # not accept tokens should not confirm to a prober that it has an
         # identity provider at all.
-        raise AuthenticationError("Invalid API key provided.")
-
-    # Several providers may be configured (ADR 0051). The unverified `iss`
-    # claim picks which one verifies — routing, not trusting: the signature
-    # check against the chosen provider's keys is what decides anything.
-    client, provider = await _bearer_client(request, session, token)
-    if client is None:
+        logger.warning(
+            "access token rejected: GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE is empty, "
+            "so no access token is accepted on /v1"
+        )
         raise AuthenticationError("Invalid API key provided.")
 
     try:
-        claims = await client.validate_access_token(token)
+        # Several providers may be configured (ADR 0051). A JWT's unverified
+        # `iss` picks which one verifies — routing, not trusting: the
+        # signature check against the chosen provider's keys is what decides
+        # anything. An opaque token is introspected instead.
+        validated = await validate_bearer_token(request, session, token)
+        claims, provider = validated.claims, validated.record
         # The same policy gate the browser login answers to (ADR 0048), folded
         # with this provider's own group claim — the mappings are the global
         # policy's alone now (ADR 0093 §3.4), so there is nothing of the
@@ -442,6 +550,7 @@ async def _authenticate_bearer_user(request: Request, session: AsyncSession, tok
         raise AuthenticationError("Invalid API key provided.") from exc
 
     if not user.is_active:
+        logger.warning("access token rejected: account %s is disabled", user.id)
         raise AuthenticationError("Invalid API key provided.")
 
     await session.commit()
@@ -451,9 +560,9 @@ async def _authenticate_bearer_user(request: Request, session: AsyncSession, tok
 async def _bearer_principal(request: Request, session: AsyncSession, token: str) -> Principal:
     """Authenticate a ``/v1`` caller holding an OIDC access token.
 
-    Reached only for a credential shaped like a JWT, so an API key never pays
-    for the signature work and a token never costs a database lookup on a prefix
-    it does not have.
+    Reached for a credential shaped like a JWT, so an API key never pays for
+    the signature work, or for a non-JWT that is no key of ours (an IdP's
+    opaque token, introspected; see :func:`validate_bearer_token`).
 
     The resulting principal is indistinguishable from a key-authenticated one
     apart from ``api_key`` being None, which is the point: quotas, model access,
@@ -498,15 +607,26 @@ async def get_authenticated_caller(
             "'Authorization: Bearer <key>'."
         )
 
-    if looks_like_jwt(secret):
-        user = await _authenticate_bearer_user(request, session, secret)
-        requested = requested_billing_group(request)
-        pinned = _pin_from_header(user, requested) if requested else None
-        return AuthenticatedCaller(
-            user=user, billing_group=resolve_billing_group_or_none(user, pinned=pinned)
-        )
+    if not looks_like_jwt(secret):
+        try:
+            api_key = await resolve_api_key(session, secret)
+        except _NoSuchKey:
+            if not _may_be_opaque_token(request, secret):
+                raise
+        else:
+            return await _caller_from_key(request, session, api_key)
 
-    api_key = await resolve_api_key(session, secret)
+    user = await _authenticate_bearer_user(request, session, secret)
+    requested = requested_billing_group(request)
+    pinned = _pin_from_header(user, requested) if requested else None
+    return AuthenticatedCaller(
+        user=user, billing_group=resolve_billing_group_or_none(user, pinned=pinned)
+    )
+
+
+async def _caller_from_key(
+    request: Request, session: AsyncSession, api_key: ApiKey
+) -> AuthenticatedCaller:
     requested = requested_billing_group(request)
     if requested is not None and api_key.is_issued_key:
         # Same refusal `get_principal` gives an issued key naming `x-bill-to`
