@@ -48,7 +48,7 @@ cd deploy && docker compose up -d --wait
 The first sign-in with `PYSTINO_BOOTSTRAP_ADMIN_EMAIL` becomes the
 administrator. Upgrading is `git pull && docker compose pull && docker
 compose up -d --wait`. For the full stack with the Cerea chat, use the
-**cerea-deploy** repository instead; it uses the same variable names, so a
+**deploy kit** instead (`kit/` in the [Cerea repository](https://github.com/paoloviviani/Cerea)); it uses the same variable names, so a
 `deploy/.env` carries over. Details: [docs/deployment.md](docs/deployment.md).
 
 ## Configuration
@@ -98,7 +98,8 @@ one to bill with `x-bill-to`.
 ```sh
 uv sync && pnpm install
 uv run pytest -q                                  # SQLite and a fake upstream: no services needed
-uv run ruff check . && uv run mypy apps/gateway/src packages/shared-py/src services
+uv run ruff check . && uv run ruff format --check .
+uv run mypy apps/gateway/src packages/shared-py/src services
 pnpm -r test && pnpm -r typecheck                 # the console and the UI package
 ./scripts/smoke_test.sh                           # end to end over real HTTP
 ```
@@ -121,7 +122,7 @@ The documentation site is `docs/` (`uv run mkdocs build --strict`). Start at
 [accounting and quotas](docs/accounting-and-quotas.md) ·
 [redaction](docs/redaction.md) ·
 [deployment](docs/deployment.md) ·
-[identity](docs/oidc-generic-provider.md) ·
+[identity](docs/identity.md) ·
 [coding agents](docs/coding-agents.md) ·
 [operations](docs/operations.md) ·
 [development](docs/development.md). The gateway package has its own

@@ -66,7 +66,7 @@ than a dashboard.
 
 | | before | after |
 |---|---|---|
-| authenticate (`/v1/models`) | 5 selects | **3** |
+| authenticate (`/v1/models`) | 5 selects | **3** (4 since the listing also carries the agents a caller may reach; the test pins 4) |
 | metered request | 8 selects + 2 writes | **5** + 2 |
 
 The two saved on *every* request came from `resolve_api_key`, which used

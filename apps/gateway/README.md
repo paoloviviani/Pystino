@@ -13,12 +13,15 @@ how to run it, and what it does not do.
 
 - `/v1` — the metered surfaces (chat completions, responses, Anthropic
   messages, embeddings, image generation, OCR, web search), plus models,
-  billing groups, `/v1/me` and `pystino/usage`. One dependency
+  billing groups, `/v1/me`, `/v1/me/identities`, `pystino/usage`, and the
+  chat's sign-in door `/v1/session/announce`. One dependency
   authenticates all of them and takes either an API key or an OIDC access
   token.
 - `/api/me` and `/api/admin` — the management API, session cookie only.
   `/docs` is the generated Swagger over the same schemas; the human surface is
   the React console at `/console`.
+- `/auth/*` — the OIDC sign-in, `/scim/v2/<provider>` — SCIM pushes from an
+  external directory, `/opencode/install.sh` — the opencode setup script.
 - `/healthz`, `/readyz` — liveness with no dependencies, readiness with one DB
   round trip.
 
@@ -62,14 +65,17 @@ Or `docker compose -f deploy/compose.yaml up -d --wait` for the Pystino-only dep
 ## Testing
 
 ```bash
-uv run pytest                  # ~1,500 tests, SQLite, no services needed
-../../scripts/smoke_test.sh    # end-to-end over real HTTP, no Docker
+# from the repository root:
+uv run pytest -q               # ~1,900 tests, SQLite, no services needed
+./scripts/smoke_test.sh        # end-to-end over real HTTP, no Docker
 ```
 
 Tests run against SQLite by default so they need no services. Money arithmetic
 is tested as pure `Decimal` functions, because SQLite cannot store `Numeric`
-natively; the schema itself is exercised against PostgreSQL by the migration in
-CI and by `docker compose`.
+natively. `test_migrations_sqlite.py` runs the whole migration chain on SQLite;
+the schema meets PostgreSQL only in `docker compose` (the `migrate` service), in
+the `stack` workflow on a release tag, and in the live checks — CI's unit job
+has no PostgreSQL.
 
 Anything touching the request path, money or SQL also wants the live checks in
 `scripts/` against a running stack — see
@@ -85,14 +91,15 @@ the serious bugs in this project's history were only findable there.
 | SSE must be parsed at `\n\n` boundaries, not network chunk boundaries | `sse/parser.py` |
 | A trailing `\r` split across chunks is ambiguous and must be held back | `sse/parser.py:_pop_line` |
 | httpx's 5s default read timeout kills long streams | `upstream.py:build_http_client` |
-| Client disconnect must close the upstream *and* still record accrued usage | `routers/chat.py:_spawn_finalisation` |
+| Client disconnect must close the upstream *and* still record accrued usage | `routers/chat.py:spawn_finalisation` |
+| A client that hangs up the instant the stream ends must not cancel the settling write | `routers/chat.py:settle_completed` |
 | Assistant output must be persisted as it streams, not only at the end | `accounting/recorder.py:maybe_flush` |
 | An absent usage frame must not be recorded as zero spend | `accounting/tokens.py` |
 | Concurrent requests must not each pass the same under-limit check | `quota/engine.py:check_and_reserve` |
 | Money must never touch a float, including inside the counter store | `types.py`, `quota/counters.py` |
 | A wiped counter cache reports zero spend, not an error, so every group gets a fresh budget | `quota/engine.py:rebuild_if_cache_is_cold` |
 | Editing a price would rewrite what past requests cost, so prices are append-only | `routers/admin.py:create_price` |
-| Deleting a model orphans the usage rows that reference it, so models only deactivate | `routers/admin.py` (no DELETE route) |
+| Deleting a model must not lose the spend recorded against it: `usage_records.model_id` is `ON DELETE SET NULL` and every row keeps `model_name` | `routers/admin.py:delete_model` |
 
 ## Known gaps
 
@@ -137,10 +144,10 @@ Stated plainly, so none of these is a surprise later.
 
 **Known operational sharp edges**
 
-- **GDPR erasure is incomplete.** Identity foreign keys use `ON DELETE SET NULL`
-  so the financial ledger survives deleting a user — but `assistant_text` may
-  itself contain personal data and is *not* cleared by that. An erasure
-  procedure has to blank it explicitly, and no such procedure exists yet.
+- **GDPR erasure is incomplete.** Deleting a user removes the account and
+  erases them from the chat; identity foreign keys on the ledger use `ON DELETE
+  SET NULL` so the financial rows survive — but `assistant_text` on them may
+  itself contain personal data and is *not* cleared by the delete.
   Retention bounds it: the text is cleared after
   `GATEWAY_TRANSCRIPT_RETENTION_HOURS` (default 24, `0` keeps it).
 - **The redaction HMAC key must be backed up with the transcripts it labelled.**
@@ -150,5 +157,3 @@ Stated plainly, so none of these is a surprise later.
   the gateway keeps running, the cache reports zero and quotas are briefly too
   permissive until the gateway restarts. An empty cache is not a failed read, so
   nothing detects it at runtime. Restart the gateway after any cache loss.
-- **Redaction rules are loaded per request.** Cacheable if it ever shows up in a
-  profile.

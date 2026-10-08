@@ -5,14 +5,14 @@ gateway and its console, alone, with no chat. Everything is readable files you
 edit and `git pull`: a compose file, a documented `.env.example`, and the
 Caddy and Authelia configuration mounted into their stock images.
 
-**Want the chat too?** Use the separate `cerea-deploy` repository instead. It is the same variable names and `.env` conventions, so
+**Want the chat too?** Use the Cerea deploy kit (`kit/` in the [Cerea repository](https://github.com/paoloviviani/Cerea)) instead. It is the same variable names and `.env` conventions, so
 moving to it later is: copy this `.env` and the compose project name over,
 `./configure` again to add the chat's secrets, then `docker compose up -d`.
 
 ## Serving chats you don't deploy here
 
 A central Pystino can serve chat deployments that live elsewhere: each one
-(the `satellite` preset in cerea-deploy) runs only the chat, pointed here
+(the `satellite` preset in the deploy kit) runs only the chat, pointed here
 with `OPENAI_BASE_URL` at this gateway's public `/v1`, signing people in
 against this gateway's identity provider, and reading this gateway's
 ledger with each person's own token. Quotas, accounting and model access

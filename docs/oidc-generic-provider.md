@@ -70,7 +70,7 @@ for the scopes in `GATEWAY_OIDC__SCOPES`, so the fix is to drop `groups` from
 that list and from the chat's `OIDC_SCOPES`, which are one setting spelled two
 ways (a JSON list for the gateway, words for the chat).
 
-With cerea-deploy, `./configure --idp external` reads the issuer's discovery
+With the deploy kit, `./configure --idp external` reads the issuer's discovery
 document and asks only for the scopes it lists (`openid` always stays), writes
 both spellings (`OIDC_SCOPES` and `OIDC_SCOPES_JSON`) and says so when `groups`
 is dropped. `./configure --check` warns about a configured scope the issuer

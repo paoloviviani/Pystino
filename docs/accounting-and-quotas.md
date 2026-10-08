@@ -8,7 +8,8 @@ through the same pipeline in `routers/_metered.py`:
 **resolve → reserve → record → settle**
 
 1. **resolve** — authenticate the caller (API key or OIDC bearer), load user,
-   billing group and model (3 SELECTs, pinned by a test).
+   billing group and model (a handful of SELECTs; the whole metered request is
+   pinned at 5 SELECTs and 2 writes by `test_query_counts.py`).
 2. **reserve** — ask the quota engine whether this request may proceed *before*
    the upstream call, and tentatively debit its estimate.
 3. **record** — write the in-progress ledger row *before* the upstream call, so
@@ -21,15 +22,17 @@ fails in a specific, boring, expensive way.
 
 ## The ledger
 
-Every request writes one row to `usage_records` — before the upstream call, not
-after. The row carries the caller, the billing group, the requested and served
+Every admitted request writes one row to `usage_records` — before the upstream
+call, not after. A request the quota refuses (a `429` with `code:
+quota_exceeded`) writes none: it never reached a provider and cost nothing. The row carries the caller, the billing group, the requested and served
 models (which can differ behind a router),
 token counts, status, redaction provenance (`redaction_scope`,
 `redaction_rule_id`) and three cost figures.
 
-Statuses include `ok`, `client_disconnected` (the caller hung up before the
-terminal frame — tokens are counted locally and stamped `estimated`),
-`quota_exceeded` (never admitted) and `blocked` (refused by redaction policy —
+The statuses are `in_progress` (written before the upstream call; a row that
+stays there was never settled), `completed`, `client_disconnected` (the caller
+hung up before the terminal frame — tokens are counted locally and stamped
+`estimated`), `upstream_error`, and `blocked` (refused by redaction policy —
 zero tokens, zero cost, but counted, because "this deployment refused 400
 prompts last month" is a number a data-protection review asks for).
 
@@ -194,7 +197,7 @@ whether the rebuild lock is held. A counter the store cannot read is reported as
 `null`, never as zero. The same figures are the **Quota health** panel on the
 Quotas page of the console. Without a browser session, `docker compose exec
 gateway pystino quota health` prints the same figures as JSON; it is what
-cerea-deploy's `tools/diagnose` attaches to a report.
+the deploy kit's `tools/diagnose` attaches to a report.
 
 `POST /api/admin/quota/reconcile` (the panel's **Reconcile** button) recomputes
 every *active* rule's current window from the ledger with the replace semantics

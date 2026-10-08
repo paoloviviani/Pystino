@@ -198,8 +198,8 @@ uv run mkdocs build --strict           # this site
   `pnpm --filter @llmp/console typecheck`. `pnpm --filter @llmp/ui test` and
   `typecheck` cover the UI package.
 - **The query budget** is a test: `apps/gateway/tests/test_query_counts.py` pins
-  three SELECTs to authenticate and five SELECTs plus two writes for a metered
-  request. Prefer `joinedload` to `selectinload` on many-to-one relations.
+  four SELECTs for `GET /v1/models` (authentication plus the catalogue) and five
+  SELECTs plus two writes for a metered request. Prefer `joinedload` to `selectinload` on many-to-one relations.
 - **Live checks** run against a real stack, because more than half of the
   serious bugs in this project could only be found there. Bring the compose
   deployment up with the fake upstream (above), then:
@@ -217,12 +217,12 @@ uv run mkdocs build --strict           # this site
   page says what each covers and what they need. Two traps: do **not** source
   `deploy/.env` before `docker compose` (the shell's copy wins over `--env-file`,
   and quote removal mangles values with quotes or JSON; the *scripts* want it
-  sourced, compose does not), and a whole run exhausts the demo group's cost
+  sourced, compose does not), and a whole run exhausts the test group's cost
   ceiling because the fake upstream bills a million tokens per request, which the
   scripts report as skipped.
 - **The full stack** is the `stack` workflow below; to try it by hand, run
-  cerea-deploy's `./configure` and `docker compose up` with
-  `PYSTINO_REGISTRY=local` and your gateway image.
+  the deploy kit's `./configure` (in `kit/` of the Cerea repository) and
+  `docker compose up` with `PYSTINO_REGISTRY=local` and your gateway image.
 
 A regression test must fail without the fix. A failure is "pre-existing" only
 once it also fails on `main`. Say in the pull request which of the above you ran;
@@ -238,10 +238,10 @@ Four workflows in `.github/workflows/`.
 
 | Workflow | Runs on | What it does |
 |---|---|---|
-| `ci` | every push to `main` and every pull request (changes to `docs/**` and `*.md` are ignored), and by hand | a `changes` job decides what to run. **gateway** (when `apps/gateway`, `packages/shared-py`, `services`, `deploy`, `uv.lock`, `pyproject.toml` changed): `uv sync --locked`, `ruff check`, `mypy apps/gateway/src packages/shared-py/src services`, `pytest`, then `docker compose config` for every profile of `deploy/compose.yaml`, the Caddyfile adapting in all three TLS modes, and `deploy/pin.py --check`. **console** (when `apps/console`, `packages/ui`, `pnpm-lock.yaml` changed): `pnpm install --frozen-lockfile`, then `typecheck` and `test` for `packages/ui` and for the console. A manual run does both. |
-| `docs` | pushes to `main` that touch `docs/**` or `mkdocs.yml`, and by hand | `uv run mkdocs build --strict`, published to GitHub Pages at <https://paoloviviani.github.io/Pystino/> |
-| `images` | by hand (`workflow_dispatch`) only | builds and pushes `pystino-gateway` and `pystino-redaction` (the `-pattern` flavour) to GHCR; on a release tag, a second job runs `pystino release-pin --check` |
-| `stack` | a pushed `v*.*.*` tag, and by hand | builds the gateway and redaction images from the tag, brings up cerea-deploy's `main` with them and the Cerea image named in `deploy/release.env`, checks `/healthz` and `/chat/`, and brings up the Pystino-only `deploy/compose.yaml` too |
+| `ci` | every push to `main` and every pull request (changes to `docs/**` and `*.md` are ignored), and by hand | a `changes` job decides what to run. **gateway** (when `apps/gateway`, `packages/shared-py`, `services`, `deploy`, `uv.lock`, `pyproject.toml` or `ci.yml` changed): `uv sync --locked`, `ruff check`, `ruff format --check`, `mypy apps/gateway/src packages/shared-py/src services`, `pytest`, then `docker compose config` for every profile of `deploy/compose.yaml`, the Caddyfile adapting in all three TLS modes, and `deploy/pin.py --check`. **console** (when `apps/console`, `packages/ui`, `pnpm-lock.yaml` or `ci.yml` changed): `pnpm install --frozen-lockfile`, then `typecheck` and `test` for `packages/ui` and for the console. A manual run does both. |
+| `docs` | pushes to `main` that touch `docs/**` or `mkdocs.yml`, and by hand | `uv run mkdocs build --strict`, published to GitHub Pages at <https://paoloviviani.github.io/Pystino/>. A change to `CONTRIBUTING.md` alone (this page) does not trigger it: run it by hand (`gh workflow run docs.yml`) |
+| `images` | by hand (`workflow_dispatch`) only; automatic publishing is on hold, and the workflow file says how to turn it on | builds and pushes `pystino-gateway` and `pystino-redaction` (the `-pattern` flavour) to GHCR: from a tag, `X.Y.Z` and `X.Y`; from `main`, `edge` and `sha-<short>`; from any other ref, `sha-<short>` only. On a release tag, a second job runs `pystino release-pin --check` |
+| `stack` | a pushed `v*.*.*` tag, and by hand | builds the gateway and redaction images from the tag, brings up the deploy kit (`kit/` of the Cerea repository, `main`) with them and the Cerea image named in `deploy/release.env`, checks `/healthz` and `/chat/`, and brings up the Pystino-only `deploy/compose.yaml` too |
 
 One gap worth knowing: the commit hooks and `docs` links to other repositories
 are not checked by CI.
@@ -250,7 +250,7 @@ are not checked by CI.
 
 A release is a git tag `vX.Y.Z` (the version in `apps/gateway/pyproject.toml`
 and `uv.lock`, without the `v`), paired with a Cerea release. Pystino and Cerea
-are tagged separately; the kit that pins them is cerea-deploy.
+are tagged separately; the kit that pins them is Cerea's `kit/`, versioned with Cerea.
 
 1. **Green CI** on the commit to be tagged, and the live checks if the change
    touched the request path, money or SQL.
@@ -264,18 +264,32 @@ are tagged separately; the kit that pins them is cerea-deploy.
    `pystino release-pin --check` fails if any image is unpinned. Pystino's own
    images are pinned by version tag, not digest: the gateway image carries this
    manifest, so it cannot contain its own digest.
+   `release-pin` keeps the tag already written in `CEREA_IMAGE` and only
+   refreshes its digest, so when `CEREA_VERSION` changes, change the tag in
+   `CEREA_IMAGE` to match (or delete the line and let `release-pin` derive it
+   from `CEREA_VERSION`); `--check` does not compare the two.
 3. **Tag and push:** `git tag -a vX.Y.Z -m "…"`, `git push origin vX.Y.Z`. The
-   `stack` workflow runs on the tag.
+   `stack` workflow runs on the tag: it builds this tag's gateway image itself,
+   so it does not wait for step 4.
 4. **Publish the images:** `gh workflow run images.yml --ref vX.Y.Z`. On a tag it
    pushes `pystino-gateway:X.Y.Z` and `:X.Y` (and `pystino-redaction:X.Y.Z-pattern`),
    refuses to overwrite a version that already exists (a release tag is
    immutable), then runs `pystino release-pin --check`. The packages are public:
    check that the image pulls with an empty Docker login.
-5. **Hand over to cerea-deploy**, which pins the new pair, runs its tests and
-   the fresh-kit sign-in (`E2E_OK`), writes its CHANGELOG entry and tags: see its
-   [CONTRIBUTING.md](https://github.com/paoloviviani/cerea-deploy/blob/main/CONTRIBUTING.md#releasing).
-   The sign-in check is `uv run python deploy/ci/e2e_login.py <kit dir> <password> --chat`
-   from this repository; it prints `E2E_OK`.
+5. **Hand over to Cerea.** A Cerea release is what ships the pair: its release
+   commit runs `kit/tools/pin --pystino X.Y.Z` (with `--cerea` for its own
+   version) and `kit/tools/pin --check`, and its `scripts/release/release.sh`
+   tags, publishes the chat image, runs the fresh-kit sign-in (`E2E_OK`) and
+   moves `stable`: see its
+   [CONTRIBUTING.md](https://github.com/paoloviviani/Cerea/blob/main/CONTRIBUTING.md#releasing).
+   Cerea's contract tests run against the Pystino version in its
+   `deploy/ci/pystino-contract.env`; bump it there when a release changes
+   what the chat relies on. To run the sign-in check by hand from this
+   repository: `uv run python deploy/ci/e2e_login.py <kit dir> <password> --chat`
+   (it prints `E2E_OK`).
+
+The exact command sequence, with what to check after each step, is in
+[AGENTS.md](https://github.com/paoloviviani/Pystino/blob/main/AGENTS.md#releasing-pystino).
 
 **Versions.** `MAJOR.MINOR.PATCH`, one tag per release, never moved. A change
 that needs the chat to move too names the Cerea release in the release commit.

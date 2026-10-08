@@ -11,7 +11,7 @@ changes the label, the label changes the service definition, and
 `docker compose up -d` recreates the container. Run this after editing
 deploy/caddy/ or deploy/authelia/; CI runs it with --check.
 
-Same algorithm as cerea-deploy's `tools/pin`, so the two labels mean the same
+Same algorithm as the Cerea deploy kit's `kit/tools/pin`, so the two labels mean the same
 thing in both repositories: sha256 over sorted relative paths and contents,
 first 16 hex characters.
 

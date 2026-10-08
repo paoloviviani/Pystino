@@ -53,17 +53,18 @@ is a `/v1` client of this gateway and a separate repository.
 
 ## The rest of the stack
 
-Pystino is one of three repositories. **[Cerea](https://github.com/paoloviviani/Cerea)**
+Pystino is one of two repositories. **[Cerea](https://github.com/paoloviviani/Cerea)**
 is the chat, with its own [documentation](https://paoloviviani.github.io/Cerea/)
-(using it, the agent machines, configuration). **cerea-deploy** is the
-deployment that runs both, [with its README](https://github.com/paoloviviani/cerea-deploy#readme)
-as the runbook.
+(using it, the agent machines, configuration). Its `kit/` directory is the **deploy
+kit**, the deployment that runs both, with
+[its README](https://github.com/paoloviviani/Cerea/blob/stable/kit/README.md)
+as the runbook (it was the separate `cerea-deploy` repository until it moved there).
 
 ## Versions
 
 This site follows `main` and is not versioned per release. What changed between releases, and which Pystino and Cerea
 versions a given release of the stack pins together, is recorded in
-[cerea-deploy's CHANGELOG](https://github.com/paoloviviani/cerea-deploy/blob/main/CHANGELOG.md).
+[the deploy kit's CHANGELOG](https://github.com/paoloviviani/Cerea/blob/stable/kit/CHANGELOG.md).
 
 ## Licence
 
