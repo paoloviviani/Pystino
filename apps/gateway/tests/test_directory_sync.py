@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from conftest import Seeded
+from conftest import LEGACY_GROUPS, Seeded
 from gateway.config import OIDCSettings
 from gateway.directory.adapters import (
     AdapterError,
@@ -135,7 +135,7 @@ class TestEngine:
             session,
             record_from_row(row, BOX),
             entries,
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
         )
@@ -154,7 +154,7 @@ class TestEngine:
             session,
             record_from_row(row, BOX),
             [Entry("alice", "alice", None, None, ("ops",))],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=True,
             full=True,
         )
@@ -174,13 +174,13 @@ class TestEngine:
         record = record_from_row(row, BOX)
         both = [Entry("alice", "alice"), Entry("bob", "bob")]
         await apply_entries(
-            session, record, both, settings=OIDCSettings(), dry_run=False, full=True
+            session, record, both, settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True
         )
         report = await apply_entries(
             session,
             record,
             [Entry("alice", "alice", active=False)],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
         )
@@ -190,7 +190,7 @@ class TestEngine:
             await session.refresh(fresh)
             assert not fresh.is_active and fresh.deactivated_by == "directory"
         back = await apply_entries(
-            session, record, both, settings=OIDCSettings(), dry_run=False, full=True
+            session, record, both, settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True
         )
         # Both come back: the directory deactivated them, so it may reactivate them.
         assert back.reactivated == 2
@@ -204,7 +204,7 @@ class TestEngine:
             session,
             record_from_row(row, BOX),
             [Entry("alice", "alice")],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
         )
@@ -219,10 +219,15 @@ class TestEngine:
         record = record_from_row(row, BOX)
         everyone = [Entry(f"u{i}", f"u{i}") for i in range(8)]
         await apply_entries(
-            session, record, everyone, settings=OIDCSettings(), dry_run=False, full=True
+            session,
+            record,
+            everyone,
+            settings=OIDCSettings(**LEGACY_GROUPS),
+            dry_run=False,
+            full=True,
         )
         report = await apply_entries(
-            session, record, [], settings=OIDCSettings(), dry_run=False, full=True
+            session, record, [], settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True
         )
         assert report.status == "needs_confirmation" and report.deactivated == 8
         active = (
@@ -230,7 +235,13 @@ class TestEngine:
         )
         assert len(active) == 8, "nothing applied"
         forced = await apply_entries(
-            session, record, [], settings=OIDCSettings(), dry_run=False, full=True, force=True
+            session,
+            record,
+            [],
+            settings=OIDCSettings(**LEGACY_GROUPS),
+            dry_run=False,
+            full=True,
+            force=True,
         )
         assert forced.status == "ok"
 
@@ -247,7 +258,7 @@ class TestEngine:
             session,
             record_from_row(row, BOX),
             [Entry("u-1", "alice", "a@x.org", "Alice", ("ops",), is_subject=True)],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
         )
@@ -267,7 +278,7 @@ class TestEngine:
             session,
             record,
             [Entry("alice", "alice", groups=("ops",))],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=False,
         )
@@ -277,7 +288,7 @@ class TestEngine:
             session,
             record,
             [Entry("alice", "alice", groups=())],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=False,
         )
@@ -293,7 +304,7 @@ class TestEngine:
             session,
             record,
             [Entry("carol", "carol", "carol@example.org")],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
         )
@@ -308,14 +319,14 @@ class TestEngine:
             record,
             carol,
             {"preferred_username": "carol", "email": "carol@example.org", "email_verified": "true"},
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         assert await link_at_login(
             session,
             record,
             carol,
             {"preferred_username": "carol", "email": "carol@example.org", "email_verified": True},
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
         await session.refresh(carol, attribute_names=["memberships"])
@@ -384,7 +395,7 @@ class TestRunsAndApi:
             await _provider(session, name="unconfirmed", issuer="https://other.example.org")
             await session.commit()
             ready_id = ready.id
-        settings = type("S", (), {"oidc": OIDCSettings()})()
+        settings = type("S", (), {"oidc": OIDCSettings(**LEGACY_GROUPS)})()
         scheduler = DirectoryScheduler(session_factory, BOX, httpx.AsyncClient(), settings, None)  # type: ignore[arg-type]
         assert await scheduler.run_due() == [ready_id]
         assert await scheduler.run_due() == [], "not due again within the interval"

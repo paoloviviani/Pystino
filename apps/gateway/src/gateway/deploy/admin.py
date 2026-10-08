@@ -13,7 +13,7 @@ can undo it.
 
 `break_glass` is the deeper recovery: it does not need the configured IdP to
 be reachable, or even the same one as before, because `./configure
---break-glass` (cerea-deploy) has already rewritten `.env` to the bundled
+--break-glass` (the deploy kit) has already rewritten `.env` to the bundled
 Authelia before this runs (ADR 0093 §10 host steps 1-2). It replaces
 `pystino admin grant` as the *documented* recovery; `admin grant`/`revoke`
 stay available for the ordinary case, where whatever IdP is already
@@ -239,7 +239,7 @@ async def break_glass(
         # never a billing group, but this person may still want to call
         # `/v1` directly, and a fresh pending user has nothing to bill from
         # otherwise.
-        await ensure_bundled_default_group(session, target)
+        await ensure_bundled_default_group(session, target, settings.oidc.default_group)
         await mark_bootstrap_consumed(session)
         await record_event(
             session,

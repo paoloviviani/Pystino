@@ -16,10 +16,11 @@ from typing import Any
 from conftest import BEARER_ISSUER, Seeded, make_token
 from conftest import bearer_auth as auth
 from fastapi import FastAPI
-from gateway.models import ApiKey, User, UserIdentity
+from gateway.models import ApiKey, SeenGroup, User, UserIdentity
 from gateway.security import generate_api_key
 from gateway.types import utcnow
 from joserfc.jwk import RSAKey
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
@@ -118,7 +119,12 @@ class TestAnnounce:
             user = await db.get(User, uuid.UUID(body["id"]))
             assert user is not None
             assert user.email == "fresh@example.org"
-            assert {m.group.name for m in user.memberships} == {"research"}
+            # Under the default group_import=manual, "research" (no such
+            # group here) is recorded as seen, not created; "users" is the
+            # default group every new person joins.
+            assert {m.group.name for m in user.memberships} == {"users"}
+            seen = (await db.execute(select(SeenGroup.name))).scalars().all()
+            assert seen == ["research"]
 
     async def test_the_tenth_call_is_fine_the_eleventh_is_rate_limited(
         self,

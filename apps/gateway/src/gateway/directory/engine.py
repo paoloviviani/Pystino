@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.config import OIDCSettings
 from gateway.directory.adapters import Entry
+from gateway.group_import import record_unresolved
 from gateway.models import (
     DirectoryEntry,
     DirectorySyncRun,
@@ -43,7 +44,7 @@ from gateway.models import (
     MembershipSource,
     User,
 )
-from gateway.oidc import _reconcile_memberships, _resolve_groups, apply_admin_answer
+from gateway.oidc import _reconcile_memberships, _resolve_group_names, apply_admin_answer
 from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,9 @@ async def add_manual_memberships(
 BUNDLED_DEFAULT_GROUP_NAME = "users"
 
 
-async def ensure_bundled_default_group(session: AsyncSession, user: User) -> bool:
+async def ensure_bundled_default_group(
+    session: AsyncSession, user: User, name: str = BUNDLED_DEFAULT_GROUP_NAME
+) -> bool:
     """Give a bundled-Authelia user with *no* membership at all the console's
     ``users`` group (created the first time it's needed), so every bundled
     account has somewhere to bill from the moment it exists — mirroring what
@@ -139,14 +142,18 @@ async def ensure_bundled_default_group(session: AsyncSession, user: User) -> boo
     Callers: console `create_user`/`create_sign_in`, break-glass's pending
     user, and `sign_in`'s bundled-login path (new accounts, and existing ones
     each time they sign in, so a user provisioned before this existed still
-    gets one). Returns whether it added the group, since a caller that just
+    gets one). *name* is the deployment's default group
+    (``GATEWAY_OIDC__DEFAULT_GROUP``) where the caller has the settings, so
+    the two rules converge on one group; empty falls back to ``users``, which
+    keeps this rule exactly as it was for a deployment that turned the
+    default group off. Returns whether it added the group, since a caller that just
     set a default billing group from a different source needs to know
     whether this changed anything to re-check.
     """
     await session.refresh(user, attribute_names=["memberships"])
     if user.memberships:
         return False
-    await add_manual_memberships(session, user, [BUNDLED_DEFAULT_GROUP_NAME])
+    await add_manual_memberships(session, user, [name or BUNDLED_DEFAULT_GROUP_NAME])
     await session.refresh(user, attribute_names=["memberships"])
     # Always the sole group right after being added from empty, but stated
     # the same way as `provision_user`'s own rule rather than assumed.
@@ -178,8 +185,19 @@ async def _apply_to_user(
     if answers and record.group_source == "directory":
         before = await _oidc_group_names(session, user)
         wanted = [mappings.get(g, g) for g in entry.groups]
-        groups = await _resolve_groups(session, wanted, settings)
+        groups, missing = await _resolve_group_names(session, wanted, settings)
         await _reconcile_memberships(session, user, groups)
+        # A sync run is a sighting like a sign-in: under group_import=manual
+        # the names nothing here carries are listed for import, not created.
+        resolved = {group.name for group in groups}
+        await record_unresolved(
+            session,
+            user,
+            issuer=record.issuer,
+            unresolved=[name for name in wanted if name not in resolved],
+            missing=missing,
+            touch_login=True,
+        )
         after = await _oidc_group_names(session, user)
         if after != before:
             report.updated += 1

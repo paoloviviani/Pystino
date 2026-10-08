@@ -183,3 +183,20 @@ What to know about GitLab:
 - **Email** is present only for users with a public email on their profile.
   They can still sign in; the console shows the subject until an email
   appears.
+- **Every GitLab group a person is in arrives in the claim.** Under the old
+  behaviour (`OIDC_GROUP_IMPORT=auto`) each name became a group at first
+  sight: one operator's first sign-in created 67 groups. With
+  `OIDC_GROUP_IMPORT=manual`, the default, a sign-in creates none. The names
+  appear on the console's **Groups** page under *Seen from your identity
+  provider*, with how many people carry each and when it was last seen;
+  **Import** the few that should mean something here (the group is created
+  and given at once to the people who carry it, under `every_login`) and
+  **Dismiss** the rest. Meanwhile everyone is in `users`
+  ([the default group](identity.md#the-default-group)), so they can use the
+  public models from the first sign-in. `OIDC_GROUP_ALLOWLIST` narrows what
+  is considered at all, if the list is long and the wanted names are known.
+- **Cleaning up groups created before.** An install that ran with the old
+  behaviour keeps the groups it made. Delete the unwanted ones on the
+  console's **Groups** page: their memberships go with them, and under
+  `manual` they are not recreated; the names return to the *Seen* list at
+  the next sign-in, to import or dismiss.

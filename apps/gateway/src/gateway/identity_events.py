@@ -80,6 +80,11 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     # changed: counts only, so the row says that drift was repaired and how
     # much without carrying anyone's spend.
     IdentityEventAction.QUOTA_RECONCILE: frozenset({"windows", "corrected"}),
+    # The `issuer` column carries the provider, `target_label` the group name;
+    # `members` is how many people the import granted it to at once.
+    IdentityEventAction.GROUP_IMPORT: frozenset({"members"}),
+    IdentityEventAction.GROUP_DISMISS: frozenset(),
+    IdentityEventAction.GROUP_RESTORE: frozenset(),
 }
 
 #: Unconditional, whatever the action: the review's rule is "never a password,

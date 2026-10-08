@@ -12,6 +12,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from conftest import LEGACY_GROUPS
 from gateway.config import OIDCSettings
 from gateway.models import Group, GroupSource, Membership, User
 from gateway.oidc import (
@@ -83,20 +84,20 @@ class TestNormaliseGroups:
 
 class TestExtractGroups:
     def test_uses_the_configured_claim(self) -> None:
-        settings = OIDCSettings(groups_claim="realm_access.roles")
+        settings = OIDCSettings(**LEGACY_GROUPS, groups_claim="realm_access.roles")
         claims = {"realm_access": {"roles": ["research"]}, "groups": ["ignored"]}
         assert extract_groups(claims, settings) == ["research"]
 
     def test_allowlist_filters(self) -> None:
-        settings = OIDCSettings(groups_claim="groups", group_allowlist=["kept"])
+        settings = OIDCSettings(**LEGACY_GROUPS, groups_claim="groups", group_allowlist=["kept"])
         assert extract_groups({"groups": ["kept", "dropped"]}, settings) == ["kept"]
 
     def test_empty_allowlist_imports_everything(self) -> None:
-        settings = OIDCSettings(groups_claim="groups")
+        settings = OIDCSettings(**LEGACY_GROUPS, groups_claim="groups")
         assert extract_groups({"groups": ["a", "b"]}, settings) == ["a", "b"]
 
     def test_duplicates_are_removed_in_order(self) -> None:
-        settings = OIDCSettings(groups_claim="groups")
+        settings = OIDCSettings(**LEGACY_GROUPS, groups_claim="groups")
         assert extract_groups({"groups": ["a", "b", "a"]}, settings) == ["a", "b"]
 
 
@@ -123,7 +124,7 @@ class TestProvisioning:
             email="new@example.org",
             display_name="New Person",
             group_names=["research", "admin"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
 
@@ -143,7 +144,7 @@ class TestProvisioning:
                 email=email,
                 display_name=name,
                 group_names=["research"],
-                settings=OIDCSettings(),
+                settings=OIDCSettings(**LEGACY_GROUPS),
             )
             await session.commit()
 
@@ -174,7 +175,7 @@ class TestProvisioning:
             display_name="Old Name",
             username="old@local",
             group_names=["research"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
         user.email = "corrected@example.org"
@@ -191,7 +192,7 @@ class TestProvisioning:
             display_name="Directory Name",
             username="directory@local",
             group_names=["research"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
 
@@ -218,7 +219,7 @@ class TestProvisioning:
             email="old@example.org",
             display_name="Old Name",
             group_names=["research"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
         user.email = "corrected@example.org"
@@ -232,7 +233,7 @@ class TestProvisioning:
             email="directory@example.org",
             display_name="Directory Name",
             group_names=["research"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
 
@@ -251,7 +252,7 @@ class TestProvisioning:
             email=None,
             display_name=None,
             group_names=["research", "finance"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
 
@@ -262,7 +263,7 @@ class TestProvisioning:
             email=None,
             display_name=None,
             group_names=["research"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
 
@@ -279,7 +280,7 @@ class TestProvisioning:
             email=None,
             display_name=None,
             group_names=["not-created"],
-            settings=OIDCSettings(auto_create_groups=False),
+            settings=OIDCSettings(auto_create_groups=False, default_group=""),
         )
         await session.commit()
         assert user.memberships == []
@@ -296,7 +297,7 @@ class TestProvisioning:
             email=None,
             display_name=None,
             group_names=["preexisting"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
 
@@ -315,7 +316,7 @@ class TestProvisioning:
             email=None,
             display_name=None,
             group_names=["retired"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
         assert user.memberships == []
@@ -331,7 +332,7 @@ class TestProvisioning:
             email=None,
             display_name=None,
             group_names=["only-group"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
         assert user.default_billing_group_id is not None
@@ -344,7 +345,7 @@ class TestProvisioning:
             email=None,
             display_name=None,
             group_names=["a", "b"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
         assert user.default_billing_group_id is None
@@ -358,7 +359,7 @@ class TestProvisioning:
             email=None,
             display_name=None,
             group_names=["going-away"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
         assert user.default_billing_group_id is not None
@@ -370,7 +371,7 @@ class TestProvisioning:
             email=None,
             display_name=None,
             group_names=["something-else"],
-            settings=OIDCSettings(),
+            settings=OIDCSettings(**LEGACY_GROUPS),
         )
         await session.commit()
         # Reassigned to the only remaining group rather than left dangling.
@@ -387,7 +388,7 @@ class TestProvisioning:
                 email=None,
                 display_name=None,
                 group_names=[],
-                settings=OIDCSettings(),
+                settings=OIDCSettings(**LEGACY_GROUPS),
             )
             await session.commit()
 

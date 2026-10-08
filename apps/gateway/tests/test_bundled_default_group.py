@@ -158,7 +158,12 @@ class TestSignInWiresItIn:
         await session.refresh(result.user, attribute_names=["memberships"])
         assert {m.group.name for m in result.user.memberships} == {"users"}
 
-    async def test_an_external_idp_sign_in_gets_nothing(self, session: AsyncSession) -> None:
+    async def test_an_external_idp_sign_in_gets_nothing_with_the_default_group_off(
+        self, session: AsyncSession
+    ) -> None:
+        """This rule is the bundled provider's alone; an external IdP's sign-in
+        gets the deployment's default group instead (test_group_import.py),
+        and with that turned off, nothing."""
         from gateway.identity_registry import record_from_env
 
         settings = Settings(
@@ -167,6 +172,7 @@ class TestSignInWiresItIn:
                 issuer="https://idp.example.org",
                 client_id="c",
                 groups_claim="groups",
+                default_group="",
             )
         )
         record = record_from_env(settings)

@@ -9,13 +9,20 @@
  * of rows, and model access granted from the Models screen.
  */
 
-import { Badge, Button, Card, Input, Notice, Pagination, Spinner, Table } from "@llmp/ui";
+import { Badge, Button, Card, EmptyState, Input, Notice, Pagination, Spinner, Table } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
-import { useCreateGroup, useDeleteGroup, useGroups } from "../lib/admin";
+import {
+  type SeenGroupPage,
+  useCreateGroup,
+  useDeleteGroup,
+  useGroups,
+  useSeenGroupAction,
+  useSeenGroups,
+} from "../lib/admin";
 import { CHIPS, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
-import type { AdminGroup } from "../lib/types";
+import type { AdminGroup, SeenGroup, SeenGroupImport } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import { Dialog } from "@llmp/ui";
 import { useAddGroupMember, useGroupMembers, useRemoveGroupMember, useUsers } from "../lib/admin";
@@ -148,6 +155,8 @@ export function AdminGroups() {
           </>
         )}
       </Card>
+
+      <SeenGroups />
 
       <CreateGroupDialog open={creating} onClose={() => setCreating(false)} />
       <GroupMembersDialog group={managing} onClose={() => setManaging(null)} />
@@ -411,12 +420,224 @@ function DeleteGroupDialog({ group, onClose }: { group: AdminGroup | null; onClo
         redaction rules scoped to the group keep their scope but stop matching
         anyone.
       </p>
-      {group?.source === "oidc" && (
-        <Notice tone="warn" title="This group comes from the identity provider">
-          It will be recreated the next time one of its members signs in, unless
-          the mappings or the directory have changed.
-        </Notice>
-      )}
+      {group?.source === "oidc" && <IdpGroupDeleteNotice />}
     </Dialog>
   );
+}
+
+/** What deleting a directory's group leads to depends on the import mode:
+ * under `auto` the next sign-in recreates it; under `manual` its name only
+ * comes back to the "Seen" list below, to import again or dismiss. */
+function IdpGroupDeleteNotice() {
+  const seen = useSeenGroups({ limit: 1 });
+  return seen.data?.group_import === "auto" ? (
+    <Notice tone="warn" title="This group comes from the identity provider">
+      It will be recreated the next time one of its members signs in, unless
+      the mappings or the directory have changed.
+    </Notice>
+  ) : (
+    <Notice tone="info" title="This group comes from the identity provider">
+      Its members lose it now. When one of them next signs in, its name is
+      listed under “Seen from your identity provider” again, and nothing is
+      recreated unless you import it.
+    </Notice>
+  );
+}
+
+/**
+ * Group names the identity provider reported that no group here carries
+ * (GATEWAY_OIDC__GROUP_IMPORT=manual, the default). A real directory reports
+ * every group a person is in: one GitLab sign-in used to create 67 groups.
+ * Now they wait here, most-carried first, for Import or Dismiss.
+ */
+function SeenGroups() {
+  const paged = usePaginated();
+  const [showDismissed, setShowDismissed] = useState(false);
+  const seen = useSeenGroups(paged.page, showDismissed);
+  const act = useSeenGroupAction();
+  const toast = useOptionalToast();
+
+  const page = seen.data;
+  const rows = page?.items ?? [];
+
+  const run = (row: SeenGroup, action: "import" | "dismiss" | "restore") =>
+    act.mutate(
+      { id: row.id, action },
+      {
+        onSuccess: (result) => {
+          if (action === "import") {
+            const imported = result as SeenGroupImport;
+            toast?.add({
+              title: `Group ${row.name} imported`,
+              description: importedDescription(imported),
+              type: "success",
+            });
+          } else {
+            toast?.add({
+              title: action === "dismiss" ? `${row.name} dismissed` : `${row.name} listed again`,
+              type: "success",
+            });
+          }
+        },
+        onError: (error) =>
+          toast?.add({
+            title: `Could not ${action} ${row.name}`,
+            description: error instanceof Error ? error.message : undefined,
+            type: "error",
+          }),
+      },
+    );
+
+  const busy = (row: SeenGroup, action: string) =>
+    act.isPending && act.variables?.id === row.id && act.variables.action === action;
+
+  const actions = (row: SeenGroup) => (
+    <>
+      <Button variant="ghost" busy={busy(row, "import")} onClick={() => run(row, "import")}>
+        Import
+      </Button>
+      {row.dismissed ? (
+        <Button variant="ghost" busy={busy(row, "restore")} onClick={() => run(row, "restore")}>
+          Restore
+        </Button>
+      ) : (
+        <Button variant="ghost" busy={busy(row, "dismiss")} onClick={() => run(row, "dismiss")}>
+          Dismiss
+        </Button>
+      )}
+    </>
+  );
+
+  const columns: Column<SeenGroup>[] = [
+    {
+      key: "name",
+      header: "Name",
+      render: (row) => (
+        <>
+          {/* Directory paths (gitlab/acme/ml-research) wrap at any point only
+              when they must, not letter by letter in a narrow column. */}
+          <div className="[overflow-wrap:anywhere]">{row.name}</div>
+          {row.provider && <div className={MUTED}>{row.provider}</div>}
+          {/* On a phone the actions column is dropped and the buttons sit
+              under the name, where there is room for both. */}
+          <div className="-ml-3 mt-1 flex gap-1 sm:hidden">{actions(row)}</div>
+        </>
+      ),
+    },
+    {
+      key: "people",
+      header: "People",
+      numeric: true,
+      render: (row) => row.people.toLocaleString(),
+    },
+    {
+      key: "seen",
+      header: "Last seen",
+      hideBelow: "sm",
+      render: (row) => formatDate(row.last_seen_at),
+    },
+    {
+      key: "actions",
+      header: "",
+      hideBelow: "sm",
+      render: (row) => <div className={ROW_ACTIONS}>{actions(row)}</div>,
+    },
+  ];
+
+  return (
+    <Card
+      title="Seen from your identity provider"
+      description={page ? <ModeLine page={page} /> : null}
+    >
+      {seen.error ? (
+        <Notice tone="danger" title="Could not load the groups your identity provider reported">
+          {seen.error instanceof Error ? seen.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+      <div className={FORM}>
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="min-w-56 flex-1">
+            <Input
+              label="Search"
+              value={paged.search}
+              onChange={(event) => paged.setSearch(event.target.value)}
+              placeholder="group name"
+              hint={page ? `${page.total.toLocaleString()} ${showDismissed ? "dismissed" : "waiting"}` : undefined}
+            />
+          </div>
+          {/* Aligned with the input, not its label. */}
+          <Button className="mt-6" onClick={() => setShowDismissed((value) => !value)}>
+            {showDismissed ? "Show waiting" : "Show dismissed"}
+          </Button>
+        </div>
+        {seen.isPending ? (
+          <Spinner label="Loading the groups your identity provider reported" />
+        ) : rows.length === 0 && !paged.query ? (
+          <EmptyState
+            title={showDismissed ? "Nothing dismissed." : "Nothing waiting to be imported."}
+            detail={
+              showDismissed
+                ? "Names you dismiss are kept here, to import or list again later."
+                : "Group names your identity provider reports appear here after someone signs in with them."
+            }
+          />
+        ) : (
+          <>
+            <Table
+              columns={columns}
+              rows={rows}
+              rowKey={(row) => row.id}
+              empty="No group name matches that."
+              caption="Group names your identity provider reported, and how many people carry each."
+            />
+            <Pagination
+              total={page?.total ?? 0}
+              limit={paged.limit}
+              offset={paged.offset}
+              onOffsetChange={paged.setOffset}
+              noun="names"
+              busy={seen.isFetching}
+            />
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/** The one line that says what this list is under the deployment's mode. */
+function ModeLine({ page }: { page: SeenGroupPage }) {
+  const everyone = page.default_group ? (
+    <>
+      {" "}Everyone joins <strong>{page.default_group}</strong> at their first sign-in, so
+      new people can use public models before anything is imported.
+    </>
+  ) : null;
+  return page.group_import === "auto" ? (
+    <>
+      Groups are imported automatically at sign-in. Names listed here were seen
+      before that was turned on.{everyone}
+    </>
+  ) : (
+    <>
+      Nothing is created until you import it. Importing creates the group and
+      gives it to the people who carry it now, or at their next sign-in where
+      the provider's groups only apply then.{everyone}
+    </>
+  );
+}
+
+function importedDescription(result: SeenGroupImport): string {
+  if (result.applied === "next_login")
+    return "Its members get it at their next sign-in. Grant it models on the Models screen.";
+  const people = result.members_added === 1 ? "1 person" : `${result.members_added} people`;
+  return `${people} added now. Grant it models on the Models screen.`;
+}
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }

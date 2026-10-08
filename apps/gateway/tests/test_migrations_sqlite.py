@@ -45,7 +45,7 @@ def test_every_migration_applies_on_sqlite(tmp_path: Path) -> None:
     result = _alembic("-x", f"url=sqlite+aiosqlite:///{database}", "upgrade", "head")
     assert result.returncode == 0, result.stderr[-2000:]
 
-    # `alembic heads` prints "0055 (head)": the revision a finished chain stamps.
+    # `alembic heads` prints "0056 (head)": the revision a finished chain stamps.
     head = _alembic("heads").stdout.split()[0]
     with closing(sqlite3.connect(database)) as connection:
         stamped = connection.execute("SELECT version_num FROM alembic_version").fetchall()
@@ -55,3 +55,32 @@ def test_every_migration_applies_on_sqlite(tmp_path: Path) -> None:
         }
     assert stamped == [(head,)]
     assert not tables & _DROPPED_BY_0035
+
+
+def test_0056_seen_groups_round_trips_on_sqlite(tmp_path: Path) -> None:
+    """0056's tables and columns arrive, and its downgrade (batch mode for the
+    two `users` columns, which SQLite cannot drop in place) leaves 0055."""
+    database = tmp_path / "seen.db"
+    url = f"url=sqlite+aiosqlite:///{database}"
+    assert _alembic("-x", url, "upgrade", "0056").returncode == 0
+
+    def schema() -> tuple[set[str], set[str]]:
+        with closing(sqlite3.connect(database)) as connection:
+            tables = {
+                name
+                for (name,) in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
+        return tables, columns
+
+    tables, columns = schema()
+    assert {"seen_groups", "seen_group_users"} <= tables
+    assert {"unresolved_group_names", "default_group_granted_at"} <= columns
+
+    result = _alembic("-x", url, "downgrade", "0055")
+    assert result.returncode == 0, result.stderr[-2000:]
+    tables, columns = schema()
+    assert not {"seen_groups", "seen_group_users"} & tables
+    assert not {"unresolved_group_names", "default_group_granted_at"} & columns

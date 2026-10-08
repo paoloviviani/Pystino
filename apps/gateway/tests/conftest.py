@@ -717,6 +717,15 @@ async def seed_identity_provider(
     return row
 
 
+#: The group behaviour from before `group_import`/`default_group` existed:
+#: every claimed name becomes a group, and nobody joins a default group. The
+#: tests that pin provisioning, sync modes and provenance were written against
+#: it and assert exact membership sets, so they opt into it by name rather
+#: than each growing a `users` group they are not about. The new defaults
+#: have their own tests (test_group_import.py).
+LEGACY_GROUPS: dict[str, str] = {"group_import": "auto", "default_group": ""}
+
+
 @pytest_asyncio.fixture
 async def bearer_app(app: FastAPI, signing_key: RSAKey) -> FastAPI:
     """The real app, configured to accept tokens for BEARER_AUDIENCE."""

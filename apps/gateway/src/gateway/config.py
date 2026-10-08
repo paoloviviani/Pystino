@@ -7,15 +7,16 @@ a double underscore, e.g. ``GATEWAY_OIDC__ISSUER``.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import lru_cache
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 if TYPE_CHECKING:
     # Annotation-only: `from __future__ import annotations` means the dataclass
@@ -92,11 +93,57 @@ class OIDCSettings(BaseModel):
     # Some IdPs only return groups on the userinfo endpoint, not in the ID token.
     fetch_userinfo: bool = True
     # If set, only these groups are imported; everything else is ignored. Empty
-    # means "import every group the IdP reports".
-    group_allowlist: list[str] = Field(default_factory=list)
-    # Groups are created on first sight when true. Turn off to make group
-    # membership purely an admin decision.
-    auto_create_groups: bool = True
+    # means "import every group the IdP reports". Comma-separated or a JSON
+    # list: `NoDecode` because pydantic-settings would otherwise insist on
+    # JSON, and refuse even an empty value, which a compose passthrough of an
+    # unset variable produces.
+    group_allowlist: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # What a group name the directory reports, and no group here carries, does
+    # at a login. `manual` records it as *seen* (the console's Groups page
+    # lists it, with Import and Dismiss) and creates nothing; `auto` creates
+    # the group on first sight, which is what this gateway always did. Groups
+    # that already exist resolve in both modes, so an upgrade that lands on
+    # `manual` keeps every membership it was granting; only *new* names stop
+    # becoming groups. Manual is the default because a real directory reports
+    # every group a person is in: one GitLab sign-in created 67 groups.
+    group_import: Literal["manual", "auto"] = "manual"
+    # The older spelling of the same switch, still honoured: a deployment that
+    # set it keeps its behaviour (`true` is `auto`, `false` is `manual`).
+    # Unset (None) leaves `group_import` to decide.
+    auto_create_groups: bool | None = None
+    # The group every person joins at their first sign-in here (and every
+    # existing person at their next one): what makes a brand-new account
+    # usable, with a group to bill, when nothing its directory says has been
+    # imported. It grants no model by itself — models are granted per group
+    # or public. The bundled Authelia's `users` group is this one by default.
+    # Empty turns it off.
+    default_group: str = "users"
+
+    @field_validator("group_allowlist", mode="before")
+    @classmethod
+    def _allowlist_from_text(cls, value: object) -> object:
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("["):
+                return json.loads(text)
+            return _split_csv(text)
+        return value
+
+    @model_validator(mode="after")
+    def _group_import_from_legacy(self) -> OIDCSettings:
+        if self.auto_create_groups is None:
+            return self
+        legacy: Literal["manual", "auto"] = "auto" if self.auto_create_groups else "manual"
+        if "group_import" in self.model_fields_set and self.group_import != legacy:
+            # Two settings saying opposite things is a mistake to surface, not
+            # a precedence rule for the operator to guess.
+            raise ValueError(
+                f"GATEWAY_OIDC__AUTO_CREATE_GROUPS={str(self.auto_create_groups).lower()} "
+                f"contradicts GATEWAY_OIDC__GROUP_IMPORT={self.group_import}: delete "
+                "AUTO_CREATE_GROUPS, the older spelling, and keep GROUP_IMPORT."
+            )
+        self.group_import = legacy
+        return self
 
     # Off by default, and turning it on is always an explicit operator act —
     # never a consequence of upgrading (ADR 0056): a deployment that had no
@@ -139,7 +186,7 @@ class OIDCSettings(BaseModel):
 
     # What kind of directory the environment's provider is (ADR 0088):
     # `authelia` for the bundled one, which OIDC_KIND in .env writes (ADR
-    # 0091: deploy/.env.example, or cerea-deploy's ./configure). It only
+    # 0091: deploy/.env.example, or the deploy kit's ./configure). It only
     # matters when the first provider row is seeded from here — that row then
     # gets the users-file sync adapter and the console's user management.
     kind: str = "generic"
@@ -267,7 +314,7 @@ class SmtpSettings(BaseModel):
     Was ``local_auth.password_reset`` (ADR 0049), nested there because mail
     arrived with the local door's password reset. That door is long gone
     (ADR 0088 D3), but mail outlived it: quota notifications and the
-    console's "send test" both read this, and (through cerea-deploy, a
+    console's "send test" both read this, and (through the deploy kit, a
     different repo) Authelia's own notifier feeds its self-service reset
     from the same values. None of that is "password reset" any more, so it
     moved to the top level and took a name that says what it actually is.
@@ -291,7 +338,7 @@ class ChatSettings(BaseModel):
     """The gateway's own call to the chat, for erasure only (ADR 0093 §9.3).
 
     ``erasure_token`` is a service credential minted once by
-    ``cerea-deploy``'s ``./configure``, used for nothing else, and never
+    the deploy kit's ``./configure`` (Cerea's ``kit/``), used for nothing else, and never
     reaches the edge (the Caddyfile answers 404 for the path first; the chat
     refuses it again itself if a proxy header is present regardless). Empty
     ``erasure_url`` means this deployment has no chat the gateway can reach —
@@ -332,9 +379,9 @@ class _RemovedPasswordResetSettings(BaseModel):
             raise ValueError(
                 "GATEWAY_LOCAL_AUTH__PASSWORD_RESET__* was removed (ADR 0093): mail "
                 "settings are GATEWAY_SMTP__* now, and feed quota notifications, the "
-                "console's \"send test\" and (through cerea-deploy) Authelia's own "
+                "console's \"send test\" and (through the deploy kit) Authelia's own "
                 "reset flow. Delete the variable and set GATEWAY_SMTP__HOST etc. "
-                "instead (cerea-deploy: ./configure --smtp-host ...)."
+                "instead (the deploy kit, Cerea's kit/: ./configure --smtp-host ...)."
             )
         return self
 
@@ -370,7 +417,7 @@ class IdPSettings(BaseModel):
     """The house identity provider — removed (ADR 0088; it superseded ADR 0068).
 
     The bundled Authelia (COMPOSE_PROFILES=authelia in deploy/.env.example, or
-    cerea-deploy's `./configure --idp authelia`) or any OIDC provider replaces
+    the deploy kit's `./configure --idp authelia`) or any OIDC provider replaces
     it. A tripwire, like LocalAuthSettings: GATEWAY_IDP__ENABLED=true refuses
     to start with a message saying what to do instead.
     """

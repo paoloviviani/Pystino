@@ -163,6 +163,15 @@ services:
       # bundled Authelia's users file carries no groups claim worth polling,
       # so it is forced to never regardless of what is set here.
       GATEWAY_OIDC__GROUP_SYNC: ${OIDC_GROUP_SYNC:-every_login}
+      # A group name from the IdP that no group carries yet: manual lists it in
+      # the console to import or dismiss, auto creates it. Existing groups are
+      # granted either way; no effect with the bundled Authelia.
+      GATEWAY_OIDC__GROUP_IMPORT: ${OIDC_GROUP_IMPORT:-manual}
+      # Advanced: only these IdP group names are considered (comma-separated).
+      GATEWAY_OIDC__GROUP_ALLOWLIST: ${OIDC_GROUP_ALLOWLIST:-[]}
+      # The group everyone joins once, so a new account can bill; `-`, not
+      # `:-`, so an explicitly empty value turns it off.
+      GATEWAY_OIDC__DEFAULT_GROUP: ${OIDC_DEFAULT_GROUP-users}
       # Overrides the provider's own end_session_endpoint; empty uses discovery,
       # or the bundled Authelia's own default when it publishes none.
       GATEWAY_OIDC__LOGOUT_URL: ${OIDC_LOGOUT_URL:-}

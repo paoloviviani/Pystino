@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from conftest import Seeded
+from conftest import LEGACY_GROUPS, Seeded
 from gateway.config import OIDCSettings
 from gateway.identity_policy import AdminRule, PolicyError, admin_rule, capabilities, validate
 from gateway.models import Membership, User
@@ -75,7 +75,7 @@ async def _login(
         email=f"{subject}@example.org",
         display_name=None,
         group_names=groups,
-        settings=settings or OIDCSettings(),
+        settings=settings or OIDCSettings(**LEGACY_GROUPS),
         claims=claims,
         **policy,  # type: ignore[arg-type]
     )
@@ -88,7 +88,7 @@ def _rule_settings() -> OIDCSettings:
     through `OIDCSettings` rather than a row's `AdminRule` — the row-based
     shape this module's `TestAdminRule` still tests is `directory/engine.py`'s
     own batch sync, a different call site untouched by this stage."""
-    return OIDCSettings(admin_claim="groups", admin_claim_values="ops")
+    return OIDCSettings(**LEGACY_GROUPS, admin_claim="groups", admin_claim_values="ops")
 
 
 class TestAdminFromClaim:

@@ -29,7 +29,7 @@ from conftest import (
 )
 from fastapi import FastAPI
 from gateway.config import OIDCSettings, Settings
-from gateway.models import Membership, OIDCPolicyConfig, UsageRecord, User
+from gateway.models import Group, Membership, OIDCPolicyConfig, UsageRecord, User
 from gateway.types import utcnow
 from helpers import completion_body
 from joserfc.jwk import RSAKey
@@ -265,6 +265,9 @@ class TestGroupMappingsAreGlobalOnly:
     ) -> None:
         async with session_factory() as db:
             db.add(OIDCPolicyConfig(group_mappings=[["idp-eng", "global-mapped"]]))
+            # Existing, because group_import=manual (the default) creates no
+            # group from a claim: the mapping is what is under test here.
+            db.add(Group(name="global-mapped"))
             await db.commit()
         await bearer_app.state.oidc_policy.refresh_once()
 

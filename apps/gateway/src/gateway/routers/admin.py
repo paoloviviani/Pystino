@@ -66,6 +66,7 @@ from gateway.errors import (
     ServiceUnavailableError,
     UpstreamUnavailableError,
 )
+from gateway.group_import import import_seen_group
 from gateway.identity_events import record_event
 from gateway.identity_registry import (
     active_bundled_provider,
@@ -117,6 +118,8 @@ from gateway.models import (
     RedactionRule,
     RedactionScope,
     RefreshCredential,
+    SeenGroup,
+    SeenGroupUser,
     UsageRecord,
     UsageSource,
     UsageStatus,
@@ -227,6 +230,9 @@ from gateway.schemas import (
     RedactionServiceHealth,
     RedactionStatusResponse,
     SearchBackendDeleteResponse,
+    SeenGroupImportResponse,
+    SeenGroupPage,
+    SeenGroupResponse,
     SignInCreateRequest,
     UsageReport,
     UserAdminResponse,
@@ -1781,6 +1787,160 @@ async def create_group(
     )
 
 
+@router.get("/groups/seen", response_model=SeenGroupPage)
+async def list_seen_groups(
+    admin: AdminUserDep,
+    session: SessionDep,
+    page: PageDep,
+    settings: SettingsDep,
+    q: str = "",
+    dismissed: bool = False,
+) -> SeenGroupPage:
+    """Group names a directory reported that no group here carries.
+
+    Most-carried first, since that is the order an operator imports in. A name
+    that has meanwhile become a group (created by hand, or by `auto` mode) is
+    left out rather than shown with an Import that could only conflict.
+    ``dismissed=true`` lists the dismissed ones instead, to restore or import.
+    """
+    people = (
+        select(func.count(SeenGroupUser.user_id))
+        .where(SeenGroupUser.seen_group_id == SeenGroup.id)
+        .correlate(SeenGroup)
+        .scalar_subquery()
+    )
+    stmt = (
+        select(SeenGroup, people.label("people"))
+        .where(
+            SeenGroup.dismissed_at.is_not(None) if dismissed else SeenGroup.dismissed_at.is_(None),
+            ~select(Group.id).where(Group.name == SeenGroup.name).exists(),
+        )
+        .order_by(people.desc(), SeenGroup.name)
+    )
+    if needle := q.strip():
+        stmt = stmt.where(_matches(needle, SeenGroup.name))
+    total = await count_of(session, stmt)
+    rows = (await session.execute(page.apply(stmt))).all()
+    issuers = {seen.issuer for seen, _ in rows}
+    providers: dict[str, str] = {}
+    if issuers:
+        for name, issuer in (
+            await session.execute(select(IdentityProvider.name, IdentityProvider.issuer))
+        ).all():
+            providers.setdefault(issuer.rstrip("/"), name)
+    listing = page.page(
+        [
+            SeenGroupResponse(
+                id=seen.id,
+                name=seen.name,
+                issuer=seen.issuer,
+                provider=providers.get(seen.issuer.rstrip("/")),
+                people=int(count or 0),
+                first_seen_at=seen.first_seen_at,
+                last_seen_at=seen.last_seen_at,
+                dismissed=seen.dismissed_at is not None,
+            )
+            for seen, count in rows
+        ],
+        total,
+    )
+    return SeenGroupPage(
+        **listing.model_dump(),
+        group_import=settings.oidc.group_import,
+        default_group=settings.oidc.default_group,
+    )
+
+
+async def _load_seen_group(seen_id: uuid.UUID, session: AsyncSession) -> SeenGroup:
+    seen = (
+        await session.execute(select(SeenGroup).where(SeenGroup.id == seen_id))
+    ).scalar_one_or_none()
+    if seen is None:
+        raise NotFoundError(f"No seen group with id {seen_id}.")
+    return seen
+
+
+@router.post("/groups/seen/{seen_id}/import", response_model=SeenGroupImportResponse)
+async def import_seen(
+    seen_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
+) -> SeenGroupImportResponse:
+    """Create the group a directory's name asks for (source: the directory).
+
+    People whose last sign-in carried the name are granted it now when their
+    provider's group answer applies at every login, otherwise at their next
+    sign-in; ``applied`` says which, and the console repeats it.
+    """
+    seen = await _load_seen_group(seen_id, session)
+    name, issuer = seen.name, seen.issuer
+    if (
+        await session.execute(select(Group.id).where(Group.name == name))
+    ).scalar_one_or_none() is not None:
+        raise ConflictError(f"A group named {name!r} already exists.", code="group_exists")
+    result = await import_seen_group(session, seen)
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.GROUP_IMPORT,
+        target_label=name,
+        issuer=issuer,
+        detail={"members": result.members_added},
+    )
+    await session.commit()
+    group = result.group
+    return SeenGroupImportResponse(
+        group=GroupAdminResponse(
+            id=group.id,
+            name=group.name,
+            description=group.description,
+            source=group.source.value,
+            is_active=group.is_active,
+            member_count=result.members_added,
+            models=[],
+            search_backend=None,
+        ),
+        members_added=result.members_added,
+        applied="now" if result.applied == "now" else "next_login",
+    )
+
+
+@router.post("/groups/seen/{seen_id}/dismiss", status_code=status.HTTP_204_NO_CONTENT)
+async def dismiss_seen(seen_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
+    """Stop listing a name. Sign-ins keep counting it; nothing is created."""
+    seen = await _load_seen_group(seen_id, session)
+    if seen.dismissed_at is None:
+        seen.dismissed_at = utcnow()
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.GROUP_DISMISS,
+            target_label=seen.name,
+            issuer=seen.issuer,
+        )
+    await session.commit()
+
+
+@router.post("/groups/seen/{seen_id}/restore", status_code=status.HTTP_204_NO_CONTENT)
+async def restore_seen(seen_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
+    """List a dismissed name again: a dismissal is a decision, not a deletion."""
+    seen = await _load_seen_group(seen_id, session)
+    if seen.dismissed_at is not None:
+        seen.dismissed_at = None
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.GROUP_RESTORE,
+            target_label=seen.name,
+            issuer=seen.issuer,
+        )
+    await session.commit()
+
+
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(group_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
     """Delete a group.
@@ -2539,6 +2699,7 @@ async def create_user(
     admin: AdminUserDep,
     session: SessionDep,
     secrets: SecretsDep,
+    settings: SettingsDep,
 ) -> BundledUserCreatedResponse:
     """Add a person to the bundled directory (ADR 0093 §8.1/§8.2).
 
@@ -2593,7 +2754,7 @@ async def create_user(
         # something (ADR 0093 to-do item 1) — the same `users` group a
         # bundled sign-in's own token used to carry before the redesign made
         # groups console-authoritative.
-        await ensure_bundled_default_group(session, user)
+        await ensure_bundled_default_group(session, user, settings.oidc.default_group)
 
         session.add(
             DirectoryEntry(
@@ -2658,6 +2819,7 @@ async def create_sign_in(
     admin: AdminUserDep,
     session: SessionDep,
     secrets: SecretsDep,
+    settings: SettingsDep,
 ) -> BundledUserCreatedResponse:
     """A bundled login for an existing gateway user who has none (§8.1):
     the after-a-switch and after-break-glass case, where the person already
@@ -2718,7 +2880,7 @@ async def create_sign_in(
         # the bundled Authelia — or may be a break-glass pending user with
         # none at all; either way, this is one of the to-do's named call
         # sites, so the same gap-filler runs here too.
-        await ensure_bundled_default_group(session, user)
+        await ensure_bundled_default_group(session, user, settings.oidc.default_group)
         await record_event(
             session,
             actor_type=IdentityEventActor.USER,
@@ -3386,7 +3548,7 @@ async def delete_user(
         # A URL with no token is exactly as unusable as no URL at all: every
         # call would be refused with 401, forever, by design — so this is
         # the same refusal, not a distinct one, however the deployment ended
-        # up in the state. cerea-deploy sets the URL unconditionally on any
+        # up in the state. The deploy kit sets the URL unconditionally on any
         # preset that runs a local chat; the token is what an unconfigured
         # deployment (an .env from before `./configure` minted one) lacks.
         raise BadRequestError("this deployment's chat is not reachable from the gateway")

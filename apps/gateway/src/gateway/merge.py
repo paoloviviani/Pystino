@@ -2,7 +2,7 @@
 irreversibly, in one transaction.
 
 **The registry, `MERGE_RULES`, is the point.** It names every foreign key to
-``users.id`` and every user-scoped ``scope_id`` -- the same 19 plus 2 columns
+``users.id`` and every user-scoped ``scope_id`` -- the same 20 plus 2 columns
 a person's data can live under -- paired with how a merge treats that
 column. :func:`assert_merge_rules_are_complete` walks `Base.metadata` itself
 and fails if a column exists that the registry does not name, so a table
@@ -122,6 +122,11 @@ MERGE_RULES: tuple[MergeRule, ...] = (
     MergeRule("idp_authorization_codes", "user_id", MergeRuleKind.DELETE),
     MergeRule("password_reset_tokens", "user_id", MergeRuleKind.DELETE),
     MergeRule("local_credentials", "user_id", MergeRuleKind.DELETE),
+    # Sightings of unimported directory group names: a count, and who an
+    # import grants to at once. The source's are dropped rather than moved; the
+    # merged person's next sign-in records what their token says, and an
+    # import in between only reaches them at that sign-in.
+    MergeRule("seen_group_users", "user_id", MergeRuleKind.DELETE),
     MergeRule("quota_notification_settings", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
     MergeRule("quota_notification_state", "user_id", MergeRuleKind.KEEP_TARGET_DELETE_SOURCE),
 )

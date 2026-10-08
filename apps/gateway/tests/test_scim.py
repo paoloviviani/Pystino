@@ -110,6 +110,10 @@ async def test_pushed_group_membership_becomes_directory_groups(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     _, headers = await _setup(app, client, seeded, session_factory)
+    # A pushed group name is a directory's name like a claimed one: under
+    # group_import=manual (the default) it is listed for import, not created.
+    # This test is about the push mechanics, so it runs in auto mode.
+    app.state.settings.oidc.group_import = "auto"  # type: ignore[attr-defined]
     uid = (
         await client.post(
             "/scim/v2/entra/Users",

@@ -492,6 +492,16 @@ files and the successful v0.3.1 and v0.3.2 runs.
   manual ones. `identity_providers.group_sync` says how often the directory
   answers. `is_admin`, the default billing group and the sole-group rule read
   effective memberships, not the token.
+- **A claimed group name nothing carries is recorded, not created**
+  (`GATEWAY_OIDC__GROUP_IMPORT=manual`, the default; `group_import.py`):
+  `seen_groups` per issuer, `seen_group_users` for who carries it, and the
+  console imports or dismisses. `users.unresolved_group_names` is what keeps
+  the bearer path write-free: `_claims_diverge` subtracts it, or one
+  unimported name would re-provision on every `/v1` request (12 selects
+  instead of 5; `test_group_import.py` pins it). The default group
+  (`GATEWAY_OIDC__DEFAULT_GROUP`, `users`) is granted once per person,
+  stamped in `users.default_group_granted_at`, so an administrator's removal
+  sticks; it never counts as a billing "choice" in the sole-group rule.
 - **A deployment may keep no ledger.** `GATEWAY_ACCOUNTING__ENABLED=false`
   writes no `usage_records`, never a row of zeros, and the report announces
   that metering is off. Quotas without a ledger are refused at startup, since
@@ -537,8 +547,5 @@ files and the successful v0.3.1 and v0.3.2 runs.
 - **Reranking, image editing and variations, and per-size image pricing** are
   not implemented (`image_size` is recorded on every image row; nothing prices
   by it).
-- **Comments and runtime messages in the gateway source still name
-  `cerea-deploy`** (`config.py`, `deploy/cli.py`, `deploy/admin.py`,
-  `routers/admin.py`): the deploy kit is now Cerea's `kit/`. One of them is an
-  error an operator reads (the SMTP settings message in `config.py`). Fix them
-  with the next change to those files.
+- **Comments in `deploy/cli.py` still name `cerea-deploy`**: the deploy kit
+  is now Cerea's `kit/`. Fix them with the next change to that file.

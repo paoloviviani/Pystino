@@ -32,6 +32,7 @@ the **Exact figures** toggle.
 | choose the search backends and see how many searches each group spent | **Web search** | [Surfaces](gateway.md#surfaces) |
 | add, disable, reset or merge a person | **Users** | [Bundled accounts](bundled-accounts.md), [Identity](identity.md) |
 | decide who belongs together and what a group may use | **Groups** | [Groups](identity.md#groups) |
+| import or dismiss the group names your identity provider reports | **Groups**, *Seen from your identity provider* | [Importing the provider's groups](identity.md#importing-the-providers-groups) |
 | configure mail, read the identity provider, or decide who may become a user | **Settings** | [Identity](identity.md) |
 | see what happened to a person's account, and who did it | **Users → Edit → Activity** | [The audit trail](identity.md#the-audit-trail) |
 
