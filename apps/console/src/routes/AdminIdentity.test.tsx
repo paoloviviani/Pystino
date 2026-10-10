@@ -102,15 +102,19 @@ describe("AdminIdentity", () => {
     renderScreen(<AdminIdentity />);
 
     await screen.findByRole("checkbox", { name: /create an account on first sign-in/i });
-    // On: no rule to choose, because it could not apply.
+    // On: no rule to choose, because it could not apply — and the hint says
+    // what On does, never "the rule below" that is not there.
     expect(
       screen.queryByLabelText(/first-time sign-in while provisioning is off/i),
     ).not.toBeInTheDocument();
+    expect(screen.getByText(/gets an active account at once/i)).toBeInTheDocument();
+    expect(screen.queryByText(/rule below/i)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("checkbox", { name: /create an account on first sign-in/i }));
     expect(
       await screen.findByLabelText(/first-time sign-in while provisioning is off/i),
     ).toBeInTheDocument();
+    expect(screen.getByText(/follows the rule below/i)).toBeInTheDocument();
   });
 
   it("saves each setting as its own decision", async () => {

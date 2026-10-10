@@ -84,7 +84,9 @@ export function ProvisioningPolicySection() {
         <span>
           Create an account on first sign-in
           <span className="mt-0.5 block text-xs text-ink-faint">
-            Off, a first-time sign-in is not a user yet: it follows the rule below.
+            {autoProvision
+              ? "On: anyone who signs in through the identity provider gets an active account at once. Turn it off to refuse first-time sign-ins or hold them for your approval."
+              : "Off: a first-time sign-in is not a user yet. It follows the rule below."}
           </span>
         </span>
       </label>
