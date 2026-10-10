@@ -114,5 +114,5 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-        with: {enable-cache: true}
+        with: {enable-cache: true, python-version: "3.12"}
       - run: uv run --package gateway pystino release-pin --check
