@@ -31,8 +31,8 @@ name: ${COMPOSE_PROJECT_NAME:-pystino}
 # The pin. A release of this repository names the version in release.env; a
 # unit test fails if this default and release.env's PYSTINO_VERSION diverge.
 # .env overrides it only for a local build or a private registry.
-x-gateway-image: &gateway-image ${GATEWAY_IMAGE:-${PYSTINO_REGISTRY:-ghcr.io/paoloviviani}/pystino-gateway:${PYSTINO_VERSION:-0.4.0}}
-x-redaction-image: &redaction-image ${REDACTION_IMAGE:-${PYSTINO_REGISTRY:-ghcr.io/paoloviviani}/pystino-redaction:${PYSTINO_VERSION:-0.4.0}-pattern}
+x-gateway-image: &gateway-image ${GATEWAY_IMAGE:-${PYSTINO_REGISTRY:-ghcr.io/paoloviviani}/pystino-gateway:${PYSTINO_VERSION:-0.4.1}}
+x-redaction-image: &redaction-image ${REDACTION_IMAGE:-${PYSTINO_REGISTRY:-ghcr.io/paoloviviani}/pystino-redaction:${PYSTINO_VERSION:-0.4.1}-pattern}
 
 x-database-url: &database-url postgresql+asyncpg://${POSTGRES_USER:-gateway}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-gateway}
 
