@@ -153,7 +153,12 @@ an administrator has looked at what the adapter would do and confirmed it.
    the console's redirect URI and the scopes `openid profile email`. `openid`
    is the one that carries group memberships. Copy the secret: it is shown
    once. Add a second application for the chat if you deploy it, also
-   confidential, with the chat's redirect URI and the same scopes.
+   confidential, with the chat's redirect URI and the same scopes. For agent
+   machines (galopin), add a third: **not** confidential (galopin has no
+   secret), the scopes `openid profile email`, and the device authorization
+   grant enabled; its redirect URI can be `http://127.0.0.1/callback`, which
+   only the browser flow on a laptop uses. Its **Application ID** is the
+   machine client id.
 2. In `.env`, leave `authelia` out of `COMPOSE_PROFILES` and set:
 
    ```bash
@@ -167,7 +172,15 @@ an administrator has looked at what the adapter would do and confirmed it.
    # with the chat:
    OIDC_CHAT_CLIENT_ID='<chat application id>'
    OIDC_CHAT_CLIENT_SECRET='<chat secret>'
+   # with agent machines:
+   OIDC_MACHINE_CLIENT_ID='<machine application id>'
    ```
+
+   `OIDC_MACHINE_CLIENT_ID` replaces the default `opencode-enrollment`, an id
+   GitLab cannot have (it mints its own): it goes into `ACCEPTED_CLIENTS` and
+   into the pairing dialog's `galopin enroll --client-id`. A machine enrolled
+   with the default id gets *Client authentication failed due to unknown
+   client* from GitLab's sign-in page.
 
    Group names arrive as full paths (`my-group/sub-group`); name group-based
    model access and admin claims accordingly. Run `pystino idp check
@@ -203,6 +216,25 @@ What to know about GitLab:
   console sign-in produces, so console and chat land on the same account. The
   chat's application needs the `openid` scope for that (`openid profile
   email`, as above).
+- **Agent machines' tokens are checked at `/oauth/token/info`.** galopin's
+  application is public, so it has no secret, and introspection under it is
+  impossible; under any other application GitLab answers `active: false`.
+  For a token no introspection vouched for, the gateway asks GitLab's
+  `GET /oauth/token/info` with the token itself as the bearer (only at a
+  provider whose introspection endpoint is Doorkeeper's `/oauth/introspect`).
+  GitLab answers 401 for an unknown, revoked or expired token, and otherwise
+  names the application the token belongs to and the seconds it has left.
+  The token is accepted only when that application is in `ACCEPTED_CLIENTS`
+  and is neither the console's nor the chat's (those two are confidential:
+  an inactive introspection for them stays final, so a missing chat secret
+  still fails loudly), and when it expires; the person is then read from
+  userinfo, the same `(issuer, GitLab user id)` as everywhere else. Answers
+  are cached exactly like introspection's.
+- **GitLab's device endpoint is not in its discovery.** Its
+  `/.well-known/openid-configuration` lists the `device_code` grant but no
+  `device_authorization_endpoint`; the endpoint is
+  `<issuer>/oauth/authorize_device`. galopin derives it (from 0.10.13 on); an
+  older galopin stops with *no device endpoint advertised*.
 - **Revocation takes up to a minute.** Answers are cached in the gateway,
   keyed by a hash of the token (never the token), for 60 seconds or until the
   token's own `exp`, whichever is sooner; a refusal is cached for 10 seconds.

@@ -23,6 +23,19 @@ Doorkeeper's introspection answer carries no ``sub`` (``active``, ``scope``,
 subject comes from userinfo fetched with the token itself. GitLab's userinfo
 ``sub`` is the same user id its ID tokens carry.
 
+A **public** client has no secret to introspect with, so no answer of the
+kind above can ever vouch for its tokens. galopin's machine client is one:
+GitLab's device flow issues to a public application. For that case only, a
+Doorkeeper provider (its ``introspection_endpoint`` is ``…/oauth/introspect``)
+is asked at ``GET …/oauth/token/info``, authorised by the token itself:
+Doorkeeper answers 401 for a token that is unknown, revoked or expired, and
+otherwise names the application the token belongs to (``application.uid``)
+and how long it still lives (``expires_in``). It is believed only when that
+application is in the deployment's ``ACCEPTED_CLIENTS`` and is **not** one
+this gateway holds credentials for (those are introspected, and an inactive
+answer for them is final), and when the token expires. The subject then comes
+from userinfo, as above, so the identity is the same pair.
+
 Answers are cached by a SHA-256 of the token, never the token, for at most
 :data:`POSITIVE_TTL_SECONDS` and never past the token's own ``exp``; a
 refusal for :data:`NEGATIVE_TTL_SECONDS`. That bound is also the revocation
@@ -74,6 +87,10 @@ class Candidate:
     record: ProviderRecord
     client: OIDCClient
     credentials: tuple[IntrospectionCredentials, ...]
+    #: Accepted clients that are public here (no secret, so never
+    #: introspectable): the only ones the token-info fallback may bind a
+    #: token to. See :func:`public_clients_for`.
+    public_clients: frozenset[str] = frozenset()
 
 
 def credentials_for(
@@ -99,6 +116,19 @@ def credentials_for(
     ):
         out.append(IntrospectionCredentials(record.client_id, record.client_secret))
     return tuple(out)
+
+
+def public_clients_for(record: ProviderRecord, settings: Settings) -> frozenset[str]:
+    """The accepted clients the token-info fallback may vouch for at this
+    provider: ``ACCEPTED_CLIENTS`` minus the console's and the chat's own
+    clients. Those two are confidential and introspected with their own
+    secrets — an inactive answer for them is final, and a chat whose secret
+    is missing here must keep failing loudly rather than slip through
+    another door. What is left is galopin's machine client. Empty without an
+    allowlist: the fallback binds a token to a client only through it."""
+    oidc = settings.oidc
+    confidential = {record.client_id, oidc.client_id, oidc.chat_client_id}
+    return frozenset(c for c in oidc.accepted_client_list() if c and c not in confidential)
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,7 +271,8 @@ async def introspect(
         # which will not vouch for a token they did not issue.
 
     usable = [c for c in candidates if c.credentials]
-    if not usable:
+    fallback = [c for c in candidates if c.public_clients]
+    if not usable and not fallback:
         raise OpaqueTokenRejected(
             "not a JWT, and no enabled provider has client credentials to introspect it with"
         )
@@ -282,6 +313,36 @@ async def introspect(
                 raise
             cache.put_positive(token, candidate.record.id, claims, float(claims["exp"]))
             return candidate.record, candidate.client, dict(claims)
+
+    # Nobody we can authenticate as vouched: the token may belong to a public
+    # client (galopin's), which only the token itself can ask about.
+    for candidate in fallback:
+        try:
+            metadata = await candidate.client.metadata()
+        except OIDCError as exc:
+            reasons.append(f"{candidate.record.name}: discovery failed ({exc})")
+            continue
+        endpoint = _token_info_endpoint(metadata.introspection_endpoint)
+        if endpoint is None:
+            continue
+        status, info = await _ask_token_info(candidate.client, endpoint, token)
+        if status is None:
+            reasons.append(f"{candidate.record.name}: token info failed")
+            continue
+        answered = True
+        if status != 200 or info is None:
+            reasons.append(f"{candidate.record.name}: token info answered HTTP {status}")
+            continue
+        try:
+            claims = await _claims_from_token_info(candidate, metadata.issuer, info, token, cache)
+        except OpaqueTokenRejected as exc:
+            # Keep what introspection said too: "inactive for client …" is
+            # the line an operator debugging a chat sign-in looks for.
+            rejected = "; ".join([*reasons, str(exc)])
+            cache.put_negative(token, rejected)
+            raise OpaqueTokenRejected(rejected) from exc
+        cache.put_positive(token, candidate.record.id, claims, float(claims["exp"]))
+        return candidate.record, candidate.client, dict(claims)
 
     reason = "not a JWT, and no introspecting provider vouched for it: " + "; ".join(reasons)
     if answered:
@@ -345,4 +406,97 @@ async def _claims_from(
     )
     if isinstance(answer.get("scope"), str):
         claims["scope"] = answer["scope"]
+    return claims
+
+
+#: The path Doorkeeper serves introspection at, and the sibling path its token
+#: info lives at. Only a provider whose discovery names the first is asked at
+#: the second: anything else may not have a token info endpoint at all, or
+#: one with other semantics.
+_DOORKEEPER_INTROSPECT = "/oauth/introspect"
+_DOORKEEPER_TOKEN_INFO = "/oauth/token/info"  # noqa: S105 -- a URL path, not a credential
+
+
+def _token_info_endpoint(introspection_endpoint: str | None) -> str | None:
+    if not introspection_endpoint:
+        return None
+    base, sep, _query = introspection_endpoint.partition("?")
+    if sep or not base.rstrip("/").endswith(_DOORKEEPER_INTROSPECT):
+        return None
+    return base.rstrip("/")[: -len(_DOORKEEPER_INTROSPECT)] + _DOORKEEPER_TOKEN_INFO
+
+
+async def _ask_token_info(
+    client: OIDCClient, endpoint: str, token: str
+) -> tuple[int | None, dict[str, Any] | None]:
+    """``GET`` Doorkeeper's token info with the token as its own bearer.
+    ``(None, None)`` when the provider could not be reached; never logs a
+    body or the token."""
+    try:
+        response = await client._http.get(
+            endpoint,
+            headers={
+                "authorization": f"Bearer {token}",
+                "accept": "application/json",
+                **client._backchannel_headers(),
+            },
+        )
+    except httpx.HTTPError as exc:
+        logger.warning("token info at %s failed: %s", endpoint, type(exc).__name__)
+        return None, None
+    if response.status_code != 200:
+        return response.status_code, None
+    try:
+        payload = response.json()
+    except ValueError:
+        logger.warning("token info at %s returned a non-JSON body", endpoint)
+        return response.status_code, None
+    return response.status_code, payload if isinstance(payload, dict) else None
+
+
+async def _claims_from_token_info(
+    candidate: Candidate,
+    issuer: str,
+    info: dict[str, Any],
+    token: str,
+    cache: IntrospectionCache,
+) -> dict[str, Any]:
+    name = candidate.record.name
+    application = info.get("application")
+    client_id = application.get("uid") if isinstance(application, dict) else None
+    if not isinstance(client_id, str) or not client_id:
+        raise OpaqueTokenRejected(f"{name}: token info names no application")
+    if client_id not in candidate.public_clients:
+        # Either not accepted here at all, or a client we introspect with its
+        # own credentials — whose inactive answer this must not overrule.
+        raise OpaqueTokenRejected(
+            f"{name}: token info names client {client_id!r}, not a public client this "
+            "deployment accepts"
+        )
+    # GitLab adds `expires_in_seconds`; Doorkeeper's own field is
+    # `expires_in`. Both are seconds left, null for a token that never
+    # expires — which is refused: the cache and revocation latency are both
+    # bounded by the token's lifetime.
+    left = info.get("expires_in_seconds", info.get("expires_in"))
+    if isinstance(left, bool) or not isinstance(left, int | float):
+        raise OpaqueTokenRejected(f"{name}: token info carries no expiry")
+    if left <= 0:
+        raise OpaqueTokenRejected(f"{name}: token expired")
+    exp = int(cache.now() + left)
+
+    userinfo = await candidate.client.fetch_userinfo(token)
+    subject = userinfo.get("sub")
+    if subject is None or str(subject) == "":
+        raise OpaqueTokenRejected(f"{name}: userinfo names no sub")
+    owner = info.get("resource_owner_id")
+    if owner is not None and str(owner) != str(subject):
+        raise OpaqueTokenRejected(f"{name}: token info and userinfo disagree on the owner")
+
+    claims: dict[str, Any] = dict(userinfo)
+    claims.update(
+        {"iss": issuer, "sub": str(subject), "azp": client_id, "client_id": client_id, "exp": exp}
+    )
+    scopes = info.get("scopes", info.get("scope"))
+    if isinstance(scopes, list) and all(isinstance(x, str) for x in scopes):
+        claims["scope"] = " ".join(scopes)
     return claims
