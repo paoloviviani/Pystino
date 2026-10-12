@@ -120,6 +120,10 @@ class OIDCMetadata:
     # Present when the provider supports the device flow; recorded now because
     # Phase 4 will need it and discovery is already being parsed.
     device_authorization_endpoint: str | None = None
+    # What grants the provider says it honours. Absent means "not said" — the
+    # device authorization endpoint's presence is the requirement; this list,
+    # when published, is the second witness `idp check` reports against.
+    grant_types_supported: tuple[str, ...] | None = None
     # RP-initiated logout. Optional in the spec, so a provider without it means
     # the gateway can only drop its own session — see `logout`.
     end_session_endpoint: str | None = None
@@ -291,6 +295,12 @@ class OIDCClient:
                 jwks_uri=self._backchannel_url(document["jwks_uri"]) or "",
                 userinfo_endpoint=self._backchannel_url(document.get("userinfo_endpoint")),
                 device_authorization_endpoint=document.get("device_authorization_endpoint"),
+                grant_types_supported=(
+                    tuple(document["grant_types_supported"])
+                    if isinstance(document.get("grant_types_supported"), list)
+                    and all(isinstance(g, str) for g in document["grant_types_supported"])
+                    else None
+                ),
                 end_session_endpoint=document.get("end_session_endpoint"),
                 introspection_endpoint=self._backchannel_url(
                     document.get("introspection_endpoint")

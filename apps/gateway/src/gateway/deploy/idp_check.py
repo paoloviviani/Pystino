@@ -80,6 +80,27 @@ async def check_discovery(client: OIDCClient, settings: OIDCSettings, report: Ch
         "  device_authorization_endpoint: "
         f"{metadata.device_authorization_endpoint or '(none published)'}"
     )
+    # ADR 0095: fail loudly. Without the device flow galopin cannot enroll —
+    # a machine has no browser — and the deployment only finds out at
+    # enrollment time otherwise. Infomaniak (2026-10-10) is the real case:
+    # no device endpoint, and grants limited to password/refresh/code/
+    # token-exchange.
+    if not metadata.device_authorization_endpoint:
+        report.fail(
+            "  device flow: MISSING — no device_authorization_endpoint in discovery; "
+            "galopin cannot enroll, so agent machines will not work with this issuer"
+        )
+    elif (
+        metadata.grant_types_supported is not None
+        and "urn:ietf:params:oauth:grant-type:device_code" not in metadata.grant_types_supported
+    ):
+        report.fail(
+            "  device flow: MISSING — grant_types_supported omits "
+            "urn:ietf:params:oauth:grant-type:device_code; galopin cannot enroll, "
+            "so agent machines will not work with this issuer"
+        )
+    else:
+        report.say("  device flow: available (galopin can enroll)")
     report.say(
         "  end_session_endpoint: "
         f"{metadata.end_session_endpoint or '(none published — see OIDC_LOGOUT_URL)'}"
@@ -171,6 +192,16 @@ async def check_token(
     email = claims.get("email")
     verified = claims.get("email_verified")
     report.say(f"  email: {email!r}, email_verified: {verified!r} ({type(verified).__name__})")
+    report.say(
+        f"  join mode: {settings.join_mode!r} (as GATEWAY_OIDC__JOIN_MODE; the console's "
+        "policy row may override it within ten seconds of a save)"
+    )
+    if settings.join_mode == "invite" and "email_verified" not in claims:
+        report.say(
+            "  WARNING: invite mode matches invitations by *verified* email, and this "
+            "provider's tokens carry no email_verified — pre-registration cannot match "
+            "this provider's users by email; use SCIM or approval"
+        )
     groups_value = resolve_claim(claims, settings.groups_claim)
     report.say(f"  groups claim {settings.groups_claim!r}: {groups_value!r}")
     aud = claims.get("aud")
