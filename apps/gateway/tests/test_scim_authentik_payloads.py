@@ -119,8 +119,8 @@ async def test_the_captured_create_dialect_provisions_before_login(
     assert body["meta"]["resourceType"] == "User"
     gateway_id = body["id"]
 
-    from sqlalchemy import select
     from gateway.models import DirectoryEntry, User
+    from sqlalchemy import select
 
     async with session_factory() as session:
         entry = (
@@ -162,8 +162,8 @@ async def test_the_captured_update_dialect_puts_the_adopted_id(
     # person); the account's profile fields follow the login claims, with
     # `admin_edited_fields` governing — a pushed rename lands there, not on
     # the account.
-    from sqlalchemy import select
     from gateway.models import DirectoryEntry
+    from sqlalchemy import select
 
     async with session_factory() as session:
         entry = (
