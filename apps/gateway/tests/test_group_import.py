@@ -25,6 +25,7 @@ from gateway.models import (
     IdentityProvider,
     Membership,
     MembershipSource,
+    OIDCPolicyConfig,
     SeenGroup,
     SeenGroupUser,
     User,
@@ -489,6 +490,178 @@ class TestTheAdminApi:
     ) -> None:
         as_user(bearer_app, await make_admin(session_factory, seeded, admin=False))
         assert (await client.get("/api/admin/groups/seen")).status_code == 403
+
+    async def test_map_to_existing_grants_now_and_removes_the_seen(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Map to existing (ADR 0095 §4): the IdP name now grants the local
+        group, carriers are granted now under every_login, the seen row goes,
+        and the mapping is a new policy row on the append-only history."""
+        as_user(bearer_app, await make_admin(session_factory, seeded))
+        await self._sign_in_people(session_factory)
+        async with session_factory() as session:
+            session.add(Group(name="engineering"))
+            await session.commit()
+            target_id = (
+                await session.execute(select(Group.id).where(Group.name == "engineering"))
+            ).scalar_one()
+        eng = next(
+            i
+            for i in (await client.get("/api/admin/groups/seen")).json()["items"]
+            if i["name"] == "gitlab/eng"
+        )
+
+        response = await client.post(
+            f"/api/admin/groups/seen/{eng['id']}/map",
+            json={"group_id": str(target_id), "reason": "eng is engineering here"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["applied"] == "now"
+        assert body["members_added"] == 2
+        assert body["group"]["name"] == "engineering"
+
+        async with session_factory() as session:
+            people = (
+                (
+                    await session.execute(
+                        select(User.subject)
+                        .join(Membership, Membership.user_id == User.id)
+                        .join(Group, Group.id == Membership.group_id)
+                        .where(Group.name == "engineering")
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert sorted(people) == ["p1", "p2"]
+            assert (
+                await session.execute(select(SeenGroup).where(SeenGroup.name == "gitlab/eng"))
+            ).scalar_one_or_none() is None
+            event = (
+                await session.execute(
+                    select(IdentityEvent).where(IdentityEvent.action == "group.map")
+                )
+            ).scalar_one()
+            assert event.detail == {"group": "engineering"}
+            assert event.target_label == "gitlab/eng"
+
+        policy = (await client.get("/api/admin/oidc/policy")).json()
+        assert {"idp": "gitlab/eng", "local": "engineering"} in policy["group_mappings"]
+        assert policy["configured"]["reason"] == "eng is engineering here"
+
+    async def test_map_waits_for_the_next_sign_in_elsewhere(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        as_user(bearer_app, await make_admin(session_factory, seeded))
+        async with session_factory() as session:
+            row = (await session.execute(select(IdentityProvider))).scalar_one()
+            row.group_sync = GroupSync.FIRST_LOGIN
+            session.add(Group(name="engineering"))
+            await session.commit()
+            target_id = (
+                await session.execute(select(Group.id).where(Group.name == "engineering"))
+            ).scalar_one()
+        await self._sign_in_people(session_factory)
+        ops = next(
+            i
+            for i in (await client.get("/api/admin/groups/seen")).json()["items"]
+            if i["name"] == "gitlab/ops"
+        )
+        body = (
+            await client.post(
+                f"/api/admin/groups/seen/{ops['id']}/map", json={"group_id": str(target_id)}
+            )
+        ).json()
+        assert body["applied"] == "next_login" and body["members_added"] == 0
+
+    async def test_map_refuses_an_already_mapped_name(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        as_user(bearer_app, await make_admin(session_factory, seeded))
+        await self._sign_in_people(session_factory)
+        async with session_factory() as session:
+            session.add(Group(name="engineering"))
+            await session.commit()
+            target_id = (
+                await session.execute(select(Group.id).where(Group.name == "engineering"))
+            ).scalar_one()
+        eng = next(
+            i
+            for i in (await client.get("/api/admin/groups/seen")).json()["items"]
+            if i["name"] == "gitlab/eng"
+        )
+        first = await client.post(
+            f"/api/admin/groups/seen/{eng['id']}/map", json={"group_id": str(target_id)}
+        )
+        assert first.status_code == 200, first.text
+        # The seen row is gone with the mapping, so a second map 404s...
+        again = await client.post(
+            f"/api/admin/groups/seen/{eng['id']}/map", json={"group_id": str(target_id)}
+        )
+        assert again.status_code == 404
+        # ...and mapping the same IdP name from a fresh sighting 400s.
+        await self._sign_in_people(session_factory)
+        fresh = next(
+            i
+            for i in (await client.get("/api/admin/groups/seen")).json()["items"]
+            if i["name"] == "gitlab/eng"
+        )
+        duplicate = await client.post(
+            f"/api/admin/groups/seen/{fresh['id']}/map", json={"group_id": str(target_id)}
+        )
+        assert duplicate.status_code == 400, duplicate.text
+
+    async def test_unmap_appends_a_row_without_the_pair(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Unmap needs no endpoint: PUT the mappings list without the pair,
+        and the append-only history records the removal."""
+        as_user(bearer_app, await make_admin(session_factory, seeded))
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={
+                "group_mappings": [{"idp": "gitlab/eng", "local": "engineering"}],
+                "reason": "map",
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["group_mappings"] == [{"idp": "gitlab/eng", "local": "engineering"}]
+        response = await client.put(
+            "/api/admin/oidc/policy", json={"group_mappings": [], "reason": "unmap"}
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["group_mappings"] == []
+        async with session_factory() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert [r.group_mappings for r in rows[-2:]] == [
+                [["gitlab/eng", "engineering"]],
+                [],
+            ]
 
 
 class TestANewGitLabUserCanChat:

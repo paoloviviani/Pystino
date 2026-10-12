@@ -90,6 +90,8 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     IdentityEventAction.GROUP_IMPORT: frozenset({"members"}),
     IdentityEventAction.GROUP_DISMISS: frozenset(),
     IdentityEventAction.GROUP_RESTORE: frozenset(),
+    # ADR 0095: `group` is the local group the IdP name now grants.
+    IdentityEventAction.GROUP_MAP: frozenset({"group"}),
     # ADR 0095: `reason` is the join mode that refused (`invite`, `group`).
     IdentityEventAction.ACCESS_REFUSED: frozenset({"reason"}),
 }

@@ -1774,6 +1774,10 @@ class IdentityEventAction(enum.StrEnum):
     GROUP_IMPORT = "group.import"
     GROUP_DISMISS = "group.dismiss"
     GROUP_RESTORE = "group.restore"
+    #: ADR 0095: an IdP group name mapped to an existing local group instead
+    #: of imported. `detail.group` is the local group; the target label is the
+    #: IdP name. Plain VARCHAR(32) column, so no migration.
+    GROUP_MAP = "group.map"
     # ADR 0095: the join gate refused a sign-in (a stranger in `invite` or
     # `group` mode, or an account outside the required groups).
     # `detail.reason` is the mode that refused. Plain VARCHAR(32) column, so

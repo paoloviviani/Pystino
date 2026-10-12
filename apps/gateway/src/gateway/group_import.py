@@ -234,55 +234,84 @@ class ImportResult:
     applied: str
 
 
+async def _carriers_apply_now(session: AsyncSession, issuer: str) -> bool:
+    """Whether a seen name's recorded carriers may be granted at once.
+
+    Only for a provider whose answer is the token's and applies at every
+    login: that is the provider whose next sign-in would grant the same
+    thing anyway, so doing it now changes the timing and nothing else.
+    Under ``first_login`` the claim of a past login was never going to be
+    applied again, and inventing that now would be a grant the operator did
+    not configure.
+    """
+    provider = await provider_for_issuer(session, issuer)
+    return (
+        provider is not None
+        and provider.group_sync is GroupSync.EVERY_LOGIN
+        and (provider.group_source or "claim") == "claim"
+    )
+
+
+async def _grant_seen_carriers(session: AsyncSession, seen: SeenGroup, group: Group) -> int:
+    """Grant the recorded carriers a group, now. Returns how many."""
+    users = list(
+        (
+            await session.execute(
+                select(User)
+                .join(SeenGroupUser, SeenGroupUser.user_id == User.id)
+                .where(SeenGroupUser.seen_group_id == seen.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for user in users:
+        session.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.OIDC))
+        user.unresolved_group_names = [
+            name for name in (user.unresolved_group_names or []) if name != seen.name
+        ]
+    await session.flush()
+    # The same rule provisioning applies: someone whose only group this
+    # now is would otherwise have nothing to bill until they chose it.
+    for user in users:
+        await session.refresh(user, attribute_names=["memberships"])
+        if user.default_billing_group_id is None and len(user.memberships) == 1:
+            user.default_billing_group_id = group.id
+    return len(users)
+
+
 async def import_seen_group(session: AsyncSession, seen: SeenGroup) -> ImportResult:
     """Create the group a seen name asks for, and grant it where that is sound.
 
     The grant is immediate only for a provider whose answer is the token's
-    and applies at every login: that is the provider whose next sign-in
-    would grant the same thing anyway, so doing it now changes the timing and
-    nothing else. Under ``first_login`` the claim of a past login was never
-    going to be applied again, and inventing that now would be a grant the
-    operator did not configure.
+    and applies at every login (see `_carriers_apply_now`).
     """
     group = Group(name=seen.name, source=GroupSource.OIDC)
     session.add(group)
     await session.flush()
 
-    provider = await provider_for_issuer(session, seen.issuer)
-    immediate = (
-        provider is not None
-        and provider.group_sync is GroupSync.EVERY_LOGIN
-        and (provider.group_source or "claim") == "claim"
-    )
+    immediate = await _carriers_apply_now(session, seen.issuer)
     added = 0
     if immediate:
-        users = list(
-            (
-                await session.execute(
-                    select(User)
-                    .join(SeenGroupUser, SeenGroupUser.user_id == User.id)
-                    .where(SeenGroupUser.seen_group_id == seen.id)
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for user in users:
-            session.add(
-                Membership(user_id=user.id, group_id=group.id, source=MembershipSource.OIDC)
-            )
-            user.unresolved_group_names = [
-                name for name in (user.unresolved_group_names or []) if name != seen.name
-            ]
-            added += 1
-        await session.flush()
-        # The same rule provisioning applies: someone whose only group this
-        # now is would otherwise have nothing to bill until they chose it.
-        for user in users:
-            await session.refresh(user, attribute_names=["memberships"])
-            if user.default_billing_group_id is None and len(user.memberships) == 1:
-                user.default_billing_group_id = group.id
+        added = await _grant_seen_carriers(session, seen, group)
 
+    await session.delete(seen)
+    await session.flush()
+    return ImportResult(
+        group=group, members_added=added, applied="now" if immediate else "next_login"
+    )
+
+
+async def map_seen_group(session: AsyncSession, seen: SeenGroup, group: Group) -> ImportResult:
+    """Grant a seen name's carriers to an existing local group (ADR 0095 §4).
+
+    The same immediacy rule as an import: now under every_login, otherwise
+    the mapping applies at each carrier's next sign-in through the ordinary
+    mapped-groups reconciliation. The seen row goes either way — the name is
+    decided now, not pending.
+    """
+    immediate = await _carriers_apply_now(session, seen.issuer)
+    added = await _grant_seen_carriers(session, seen, group) if immediate else 0
     await session.delete(seen)
     await session.flush()
     return ImportResult(

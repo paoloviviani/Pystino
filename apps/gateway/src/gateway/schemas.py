@@ -1283,6 +1283,14 @@ class SeenGroupImportResponse(BaseModel):
     applied: Literal["now", "next_login"]
 
 
+class SeenGroupMapRequest(BaseModel):
+    """``POST /admin/groups/seen/{id}/map``: the IdP name now grants this
+    local group (ADR 0095 §4), instead of importing as a same-named one."""
+
+    group_id: uuid.UUID
+    reason: str = Field(default="", max_length=500)
+
+
 class GroupSearchBackendRequest(BaseModel):
     """Point a group's unified-search policy at a backend, or clear it.
 

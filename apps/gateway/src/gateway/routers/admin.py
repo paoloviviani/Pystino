@@ -66,7 +66,7 @@ from gateway.errors import (
     ServiceUnavailableError,
     UpstreamUnavailableError,
 )
-from gateway.group_import import grant_default_group, import_seen_group
+from gateway.group_import import grant_default_group, import_seen_group, map_seen_group
 from gateway.identity_events import record_event
 from gateway.identity_registry import (
     active_bundled_provider,
@@ -233,6 +233,7 @@ from gateway.schemas import (
     RedactionStatusResponse,
     SearchBackendDeleteResponse,
     SeenGroupImportResponse,
+    SeenGroupMapRequest,
     SeenGroupPage,
     SeenGroupResponse,
     SignInCreateRequest,
@@ -1906,6 +1907,90 @@ async def import_seen(
         members_added=result.members_added,
         applied="now" if result.applied == "now" else "next_login",
     )
+
+
+@router.post("/groups/seen/{seen_id}/map", response_model=SeenGroupImportResponse)
+async def map_seen(
+    seen_id: uuid.UUID,
+    payload: SeenGroupMapRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+    settings: SettingsDep,
+) -> SeenGroupImportResponse:
+    """Map a directory's group name to an existing local group (ADR 0095 §4).
+
+    The IdP name now grants that group: recorded carriers are granted now
+    when their provider's group answer applies at every login, otherwise at
+    their next sign-in — the same immediacy rule as an import. The mapping
+    is a new `oidc_config` row on the append-only history (built through the
+    same carry-forward helper as PUT, so the join answers ride along), the
+    seen row goes, and the audit names both sides.
+    """
+    seen = await _load_seen_group(seen_id, session)
+    name, issuer = seen.name, seen.issuer
+    group = (
+        await session.execute(select(Group).where(Group.id == payload.group_id))
+    ).scalar_one_or_none()
+    if group is None:
+        raise NotFoundError(f"No group with id {payload.group_id}.")
+
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    current = resolver.policy.group_mappings if resolver is not None else {}
+    if name in current:
+        raise BadRequestError(
+            f"Group {name!r} is already mapped to {current[name]!r}. Unmap it first."
+        )
+    pairs = [[idp, local] for idp, local in current.items()] + [[name, group.name]]
+    stored = await _latest_oidc_config(session)
+    row = _pending_policy_row(
+        stored, {"group_mappings": pairs}, required_groups=None, mappings=pairs
+    )
+    row.reason = payload.reason.strip()
+    row.created_by = admin.id
+    session.add(row)
+
+    result = await map_seen_group(session, seen, group)
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.GROUP_MAP,
+        target_label=name,
+        issuer=issuer,
+        detail={"group": group.name},
+    )
+    await session.commit()
+    await _refresh_policy_resolver(request)
+    return SeenGroupImportResponse(
+        group=GroupAdminResponse(
+            id=group.id,
+            name=group.name,
+            description=group.description,
+            source=group.source.value,
+            is_active=group.is_active,
+            member_count=result.members_added,
+            models=[],
+            search_backend=None,
+        ),
+        members_added=result.members_added,
+        applied="now" if result.applied == "now" else "next_login",
+    )
+
+
+async def _refresh_policy_resolver(request: Request) -> None:
+    """This worker picks a saved policy decision up now; the others within
+    the poll interval. Best effort: a failed refresh leaves the poll to
+    catch up."""
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    if resolver is not None:
+        try:
+            await resolver.refresh_once()
+        except Exception:
+            # The ten-second poll catches up; a failed refresh here must not
+            # turn a saved decision into an error the console reports.
+            logger.warning("oidc policy refresh after save failed", exc_info=True)
 
 
 @router.post("/groups/seen/{seen_id}/dismiss", status_code=status.HTTP_204_NO_CONTENT)
@@ -4323,16 +4408,7 @@ async def set_oidc_policy(
     session.add(row)
     await session.commit()
 
-    # This worker picks the decision up now; the others within the poll
-    # interval. Best effort: a failed refresh leaves the poll to catch up.
-    resolver = getattr(request.app.state, "oidc_policy", None)
-    if resolver is not None:
-        try:
-            await resolver.refresh_once()
-        except Exception:
-            # The ten-second poll catches up; a failed refresh here must not
-            # turn a saved decision into an error the console reports.
-            logger.warning("oidc policy refresh after save failed", exc_info=True)
+    await _refresh_policy_resolver(request)
     return await _oidc_policy_response(request, session)
 
 
