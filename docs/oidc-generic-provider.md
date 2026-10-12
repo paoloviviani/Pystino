@@ -61,6 +61,59 @@ A string claim is one group; it is never split on separators.
 `OIDC_GROUPS_CLAIM` names it, and [how it is applied](identity.md#groups) is
 `OIDC_GROUP_SYNC`.
 
+## `email_verified` by provider, and what it means for invitations
+
+An invitation is claimed by the invitee's **verified** email, so what a
+provider puts in `email_verified` decides whether invites work against it.
+Each row below was checked against the provider's current documentation
+(October 2026), not guessed; run `pystino idp check` on your own issuer to
+confirm what yours asserts — the token report prints the claim and, in
+invite mode, warns when it is absent.
+
+| Provider | Sends `email_verified`? | Notes, and what it means for invitations |
+|---|---|---|
+| Bundled Authelia | yes | `true` for console-made accounts — invites are not the bundled flow anyway |
+| Google | yes | with the `email` scope; ID token and userinfo |
+| GitLab | yes, conditionally | only with the `email` scope **and** a public email on the user's profile; without one, an invite waits until the profile has an address |
+| Keycloak | yes | the built-in `email` client scope carries the `email_verified` mapper (source-checked, 2026-10); `true` once Keycloak considers the address verified |
+| Okta | yes | `email` scope, boolean; in the ID token for `id_token` response types, from userinfo on the `code` flow (which the console merges) |
+| Authentik | yes, but value varies | **before 2025.10 always `true`** (even for unverified addresses); **since 2025.10 `false` until the address is verified** through authentik's flow — an invitation stays unclaimable until then, or use SCIM |
+| Microsoft Entra ID | **no** | `email_verified` is not among Entra's optional claims and work accounts never get one: **invitations cannot be claimed by email** — use SCIM (accounts pre-created by `oid`, see [SCIM setup](#turning-on-provisioning-per-provider)) or `approval` |
+
+When the answer is "no", or the claim stays `false`, the first sign-in of an
+invited person is refused with the invite-mode text and the pending account
+waits; nothing is provisioned twice. SCIM and the directory pull do not need
+the claim — they key people by `externalId`/`oid`, not by email.
+
+## Turning on provisioning per provider
+
+The [User sync](#user-sync) dialog mints the token; what the IdP's side
+needs, per provider:
+
+- **Microsoft Entra ID**: create an **Enterprise application** from the
+  gallery template *SCIM* (or *Provisioning*), point its tenant at
+  `https://<gateway>/scim/v2/<provider name>` with the minted bearer token,
+  and set *Provision Azure Active Directory Users* on. Entra's `externalId`
+  is the user's **`objectId`** (a GUID); the provider row must carry
+  `subject_claim: oid` so sign-ins key on the same id the sync created —
+  it is a field on the provider row (default `sub`), set on the Entra row
+  in the console or with
+  `PUT /api/admin/identity-providers/{id}` (`subject_claim: "oid"`).
+  Attribute
+  mapping: `externalId` ← `objectId`, `mail` ← `mail`, `displayName` ←
+  `displayName`, `active` ← `accountEnabled`.
+- **Okta**: an app integration of type *SCIM* (Workforce requires Okta's
+  SCIM 2.0 app), base URL as above, auth mode *HTTP Header* with the minted
+  token. `externalId` is Okta's user id by default; leave it unless you have
+  a reason to map something else.
+- **Authentik**: an **Outpost-integrated SCIM provider** is not needed —
+  authentik 2025.x has an outbound SCIM provider type: set the base URL and
+  token as above. authentik sends `externalId` as its user UID, so sign-ins
+  key on it; no `subject_claim` override is needed.
+
+Everything else (dry run, confirmation, the deactivation valve) is
+[User sync](#user-sync), which SCIM shares.
+
 ## Providers that reject the `groups` scope
 
 Some providers publish a `groups` *claim* but no `groups` *scope*, and answer a
