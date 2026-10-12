@@ -90,6 +90,7 @@ describe("AdminSettings providers card", () => {
         scim_push: false,
         subject_before_login: true,
         deprovision: true,
+        creates_logins: false,
         adapters: ["keycloak_admin"],
       },
       ...overrides,
@@ -99,6 +100,9 @@ describe("AdminSettings providers card", () => {
   const policy: OidcPolicy = {
     auto_provision: true,
     unknown_user_policy: "refuse",
+    join_mode: "open",
+    required_groups: [],
+    group_fallback: "refuse",
     groups_claim: "groups",
     group_mappings: [],
     source: "environment",

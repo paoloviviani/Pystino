@@ -9,7 +9,18 @@
  * of rows, and model access granted from the Models screen.
  */
 
-import { Badge, Button, Card, EmptyState, Input, Notice, Pagination, Spinner, Table } from "@llmp/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  Input,
+  Notice,
+  Pagination,
+  Select,
+  Spinner,
+  Table,
+} from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import {
@@ -17,8 +28,11 @@ import {
   useCreateGroup,
   useDeleteGroup,
   useGroups,
+  useMapSeenGroup,
+  useOidcPolicy,
   useSeenGroupAction,
   useSeenGroups,
+  useUpdateOidcPolicy,
 } from "../lib/admin";
 import { CHIPS, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
@@ -455,7 +469,10 @@ function SeenGroups() {
   const [showDismissed, setShowDismissed] = useState(false);
   const seen = useSeenGroups(paged.page, showDismissed);
   const act = useSeenGroupAction();
+  const policy = useOidcPolicy();
+  const unmap = useUpdateOidcPolicy();
   const toast = useOptionalToast();
+  const [mapping, setMapping] = useState<SeenGroup | null>(null);
 
   const page = seen.data;
   const rows = page?.items ?? [];
@@ -474,7 +491,7 @@ function SeenGroups() {
             });
           } else {
             toast?.add({
-              title: action === "dismiss" ? `${row.name} dismissed` : `${row.name} listed again`,
+              title: action === "dismiss" ? `${row.name} ignored` : `${row.name} listed again`,
               type: "success",
             });
           }
@@ -496,13 +513,16 @@ function SeenGroups() {
       <Button variant="ghost" busy={busy(row, "import")} onClick={() => run(row, "import")}>
         Import
       </Button>
+      <Button variant="ghost" onClick={() => setMapping(row)}>
+        Map…
+      </Button>
       {row.dismissed ? (
         <Button variant="ghost" busy={busy(row, "restore")} onClick={() => run(row, "restore")}>
           Restore
         </Button>
       ) : (
         <Button variant="ghost" busy={busy(row, "dismiss")} onClick={() => run(row, "dismiss")}>
-          Dismiss
+          Ignore
         </Button>
       )}
     </>
@@ -546,13 +566,66 @@ function SeenGroups() {
 
   return (
     <Card
-      title="Seen from your identity provider"
+      title="Groups from your identity provider"
       description={page ? <ModeLine page={page} /> : null}
     >
       {seen.error ? (
         <Notice tone="danger" title="Could not load the groups your identity provider reported">
           {seen.error instanceof Error ? seen.error.message : "Unknown error."}
         </Notice>
+      ) : null}
+      {/* ADR 0095 §4: the mappings this panel decides, with their Unmap.
+          Memberships granted through a mapping are the directory's to
+          reconcile, so they go at the next sign-in — the confirm says so. */}
+      {policy.data && policy.data.group_mappings.length > 0 ? (
+        <div className="mb-4">
+          <p className="mb-2 text-sm font-medium">Current mappings</p>
+          <div className={CHIPS}>
+            {policy.data.group_mappings.map((rule) => (
+              <span
+                key={rule.idp}
+                className="inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-xs"
+              >
+                <span className="[overflow-wrap:anywhere]">{rule.idp}</span>
+                <span aria-hidden>→</span>
+                <span className="font-medium [overflow-wrap:anywhere]">{rule.local}</span>
+                <button
+                  type="button"
+                  aria-label={`Unmap ${rule.idp}`}
+                  className="text-danger"
+                  onClick={() => {
+                    const reason = `Unmapped ${rule.idp}`;
+                    unmap.mutate(
+                      {
+                        group_mappings: policy.data!.group_mappings.filter(
+                          (candidate) => candidate.idp !== rule.idp,
+                        ),
+                        reason,
+                      },
+                      {
+                        onSuccess: () =>
+                          toast?.add({
+                            title: `${rule.idp} unmapped`,
+                            description:
+                              "Memberships granted through the mapping go at each person's next sign-in.",
+                            type: "success",
+                          }),
+                        onError: (error) =>
+                          toast?.add({
+                            title: "Could not unmap",
+                            description: error instanceof Error ? error.message : undefined,
+                            type: "error",
+                          }),
+                      },
+                    );
+                  }}
+                >
+                  Unmap
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
       ) : null}
       <div className={FORM}>
         <div className="flex flex-wrap items-start gap-3">
@@ -601,7 +674,97 @@ function SeenGroups() {
           </>
         )}
       </div>
+      <MapSeenDialog seen={mapping} onClose={() => setMapping(null)} />
     </Card>
+  );
+}
+
+/** Map one seen IdP name to an existing local group (ADR 0095 §4): the name
+ * now grants that group — a better answer than a same-named twin when the
+ * deployment already has the group the directory means. */
+function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () => void }) {
+  const groups = useGroups();
+  const map = useMapSeenGroup();
+  const toast = useOptionalToast();
+  const [groupId, setGroupId] = useState("");
+  const [reason, setReason] = useState("");
+
+  const close = () => {
+    map.reset();
+    setGroupId("");
+    setReason("");
+    onClose();
+  };
+
+  const options = groups.data?.items ?? [];
+
+  return (
+    <Dialog
+      open={seen !== null}
+      title={`Map ${seen?.name ?? ""}`}
+      onClose={close}
+      footer={
+        <>
+          <Button onClick={close}>Cancel</Button>
+          <Button
+            variant="primary"
+            disabled={!groupId}
+            busy={map.isPending}
+            onClick={() => {
+              if (!seen) return;
+              map.mutate(
+                { id: seen.id, group_id: groupId, reason: reason.trim() || undefined },
+                {
+                  onSuccess: (result) => {
+                    toast?.add({
+                      title: `${seen.name} mapped to ${result.group.name}`,
+                      description: importedDescription(result),
+                      type: "success",
+                    });
+                    close();
+                  },
+                  onError: (error) =>
+                    toast?.add({
+                      title: "Could not map",
+                      description: error instanceof Error ? error.message : undefined,
+                      type: "error",
+                    }),
+                },
+              );
+            }}
+          >
+            Map
+          </Button>
+        </>
+      }
+    >
+      <div className={FORM}>
+        {map.error ? (
+          <Notice tone="danger" title="Could not map">
+            {map.error instanceof Error ? map.error.message : "Unknown error."}
+          </Notice>
+        ) : null}
+        <Select
+          label="Local group"
+          value={groupId}
+          onChange={(event) => setGroupId(event.target.value)}
+          hint="The IdP name now grants this group, wherever it is claimed."
+        >
+          <option value="">Pick a group…</option>
+          {options.map((group) => (
+            <option key={group.id} value={group.id}>
+              {group.name}
+            </option>
+          ))}
+        </Select>
+        <Input
+          label="Reason (optional)"
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="recorded on the policy history"
+        />
+      </div>
+    </Dialog>
   );
 }
 

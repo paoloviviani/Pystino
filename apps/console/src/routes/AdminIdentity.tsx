@@ -1,6 +1,6 @@
 /**
- * The identity policy (ADR 0048): who may come to exist, which claim names
- * their groups, what an IdP group means here.
+ * The identity policy (ADR 0048; join modes ADR 0095): who may join, which
+ * claim names their groups, what an IdP group means here.
  *
  * This is the console-editable half of OIDC. The connection — issuer, client
  * secret, redirect — stays in the environment on purpose: it is read once at
@@ -10,45 +10,140 @@
  * poll interval the API reports.
  *
  * Roles are not part of it (ADR 0069): authorisation is a gateway fact, so an
- * administrator is made on the Users screen — never by a group claim, and no
- * longer by naming an admin group here either. That input existed while the
- * flag was derived from membership; the derivation is gone and the input went
- * with it.
+ * administrator is made on the Users screen — never by a group claim. The
+ * join gate stands aside for administrators for the same reason: a
+ * misconfigured group mode must not be able to lock every admin out.
  */
 
-import { Card, Notice, Select, Spinner } from "@llmp/ui";
+import { Button, Card, Notice, Select, Spinner } from "@llmp/ui";
 import { useEffect, useState } from "react";
-import { useOidcPolicy, useUpdateOidcPolicy } from "../lib/admin";
-import type { OidcPolicyInput } from "../lib/types";
+import { useGroups, useOidcPolicy, usePolicyPreview, useUpdateOidcPolicy } from "../lib/admin";
+import type { JoinMode, OidcPolicyInput } from "../lib/types";
 import { FORM } from "../lib/layout";
 import { useOptionalToast } from "../lib/toast";
+
+const JOIN_MODES: { value: JoinMode; label: string; hint: string }[] = [
+  {
+    value: "open",
+    label: "Open",
+    hint: "Anyone who signs in through the identity provider gets an active account at once.",
+  },
+  {
+    value: "approval",
+    label: "Approval",
+    hint: "A first-time sign-in creates a disabled account in the Users page's Awaiting-approval queue; you enable the people you want.",
+  },
+  {
+    value: "invite",
+    label: "Invite",
+    hint: "Only people you invited (or a directory pushed) can sign in. Everyone else is refused.",
+  },
+  {
+    value: "group",
+    label: "Group",
+    hint: "Only members of the required groups may sign in — checked at every sign-in and every API call.",
+  },
+];
 
 export function ProvisioningPolicySection() {
   const policy = useOidcPolicy();
   const save = useUpdateOidcPolicy();
+  const preview = usePolicyPreview();
+  const groups = useGroups();
   const toast = useOptionalToast();
 
   // Local edit state per field: each saves on its own, as its own decision —
   // one knob, one row in the policy history — rather than a form that must be
   // submitted as a whole.
-  const [autoProvision, setAutoProvision] = useState(true);
-  const [unknownPolicy, setUnknownPolicy] = useState<"refuse" | "create_inactive">("refuse");
+  const [joinMode, setJoinMode] = useState<JoinMode>("open");
+  const [requiredGroups, setRequiredGroups] = useState<string[]>([]);
+  const [groupFallback, setGroupFallback] = useState<"refuse" | "approval">("refuse");
+  // Picking Group with nothing required would save a gate that refuses
+  // everyone but the admins; said inline rather than allowed.
+  const [needsGroups, setNeedsGroups] = useState(false);
 
   useEffect(() => {
     if (!policy.data) return;
-    setAutoProvision(policy.data.auto_provision);
-    setUnknownPolicy(policy.data.unknown_user_policy);
+    setJoinMode(policy.data.join_mode);
+    setRequiredGroups(policy.data.required_groups);
+    setGroupFallback(policy.data.group_fallback);
   }, [policy.data]);
 
   const put = (body: OidcPolicyInput, ok: string) =>
     save.mutate(body, {
-      onSuccess: () => toast?.add({ title: ok, type: "success" }),
+      onSuccess: () => {
+        toast?.add({ title: ok, type: "success" });
+        preview.reset();
+      },
       onError: (caught: unknown) =>
         toast?.add({
           title: caught instanceof Error ? caught.message : "Could not save",
           type: "error",
         }),
     });
+
+  // Saving group mode (or changed groups inside it) asks the preview first:
+  // "N people will lose access at their next request" is a sentence worth
+  // reading before it becomes true. Other modes save straight away.
+  const saveGroupMode = (mode: "group", groups: string[], fallback: "refuse" | "approval") => {
+    preview.mutate(
+      { join_mode: mode, required_groups: groups },
+      {
+        onSuccess: (result) => {
+          if (result.would_be_refused === 0) {
+            put(
+              { join_mode: mode, required_groups: groups, group_fallback: fallback },
+              "Join mode updated",
+            );
+          }
+        },
+        onError: (caught: unknown) =>
+          toast?.add({
+            title: caught instanceof Error ? caught.message : "Could not preview the change",
+            type: "error",
+          }),
+      },
+    );
+  };
+
+  const pickMode = (mode: JoinMode) => {
+    setJoinMode(mode);
+    setNeedsGroups(false);
+    if (mode === "group") {
+      if (requiredGroups.length === 0) {
+        setNeedsGroups(true);
+        return;
+      }
+      saveGroupMode("group", requiredGroups, groupFallback);
+      return;
+    }
+    put(
+      mode === "open"
+        ? { join_mode: "open" }
+        : mode === "approval"
+          ? { join_mode: "approval" }
+          : { join_mode: "invite" },
+      "Join mode updated",
+    );
+  };
+
+  const changeGroups = (names: string[]) => {
+    setRequiredGroups(names);
+    setNeedsGroups(names.length === 0 && joinMode === "group");
+    if (joinMode === "group" && names.length > 0) {
+      saveGroupMode("group", names, groupFallback);
+    }
+  };
+
+  const changeFallback = (fallback: "refuse" | "approval") => {
+    setGroupFallback(fallback);
+    if (joinMode === "group" && requiredGroups.length > 0) {
+      put(
+        { join_mode: "group", required_groups: requiredGroups, group_fallback: fallback },
+        "Join mode updated",
+      );
+    }
+  };
 
   if (policy.isPending || policy.error) {
     return (
@@ -64,6 +159,9 @@ export function ProvisioningPolicySection() {
     );
   }
 
+  const sourceOf = (field: string) =>
+    policy.data?.sources[field] === "console" ? "set here" : "set in .env";
+
   return (
     <div className={FORM}>
       {save.error ? (
@@ -72,44 +170,122 @@ export function ProvisioningPolicySection() {
         </Notice>
       ) : null}
 
-      <label className="flex cursor-pointer items-center gap-2">
-        <input
-          type="checkbox"
-          checked={autoProvision}
-          onChange={(event) => {
-            setAutoProvision(event.target.checked);
-            put({ auto_provision: event.target.checked }, "Provisioning updated");
-          }}
-        />
-        <span>
-          Create an account on first sign-in
-          <span className="mt-0.5 block text-xs text-ink-faint">
-            {autoProvision
-              ? "On: anyone who signs in through the identity provider gets an active account at once. Turn it off to refuse first-time sign-ins or hold them for your approval."
-              : "Off: a first-time sign-in is not a user yet. It follows the rule below."}
-          </span>
-        </span>
-      </label>
+      <fieldset>
+        <legend className="p-0 text-sm">Who may join</legend>
+        <div className="flex flex-col gap-2">
+          {JOIN_MODES.map((mode) => (
+            <label
+              key={mode.value}
+              className="flex cursor-pointer items-start gap-2 text-sm"
+            >
+              <input
+                type="radio"
+                name="join-mode"
+                value={mode.value}
+                checked={joinMode === mode.value}
+                onChange={() => pickMode(mode.value)}
+                className="mt-[0.2em] accent-accent"
+              />
+              <span>
+                {mode.label}
+                <span className="mt-0.5 block text-xs text-ink-faint">{mode.hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <p className="mt-1 text-xs text-ink-faint">
+          Join mode {sourceOf("join_mode")}. Administrators are never refused by
+          this gate, so a wrong group cannot lock you out.
+        </p>
+      </fieldset>
 
-      {autoProvision ? null : (
-        <Select
-          label="First-time sign-in while provisioning is off"
-          value={unknownPolicy}
-          onChange={(event) => {
-            const value = event.target.value as "refuse" | "create_inactive";
-            setUnknownPolicy(value);
-            put({ unknown_user_policy: value }, "First-time sign-in rule updated");
-          }}
-          hint={
-            unknownPolicy === "refuse"
-              ? "The stranger is told to ask an administrator. Nothing is created."
-              : "The account is created disabled, waiting for you to enable it on the Users screen."
-          }
+      {joinMode === "group" ? (
+        <>
+          {needsGroups ? (
+            <Notice tone="warn" title="Pick at least one required group first">
+              A group gate with no groups refuses everyone who is not an
+              administrator — including the account that would fix it.
+            </Notice>
+          ) : null}
+          <fieldset>
+            <legend className="p-0 text-sm">Required groups</legend>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              {(groups.data?.items ?? []).map((group) => (
+                <label key={group.id} className="inline-flex items-center gap-1.5 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={requiredGroups.includes(group.name)}
+                    onChange={(event) =>
+                      changeGroups(
+                        event.target.checked
+                          ? [...requiredGroups, group.name].sort()
+                          : requiredGroups.filter((name) => name !== group.name),
+                      )
+                    }
+                    className="accent-accent"
+                  />
+                  {group.name}
+                </label>
+              ))}
+            </div>
+            {(groups.data?.items ?? []).length === 0 ? (
+              <p className="text-xs text-ink-faint">
+                No groups yet. A directory name must first be imported or mapped
+                on the Groups page.
+              </p>
+            ) : (
+              <p className="text-xs text-ink-faint">
+                Local group names. Required groups {sourceOf("required_groups")}.
+              </p>
+            )}
+          </fieldset>
+
+          <Select
+            label="Someone without a required group"
+            value={groupFallback}
+            onChange={(event) => changeFallback(event.target.value as "refuse" | "approval")}
+            hint={
+              groupFallback === "refuse"
+                ? "They are refused and told to ask an administrator."
+                : "Their account is created disabled, waiting in the approval queue."
+            }
+          >
+            <option value="refuse">Refuse them</option>
+            <option value="approval">Hold them for approval</option>
+          </Select>
+        </>
+      ) : null}
+
+      {preview.data && preview.data.would_be_refused > 0 ? (
+        <Notice
+          tone="warn"
+          title={`${preview.data.would_be_refused} ${
+            preview.data.would_be_refused === 1 ? "person" : "people"
+          } will lose access at their next request`}
         >
-          <option value="refuse">Refuse — ask an administrator</option>
-          <option value="create_inactive">Create disabled, awaiting approval</option>
-        </Select>
-      )}
+          {preview.data.admins_exempt}{" "}
+          {preview.data.admins_exempt === 1 ? "administrator is" : "administrators are"} exempt.
+          <div className="mt-2 flex gap-2">
+            <Button
+              variant="primary"
+              busy={save.isPending}
+              onClick={() =>
+                put(
+                  {
+                    join_mode: "group",
+                    required_groups: requiredGroups,
+                    group_fallback: groupFallback,
+                  },
+                  "Join mode updated",
+                )
+              }
+            >
+              Save anyway
+            </Button>
+            <Button onClick={() => preview.reset()}>Go back</Button>
+          </div>
+        </Notice>
+      ) : null}
     </div>
   );
 }

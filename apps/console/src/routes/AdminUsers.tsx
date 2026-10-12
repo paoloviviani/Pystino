@@ -16,13 +16,17 @@ import {
   useCreateBundledUser,
   useDeletePreview,
   useDeleteUser,
+  useEmailSettings,
   useIdentityEvents,
   useIdentityProviders,
+  useInviteText,
+  useInviteUser,
   useMergePreview,
   useMergeUser,
   usePendingErasures,
   useResetBundledPassword,
   useUpdateUser,
+  useUserStatusCounts,
   useUsers,
 } from "../lib/admin";
 import {
@@ -38,9 +42,21 @@ import {
   SECRET_ROW,
 } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
-import type { AdminUser, IdentityProvider } from "../lib/types";
+import type { AdminUser, IdentityProvider, UserStatus } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
+
+/** How long an invitation stays claimable (ADR 0095) — the marker's clock.
+ * Kept in step with the gateway's `INVITE_EXPIRY_DAYS` by hand: the gateway
+ * decides, the console only labels. */
+const INVITE_EXPIRY_DAYS = 14;
+
+function inviteExpired(user: AdminUser): boolean {
+  if (!user.invited_at) return false;
+  return Date.now() - new Date(user.invited_at).getTime() > INVITE_EXPIRY_DAYS * 86_400_000;
+}
+
+const isInvited = (user: AdminUser): boolean => user.invited_at !== null;
 
 /**
  * The one enabled provider, when it is the bundled Authelia (ADR 0093 §2:
@@ -105,8 +121,11 @@ export function AdminUsers() {
   // organisation outgrows one response — at which point the box quietly
   // searches the first page and reports nothing found.
   const paged = usePaginated();
-  const users = useUsers(paged.page);
+  const [status, setStatus] = useState<UserStatus | null>(null);
+  const users = useUsers(paged.page, true, status ?? undefined);
+  const statusCounts = useUserStatusCounts();
   const update = useUpdateUser();
+  const toast = useOptionalToast();
   const pendingErasures = usePendingErasures();
   const bundled = useBundledProvider();
   const providers = useIdentityProviders();
@@ -114,6 +133,12 @@ export function AdminUsers() {
   // "no bundled provider" and "haven't checked yet" would otherwise look
   // identical, hiding every bundled action for a moment on every page load.
   const knowsProviders = providers.data !== undefined;
+  // ADR 0095: the account backend comes from the enabled provider's
+  // capabilities, not its kind — the bundled Authelia creates logins; every
+  // other kind invites. The gateway answers the same question from the same
+  // field, so the two can never disagree.
+  const enabledProvider = providers.data?.find((provider) => provider.is_enabled);
+  const createsLogins = enabledProvider?.capabilities.creates_logins ?? false;
 
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [deleting, setDeleting] = useState<AdminUser | null>(null);
@@ -123,6 +148,24 @@ export function AdminUsers() {
   const [togglingActive, setTogglingActive] = useState<AdminUser | null>(null);
   const [viewingActivity, setViewingActivity] = useState<AdminUser | null>(null);
   const [merging, setMerging] = useState<AdminUser | null>(null);
+
+  const pickStatus = (next: UserStatus | null) => {
+    setStatus(next);
+    paged.setOffset(0);
+  };
+
+  const approve = (user: AdminUser) =>
+    update.mutate(
+      { id: user.id, is_active: true },
+      {
+        onSuccess: () => toast?.add({ title: "Approved — they can sign in now", type: "success" }),
+        onError: (caught: unknown) =>
+          toast?.add({
+            title: caught instanceof Error ? caught.message : "Could not approve",
+            type: "error",
+          }),
+      },
+    );
 
   const page = users.data;
   const rows = page?.items ?? [];
@@ -205,7 +248,17 @@ export function AdminUsers() {
       render: (user) => (
         <div className={CHIPS}>
           {user.is_admin && <Badge tone="accent">Admin</Badge>}
-          {user.is_active ? <Badge tone="ok">Active</Badge> : <Badge tone="danger">Disabled</Badge>}
+          {isInvited(user) && <Badge tone="warn">Invited</Badge>}
+          {!user.is_active && user.deactivated_by === "approval" && (
+            <Badge tone="warn">Awaiting approval</Badge>
+          )}
+          {user.is_active && !isInvited(user) ? (
+            <Badge tone="ok">Active</Badge>
+          ) : null}
+          {!user.is_active && user.deactivated_by !== "approval" && (
+            <Badge tone="danger">Disabled</Badge>
+          )}
+          {isInvited(user) && inviteExpired(user) && <Badge tone="danger">Expired</Badge>}
         </div>
       ),
     },
@@ -226,9 +279,24 @@ export function AdminUsers() {
           <Button variant="secondary" onClick={() => setEditing(user)}>
             Edit
           </Button>
-          <Button variant="ghost" onClick={() => setTogglingActive(user)}>
-            {user.is_active ? "Disable" : "Enable"}
-          </Button>
+          {/* The approval queue's one click (ADR 0095): enable is the whole
+              approval; Reject is the Delete below it. */}
+          {!user.is_active && user.deactivated_by === "approval" && (
+            <Button variant="secondary" onClick={() => approve(user)}>
+              Approve
+            </Button>
+          )}
+          {isInvited(user) && inviteExpired(user) && <ReIssueButton user={user} />}
+          {!user.is_active && user.deactivated_by !== "approval" && (
+            <Button variant="ghost" onClick={() => setTogglingActive(user)}>
+              Enable
+            </Button>
+          )}
+          {user.is_active && (
+            <Button variant="ghost" onClick={() => setTogglingActive(user)}>
+              Disable
+            </Button>
+          )}
           {/* Thin red text, never filled: the same row-level delete as every
               other screen — filled red belongs to the confirm dialog, not to
               a control that sits beside Edit all day. Destructive actions
@@ -251,12 +319,18 @@ export function AdminUsers() {
       <PageHeader
         title="Users"
         subtitle={
-          knowsProviders && bundled
-            ? "People arrive at their first sign-in, or you can add one directly below."
-            : "Accounts live at the identity provider — this deployment cannot add a login or reset its password here. Disable and Enable still apply on the gateway side."
+          !knowsProviders
+            ? "Accounts live at the identity provider — this deployment cannot add a login or reset its password here. Disable and Enable still apply on the gateway side."
+            : createsLogins
+              ? "People arrive at their first sign-in, or you can add one directly below."
+              : "People arrive when you invite them, at their first sign-in, or when the directory pushes them."
         }
         actions={
-          knowsProviders && bundled ? <Button onClick={() => setAdding(true)}>Add user</Button> : null
+          knowsProviders && enabledProvider ? (
+            <Button onClick={() => setAdding(true)}>
+              {createsLogins ? "Add user" : "Invite"}
+            </Button>
+          ) : null
         }
       />
 
@@ -292,6 +366,35 @@ export function AdminUsers() {
               }
             />
           </div>
+        </div>
+        {/* The filter chips (ADR 0095): the queues an administrator works,
+            with their counts from one round trip. "All" is no filter at all. */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Chip active={status === null} onClick={() => pickStatus(null)} label="All" />
+          <Chip
+            active={status === "awaiting_approval"}
+            onClick={() => pickStatus("awaiting_approval")}
+            label="Awaiting approval"
+            count={statusCounts.data?.awaiting_approval}
+          />
+          <Chip
+            active={status === "invited"}
+            onClick={() => pickStatus("invited")}
+            label="Invited"
+            count={statusCounts.data?.invited}
+          />
+          <Chip
+            active={status === "active"}
+            onClick={() => pickStatus("active")}
+            label="Active"
+            count={statusCounts.data?.active}
+          />
+          <Chip
+            active={status === "disabled"}
+            onClick={() => pickStatus("disabled")}
+            label="Disabled"
+            count={statusCounts.data?.disabled}
+          />
         </div>
       </Card>
 
@@ -337,7 +440,12 @@ export function AdminUsers() {
 
       <DeleteUserDialog user={deleting} onClose={() => setDeleting(null)} />
 
-      <AddUserDialog open={adding} onClose={() => setAdding(false)} />
+      <AddUserDialog
+        open={adding}
+        createsLogins={createsLogins}
+        knowsProviders={knowsProviders}
+        onClose={() => setAdding(false)}
+      />
 
       <CreateSignInDialog user={signingIn} onClose={() => setSigningIn(null)} />
 
@@ -712,7 +820,227 @@ function MintedPasswordNotice({ login, password }: { login: string; password: st
  * groups — manual memberships — never the Authelia file's own, which is
  * always `["users"]` (§8.3): editing it stopped being on offer at all.
  */
-function AddUserDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+function AddUserDialog({
+  open,
+  createsLogins,
+  knowsProviders,
+  onClose,
+}: {
+  open: boolean;
+  createsLogins: boolean;
+  knowsProviders: boolean;
+  onClose: () => void;
+}) {
+  // ADR 0095: one entry point, two backends — the enabled provider's
+  // capabilities decide, the same field the gateway routes on.
+  if (open && knowsProviders && !createsLogins) {
+    return <InviteUserDialog open={open} onClose={onClose} />;
+  }
+  return <BundledAddUserDialog open={open} onClose={onClose} />;
+}
+
+/** One filter chip of the status row. A button styled as a chip: "All" is
+ * no filter at all, and the count sits in the label. */
+function Chip({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count?: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={
+        active
+          ? "rounded-full border border-accent bg-accent-soft px-3 py-1 text-xs font-medium text-accent"
+          : "rounded-full border border-line px-3 py-1 text-xs text-ink-muted hover:border-accent"
+      }
+    >
+      {label}
+      {count === undefined ? "" : ` (${count.toLocaleString()})`}
+    </button>
+  );
+}
+
+/** Re-issue an expired invitation: regenerate the text (which re-stamps
+ * `invited_at`, ADR 0095) and put it on the clipboard. */
+function ReIssueButton({ user }: { user: AdminUser }) {
+  const invite = useInviteText();
+  const toast = useOptionalToast();
+  return (
+    <Button
+      variant="ghost"
+      busy={invite.isPending}
+      onClick={() =>
+        invite.mutate(user.id, {
+          onSuccess: async (result) => {
+            try {
+              await navigator.clipboard.writeText(result.invite_text);
+              toast?.add({ title: "Fresh invite text copied", type: "success" });
+            } catch {
+              toast?.add({ title: result.invite_text, type: "info" });
+            }
+          },
+          onError: (caught: unknown) =>
+            toast?.add({
+              title: caught instanceof Error ? caught.message : "Could not re-issue",
+              type: "error",
+            }),
+        })
+      }
+    >
+      Re-invite
+    </Button>
+  );
+}
+
+/** Invite a person for a provider that creates no logins (ADR 0095 §2):
+ * email, name, groups — then the ready-to-paste paragraph. */
+function InviteUserDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const invite = useInviteUser();
+  const emailSettings = useEmailSettings();
+  const toast = useOptionalToast();
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [groups, setGroups] = useState("");
+  const [sendEmail, setSendEmail] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const smtpUsable =
+    (emailSettings.data?.enabled ?? false) &&
+    (emailSettings.data?.host ?? "") !== "" &&
+    (emailSettings.data?.from_address ?? "") !== "";
+
+  const close = () => {
+    invite.reset();
+    setDisplayName("");
+    setEmail("");
+    setGroups("");
+    setSendEmail(false);
+    setCopied(false);
+    onClose();
+  };
+
+  const created = invite.data;
+
+  return (
+    <Dialog
+      open={open}
+      title="Invite"
+      onClose={close}
+      footer={
+        created ? (
+          <Button variant="primary" onClick={close}>
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button onClick={close}>Cancel</Button>
+            <Button
+              variant="primary"
+              disabled={!email.trim()}
+              busy={invite.isPending}
+              onClick={() =>
+                invite.mutate({
+                  email: email.trim(),
+                  display_name: displayName.trim() || undefined,
+                  groups: groups
+                    .split(",")
+                    .map((g) => g.trim())
+                    .filter(Boolean),
+                  send_email: sendEmail && smtpUsable,
+                })
+              }
+            >
+              {sendEmail && smtpUsable ? "Invite and send" : "Invite"}
+            </Button>
+          </>
+        )
+      }
+    >
+      {invite.error ? (
+        <Notice tone="danger" title="Could not invite">
+          {invite.error instanceof Error ? invite.error.message : "Unknown error."}
+        </Notice>
+      ) : null}
+
+      {created ? (
+        <div className={FORM}>
+          {created.email_sent ? (
+            <Notice tone="info" title="Invitation sent">
+              Emailed to {created.user.email}.
+            </Notice>
+          ) : created.email_error ? (
+            <Notice tone="warn" title="Could not send the email">
+              {created.email_error} — copy the text below instead.
+            </Notice>
+          ) : sendEmail ? null : null}
+          <div>
+            <p className="mb-1 text-sm font-medium">Invite text</p>
+            <p className="rounded border border-line bg-surface-muted p-2 text-sm">
+              {created.invite_text}
+            </p>
+            <Button
+              variant="secondary"
+              className="mt-2"
+              busy={copied}
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(created.invite_text);
+                  setCopied(true);
+                  toast?.add({ title: "Invite text copied", type: "success" });
+                } catch {
+                  toast?.add({ title: "Copy failed — select the text above", type: "error" });
+                }
+              }}
+            >
+              {copied ? "Copied" : "Copy invite text"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className={FORM}>
+          <Input label="Email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+          <Input
+            label="Display name"
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+          />
+          <Input
+            label="Groups"
+            value={groups}
+            onChange={(event) => setGroups(event.target.value)}
+            placeholder="comma separated"
+            hint="Console groups — the same manual membership an administrator grants anywhere else."
+          />
+          {smtpUsable ? (
+            <label className={CHECK_ITEM}>
+              <input
+                type="checkbox"
+                checked={sendEmail}
+                onChange={(event) => setSendEmail(event.target.checked)}
+              />
+              <span>Email them the invitation</span>
+            </label>
+          ) : (
+            <p className="text-xs text-ink-faint">
+              Email is not configured, so copy the invite text to send it yourself.
+            </p>
+          )}
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
+function BundledAddUserDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const create = useCreateBundledUser();
   const [login, setLogin] = useState("");
   // The login prefills from the email until the administrator edits it by
