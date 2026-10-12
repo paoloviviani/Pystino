@@ -1439,6 +1439,48 @@ class BundledUserCreatedResponse(UserAdminResponse):
     password: str
 
 
+class UserCreateRequest(BaseModel):
+    """``POST /admin/users`` for either account backend (ADR 0095).
+
+    The bundled Authelia backend needs ``login`` (and makes the password);
+    every other provider invites by email and the login is refused — it is
+    the directory's to mint, not the console's. ``send_email`` pastes nothing:
+    it sends the invite text through the configured SMTP, and is refused when
+    mail is not configured.
+    """
+
+    login: str | None = Field(default=None, max_length=64)
+    display_name: str = Field(default="", max_length=255)
+    email: str | None = Field(default=None, max_length=320)
+    groups: list[str] = Field(default_factory=list, max_length=100)
+    send_email: bool = False
+
+
+class InvitedUserResponse(BaseModel):
+    """An invitation for a provider that creates no logins (ADR 0095).
+
+    ``sign_in_url`` is where the invitee signs in: the chat when one is
+    deployed, else the console. ``invite_text`` is the ready-to-paste
+    paragraph; ``email_sent`` says whether ``send_email`` delivered it.
+    """
+
+    user: UserAdminResponse
+    sign_in_url: str
+    invite_text: str
+    email_sent: bool = False
+
+
+class InviteTextResponse(BaseModel):
+    """A regenerated invitation text (ADR 0095).
+
+    Re-issuing re-stamps ``invited_at``: copying the text to resend it *is*
+    re-inviting, and an expired invite becomes claimable again.
+    """
+
+    sign_in_url: str
+    invite_text: str
+
+
 class SignInCreateRequest(BaseModel):
     """``POST /admin/users/{id}/sign-in``: a bundled login for an existing
     gateway user who has none yet (§8.1's "Create sign-in" — the

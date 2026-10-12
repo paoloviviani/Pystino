@@ -27,6 +27,7 @@ import math
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -34,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.config import OIDCSettings
 from gateway.directory.adapters import Entry
+from gateway.email_normalize import is_trusted_email
 from gateway.group_import import record_unresolved
 from gateway.models import (
     DirectoryEntry,
@@ -44,7 +46,13 @@ from gateway.models import (
     MembershipSource,
     User,
 )
-from gateway.oidc import _reconcile_memberships, _resolve_group_names, apply_admin_answer
+from gateway.oidc import (
+    INVITE_EXPIRY_DAYS,
+    PENDING_USER_ISSUER,
+    _reconcile_memberships,
+    _resolve_group_names,
+    apply_admin_answer,
+)
 from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
@@ -88,6 +96,42 @@ class SyncReport:
 
 def _who(entry: Entry | DirectoryEntry) -> str:
     return entry.username or entry.email or entry.external_id
+
+
+async def _claim_pending_invite(session: AsyncSession, entry: Entry) -> User | None:
+    """An invitation this directory entry resolves (ADR 0095 §2/§6.1).
+
+    Exactly one live, unexpired invitation for the entry's address — anything
+    else (none, several, disabled, expired, or a bundled pending account that
+    was never an invitation) is the caller's cue to create fresh. The caller
+    sets the real `(issuer, subject)` pair and keeps the memberships.
+    """
+    if not entry.email:
+        return None
+    normalized, trusted = is_trusted_email(entry.email)
+    if not trusted:
+        return None
+    candidates = (
+        (
+            await session.execute(
+                select(User).where(
+                    User.issuer == PENDING_USER_ISSUER,
+                    User.email_normalized == normalized,
+                    User.is_active.is_(True),
+                    User.invited_at.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(candidates) != 1:
+        return None
+    target = candidates[0]
+    assert target.invited_at is not None
+    if target.invited_at + timedelta(days=INVITE_EXPIRY_DAYS) < utcnow():
+        return None
+    return target
 
 
 async def add_manual_memberships(
@@ -291,20 +335,36 @@ async def apply_entries(
             user = by_username.get(entry.username)
         newly_linked = False
         if user is None and entry.is_subject and entry.active and record.sync_create_users:
-            user = User(
-                issuer=record.issuer,
-                subject=entry.external_id,
-                email=entry.email,
-                display_name=entry.display_name,
-                username=entry.username,
-            )
-            session.add(user)
-            await session.flush()
-            by_subject[user.subject] = user
-            by_id[user.id] = user
-            report.created += 1
-            report.note("create", _who(entry))
-            newly_linked = True
+            claimed = await _claim_pending_invite(session, entry)
+            if claimed is not None:
+                # An administrator invited this address and the directory just
+                # pushed it: claim the invitation instead of minting a second
+                # row, keeping its memberships. Counted under linked, like
+                # every other resolution to an existing person.
+                user = claimed
+                user.issuer = record.issuer
+                user.subject = entry.external_id
+                await session.flush()
+                by_subject[user.subject] = user
+                by_id[user.id] = user
+                newly_linked = True
+                report.linked += 1
+                report.note("claim_pending", _who(entry))
+            else:
+                user = User(
+                    issuer=record.issuer,
+                    subject=entry.external_id,
+                    email=entry.email,
+                    display_name=entry.display_name,
+                    username=entry.username,
+                )
+                session.add(user)
+                await session.flush()
+                by_subject[user.subject] = user
+                by_id[user.id] = user
+                report.created += 1
+                report.note("create", _who(entry))
+                newly_linked = True
         if user is not None and row.user_id != user.id:
             row.user_id = user.id
             if not newly_linked:

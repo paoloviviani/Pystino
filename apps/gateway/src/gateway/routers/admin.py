@@ -27,7 +27,7 @@ from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Request, Response, status
 from fastapi.responses import PlainTextResponse
@@ -66,7 +66,7 @@ from gateway.errors import (
     ServiceUnavailableError,
     UpstreamUnavailableError,
 )
-from gateway.group_import import import_seen_group
+from gateway.group_import import grant_default_group, import_seen_group
 from gateway.identity_events import record_event
 from gateway.identity_registry import (
     active_bundled_provider,
@@ -76,6 +76,7 @@ from gateway.identity_registry import (
 from gateway.identity_registry import (
     list_providers as list_provider_records,
 )
+from gateway.join_gate import provider_label
 from gateway.mail import MailDeliveryError, send_mail_async
 from gateway.merge import (
     MERGE_RULES,
@@ -166,7 +167,6 @@ from gateway.reporting import (
 )
 from gateway.schemas import (
     BundledUserCreatedResponse,
-    BundledUserCreateRequest,
     CatalogueDiscoveryResponse,
     CatalogueDriftRow,
     CatalogueTagsResponse,
@@ -185,6 +185,8 @@ from gateway.schemas import (
     GroupUsageRow,
     IdentityProviderResponse,
     IdentityRef,
+    InvitedUserResponse,
+    InviteTextResponse,
     LimitRuleCreateRequest,
     LimitRuleResetRequest,
     LimitRuleResponse,
@@ -236,6 +238,7 @@ from gateway.schemas import (
     SignInCreateRequest,
     UsageReport,
     UserAdminResponse,
+    UserCreateRequest,
     UserUpdateRequest,
 )
 from gateway.secrets import SecretBox, SecretsUnavailableError, hint_for
@@ -2705,11 +2708,45 @@ async def _bundled_provider(session: AsyncSession) -> IdentityProvider:
     return row
 
 
-@router.post(
-    "/users", response_model=BundledUserCreatedResponse, status_code=status.HTTP_201_CREATED
-)
+@router.post("/users", status_code=status.HTTP_201_CREATED)
 async def create_user(
-    payload: BundledUserCreateRequest,
+    payload: UserCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+    settings: SettingsDep,
+) -> BundledUserCreatedResponse | InvitedUserResponse:
+    """Add a person, through the deployment's account backend (ADR 0095).
+
+    The bundled Authelia creates the login itself (plus a one-time
+    password); every other provider invites by email, and the invitee's
+    first sign-in claims the pending row by verified email. The backend is
+    chosen from the provider's capabilities, never the kind name, so a
+    future kind that creates logins through the IdP's admin API slots in
+    without rewriting this route. No ``response_model``: the two backends
+    answer different shapes, documented on their schemas.
+    """
+    bundled = await active_bundled_provider(session)
+    if bundled is not None and _account_backend(bundled.kind) == "authelia":
+        return await _create_bundled_user(payload, bundled, admin, session, secrets, settings)
+    return await _invite_user(payload, admin, session, secrets, settings)
+
+
+def _account_backend(kind: str) -> str:
+    """Which user-creation backend serves this provider kind (ADR 0095).
+
+    ``authelia`` creates the login itself; ``pending`` invites by email for
+    a later claim. A future kind that creates logins through the IdP's
+    admin API (Zitadel, Layer 2) adds a third backend here.
+    """
+    if identity_policy.capabilities(kind).creates_logins:
+        return "authelia"
+    return "pending"
+
+
+async def _create_bundled_user(
+    payload: UserCreateRequest,
+    provider: IdentityProvider,
     admin: AdminUserDep,
     session: SessionDep,
     secrets: SecretsDep,
@@ -2727,12 +2764,15 @@ async def create_user(
     the Authelia entry is removed again: a login with no account behind it
     is worse than the create simply having failed outright.
     """
-    provider = await _bundled_provider(session)
+    if not payload.login:
+        raise BadRequestError("login is required to create a bundled user.")
+    if not payload.email:
+        raise BadRequestError("email is required to create a bundled user.")
     users_file = bundled_users_file(provider, secrets)
 
     try:
         _authelia_user, password = users_file.create(
-            payload.login, payload.email, payload.display_name
+            payload.login, payload.email, payload.display_name or ""
         )
     except UsersFileLockedError as exc:
         raise ServiceUnavailableError(str(exc)) from exc
@@ -2820,6 +2860,181 @@ async def create_user(
     await session.refresh(user, attribute_names=["memberships"])
     response = (await _user_responses(session, [user]))[0]
     return BundledUserCreatedResponse(**response.model_dump(), password=password)
+
+
+async def _invite_user(
+    payload: UserCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+    settings: SettingsDep,
+) -> InvitedUserResponse:
+    """Invite a person for a provider that creates no logins (ADR 0095 §2).
+
+    A pending user with no login and no `directory_entries` row: the
+    invitee's first sign-in claims it by verified email
+    (`claim_pending_by_email`), keeping the pre-assigned groups. An
+    invitation older than 14 days behaves as no invitation; re-issuing (the
+    invite-text endpoint) re-stamps it.
+    """
+    if payload.login:
+        raise BadRequestError(
+            "login is managed by the identity provider on this deployment: "
+            "invite by email, without a login."
+        )
+    if not payload.email:
+        raise BadRequestError("email is required to invite someone.")
+    normalized_email, trusted = is_trusted_email(payload.email)
+    if not trusted:
+        raise BadRequestError(f"{payload.email!r} is not a trusted address.")
+    duplicate = (
+        (await session.execute(select(User).where(User.email_normalized == normalized_email)))
+        .scalars()
+        .all()
+    )
+    if duplicate:
+        holder = duplicate[0]
+        if holder.issuer == PENDING_USER_ISSUER:
+            status = "pending"
+        elif not holder.is_active:
+            status = "disabled"
+        else:
+            status = "active"
+        raise ConflictError(f"{payload.email} already has an account ({status}).")
+
+    user = User(
+        issuer=PENDING_USER_ISSUER,
+        subject=str(uuid.uuid4()),
+        email=payload.email,
+        email_normalized=normalized_email,
+        display_name=payload.display_name or None,
+        # The administrator just set it; it must not revert at this person's
+        # first login the way an ordinary directory claim would.
+        admin_edited_fields=["email"],
+        is_active=True,
+        invited_at=utcnow(),
+        invited_by=admin.id,
+    )
+    session.add(user)
+    await session.flush()
+    # Same MissingGreenlet reason as the bundled path above: a brand-new row
+    # has never loaded `memberships`.
+    await session.refresh(user, attribute_names=["memberships"])
+
+    await add_manual_memberships(session, user, payload.groups)
+    await grant_default_group(session, user, settings.oidc.default_group)
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.USER_INVITE,
+        target_user_id=user.id,
+        target_label=payload.email,
+        detail={"groups": sorted(payload.groups)},
+    )
+    await session.commit()
+
+    sign_in_url = _invite_sign_in_url(settings)
+    deployment = _invite_deployment(settings)
+    idp = await _invite_provider_label(session, settings, secrets)
+    invite_text = (
+        f"You've been given access to {deployment}. Sign in at {sign_in_url} "
+        f"with your {idp} account {payload.email}."
+    )
+    email_sent = False
+    if payload.send_email:
+        smtp = await effective_smtp(session, settings, secrets)
+        if not smtp.usable:
+            raise BadRequestError(
+                "Email is not configured: set the SMTP host and a From address first."
+            )
+        await send_mail_async(
+            smtp.to_smtp_settings(),
+            payload.email,
+            f"You've been given access to {deployment}",
+            invite_text,
+        )
+        email_sent = True
+
+    await session.refresh(user, attribute_names=["memberships"])
+    response = (await _user_responses(session, [user]))[0]
+    return InvitedUserResponse(
+        user=response, sign_in_url=sign_in_url, invite_text=invite_text, email_sent=email_sent
+    )
+
+
+def _invite_sign_in_url(settings: Settings) -> str:
+    """Where an invitee signs in: the chat when one is deployed, else the console.
+
+    The gateway knows the chat by its erasure URL, and its own public origin
+    by the OIDC redirect URI — Cerea serves the chat at `/chat` on that same
+    origin, the console at `/console`. No redirect URI, no origin: a bare
+    path, which is still the right door on this host.
+    """
+    path = "/chat" if settings.chat.erasure_url else "/console"
+    redirect = (settings.oidc.redirect_uri or "").strip()
+    if redirect:
+        parts = urlsplit(redirect)
+        if parts.scheme and parts.hostname:
+            origin = f"{parts.scheme}://{parts.hostname}"
+            if parts.port:
+                origin += f":{parts.port}"
+            return origin + path
+    return path
+
+
+def _invite_deployment(settings: Settings) -> str:
+    """The deployment name the invite text grants access to: the public host."""
+    redirect = (settings.oidc.redirect_uri or "").strip()
+    if redirect:
+        host = urlsplit(redirect).hostname or ""
+        if host:
+            return host
+    return "this deployment"
+
+
+async def _invite_provider_label(
+    session: SessionDep, settings: SettingsDep, secrets: SecretsDep
+) -> str:
+    """The `<IdP display name>` the invite text names: the enabled external
+    provider, else the environment's, else the honest generic."""
+    for record in await list_provider_records(session, settings, secrets, enabled_only=True):
+        if record.kind != "authelia":
+            return provider_label(record.kind)
+    if settings.oidc.enabled and settings.oidc.kind != "authelia":
+        return provider_label(settings.oidc.kind)
+    return provider_label(None)
+
+
+@router.post("/users/{user_id}/invite-text", response_model=InviteTextResponse)
+async def invite_text(
+    user_id: uuid.UUID,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    secrets: SecretsDep,
+) -> InviteTextResponse:
+    """Regenerate an invitation's text, for the console's Copy button.
+
+    Re-issuing re-stamps ``invited_at``: copying the text to resend it *is*
+    re-inviting, and an expired invitation becomes claimable again.
+    """
+    user = await session.get(User, user_id)
+    if user is None or user.issuer != PENDING_USER_ISSUER:
+        raise NotFoundError("No pending invitation with that id.")
+    user.invited_at = utcnow()
+    await session.commit()
+    sign_in_url = _invite_sign_in_url(settings)
+    return InviteTextResponse(
+        sign_in_url=sign_in_url,
+        invite_text=(
+            f"You've been given access to {_invite_deployment(settings)}. Sign in at "
+            f"{sign_in_url} with your "
+            f"{await _invite_provider_label(session, settings, secrets)} account "
+            f"{user.email or ''}."
+        ),
+    )
 
 
 @router.post(
@@ -3480,7 +3695,7 @@ async def delete_user(
     http: ControlHttpDep,
     secrets: SecretsDep,
     body: DeleteUserRequest = DeleteUserRequest(),
-) -> DeleteUserResponse:
+) -> DeleteUserResponse | Response:
     """Delete an account everywhere (ADR 0093 §9.2, §9.3): the gateway's own
     rows in one transaction with the ``chat_erasures`` row that records the
     chat still owes an answer, then — after that commits — the bound
@@ -3535,6 +3750,24 @@ async def delete_user(
         raise LastAdminError(
             "This would leave no active administrator. Make another account an administrator first."
         )
+
+    if user.issuer == PENDING_USER_ISSUER:
+        # An invitation, never a working account: no chat data was ever
+        # attached to it, so there is nothing to erase and no queue row to
+        # leave behind — just the row and its memberships (CASCADE).
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.USER_DELETE,
+            target_user_id=user.id,
+            target_label=user.email or "",
+            detail={"pending": True},
+        )
+        await session.delete(user)
+        await session.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     published = await _published_by(session, user_id)
     if published:

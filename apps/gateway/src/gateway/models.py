@@ -1727,6 +1727,9 @@ class IdentityEventAction(enum.StrEnum):
     USER_DISABLE = "user.disable"
     USER_ENABLE = "user.enable"
     USER_DELETE = "user.delete"
+    #: ADR 0095: an administrator invited a person who has never signed in
+    #: (any provider). `detail.groups` is the requested console groups.
+    USER_INVITE = "user.invite"
     ADMIN_GRANT = "admin.grant"
     ADMIN_REVOKE = "admin.revoke"
     ADMIN_REFUSED_LAST = "admin.refused_last"
@@ -1740,6 +1743,10 @@ class IdentityEventAction(enum.StrEnum):
     # user.enable standing for both halves of the action.
     LOGIN_ENABLE = "login.enable"
     IDENTITY_LINK = "identity.link"
+    # §13.4/§8.2: a migration-created, unbound entry claimed at its first
+    # real sign-in carries "claimed_unbound" so this row is distinguishable
+    # from the ordinary bind_bundled_login case, which never sees one.
+    # ADR 0095: an invite claimed by verified email carries "pending_claim".
     IDENTITY_BIND = "identity.bind"
     IDENTITY_DROP = "identity.drop"
     USER_MERGE = "user.merge"

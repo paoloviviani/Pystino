@@ -50,6 +50,12 @@ class Capabilities:
     subject_before_login: bool
     #: The directory can say someone is gone (disabled, deleted).
     deprovision: bool
+    #: The provider kind creates logins through its own admin surface, so the
+    #: console's Add-user dialog makes a login plus a one-time password (ADR
+    #: 0095: today only Authelia; a future Zitadel kind sets this with
+    #: `subject_before_login`). Kinds without it invite by email instead, and
+    #: the console shows the Invite dialog from this flag, never the kind name.
+    creates_logins: bool = False
 
     @property
     def adapters(self) -> tuple[str, ...]:
@@ -62,12 +68,13 @@ class Capabilities:
             "scim_push": self.scim_push,
             "subject_before_login": self.subject_before_login,
             "deprovision": self.deprovision,
+            "creates_logins": self.creates_logins,
             "adapters": list(self.adapters),
         }
 
 
 _CAPABILITIES: dict[str, Capabilities] = {
-    "authelia": Capabilities(True, ("authelia_file",), False, False, True),
+    "authelia": Capabilities(True, ("authelia_file",), False, False, True, True),
     "keycloak": Capabilities(True, ("keycloak_admin",), False, True, True),
     "entra": Capabilities(True, (), True, True, True),
     "okta": Capabilities(True, (), True, True, True),

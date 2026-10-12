@@ -39,7 +39,7 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -617,6 +617,11 @@ class OIDCClient:
 # made an administrator ahead of time (§5.4): an invite is not a grant.
 PENDING_USER_ISSUER = "pystino:pending"
 
+#: How long an invitation stays claimable (ADR 0095, the owner's decision).
+#: An older invite behaves as no invite under the join gate; re-issuing (the
+#: invite-text endpoint) re-stamps `invited_at`.
+INVITE_EXPIRY_DAYS = 14
+
 #: Serializes every last-admin guard against its peers until the surrounding
 #: transaction commits, so concurrent demotes/disables cannot both pass the
 #: check (ADR 0093 §5.5). Postgres only; arbitrary but fixed, and distinct
@@ -766,6 +771,95 @@ async def bind_bundled_login(
         issuer=issuer,
         subject=subject,
     )
+
+
+async def claim_pending_by_email(
+    session: AsyncSession,
+    record: IdentityProvider,
+    *,
+    issuer: str,
+    subject: str,
+    email: str | None,
+    email_verified: object,
+) -> User | None:
+    """Claim an invitation by verified email (ADR 0095 §2).
+
+    Runs in `sign_in` right after `bind_bundled_login`, before the
+    link-by-email block: a hit means `provision_user` finds an existing
+    person instead of creating one, so the join gate is never consulted for
+    someone an administrator vouched for. Never from the plain `/v1` path —
+    bearer claims may lack `email_verified`, and a sign-in to the chat or
+    console is what "sign in once" means. (Galopin enrolment already implies
+    a chat sign-in.)
+
+    Each refusal logs a WARNING naming its own number, like `link_by_email`.
+    Provider caveat, documented not solved: Entra ID sends no
+    `email_verified`, so its email claim cannot be trusted for matching
+    (nOAuth-class risk) — for Entra, use SCIM (pre-created by `oid`), or
+    `approval`.
+    """
+    # Self-gating: the bundled path is `bind_bundled_login`.
+    if record.kind == "authelia":
+        return None
+    # ... and an identity already known here needs no claim.
+    known = (await session.execute(_identity_select(issuer, subject))).scalar_one_or_none()
+    if known is not None:
+        return None
+    if email_verified is not True:
+        logger.warning("pending-claim declined (1): email_verified is not the literal true")
+        return None
+    claim_email, trusted = is_trusted_email(email or "")
+    if not trusted:
+        logger.warning("pending-claim declined (2): %r is not a trusted ASCII address", email)
+        return None
+    candidates = (
+        (
+            await session.execute(
+                select(User).where(
+                    User.issuer == PENDING_USER_ISSUER, User.email_normalized == claim_email
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(candidates) != 1:
+        logger.warning(
+            "pending-claim declined (3): %d pending account(s) hold %r, need exactly one",
+            len(candidates),
+            claim_email,
+        )
+        return None
+    target = candidates[0]
+    if not target.is_active:
+        logger.warning("pending-claim declined (4): %s is not active", target.id)
+        return None
+    if target.invited_at is None:
+        # A bundled pending account, not an invitation: `bind_bundled_login`
+        # owns that claim, and its directory entry already binds the user.
+        logger.warning("pending-claim declined (5): %s is not an invitation", target.id)
+        return None
+    if target.invited_at + timedelta(days=INVITE_EXPIRY_DAYS) < utcnow():
+        logger.warning("pending-claim declined (6): %s's invitation expired", target.id)
+        return None
+    # The same replacement the PENDING branch of `bind_bundled_login` does:
+    # the placeholder pair becomes the real one, in place, memberships kept.
+    target.issuer = issuer
+    target.subject = subject
+    await session.flush()
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.LOGIN,
+        actor_label=claim_email,
+        action=IdentityEventAction.IDENTITY_BIND,
+        target_user_id=target.id,
+        target_label=claim_email,
+        issuer=issuer,
+        subject=subject,
+        detail={"pending_claim": True},
+    )
+    logger.info("pending-claim: %s/%s claimed the invitation for %s", issuer, subject, claim_email)
+    return target
 
 
 async def claim_unbound_bundled_login(
@@ -1523,6 +1617,19 @@ async def sign_in(
         subject=subject,
         preferred_username=preferred_username,
         email=email,
+        email_verified=email_verified,
+    )
+
+    # ADR 0095 §2: an invitation claims itself by verified email, before
+    # anything below gets a chance to treat it as a stranger. A hit means
+    # `provision_user` finds an existing person, so the join gate is never
+    # consulted for someone an administrator vouched for.
+    await claim_pending_by_email(
+        session,
+        record,
+        issuer=issuer,
+        subject=subject,
+        email=email if isinstance(email, str) else None,
         email_verified=email_verified,
     )
 
