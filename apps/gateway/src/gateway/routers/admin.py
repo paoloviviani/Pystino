@@ -1935,14 +1935,22 @@ async def map_seen(
     if group is None:
         raise NotFoundError(f"No group with id {payload.group_id}.")
 
-    resolver = getattr(request.app.state, "oidc_policy", None)
-    current = resolver.policy.group_mappings if resolver is not None else {}
+    stored = await _latest_oidc_config(session)
+    # The pairs come from the stored row, never the worker's in-memory
+    # policy: the poll lags a save on another worker by up to ten seconds,
+    # and a mapping saved in that window must survive this one.
+    current: dict[str, str] = {}
+    if stored is not None and stored.group_mappings is not None:
+        for pair in stored.group_mappings:
+            if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                idp, local = pair
+                if isinstance(idp, str) and isinstance(local, str) and idp and local:
+                    current[idp] = local
     if name in current:
         raise BadRequestError(
             f"Group {name!r} is already mapped to {current[name]!r}. Unmap it first."
         )
     pairs = [[idp, local] for idp, local in current.items()] + [[name, group.name]]
-    stored = await _latest_oidc_config(session)
     row = _pending_policy_row(
         stored, {"group_mappings": pairs}, required_groups=None, mappings=pairs
     )
@@ -1963,6 +1971,11 @@ async def map_seen(
     )
     await session.commit()
     await _refresh_policy_resolver(request)
+    member_count = (
+        await session.execute(
+            select(func.count()).select_from(Membership).where(Membership.group_id == group.id)
+        )
+    ).scalar_one()
     return SeenGroupImportResponse(
         group=GroupAdminResponse(
             id=group.id,
@@ -1970,7 +1983,7 @@ async def map_seen(
             description=group.description,
             source=group.source.value,
             is_active=group.is_active,
-            member_count=result.members_added,
+            member_count=member_count,
             models=[],
             search_backend=None,
         ),

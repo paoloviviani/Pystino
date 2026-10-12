@@ -583,6 +583,93 @@ class TestTheAdminApi:
         ).json()
         assert body["applied"] == "next_login" and body["members_added"] == 0
 
+    async def test_map_skips_carriers_already_holding_the_group(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Map-to-existing onto a group a carrier already holds (the normal
+        case: console-added, another mapped name, directory sync) must not
+        500 on the membership primary key — and must not convert their manual
+        membership into the directory's. Runs through the endpoint's commit,
+        so the constraint is really exercised."""
+        as_user(bearer_app, await make_admin(session_factory, seeded))
+        await self._sign_in_people(session_factory)
+        async with session_factory() as session:
+            session.add(Group(name="engineering"))
+            await session.flush()
+            target_id = (
+                await session.execute(select(Group.id).where(Group.name == "engineering"))
+            ).scalar_one()
+            p1 = (await session.execute(select(User).where(User.subject == "p1"))).scalar_one()
+            session.add(
+                Membership(user_id=p1.id, group_id=target_id, source=MembershipSource.MANUAL)
+            )
+            await session.commit()
+        eng = next(
+            i
+            for i in (await client.get("/api/admin/groups/seen")).json()["items"]
+            if i["name"] == "gitlab/eng"
+        )
+        response = await client.post(
+            f"/api/admin/groups/seen/{eng['id']}/map", json={"group_id": str(target_id)}
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["members_added"] == 1
+        assert body["group"]["member_count"] == 2
+        async with session_factory() as session:
+            memberships = (
+                (
+                    await session.execute(
+                        select(Membership)
+                        .join(Group, Group.id == Membership.group_id)
+                        .where(Group.name == "engineering")
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            by_user = {m.user_id: m.source for m in memberships}
+            assert len(by_user) == 2
+            p1 = (await session.execute(select(User).where(User.subject == "p1"))).scalar_one()
+            assert by_user[p1.id] == MembershipSource.MANUAL
+
+    async def test_map_keeps_mappings_saved_behind_the_worker(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The pairs come from the stored row, not the worker's up-to-10s-old
+        policy: a mapping saved elsewhere in that window must survive."""
+        from gateway.models import OIDCPolicyConfig
+
+        as_user(bearer_app, await make_admin(session_factory, seeded))
+        await self._sign_in_people(session_factory)
+        async with session_factory() as session:
+            session.add(Group(name="engineering"))
+            session.add(OIDCPolicyConfig(group_mappings=[["gitlab/old", "engineering"]]))
+            await session.commit()
+            target_id = (
+                await session.execute(select(Group.id).where(Group.name == "engineering"))
+            ).scalar_one()
+        eng = next(
+            i
+            for i in (await client.get("/api/admin/groups/seen")).json()["items"]
+            if i["name"] == "gitlab/eng"
+        )
+        response = await client.post(
+            f"/api/admin/groups/seen/{eng['id']}/map", json={"group_id": str(target_id)}
+        )
+        assert response.status_code == 200, response.text
+        policy = (await client.get("/api/admin/oidc/policy")).json()
+        assert {"idp": "gitlab/old", "local": "engineering"} in policy["group_mappings"]
+        assert {"idp": "gitlab/eng", "local": "engineering"} in policy["group_mappings"]
+
     async def test_map_refuses_an_already_mapped_name(
         self,
         bearer_app: FastAPI,

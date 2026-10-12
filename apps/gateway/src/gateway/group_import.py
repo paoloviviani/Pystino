@@ -253,7 +253,13 @@ async def _carriers_apply_now(session: AsyncSession, issuer: str) -> bool:
 
 
 async def _grant_seen_carriers(session: AsyncSession, seen: SeenGroup, group: Group) -> int:
-    """Grant the recorded carriers a group, now. Returns how many."""
+    """Grant the recorded carriers a group, now. Returns how many were added.
+
+    Carriers already holding the group — the normal case for map-to-existing,
+    via a console grant, another mapped name or the directory sync — are
+    skipped, never converted: their membership keeps its source. Only real
+    additions count.
+    """
     users = list(
         (
             await session.execute(
@@ -265,11 +271,21 @@ async def _grant_seen_carriers(session: AsyncSession, seen: SeenGroup, group: Gr
         .scalars()
         .all()
     )
+    holding = set(
+        (await session.execute(select(Membership.user_id).where(Membership.group_id == group.id)))
+        .scalars()
+        .all()
+    )
+    added = 0
     for user in users:
-        session.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.OIDC))
         user.unresolved_group_names = [
             name for name in (user.unresolved_group_names or []) if name != seen.name
         ]
+        if user.id in holding:
+            continue
+        session.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.OIDC))
+        holding.add(user.id)
+        added += 1
     await session.flush()
     # The same rule provisioning applies: someone whose only group this
     # now is would otherwise have nothing to bill until they chose it.
@@ -277,7 +293,7 @@ async def _grant_seen_carriers(session: AsyncSession, seen: SeenGroup, group: Gr
         await session.refresh(user, attribute_names=["memberships"])
         if user.default_billing_group_id is None and len(user.memberships) == 1:
             user.default_billing_group_id = group.id
-    return len(users)
+    return added
 
 
 async def import_seen_group(session: AsyncSession, seen: SeenGroup) -> ImportResult:
