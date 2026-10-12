@@ -47,6 +47,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 GITLAB = "https://gitlab.test"
 CONSOLE_ID, CONSOLE_SECRET = "pystino-console", "console-secret"
 CHAT_ID, CHAT_SECRET = "cerea", "chat-secret"
+# galopin's machine client: a PUBLIC application at GitLab (no secret, so no
+# introspection credentials here), which is what the device flow needs.
+MACHINE_ID = "galopin-machine-app"
 AUDIENCE = "pystino-api"
 
 
@@ -62,6 +65,10 @@ class FakeGitLab:
         }
         self.introspections = 0
         self.userinfo_calls = 0
+        self.token_info_calls = 0
+        # GitLab's token info reports `expires_in` null for a token that
+        # never expires; tokens minted with ttl=None model that.
+        self.no_expiry: set[str] = set()
         # Misbehaviours a stricter-than-GitLab IdP never shows, to prove the
         # gateway does not rely on the provider being strict.
         self.active_for_anyone = False
@@ -102,6 +109,37 @@ class FakeGitLab:
                     "token_type": "Bearer",
                     "iat": int(utcnow().timestamp()),
                     "exp": held[2],
+                },
+            )
+        if request.url.path == "/oauth/token/info":
+            # Doorkeeper's TokenInfoController with GitLab's additions
+            # (`scopes`, `expires_in_seconds`): authorised by the token itself,
+            # no client credentials, 401 `invalid_token` for anything else.
+            self.token_info_calls += 1
+            if request.method != "GET":
+                return httpx.Response(404)
+            token = request.headers.get("authorization", "").removeprefix("Bearer ")
+            held = self._live(token)
+            if held is None:
+                return httpx.Response(
+                    401,
+                    json={
+                        "error": "invalid_token",
+                        "error_description": "The access token is invalid",
+                        "state": "unauthorized",
+                    },
+                )
+            remaining = None if token in self.no_expiry else held[2] - int(utcnow().timestamp())
+            return httpx.Response(
+                200,
+                json={
+                    "resource_owner_id": held[1],
+                    "scope": ["openid", "profile", "email"],
+                    "expires_in": remaining,
+                    "application": {"uid": held[0]},
+                    "created_at": int(utcnow().timestamp()),
+                    "scopes": ["openid", "profile", "email"],
+                    "expires_in_seconds": remaining,
                 },
             )
         if request.url.path == "/oauth/userinfo":
@@ -180,7 +218,7 @@ async def gitlab_app(app: FastAPI, gitlab: FakeGitLab, gitlab_key: RSAKey) -> Fa
         client_id=CONSOLE_ID,
         client_secret=CONSOLE_SECRET,
         access_token_audience=AUDIENCE,
-        accepted_clients=f"{CONSOLE_ID},{CHAT_ID}",
+        accepted_clients=f"{CONSOLE_ID},{CHAT_ID},{MACHINE_ID}",
         chat_client_id=CHAT_ID,
         chat_client_secret=CHAT_SECRET,
         groups_claim="groups",
@@ -333,6 +371,9 @@ class TestAnnounceWithAnOpaqueToken:
             response = await client.post("/v1/session/announce", headers=auth(gitlab.mint(CHAT_ID)))
         assert response.status_code == 401, response.text
         assert "inactive for client 'pystino-console'" in caplog.text
+        # The chat is confidential: its token is never vouched for through
+        # token info, which would hide the missing secret.
+        assert gitlab.token_info_calls == 0 or "not a public client" in caplog.text
 
 
 class TestV1WithAnOpaqueToken:
@@ -399,6 +440,93 @@ class TestV1WithAnOpaqueToken:
         assert response.status_code == 401, response.text
         assert "is not in ACCEPTED_CLIENTS" in caplog.text
         assert token not in caplog.text
+
+
+class TestMachineTokensFromAPublicApplication:
+    """galopin's tokens: issued by GitLab's device flow to a PUBLIC
+    application, which has no secret, so introspection can never vouch for
+    them (Doorkeeper answers only the token's own application, and that one
+    cannot authenticate). GitLab's `GET /oauth/token/info`, authorised by the
+    token itself, is the provider vouching instead: it names the application
+    the token belongs to and how long it lives."""
+
+    async def test_a_machine_token_is_accepted_as_the_same_person(
+        self, gitlab_app: FastAPI, client: Any, gitlab: FakeGitLab
+    ) -> None:
+        chat = gitlab.mint(CHAT_ID)
+        assert (await client.post("/v1/session/announce", headers=auth(chat))).status_code == 200
+        machine = gitlab.mint(MACHINE_ID)
+        response = await client.get("/v1/me", headers=auth(machine))
+        assert response.status_code == 200, response.text
+        users = await _users(gitlab_app.state.session_factory)
+        assert [u.subject for u in users] == ["42"]
+        assert gitlab.token_info_calls == 1
+
+    async def test_the_answer_is_cached_like_an_introspection(
+        self, gitlab_app: FastAPI, client: Any, gitlab: FakeGitLab
+    ) -> None:
+        machine = gitlab.mint(MACHINE_ID)
+        for _ in range(3):
+            assert (await client.get("/v1/me", headers=auth(machine))).status_code == 200
+        assert (gitlab.token_info_calls, gitlab.userinfo_calls) == (1, 1)
+
+    async def test_a_revoked_machine_token_fails_once_the_cache_lapses(
+        self, gitlab_app: FastAPI, client: Any, gitlab: FakeGitLab
+    ) -> None:
+        now = [1000.0]
+        gitlab_app.state.introspection_cache = IntrospectionCache(clock=lambda: now[0])
+        machine = gitlab.mint(MACHINE_ID)
+        assert (await client.get("/v1/me", headers=auth(machine))).status_code == 200
+        del gitlab.tokens[machine]
+        now[0] += 61
+        assert (await client.get("/v1/me", headers=auth(machine))).status_code == 401
+
+    async def test_an_application_outside_accepted_clients_is_refused(
+        self, gitlab_app: FastAPI, client: Any, gitlab: FakeGitLab, caplog: Any
+    ) -> None:
+        token = gitlab.mint("other-app")
+        with caplog.at_level(logging.WARNING):
+            response = await client.get("/v1/me", headers=auth(token))
+        assert response.status_code == 401, response.text
+        assert token not in caplog.text
+
+    async def test_a_client_we_hold_credentials_for_never_falls_back(
+        self, gitlab_app: FastAPI, client: Any, gitlab: FakeGitLab
+    ) -> None:
+        # The chat's token, which introspection under the chat's own
+        # credentials must vouch for. A token info saying "chat" for a token
+        # introspection called inactive is a contradiction, not a second
+        # chance: refuse.
+        token = gitlab.mint(CHAT_ID)
+        gitlab.clients[CHAT_ID] = "rotated-at-gitlab"  # our secret is stale
+        response = await client.get("/v1/me", headers=auth(token))
+        assert response.status_code == 401, response.text
+
+    async def test_a_token_without_expiry_is_refused(
+        self, gitlab_app: FastAPI, client: Any, gitlab: FakeGitLab
+    ) -> None:
+        machine = gitlab.mint(MACHINE_ID)
+        gitlab.no_expiry.add(machine)
+        assert (await client.get("/v1/me", headers=auth(machine))).status_code == 401
+
+    async def test_no_fallback_without_accepted_clients(
+        self, gitlab_app: FastAPI, client: Any, gitlab: FakeGitLab
+    ) -> None:
+        # The fallback binds a token to a client only through the allowlist;
+        # with none configured there is nothing to bind it to.
+        gitlab_app.state.settings.oidc.accepted_clients = ""
+        gitlab_app.state.gitlab_client._settings.accepted_clients = ""
+        machine = gitlab.mint(MACHINE_ID)
+        assert (await client.get("/v1/me", headers=auth(machine))).status_code == 401
+        assert gitlab.token_info_calls == 0
+
+    async def test_no_fallback_at_a_provider_that_is_not_doorkeeper(
+        self, gitlab_app: FastAPI, client: Any, gitlab: FakeGitLab
+    ) -> None:
+        gitlab_app.state.gitlab_client.introspection_endpoint = f"{GITLAB}/introspect"
+        machine = gitlab.mint(MACHINE_ID)
+        assert (await client.get("/v1/me", headers=auth(machine))).status_code == 401
+        assert gitlab.token_info_calls == 0
 
 
 class TestCache:

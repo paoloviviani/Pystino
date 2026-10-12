@@ -18,7 +18,13 @@ from gateway.accounting import TokenEstimator
 from gateway.config import Settings
 from gateway.errors import AuthenticationError, PermissionError_
 from gateway.identity_registry import list_providers
-from gateway.introspection import Candidate, IntrospectionCache, credentials_for, introspect
+from gateway.introspection import (
+    Candidate,
+    IntrospectionCache,
+    credentials_for,
+    introspect,
+    public_clients_for,
+)
 from gateway.models import ApiKey, Group, GroupSync, User
 from gateway.oidc import OIDCClient, OIDCError, sync_user_from_claims
 from gateway.oidc_policy import OIDCPolicy
@@ -479,7 +485,13 @@ async def validate_bearer_token(
     records.sort(key=lambda r: r.issuer.rstrip("/") != env_issuer)
     origin = str(request.base_url).rstrip("/")
     candidates = [
-        Candidate(r, registry.client_for(r, origin), credentials_for(r, settings)) for r in records
+        Candidate(
+            r,
+            registry.client_for(r, origin),
+            credentials_for(r, settings),
+            public_clients_for(r, settings),
+        )
+        for r in records
     ]
     record, client, claims = await introspect(token, candidates, _introspection_cache(request))
     # The one check `validate_access_token` makes that introspection does
