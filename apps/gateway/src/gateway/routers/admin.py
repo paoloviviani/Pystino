@@ -128,7 +128,7 @@ from gateway.models import (
     UserModelAccess,
 )
 from gateway.oidc import PENDING_USER_ISSUER, other_active_admin_exists
-from gateway.oidc_policy import GROUP_FALLBACKS, JOIN_MODES, environment_policy
+from gateway.oidc_policy import GROUP_FALLBACKS, JOIN_MODES, effective_policy, environment_policy
 from gateway.pagination import Page, PageDep, count_of
 from gateway.periods import PeriodKind
 from gateway.plugins import registry as plugin_registry
@@ -3882,6 +3882,68 @@ async def remove_identity_provider(
     await session.commit()
 
 
+def _pending_policy_row(
+    stored: OIDCPolicyConfig | None,
+    fields: dict[str, Any],
+    *,
+    required_groups: list[str] | None,
+    mappings: list[list[str]] | None,
+) -> OIDCPolicyConfig:
+    """The row a policy save would store: the newest stored row's answers
+    carried forward for every field the payload does not send.
+
+    Only the newest `oidc_config` row is ever in force, and the console saves
+    one field at a time — so a save that stored null for every unsent field
+    would reset the other saves' answers to the environment (a group-mode
+    save followed by a fallback-only save would fail open). Unsent fields
+    carry the newest row's values instead; an explicitly sent null clears the
+    field back to the environment. A payload that names a join mode clears
+    the carried legacy columns (and a payload naming legacy columns clears
+    the carried join ones), so a stored row never mixes the two spellings —
+    the fold would let one silently win. The future map-to-existing endpoint
+    builds its row through this same helper.
+    """
+    row = OIDCPolicyConfig(
+        auto_provision=stored.auto_provision if stored is not None else None,
+        unknown_user_policy=stored.unknown_user_policy if stored is not None else None,
+        join_mode=stored.join_mode if stored is not None else None,
+        required_groups=(
+            list(stored.required_groups)
+            if stored is not None and stored.required_groups is not None
+            else None
+        ),
+        group_fallback=stored.group_fallback if stored is not None else None,
+        groups_claim=stored.groups_claim if stored is not None else None,
+        group_mappings=(
+            [list(pair) for pair in stored.group_mappings]
+            if stored is not None and stored.group_mappings is not None
+            else None
+        ),
+    )
+    if "auto_provision" in fields:
+        row.auto_provision = fields["auto_provision"]
+    if "unknown_user_policy" in fields:
+        row.unknown_user_policy = fields["unknown_user_policy"]
+    if "join_mode" in fields:
+        row.join_mode = fields["join_mode"]
+    if "required_groups" in fields:
+        row.required_groups = required_groups
+    if "group_fallback" in fields:
+        row.group_fallback = fields["group_fallback"]
+    if "groups_claim" in fields:
+        row.groups_claim = fields["groups_claim"]
+    if "group_mappings" in fields:
+        row.group_mappings = mappings
+    if fields.get("join_mode") is not None:
+        row.auto_provision = None
+        row.unknown_user_policy = None
+    if fields.get("auto_provision") is not None or fields.get("unknown_user_policy") is not None:
+        row.join_mode = None
+        row.required_groups = None
+        row.group_fallback = None
+    return row
+
+
 @router.put("/oidc/policy", response_model=OidcPolicyResponse)
 async def set_oidc_policy(
     payload: OidcPolicyUpdateRequest,
@@ -3892,11 +3954,14 @@ async def set_oidc_policy(
 ) -> OidcPolicyResponse:
     """Record a new identity-policy decision.
 
-    Append-only, newest row wins, and every unset field stores ``null`` —
-    "the environment decides this one" — so a change to one knob never has to
-    know the deployment's other answers. The change reaches every worker
-    within the poll interval; the answering worker refreshes immediately so a
-    console that saves and re-reads sees its own decision.
+    Append-only, newest row wins. The new row carries the newest stored row's
+    answers forward for every field the payload does not send — the console
+    saves one field at a time, and storing null for the unsent fields would
+    reset the other saves' answers to the environment (a group-mode save
+    followed by a fallback-only save would fail open). An explicitly sent
+    null still clears the field back to the environment. The change reaches
+    every worker within the poll interval; the answering worker refreshes
+    immediately so a console that saves and re-reads sees its own decision.
     """
     fields = payload.model_dump(exclude_unset=True)
 
@@ -3911,89 +3976,79 @@ async def set_oidc_policy(
             "save one or the other, not both."
         )
 
-    policy_in_force = getattr(request.app.state, "oidc_policy", None)
-    current = policy_in_force.policy if policy_in_force is not None else None
-    mode_after = join_mode or (current.join_mode if current is not None else "open")
-    groups_after: list[str] | None
-    if payload.required_groups is not None:
-        cleaned: list[str] = []
-        for name in payload.required_groups:
-            name = str(name).strip()
-            if name and name not in cleaned:
-                cleaned.append(name)
-        groups_after = cleaned
-    elif current is not None:
-        groups_after = list(current.required_groups)
-    else:
-        groups_after = []
-    if mode_after == "group" and not groups_after:
+    groups_claim = fields.get("groups_claim")
+    if groups_claim is not None and not str(groups_claim).strip():
+        raise BadRequestError("groups_claim must name a claim (e.g. 'groups').")
+
+    mappings: list[list[str]] | None = None
+    if "group_mappings" in fields:
+        mappings = []
+        if payload.group_mappings is not None:
+            seen_idp: set[str] = set()
+            for rule in payload.group_mappings:
+                idp, local = rule.idp.strip(), rule.local.strip()
+                if not idp or not local:
+                    raise BadRequestError("Mapping rules need both an IdP name and a local name.")
+                if idp in seen_idp:
+                    # Two rows naming the same IdP group cannot both apply; storing
+                    # one silently would make the form disagree with the policy.
+                    raise BadRequestError(f"Group '{idp}' is mapped more than once.")
+                seen_idp.add(idp)
+                mappings.append([idp, local])
+
+    cleaned_groups: list[str] | None = None
+    if "required_groups" in fields:
+        cleaned_groups = []
+        if payload.required_groups is not None:
+            for name in payload.required_groups:
+                name = str(name).strip()
+                if name and name not in cleaned_groups:
+                    cleaned_groups.append(name)
+            local_names = set((await session.execute(select(Group.name))).scalars().all())
+            missing = [name for name in cleaned_groups if name not in local_names]
+            if missing:
+                raise BadRequestError(
+                    f"Unknown groups: {', '.join(missing)}. required_groups names "
+                    "local groups — import the directory name or map it to one first."
+                )
+
+    group_fallback = fields.get("group_fallback")
+    if group_fallback is not None and group_fallback not in GROUP_FALLBACKS:
+        raise BadRequestError("group_fallback must be 'refuse' or 'approval'.")
+
+    stored = await _latest_oidc_config(session)
+    row = _pending_policy_row(stored, fields, required_groups=cleaned_groups, mappings=mappings)
+    folded = effective_policy(settings.oidc, row)
+
+    unknown = fields.get("unknown_user_policy")
+    if unknown is not None and unknown not in ("refuse", "create_inactive"):
+        raise BadRequestError("unknown_user_policy must be 'refuse' or 'create_inactive'.")
+    if row.unknown_user_policy is not None and folded.auto_provision:
+        # Refused rather than stored-never-applied: a knob that does nothing
+        # because of another knob's value reads as a bug, not as a policy.
+        # Checked against this exact row folded over env, which is what the
+        # row would do in force — a save that turns provisioning off carries
+        # that decision with it, so it is valid, not an error.
+        raise BadRequestError(
+            "unknown_user_policy only applies when automatic provisioning "
+            "is off. Turn provisioning off, or drop the unknown-user policy."
+        )
+    if folded.join_mode == "group" and not folded.required_groups:
         raise BadRequestError(
             "join_mode 'group' needs required_groups: a group gate with no "
             "groups refuses everyone who is not an administrator. Name at "
             "least one local group first."
         )
-    group_fallback = fields.get("group_fallback")
-    if group_fallback is not None and group_fallback not in GROUP_FALLBACKS:
-        raise BadRequestError("group_fallback must be 'refuse' or 'approval'.")
-    if (
-        payload.required_groups is not None or group_fallback is not None
-    ) and mode_after != "group":
+    groups_sent = "required_groups" in fields and fields["required_groups"] is not None
+    if (groups_sent or group_fallback is not None) and folded.join_mode != "group":
         # Same "knob that does nothing" rule as unknown_user_policy above.
         raise BadRequestError(
             "required_groups and group_fallback only apply in join_mode "
             "'group'. Switch the join mode, or drop them."
         )
 
-    unknown = fields.get("unknown_user_policy")
-    if unknown is not None and unknown not in ("refuse", "create_inactive"):
-        raise BadRequestError("unknown_user_policy must be 'refuse' or 'create_inactive'.")
-    if unknown is not None:
-        # Refused rather than stored-never-applied: a knob that does nothing
-        # because of another knob's value reads as a bug, not as a policy. The
-        # check is against the policy that would be in force *after* this row
-        # — per-field saves are the normal case, so "the previous decision
-        # already turned provisioning off" is a valid state, not an error.
-        policy_in_force = getattr(request.app.state, "oidc_policy", None)
-        default_after = (
-            policy_in_force.policy.auto_provision if policy_in_force is not None else True
-        )
-        auto_after = fields.get("auto_provision", default_after)
-        if auto_after:
-            raise BadRequestError(
-                "unknown_user_policy only applies when automatic provisioning "
-                "is off. Turn provisioning off, or drop the unknown-user policy."
-            )
-
-    groups_claim = fields.get("groups_claim")
-    if groups_claim is not None and not str(groups_claim).strip():
-        raise BadRequestError("groups_claim must name a claim (e.g. 'groups').")
-
-    mappings: list[list[str]] | None = None
-    if payload.group_mappings is not None:
-        mappings = []
-        seen_idp: set[str] = set()
-        for rule in payload.group_mappings:
-            idp, local = rule.idp.strip(), rule.local.strip()
-            if not idp or not local:
-                raise BadRequestError("Mapping rules need both an IdP name and a local name.")
-            if idp in seen_idp:
-                # Two rows naming the same IdP group cannot both apply; storing
-                # one silently would make the form disagree with the policy.
-                raise BadRequestError(f"Group '{idp}' is mapped more than once.")
-            seen_idp.add(idp)
-            mappings.append([idp, local])
-
-    row = OIDCPolicyConfig(
-        auto_provision=fields.get("auto_provision"),
-        unknown_user_policy=unknown,
-        join_mode=join_mode,
-        required_groups=groups_after if payload.required_groups is not None else None,
-        group_fallback=group_fallback,
-        groups_claim=groups_claim,
-        group_mappings=mappings,
-        reason=payload.reason.strip(),
-        created_by=admin.id,
-    )
+    row.reason = payload.reason.strip()
+    row.created_by = admin.id
     session.add(row)
     await session.commit()
 

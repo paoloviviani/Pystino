@@ -155,6 +155,22 @@ class TestJoinModeFold:
         with _pytest.raises(Exception, match="group_fallback"):
             OIDCSettings(**LEGACY_GROUPS, group_fallback="maybe")
 
+    async def test_env_required_groups_warn_for_unknown_names(
+        self, session_factory: async_sessionmaker[AsyncSession], caplog: Any
+    ) -> None:
+        import logging as _logging
+
+        settings = OIDCSettings(**LEGACY_GROUPS, join_mode="group", required_groups=["ghost"])
+        resolver = OIDCPolicyResolver(settings, session_factory)
+        with caplog.at_level(_logging.WARNING, logger="gateway.oidc_policy"):
+            await resolver.refresh_once()
+        assert "ghost" in caplog.text
+        # Warned once per distinct set: the ten-second poll must not spam.
+        caplog.clear()
+        with caplog.at_level(_logging.WARNING, logger="gateway.oidc_policy"):
+            await resolver.refresh_once()
+        assert "ghost" not in caplog.text
+
 
 class TestMapGroupNames:
     def test_unmapped_groups_keep_their_name(self) -> None:
@@ -499,19 +515,52 @@ class TestOidcPolicyEndpoints:
             row = (await session.execute(select(OIDCPolicyConfig))).scalar_one()
             assert row.reason == ""
 
-    async def test_unknown_user_policy_requires_provisioning_off(
+    async def test_unknown_user_policy_alone_means_approval(
         self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]
     ) -> None:
+        # A row naming only the unknown-user rule folds to approval on its
+        # own — the save carries the "provisioning off" decision with it, so
+        # there is no dead knob to refuse.
         response = await client.put(
             "/api/admin/oidc/policy",
             json={"unknown_user_policy": "create_inactive"},
             headers=admin_session,
         )
-        assert response.status_code == 400
+        assert response.status_code == 200, response.text
+        assert response.json()["join_mode"] == "approval"
 
-    async def test_put_join_mode_group_with_groups(
+    async def test_unknown_user_policy_with_provisioning_on_is_refused(
         self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]
     ) -> None:
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={"auto_provision": True, "unknown_user_policy": "create_inactive"},
+            headers=admin_session,
+        )
+        assert response.status_code == 400
+
+    async def test_put_unknown_group_name_is_refused(
+        self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]
+    ) -> None:
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={"join_mode": "group", "required_groups": ["no-such-group"]},
+            headers=admin_session,
+        )
+        assert response.status_code == 400
+        assert "no-such-group" in response.json()["error"]["message"]
+
+    async def test_put_join_mode_group_with_groups(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Any,
+        admin_session: dict[str, str],
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        async with session_factory() as session:
+            session.add(Group(name="staff"))
+            session.add(Group(name="ops"))
+            await session.commit()
         response = await client.put(
             "/api/admin/oidc/policy",
             json={
@@ -559,6 +608,102 @@ class TestOidcPolicyEndpoints:
             headers=admin_session,
         )
         assert response.status_code == 400
+
+    async def test_single_field_saves_carry_the_join_mode(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Any,
+        admin_session: dict[str, str],
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """One row per save must not reset the answers the other saves gave.
+
+        The console saves one field at a time, and each save stores a whole
+        row of nulls-except-what-was-sent. Without carry-forward, the second
+        save folds the join answer back to the environment and fails open.
+        """
+        async with session_factory() as session:
+            session.add(Group(name="staff"))
+            await session.commit()
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={"join_mode": "group", "required_groups": ["staff"]},
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+
+        response = await client.put(
+            "/api/admin/oidc/policy", json={"group_fallback": "approval"}, headers=admin_session
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["join_mode"] == "group"
+        assert body["required_groups"] == ["staff"]
+        assert body["group_fallback"] == "approval"
+
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={"group_mappings": [{"idp": "idp-team", "local": "staff"}]},
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["join_mode"] == "group"
+        assert body["required_groups"] == ["staff"]
+
+        response = await client.put(
+            "/api/admin/oidc/policy", json={"groups_claim": "roles"}, headers=admin_session
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["join_mode"] == "group"
+        assert body["required_groups"] == ["staff"]
+        assert body["groups_claim"] == "roles"
+
+    async def test_legacy_pair_across_two_saves_gives_approval(
+        self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]
+    ) -> None:
+        response = await client.put(
+            "/api/admin/oidc/policy", json={"auto_provision": False}, headers=admin_session
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["join_mode"] == "invite"
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={"unknown_user_policy": "create_inactive"},
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["join_mode"] == "approval"
+
+    async def test_join_mode_save_clears_carried_legacy_columns(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Any,
+        admin_session: dict[str, str],
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A row must never mix the two spellings: saving a join mode drops
+        the carried legacy columns, so a later legacy-column edit cannot
+        silently revive beside it."""
+        response = await client.put(
+            "/api/admin/oidc/policy", json={"auto_provision": False}, headers=admin_session
+        )
+        assert response.status_code == 200, response.text
+        response = await client.put(
+            "/api/admin/oidc/policy", json={"join_mode": "open"}, headers=admin_session
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["join_mode"] == "open"
+        async with session_factory() as session:
+            row = (
+                await session.execute(
+                    select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc()).limit(1)
+                )
+            ).scalar_one()
+            assert row.join_mode == "open"
+            assert row.auto_provision is None
+            assert row.unknown_user_policy is None
 
     async def test_an_idp_group_cannot_be_mapped_twice(
         self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]
