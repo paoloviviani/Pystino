@@ -831,9 +831,10 @@ class TestOidcPolicyEndpoints:
             )
             await session.commit()
         # The seeded administrator is exempt; the plain user holds nothing.
+        # Repeated params, as the console sends them (list[str] Query).
         response = await client.get(
             "/api/admin/oidc/policy/preview",
-            params={"join_mode": "group", "required_groups": "research"},
+            params=[("join_mode", "group"), ("required_groups", "research")],
             headers=admin_session,
         )
         assert response.status_code == 200, response.text
@@ -845,14 +846,14 @@ class TestOidcPolicyEndpoints:
         assert (
             await client.get(
                 "/api/admin/oidc/policy/preview",
-                params={"join_mode": "invite"},
+                params=[("join_mode", "invite")],
                 headers=admin_session,
             )
         ).status_code == 400
         assert (
             await client.get(
                 "/api/admin/oidc/policy/preview",
-                params={"join_mode": "group", "required_groups": ""},
+                params=[("join_mode", "group")],
                 headers=admin_session,
             )
         ).status_code == 400

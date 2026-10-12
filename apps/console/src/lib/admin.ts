@@ -1122,13 +1122,17 @@ export function useUpdateOidcPolicy() {
 }
 
 /** What saving a group gate would do (ADR 0095). Fetched on demand — the
- * console asks before saving, not on every render. */
+ * console asks before saving, not on every render. The groups go as
+ * repeated `required_groups` params: a comma inside a name cannot be
+ * mistaken for a separator. */
 export function usePolicyPreview() {
   return useMutation({
-    mutationFn: ({ join_mode, required_groups }: { join_mode: string; required_groups: string[] }) =>
-      request<OidcPolicyPreview>(
-        `/api/admin/oidc/policy/preview?join_mode=${encodeURIComponent(join_mode)}&required_groups=${encodeURIComponent(required_groups.join(","))}`,
-      ),
+    mutationFn: ({ join_mode, required_groups }: { join_mode: string; required_groups: string[] }) => {
+      const params = new URLSearchParams();
+      params.set("join_mode", join_mode);
+      for (const group of required_groups) params.append("required_groups", group);
+      return request<OidcPolicyPreview>(`/api/admin/oidc/policy/preview?${params.toString()}`);
+    },
   });
 }
 

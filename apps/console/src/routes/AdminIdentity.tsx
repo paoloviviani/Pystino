@@ -69,17 +69,30 @@ export function ProvisioningPolicySection() {
     setGroupFallback(policy.data.group_fallback);
   }, [policy.data]);
 
+  // A refused save must not leave the radio (or the checkboxes) showing a
+  // mode the server declined: everything goes back to what is in force.
+  const resetToPolicy = () => {
+    if (!policy.data) return;
+    setJoinMode(policy.data.join_mode);
+    setRequiredGroups(policy.data.required_groups);
+    setGroupFallback(policy.data.group_fallback);
+    setNeedsGroups(false);
+    preview.reset();
+  };
+
   const put = (body: OidcPolicyInput, ok: string) =>
     save.mutate(body, {
       onSuccess: () => {
         toast?.add({ title: ok, type: "success" });
         preview.reset();
       },
-      onError: (caught: unknown) =>
+      onError: (caught: unknown) => {
         toast?.add({
           title: caught instanceof Error ? caught.message : "Could not save",
           type: "error",
-        }),
+        });
+        resetToPolicy();
+      },
     });
 
   // Saving group mode (or changed groups inside it) asks the preview first:
@@ -127,13 +140,21 @@ export function ProvisioningPolicySection() {
     );
   };
 
+  // The checkboxes are local state: ticking one after another must not save
+  // every intermediate set as its own policy row (or confirm a misleading
+  // "N will lose access" for a gate nobody asked for). "Save access groups"
+  // runs the preview/confirm for the whole set, once.
   const changeGroups = (names: string[]) => {
     setRequiredGroups(names);
     setNeedsGroups(names.length === 0 && joinMode === "group");
-    if (joinMode === "group" && names.length > 0) {
-      saveGroupMode("group", names, groupFallback);
-    }
+    preview.reset();
   };
+
+  const saved = policy.data?.required_groups ?? [];
+  const groupsDirty =
+    joinMode === "group" &&
+    (requiredGroups.length !== saved.length ||
+      [...requiredGroups].sort().join("\n") !== [...saved].sort().join("\n"));
 
   const changeFallback = (fallback: "refuse" | "approval") => {
     setGroupFallback(fallback);
@@ -238,6 +259,18 @@ export function ProvisioningPolicySection() {
                 Local group names. Required groups {sourceOf("required_groups")}.
               </p>
             )}
+            {/* Saving is explicit for the set: no intermediate gate is ever
+                stored, and the preview sees the whole choice. */}
+            <div className="mt-2">
+              <Button
+                variant="primary"
+                disabled={!groupsDirty}
+                busy={preview.isPending || save.isPending}
+                onClick={() => saveGroupMode("group", requiredGroups, groupFallback)}
+              >
+                Save access groups
+              </Button>
+            </div>
           </fieldset>
 
           <Select

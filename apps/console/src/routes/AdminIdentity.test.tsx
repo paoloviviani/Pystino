@@ -51,10 +51,23 @@ function renderScreen(element: ReactElement) {
   );
 }
 
-function mockRoutes({ policy, groups }: { policy: OidcPolicy; groups?: { id: string; name: string }[] }) {
+function mockRoutes({
+  policy,
+  groups,
+  putStatus = 200,
+}: {
+  policy: OidcPolicy;
+  groups?: { id: string; name: string }[];
+  putStatus?: number;
+}) {
   fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/api/admin/oidc/policy") && (init?.method ?? "GET") === "PUT") {
+      if (putStatus !== 200)
+        return new Response(
+          JSON.stringify({ error: { message: "the server refused that" } }),
+          { status: putStatus, headers: { "content-type": "application/json" } },
+        );
       return new Response(JSON.stringify(policy), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -62,7 +75,7 @@ function mockRoutes({ policy, groups }: { policy: OidcPolicy; groups?: { id: str
     }
     if (url.includes("/api/admin/oidc/policy/preview")) {
       const params = new URL(url, "http://x").searchParams;
-      const refused = params.get("required_groups")?.includes("cut-off") ? 2 : 0;
+      const refused = params.getAll("required_groups").includes("cut-off") ? 2 : 0;
       return new Response(
         JSON.stringify({ active_users: 5, would_be_refused: refused, admins_exempt: 1 }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -161,6 +174,10 @@ describe("AdminIdentity", () => {
       await screen.findByText(/pick at least one required group first/i),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "cut-off" }));
+    // Ticking is local: no save, no preview, no row.
+    expect(putBodies()).toEqual([]);
+
+    await user.click(screen.getByRole("button", { name: /save access groups/i }));
 
     const warning = await screen.findByText(/will lose access/i);
     expect(warning).toBeInTheDocument();
@@ -187,6 +204,9 @@ describe("AdminIdentity", () => {
       await screen.findByText(/pick at least one required group first/i),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "staff" }));
+    expect(putBodies()).toEqual([]);
+    // The set saves as one decision, once.
+    await user.click(screen.getByRole("button", { name: /save access groups/i }));
     await waitFor(() =>
       expect(putBodies()).toEqual([
         { join_mode: "group", required_groups: ["staff"], group_fallback: "refuse" },
@@ -208,6 +228,19 @@ describe("AdminIdentity", () => {
         { join_mode: "group", required_groups: ["staff"], group_fallback: "approval" },
       ]),
     );
+  });
+
+  it("a refused save puts the radio back to the mode in force", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({ policy: policyFixture({ join_mode: "open" }), putStatus: 400 });
+    renderScreen(<AdminIdentity />);
+    await screen.findByRole("radio", { name: /^Open/ });
+
+    await user.click(screen.getByRole("radio", { name: /^Invite/ }));
+    expect(await screen.findByText(/the server refused that/i)).toBeInTheDocument();
+    // The radio never shows a mode the server declined.
+    expect(screen.getByRole("radio", { name: /^Open/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^Invite/ })).not.toBeChecked();
   });
 
   it("still opens showing the legacy view for an old row", async () => {

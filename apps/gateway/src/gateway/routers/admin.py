@@ -29,7 +29,7 @@ from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import quote, urlsplit
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from llmp_shared import EntitySpan, PlaceholderMap
 from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select, update
@@ -4105,7 +4105,10 @@ async def preview_oidc_policy(
     admin: AdminUserDep,
     session: SessionDep,
     join_mode: str = "group",
-    required_groups: str = "",
+    #: Repeated `?required_groups=a&required_groups=b`: the console sends the
+    #: set as it is, and a comma inside a group name cannot be mistaken for a
+    #: separator.
+    required_groups: list[str] = Query(default=[]),
 ) -> OidcPolicyPreviewResponse:
     """What saving this group gate would do (ADR 0095 §7).
 
@@ -4117,7 +4120,7 @@ async def preview_oidc_policy(
     """
     if join_mode != "group":
         raise BadRequestError("Only join_mode 'group' has a preview.")
-    names = [name.strip() for name in required_groups.split(",") if name.strip()]
+    names = [name.strip() for name in required_groups if name.strip()]
     if not names:
         raise BadRequestError("Name at least one required group to preview.")
     active_users = await session.scalar(
