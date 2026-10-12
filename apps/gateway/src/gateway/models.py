@@ -1767,6 +1767,11 @@ class IdentityEventAction(enum.StrEnum):
     GROUP_IMPORT = "group.import"
     GROUP_DISMISS = "group.dismiss"
     GROUP_RESTORE = "group.restore"
+    # ADR 0095: the join gate refused a sign-in (a stranger in `invite` or
+    # `group` mode, or an account outside the required groups).
+    # `detail.reason` is the mode that refused. Plain VARCHAR(32) column, so
+    # no migration.
+    ACCESS_REFUSED = "access.refused"
 
 
 #: Raised by both dialects' triggers, so a caller sees the same reason whether

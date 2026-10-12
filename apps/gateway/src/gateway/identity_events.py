@@ -85,6 +85,8 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     IdentityEventAction.GROUP_IMPORT: frozenset({"members"}),
     IdentityEventAction.GROUP_DISMISS: frozenset(),
     IdentityEventAction.GROUP_RESTORE: frozenset(),
+    # ADR 0095: `reason` is the join mode that refused (`invite`, `group`).
+    IdentityEventAction.ACCESS_REFUSED: frozenset({"reason"}),
 }
 
 #: Unconditional, whatever the action: the review's rule is "never a password,

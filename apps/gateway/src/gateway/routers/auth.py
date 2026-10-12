@@ -28,6 +28,7 @@ from gateway.errors import (
     ServiceUnavailableError,
 )
 from gateway.identity_registry import OIDCProviderRegistry, list_providers, provider_by_name
+from gateway.join_gate import refusal_text
 from gateway.oidc import (
     OIDCClient,
     OIDCError,
@@ -363,6 +364,8 @@ async def callback(
     # login, it is a maze. The commit above already landed — an account created
     # here exists as a disabled row an administrator can see and enable.
     if not user.is_active:
+        if user.deactivated_by == "approval":
+            raise BadRequestError(refusal_text("approval", email=None, provider=""))
         raise BadRequestError(
             "This account is not enabled. Ask an administrator to enable it, then sign in again."
         )

@@ -26,11 +26,13 @@ import httpx
 
 from gateway.config import OIDCSettings, Settings
 from gateway.email_normalize import is_trusted_email, normalize_email
+from gateway.join_gate import (
+    _matches_claim_rule,
+    _matches_email_rule,
+)
 from gateway.oidc import (
     OIDCClient,
     OIDCError,
-    _matches_claim_rule,
-    _matches_email_rule,
     resolve_claim,
 )
 

@@ -25,6 +25,7 @@ from gateway.introspection import (
     introspect,
     public_clients_for,
 )
+from gateway.join_gate import holds_required_group, provider_label
 from gateway.models import ApiKey, Group, GroupSync, User
 from gateway.oidc import OIDCClient, OIDCError, sync_user_from_claims
 from gateway.oidc_policy import OIDCPolicy
@@ -551,6 +552,7 @@ async def _authenticate_bearer_user(request: Request, session: AsyncSession, tok
             group_sync=provider.group_sync if provider is not None else GroupSync.EVERY_LOGIN,
             group_source=provider.group_source if provider is not None else "claim",
             group_mappings=policy.group_mappings if policy is not None else None,
+            idp_label=provider_label(provider.kind) if provider is not None else None,
         )
     except OIDCError as exc:
         # Logged in full, returned as one word: the reason a token failed is
@@ -738,7 +740,21 @@ async def get_management_user(
     except OIDCError as exc:
         raise AuthenticationError("Session is not valid or has expired.") from exc
 
-    return await load_user_for_management(session, claims.user_id, issued_at=claims.issued_at)
+    user = await load_user_for_management(session, claims.user_id, issued_at=claims.issued_at)
+    # ADR 0095: the group gate on an already-open console session. The row
+    # above already carries the memberships (`selectinload`, groups joined),
+    # so this costs no query; without claims only the admin flag can exempt.
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    policy = resolver.policy if resolver is not None else None
+    if (
+        policy is not None
+        and policy.join_mode == "group"
+        and user.is_active
+        and not user.is_admin
+        and not holds_required_group(user, frozenset(policy.required_groups))
+    ):
+        raise AuthenticationError("Session is no longer valid.")
+    return user
 
 
 async def get_admin_user(
