@@ -12,6 +12,27 @@ against quotas, redacted, metered and written to a ledger you can report on.
 > The name is *pistino*: Turin dialect for a nitpicker, the person who checks
 > every last detail. Which is what an accounting gateway is for.
 
+## Pystino and Cerea
+
+Pystino is one half of a pair. Each half solves a different problem, and each
+runs on its own:
+
+- **Pystino** (this repository) serves the organisation paying for models:
+  who may call which model, what it costs, who pays, and what leaves the
+  building.
+- **[Cerea](https://github.com/paoloviviani/Cerea)** serves the people using
+  them: a self-hosted chat with knowledge bases, artifacts, Python in the
+  browser, and **galopin**, which pairs coding agents on a person's own
+  machine.
+
+Pystino alone serves any OpenAI or Anthropic client: scripts, IDEs, coding
+agents. Cerea alone runs against any OpenAI-compatible endpoint with one
+shared key. Together they are the intended setup: the chat calls Pystino's
+`/v1` with each person's own sign-in token, so spend, quotas, model access and
+redaction follow the person, and the chat gains Pystino's web search, document
+reader and metered coding agents. The full stack is deployed with Cerea's
+deploy kit (`kit/` in the Cerea repository); `deploy/` here runs Pystino alone.
+
 ## Features
 
 - **One API for many providers.** OpenAI-compatible surfaces in front of any
@@ -31,13 +52,21 @@ against quotas, redacted, metered and written to a ledger you can report on.
   or your own issuer, with groups from claims, directory sync or SCIM. To
   combine several sources of users, federate them in your own IdP. Programs
   use revocable API keys or OIDC access tokens.
+- **More than chat.** Embeddings, image generation, document extraction
+  (OCR, or a local reader that keeps documents inside the deployment) and web
+  search across several backends, each recorded in the ledger like any other
+  call.
+- **Coding agents on the same footing.** One script points opencode at the
+  gateway ([docs/coding-agents.md](docs/coding-agents.md)), so an agent's
+  calls are billed and limited like a person's.
 - **An admin console** for spend, reports, quotas, providers, models and
   prices, users, groups and redaction rules.
 
 ## Quick start
 
 `deploy/` is a self-contained Pystino deployment: the gateway, its console
-and, optionally, the bundled Authelia and redaction. No chat.
+and, optionally, the bundled Authelia and redaction. No chat: that is the
+Pystino-alone setup.
 
 ```sh
 cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
@@ -123,8 +152,12 @@ The documentation site is `docs/` (`uv run mkdocs build --strict`). Start at
 [redaction](docs/redaction.md) ·
 [deployment](docs/deployment.md) ·
 [identity](docs/identity.md) ·
+[bundled accounts](docs/bundled-accounts.md) ·
+[the OIDC provider](docs/oidc-generic-provider.md) ·
 [coding agents](docs/coding-agents.md) ·
+[console](docs/console.md) ·
 [operations](docs/operations.md) ·
+[performance](docs/performance.md) ·
 [development](docs/development.md). The gateway package has its own
 [README](apps/gateway/README.md).
 

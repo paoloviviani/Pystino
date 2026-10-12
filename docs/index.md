@@ -6,8 +6,9 @@ operates it. The name is *pistino*: Turin dialect for a nitpicker, the person
 who checks every last detail.
 
 One origin: the gateway serves the `/v1` API, the management API and the
-console at `/console`. [Cerea](https://github.com/paoloviviani/Cerea), the chat,
-is a `/v1` client of this gateway and a separate repository.
+console at `/console`. It pairs with [Cerea](https://github.com/paoloviviani/Cerea),
+the chat, which is a `/v1` client of this gateway: each runs on its own, and
+together they are the intended setup (see [the rest of the stack](#the-rest-of-the-stack)).
 
 ## The four ideas that carry the design
 
@@ -53,12 +54,13 @@ is a `/v1` client of this gateway and a separate repository.
 
 ## The rest of the stack
 
-Pystino is one of two repositories. **[Cerea](https://github.com/paoloviviani/Cerea)**
-is the chat, with its own [documentation](https://paoloviviani.github.io/Cerea/)
+Pystino is one of two repositories, each solving a different problem: Pystino
+governs model calls (access, cost, quotas, redaction), and
+**[Cerea](https://github.com/paoloviviani/Cerea)** is the chat people use, with its own [documentation](https://paoloviviani.github.io/Cerea/)
 (using it, the agent machines, configuration). Its `kit/` directory is the **deploy
 kit**, the deployment that runs both, with
 [its README](https://github.com/paoloviviani/Cerea/blob/stable/kit/README.md)
-as the runbook (it was the separate `cerea-deploy` repository until it moved there).
+as the runbook.
 
 ## Versions
 
