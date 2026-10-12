@@ -2902,6 +2902,17 @@ async def _invite_user(
             status = "active"
         raise ConflictError(f"{payload.email} already has an account ({status}).")
 
+    # Refused before anything is written: a misconfigured-mail invite must
+    # leave nothing behind for its retry to 409 against.
+    smtp_settings = None
+    if payload.send_email:
+        smtp = await effective_smtp(session, settings, secrets)
+        if not smtp.usable:
+            raise BadRequestError(
+                "Email is not configured: set the SMTP host and a From address first."
+            )
+        smtp_settings = smtp.to_smtp_settings()
+
     user = User(
         issuer=PENDING_USER_ISSUER,
         subject=str(uuid.uuid4()),
@@ -2943,24 +2954,31 @@ async def _invite_user(
         f"with your {idp} account {payload.email}."
     )
     email_sent = False
-    if payload.send_email:
-        smtp = await effective_smtp(session, settings, secrets)
-        if not smtp.usable:
-            raise BadRequestError(
-                "Email is not configured: set the SMTP host and a From address first."
+    email_error = None
+    if smtp_settings is not None:
+        try:
+            await send_mail_async(
+                smtp_settings,
+                payload.email,
+                f"You've been given access to {deployment}",
+                invite_text,
             )
-        await send_mail_async(
-            smtp.to_smtp_settings(),
-            payload.email,
-            f"You've been given access to {deployment}",
-            invite_text,
-        )
-        email_sent = True
+            email_sent = True
+        except MailDeliveryError as exc:
+            # The invitation stands — 201, not 500 — and the console falls
+            # back to Copy invite text. The send was best-effort delivery of
+            # a paragraph the administrator can paste instead.
+            logger.warning("invite email to %s failed: %s", payload.email, exc)
+            email_error = str(exc) or "delivery failed"
 
     await session.refresh(user, attribute_names=["memberships"])
     response = (await _user_responses(session, [user]))[0]
     return InvitedUserResponse(
-        user=response, sign_in_url=sign_in_url, invite_text=invite_text, email_sent=email_sent
+        user=response,
+        sign_in_url=sign_in_url,
+        invite_text=invite_text,
+        email_sent=email_sent,
+        email_error=email_error,
     )
 
 
@@ -3018,10 +3036,12 @@ async def invite_text(
     """Regenerate an invitation's text, for the console's Copy button.
 
     Re-issuing re-stamps ``invited_at``: copying the text to resend it *is*
-    re-inviting, and an expired invitation becomes claimable again.
+    re-inviting, and an expired invitation becomes claimable again. Only
+    invitations qualify — a bundled pending account (no ``invited_at``) must
+    never be stamped into one, or it would pass the invite-claim check.
     """
     user = await session.get(User, user_id)
-    if user is None or user.issuer != PENDING_USER_ISSUER:
+    if user is None or user.issuer != PENDING_USER_ISSUER or user.invited_at is None:
         raise NotFoundError("No pending invitation with that id.")
     user.invited_at = utcnow()
     await session.commit()

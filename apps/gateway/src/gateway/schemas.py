@@ -1468,6 +1468,9 @@ class InvitedUserResponse(BaseModel):
     sign_in_url: str
     invite_text: str
     email_sent: bool = False
+    # Set when `send_email` was asked for but delivery failed: the invitation
+    # itself stands (201), and the console falls back to Copy invite text.
+    email_error: str | None = None
 
 
 class InviteTextResponse(BaseModel):

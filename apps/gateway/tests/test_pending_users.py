@@ -125,9 +125,7 @@ class TestInvite:
         assert response.status_code == 201, response.text
         async with session_factory() as session:
             user = (
-                await session.execute(
-                    select(User).where(User.email_normalized == "g@example.org")
-                )
+                await session.execute(select(User).where(User.email_normalized == "g@example.org"))
             ).scalar_one()
             names = sorted(m.group.name for m in user.memberships)
             assert "research" in names
@@ -180,6 +178,40 @@ class TestInvite:
         response = await _invite(client, headers, "m@example.org", send_email=True)
         assert response.status_code == 400, response.text
         assert "Email" in response.json()["error"]["message"]
+        # Nothing left behind for the retry to 409 against.
+        async with session_factory() as session:
+            assert (
+                await session.execute(select(User).where(User.email_normalized == "m@example.org"))
+            ).scalar_one_or_none() is None
+
+    async def test_send_failure_still_creates_the_invite(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: Any,
+    ) -> None:
+        from gateway.mail import MailDeliveryError
+
+        async def _fail(*args: Any, **kwargs: Any) -> None:
+            raise MailDeliveryError("relay refused")
+
+        monkeypatch.setattr("gateway.routers.admin.send_mail_async", _fail)
+        # Mail configured, so the usable check passes and the send itself fails.
+        app.state.settings.smtp.enabled = True
+        app.state.settings.smtp.host = "127.0.0.1"
+        app.state.settings.smtp.from_address = "gateway@example.org"
+        headers = await _admin_session(app, session_factory, seeded)
+        response = await _invite(client, headers, "n@example.org", send_email=True)
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["email_sent"] is False
+        assert body["email_error"] == "relay refused"
+        async with session_factory() as session:
+            assert (
+                await session.execute(select(User).where(User.email_normalized == "n@example.org"))
+            ).scalar_one() is not None
 
     async def test_invite_text_regenerates_and_reissues(
         self,
@@ -218,6 +250,32 @@ class TestInvite:
             f"/api/admin/users/{seeded.user.id}/invite-text", headers=headers
         )
         assert response.status_code == 404, response.text
+
+    async def test_invite_text_refuses_a_bundled_pending_account(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A bundled pending account has no invited_at: stamping one would
+        turn it into an "invitation" that passes the invite-claim check."""
+        headers = await _admin_session(app, session_factory, seeded)
+        async with session_factory() as session:
+            bundled_pending = User(
+                issuer=PENDING_USER_ISSUER,
+                subject="bundled-pending-sub",
+                email="bp@example.org",
+                email_normalized="bp@example.org",
+                username="bplogin",
+            )
+            session.add(bundled_pending)
+            await session.commit()
+            pending_id = bundled_pending.id
+        response = await client.post(f"/api/admin/users/{pending_id}/invite-text", headers=headers)
+        assert response.status_code == 404, response.text
+        async with session_factory() as session:
+            assert (await session.get(User, pending_id)).invited_at is None
 
 
 class TestClaim:
