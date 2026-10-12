@@ -550,6 +550,90 @@ class TestOidcPolicyEndpoints:
         assert response.status_code == 400
         assert "no-such-group" in response.json()["error"]["message"]
 
+    async def test_explicit_nulls_clear_back_to_env(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Any,
+        admin_session: dict[str, str],
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """An explicitly sent null stores None — back to env — not []."""
+        async with session_factory() as session:
+            session.add(Group(name="staff"))
+            await session.commit()
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={
+                "join_mode": "group",
+                "required_groups": ["staff"],
+                "group_mappings": [{"idp": "idp-team", "local": "staff"}],
+            },
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+        # Leaving group mode needs the groups cleared in the same save;
+        # clearing them alone would strand a gateless group mode.
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={"join_mode": "invite", "required_groups": None},
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+        response = await client.put(
+            "/api/admin/oidc/policy", json={"group_mappings": None}, headers=admin_session
+        )
+        assert response.status_code == 200, response.text
+        async with session_factory() as session:
+            row = (
+                await session.execute(
+                    select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc()).limit(1)
+                )
+            ).scalar_one()
+            assert row.join_mode == "invite"
+            assert row.required_groups is None
+            assert row.group_mappings is None
+
+    async def test_deleting_a_required_group_is_refused(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Any,
+        admin_session: dict[str, str],
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        async with session_factory() as session:
+            session.add(Group(name="staff"))
+            session.add(OIDCPolicyConfig(join_mode="group", required_groups=["staff"]))
+            await session.commit()
+            group_id = (
+                await session.execute(select(Group.id).where(Group.name == "staff"))
+            ).scalar_one()
+        await app.state.oidc_policy.refresh_once()
+        response = await client.delete(f"/api/admin/groups/{group_id}", headers=admin_session)
+        assert response.status_code == 400, response.text
+        assert "required groups" in response.json()["error"]["message"]
+        assert "staff" in response.json()["error"]["message"]
+
+    async def test_deleting_an_unrequired_group_still_works(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Any,
+        admin_session: dict[str, str],
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        async with session_factory() as session:
+            session.add(Group(name="staff"))
+            session.add(Group(name="other"))
+            session.add(OIDCPolicyConfig(join_mode="group", required_groups=["staff"]))
+            await session.commit()
+            group_id = (
+                await session.execute(select(Group.id).where(Group.name == "other"))
+            ).scalar_one()
+        await app.state.oidc_policy.refresh_once()
+        response = await client.delete(f"/api/admin/groups/{group_id}", headers=admin_session)
+        assert response.status_code == 204, response.text
+
     async def test_put_join_mode_group_with_groups(
         self,
         client: httpx.AsyncClient,

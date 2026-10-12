@@ -1942,7 +1942,9 @@ async def restore_seen(seen_id: uuid.UUID, admin: AdminUserDep, session: Session
 
 
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_group(group_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
+async def delete_group(
+    group_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
+) -> None:
     """Delete a group.
 
     Model access rows die with it (cascade); members lose it, and anyone whose
@@ -1956,6 +1958,18 @@ async def delete_group(group_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
     if group is None:
         raise NotFoundError(f"No group with id {group_id}.")
+    # ADR 0095: a required group is load-bearing for the join gate — deleting
+    # it would fail the gate open for nobody (everyone refused) or strand the
+    # policy naming a ghost. Refused until the name leaves the required list.
+    # (There is no rename or deactivate endpoint to guard: this is the only
+    # group mutation besides membership edits.)
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    policy = resolver.policy if resolver is not None else None
+    if policy is not None and group.name in policy.required_groups:
+        raise BadRequestError(
+            f"Group '{group.name}' is named in the identity policy's required "
+            "groups (join_mode 'group'). Remove it from the required groups first."
+        )
     await session.delete(group)
     await session.commit()
 
@@ -3982,8 +3996,10 @@ async def set_oidc_policy(
 
     mappings: list[list[str]] | None = None
     if "group_mappings" in fields:
-        mappings = []
+        # An explicitly sent null clears back to env (stored None), not [].
+        mappings = None
         if payload.group_mappings is not None:
+            mappings = []
             seen_idp: set[str] = set()
             for rule in payload.group_mappings:
                 idp, local = rule.idp.strip(), rule.local.strip()
@@ -3998,8 +4014,10 @@ async def set_oidc_policy(
 
     cleaned_groups: list[str] | None = None
     if "required_groups" in fields:
-        cleaned_groups = []
+        # Same null-clears rule as mappings above.
+        cleaned_groups = None
         if payload.required_groups is not None:
+            cleaned_groups = []
             for name in payload.required_groups:
                 name = str(name).strip()
                 if name and name not in cleaned_groups:

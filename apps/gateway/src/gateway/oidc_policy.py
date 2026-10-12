@@ -262,16 +262,22 @@ class OIDCPolicyResolver:
                     select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc()).limit(1)
                 )
             ).scalar_one_or_none()
-            local_names = set((await session.execute(select(Group.name))).scalars().all())
-        self._policy = effective_policy(self._settings, row)
-        # Console-saved names are validated at PUT; env names have no such
-        # gate, so the load warns instead. Warned once per distinct set: the
-        # poll runs every ten seconds and must not spam the log.
-        missing = frozenset(n for n in self._settings.required_groups if n not in local_names)
+            policy = effective_policy(self._settings, row)
+            # Console-saved names are validated at PUT, but the group can be
+            # deleted afterwards — and env names have no PUT gate at all — so
+            # the load warns for whatever the folded policy names that does
+            # not exist. Warned once per distinct set: the poll runs every ten
+            # seconds and must not spam the log. No required names, no query.
+            required = policy.required_groups
+            local_names: set[str] = set()
+            if required:
+                local_names = set((await session.execute(select(Group.name))).scalars().all())
+        self._policy = policy
+        missing = frozenset(n for n in required if n not in local_names)
         if missing and missing != self._warned_missing_groups:
             logger.warning(
-                "GATEWAY_OIDC__REQUIRED_GROUPS names unknown groups: %s. The group "
-                "gate admits nobody under those names — import the directory "
+                "The identity policy's required groups name unknown groups: %s. The "
+                "group gate admits nobody under those names — import the directory "
                 "name or map it to a local group first.",
                 ", ".join(sorted(missing)),
             )

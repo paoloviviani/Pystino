@@ -16,7 +16,11 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from gateway.accounting import TokenEstimator
 from gateway.config import Settings
-from gateway.errors import AuthenticationError, PermissionError_
+from gateway.errors import (
+    AuthenticationError,
+    OutsideAccessGroupsError,
+    PermissionError_,
+)
 from gateway.identity_registry import list_providers
 from gateway.introspection import (
     Candidate,
@@ -25,7 +29,7 @@ from gateway.introspection import (
     introspect,
     public_clients_for,
 )
-from gateway.join_gate import holds_required_group, provider_label
+from gateway.join_gate import holds_required_group, provider_label, refusal_text
 from gateway.models import ApiKey, Group, GroupSync, User
 from gateway.oidc import OIDCClient, OIDCError, sync_user_from_claims
 from gateway.oidc_policy import OIDCPolicy
@@ -219,6 +223,27 @@ async def resolve_api_key(session: AsyncSession, secret: str) -> ApiKey:
     return api_key
 
 
+def _refuse_key_outside_groups(request: Request, user: User) -> None:
+    """ADR 0095: an API key's owner meets the group gate too.
+
+    The key resolved with the owner's memberships already loaded
+    (`selectinload`, groups joined), so this costs no query and writes
+    nothing — the same no-write, no-audit rule as the bearer path. Without
+    claims only the admin flag can exempt; refused with 403, never the 401
+    that would make Cerea revoke the machine permanently.
+    """
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    policy = resolver.policy if resolver is not None else None
+    if (
+        policy is not None
+        and policy.join_mode == "group"
+        and user.is_active
+        and not user.is_admin
+        and not holds_required_group(user, frozenset(policy.required_groups))
+    ):
+        raise OutsideAccessGroupsError(refusal_text("group_lost", email=None, provider=""))
+
+
 def resolve_billing_group(user: User, *, pinned: Group | None = None) -> Group:
     """Decide which group pays, and check the caller may still charge it.
 
@@ -381,6 +406,7 @@ async def get_principal(
         pinned = _pin_from_header(api_key.user, requested)
     else:
         pinned = api_key.billing_group
+    _refuse_key_outside_groups(request, api_key.user)
     group = resolve_billing_group(api_key.user, pinned=pinned)
     await _touch_last_used(session, api_key)
     return Principal(user=api_key.user, billing_group=group, api_key=api_key)
@@ -656,6 +682,7 @@ async def _caller_from_key(
         if requested is not None
         else api_key.billing_group
     )
+    _refuse_key_outside_groups(request, api_key.user)
     await _touch_last_used(session, api_key)
     return AuthenticatedCaller(
         user=api_key.user,

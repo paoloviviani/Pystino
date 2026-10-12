@@ -17,6 +17,7 @@ import pytest
 import pytest_asyncio
 from conftest import LEGACY_GROUPS, Seeded
 from gateway.config import OIDCSettings, Settings
+from gateway.errors import OutsideAccessGroupsError
 from gateway.identity_registry import record_from_env
 from gateway.join_gate import (
     exempt,
@@ -34,7 +35,7 @@ from gateway.models import (
     OIDCPolicyConfig,
     User,
 )
-from gateway.oidc import OIDCError, ProvisioningRefused, sign_in, sync_user_from_claims
+from gateway.oidc import ProvisioningRefused, sign_in, sync_user_from_claims
 from gateway.oidc_policy import OIDCPolicy
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -268,11 +269,11 @@ class TestGroupModeExistingUsers:
         with pytest.raises(ProvisioningRefused, match="no longer"):
             await _sign_in(session, "s-1", [], policy=policy)
 
-    async def test_v1_refused_with_oidc_error(self, session: AsyncSession) -> None:
+    async def test_v1_refused_with_403(self, session: AsyncSession) -> None:
         policy = _policy("group", required_groups=("staff",))
         await _member_user(session, "s-2", ["staff"])
         settings = OIDCSettings(**LEGACY_GROUPS)
-        with pytest.raises(OIDCError, match="outside the access groups"):
+        with pytest.raises(OutsideAccessGroupsError, match="no longer"):
             await sync_user_from_claims(
                 session,
                 claims=_claims("s-2", []),
@@ -285,7 +286,7 @@ class TestGroupModeExistingUsers:
         policy = _policy("group", required_groups=("staff",))
         await _member_user(session, "s-3", ["other"])
         settings = OIDCSettings(**LEGACY_GROUPS)
-        with pytest.raises(OIDCError, match="outside the access groups"):
+        with pytest.raises(OutsideAccessGroupsError, match="no longer"):
             await sync_user_from_claims(
                 session,
                 claims=_claims("s-3", ["other"]),
@@ -334,6 +335,68 @@ class TestGroupModeExistingUsers:
         await session.commit()
         with pytest.raises(ProvisioningRefused):
             await _sign_in(session, "s-7", [], policy=policy)
+
+
+# -- the /v1 doors answer 403, never 401 ---------------------------------------
+
+
+class TestV1DoorsAnswer403:
+    async def test_bearer_outside_groups_is_403_with_code(
+        self,
+        bearer_app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        signing_key: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The token verifies — the caller is authenticated — so a 401 would
+        lie, and Cerea would revoke the machine for a loss that regaining the
+        group restores."""
+        from test_bearer_auth import auth, make_token
+
+        async with session_factory() as session:
+            session.add(Group(name="staff"))
+            session.add(OIDCPolicyConfig(join_mode="group", required_groups=["staff"]))
+            await session.commit()
+        await bearer_app.state.oidc_policy.refresh_once()
+
+        token = make_token(signing_key)
+        response = await client.get("/v1/models", headers=auth(token))
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "outside_access_groups"
+
+    async def test_key_outside_groups_is_403_with_code(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        group_policy: None,
+    ) -> None:
+        response = await client.get("/v1/models", headers=seeded.auth)
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "outside_access_groups"
+
+    async def test_key_with_a_required_group_passes(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        group_policy: None,
+    ) -> None:
+        async with session_factory() as session:
+            group = (await session.execute(select(Group).where(Group.name == "staff"))).scalar_one()
+            session.add(
+                Membership(
+                    user_id=seeded.user.id,
+                    group_id=group.id,
+                    source=MembershipSource.MANUAL,
+                )
+            )
+            await session.commit()
+        response = await client.get("/v1/models", headers=seeded.auth)
+        assert response.status_code == 200, response.text
 
 
 # -- the console session door ---------------------------------------------------

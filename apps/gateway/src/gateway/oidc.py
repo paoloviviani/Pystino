@@ -54,6 +54,7 @@ from sqlalchemy.orm import selectinload
 from gateway.config import OIDCSettings, Settings
 from gateway.deployment_state import get_or_create_deployment_state, mark_bootstrap_consumed
 from gateway.email_normalize import is_trusted_email, normalize_email
+from gateway.errors import OutsideAccessGroupsError
 from gateway.group_import import grant_default_group, record_unresolved
 from gateway.identity_events import record_event
 from gateway.join_gate import (
@@ -1757,9 +1758,11 @@ def _refuse_outside_groups(
 ) -> None:
     """The group gate for the `/v1` bearer path (ADR 0095), both return paths.
 
-    The caller meets the mapping refusal with a 401 "Invalid API key" — the
-    bearer path never shows a policy text, so a prober learns nothing. No
-    audit write here: this path must stay write-free in steady state.
+    Refused with 403 `outside_access_groups`, never the 401 "Invalid API
+    key": the caller is authenticated, and a 401 would make Cerea's machine
+    revalidation revoke the device permanently for a loss that regaining the
+    group restores. No audit write here: this path must stay write-free in
+    steady state.
     """
     if (
         policy is not None
@@ -1768,7 +1771,7 @@ def _refuse_outside_groups(
         and not exempt(user, claims, settings, group_mappings=group_mappings, email_rule=False)
         and not holds_required_group(user, frozenset(policy.required_groups))
     ):
-        raise OIDCError("outside the access groups")
+        raise OutsideAccessGroupsError(refusal_text("group_lost", email=None, provider=""))
 
 
 def _admin_diverges(
