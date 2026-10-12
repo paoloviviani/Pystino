@@ -117,7 +117,7 @@ async def test_the_captured_create_dialect_provisions_before_login(
     assert body["userName"] == "dana"
     assert body["externalId"] == CREATE_USER["externalId"]
     assert body["meta"]["resourceType"] == "User"
-    gateway_id = body["id"]
+    assert body["id"]
 
     from gateway.models import DirectoryEntry, User
     from sqlalchemy import select
