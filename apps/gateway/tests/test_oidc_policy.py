@@ -811,3 +811,48 @@ class TestOidcPolicyEndpoints:
             "/api/admin/oidc/policy", headers=session_cookie(seeded.user.id, app)
         )
         assert response.status_code == 403
+
+    async def test_policy_preview_counts_refusals(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Any,
+        admin_session: dict[str, str],
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The console confirms "N people lose access" before saving group mode."""
+        async with session_factory() as session:
+            session.add(
+                User(
+                    issuer="https://idp.test",
+                    subject="plain-1",
+                    email="plain@example.org",
+                    email_normalized="plain@example.org",
+                )
+            )
+            await session.commit()
+        # The seeded administrator is exempt; the plain user holds nothing.
+        response = await client.get(
+            "/api/admin/oidc/policy/preview",
+            params={"join_mode": "group", "required_groups": "research"},
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "active_users": 2,
+            "would_be_refused": 1,
+            "admins_exempt": 1,
+        }
+        assert (
+            await client.get(
+                "/api/admin/oidc/policy/preview",
+                params={"join_mode": "invite"},
+                headers=admin_session,
+            )
+        ).status_code == 400
+        assert (
+            await client.get(
+                "/api/admin/oidc/policy/preview",
+                params={"join_mode": "group", "required_groups": ""},
+                headers=admin_session,
+            )
+        ).status_code == 400

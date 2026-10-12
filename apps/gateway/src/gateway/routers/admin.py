@@ -202,6 +202,7 @@ from gateway.schemas import (
     ModelUpdateRequest,
     OidcMappingRule,
     OidcPolicyChange,
+    OidcPolicyPreviewResponse,
     OidcPolicyResponse,
     OidcPolicyUpdateRequest,
     PasswordResetResponse,
@@ -240,6 +241,7 @@ from gateway.schemas import (
     UsageReport,
     UserAdminResponse,
     UserCreateRequest,
+    UserStatusCounts,
     UserUpdateRequest,
 )
 from gateway.secrets import SecretBox, SecretsUnavailableError, hint_for
@@ -2788,6 +2790,8 @@ async def _user_responses(
             ),
             active_key_count=int(key_counts.get(user.id, 0)),
             last_login_at=user.last_login_at,
+            deactivated_by=user.deactivated_by,
+            invited_at=user.invited_at,
         )
         for user in users
     ]
@@ -3310,13 +3314,24 @@ async def list_users(
     page: PageDep,
     q: str = "",
     is_active: bool | None = None,
+    status: str | None = None,
 ) -> Page[UserAdminResponse]:
     """Accounts, by email.
 
     ``q`` matches email, display name or the identity provider's subject. The
     subject is in there because that is all there is to search on for an
-    account whose IdP does not release an email claim.
+    account whose IdP does not release an email claim. ``status`` is one of
+    ``awaiting_approval`` (inactive, held by the join queue), ``invited``
+    (never signed in), ``active`` or ``disabled`` — the console's filter
+    chips, which a bare ``is_active`` cannot express.
     """
+    if status is not None and status not in (
+        "awaiting_approval",
+        "invited",
+        "active",
+        "disabled",
+    ):
+        raise BadRequestError("status must be one of awaiting_approval, invited, active, disabled.")
     stmt = (
         select(User)
         .options(selectinload(User.memberships).selectinload(Membership.group))
@@ -3332,10 +3347,53 @@ async def list_users(
         )
     if is_active is not None:
         stmt = stmt.where(User.is_active.is_(is_active))
+    if status == "awaiting_approval":
+        stmt = stmt.where(User.is_active.is_(False), User.deactivated_by == "approval")
+    elif status == "invited":
+        stmt = stmt.where(User.issuer == PENDING_USER_ISSUER)
+    elif status == "active":
+        stmt = stmt.where(User.is_active.is_(True), User.issuer != PENDING_USER_ISSUER)
+    elif status == "disabled":
+        stmt = stmt.where(
+            User.is_active.is_(False),
+            or_(User.deactivated_by.is_(None), User.deactivated_by != "approval"),
+        )
 
     total = await count_of(session, stmt)
     users = (await session.execute(page.apply(stmt))).scalars().all()
     return page.page(await _user_responses(session, users), total)
+
+
+@router.get("/users/status-counts", response_model=UserStatusCounts)
+async def user_status_counts(admin: AdminUserDep, session: SessionDep) -> UserStatusCounts:
+    """The Users page's filter-chip counts, in one round trip."""
+    awaiting = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(User.is_active.is_(False), User.deactivated_by == "approval")
+    )
+    invited = await session.scalar(
+        select(func.count()).select_from(User).where(User.issuer == PENDING_USER_ISSUER)
+    )
+    active = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(User.is_active.is_(True), User.issuer != PENDING_USER_ISSUER)
+    )
+    disabled = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(
+            User.is_active.is_(False),
+            or_(User.deactivated_by.is_(None), User.deactivated_by != "approval"),
+        )
+    )
+    return UserStatusCounts(
+        awaiting_approval=awaiting or 0,
+        invited=invited or 0,
+        active=active or 0,
+        disabled=disabled or 0,
+    )
 
 
 async def _bundled_entry_for(
@@ -4040,6 +4098,59 @@ async def _latest_oidc_config(session: SessionDep) -> OIDCPolicyConfig | None:
             select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc()).limit(1)
         )
     ).scalar_one_or_none()
+
+
+@router.get("/oidc/policy/preview", response_model=OidcPolicyPreviewResponse)
+async def preview_oidc_policy(
+    admin: AdminUserDep,
+    session: SessionDep,
+    join_mode: str = "group",
+    required_groups: str = "",
+) -> OidcPolicyPreviewResponse:
+    """What saving this group gate would do (ADR 0095 §7).
+
+    Counted over effective memberships, in SQL: ``would_be_refused`` is the
+    active, non-admin accounts holding none of the named active groups —
+    the people who lose access at their next request, which the console
+    confirms before saving. Only ``group`` mode is previewable; anything
+    else is a 400.
+    """
+    if join_mode != "group":
+        raise BadRequestError("Only join_mode 'group' has a preview.")
+    names = [name.strip() for name in required_groups.split(",") if name.strip()]
+    if not names:
+        raise BadRequestError("Name at least one required group to preview.")
+    active_users = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(User.is_active.is_(True), User.issuer != PENDING_USER_ISSUER)
+    )
+    admins_exempt = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(User.is_active.is_(True), User.is_admin.is_(True))
+    )
+    held = (
+        select(Membership.user_id)
+        .join(Group, Group.id == Membership.group_id)
+        .where(Group.name.in_(names), Group.is_active.is_(True))
+        .distinct()
+    )
+    would_be_refused = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(
+            User.is_active.is_(True),
+            User.is_admin.is_(False),
+            User.issuer != PENDING_USER_ISSUER,
+            User.id.not_in(held),
+        )
+    )
+    return OidcPolicyPreviewResponse(
+        active_users=active_users or 0,
+        would_be_refused=would_be_refused or 0,
+        admins_exempt=admins_exempt or 0,
+    )
 
 
 @router.get("/oidc/policy", response_model=OidcPolicyResponse)

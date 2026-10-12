@@ -1349,6 +1349,13 @@ class UserAdminResponse(BaseModel):
     default_billing_group: str | None
     active_key_count: int
     last_login_at: datetime | None
+    #: Who deactivated the account ("manual", "directory", or "approval" for
+    #: the join queue). The console's Awaiting-approval badge reads this, not
+    #: bare inactivity.
+    deactivated_by: str | None = None
+    #: When this person was invited (ADR 0095). The console's Invited badge
+    #: and its expiry marker read this.
+    invited_at: datetime | None = None
     #: Set only by `PATCH /admin/users/{id}` when it just tried to sync
     #: Authelia's own `disabled` flag and that write failed — the gateway
     #: side of the same action already stands regardless. `None` on a
@@ -1358,6 +1365,15 @@ class UserAdminResponse(BaseModel):
     #: retry (ADR 0093 §9.1).
     authelia_sync: Literal["failed"] | None = None
     authelia_sync_message: str | None = None
+
+
+class UserStatusCounts(BaseModel):
+    """The Users page's filter-chip counts (ADR 0095 §7)."""
+
+    awaiting_approval: int = 0
+    invited: int = 0
+    active: int = 0
+    disabled: int = 0
 
 
 def _clean_optional_text(value: str | None) -> str | None:
@@ -1638,6 +1654,21 @@ class OidcPolicyChange(BaseModel):
     reason: str
     changed_at: datetime
     changed_by: str | None = None
+
+
+class OidcPolicyPreviewResponse(BaseModel):
+    """What switching to `group` mode with these required groups would do
+    (ADR 0095 §7): people counted over effective memberships, in SQL.
+
+    ``would_be_refused`` counts active, non-admin accounts holding none of
+    the named (active) groups — the people who lose access at their next
+    request. ``admins_exempt`` counts the administrators the gate stands
+    aside for.
+    """
+
+    active_users: int
+    would_be_refused: int
+    admins_exempt: int
 
 
 class OidcPolicyResponse(BaseModel):

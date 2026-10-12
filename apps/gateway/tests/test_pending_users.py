@@ -495,3 +495,86 @@ class TestClaimAtAnnounce:
                 .where(User.email_normalized == "invited@example.org")
             )
             assert count == 1
+
+
+class TestUserStatusFilter:
+    async def test_status_filters_split_the_list(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+
+        headers = await _admin_session(app, session_factory, seeded)
+        assert (await _invite(client, headers, "w@example.org")).status_code == 201
+        async with session_factory() as session:
+            waiting = User(
+                issuer=ISS,
+                subject="waiting-1",
+                email="waiting@example.org",
+                email_normalized="waiting@example.org",
+                is_active=False,
+                deactivated_by="approval",
+            )
+            session.add(waiting)
+            await session.commit()
+
+        for status, emails in [
+            ("invited", ["w@example.org"]),
+            ("awaiting_approval", ["waiting@example.org"]),
+            ("active", [seeded.user.email]),
+            ("disabled", []),
+        ]:
+            body = (await client.get(f"/api/admin/users?status={status}", headers=headers)).json()
+            assert sorted(i["email"] for i in body["items"]) == sorted(emails), status
+        assert (
+            await client.get("/api/admin/users?status=bogus", headers=headers)
+        ).status_code == 400
+
+    async def test_status_counts(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        headers = await _admin_session(app, session_factory, seeded)
+        assert (await _invite(client, headers, "c1@example.org")).status_code == 201
+        async with session_factory() as session:
+            session.add(
+                User(
+                    issuer=ISS,
+                    subject="waiting-2",
+                    email="waiting2@example.org",
+                    email_normalized="waiting2@example.org",
+                    is_active=False,
+                    deactivated_by="approval",
+                )
+            )
+            await session.commit()
+        body = (await client.get("/api/admin/users/status-counts", headers=headers)).json()
+        assert body == {
+            "awaiting_approval": 1,
+            "invited": 1,
+            "active": 1,
+            "disabled": 0,
+        }
+
+    async def test_list_exposes_invite_fields(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        headers = await _admin_session(app, session_factory, seeded)
+        created = await _invite(client, headers, "f@example.org")
+        assert created.status_code == 201, created.text
+        row = next(
+            i
+            for i in (await client.get("/api/admin/users", headers=headers)).json()["items"]
+            if i["email"] == "f@example.org"
+        )
+        assert row["invited_at"] is not None
+        assert row["deactivated_by"] is None
