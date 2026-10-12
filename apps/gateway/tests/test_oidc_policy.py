@@ -70,11 +70,96 @@ class TestEffectivePolicy:
         assert policy.group_mappings == {"idp-a": "local-one", "idp-b": "local-one"}
 
 
+class TestJoinModeFold:
+    """ADR 0095: one join mode folds from row, legacy columns, or env, in order."""
+
+    def test_legacy_open_row_maps_to_open(self) -> None:
+        policy = effective_policy(
+            OIDCSettings(**LEGACY_GROUPS), OIDCPolicyConfig(auto_provision=True)
+        )
+        assert policy.join_mode == "open"
+        assert policy.sources == {"auto_provision": "console"}
+        assert policy.auto_provision is True
+        assert policy.unknown_user_policy == "refuse"
+
+    def test_legacy_create_inactive_maps_to_approval(self) -> None:
+        policy = effective_policy(
+            OIDCSettings(**LEGACY_GROUPS),
+            OIDCPolicyConfig(auto_provision=False, unknown_user_policy="create_inactive"),
+        )
+        assert policy.join_mode == "approval"
+        assert policy.auto_provision is False
+        assert policy.unknown_user_policy == "create_inactive"
+
+    def test_legacy_refuse_maps_to_invite(self) -> None:
+        policy = effective_policy(
+            OIDCSettings(**LEGACY_GROUPS),
+            OIDCPolicyConfig(auto_provision=False, unknown_user_policy="refuse"),
+        )
+        assert policy.join_mode == "invite"
+        assert policy.auto_provision is False
+        assert policy.unknown_user_policy == "refuse"
+
+    def test_legacy_silent_row_maps_to_invite(self) -> None:
+        # auto_provision False with no unknown-user policy: the old code
+        # refused (the env baseline), so the fold reads invite, honestly now
+        # that pre-registration exists.
+        policy = effective_policy(
+            OIDCSettings(**LEGACY_GROUPS), OIDCPolicyConfig(auto_provision=False)
+        )
+        assert policy.join_mode == "invite"
+
+    def test_join_mode_row_wins_over_legacy_columns(self) -> None:
+        policy = effective_policy(
+            OIDCSettings(**LEGACY_GROUPS),
+            OIDCPolicyConfig(join_mode="open", auto_provision=False),
+        )
+        assert policy.join_mode == "open"
+        assert policy.auto_provision is True
+
+    def test_no_row_means_the_env_join_mode(self) -> None:
+        policy = effective_policy(OIDCSettings(**LEGACY_GROUPS), None)
+        assert policy.join_mode == "open"
+        assert policy.group_fallback == "refuse"
+        assert policy.required_groups == ()
+        assert "join_mode" not in policy.sources
+
+    def test_env_join_mode_and_groups(self) -> None:
+        settings = OIDCSettings(
+            **LEGACY_GROUPS, join_mode="group", required_groups=["staff"], group_fallback="approval"
+        )
+        policy = effective_policy(settings, None)
+        assert policy.join_mode == "group"
+        assert policy.required_groups == ("staff",)
+        assert policy.group_fallback == "approval"
+
+    def test_env_required_groups_accepts_a_comma_string(self) -> None:
+        settings = OIDCSettings(**LEGACY_GROUPS, required_groups="staff, ops")
+        assert effective_policy(settings, None).required_groups == ("staff", "ops")
+
+    def test_a_hand_mangled_join_mode_defers_to_env(self) -> None:
+        settings = OIDCSettings(**LEGACY_GROUPS, join_mode="invite")
+        policy = effective_policy(settings, OIDCPolicyConfig(join_mode="nonsense"))
+        assert policy.join_mode == "invite"
+        assert "join_mode" not in policy.sources
+
+    def test_group_mode_without_groups_refuses_startup(self) -> None:
+        import pytest as _pytest
+
+        with _pytest.raises(ValueError, match="REQUIRED_GROUPS"):
+            OIDCSettings(**LEGACY_GROUPS, join_mode="group")
+
+    def test_group_fallback_rejects_other_words(self) -> None:
+        import pytest as _pytest
+
+        with _pytest.raises(Exception, match="group_fallback"):
+            OIDCSettings(**LEGACY_GROUPS, group_fallback="maybe")
+
+
 class TestMapGroupNames:
     def test_unmapped_groups_keep_their_name(self) -> None:
         policy = OIDCPolicy(
-            auto_provision=True,
-            unknown_user_policy="refuse",
+            join_mode="open",
             groups_claim="groups",
             group_mappings={"idp-team": "research"},
         )
@@ -82,8 +167,7 @@ class TestMapGroupNames:
 
     def test_many_to_one_folds_without_repetition(self) -> None:
         policy = OIDCPolicy(
-            auto_provision=True,
-            unknown_user_policy="refuse",
+            join_mode="open",
             groups_claim="groups",
             group_mappings={"a": "one", "b": "one"},
         )
@@ -117,8 +201,7 @@ class TestProvisioningGate:
     ) -> None:
         await write_policy(session_factory, auto_provision=False)
         policy = OIDCPolicy(
-            auto_provision=False,
-            unknown_user_policy="refuse",
+            join_mode="invite",
             groups_claim="groups",
         )
         with pytest.raises(ProvisioningRefused):
@@ -140,8 +223,7 @@ class TestProvisioningGate:
     ) -> None:
         await write_policy(session_factory, auto_provision=False)
         policy = OIDCPolicy(
-            auto_provision=False,
-            unknown_user_policy="create_inactive",
+            join_mode="approval",
             groups_claim="groups",
         )
         async with session_factory() as session:
@@ -182,8 +264,7 @@ class TestProvisioningGate:
             existing_id = existing.id
 
         policy = OIDCPolicy(
-            auto_provision=False,
-            unknown_user_policy="refuse",
+            join_mode="invite",
             groups_claim="groups",
         )
         async with session_factory() as session:
@@ -213,8 +294,7 @@ class TestProvisioningGate:
         who administers this deployment.
         """
         policy = OIDCPolicy(
-            auto_provision=True,
-            unknown_user_policy="refuse",
+            join_mode="open",
             groups_claim="groups",
             group_mappings={"platform-admins": "admins"},
         )
@@ -425,6 +505,57 @@ class TestOidcPolicyEndpoints:
         response = await client.put(
             "/api/admin/oidc/policy",
             json={"unknown_user_policy": "create_inactive"},
+            headers=admin_session,
+        )
+        assert response.status_code == 400
+
+    async def test_put_join_mode_group_with_groups(
+        self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]
+    ) -> None:
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={
+                "join_mode": "group",
+                "required_groups": ["staff", " ops "],
+                "group_fallback": "approval",
+            },
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["join_mode"] == "group"
+        assert body["required_groups"] == ["staff", "ops"]
+        assert body["group_fallback"] == "approval"
+        assert body["sources"]["join_mode"] == "console"
+        # The legacy view follows the mode: off, and refusing by default the
+        # fallback names.
+        assert body["auto_provision"] is False
+
+    async def test_put_group_without_groups_is_refused(
+        self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]
+    ) -> None:
+        response = await client.put(
+            "/api/admin/oidc/policy", json={"join_mode": "group"}, headers=admin_session
+        )
+        assert response.status_code == 400
+        assert "required_groups" in response.json()["error"]["message"]
+
+    async def test_put_join_mode_with_legacy_knobs_is_refused(
+        self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]
+    ) -> None:
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={"join_mode": "invite", "auto_provision": False},
+            headers=admin_session,
+        )
+        assert response.status_code == 400
+
+    async def test_put_groups_outside_group_mode_is_refused(
+        self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]
+    ) -> None:
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={"join_mode": "invite", "required_groups": ["staff"]},
             headers=admin_session,
         )
         assert response.status_code == 400

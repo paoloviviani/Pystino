@@ -1568,6 +1568,14 @@ class OidcPolicyUpdateRequest(BaseModel):
     # Only meaningful while auto-provisioning is off; the API refuses it
     # alongside `auto_provision: true`, where it would silently never apply.
     unknown_user_policy: Literal["refuse", "create_inactive"] | None = None
+    # ADR 0095: one join mode supersedes the two knobs above. Refused
+    # alongside either of them in the same payload, where it would silently
+    # win and they would silently never apply.
+    join_mode: Literal["open", "approval", "invite", "group"] | None = None
+    # The local group names `group` mode admits. Only meaningful in `group`
+    # mode; the API refuses it (and `group_fallback`) elsewhere.
+    required_groups: list[str] | None = None
+    group_fallback: Literal["refuse", "approval"] | None = None
     groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
     group_mappings: list[OidcMappingRule] | None = None
     reason: str = Field(default="", max_length=500)
@@ -1584,6 +1592,11 @@ class OidcPolicyResponse(BaseModel):
 
     auto_provision: bool
     unknown_user_policy: Literal["refuse", "create_inactive"]
+    # ADR 0095: the join answer, and the group gate's local names. The two
+    # fields above are the derived legacy view, kept one release.
+    join_mode: str
+    required_groups: list[str] = []
+    group_fallback: str = "refuse"
     groups_claim: str
     group_mappings: list[OidcMappingRule]
     # "console" when any field is a stored decision, "environment" otherwise;

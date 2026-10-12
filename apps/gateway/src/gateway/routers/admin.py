@@ -128,7 +128,7 @@ from gateway.models import (
     UserModelAccess,
 )
 from gateway.oidc import PENDING_USER_ISSUER, other_active_admin_exists
-from gateway.oidc_policy import environment_policy
+from gateway.oidc_policy import GROUP_FALLBACKS, JOIN_MODES, environment_policy
 from gateway.pagination import Page, PageDep, count_of
 from gateway.periods import PeriodKind
 from gateway.plugins import registry as plugin_registry
@@ -3647,6 +3647,9 @@ async def _oidc_policy_response(request: Request, session: SessionDep) -> OidcPo
     return OidcPolicyResponse(
         auto_provision=policy.auto_provision,
         unknown_user_policy=policy.unknown_user_policy,
+        join_mode=policy.join_mode,
+        required_groups=list(policy.required_groups),
+        group_fallback=policy.group_fallback,
         groups_claim=policy.groups_claim,
         group_mappings=[
             OidcMappingRule(idp=idp, local=local) for idp, local in policy.group_mappings.items()
@@ -3897,6 +3900,50 @@ async def set_oidc_policy(
     """
     fields = payload.model_dump(exclude_unset=True)
 
+    join_mode = fields.get("join_mode")
+    if join_mode is not None and join_mode not in JOIN_MODES:
+        raise BadRequestError(f"join_mode must be one of {', '.join(JOIN_MODES)}.")
+    if join_mode is not None and ("auto_provision" in fields or "unknown_user_policy" in fields):
+        # join_mode wins over the legacy columns in the fold, so saving both
+        # at once would store a knob that silently never applies.
+        raise BadRequestError(
+            "join_mode replaces auto_provision and unknown_user_policy: "
+            "save one or the other, not both."
+        )
+
+    policy_in_force = getattr(request.app.state, "oidc_policy", None)
+    current = policy_in_force.policy if policy_in_force is not None else None
+    mode_after = join_mode or (current.join_mode if current is not None else "open")
+    groups_after: list[str] | None
+    if payload.required_groups is not None:
+        cleaned: list[str] = []
+        for name in payload.required_groups:
+            name = str(name).strip()
+            if name and name not in cleaned:
+                cleaned.append(name)
+        groups_after = cleaned
+    elif current is not None:
+        groups_after = list(current.required_groups)
+    else:
+        groups_after = []
+    if mode_after == "group" and not groups_after:
+        raise BadRequestError(
+            "join_mode 'group' needs required_groups: a group gate with no "
+            "groups refuses everyone who is not an administrator. Name at "
+            "least one local group first."
+        )
+    group_fallback = fields.get("group_fallback")
+    if group_fallback is not None and group_fallback not in GROUP_FALLBACKS:
+        raise BadRequestError("group_fallback must be 'refuse' or 'approval'.")
+    if (
+        payload.required_groups is not None or group_fallback is not None
+    ) and mode_after != "group":
+        # Same "knob that does nothing" rule as unknown_user_policy above.
+        raise BadRequestError(
+            "required_groups and group_fallback only apply in join_mode "
+            "'group'. Switch the join mode, or drop them."
+        )
+
     unknown = fields.get("unknown_user_policy")
     if unknown is not None and unknown not in ("refuse", "create_inactive"):
         raise BadRequestError("unknown_user_policy must be 'refuse' or 'create_inactive'.")
@@ -3939,6 +3986,9 @@ async def set_oidc_policy(
     row = OIDCPolicyConfig(
         auto_provision=fields.get("auto_provision"),
         unknown_user_policy=unknown,
+        join_mode=join_mode,
+        required_groups=groups_after if payload.required_groups is not None else None,
+        group_fallback=group_fallback,
         groups_claim=groups_claim,
         group_mappings=mappings,
         reason=payload.reason.strip(),

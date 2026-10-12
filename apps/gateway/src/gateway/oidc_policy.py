@@ -37,26 +37,64 @@ DEFAULT_REFRESH_SECONDS = 10.0
 #: What a first-time sign-in does when provisioning is off. "refuse": the
 #: stranger is told to ask an administrator. "create_inactive": the account is
 #: created but disabled, waiting for an administrator to enable it.
+#: Legacy (ADR 0095): the fold still reads these columns, but new decisions
+#: are `join_mode` below.
 UNKNOWN_USER_POLICIES = ("refuse", "create_inactive")
+
+#: One answer to "who may join" (ADR 0095), for any issuer. `open` signs a
+#: stranger up at once; `approval` creates their account disabled for an
+#: administrator to enable; `invite` refuses anyone not pre-registered (or
+#: directory-created); `group` admits only carriers of a required group, on
+#: every sign-in and every `/v1` call.
+JOIN_MODES = ("open", "approval", "invite", "group")
+
+#: What a stranger without a required group gets in `group` mode.
+GROUP_FALLBACKS = ("refuse", "approval")
+
+
+def _legacy_from_join(join_mode: str, group_fallback: str) -> tuple[bool, str]:
+    """The old two-knob view of a join mode, for readers not yet converted.
+
+    One release only (ADR 0095): `oidc.py`'s gate still reads
+    `auto_provision`, and the console still saves it. `group` reads as
+    off-and-refusing, which fails closed until the gate step replaces it.
+    """
+    if join_mode == "open":
+        return True, "refuse"
+    if join_mode == "approval":
+        return False, "create_inactive"
+    return False, "refuse"
 
 
 @dataclass(frozen=True)
 class OIDCPolicy:
     """The policy in force on this worker."""
 
-    auto_provision: bool
-    unknown_user_policy: str
-    groups_claim: str
+    join_mode: str = "open"
+    required_groups: tuple[str, ...] = ()
+    group_fallback: str = "refuse"
+    groups_claim: str = "groups"
     #: IdP group name -> local group name. Unmapped groups keep their own name.
     group_mappings: dict[str, str] = field(default_factory=dict)
     #: Where each value came from — "environment" until a row carries one, and
     #: per field, because a row may answer one question and not the rest. The
     #: admin screen reports this, because "the console says X and the
-    #: environment says Y" is otherwise invisible.
+    #: environment says Y" is otherwise invisible. Only fields a row actually
+    #: decided carry a key; the legacy view below is derived, not decided.
     sources: dict[str, str] = field(default_factory=dict)
     config_id: object = None
     config_at: datetime | None = None
     config_reason: str = ""
+
+    @property
+    def auto_provision(self) -> bool:
+        """Legacy view (ADR 0095): derived from `join_mode`, one release."""
+        return _legacy_from_join(self.join_mode, self.group_fallback)[0]
+
+    @property
+    def unknown_user_policy(self) -> str:
+        """Legacy view (ADR 0095): derived from `join_mode`, one release."""
+        return _legacy_from_join(self.join_mode, self.group_fallback)[1]
 
     @property
     def source(self) -> str:
@@ -81,11 +119,23 @@ class OIDCPolicy:
 def environment_policy(settings: OIDCSettings) -> OIDCPolicy:
     """The policy as the environment states it — the baseline every row folds onto."""
     return OIDCPolicy(
-        auto_provision=True,
-        unknown_user_policy="refuse",
+        join_mode=settings.join_mode,
+        required_groups=tuple(settings.required_groups),
+        group_fallback=settings.group_fallback,
         groups_claim=settings.groups_claim,
         group_mappings={},
     )
+
+
+def _legacy_join_mode(auto_provision: bool | None, unknown_user_policy: str | None) -> str:
+    """The join mode a legacy row's columns mean. `refuse` and silence both
+    read `invite`: refusing a stranger while nobody can be pre-registered was
+    the old behaviour, and pre-registration is what makes the name honest."""
+    if auto_provision:
+        return "open"
+    if unknown_user_policy == "create_inactive":
+        return "approval"
+    return "invite"
 
 
 def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OIDCPolicy:
@@ -94,10 +144,24 @@ def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OI
     Per-field: a null column defers. This is why the table can carry a row
     that changes one thing — the row never has to know the deployment's other
     answers to restate them.
+
+    For the join answer the fold tries, in order: the row's `join_mode`, the
+    row's legacy columns, the environment (ADR 0095 §1).
     """
     base = environment_policy(settings)
     if row is None:
         return base
+
+    join_mode = row.join_mode
+    if join_mode is not None and join_mode not in JOIN_MODES:
+        # The database check constraint holds for anything written through the
+        # API; a hand-edited row does not get to crash every login. Env stands.
+        logger.warning("ignoring oidc_config row %s: join mode %r", row.id, join_mode)
+        join_mode = None
+    group_fallback = row.group_fallback
+    if group_fallback is not None and group_fallback not in GROUP_FALLBACKS:
+        logger.warning("ignoring oidc_config row %s: group fallback %r", row.id, group_fallback)
+        group_fallback = None
 
     unknown = row.unknown_user_policy
     if unknown is not None and unknown not in UNKNOWN_USER_POLICIES:
@@ -107,15 +171,27 @@ def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OI
         unknown = None
 
     sources: dict[str, str] = {}
-    auto_provision = base.auto_provision
-    if row.auto_provision is not None:
-        auto_provision = row.auto_provision
-        sources["auto_provision"] = "console"
-    if unknown is not None:
-        base_unknown = unknown
-        sources["unknown_user_policy"] = "console"
+    if join_mode is not None:
+        mode = join_mode
+        sources["join_mode"] = "console"
+    elif row.auto_provision is not None or unknown is not None:
+        mode = _legacy_join_mode(row.auto_provision, unknown)
+        if row.auto_provision is not None:
+            sources["auto_provision"] = "console"
+        if unknown is not None:
+            sources["unknown_user_policy"] = "console"
     else:
-        base_unknown = base.unknown_user_policy
+        mode = base.join_mode
+    if group_fallback is not None:
+        fallback = group_fallback
+        sources["group_fallback"] = "console"
+    else:
+        fallback = base.group_fallback
+    if row.required_groups is not None:
+        required = tuple(name for name in (str(n).strip() for n in row.required_groups) if name)
+        sources["required_groups"] = "console"
+    else:
+        required = base.required_groups
     groups_claim = base.groups_claim
     if row.groups_claim:
         groups_claim = row.groups_claim
@@ -134,8 +210,9 @@ def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OI
                     mappings[idp] = local
 
     return OIDCPolicy(
-        auto_provision=auto_provision,
-        unknown_user_policy=base_unknown,
+        join_mode=mode,
+        required_groups=required,
+        group_fallback=fallback,
         groups_claim=groups_claim,
         group_mappings=mappings,
         sources=sources,

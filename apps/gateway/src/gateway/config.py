@@ -119,7 +119,7 @@ class OIDCSettings(BaseModel):
     # Empty turns it off.
     default_group: str = "users"
 
-    @field_validator("group_allowlist", mode="before")
+    @field_validator("group_allowlist", "required_groups", mode="before")
     @classmethod
     def _allowlist_from_text(cls, value: object) -> object:
         if isinstance(value, str):
@@ -128,6 +128,36 @@ class OIDCSettings(BaseModel):
                 return json.loads(text)
             return _split_csv(text)
         return value
+
+    # ADR 0095: one "join mode" answers who may join, for any issuer. `open`
+    # signs a stranger up at once; `approval` creates their account disabled
+    # for an administrator to enable; `invite` refuses anyone not
+    # pre-registered (or directory-created); `group` admits only carriers of a
+    # required group, on every sign-in and every `/v1` call. The console's
+    # `oidc_config` row decides per field when it names one; this is the
+    # baseline it folds onto, and the value for a deployment that never
+    # touches the console — `open`, which is what `auto_provision` unset always
+    # meant.
+    join_mode: Literal["open", "approval", "invite", "group"] = "open"
+    # The local group names `group` mode admits. Local, never IdP names: the
+    # gate reads memberships the bearer path already loaded, so it costs no
+    # query. A directory name must first be imported or mapped to one of
+    # these. Same comma-or-JSON spelling as `group_allowlist`.
+    required_groups: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # What a stranger without a required group gets in `group` mode: refused,
+    # or an inactive account waiting for approval.
+    group_fallback: Literal["refuse", "approval"] = "refuse"
+
+    @model_validator(mode="after")
+    def _join_mode_needs_its_groups(self) -> OIDCSettings:
+        if self.join_mode == "group" and not self.required_groups:
+            raise ValueError(
+                "GATEWAY_OIDC__JOIN_MODE=group needs GATEWAY_OIDC__REQUIRED_GROUPS: "
+                "a group gate with no groups refuses everyone who is not an "
+                "administrator, including the account that would fix it. Name "
+                "at least one local group, or pick another join mode."
+            )
+        return self
 
     @model_validator(mode="after")
     def _group_import_from_legacy(self) -> OIDCSettings:
