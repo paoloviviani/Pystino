@@ -8,8 +8,8 @@ import { jsonResponse } from "../test-helpers";
 import { AdminGroups } from "./AdminGroups";
 
 /**
- * The "Seen from your identity provider" section: what an operator reads to
- * decide which of a directory's groups become groups here. Tested for what it
+ * The "Groups from your identity provider" section: what an operator reads to
+ * decide which of a directory's names mean something here. Tested for what it
  * says (the mode, who carries what, the empty state) and that its buttons
  * call the right routes.
  */
