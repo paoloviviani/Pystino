@@ -74,11 +74,14 @@ def _load_migration():
 
 @pytest.fixture()
 def run_migration():
-    """A raw SQLite engine with the pre-0058 tables, and the migration's
-    upgrade() run against it. Yields the engine."""
+    """A factory for raw SQLite engines with the pre-0058 tables, each with
+    the migration's upgrade() run against it; every engine it built is
+    disposed when the test ends (the suite fails a run on a ResourceWarning)."""
+    engines: list[sa.Engine] = []
 
     def build(*, seed: bool = True) -> sa.Engine:
         engine = sa.create_engine("sqlite://")
+        engines.append(engine)
         with engine.begin() as conn:
             for statement in DDL.split(";"):
                 if statement.strip():
@@ -91,7 +94,10 @@ def run_migration():
             _load_migration().upgrade()
         return engine
 
-    return build
+    yield build
+
+    for engine in engines:
+        engine.dispose()
 
 
 def _seed(conn: sa.Connection) -> None:
@@ -122,32 +128,22 @@ def _seed(conn: sa.Connection) -> None:
     for name, group_id in groups.items():
         source = "oidc" if name in ("eng", "x") else "manual"
         conn.execute(
-            sa.text(
-                "INSERT INTO groups (id, name, source) VALUES (:id, :name, :source)"
-            ),
+            sa.text("INSERT INTO groups (id, name, source) VALUES (:id, :name, :source)"),
             {"id": group_id.hex, "name": name, "source": source},
         )
     conn.execute(
-        sa.text(
-            "INSERT INTO memberships (user_id, group_id, source) VALUES (:u, :g, 'oidc')"
-        ),
+        sa.text("INSERT INTO memberships (user_id, group_id, source) VALUES (:u, :g, 'oidc')"),
         {"u": uuid.uuid4().hex, "g": groups["staff"].hex},
     )
     conn.execute(
-        sa.text(
-            "INSERT INTO memberships (user_id, group_id, source) VALUES (:u, :g, 'manual')"
-        ),
+        sa.text("INSERT INTO memberships (user_id, group_id, source) VALUES (:u, :g, 'manual')"),
         {"u": uuid.uuid4().hex, "g": groups["solo"].hex},
     )
 
 
 def _newest_config(conn: sa.Connection) -> dict[str, object]:
     return dict(
-        conn.execute(
-            sa.text(
-                "SELECT * FROM oidc_config ORDER BY created_at DESC, id LIMIT 1"
-            )
-        )
+        conn.execute(sa.text("SELECT * FROM oidc_config ORDER BY created_at DESC, id LIMIT 1"))
         .mappings()
         .one()
     )
