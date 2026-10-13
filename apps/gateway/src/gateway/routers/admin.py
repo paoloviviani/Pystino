@@ -129,7 +129,13 @@ from gateway.models import (
     UserModelAccess,
 )
 from gateway.oidc import PENDING_USER_ISSUER, other_active_admin_exists
-from gateway.oidc_policy import GROUP_FALLBACKS, JOIN_MODES, effective_policy, environment_policy
+from gateway.oidc_policy import (
+    GROUP_FALLBACKS,
+    JOIN_MODES,
+    effective_policy,
+    environment_policy,
+    pending_policy_row,
+)
 from gateway.pagination import Page, PageDep, count_of
 from gateway.periods import PeriodKind
 from gateway.plugins import registry as plugin_registry
@@ -1953,7 +1959,7 @@ async def map_seen(
             f"Group {name!r} is already mapped to {current[name]!r}. Unmap it first."
         )
     pairs = [[idp, local] for idp, local in current.items()] + [[name, group.name]]
-    row = _pending_policy_row(
+    row = pending_policy_row(
         stored, {"group_mappings": pairs}, required_groups=None, mappings=pairs
     )
     row.reason = payload.reason.strip()
@@ -4361,68 +4367,6 @@ async def remove_identity_provider(
     await session.commit()
 
 
-def _pending_policy_row(
-    stored: OIDCPolicyConfig | None,
-    fields: dict[str, Any],
-    *,
-    required_groups: list[str] | None,
-    mappings: list[list[str]] | None,
-) -> OIDCPolicyConfig:
-    """The row a policy save would store: the newest stored row's answers
-    carried forward for every field the payload does not send.
-
-    Only the newest `oidc_config` row is ever in force, and the console saves
-    one field at a time — so a save that stored null for every unsent field
-    would reset the other saves' answers to the environment (a group-mode
-    save followed by a fallback-only save would fail open). Unsent fields
-    carry the newest row's values instead; an explicitly sent null clears the
-    field back to the environment. A payload that names a join mode clears
-    the carried legacy columns (and a payload naming legacy columns clears
-    the carried join ones), so a stored row never mixes the two spellings —
-    the fold would let one silently win. The future map-to-existing endpoint
-    builds its row through this same helper.
-    """
-    row = OIDCPolicyConfig(
-        auto_provision=stored.auto_provision if stored is not None else None,
-        unknown_user_policy=stored.unknown_user_policy if stored is not None else None,
-        join_mode=stored.join_mode if stored is not None else None,
-        required_groups=(
-            list(stored.required_groups)
-            if stored is not None and stored.required_groups is not None
-            else None
-        ),
-        group_fallback=stored.group_fallback if stored is not None else None,
-        groups_claim=stored.groups_claim if stored is not None else None,
-        group_mappings=(
-            [list(pair) for pair in stored.group_mappings]
-            if stored is not None and stored.group_mappings is not None
-            else None
-        ),
-    )
-    if "auto_provision" in fields:
-        row.auto_provision = fields["auto_provision"]
-    if "unknown_user_policy" in fields:
-        row.unknown_user_policy = fields["unknown_user_policy"]
-    if "join_mode" in fields:
-        row.join_mode = fields["join_mode"]
-    if "required_groups" in fields:
-        row.required_groups = required_groups
-    if "group_fallback" in fields:
-        row.group_fallback = fields["group_fallback"]
-    if "groups_claim" in fields:
-        row.groups_claim = fields["groups_claim"]
-    if "group_mappings" in fields:
-        row.group_mappings = mappings
-    if fields.get("join_mode") is not None:
-        row.auto_provision = None
-        row.unknown_user_policy = None
-    if fields.get("auto_provision") is not None or fields.get("unknown_user_policy") is not None:
-        row.join_mode = None
-        row.required_groups = None
-        row.group_fallback = None
-    return row
-
-
 @router.put("/oidc/policy", response_model=OidcPolicyResponse)
 async def set_oidc_policy(
     payload: OidcPolicyUpdateRequest,
@@ -4492,7 +4436,7 @@ async def set_oidc_policy(
             if missing:
                 raise BadRequestError(
                     f"Unknown groups: {', '.join(missing)}. required_groups names "
-                    "local groups — import the directory name or map it to one first."
+                    "local groups — map the identity provider's name to one first."
                 )
 
     group_fallback = fields.get("group_fallback")
@@ -4500,7 +4444,7 @@ async def set_oidc_policy(
         raise BadRequestError("group_fallback must be 'refuse' or 'approval'.")
 
     stored = await _latest_oidc_config(session)
-    row = _pending_policy_row(stored, fields, required_groups=cleaned_groups, mappings=mappings)
+    row = pending_policy_row(stored, fields, required_groups=cleaned_groups, mappings=mappings)
     folded = effective_policy(settings.oidc, row)
 
     unknown = fields.get("unknown_user_policy")

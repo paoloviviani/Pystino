@@ -59,10 +59,10 @@ def holds_required_group(user: User, required: frozenset[str]) -> bool:
 
     The gate reads memberships alone. A claimed name that should not count
     never becomes one: the mapping step (`OIDCPolicy.map_claim_group_names`)
-    drops every claim-sourced name the operator did not vouch for, so by the
-    time the gate looks, an unvouched name has no membership to stand on.
-    A manual membership (the console's, or a pre-assigned directory grant)
-    always counts — the operator made it by hand.
+    keeps only the names the operator mapped, so by the time the gate looks,
+    an unmapped name has no membership to stand on. A manual membership (the
+    console's, or a pre-assigned directory grant) always counts — the
+    operator made it by hand.
     """
     return any(
         membership.group.name in required and membership.group.is_active
@@ -73,8 +73,9 @@ def holds_required_group(user: User, required: frozenset[str]) -> bool:
 def stranger_passes(mapped_names: list[str], required: frozenset[str]) -> bool:
     """A stranger's mapped claim names against the required local names.
 
-    `mapped_names` are already through `map_claim_group_names`, so an
-    unvouched same-name claim is not a pass — only vouched names arrive here.
+    `mapped_names` are already through `map_claim_group_names`, which keeps
+    only mapped names — an unmapped same-name claim is not here, so it is
+    not a pass.
     """
     return any(name in required for name in mapped_names)
 

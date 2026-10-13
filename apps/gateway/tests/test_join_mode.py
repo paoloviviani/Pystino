@@ -46,7 +46,7 @@ ISS = "https://idp.test"
 
 def _settings(**overrides: Any) -> Settings:
     return Settings(
-        oidc=OIDCSettings(enabled=True, issuer=ISS, client_id="c", **LEGACY_GROUPS, **overrides)
+        oidc=OIDCSettings(enabled=True, issuer=ISS, client_id="c", **{**LEGACY_GROUPS, **overrides})
     )
 
 
@@ -221,17 +221,24 @@ class TestStrangerModes:
         assert result.user.is_active is True
         assert "staff" in [m.group.name for m in result.user.memberships]
 
-    async def test_an_allowlisted_name_is_admitted(self, session: AsyncSession) -> None:
+    async def test_an_allowlisted_name_confers_nothing_by_itself(
+        self, session: AsyncSession
+    ) -> None:
+        """The allowlist is a pre-filter on which claimed names are considered
+        at all (extract_groups); it vouches for nothing. Admission needs a
+        mapping — an allowlisted-but-unmapped required name is refused like
+        any other unmapped claim."""
         settings = _settings(group_allowlist=["staff"])
-        result = await _sign_in(
-            session,
-            "allowlisted-1",
-            ["staff"],
-            settings=settings,
-            policy=_policy("group", required_groups=("staff",)),
-        )
-        assert result.user.is_active is True
-        assert "staff" in [m.group.name for m in result.user.memberships]
+        policy = _policy("group", required_groups=("staff",))
+        with pytest.raises(ProvisioningRefused, match="isn't in a group"):
+            await _sign_in(
+                session,
+                "allowlisted-1",
+                ["staff"],
+                settings=settings,
+                policy=policy,
+            )
+        assert await _row(session, "allowlisted-1") is None
 
     async def test_group_refuses_without_one_and_names_none(self, session: AsyncSession) -> None:
         with pytest.raises(ProvisioningRefused, match="isn't in a group"):
@@ -401,15 +408,25 @@ class TestGroupModeExistingUsers:
         )
         assert user.is_active is True
 
-    async def test_a_non_required_name_still_resolves_as_today(self, session: AsyncSession) -> None:
-        """The drop is scoped to required names: a non-required name with no
-        mapping still resolves to a same-name local group (model-access
-        groups are unchanged)."""
+    async def test_a_non_required_unmapped_name_resolves_to_nothing(
+        self, session: AsyncSession
+    ) -> None:
+        """The drop is the rule, not a required-names special case: an
+        unmapped name resolves to nothing whatever the gate asks for, and is
+        recorded as a seen name for the console to map. (Under `auto` the
+        name would self-map instead — that mode creates the mapping itself.)"""
         policy = _policy("group", required_groups=("staff",))
         await _member_user(session, "s-8", ["staff"])  # manual: admitted
-        result = await _sign_in(session, "s-8", ["research"], policy=policy)
+        result = await _sign_in(
+            session,
+            "s-8",
+            ["research"],
+            settings=_settings(group_import="manual"),
+            policy=policy,
+        )
         names = [m.group.name for m in result.user.memberships]
-        assert "research" in names and "staff" in names
+        assert "research" not in names and "staff" in names
+        assert "research" in (result.user.unresolved_group_names or [])
 
     async def test_inactive_group_does_not_count(self, session: AsyncSession) -> None:
         policy = _policy("group", required_groups=("staff",))

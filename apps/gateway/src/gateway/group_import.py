@@ -37,10 +37,12 @@ from gateway.models import (
     IdentityProvider,
     Membership,
     MembershipSource,
+    OIDCPolicyConfig,
     SeenGroup,
     SeenGroupUser,
     User,
 )
+from gateway.oidc_policy import pending_policy_row
 from gateway.types import utcnow
 
 
@@ -117,6 +119,50 @@ async def grant_default_group(session: AsyncSession, user: User, name: str) -> G
 # -- seen groups ------------------------------------------------------------------
 
 
+async def self_map_new_names(
+    session: AsyncSession, names: list[str], *, reason: str
+) -> dict[str, str]:
+    """`auto` import's answer to the mapping-only rule: each new claimed name
+    becomes a self-mapping (name -> a local group of the same name), appended
+    to the policy history as one carry-forward row.
+
+    The group is created when missing (source ``oidc``, conflict-safe against
+    two first sign-ins racing) and used as it stands when one exists — a
+    manual group the IdP also names gets the mapping, which is what keeps the
+    memberships ``auto`` was already granting. The row carries the newest
+    row's other answers forward through the same helper the console saves
+    with: a bare row would reset the join mode to the environment on the next
+    poll. Returns the mappings to add, so the caller re-maps in the same
+    login and the membership lands now, as ``auto`` always did.
+    """
+    wanted = sorted(set(names))
+    await session.execute(
+        _insert(session, Group)
+        .values([{"id": uuid.uuid4(), "name": name, "source": GroupSource.OIDC} for name in wanted])
+        .on_conflict_do_nothing(index_elements=["name"])
+    )
+    await session.flush()
+    stored = (
+        await session.execute(
+            select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    current: list[list[str]] = (
+        [list(pair) for pair in stored.group_mappings]
+        if stored is not None and stored.group_mappings is not None
+        else []
+    )
+    pairs = current + [[name, name] for name in wanted]
+    row = pending_policy_row(
+        stored, {"group_mappings": pairs}, required_groups=None, mappings=pairs
+    )
+    row.reason = reason
+    row.created_by = None
+    session.add(row)
+    await session.flush()
+    return {name: name for name in wanted}
+
+
 async def record_unresolved(
     session: AsyncSession,
     user: User,
@@ -129,10 +175,14 @@ async def record_unresolved(
     """Remember what this provisioning could not resolve, writing only changes.
 
     *unresolved* is every claimed name that did not become a membership
-    (missing, or a deactivated group); it goes on the user row, for the hot
-    path's divergence check. *missing* is the subset no group carries at all;
-    those are the seen names, with this person counted against each. A sign-in
-    (*touch_login*) also moves their ``last_seen_at``, in one statement.
+    (unmapped, or mapped to a missing or deactivated group); it goes on the
+    user row, for the hot path's divergence check. *missing* is the subset
+    the console should see — every unmapped claimed name (even one an
+    existing local group carries: under the mapping-only rule it resolves to
+    nothing, and the console maps it) plus the mapped targets no group
+    carries; those are the seen names, with this person counted against each.
+    A sign-in (*touch_login*) also moves their ``last_seen_at``, in one
+    statement.
     """
     wanted = sorted(set(unresolved))
     changed = user.unresolved_group_names is None or sorted(user.unresolved_group_names) != wanted
