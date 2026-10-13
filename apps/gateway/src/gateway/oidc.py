@@ -2003,7 +2003,7 @@ def _claims_diverge(
     row as ``unresolved_group_names`` and is not a divergence: it would
     resolve to nothing again, and counting it made every request from a
     person in one unimported group re-provision, forever. Importing it grants
-    it at once (``group_import.import_seen_group``) or at the next sign-in.
+    it at once (the map endpoint) or at the next sign-in.
 
     The question asked is "would a sync change anything" (ADR 0057), not
     "does the stored set equal the claimed set". This runs on every ``/v1``

@@ -32,7 +32,7 @@ from urllib.parse import quote, urlsplit
 from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from llmp_shared import EntitySpan, PlaceholderMap
-from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select, update
+from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select, true, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
@@ -66,7 +66,7 @@ from gateway.errors import (
     ServiceUnavailableError,
     UpstreamUnavailableError,
 )
-from gateway.group_import import grant_default_group, import_seen_group, map_seen_group
+from gateway.group_import import grant_default_group, map_seen_group
 from gateway.identity_events import record_event
 from gateway.identity_registry import (
     active_bundled_provider,
@@ -1808,13 +1808,21 @@ async def list_seen_groups(
     q: str = "",
     dismissed: bool = False,
 ) -> SeenGroupPage:
-    """Group names a directory reported that no group here carries.
+    """Group names a directory reported that nothing maps yet.
 
-    Most-carried first, since that is the order an operator imports in. A name
-    that has meanwhile become a group (created by hand, or by `auto` mode) is
-    left out rather than shown with an Import that could only conflict.
-    ``dismissed=true`` lists the dismissed ones instead, to restore or import.
+    Most-carried first, since that is the order an operator decides in. The
+    mapping-only rule makes this the one place an unmapped name is visible —
+    including a name an existing local group carries, which used to be hidden
+    and resolved silently. A name that is already a mapping key is left out:
+    it is decided, not waiting. ``dismissed=true`` lists the dismissed ones
+    instead, to restore or map.
     """
+    stored = await _latest_oidc_config(session)
+    mapped_keys: list[str] = (
+        [pair[0] for pair in stored.group_mappings if isinstance(pair, list) and pair]
+        if stored is not None and stored.group_mappings is not None
+        else []
+    )
     people = (
         select(func.count(SeenGroupUser.user_id))
         .where(SeenGroupUser.seen_group_id == SeenGroup.id)
@@ -1825,7 +1833,7 @@ async def list_seen_groups(
         select(SeenGroup, people.label("people"))
         .where(
             SeenGroup.dismissed_at.is_not(None) if dismissed else SeenGroup.dismissed_at.is_(None),
-            ~select(Group.id).where(Group.name == SeenGroup.name).exists(),
+            SeenGroup.name.not_in(mapped_keys) if mapped_keys else true(),
         )
         .order_by(people.desc(), SeenGroup.name)
     )
@@ -1872,51 +1880,6 @@ async def _load_seen_group(seen_id: uuid.UUID, session: AsyncSession) -> SeenGro
     return seen
 
 
-@router.post("/groups/seen/{seen_id}/import", response_model=SeenGroupImportResponse)
-async def import_seen(
-    seen_id: uuid.UUID, admin: AdminUserDep, session: SessionDep
-) -> SeenGroupImportResponse:
-    """Create the group a directory's name asks for (source: the directory).
-
-    People whose last sign-in carried the name are granted it now when their
-    provider's group answer applies at every login, otherwise at their next
-    sign-in; ``applied`` says which, and the console repeats it.
-    """
-    seen = await _load_seen_group(seen_id, session)
-    name, issuer = seen.name, seen.issuer
-    if (
-        await session.execute(select(Group.id).where(Group.name == name))
-    ).scalar_one_or_none() is not None:
-        raise ConflictError(f"A group named {name!r} already exists.", code="group_exists")
-    result = await import_seen_group(session, seen)
-    await record_event(
-        session,
-        actor_type=IdentityEventActor.USER,
-        actor_user_id=admin.id,
-        actor_label=admin.email or "",
-        action=IdentityEventAction.GROUP_IMPORT,
-        target_label=name,
-        issuer=issuer,
-        detail={"members": result.members_added},
-    )
-    await session.commit()
-    group = result.group
-    return SeenGroupImportResponse(
-        group=GroupAdminResponse(
-            id=group.id,
-            name=group.name,
-            description=group.description,
-            source=group.source.value,
-            is_active=group.is_active,
-            member_count=result.members_added,
-            models=[],
-            search_backend=None,
-        ),
-        members_added=result.members_added,
-        applied="now" if result.applied == "now" else "next_login",
-    )
-
-
 @router.post("/groups/seen/{seen_id}/map", response_model=SeenGroupImportResponse)
 async def map_seen(
     seen_id: uuid.UUID,
@@ -1924,24 +1887,74 @@ async def map_seen(
     admin: AdminUserDep,
     session: SessionDep,
     request: Request,
-    settings: SettingsDep,
 ) -> SeenGroupImportResponse:
-    """Map a directory's group name to an existing local group (ADR 0095 §4).
+    """Decide what an identity provider's group name grants here.
 
-    The IdP name now grants that group: recorded carriers are granted now
-    when their provider's group answer applies at every login, otherwise at
-    their next sign-in — the same immediacy rule as an import. The mapping
-    is a new `oidc_config` row on the append-only history (built through the
-    same carry-forward helper as PUT, so the join answers ride along), the
-    seen row goes, and the audit names both sides.
+    One endpoint, three answers to that question: ``new_same_name`` creates a
+    local group of the same name (source ``oidc``), ``new_named`` creates one
+    under another name, ``existing`` maps onto a group that already exists —
+    the choice the ``new_*`` targets offer a 409 for. Whichever it is, the
+    token's name resolves only through the mapping, so every target appends
+    one: a new row on the append-only policy history, built through the same
+    carry-forward helper as PUT, so the join answers ride along. Recorded
+    carriers are granted now under an every-login provider (existing holders
+    skipped, their membership source kept), the seen row goes, and the audit
+    names both the target shape and the group.
     """
+    return await _map_seen_group(seen_id, payload, admin, session, request)
+
+
+@router.post(
+    "/groups/seen/{seen_id}/import",
+    response_model=SeenGroupImportResponse,
+    deprecated=True,
+)
+async def import_seen(
+    seen_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
+) -> SeenGroupImportResponse:
+    """Deprecated alias of ``map`` with ``target: "new_same_name"``.
+
+    Kept one release so a console built before the mapping-only rule keeps
+    working; remove it once no console calls it. The mapping it appends is
+    not an implementation detail: under the rule the new group resolves only
+    through it, so the alias is the same decision map makes.
+    """
+    return await _map_seen_group(
+        seen_id, SeenGroupMapRequest(target="new_same_name"), admin, session, request
+    )
+
+
+async def _map_seen_group(
+    seen_id: uuid.UUID,
+    payload: SeenGroupMapRequest,
+    admin: AdminUserDep,
+    session: AsyncSession,
+    request: Request,
+) -> SeenGroupImportResponse:
+    """The one implementation behind map (and, for one release, import)."""
     seen = await _load_seen_group(seen_id, session)
     name, issuer = seen.name, seen.issuer
-    group = (
-        await session.execute(select(Group).where(Group.id == payload.group_id))
-    ).scalar_one_or_none()
-    if group is None:
-        raise NotFoundError(f"No group with id {payload.group_id}.")
+    if payload.target == "existing":
+        if payload.group_id is None:
+            raise BadRequestError("target 'existing' needs the group to map onto.")
+        group = (
+            await session.execute(select(Group).where(Group.id == payload.group_id))
+        ).scalar_one_or_none()
+        if group is None:
+            raise NotFoundError(f"No group with id {payload.group_id}.")
+    else:
+        target_name = seen.name if payload.target == "new_same_name" else payload.name
+        if not target_name:
+            raise BadRequestError("target 'new_named' needs the name to create.")
+        if (
+            await session.execute(select(Group.id).where(Group.name == target_name))
+        ).scalar_one_or_none() is not None:
+            raise ConflictError(
+                f"A group named {target_name!r} already exists.", code="group_exists"
+            )
+        group = Group(name=target_name, source=GroupSource.OIDC)
+        session.add(group)
+        await session.flush()
 
     stored = await _latest_oidc_config(session)
     # The pairs come from the stored row, never the worker's in-memory
@@ -1975,7 +1988,7 @@ async def map_seen(
         action=IdentityEventAction.GROUP_MAP,
         target_label=name,
         issuer=issuer,
-        detail={"group": group.name},
+        detail={"target": payload.target, "group": group.name},
     )
     await session.commit()
     await _refresh_policy_resolver(request)

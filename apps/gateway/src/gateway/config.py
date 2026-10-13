@@ -92,20 +92,24 @@ class OIDCSettings(BaseModel):
     groups_claim: str = "groups"
     # Some IdPs only return groups on the userinfo endpoint, not in the ID token.
     fetch_userinfo: bool = True
-    # If set, only these groups are imported; everything else is ignored. Empty
-    # means "import every group the IdP reports". Comma-separated or a JSON
-    # list: `NoDecode` because pydantic-settings would otherwise insist on
-    # JSON, and refuse even an empty value, which a compose passthrough of an
-    # unset variable produces.
+    # If set, only these claimed group names are considered at all: a
+    # pre-filter on what the IdP reports (plumbing, not meaning). It vouches
+    # for nothing by itself — a listed name still reaches a local group only
+    # through a mapping. Empty means every reported name is considered.
+    # Comma-separated or a JSON list: `NoDecode` because pydantic-settings
+    # would otherwise insist on JSON, and refuse even an empty value, which a
+    # compose passthrough of an unset variable produces.
     group_allowlist: Annotated[list[str], NoDecode] = Field(default_factory=list)
-    # What a group name the directory reports, and no group here carries, does
-    # at a login. `manual` records it as *seen* (the console's Groups page
-    # lists it, with Import and Dismiss) and creates nothing; `auto` creates
-    # the group on first sight, which is what this gateway always did. Groups
-    # that already exist resolve in both modes, so an upgrade that lands on
-    # `manual` keeps every membership it was granting; only *new* names stop
-    # becoming groups. Manual is the default because a real directory reports
-    # every group a person is in: one GitLab sign-in created 67 groups.
+    # What a claimed group name that nothing maps does at a login. A name
+    # reaches a local group only through a mapping (oidc_config.group_mappings):
+    # `manual` (the default) records an unmapped name as *seen* — the console's
+    # Groups page lists it, to map or dismiss — and creates nothing; `auto`
+    # maps each new name to a local group of the same name (creating the group
+    # and the self-mapping), which is what keeps the old "every name becomes a
+    # group" behaviour inside the rule. A name the group gate requires is
+    # never auto-mapped: the console maps those. Manual is the default because
+    # a real directory reports every group a person is in: one GitLab sign-in
+    # created 67 groups.
     group_import: Literal["manual", "auto"] = "manual"
     # The older spelling of the same switch, still honoured: a deployment that
     # set it keeps its behaviour (`true` is `auto`, `false` is `manual`).

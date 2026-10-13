@@ -346,28 +346,6 @@ async def _grant_seen_carriers(session: AsyncSession, seen: SeenGroup, group: Gr
     return added
 
 
-async def import_seen_group(session: AsyncSession, seen: SeenGroup) -> ImportResult:
-    """Create the group a seen name asks for, and grant it where that is sound.
-
-    The grant is immediate only for a provider whose answer is the token's
-    and applies at every login (see `_carriers_apply_now`).
-    """
-    group = Group(name=seen.name, source=GroupSource.OIDC)
-    session.add(group)
-    await session.flush()
-
-    immediate = await _carriers_apply_now(session, seen.issuer)
-    added = 0
-    if immediate:
-        added = await _grant_seen_carriers(session, seen, group)
-
-    await session.delete(seen)
-    await session.flush()
-    return ImportResult(
-        group=group, members_added=added, applied="now" if immediate else "next_login"
-    )
-
-
 async def map_seen_group(session: AsyncSession, seen: SeenGroup, group: Group) -> ImportResult:
     """Grant a seen name's carriers to an existing local group (ADR 0095 §4).
 

@@ -31,6 +31,7 @@ from gateway.models import (
     User,
 )
 from gateway.oidc import provision_user, sync_user_from_claims
+from gateway.oidc_policy import OIDCPolicy
 from joserfc.jwk import RSAKey
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -725,15 +726,38 @@ class TestTheAdminApi:
             f"/api/admin/groups/seen/{eng['id']}/map", json={"target": "existing", "group_id": str(target_id)}
         )
         assert again.status_code == 404
-        # ...and mapping the same IdP name from a fresh sighting 400s.
-        await self._sign_in_people(session_factory)
-        fresh = next(
-            i
-            for i in (await client.get("/api/admin/groups/seen")).json()["items"]
-            if i["name"] == "gitlab/eng"
-        )
+        # ...and a mapped name is never seen again: the next sign-in resolves
+        # through it, so nothing waits.
+        async with session_factory() as session:
+            user = await provision_user(
+                session,
+                issuer=BEARER_ISSUER,
+                subject="p2",
+                email="p2@example.org",
+                display_name=None,
+                group_names=["engineering"],
+                claimed_names=["gitlab/eng"],
+                settings=OIDCSettings(),
+                policy=OIDCPolicy(join_mode="open", group_mappings={"gitlab/eng": "engineering"}),
+                group_mappings={"gitlab/eng": "engineering"},
+            )
+            await session.commit()
+            assert {m.group.name for m in user.memberships} == {"engineering", "users"}
+        listing = (await client.get("/api/admin/groups/seen")).json()["items"]
+        assert [i["name"] for i in listing] == ["gitlab/ops"]
+        # The refusal for an already-mapped name survives for the race it
+        # guards (two workers mapping while one commit is in flight): a seen
+        # row for a name the stored policy already maps is refused, not
+        # double-written.
+        async with session_factory() as session:
+            session.add(SeenGroup(issuer=BEARER_ISSUER, name="gitlab/eng"))
+            await session.commit()
+            stale = (
+                await session.execute(select(SeenGroup).where(SeenGroup.name == "gitlab/eng"))
+            ).scalar_one()
         duplicate = await client.post(
-            f"/api/admin/groups/seen/{fresh['id']}/map", json={"target": "existing", "group_id": str(target_id)}
+            f"/api/admin/groups/seen/{stale.id}/map",
+            json={"target": "existing", "group_id": str(target_id)},
         )
         assert duplicate.status_code == 400, duplicate.text
 
@@ -808,7 +832,8 @@ class TestTheAdminApi:
         listing = (await client.get("/api/admin/groups/seen")).json()["items"]
         assert row["id"] in [i["id"] for i in listing]
         policy = (await client.get("/api/admin/oidc/policy")).json()
-        assert policy["group_mappings"] == []
+        claimed_name = row["name"]
+        assert all(rule["idp"] != claimed_name for rule in policy["group_mappings"])
 
     async def test_unmap_appends_a_row_without_the_pair(
         self,
@@ -818,7 +843,9 @@ class TestTheAdminApi:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         """Unmap needs no endpoint: PUT the mappings list without the pair,
-        and the append-only history records the removal."""
+        and the append-only history records the removal. (The seeded
+        deployment carries the migration-0058 self-mapping; the carry-forward
+        keeps it, which is why the assertions read the pair, not the list.)"""
         as_user(bearer_app, await make_admin(session_factory, seeded))
         response = await client.put(
             "/api/admin/oidc/policy",
@@ -844,10 +871,8 @@ class TestTheAdminApi:
                 .scalars()
                 .all()
             )
-            assert [r.group_mappings for r in rows[-2:]] == [
-                [["gitlab/eng", "engineering"]],
-                [],
-            ]
+            assert rows[-1].group_mappings == []
+            assert ["gitlab/eng", "engineering"] in rows[-2].group_mappings
 
 
 class TestANewGitLabUserCanChat:
