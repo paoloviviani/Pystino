@@ -398,9 +398,7 @@ class Seeded:
 
 
 @pytest_asyncio.fixture
-async def seeded(
-    session_factory: async_sessionmaker[AsyncSession], app: FastAPI
-) -> Seeded:
+async def seeded(session_factory: async_sessionmaker[AsyncSession], app: FastAPI) -> Seeded:
     """A group, a member, a priced model the group may use, and a usable key.
 
     Prices are chosen so the arithmetic is easy to assert by hand:

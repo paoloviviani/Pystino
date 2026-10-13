@@ -134,9 +134,7 @@ class TestTheRule:
         assert [(s.issuer, s.name) for s in seen] == [(ISS, "research")]
         assert result.user.unresolved_group_names == ["research"]
 
-    async def test_a_mapped_name_resolves_through_its_mapping(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_mapped_name_resolves_through_its_mapping(self, session: AsyncSession) -> None:
         session.add(Group(name="research", source=GroupSource.MANUAL))
         await session.commit()
         policy = _policy("open", group_mappings={"gl/research": "research"})
@@ -160,9 +158,7 @@ class TestTheRule:
 
 
 class TestAutoImport:
-    async def test_auto_creates_the_group_and_the_self_mapping(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_auto_creates_the_group_and_the_self_mapping(self, session: AsyncSession) -> None:
         """`auto` keeps its old promise inside the rule: each new claimed name
         becomes a local group of the same name AND a self-mapping, so the
         name keeps resolving after the token that named it is gone. The
@@ -176,16 +172,10 @@ class TestAutoImport:
         )
 
         assert "eng" in await _names(session, result.user)
-        group = (
-            await session.execute(select(Group).where(Group.name == "eng"))
-        ).scalar_one()
+        group = (await session.execute(select(Group).where(Group.name == "eng"))).scalar_one()
         assert group.source is GroupSource.OIDC
         rows = (
-            (
-                await session.execute(
-                    select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at)
-                )
-            )
+            (await session.execute(select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at)))
             .scalars()
             .all()
         )
@@ -250,9 +240,7 @@ class TestAutoImport:
         )
         assert newest.group_mappings == [["eng", "eng"]]
 
-    async def test_a_refused_stranger_mints_no_self_mapping(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_refused_stranger_mints_no_self_mapping(self, session: AsyncSession) -> None:
         """Auto creates things at provisioning; a stranger the group gate
         refused never gets there, so their claim mints neither a group nor a
         mapping row."""
