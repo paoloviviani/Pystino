@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from gateway.config import OIDCSettings
-from gateway.models import Group, OIDCPolicyConfig
+from gateway.models import Group, IdentityProvider, OIDCPolicyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +243,7 @@ class OIDCPolicyResolver:
         self._refresh_seconds = refresh_seconds
         self._policy = environment_policy(settings)
         self._warned_missing_groups: frozenset[str] = frozenset()
+        self._gate_group_source = "claim"
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -253,6 +254,13 @@ class OIDCPolicyResolver:
     def refresh_seconds(self) -> float:
         """How far behind the console's save a worker may lag."""
         return self._refresh_seconds
+
+    @property
+    def gate_group_source(self) -> str:
+        """The enabled provider's group source, as of the last poll: the group
+        gate's vetting follows it (ADR 0095 review). "claim" until a row
+        exists."""
+        return self._gate_group_source
 
     async def refresh_once(self) -> None:
         """Poll once. Exposed for tests and for the startup read."""
@@ -272,7 +280,18 @@ class OIDCPolicyResolver:
             local_names: set[str] = set()
             if required:
                 local_names = set((await session.execute(select(Group.name))).scalars().all())
+            # The group gate's vetting follows the one enabled provider's
+            # group source (ADR 0095 review): claim-source names are
+            # user-writable, so the gate vouches them; directory-source names
+            # are admin-vouched. Read here, in the poll's own session, so no
+            # request path pays a query for it.
+            provider_row = (
+                await session.execute(
+                    select(IdentityProvider).where(IdentityProvider.is_enabled.is_(True))
+                )
+            ).scalar_one_or_none()
         self._policy = policy
+        self._gate_group_source = provider_row.group_source if provider_row is not None else "claim"
         missing = frozenset(n for n in required if n not in local_names)
         if missing and missing != self._warned_missing_groups:
             logger.warning(

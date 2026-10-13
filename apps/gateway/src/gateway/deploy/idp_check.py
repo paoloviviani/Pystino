@@ -112,6 +112,23 @@ async def check_discovery(client: OIDCClient, settings: OIDCSettings, report: Ch
         report.fail(f"  jwks: FAILED — {exc}")
         return False
     report.say(f"  jwks: {len(keys.keys)} key(s)")
+    # ADR 0095 review: GitLab (and any Doorkeeper IdP — the introspection
+    # path gives it away) lets users create top-level groups, so a required
+    # group name is not trusted until the operator vouches for it. The gate
+    # already refuses unmapped same-name claims; the warning is for the
+    # operator who configured the gate and wonders why nobody gets in.
+    doorkeeper = bool(
+        metadata.introspection_endpoint
+        and metadata.introspection_endpoint.rstrip("/").endswith("/oauth/introspect")
+    )
+    if settings.join_mode == "group" and (settings.kind == "gitlab" or doorkeeper):
+        report.say(
+            "  WARNING: join_mode is group on a Doorkeeper issuer (GitLab-shaped). "
+            "GitLab users can create top-level groups, so an IdP group name is "
+            "not trusted for the gate until it is mapped (Console → Groups) or "
+            "listed in GATEWAY_OIDC__GROUP_ALLOWLIST — an unmapped claim naming "
+            "a required group is refused."
+        )
     return True
 
 

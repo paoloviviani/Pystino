@@ -103,18 +103,54 @@ async def _row(session: AsyncSession, subject: str) -> User | None:
 class TestJoinGatePure:
     def test_holds_required_group_reads_effective_memberships(self) -> None:
         required = frozenset({"staff"})
+        # Without vetting (the directory-source case) every membership counts.
         assert holds_required_group(_member("staff", active=True), required) is True
-        # Any source counts: a console grant is a real membership.
-        assert (
-            holds_required_group(_member("staff", active=True, source="manual"), required) is True
-        )
         assert holds_required_group(_member("other", active=True), required) is False
         # An inactive group confers nothing.
         assert holds_required_group(_member("staff", active=False), required) is False
 
+    def test_holds_required_group_vets_claim_sourced_memberships(self) -> None:
+        """ADR 0095 review: an IdP group namespace is user-writable (a GitLab
+        user can create a top-level group named like a required local one), so
+        a *claim-sourced* membership counts only when its name is vetted — an
+        explicit mapping target or the allowlist. A manual membership always
+        counts."""
+        required = frozenset({"staff"})
+        vetted = frozenset({"staff"})
+        # A manual membership counts whatever the vetting says.
+        assert (
+            holds_required_group(
+                _member("staff", active=True, source="manual"), required, vetted=vetted
+            )
+            is True
+        )
+        # An oidc-sourced membership in the vetted name counts...
+        assert holds_required_group(_member("staff", active=True), required, vetted=vetted) is True
+        # ...and one in a name that merely *sounds* right does not.
+        assert (
+            holds_required_group(
+                _member("staff", active=True),
+                frozenset({"staff"}),
+                vetted=frozenset({"vetted-only"}),
+            )
+            is False
+        )
+
     def test_stranger_passes_on_mapped_names(self) -> None:
+        # Without vetting (the directory-source case), as before.
         assert stranger_passes(["staff"], frozenset({"staff"})) is True
         assert stranger_passes(["other"], frozenset({"staff"})) is False
+        # With vetting: an explicit mapping target admits...
+        assert stranger_passes(["staff"], frozenset({"staff"}), vetted=frozenset({"staff"})) is True
+        # ...an unmapped same-name claim does not...
+        assert (
+            stranger_passes(["staff"], frozenset({"staff"}), vetted=frozenset({"mapped-only"}))
+            is False
+        )
+        # ...and an unvetted name that is not required is refused as always.
+        assert (
+            stranger_passes(["other"], frozenset({"staff"}), vetted=frozenset({"staff"})) is False
+        )
 
     def test_exempt_admins_always(self) -> None:
         admin = User(issuer=ISS, subject="a", is_admin=True)
@@ -199,9 +235,31 @@ class TestStrangerModes:
         assert event is not None
         assert event.detail == {"reason": "invite"}
 
-    async def test_group_passes_on_a_required_group(self, session: AsyncSession) -> None:
+    async def test_an_unmapped_same_name_claim_is_refused(self, session: AsyncSession) -> None:
+        """ADR 0095 review: IdP group namespaces are user-writable — a GitLab
+        user can create a top-level group named like the required local one —
+        so a bare same-name claim is not a pass. The operator maps the name or
+        allowlists it."""
+        with pytest.raises(ProvisioningRefused, match="isn't in a group"):
+            await _sign_in(
+                session, "spoof-1", ["staff"], policy=_policy("group", required_groups=("staff",))
+            )
+        assert await _row(session, "spoof-1") is None
+
+    async def test_a_mapped_claim_is_admitted(self, session: AsyncSession) -> None:
+        """The operator's explicit mapping vouches for the name."""
+        policy = _policy("group", required_groups=("staff",), group_mappings={"staff": "staff"})
+        result = await _sign_in(session, "mapped-1", ["staff"], policy=policy)
+        assert result.user.is_active is True
+
+    async def test_an_allowlisted_claim_is_admitted(self, session: AsyncSession) -> None:
+        settings = _settings(group_allowlist=["staff"])
         result = await _sign_in(
-            session, "new-5", ["staff"], policy=_policy("group", required_groups=("staff",))
+            session,
+            "allowlisted-1",
+            ["staff"],
+            settings=settings,
+            policy=_policy("group", required_groups=("staff",)),
         )
         assert result.user.is_active is True
 
@@ -240,7 +298,16 @@ class TestStrangerModes:
 # -- group mode for people already here ---------------------------------------
 
 
-async def _member_user(session: AsyncSession, subject: str, group_names: list[str]) -> User:
+async def _member_user(
+    session: AsyncSession,
+    subject: str,
+    group_names: list[str],
+    *,
+    source: Any = MembershipSource.MANUAL,
+) -> User:
+    """A person whose memberships were granted here (console, or a directory
+    push — both count toward the gate as before). The claim-sourced shape is
+    the one test that needs it passes `source=MembershipSource.OIDC`."""
     user = User(
         issuer=ISS,
         subject=subject,
@@ -257,21 +324,25 @@ async def _member_user(session: AsyncSession, subject: str, group_names: list[st
             group = Group(name=name)
             session.add(group)
             await session.flush()
-        session.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.OIDC))
+        session.add(Membership(user_id=user.id, group_id=group.id, source=source))
     await session.commit()
     return user
 
 
 class TestGroupModeExistingUsers:
     async def test_sign_in_refused_after_losing_the_group(self, session: AsyncSession) -> None:
-        policy = _policy("group", required_groups=("staff",))
+        # The mapping is the operator's vouch for the IdP name (ADR 0095
+        # review): without it the claim itself would not admit.
+        policy = _policy("group", required_groups=("staff",), group_mappings={"staff": "staff"})
         await _sign_in(session, "s-1", ["staff"], policy=policy)
         with pytest.raises(ProvisioningRefused, match="no longer"):
             await _sign_in(session, "s-1", [], policy=policy)
 
     async def test_v1_refused_with_403(self, session: AsyncSession) -> None:
-        policy = _policy("group", required_groups=("staff",))
-        await _member_user(session, "s-2", ["staff"])
+        """A vetted membership the directory then takes away: the claim drops
+        `staff`, the reconcile removes it, and the gate refuses with 403."""
+        policy = _policy("group", required_groups=("staff",), group_mappings={"staff": "staff"})
+        await _member_user(session, "s-2", ["staff"], source=MembershipSource.OIDC)
         settings = OIDCSettings(**LEGACY_GROUPS)
         with pytest.raises(OutsideAccessGroupsError, match="no longer"):
             await sync_user_from_claims(
@@ -295,7 +366,7 @@ class TestGroupModeExistingUsers:
             )
 
     async def test_regained_group_restores_access(self, session: AsyncSession) -> None:
-        policy = _policy("group", required_groups=("staff",))
+        policy = _policy("group", required_groups=("staff",), group_mappings={"staff": "staff"})
         await _sign_in(session, "s-4", ["staff"], policy=policy)
         with pytest.raises(ProvisioningRefused):
             await _sign_in(session, "s-4", [], policy=policy)
@@ -324,6 +395,37 @@ class TestGroupModeExistingUsers:
         await session.commit()
         result = await _sign_in(session, "s-6", [], policy=policy)
         assert result.user.id == user.id
+
+    async def test_an_oidc_membership_in_an_unvetted_name_does_not_admit(
+        self, session: AsyncSession
+    ) -> None:
+        """The spoof at the membership level: the local group `staff` exists,
+        and a claim-sourced (oidc) membership in a same-named IdP group put
+        the person there — with no mapping, the name is not vouched, so the
+        gate refuses. A manual membership in the same group admits (the test
+        above)."""
+        policy = _policy("group", required_groups=("staff",))
+        await _member_user(session, "s-spoof", ["staff"], source=MembershipSource.OIDC)
+        with pytest.raises(ProvisioningRefused, match="no longer"):
+            await _sign_in(session, "s-spoof", [], policy=policy)
+
+    async def test_a_directory_sourced_membership_admits_without_a_mapping(
+        self, session: AsyncSession
+    ) -> None:
+        """SCIM/directory memberships count as before: with
+        `group_source="directory"` no membership was ever created from a
+        claim, so there is nothing to vouch — the oidc membership counts."""
+        policy = _policy("group", required_groups=("staff",))
+        await _member_user(session, "s-dir", ["staff"], source=MembershipSource.OIDC)
+        settings = OIDCSettings(**LEGACY_GROUPS)
+        user = await sync_user_from_claims(
+            session,
+            claims=_claims("s-dir", ["staff"]),
+            settings=settings,
+            policy=policy,
+            group_source="directory",
+        )
+        assert user.is_active is True
 
     async def test_inactive_group_does_not_count(self, session: AsyncSession) -> None:
         policy = _policy("group", required_groups=("staff",))

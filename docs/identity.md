@@ -146,6 +146,14 @@ Cross-cutting, the same in every mode:
   anyone matching an env admin rule get in whatever the mode says, so a
   misconfigured group mode cannot lock every administrator out. Break-glass
   is unchanged.
+- **An IdP group name is not trusted until you vouch for it.** With a
+  claim-source provider (the default), a claimed group name counts toward the
+  `group` gate only when it is explicitly mapped (Console → Groups) or listed
+  in `OIDC_GROUP_ALLOWLIST`: IdP group namespaces are user-writable — a
+  GitLab user can create a top-level group named exactly like your required
+  group — so an unmapped same-name claim is refused. Memberships the console
+  granted, and everything a directory (SCIM or pull) pushed, count as
+  before.
 - **The gate never disables an account.** Losing the last required group
   refuses access dynamically; regaining it restores access. Taking an account
   away stays the directory sync's job.

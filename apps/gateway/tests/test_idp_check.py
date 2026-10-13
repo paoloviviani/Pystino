@@ -44,6 +44,7 @@ def _discovery(issuer: str, *, device: bool = False) -> dict[str, object]:
             "refresh_token",
             "urn:ietf:params:oauth:grant-type:device_code",
         ]
+    doc["introspection_endpoint"] = f"{issuer}/oauth/introspect"
     return doc
 
 
@@ -332,6 +333,28 @@ class TestDeviceFlow:
         )
         assert not report.ok
         assert any("grant_types_supported omits" in line for line in report.lines)
+
+    async def test_group_mode_on_a_doorkeeper_issuer_warns_about_group_names(
+        self, signing_key: RSAKey
+    ) -> None:
+        """ADR 0095 review: GitLab users can create top-level groups, so a
+        required name must be mapped or allowlisted — the check says so."""
+        idp = FakeIdp(signing_key)
+        report = await run_check(
+            _settings(join_mode="group", required_groups=["staff"]),
+            http=httpx.AsyncClient(transport=httpx.MockTransport(idp)),
+        )
+        assert any("not trusted for the gate until it is mapped" in line for line in report.lines)
+
+    async def test_the_group_name_warning_names_nothing_but_group_mode(
+        self, signing_key: RSAKey
+    ) -> None:
+        idp = FakeIdp(signing_key)
+        report = await run_check(
+            _settings(join_mode="invite"),
+            http=httpx.AsyncClient(transport=httpx.MockTransport(idp)),
+        )
+        assert not any("not trusted for the gate" in line for line in report.lines)
 
     async def test_the_join_mode_is_reported(self, signing_key: RSAKey) -> None:
         idp = FakeIdp(signing_key)

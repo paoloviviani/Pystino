@@ -183,12 +183,20 @@ class TestTheMeteredPath:
         """ADR 0095: the group gate on the steady-state path reads the
         memberships authentication already loaded — no query, no write, same
         budget as without the gate."""
+        from gateway.models import OIDCPolicyConfig
         from test_bearer_auth import auth, make_token
 
-        from gateway.models import OIDCPolicyConfig
-
         async with session_factory() as session:  # type: ignore[attr-defined]
-            session.add(OIDCPolicyConfig(join_mode="group", required_groups=["research"]))
+            # The self-mapping is the operator's vouch for the IdP name (ADR
+            # 0095 review): without it the claim-sourced membership would not
+            # count toward the gate.
+            session.add(
+                OIDCPolicyConfig(
+                    join_mode="group",
+                    required_groups=["research"],
+                    group_mappings=[["research", "research"]],
+                )
+            )
             await session.commit()
         await bearer_app.state.oidc_policy.refresh_once()  # type: ignore[attr-defined]
 

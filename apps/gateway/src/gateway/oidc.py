@@ -61,6 +61,7 @@ from gateway.join_gate import (
     _matches_claim_rule,
     _matches_email_rule,
     exempt,
+    gate_vetted_names,
     holds_required_group,
     provider_label,
     refusal_text,
@@ -1111,7 +1112,18 @@ async def provision_user(
         mode = policy.join_mode
         if exempt(
             None, claims, settings, group_mappings=group_mappings, email_rule=touch_login
-        ) or (mode == "group" and stranger_passes(group_names, frozenset(policy.required_groups))):
+        ) or (
+            mode == "group"
+            and stranger_passes(
+                group_names,
+                frozenset(policy.required_groups),
+                # ADR 0095 review: an IdP group namespace is user-writable, so
+                # a bare same-name claim is not a pass — only mapped or
+                # allowlisted names count (empty for a directory-source
+                # provider, where nothing was claim-sourced).
+                vetted=gate_vetted_names(settings, policy, group_source),
+            )
+        ):
             mode = "open"
         if mode == "approval" or (mode == "group" and policy.group_fallback == "approval"):
             # An inactive account waiting for an administrator — nobody signs
@@ -1735,7 +1747,13 @@ async def sign_in(
         # Re-read memberships the linking above may have granted — a sign-in
         # is not the hot path, so one query is affordable.
         await session.refresh(user, attribute_names=["memberships"])
-        if not holds_required_group(user, frozenset(policy.required_groups)):
+        if not holds_required_group(
+            user,
+            frozenset(policy.required_groups),
+            # ADR 0095 review: the provider's own group source decides whether
+            # vetting applies (claim-source: only mapped/allowlisted names).
+            vetted=gate_vetted_names(settings.oidc, policy, record.group_source),
+        ):
             await record_event(
                 session,
                 actor_type=IdentityEventActor.LOGIN,
@@ -1839,7 +1857,7 @@ async def sync_user_from_claims(
         # ADR 0095: the group gate on the steady-state path — no divergence,
         # so no reconciliation ran, and the memberships above are already
         # loaded: this check costs no query and writes nothing.
-        _refuse_outside_groups(user, claims, settings, policy, group_mappings)
+        _refuse_outside_groups(user, claims, settings, policy, group_mappings, group_source)
         return user
 
     user = await provision_user(
@@ -1862,7 +1880,7 @@ async def sync_user_from_claims(
     # ... and after provisioning settled whatever diverged. A stranger the
     # gate refused never reaches here (`provision_user` raised); an existing
     # account whose memberships just reconciled meets the same check.
-    _refuse_outside_groups(user, claims, settings, policy, group_mappings)
+    _refuse_outside_groups(user, claims, settings, policy, group_mappings, group_source)
     return user
 
 
@@ -1872,6 +1890,7 @@ def _refuse_outside_groups(
     settings: OIDCSettings,
     policy: OIDCPolicy | None,
     group_mappings: dict[str, str] | None,
+    group_source: str,
 ) -> None:
     """The group gate for the `/v1` bearer path (ADR 0095), both return paths.
 
@@ -1886,7 +1905,13 @@ def _refuse_outside_groups(
         and policy.join_mode == "group"
         and user.is_active
         and not exempt(user, claims, settings, group_mappings=group_mappings, email_rule=False)
-        and not holds_required_group(user, frozenset(policy.required_groups))
+        and not holds_required_group(
+            user,
+            frozenset(policy.required_groups),
+            # ADR 0095 review: the provider's group source decides whether
+            # vetting applies; the bearer path stays query-free.
+            vetted=gate_vetted_names(settings, policy, group_source),
+        )
     ):
         raise OutsideAccessGroupsError(refusal_text("group_lost", email=None, provider=""))
 

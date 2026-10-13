@@ -78,6 +78,16 @@ invite mode, warns when it is absent.
 | Keycloak | yes | the built-in `email` client scope carries the `email_verified` mapper (source-checked, 2026-10); `true` once Keycloak considers the address verified |
 | Okta | yes | `email` scope, boolean; in the ID token for `id_token` response types, from userinfo on the `code` flow (which the console merges) |
 | Authentik | yes, but value varies | **before 2025.10 always `true`** (even for unverified addresses); **since 2025.10 `false` until the address is verified** through authentik's flow — an invitation stays unclaimable until then, or use SCIM |
+
+!!! warning "Authentik before 2025.10, with self-registration on"
+
+    On those versions **every self-registered account asserts `email_verified:
+    true`** (authentik's own `email` scope mapping always returned true), even
+    though nobody verified the address. With self-registration enabled, that
+    lets someone **claim an invitee's invitation**: they register at the IdP
+    with the invited person's address, sign in, and the invite matches on the
+    (falsely) verified email. On authentik versions before 2025.10, use SCIM
+    or `approval` instead of invites — or turn self-registration off.
 | Microsoft Entra ID | **no** | `email_verified` is not among Entra's optional claims and work accounts never get one: **invitations cannot be claimed by email** — use SCIM (accounts pre-created by `oid`, see [SCIM setup](#turning-on-provisioning-per-provider)) or `approval` |
 
 When the answer is "no", or the claim stays `false`, the first sign-in of an

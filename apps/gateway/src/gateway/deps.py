@@ -29,7 +29,7 @@ from gateway.introspection import (
     introspect,
     public_clients_for,
 )
-from gateway.join_gate import holds_required_group, provider_label, refusal_text
+from gateway.join_gate import gate_vetted_names, holds_required_group, provider_label, refusal_text
 from gateway.models import ApiKey, Group, GroupSync, User
 from gateway.oidc import OIDCClient, OIDCError, sync_user_from_claims
 from gateway.oidc_policy import OIDCPolicy
@@ -223,6 +223,19 @@ async def resolve_api_key(session: AsyncSession, secret: str) -> ApiKey:
     return api_key
 
 
+def _gate_vetted(request: Request, policy: Any) -> frozenset[str] | None:
+    """The group gate's vetted set for this deployment (ADR 0095 review), or
+    `None` when vetting is off (a directory-source provider): follows the
+    enabled provider's group source, which the policy resolver polls — so no
+    request path pays a query for it."""
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    return gate_vetted_names(
+        request.app.state.settings.oidc,
+        policy,
+        resolver.gate_group_source if resolver is not None else "claim",
+    )
+
+
 def _refuse_key_outside_groups(request: Request, user: User) -> None:
     """ADR 0095: an API key's owner meets the group gate too.
 
@@ -239,7 +252,9 @@ def _refuse_key_outside_groups(request: Request, user: User) -> None:
         and policy.join_mode == "group"
         and user.is_active
         and not user.is_admin
-        and not holds_required_group(user, frozenset(policy.required_groups))
+        and not holds_required_group(
+            user, frozenset(policy.required_groups), vetted=_gate_vetted(request, policy)
+        )
     ):
         raise OutsideAccessGroupsError(refusal_text("group_lost", email=None, provider=""))
 
@@ -778,7 +793,9 @@ async def get_management_user(
         and policy.join_mode == "group"
         and user.is_active
         and not user.is_admin
-        and not holds_required_group(user, frozenset(policy.required_groups))
+        and not holds_required_group(
+            user, frozenset(policy.required_groups), vetted=_gate_vetted(request, policy)
+        )
     ):
         raise AuthenticationError("Session is no longer valid.")
     return user
