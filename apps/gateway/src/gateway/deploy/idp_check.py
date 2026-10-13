@@ -125,9 +125,9 @@ async def check_discovery(client: OIDCClient, settings: OIDCSettings, report: Ch
         report.say(
             "  WARNING: join_mode is group on a Doorkeeper issuer (GitLab-shaped). "
             "GitLab users can create top-level groups, so an IdP group name is "
-            "not trusted for the gate until it is mapped (Console → Groups) or "
-            "listed in GATEWAY_OIDC__GROUP_ALLOWLIST — an unmapped claim naming "
-            "a required group is refused."
+            "not trusted for the gate until it is mapped (Console → Groups) — "
+            "map full paths, e.g. a subgroup under your organisation, not the "
+            "bare name a user could create. The allowlist vouches for nothing."
         )
     return True
 

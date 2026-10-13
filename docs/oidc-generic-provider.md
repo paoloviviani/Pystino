@@ -316,16 +316,21 @@ What to know about GitLab:
   behaviour (`OIDC_GROUP_IMPORT=auto`) each name became a group at first
   sight: one operator's first sign-in created 67 groups. With
   `OIDC_GROUP_IMPORT=manual`, the default, a sign-in creates none. The names
-  appear on the console's **Groups** page under *Seen from your identity
+  appear on the console's **Groups** page under *Groups from your identity
   provider*, with how many people carry each and when it was last seen;
-  **Import** the few that should mean something here (the group is created
-  and given at once to the people who carry it, under `every_login`) and
-  **Dismiss** the rest. Meanwhile everyone is in `users`
+  **Map** the few that should mean something here (the dialog asks what the
+  name means: a new group of the same name, a new group under another name,
+  or an existing group; under `every_login` the people who carry it get it at
+  once) and **Ignore** the rest. **Map full paths** — a subgroup under your
+  organisation, `acme/staff`, not the bare `staff` a user could create
+  top-level on their own account. Meanwhile everyone is in `users`
   ([the default group](identity.md#the-default-group)), so they can use the
   public models from the first sign-in. `OIDC_GROUP_ALLOWLIST` narrows what
-  is considered at all, if the list is long and the wanted names are known.
+  is considered at all, if the list is long and the wanted names are known;
+  it vouches for nothing by itself — a listed name still needs a mapping.
 - **Cleaning up groups created before.** An install that ran with the old
-  behaviour keeps the groups it made. Delete the unwanted ones on the
+  behaviour keeps the groups it made (and migration 0058 keeps their claim-fed
+  memberships working through self-mappings). Delete the unwanted ones on the
   console's **Groups** page: their memberships go with them, and under
   `manual` they are not recreated; the names return to the *Seen* list at
-  the next sign-in, to import or dismiss.
+  the next sign-in, to map or dismiss.
