@@ -46,6 +46,7 @@ jobs:
       # The docs' dependency set is the project's own (pyproject + uv lock),
       # so plain `uv run mkdocs build` resolves the pinned mkdocs-material.
       - uses: astral-sh/setup-uv@v5
+        with: {enable-cache: true, python-version: "3.13"}
       - run: uv run mkdocs build --strict --site-dir public
 
       - uses: actions/upload-pages-artifact@v3
