@@ -134,6 +134,11 @@ async def self_map_new_names(
     with: a bare row would reset the join mode to the environment on the next
     poll. Returns the mappings to add, so the caller re-maps in the same
     login and the membership lands now, as ``auto`` always did.
+
+    Two workers auto-mapping at once can each read the same newest row and
+    append one row, one pair lost to the other's carry-forward. That
+    self-heals: the name is re-seen at that person's next sign-in, and the
+    mapper resolves it through whichever row won.
     """
     wanted = sorted(set(names))
     await session.execute(

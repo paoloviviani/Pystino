@@ -1,15 +1,18 @@
-"""Migration 0058: self-mappings for groups claimed by name.
+"""Migration 0058: self-mappings for the groups claims were feeding.
 
 Before the mapping-only rule, any claimed group name equal to a local
 group's name landed in it. The rule removes that resolution, so the upgrade
 must restate it as what it always should have been spelled as: a self-
 mapping (name -> name) for every local group claims were feeding. The test
 builds the pre-0058 tables raw, seeds the deployment the upgrade story is
-about — a manual group holding OIDC memberships, an imported group, a group
-nobody's token names, and one already self-mapped — runs the migration
-through Alembic's Operations, and checks the row it appends: one row,
-carrying the previous row's answers forward, adding exactly the missing
-self-mappings, and skipping the empty case entirely.
+about, runs the migration through Alembic's Operations, and checks the row
+it appends: one row, carrying the previous row's answers forward, adding
+exactly the missing self-mappings — and none for the groups the rules
+exclude (already a mapping key, already a mapping target, required and
+manual under a group gate) — and skipping the empty case entirely. The
+appended row must also be the one `effective_policy` reads: the fold picks
+the newest row, so a timestamp that did not sort would ship a migration
+that never took.
 """
 
 from __future__ import annotations
@@ -17,14 +20,14 @@ from __future__ import annotations
 import importlib.util
 import json
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
-from gateway.oidc_policy import OIDCPolicy
+from gateway.config import OIDCSettings
+from gateway.oidc_policy import OIDCPolicy, effective_policy
 
 MIGRATION = (
     Path(__file__).resolve().parents[1]
@@ -46,7 +49,7 @@ CREATE TABLE oidc_config (
     group_mappings JSON,
     reason VARCHAR(500) NOT NULL,
     created_by CHAR(32),
-    created_at TIMESTAMP NOT NULL
+    created_at DATETIME NOT NULL
 );
 CREATE TABLE groups (
     id CHAR(32) PRIMARY KEY,
@@ -60,8 +63,17 @@ CREATE TABLE memberships (
 )
 """
 
-T0 = datetime(2026, 10, 1, 12, 0, 0, tzinfo=UTC)
+# SQLAlchemy's SQLite DATETIME spells stored values this way; the seed uses
+# the same shape so the ORM reads both rows back cleanly.
+T0 = "2026-10-01 12:00:00.000000"
 REASON = "migration 0058: self-mappings for groups claimed by name"
+
+GROUP_MODE_ROW = {
+    "join_mode": "group",
+    # staff and vouched are required: the gate's spoof case is live here.
+    "required_groups": '["staff", "vouched"]',
+    "mappings": '[["acme/vouched", "vouched"], ["keyed", "keyed-access"], ["x", "x"]]',
+}
 
 
 def _load_migration():
@@ -79,7 +91,7 @@ def run_migration():
     disposed when the test ends (the suite fails a run on a ResourceWarning)."""
     engines: list[sa.Engine] = []
 
-    def build(*, seed: bool = True) -> sa.Engine:
+    def build(*, seed: bool = True, row: dict[str, str] | None = GROUP_MODE_ROW) -> sa.Engine:
         engine = sa.create_engine("sqlite://")
         engines.append(engine)
         with engine.begin() as conn:
@@ -87,7 +99,7 @@ def run_migration():
                 if statement.strip():
                     conn.execute(sa.text(statement))
             if seed:
-                _seed(conn)
+                _seed(conn, row)
         with engine.begin() as conn, Operations.context(MigrationContext.configure(conn)):
             # `Operations.context` installs the proxy that the migration
             # file's bare `op` object binds to (the 0055 harness's way).
@@ -100,45 +112,54 @@ def run_migration():
         engine.dispose()
 
 
-def _seed(conn: sa.Connection) -> None:
-    oidc_row = uuid.uuid4()
-    conn.execute(
-        sa.text(
-            "INSERT INTO oidc_config (id, join_mode, required_groups, group_mappings, "
-            "reason, created_at) VALUES (:id, 'group', :required, :mappings, 'gate', :at)"
-        ),
-        {
-            "id": oidc_row.hex,
-            "required": '["staff"]',
-            "mappings": '[["acme/staff", "staff"], ["x", "x"]]',
-            "at": T0.isoformat(),
-        },
-    )
+def _seed(conn: sa.Connection, row: dict[str, str] | None) -> None:
+    if row is not None:
+        conn.execute(
+            sa.text(
+                "INSERT INTO oidc_config (id, join_mode, required_groups, group_mappings, "
+                "reason, created_at) VALUES (:id, :join_mode, :required, :mappings, 'gate', :at)"
+            ),
+            {
+                "id": uuid.uuid4().hex,
+                "join_mode": row["join_mode"],
+                "required": row["required_groups"],
+                "mappings": row["mappings"],
+                "at": T0,
+            },
+        )
     groups = {
-        # (a): imported from the IdP, source oidc.
-        "eng": uuid.uuid4(),
-        # (b): manual, but claims were feeding it (an oidc membership).
-        "staff": uuid.uuid4(),
-        # Neither: manual and only manual members. No claim ever resolved
-        # into it, so the upgrade adds nothing.
-        "solo": uuid.uuid4(),
-        # Already self-mapped by the row above: skipped.
-        "x": uuid.uuid4(),
+        # (a): imported from the IdP, source oidc, and claims fed it by name
+        # (its members' tokens carried "eng" itself). No mapping exists: this
+        # is the one group the upgrade must self-map.
+        "eng": ("oidc", [("u-eng", "oidc")]),
+        # (b): manual, but claims fed it by name under 0.5.0 — except that
+        # 0.5.0's group gate dropped same-name claims for REQUIRED names, so
+        # with join_mode=group this group was never fed by "staff": skip.
+        "staff": ("manual", [("u-staff", "oidc")]),
+        # (c): required AND the target of another IdP name's mapping — its
+        # memberships came through "acme/vouched", not by name: skip.
+        "vouched": ("manual", [("u-vouched", "oidc")]),
+        # (d): already a mapping KEY, pointing somewhere else ("keyed" ->
+        # "keyed-access"). Appending "keyed" -> "keyed" would sit after the
+        # operator's pair and the fold's last-entry-wins would reroute it: skip.
+        "keyed": ("oidc", [("u-keyed", "oidc")]),
+        # (e): already self-mapped: skip.
+        "x": ("oidc", []),
+        # Neither eligible: manual and only manual members. No claim ever
+        # resolved into it, so the upgrade adds nothing.
+        "solo": ("manual", [("u-solo", "manual")]),
     }
-    for name, group_id in groups.items():
-        source = "oidc" if name in ("eng", "x") else "manual"
+    for name, (source, memberships) in groups.items():
+        group_id = uuid.uuid4().hex
         conn.execute(
             sa.text("INSERT INTO groups (id, name, source) VALUES (:id, :name, :source)"),
-            {"id": group_id.hex, "name": name, "source": source},
+            {"id": group_id, "name": name, "source": source},
         )
-    conn.execute(
-        sa.text("INSERT INTO memberships (user_id, group_id, source) VALUES (:u, :g, 'oidc')"),
-        {"u": uuid.uuid4().hex, "g": groups["staff"].hex},
-    )
-    conn.execute(
-        sa.text("INSERT INTO memberships (user_id, group_id, source) VALUES (:u, :g, 'manual')"),
-        {"u": uuid.uuid4().hex, "g": groups["solo"].hex},
-    )
+        for _, member_source in memberships:
+            conn.execute(
+                sa.text("INSERT INTO memberships (user_id, group_id, source) VALUES (:u, :g, :s)"),
+                {"u": uuid.uuid4().hex, "g": group_id, "s": member_source},
+            )
 
 
 def _newest_config(conn: sa.Connection) -> dict[str, object]:
@@ -149,19 +170,8 @@ def _newest_config(conn: sa.Connection) -> dict[str, object]:
     )
 
 
-def test_the_upgrade_appends_one_row_with_the_missing_self_mappings(
-    run_migration,
-) -> None:
+def test_the_upgrade_appends_one_row_with_the_missing_self_mappings(run_migration) -> None:
     engine = run_migration()
-    with engine.connect() as conn:
-        raw = conn.execute(
-            sa.text(
-                "SELECT created_at, group_mappings, reason FROM oidc_config "
-                "ORDER BY created_at DESC"
-            )
-        ).all()
-        for row in raw:
-            print("DEBUG-ROW:", repr(row)[:200])
     with engine.connect() as conn:
         rows = conn.execute(
             sa.text(
@@ -171,35 +181,59 @@ def test_the_upgrade_appends_one_row_with_the_missing_self_mappings(
         ).all()
         assert len(rows) == 2, "exactly one row appended"
         mappings, reason, join_mode, required = rows[0]  # the new row is newest
-        mappings = json.loads(mappings)
         assert reason == REASON
         # The carry-forward: the join answers ride along, or the append would
         # reset them to the environment on the next poll.
         assert join_mode == "group"
-        assert required == '["staff"]'
-        assert sorted(map(tuple, mappings)) == [
-            ("acme/staff", "staff"),
+        assert required == '["staff", "vouched"]'
+        assert sorted(map(tuple, json.loads(mappings))) == [
+            ("acme/vouched", "vouched"),
             ("eng", "eng"),
-            ("staff", "staff"),
+            ("keyed", "keyed-access"),
             ("x", "x"),
         ]
 
 
-def test_the_same_token_resolves_the_same_groups_after_the_upgrade(
-    run_migration,
-) -> None:
+def test_the_appended_row_is_the_one_effective_policy_reads(run_migration) -> None:
+    """The fold picks the newest row by `created_at`. The migration writes the
+    same UTC datetime the model's column default writes — `sa.func.now()`
+    would spell CURRENT_TIMESTAMP on SQLite, which does not sort against the
+    ORM's ISO stamps, and the fold would then keep reading the seeded row:
+    the migration would have run and changed nothing."""
+    from gateway.models import OIDCPolicyConfig
+    from sqlalchemy.orm import Session
+
+    engine = run_migration()
+    with Session(engine) as session:
+        row = session.query(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc()).first()
+        assert row is not None
+        policy = effective_policy(OIDCSettings(enabled=False), row)
+        assert policy.config_reason == REASON, "the fold reads the appended row"
+        assert policy.join_mode == "group"
+        assert policy.required_groups == ("staff", "vouched")
+        assert policy.group_mappings.get("eng") == "eng"
+        # And what it means for a token: the by-name claim resolves, the
+        # excluded shapes do not appear.
+        assert policy.map_claim_group_names(["eng"]) == ["eng"]
+
+
+def test_the_same_token_resolves_the_same_groups_after_the_upgrade(run_migration) -> None:
     engine = run_migration()
     with engine.connect() as conn:
         newest = _newest_config(conn)
         ids = dict(conn.execute(sa.text("SELECT name, id FROM groups")).all())
     policy = OIDCPolicy(
         join_mode=str(newest["join_mode"]),
-        required_groups=tuple(json.loads(newest["required_groups"] or "[]")),
-        group_mappings=dict(json.loads(newest["group_mappings"] or "[]")),
+        required_groups=tuple(json.loads(str(newest["required_groups"] or "[]"))),
+        group_mappings=dict(json.loads(str(newest["group_mappings"] or "[]"))),
     )
-    assert policy.map_claim_group_names(["staff", "eng"]) == ["staff", "eng"]
-    assert policy.map_claim_group_names(["solo"]) == []
-    # And the names resolve to the very rows that held the memberships.
+    assert policy.map_claim_group_names(["eng"]) == ["eng"]
+    # The excluded shapes: "staff" (required manual in group mode) and
+    # "vouched"/"keyed"/"x" (mapping target, mapping key, self-mapped) claim
+    # nothing new — "vouched" reaches its group only through "acme/vouched".
+    assert policy.map_claim_group_names(["staff"]) == []
+    assert policy.map_claim_group_names(["acme/vouched"]) == ["vouched"]
+    assert policy.map_claim_group_names(["keyed-access"]) == []
     assert ids["staff"] and ids["eng"]
 
 
@@ -208,3 +242,23 @@ def test_an_empty_eligible_set_appends_nothing(run_migration) -> None:
     with engine.connect() as conn:
         rows = conn.execute(sa.text("SELECT id FROM oidc_config")).all()
         assert rows == [], "no groups, no row"
+
+
+def test_no_required_manual_group_is_self_mapped_outside_group_mode(run_migration) -> None:
+    """The required-and-manual skip is scoped to `group` mode: an open
+    deployment's claims really did resolve by name into its manual groups, so
+    those keep their self-mapping. (A mapping TARGET stays excluded in every
+    mode — its memberships came through the mapping, not by name.) Same seed,
+    join_mode open."""
+    engine = run_migration(
+        row={"join_mode": "open", "required_groups": "[]", "mappings": GROUP_MODE_ROW["mappings"]}
+    )
+    with engine.connect() as conn:
+        mappings = json.loads(_newest_config(conn)["group_mappings"])  # type: ignore[arg-type]
+    assert sorted(map(tuple, mappings)) == [
+        ("acme/vouched", "vouched"),
+        ("eng", "eng"),
+        ("keyed", "keyed-access"),
+        ("staff", "staff"),
+        ("x", "x"),
+    ]
