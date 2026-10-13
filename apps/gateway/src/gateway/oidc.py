@@ -61,7 +61,6 @@ from gateway.join_gate import (
     _matches_claim_rule,
     _matches_email_rule,
     exempt,
-    gate_vetted_names,
     holds_required_group,
     provider_label,
     refusal_text,
@@ -1112,18 +1111,7 @@ async def provision_user(
         mode = policy.join_mode
         if exempt(
             None, claims, settings, group_mappings=group_mappings, email_rule=touch_login
-        ) or (
-            mode == "group"
-            and stranger_passes(
-                group_names,
-                frozenset(policy.required_groups),
-                # ADR 0095 review: an IdP group namespace is user-writable, so
-                # a bare same-name claim is not a pass — only mapped or
-                # allowlisted names count (empty for a directory-source
-                # provider, where nothing was claim-sourced).
-                vetted=gate_vetted_names(settings, policy, group_source),
-            )
-        ):
+        ) or (mode == "group" and stranger_passes(group_names, frozenset(policy.required_groups))):
             mode = "open"
         if mode == "approval" or (mode == "group" and policy.group_fallback == "approval"):
             # An inactive account waiting for an administrator — nobody signs
@@ -1627,7 +1615,11 @@ async def sign_in(
 
     groups = extract_groups(claims, settings.oidc, policy)
     if policy is not None:
-        groups = policy.map_group_names(groups)
+        groups = policy.map_claim_group_names(
+            groups,
+            allowlist=settings.oidc.group_allowlist,
+            claim_source=record.group_source == "claim",
+        )
 
     # ADR 0093 §8.2: a console-created account's login claims this identity
     # by login name and verified email, before anything below gets a chance
@@ -1747,13 +1739,7 @@ async def sign_in(
         # Re-read memberships the linking above may have granted — a sign-in
         # is not the hot path, so one query is affordable.
         await session.refresh(user, attribute_names=["memberships"])
-        if not holds_required_group(
-            user,
-            frozenset(policy.required_groups),
-            # ADR 0095 review: the provider's own group source decides whether
-            # vetting applies (claim-source: only mapped/allowlisted names).
-            vetted=gate_vetted_names(settings.oidc, policy, record.group_source),
-        ):
+        if not holds_required_group(user, frozenset(policy.required_groups)):
             await record_event(
                 session,
                 actor_type=IdentityEventActor.LOGIN,
@@ -1811,7 +1797,11 @@ async def sync_user_from_claims(
     # Mapping first (ADR 0048): the rest of the flow — reconciliation,
     # divergence, admin — speaks local names only.
     group_names = (
-        policy.map_group_names(extract_groups(claims, settings, policy))
+        policy.map_claim_group_names(
+            extract_groups(claims, settings, policy),
+            allowlist=settings.group_allowlist,
+            claim_source=group_source == "claim",
+        )
         if policy is not None
         else extract_groups(claims, settings)
     )
@@ -1905,13 +1895,7 @@ def _refuse_outside_groups(
         and policy.join_mode == "group"
         and user.is_active
         and not exempt(user, claims, settings, group_mappings=group_mappings, email_rule=False)
-        and not holds_required_group(
-            user,
-            frozenset(policy.required_groups),
-            # ADR 0095 review: the provider's group source decides whether
-            # vetting applies; the bearer path stays query-free.
-            vetted=gate_vetted_names(settings, policy, group_source),
-        )
+        and not holds_required_group(user, frozenset(policy.required_groups))
     ):
         raise OutsideAccessGroupsError(refusal_text("group_lost", email=None, provider=""))
 

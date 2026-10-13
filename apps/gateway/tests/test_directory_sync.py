@@ -267,9 +267,7 @@ class TestEngine:
         assert user.issuer == "https://kc.example.org/realms/corp"
         assert await _groups(session, user) == {"ops"}
 
-    async def test_a_pushed_entry_claims_a_pending_invite(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_pushed_entry_claims_a_pending_invite(self, session: AsyncSession) -> None:
         """ADR 0095 §6.1: no duplicate when the directory pushes someone the
         console already invited — the invitation is claimed in place,
         memberships kept, and the report says so under `linked`."""

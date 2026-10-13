@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from gateway.config import OIDCSettings
-from gateway.models import Group, IdentityProvider, OIDCPolicyConfig
+from gateway.models import Group, OIDCPolicyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +114,41 @@ class OIDCPolicy:
             if mapped not in seen:
                 seen.append(mapped)
         return seen
+
+    def map_claim_group_names(
+        self,
+        idp_names: list[str],
+        *,
+        allowlist: list[str] | None = None,
+        claim_source: bool = True,
+    ) -> list[str]:
+        """IdP group names from a sign-in's claims, to local names — the one
+        mapper both claim-bearing doors run (`sign_in` and the bearer sync),
+        so the gate's stranger check, the membership reconciliation and the
+        bearer path's divergence check all agree on what a claim named.
+
+        In `group` mode with a claim-source provider, an IdP name may resolve
+        to a REQUIRED local group only when it is a mapping key (resolving to
+        its target) or listed in the allowlist (resolving to itself): the
+        IdP's group namespace is user-writable — a GitLab user can create a
+        top-level group named exactly like a required local group — so an
+        unmapped name equal to a required local name is dropped here, before
+        any of the three sees it. Everything else maps as `map_group_names`
+        does: non-required names keep feeding model-access groups unchanged.
+        A directory-source provider drops nothing (`claim_source=False`): its
+        claims never reconcile into memberships, and its names arrive vouched
+        by the directory connection.
+        """
+        names = idp_names
+        if claim_source and self.join_mode == "group" and self.required_groups:
+            required = set(self.required_groups)
+            allowed = set(allowlist or ())
+            names = [
+                name
+                for name in names
+                if name not in required or name in self.group_mappings or name in allowed
+            ]
+        return self.map_group_names(names)
 
 
 def environment_policy(settings: OIDCSettings) -> OIDCPolicy:
@@ -243,7 +278,6 @@ class OIDCPolicyResolver:
         self._refresh_seconds = refresh_seconds
         self._policy = environment_policy(settings)
         self._warned_missing_groups: frozenset[str] = frozenset()
-        self._gate_group_source = "claim"
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -254,13 +288,6 @@ class OIDCPolicyResolver:
     def refresh_seconds(self) -> float:
         """How far behind the console's save a worker may lag."""
         return self._refresh_seconds
-
-    @property
-    def gate_group_source(self) -> str:
-        """The enabled provider's group source, as of the last poll: the group
-        gate's vetting follows it (ADR 0095 review). "claim" until a row
-        exists."""
-        return self._gate_group_source
 
     async def refresh_once(self) -> None:
         """Poll once. Exposed for tests and for the startup read."""
@@ -280,18 +307,7 @@ class OIDCPolicyResolver:
             local_names: set[str] = set()
             if required:
                 local_names = set((await session.execute(select(Group.name))).scalars().all())
-            # The group gate's vetting follows the one enabled provider's
-            # group source (ADR 0095 review): claim-source names are
-            # user-writable, so the gate vouches them; directory-source names
-            # are admin-vouched. Read here, in the poll's own session, so no
-            # request path pays a query for it.
-            provider_row = (
-                await session.execute(
-                    select(IdentityProvider).where(IdentityProvider.is_enabled.is_(True))
-                )
-            ).scalar_one_or_none()
         self._policy = policy
-        self._gate_group_source = provider_row.group_source if provider_row is not None else "claim"
         missing = frozenset(n for n in required if n not in local_names)
         if missing and missing != self._warned_missing_groups:
             logger.warning(

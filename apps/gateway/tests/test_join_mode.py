@@ -109,48 +109,11 @@ class TestJoinGatePure:
         # An inactive group confers nothing.
         assert holds_required_group(_member("staff", active=False), required) is False
 
-    def test_holds_required_group_vets_claim_sourced_memberships(self) -> None:
-        """ADR 0095 review: an IdP group namespace is user-writable (a GitLab
-        user can create a top-level group named like a required local one), so
-        a *claim-sourced* membership counts only when its name is vetted — an
-        explicit mapping target or the allowlist. A manual membership always
-        counts."""
-        required = frozenset({"staff"})
-        vetted = frozenset({"staff"})
-        # A manual membership counts whatever the vetting says.
-        assert (
-            holds_required_group(
-                _member("staff", active=True, source="manual"), required, vetted=vetted
-            )
-            is True
-        )
-        # An oidc-sourced membership in the vetted name counts...
-        assert holds_required_group(_member("staff", active=True), required, vetted=vetted) is True
-        # ...and one in a name that merely *sounds* right does not.
-        assert (
-            holds_required_group(
-                _member("staff", active=True),
-                frozenset({"staff"}),
-                vetted=frozenset({"vetted-only"}),
-            )
-            is False
-        )
-
     def test_stranger_passes_on_mapped_names(self) -> None:
-        # Without vetting (the directory-source case), as before.
+        # The gate itself is name-against-name: the vouching happened at the
+        # mapping step, which already dropped what the IdP may not resolve.
         assert stranger_passes(["staff"], frozenset({"staff"})) is True
         assert stranger_passes(["other"], frozenset({"staff"})) is False
-        # With vetting: an explicit mapping target admits...
-        assert stranger_passes(["staff"], frozenset({"staff"}), vetted=frozenset({"staff"})) is True
-        # ...an unmapped same-name claim does not...
-        assert (
-            stranger_passes(["staff"], frozenset({"staff"}), vetted=frozenset({"mapped-only"}))
-            is False
-        )
-        # ...and an unvetted name that is not required is refused as always.
-        assert (
-            stranger_passes(["other"], frozenset({"staff"}), vetted=frozenset({"staff"})) is False
-        )
 
     def test_exempt_admins_always(self) -> None:
         admin = User(issuer=ISS, subject="a", is_admin=True)
@@ -235,24 +198,30 @@ class TestStrangerModes:
         assert event is not None
         assert event.detail == {"reason": "invite"}
 
-    async def test_an_unmapped_same_name_claim_is_refused(self, session: AsyncSession) -> None:
-        """ADR 0095 review: IdP group namespaces are user-writable — a GitLab
-        user can create a top-level group named like the required local one —
-        so a bare same-name claim is not a pass. The operator maps the name or
-        allowlists it."""
+    async def test_the_target_name_of_a_mapping_is_not_its_own_vouch(
+        self, session: AsyncSession
+    ) -> None:
+        """The hole the first vetting missed: with `acme/staff` mapped to
+        `staff`, the mapping *target* claimed directly from the IdP is still
+        user-writable — a GitLab top-level group named `staff` — and must not
+        admit. The vouch is on the IdP name: a mapping key resolves to its
+        target; the target's own name resolves to nothing."""
+        policy = _policy(
+            "group", required_groups=("staff",), group_mappings={"acme/staff": "staff"}
+        )
         with pytest.raises(ProvisioningRefused, match="isn't in a group"):
-            await _sign_in(
-                session, "spoof-1", ["staff"], policy=_policy("group", required_groups=("staff",))
-            )
+            await _sign_in(session, "spoof-1", ["staff"], policy=policy)
         assert await _row(session, "spoof-1") is None
 
-    async def test_a_mapped_claim_is_admitted(self, session: AsyncSession) -> None:
-        """The operator's explicit mapping vouches for the name."""
-        policy = _policy("group", required_groups=("staff",), group_mappings={"staff": "staff"})
-        result = await _sign_in(session, "mapped-1", ["staff"], policy=policy)
+    async def test_the_mapped_name_is_admitted(self, session: AsyncSession) -> None:
+        policy = _policy(
+            "group", required_groups=("staff",), group_mappings={"acme/staff": "staff"}
+        )
+        result = await _sign_in(session, "mapped-1", ["acme/staff"], policy=policy)
         assert result.user.is_active is True
+        assert "staff" in [m.group.name for m in result.user.memberships]
 
-    async def test_an_allowlisted_claim_is_admitted(self, session: AsyncSession) -> None:
+    async def test_an_allowlisted_name_is_admitted(self, session: AsyncSession) -> None:
         settings = _settings(group_allowlist=["staff"])
         result = await _sign_in(
             session,
@@ -262,6 +231,7 @@ class TestStrangerModes:
             policy=_policy("group", required_groups=("staff",)),
         )
         assert result.user.is_active is True
+        assert "staff" in [m.group.name for m in result.user.memberships]
 
     async def test_group_refuses_without_one_and_names_none(self, session: AsyncSession) -> None:
         with pytest.raises(ProvisioningRefused, match="isn't in a group"):
@@ -327,6 +297,11 @@ async def _member_user(
         session.add(Membership(user_id=user.id, group_id=group.id, source=source))
     await session.commit()
     return user
+
+
+async def user_memberships(session: AsyncSession, subject: str) -> list[Membership]:
+    user = (await session.execute(select(User).where(User.subject == subject))).scalar_one()
+    return list(user.memberships)
 
 
 class TestGroupModeExistingUsers:
@@ -396,18 +371,17 @@ class TestGroupModeExistingUsers:
         result = await _sign_in(session, "s-6", [], policy=policy)
         assert result.user.id == user.id
 
-    async def test_an_oidc_membership_in_an_unvetted_name_does_not_admit(
+    async def test_an_existing_user_gains_no_membership_from_the_spoofed_name(
         self, session: AsyncSession
     ) -> None:
-        """The spoof at the membership level: the local group `staff` exists,
-        and a claim-sourced (oidc) membership in a same-named IdP group put
-        the person there — with no mapping, the name is not vouched, so the
-        gate refuses. A manual membership in the same group admits (the test
-        above)."""
-        policy = _policy("group", required_groups=("staff",))
-        await _member_user(session, "s-spoof", ["staff"], source=MembershipSource.OIDC)
+        policy = _policy(
+            "group", required_groups=("staff",), group_mappings={"acme/staff": "staff"}
+        )
+        await _member_user(session, "e-1", [])
         with pytest.raises(ProvisioningRefused, match="no longer"):
-            await _sign_in(session, "s-spoof", [], policy=policy)
+            await _sign_in(session, "e-1", ["staff"], policy=policy)
+        names = [m.group.name for m in await user_memberships(session, "e-1")]
+        assert "staff" not in names
 
     async def test_a_directory_sourced_membership_admits_without_a_mapping(
         self, session: AsyncSession
@@ -426,6 +400,16 @@ class TestGroupModeExistingUsers:
             group_source="directory",
         )
         assert user.is_active is True
+
+    async def test_a_non_required_name_still_resolves_as_today(self, session: AsyncSession) -> None:
+        """The drop is scoped to required names: a non-required name with no
+        mapping still resolves to a same-name local group (model-access
+        groups are unchanged)."""
+        policy = _policy("group", required_groups=("staff",))
+        await _member_user(session, "s-8", ["staff"])  # manual: admitted
+        result = await _sign_in(session, "s-8", ["research"], policy=policy)
+        names = [m.group.name for m in result.user.memberships]
+        assert "research" in names and "staff" in names
 
     async def test_inactive_group_does_not_count(self, session: AsyncSession) -> None:
         policy = _policy("group", required_groups=("staff",))
@@ -519,6 +503,150 @@ async def group_policy(
             await session.delete(row)
         await session.commit()
     await app.state.oidc_policy.refresh_once()
+
+
+@pytest_asyncio.fixture
+async def acme_staff_policy(
+    app: Any, session_factory: async_sessionmaker[AsyncSession]
+) -> AsyncIterator[None]:
+    """Group mode with the operator's mapping `acme/staff -> staff`: the
+    mapped IdP name vouches; the target's own name does not."""
+    async with session_factory() as session:
+        session.add(Group(name="staff"))
+        session.add(
+            OIDCPolicyConfig(
+                join_mode="group",
+                required_groups=["staff"],
+                group_mappings=[["acme/staff", "staff"]],
+            )
+        )
+        await session.commit()
+    await app.state.oidc_policy.refresh_once()
+    yield
+    async with session_factory() as session:
+        for row in (await session.execute(select(OIDCPolicyConfig))).scalars().all():
+            await session.delete(row)
+        await session.commit()
+    await app.state.oidc_policy.refresh_once()
+
+
+def _mapped_policy() -> OIDCPolicy:
+    return _policy("group", required_groups=("staff",), group_mappings={"acme/staff": "staff"})
+
+
+class TestTheSpoofedNameNeverAdmits:
+    """ADR 0095 review, round 2: with `acme/staff -> staff` mapped, a claim
+    naming `staff` directly is the attacker's, not the operator's — it is
+    dropped at the mapping step, so no door admits on it and no membership
+    is created from it."""
+
+    async def test_the_bearer_path_refuses_and_creates_no_membership(
+        self,
+        bearer_app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        signing_key: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        from test_bearer_auth import auth, make_token
+
+        async with session_factory() as session:
+            # The local group the operator vouched for: an imported name
+            # resolves into it, a fresh sighting does not smuggle it in.
+            session.add(Group(name="staff"))
+            session.add(
+                OIDCPolicyConfig(
+                    join_mode="group",
+                    required_groups=["staff"],
+                    group_mappings=[["acme/staff", "staff"]],
+                )
+            )
+            await session.commit()
+        await bearer_app.state.oidc_policy.refresh_once()
+
+        # /v1/me, not /v1/models: the point is the gate, not billing (a
+        # reconcile that drops the billed group is a product-correct refusal
+        # of its own, and would mask the gate's answer). Spoofed first: the
+        # refused request must mint no membership, so the vouched request
+        # after it proves the same name admits once the IdP vouches it.
+        spoofed = await client.get(
+            "/v1/me", headers=auth(make_token(signing_key, groups=["staff"]))
+        )
+        assert spoofed.status_code == 403, spoofed.text
+        assert spoofed.json()["error"]["code"] == "outside_access_groups"
+        async with session_factory() as session:
+            user = (
+                await session.execute(select(User).where(User.email == "member@example.org"))
+            ).scalar_one()
+            assert "staff" not in [m.group.name for m in user.memberships]
+
+        vouched = await client.get(
+            "/v1/me", headers=auth(make_token(signing_key, groups=["acme/staff"]))
+        )
+        assert vouched.status_code == 200, vouched.text
+
+    async def test_the_key_is_refused_until_the_vouched_name_admits(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        acme_staff_policy: None,
+    ) -> None:
+        # The owner's own sign-in naming the target directly: dropped, so no
+        # membership is created from it.
+        with pytest.raises(ProvisioningRefused, match="no longer"):
+            async with session_factory() as session:
+                await _sign_in(
+                    session=session,
+                    subject=seeded.user.subject,
+                    groups=["staff"],
+                    policy=_mapped_policy(),
+                )
+        response = await client.get("/v1/me", headers=seeded.auth)
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "outside_access_groups"
+
+        # The vouched IdP name admits, and the key follows the account.
+        async with session_factory() as session:
+            await _sign_in(
+                session=session,
+                subject=seeded.user.subject,
+                groups=["acme/staff"],
+                policy=_mapped_policy(),
+            )
+        response = await client.get("/v1/me", headers=seeded.auth)
+        assert response.status_code == 200, response.text
+
+    async def test_the_console_session_is_refused_until_the_vouched_name_admits(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        acme_staff_policy: None,
+    ) -> None:
+        with pytest.raises(ProvisioningRefused, match="no longer"):
+            async with session_factory() as session:
+                await _sign_in(
+                    session=session,
+                    subject=seeded.user.subject,
+                    groups=["staff"],
+                    policy=_mapped_policy(),
+                )
+        cookie = session_cookie(seeded.user.id, app)
+        response = await client.get("/api/me/limits", headers=cookie)
+        assert response.status_code == 401, response.text
+
+        async with session_factory() as session:
+            await _sign_in(
+                session=session,
+                subject=seeded.user.subject,
+                groups=["acme/staff"],
+                policy=_mapped_policy(),
+            )
+        response = await client.get("/api/me/limits", headers=cookie)
+        assert response.status_code == 200, response.text
 
 
 class TestConsoleSessionGate:

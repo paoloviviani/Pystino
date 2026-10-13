@@ -147,11 +147,12 @@ Cross-cutting, the same in every mode:
   misconfigured group mode cannot lock every administrator out. Break-glass
   is unchanged.
 - **An IdP group name is not trusted until you vouch for it.** With a
-  claim-source provider (the default), a claimed group name counts toward the
+  claim-source provider (the default), a claimed group name reaches the
   `group` gate only when it is explicitly mapped (Console → Groups) or listed
   in `OIDC_GROUP_ALLOWLIST`: IdP group namespaces are user-writable — a
   GitLab user can create a top-level group named exactly like your required
-  group — so an unmapped same-name claim is refused. Memberships the console
+  group — so an unmapped same-name claim is dropped at sign-in, before any
+  membership is created, and refused. Memberships the console
   granted, and everything a directory (SCIM or pull) pushed, count as
   before.
 - **The gate never disables an account.** Losing the last required group
