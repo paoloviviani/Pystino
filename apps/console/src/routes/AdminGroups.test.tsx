@@ -8,8 +8,8 @@ import { jsonResponse } from "../test-helpers";
 import { AdminGroups } from "./AdminGroups";
 
 /**
- * The "Seen from your identity provider" section: what an operator reads to
- * decide which of a directory's groups become groups here. Tested for what it
+ * The "Groups from your identity provider" section: what an operator reads to
+ * decide which of a directory's names mean something here. Tested for what it
  * says (the mode, who carries what, the empty state) and that its buttons
  * call the right routes.
  */
@@ -110,23 +110,32 @@ describe("AdminGroups — seen from your identity provider", () => {
     const section = (await screen.findByText("Groups from your identity provider")).closest("section")!;
     await waitFor(() => expect(within(section).getByText("gitlab/eng")).toBeInTheDocument());
     expect(within(section).getByText("12")).toBeInTheDocument();
-    expect(within(section).getByText(/Nothing is created until you import it/)).toBeInTheDocument();
+    expect(within(section).getByText(/Nothing is created until you map it/)).toBeInTheDocument();
     expect(within(section).getByText("users")).toBeInTheDocument();
   });
 
-  it("says when groups are imported automatically", async () => {
+  it("says when names are mapped automatically", async () => {
     vi.stubGlobal("fetch", routes([], "auto"));
     renderScreen();
-    expect(await screen.findByText(/Groups are imported automatically at sign-in/)).toBeInTheDocument();
+    expect(await screen.findByText(/Every name is mapped automatically at sign-in/)).toBeInTheDocument();
   });
 
   it("has an empty state", async () => {
     vi.stubGlobal("fetch", routes([]));
     renderScreen();
-    expect(await screen.findByText("Nothing waiting to be imported.")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing waiting to be mapped.")).toBeInTheDocument();
   });
 
-  it("imports and dismisses through the seen-group routes", async () => {
+  it("offers no Import anywhere — mapping is the one decision", async () => {
+    vi.stubGlobal("fetch", routes([seen()]));
+    renderScreen();
+    await screen.findByText("gitlab/eng");
+    expect(screen.queryByRole("button", { name: "Import" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Map…" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: "Ignore" }).length).toBeGreaterThan(0);
+  });
+
+  it("dismisses through the seen-group route", async () => {
     const fetchMock = routes([seen()]);
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
@@ -134,15 +143,7 @@ describe("AdminGroups — seen from your identity provider", () => {
 
     // Each row carries its buttons twice (the phone layout's copy is hidden
     // by CSS, which jsdom does not apply); either one is the same action.
-    await user.click((await screen.findAllByRole("button", { name: "Import" }))[0]!);
-    await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining("/api/admin/groups/seen/s1/import"),
-        expect.objectContaining({ method: "POST" }),
-      ),
-    );
-
-    await user.click(screen.getAllByRole("button", { name: "Ignore" })[0]!);
+    await user.click((await screen.findAllByRole("button", { name: "Ignore" }))[0]!);
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining("/api/admin/groups/seen/s1/dismiss"),
@@ -176,8 +177,13 @@ describe("AdminGroups — seen from your identity provider", () => {
   });
 });
 
-describe("SeenGroups: map to existing (ADR 0095)", () => {
-  it("maps a seen name to an existing group through the map route", async () => {
+describe("SeenGroups: the Map dialog's three paths", () => {
+  async function openDialog(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getAllByRole("button", { name: "Map…" })[0]!);
+    return screen.getByRole("dialog");
+  }
+
+  it("defaults to a new group with the same name, and maps through the map route", async () => {
     const fetchMock = routes([seen()]);
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
@@ -188,12 +194,10 @@ describe("SeenGroups: map to existing (ADR 0095)", () => {
     expect(await screen.findByText("gitlab/old")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Unmap gitlab/old" })).toBeInTheDocument();
 
-    await user.click(screen.getAllByRole("button", { name: "Map…" })[0]!);
-    const dialog = screen.getByRole("dialog");
-    await user.selectOptions(
-      within(dialog).getByLabelText(/Local group/),
-      "g2",
-    );
+    const dialog = await openDialog(user);
+    expect(
+      within(dialog).getByRole("radio", { name: /New group with the same name/ }),
+    ).toBeChecked();
     await user.click(within(dialog).getByRole("button", { name: "Map" }));
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -205,6 +209,44 @@ describe("SeenGroups: map to existing (ADR 0095)", () => {
       String(url).includes("/seen/s1/map"),
     );
     expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      target: "new_same_name",
+      reason: "",
+    });
+  });
+
+  it("creates a group under another name when that is chosen", async () => {
+    const fetchMock = routes([seen()]);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByText("gitlab/eng");
+    const dialog = await openDialog(user);
+    await user.click(within(dialog).getByRole("radio", { name: /New group named/ }));
+    await user.type(within(dialog).getByLabelText(/Name the new group/), "engineering");
+    await user.click(within(dialog).getByRole("button", { name: "Map" }));
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/seen/s1/map"));
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      target: "new_named",
+      name: "engineering",
+      reason: "",
+    });
+  });
+
+  it("maps onto an existing group through the picker when that is chosen", async () => {
+    const fetchMock = routes([seen()]);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByText("gitlab/eng");
+    const dialog = await openDialog(user);
+    await user.click(within(dialog).getByRole("radio", { name: /Existing group/ }));
+    await user.selectOptions(within(dialog).getByLabelText(/Local group/), "g2");
+    await user.click(within(dialog).getByRole("button", { name: "Map" }));
+    const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/seen/s1/map"));
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      target: "existing",
       group_id: "g2",
       reason: "",
     });

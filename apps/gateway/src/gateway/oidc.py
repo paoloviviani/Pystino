@@ -55,7 +55,7 @@ from gateway.config import OIDCSettings, Settings
 from gateway.deployment_state import get_or_create_deployment_state, mark_bootstrap_consumed
 from gateway.email_normalize import is_trusted_email, normalize_email
 from gateway.errors import OutsideAccessGroupsError
-from gateway.group_import import grant_default_group, record_unresolved
+from gateway.group_import import grant_default_group, record_unresolved, self_map_new_names
 from gateway.identity_events import record_event
 from gateway.join_gate import (
     _matches_claim_rule,
@@ -1060,6 +1060,14 @@ async def provision_user(
     group_source: str = "claim",
     claims: dict[str, Any] | None = None,
     group_mappings: dict[str, str] | None = None,
+    #: The claim names *before* the mapping, as the token carried them (the
+    #: allowlist already applied). `group_names` is what they resolved to;
+    #: this is what the seen-groups bookkeeping records when they did not —
+    #: under the mapping-only rule an unmapped claimed name resolves to
+    #: nothing, and the console maps it. None from a caller that has no
+    #: claim-level view (tests driving `provision_user` directly): the
+    #: bookkeeping then reads `group_names` alone, as it always did.
+    claimed_names: list[str] | None = None,
     #: The `<provider>` refusal texts name (`join_gate.provider_label` of the
     #: record's kind). Absent — `/v1`, whose caller has no record — the text
     #: reads "identity provider".
@@ -1210,15 +1218,61 @@ async def provision_user(
     # `group_source` says *where* that answer comes from: the token here, the
     # directory mirror (applied by a sync run, never from a token), or nowhere.
     if directory_answers and group_source == "claim":
+        mappings = group_mappings or {}
+        # The mapping-only rule (ADR 0048 as amended): a claimed name resolves
+        # only through a mapping. Under `auto` import a new name maps to
+        # itself — the group and the self-mapping are created here, at
+        # provisioning, which is the same write budget `auto` always spent;
+        # under `manual` the name is recorded as seen for the console to map.
+        # A name the group gate REQUIRES is never self-mapped: auto-minting a
+        # mapping for it would let the token vouch for itself (the hole
+        # bd9a4b8 closed), so those stay dropped and wait for the console to
+        # map them deliberately.
+        if settings.group_import == "auto" and claimed_names:
+            gate_requires = (
+                frozenset(policy.required_groups)
+                if policy is not None and policy.join_mode == "group"
+                else frozenset()
+            )
+            unmapped = sorted(
+                {n for n in claimed_names if n not in mappings and n not in gate_requires}
+            )
+            if unmapped:
+                added = await self_map_new_names(
+                    session,
+                    unmapped,
+                    reason="auto-import: self-mapping for claimed group name(s) "
+                    + ", ".join(unmapped),
+                )
+                mappings = {**mappings, **added}
+                group_mappings = mappings
+                # Now that each name maps to itself, the caller's mapped view
+                # gains them: the group was created above, so resolution and
+                # reconciliation land the membership in this same login.
+                group_names = list(dict.fromkeys([*group_names, *unmapped]))
         groups, missing = await _resolve_group_names(session, group_names, settings)
         await _reconcile_memberships(session, user, groups)
         resolved = {group.name for group in groups}
+        if claimed_names is None:
+            unresolved_names = [name for name in group_names if name not in resolved]
+            missing_names = missing
+        else:
+            # What the token claimed, split by how it fared: an unmapped
+            # claimed name resolves to nothing (recorded, for the console to
+            # map), and a mapped name whose target is missing or inactive
+            # fails the same way it always did.
+            unmapped_claimed = [n for n in claimed_names if n not in mappings]
+            failed_mapped = [
+                n for n in claimed_names if n in mappings and mappings[n] not in resolved
+            ]
+            unresolved_names = sorted(set(unmapped_claimed) | set(failed_mapped))
+            missing_names = sorted(set(unmapped_claimed) | set(missing))
         await record_unresolved(
             session,
             user,
             issuer=issuer,
-            unresolved=[name for name in group_names if name not in resolved],
-            missing=missing,
+            unresolved=unresolved_names,
+            missing=missing_names,
             touch_login=touch_login,
         )
     # The env admin rules (ADR 0093 §5): a door (`touch_login`) always
@@ -1613,13 +1667,12 @@ async def sign_in(
     display_name = claims.get("name") or claims.get("preferred_username")
     username = preferred_username if isinstance(preferred_username, str) else None
 
-    groups = extract_groups(claims, settings.oidc, policy)
-    if policy is not None:
-        groups = policy.map_claim_group_names(
-            groups,
-            allowlist=settings.oidc.group_allowlist,
-            claim_source=record.group_source == "claim",
-        )
+    claimed = extract_groups(claims, settings.oidc, policy)
+    groups = (
+        policy.map_claim_group_names(claimed, claim_source=record.group_source == "claim")
+        if policy is not None
+        else claimed
+    )
 
     # ADR 0093 §8.2: a console-created account's login claims this identity
     # by login name and verified email, before anything below gets a chance
@@ -1669,6 +1722,7 @@ async def sign_in(
         display_name=display_name if isinstance(display_name, str) else None,
         username=username,
         group_names=groups,
+        claimed_names=groups if policy is None else claimed,
         settings=settings.oidc,
         policy=policy,
         # Raw, not coerced: several providers put `email_verified` on
@@ -1796,14 +1850,14 @@ async def sync_user_from_claims(
 
     # Mapping first (ADR 0048): the rest of the flow — reconciliation,
     # divergence, admin — speaks local names only.
+    claimed_names = extract_groups(claims, settings, policy)
     group_names = (
         policy.map_claim_group_names(
-            extract_groups(claims, settings, policy),
-            allowlist=settings.group_allowlist,
+            claimed_names,
             claim_source=group_source == "claim",
         )
         if policy is not None
-        else extract_groups(claims, settings)
+        else claimed_names
     )
     email = claims.get("email")
     display_name = claims.get("name") or claims.get("preferred_username")
@@ -1858,6 +1912,7 @@ async def sync_user_from_claims(
         display_name=display_name if isinstance(display_name, str) else None,
         username=username,
         group_names=group_names,
+        claimed_names=claimed_names if policy is not None else None,
         settings=settings,
         touch_login=False,
         policy=policy,
@@ -1948,7 +2003,7 @@ def _claims_diverge(
     row as ``unresolved_group_names`` and is not a divergence: it would
     resolve to nothing again, and counting it made every request from a
     person in one unimported group re-provision, forever. Importing it grants
-    it at once (``group_import.import_seen_group``) or at the next sign-in.
+    it at once (the map endpoint) or at the next sign-in.
 
     The question asked is "would a sync change anything" (ADR 0057), not
     "does the stored set equal the claimed set". This runs on every ``/v1``

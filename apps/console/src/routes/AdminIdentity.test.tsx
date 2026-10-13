@@ -144,6 +144,30 @@ describe("AdminIdentity", () => {
     expect(screen.queryByRole("checkbox", { name: "staff" })).not.toBeInTheDocument();
   });
 
+  it("notes when a required group no IdP name maps to", async () => {
+    mockRoutes({
+      policy: policyFixture({
+        join_mode: "group",
+        required_groups: ["staff", "ops"],
+        group_mappings: [{ idp: "gitlab/staff", local: "staff" }],
+      }),
+      groups: [
+        { id: "g1", name: "staff" },
+        { id: "g2", name: "ops" },
+      ],
+    });
+    renderScreen(<AdminIdentity />);
+    await screen.findByRole("checkbox", { name: "staff" });
+    const staffRow = screen.getByRole("checkbox", { name: "staff" }).closest("label")!
+      .parentElement!;
+    const opsRow = screen.getByRole("checkbox", { name: "ops" }).closest("label")!
+      .parentElement!;
+    await waitFor(() => expect(opsRow.textContent).toContain("No IdP group maps to this"));
+    // staff is mapped, so it says nothing; ops is required with no mapping
+    // targeting it, so the note says where its members can come from.
+    expect(staffRow.textContent).not.toContain("No IdP group maps to this");
+  });
+
   it("refuses to enter group mode with no groups picked", async () => {
     const user = userEvent.setup({ delay: null });
     mockRoutes({ policy: policyFixture(), groups: [] });

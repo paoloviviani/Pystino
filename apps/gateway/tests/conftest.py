@@ -48,6 +48,7 @@ from gateway.models import (
     MembershipSource,
     ModelDef,
     ModelPrice,
+    OIDCPolicyConfig,
     Provider,
     User,
 )
@@ -397,7 +398,7 @@ class Seeded:
 
 
 @pytest_asyncio.fixture
-async def seeded(session_factory: async_sessionmaker[AsyncSession]) -> Seeded:
+async def seeded(session_factory: async_sessionmaker[AsyncSession], app: FastAPI) -> Seeded:
     """A group, a member, a priced model the group may use, and a usable key.
 
     Prices are chosen so the arithmetic is easy to assert by hand:
@@ -420,6 +421,12 @@ async def seeded(session_factory: async_sessionmaker[AsyncSession]) -> Seeded:
         # This user's issuer is a directory, so the membership is one a login
         # made — which is what keeps the revocation tests meaningful (ADR 0057).
         db.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.OIDC))
+        # The mapping-only rule resolves a claim only through a mapping, and a
+        # membership a login made is the migration-0058 shape: the upgrade
+        # restated claim-fed groups as self-mappings. Without this row the
+        # token's `research` claim resolves to nothing and the reconciliation
+        # revokes the membership — which is what 0058 exists to prevent.
+        db.add(OIDCPolicyConfig(group_mappings=[["research", "research"]]))
 
         # Every model needs a provider now (ADR 0027); the fake upstream is one.
         # Its credential is stored the way a real one is — encrypted — so the
@@ -462,6 +469,12 @@ async def seeded(session_factory: async_sessionmaker[AsyncSession]) -> Seeded:
         )
         db.add(api_key)
         await db.commit()
+
+        # The resolver read the (then empty) policy at startup: fold the
+        # mapping row above in now, the way the ten-second poll would.
+        resolver = getattr(app.state, "oidc_policy", None)
+        if resolver is not None:
+            await resolver.refresh_once()
 
         # Re-read with relationships loaded, detached from this session.
         await db.refresh(user)

@@ -133,7 +133,7 @@ within the ten seconds a saved policy takes to reach every worker):
 | `open` | gets an active account at once | unaffected |
 | `approval` | gets an account created **disabled**, shown on the Users page under *Awaiting approval* | unaffected |
 | `invite` | is refused **unless** pre-invited (below) or created by the directory | unaffected |
-| `group` | gets an active account **only if** their groups include one of `OIDC_REQUIRED_GROUPS`; otherwise they are refused, or held for approval (`OIDC_GROUP_FALLBACK`) | gated on every sign-in and every `/v1` call: they must hold a required group |
+| `group` | gets an active account **only if** one of their claimed group names maps to one of `OIDC_REQUIRED_GROUPS`; otherwise they are refused, or held for approval (`OIDC_GROUP_FALLBACK`) | gated on every sign-in and every `/v1` call: they must hold a required group |
 
 Cross-cutting, the same in every mode:
 
@@ -146,15 +146,18 @@ Cross-cutting, the same in every mode:
   anyone matching an env admin rule get in whatever the mode says, so a
   misconfigured group mode cannot lock every administrator out. Break-glass
   is unchanged.
-- **An IdP group name is not trusted until you vouch for it.** With a
-  claim-source provider (the default), a claimed group name reaches the
-  `group` gate only when it is explicitly mapped (Console → Groups) or listed
-  in `OIDC_GROUP_ALLOWLIST`: IdP group namespaces are user-writable — a
-  GitLab user can create a top-level group named exactly like your required
-  group — so an unmapped same-name claim is dropped at sign-in, before any
-  membership is created, and refused. Memberships the console
-  granted, and everything a directory (SCIM or pull) pushed, count as
-  before.
+- **A group name from a token reaches a local group only through a mapping.**
+  The one rule, everywhere: model access, billing, the default-group logic
+  and the join gate all resolve claim names through the console's group
+  mappings and nothing else. An unmapped name resolves to nothing, even when
+  a local group carries the same name — IdP group namespaces are
+  user-writable, so a same-name claim is not a vouch. Unmapped names are what
+  the Groups page lists, to be mapped by hand. Memberships the console
+  granted, and everything a directory (SCIM or pull) pushed, count as before.
+  **The residual risk:** a mapping trusts an IdP *name*. If the real IdP
+  group is deleted and someone else creates a group of the same name there,
+  the mapping trusts the new one — remove the mapping when an IdP group is
+  deleted.
 - **The gate never disables an account.** Losing the last required group
   refuses access dynamically; regaining it restores access. Taking an account
   away stays the directory sync's job.
@@ -172,11 +175,13 @@ itself once the person is back in a required group. API keys meet the same
 gate; administrators are exempt there as everywhere.
 
 **One group-mapping surface.** The Groups page's *Groups from your identity
-provider* panel lists every seen IdP name with one decision per row:
-**Import** as a new group, **Map** to an existing group (the IdP name then
-grants that group), or **Ignore**. Current mappings are listed with their
-**Unmap**. `OIDC_GROUP_ALLOWLIST` stays env-only, and `OIDC_GROUP_IMPORT`
-keeps its meaning.
+provider* panel lists every unmapped IdP name with one decision per row:
+**Map** (the IdP name then grants the group it is mapped to), or **Ignore**.
+The Map dialog asks what the name means here: a new group with the same
+name, a new group under another name, or an existing group. Current
+mappings are listed with their **Unmap**. `OIDC_GROUP_ALLOWLIST` stays
+env-only: it narrows which claimed names are considered at all and vouches
+for nothing by itself. `OIDC_GROUP_IMPORT` keeps its two modes (below).
 
 **Where the invite link points:** the gateway builds it from its own host —
 the chat at `/chat` when one is deployed, else the console at `/console`.
@@ -197,36 +202,44 @@ appears, depends on the provider: see
 [the per-provider table](oidc-generic-provider.md#groups-claim-by-provider).
 A string claim is one group; it is never split on separators.
 
-### Importing the provider's groups
+### Mapping the provider's groups
 
 A directory reports every group a person is in, and most of them mean
 nothing here: with GitLab, one person's first sign-in used to create 67
-groups. `OIDC_GROUP_IMPORT` decides what a claimed name that no group
-carries does at a sign-in:
+groups. `OIDC_GROUP_IMPORT` decides what a claimed name that nothing maps
+does at a sign-in:
 
 - **`manual`** (the default): nothing is created. The name is recorded per
   provider, and the console's **Groups** page lists it under *Groups from
   your identity provider*, searchable, with how many people carry it and when
-  it was last seen. One decision per row: **Import** creates the group
-  (source `oidc`, the same name) and grants it straight away to the people
-  recorded as carrying it when the provider's `group_sync` is `every_login`;
-  otherwise they get it at their next sign-in, and the console says which.
-  **Map** grants an existing local group instead of creating a same-named
-  twin — the mapping is a new row on the identity policy's history, and
-  unmapping goes at each person's next sign-in. **Ignore** stops listing it
-  (*Show dismissed* lists those, to import, map or restore).
-- **`auto`**: every name becomes a group at first sight, as before.
+  it was last seen. One decision per row: **Map** — the dialog asks whether
+  the name means a **new group with the same name**, a **new group under
+  another name**, or an **existing group** — and the mapping is a new row on
+  the identity policy's history. The people recorded as carrying the name get
+  the group straight away when the provider's `group_sync` is `every_login`;
+  otherwise at their next sign-in, and the console says which. Unmapping goes
+  at each person's next sign-in. **Ignore** stops listing it (*Show
+  dismissed* lists those, to map or restore).
+- **`auto`**: each new claimed name is mapped to a local group of the same
+  name — the group is created (source `oidc`) and the self-mapping appended,
+  so the name keeps resolving after the token that named it is gone. A name
+  an existing group carries maps onto it. A name the group gate requires is
+  never auto-mapped: the console maps those, because auto-minting the
+  mapping would let a token vouch for itself.
 
-Groups that already exist are granted from the claim in both modes, and
-membership sync for them works as before, so **an upgrade keeps every
-membership it was granting**: only new names stop becoming groups. The
-default for an upgraded deployment is `manual`, unless it had set the older
-`GATEWAY_OIDC__AUTO_CREATE_GROUPS`, which still applies (`true` is `auto`,
-`false` is `manual`; set together with `GROUP_IMPORT`, the two must agree).
-Names are recorded only at a sign-in (and by a directory sync run), never on
-a plain `/v1` request; a name already recorded for a person does not count as
-a change on that path, so the request stays write-free. The bundled Authelia
-is not affected: its provider never applies the groups claim.
+A name equal to an existing local group is listed like any other unmapped
+name — under the rule it resolves to nothing until it is mapped, which is
+the difference from before this rule. An upgrade restates what claims were
+feeding as self-mappings (migration 0058), so **the same token gives the
+same memberships after the upgrade**: only new names stop becoming groups.
+The default for an upgraded deployment is `manual`, unless it had set the
+older `GATEWAY_OIDC__AUTO_CREATE_GROUPS`, which still applies (`true` is
+`auto`, `false` is `manual`; set together with `GROUP_IMPORT`, the two must
+agree). Names are recorded only at a sign-in (and by a directory sync run),
+never on a plain `/v1` request; a name already recorded for a person does
+not count as a change on that path, so the request stays write-free. The
+bundled Authelia is not affected: its provider never applies the groups
+claim.
 
 ### The default group
 

@@ -173,13 +173,13 @@ class TestJoinModeFold:
 
 
 class TestMapGroupNames:
-    def test_unmapped_groups_keep_their_name(self) -> None:
+    def test_an_unmapped_name_is_dropped_even_when_it_names_a_group(self) -> None:
         policy = OIDCPolicy(
             join_mode="open",
             groups_claim="groups",
             group_mappings={"idp-team": "research"},
         )
-        assert policy.map_group_names(["idp-team", "other"]) == ["research", "other"]
+        assert policy.map_claim_group_names(["idp-team", "other"]) == ["research"]
 
     def test_many_to_one_folds_without_repetition(self) -> None:
         policy = OIDCPolicy(
@@ -187,7 +187,15 @@ class TestMapGroupNames:
             groups_claim="groups",
             group_mappings={"a": "one", "b": "one"},
         )
-        assert policy.map_group_names(["a", "b"]) == ["one"]
+        assert policy.map_claim_group_names(["a", "b"]) == ["one"]
+
+    def test_a_directory_source_provider_keeps_its_names_vouched(self) -> None:
+        policy = OIDCPolicy(
+            join_mode="open",
+            groups_claim="groups",
+            group_mappings={"a": "one"},
+        )
+        assert policy.map_claim_group_names(["a", "b"], claim_source=False) == ["one", "b"]
 
 
 # -- the provisioning gate ----------------------------------------------------
@@ -324,7 +332,7 @@ class TestProvisioningGate:
                 # Map first, exactly as the callers do: provision receives
                 # local names, so a group the claim names lands under its
                 # local name — and confers nothing.
-                group_names=policy.map_group_names(["platform-admins"]),
+                group_names=policy.map_claim_group_names(["platform-admins"]),
                 settings=OIDCSettings(**LEGACY_GROUPS),
                 touch_login=False,
                 policy=policy,
@@ -456,8 +464,17 @@ class TestUserEndpoints:
 
 class TestOidcPolicyEndpoints:
     async def test_get_reports_the_environment_until_a_row_exists(
-        self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]
+        self,
+        client: httpx.AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        admin_session: dict[str, str],
     ) -> None:
+        # The seeded deployment carries the migration-0058 self-mapping row;
+        # this test's premise is "no row exists", so it clears the table first.
+        async with session_factory() as session:
+            for row in (await session.execute(select(OIDCPolicyConfig))).scalars().all():
+                await session.delete(row)
+            await session.commit()
         response = await client.get("/api/admin/oidc/policy", headers=admin_session)
         assert response.status_code == 200
         body = response.json()
@@ -512,8 +529,16 @@ class TestOidcPolicyEndpoints:
         assert response.json()["configured"]["reason"] == ""
 
         async with session_factory() as session:
-            row = (await session.execute(select(OIDCPolicyConfig))).scalar_one()
-            assert row.reason == ""
+            row = (
+                (
+                    await session.execute(
+                        select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc())
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            assert row is not None and row.reason == ""
 
     async def test_unknown_user_policy_alone_means_approval(
         self, client: httpx.AsyncClient, seeded: Any, admin_session: dict[str, str]

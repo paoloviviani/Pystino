@@ -1284,11 +1284,30 @@ class SeenGroupImportResponse(BaseModel):
 
 
 class SeenGroupMapRequest(BaseModel):
-    """``POST /admin/groups/seen/{id}/map``: the IdP name now grants this
-    local group (ADR 0095 §4), instead of importing as a same-named one."""
+    """``POST /admin/groups/seen/{id}/map``: decide what an IdP name grants.
 
-    group_id: uuid.UUID
+    One endpoint for the three answers: ``new_same_name`` (create a local
+    group of the same name), ``new_named`` (create one under ``name``),
+    ``existing`` (map onto the group ``group_id`` names). Under the
+    mapping-only rule every answer appends the mapping — the group alone
+    would never resolve."""
+
+    target: Literal["new_same_name", "new_named", "existing"]
+    name: str | None = Field(default=None, max_length=255)
+    group_id: uuid.UUID | None = None
     reason: str = Field(default="", max_length=500)
+
+    @model_validator(mode="after")
+    def _target_carries_its_argument(self) -> SeenGroupMapRequest:
+        if self.target == "new_named" and not (self.name or "").strip():
+            raise ValueError("target 'new_named' needs a name to create")
+        if self.target == "existing" and self.group_id is None:
+            raise ValueError("target 'existing' needs the group_id to map onto")
+        if self.target == "new_same_name" and (self.name or self.group_id):
+            raise ValueError("target 'new_same_name' takes neither name nor group_id")
+        if self.target == "new_named" and self.group_id is not None:
+            raise ValueError("target 'new_named' takes no group_id")
+        return self
 
 
 class GroupSearchBackendRequest(BaseModel):

@@ -694,14 +694,17 @@ class Membership(Base):
 
 
 class SeenGroup(Base):
-    """A group name a directory reported that no group here carries.
+    """A group name a directory reported that nothing maps yet.
 
     Written at sign-in when `GATEWAY_OIDC__GROUP_IMPORT=manual`, instead of
-    creating the group: the console lists these under "Seen from your identity
-    provider" with Import (create the group) and Dismiss (stop listing it).
-    Keyed by issuer rather than by provider row because the issuer is what a
-    login knows for certain, and what a user row is keyed on. An imported name
-    is deleted from here: it is a group now, and resolves like any other.
+    creating the group: under the mapping-only rule an unmapped claimed name
+    resolves to nothing — even when a local group carries the same name — so
+    the console lists these under "Groups from your identity provider" with
+    Map (create or name the group the IdP name grants) and Dismiss (stop
+    listing it). Keyed by issuer rather than by provider row because the
+    issuer is what a login knows for certain, and what a user row is keyed
+    on. A mapped name is deleted from here: it is decided now, and resolves
+    through the mapping like any other.
     """
 
     __tablename__ = "seen_groups"

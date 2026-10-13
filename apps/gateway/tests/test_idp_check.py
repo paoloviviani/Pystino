@@ -338,13 +338,16 @@ class TestDeviceFlow:
         self, signing_key: RSAKey
     ) -> None:
         """ADR 0095 review: GitLab users can create top-level groups, so a
-        required name must be mapped or allowlisted — the check says so."""
+        required name must be mapped — and mapped by full path — the check
+        says so. The allowlist vouches for nothing any more, so it is not
+        named as an out."""
         idp = FakeIdp(signing_key)
         report = await run_check(
             _settings(join_mode="group", required_groups=["staff"]),
             http=httpx.AsyncClient(transport=httpx.MockTransport(idp)),
         )
         assert any("not trusted for the gate until it is mapped" in line for line in report.lines)
+        assert any("map full paths" in line for line in report.lines)
 
     async def test_the_group_name_warning_names_nothing_but_group_mode(
         self, signing_key: RSAKey

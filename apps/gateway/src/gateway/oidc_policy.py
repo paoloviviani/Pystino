@@ -74,7 +74,9 @@ class OIDCPolicy:
     required_groups: tuple[str, ...] = ()
     group_fallback: str = "refuse"
     groups_claim: str = "groups"
-    #: IdP group name -> local group name. Unmapped groups keep their own name.
+    #: IdP group name -> local group name. A claimed name resolves to a local
+    #: group only through this table: an unmapped name resolves to nothing,
+    #: even when a local group carries the same name.
     group_mappings: dict[str, str] = field(default_factory=dict)
     #: Where each value came from — "environment" until a row carries one, and
     #: per field, because a row may answer one question and not the rest. The
@@ -101,54 +103,43 @@ class OIDCPolicy:
         """ "console" when any field is a row decision, else "environment"."""
         return "console" if self.sources else "environment"
 
-    def map_group_names(self, idp_names: list[str]) -> list[str]:
-        """IdP group names to local names, order preserved, duplicates dropped.
-
-        A many-to-one mapping can hand back the same local name twice (two IdP
-        groups folded into one platform group); the caller wants a set with
-        stable order, not a repetition.
-        """
-        seen: list[str] = []
-        for name in idp_names:
-            mapped = self.group_mappings.get(name, name)
-            if mapped not in seen:
-                seen.append(mapped)
-        return seen
-
     def map_claim_group_names(
         self,
         idp_names: list[str],
         *,
-        allowlist: list[str] | None = None,
         claim_source: bool = True,
     ) -> list[str]:
-        """IdP group names from a sign-in's claims, to local names — the one
-        mapper both claim-bearing doors run (`sign_in` and the bearer sync),
-        so the gate's stranger check, the membership reconciliation and the
-        bearer path's divergence check all agree on what a claim named.
+        """IdP group names from a token, to local names — the one mapper both
+        claim-bearing doors run (`sign_in` and the bearer sync), so the gate's
+        stranger check, the membership reconciliation and the bearer path's
+        divergence check all agree on what a claim named.
 
-        In `group` mode with a claim-source provider, an IdP name may resolve
-        to a REQUIRED local group only when it is a mapping key (resolving to
-        its target) or listed in the allowlist (resolving to itself): the
-        IdP's group namespace is user-writable — a GitLab user can create a
-        top-level group named exactly like a required local group — so an
-        unmapped name equal to a required local name is dropped here, before
-        any of the three sees it. Everything else maps as `map_group_names`
-        does: non-required names keep feeding model-access groups unchanged.
-        A directory-source provider drops nothing (`claim_source=False`): its
-        claims never reconcile into memberships, and its names arrive vouched
-        by the directory connection.
+        The rule: a claimed name reaches a local group only through a
+        mapping. Keep the mapped names, drop the rest — even when a local
+        group carries the same name, because the IdP's group namespace is
+        user-writable and a same-name claim is not a vouch. Under ``auto``
+        import the dropped names are self-mapped at provisioning
+        (:mod:`gateway.group_import`), which is how that mode's "every name
+        becomes a group" convenience survives inside the rule.
+
+        ``OIDC_GROUP_ALLOWLIST`` is a pre-filter applied before this
+        (``extract_groups``): it narrows which claimed names are considered
+        at all and confers nothing by itself. A directory-source provider
+        (``claim_source=False``) is unchanged: its claims never reconcile
+        into memberships and its names arrive vouched by the directory
+        connection — mapped names still map, the rest keep their own name.
         """
-        names = idp_names
-        if claim_source and self.join_mode == "group" and self.required_groups:
-            required = set(self.required_groups)
-            allowed = set(allowlist or ())
-            names = [
-                name
-                for name in names
-                if name not in required or name in self.group_mappings or name in allowed
-            ]
-        return self.map_group_names(names)
+        seen: list[str] = []
+        for name in idp_names:
+            if claim_source:
+                mapped = self.group_mappings.get(name)
+                if mapped is None:
+                    continue
+            else:
+                mapped = self.group_mappings.get(name, name)
+            if mapped not in seen:
+                seen.append(mapped)
+        return seen
 
 
 def environment_policy(settings: OIDCSettings) -> OIDCPolicy:
@@ -257,6 +248,67 @@ def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OI
     )
 
 
+def pending_policy_row(
+    stored: OIDCPolicyConfig | None,
+    fields: dict[str, object],
+    *,
+    required_groups: list[str] | None,
+    mappings: list[list[str]] | None,
+) -> OIDCPolicyConfig:
+    """The row a policy save would store: the newest stored row's answers
+    carried forward for every field the payload does not send.
+
+    Only the newest `oidc_config` row is ever in force, and the console saves
+    one field at a time — so a save that stored null for every unsent field
+    would reset the other saves' answers to the environment (a group-mode
+    save followed by a fallback-only save would fail open). Unsent fields
+    carry the newest row's values instead; an explicitly sent null clears the
+    field back to the environment. A payload that names a join mode clears
+    the carried legacy columns (and a payload naming legacy columns clears
+    the carried join ones), so a stored row never mixes the two spellings —
+    the fold would let one silently win. The map endpoint and the auto
+    import's self-mapping both build their rows through this same helper, so
+    an append made outside the console cannot reset what the console saved.
+    """
+    row = OIDCPolicyConfig(
+        auto_provision=stored.auto_provision if stored is not None else None,
+        unknown_user_policy=stored.unknown_user_policy if stored is not None else None,
+        join_mode=stored.join_mode if stored is not None else None,
+        required_groups=(
+            list(stored.required_groups)
+            if stored is not None and stored.required_groups is not None
+            else None
+        ),
+        group_fallback=stored.group_fallback if stored is not None else None,
+        groups_claim=stored.groups_claim if stored is not None else None,
+        group_mappings=(
+            [list(pair) for pair in stored.group_mappings]
+            if stored is not None and stored.group_mappings is not None
+            else None
+        ),
+    )
+    if "auto_provision" in fields:
+        row.auto_provision = fields["auto_provision"]  # type: ignore[assignment]
+    if "unknown_user_policy" in fields:
+        row.unknown_user_policy = fields["unknown_user_policy"]  # type: ignore[assignment]
+    if "join_mode" in fields:
+        row.join_mode = fields["join_mode"]  # type: ignore[assignment]
+    if "required_groups" in fields:
+        row.required_groups = required_groups
+    if "group_fallback" in fields:
+        row.group_fallback = fields["group_fallback"]  # type: ignore[assignment]
+    if "groups_claim" in fields:
+        row.groups_claim = fields["groups_claim"]  # type: ignore[assignment]
+    if "group_mappings" in fields:
+        row.group_mappings = mappings
+    if fields.get("join_mode") is not None:
+        row.auto_provision = None
+        row.unknown_user_policy = None
+    if fields.get("auto_provision") is not None or fields.get("unknown_user_policy") is not None:
+        row.join_mode = None
+    return row
+
+
 class OIDCPolicyResolver:
     """Holds the policy in force for this worker, and polls for changes.
 
@@ -312,8 +364,8 @@ class OIDCPolicyResolver:
         if missing and missing != self._warned_missing_groups:
             logger.warning(
                 "The identity policy's required groups name unknown groups: %s. The "
-                "group gate admits nobody under those names — import the directory "
-                "name or map it to a local group first.",
+                "group gate admits nobody under those names — map the identity "
+                "provider's name to a local group first (Console → Groups).",
                 ", ".join(sorted(missing)),
             )
         self._warned_missing_groups = missing
