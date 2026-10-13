@@ -22,6 +22,12 @@ import type {
   ModelImportResponse,
   OidcPolicy,
   OidcPolicyInput,
+  OidcPolicyPreview,
+  InvitedUser,
+  InviteText,
+  UserCreateInput,
+  UserStatus,
+  UserStatusCounts,
   ModelKind,
   Price,
   ProviderPlugin,
@@ -762,12 +768,21 @@ export function useResetLimit() {
  * searches for a person passes `false` until something is typed, rather than
  * fetching the first fifty people nobody asked for.
  */
-export function useUsers(query: PageQuery = { limit: MAX_LIMIT }, enabled = true) {
-  const search = pageParams(query);
+export function useUsers(query: PageQuery = { limit: MAX_LIMIT }, enabled = true, status?: UserStatus) {
+  const search = pageParams(query, status ? { status } : {});
   return useQuery({
-    queryKey: pagedKey(adminKeys.users, search),
+    queryKey: status ? [...pagedKey(adminKeys.users, search), status] : pagedKey(adminKeys.users, search),
     queryFn: () => request<Page<AdminUser>>(`/api/admin/users?${search}`),
     enabled,
+    ...pagedOptions,
+  });
+}
+
+/** The Users page's filter-chip counts (ADR 0095). */
+export function useUserStatusCounts() {
+  return useQuery({
+    queryKey: [...adminKeys.users, "status-counts"],
+    queryFn: () => request<UserStatusCounts>("/api/admin/users/status-counts"),
     ...pagedOptions,
   });
 }
@@ -800,6 +815,24 @@ export function useSeenGroupAction() {
     onSuccess: () => {
       client.invalidateQueries({ queryKey: adminKeys.groups });
       client.invalidateQueries({ queryKey: adminKeys.users });
+    },
+  });
+}
+
+/** Map one seen name to an existing local group (ADR 0095 §4). Invalidates
+ * the policy too: the mapping is a new row on its history. */
+export function useMapSeenGroup() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, group_id, reason }: { id: string; group_id: string; reason?: string }) =>
+      request<SeenGroupImport>(`/api/admin/groups/seen/${id}/map`, {
+        method: "POST",
+        body: { group_id, reason: reason ?? "" },
+      }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.groups });
+      client.invalidateQueries({ queryKey: adminKeys.users });
+      client.invalidateQueries({ queryKey: adminKeys.oidcPolicy });
     },
   });
 }
@@ -899,6 +932,25 @@ export function useCreateBundledUser() {
     mutationFn: (body: BundledUserCreateInput) =>
       request<BundledUserCreated>("/api/admin/users", { method: "POST", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
+
+/** Invite a person for a provider that creates no logins (ADR 0095): the
+ * answer carries the invite text to copy (and whether mail sent it). */
+export function useInviteUser() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: UserCreateInput) =>
+      request<InvitedUser>("/api/admin/users", { method: "POST", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
+  });
+}
+
+/** Regenerate an invitation's text — which re-issues it (ADR 0095). */
+export function useInviteText() {
+  return useMutation({
+    mutationFn: (userId: string) =>
+      request<InviteText>(`/api/admin/users/${userId}/invite-text`, { method: "POST" }),
   });
 }
 
@@ -1066,6 +1118,21 @@ export function useUpdateOidcPolicy() {
     mutationFn: (body: OidcPolicyInput) =>
       request<OidcPolicy>("/api/admin/oidc/policy", { method: "PUT", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.oidcPolicy }),
+  });
+}
+
+/** What saving a group gate would do (ADR 0095). Fetched on demand — the
+ * console asks before saving, not on every render. The groups go as
+ * repeated `required_groups` params: a comma inside a name cannot be
+ * mistaken for a separator. */
+export function usePolicyPreview() {
+  return useMutation({
+    mutationFn: ({ join_mode, required_groups }: { join_mode: string; required_groups: string[] }) => {
+      const params = new URLSearchParams();
+      params.set("join_mode", join_mode);
+      for (const group of required_groups) params.append("required_groups", group);
+      return request<OidcPolicyPreview>(`/api/admin/oidc/policy/preview?${params.toString()}`);
+    },
   });
 }
 

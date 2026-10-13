@@ -42,6 +42,10 @@ function user(index: number, overrides: Partial<AdminUser> = {}): AdminUser {
     last_login_at: "2026-08-01T10:00:00Z",
     authelia_sync: null,
     authelia_sync_message: null,
+    // Same widening trap as `username` above: nullable columns are stated
+    // rather than left for the spread to make `undefined`.
+    deactivated_by: null,
+    invited_at: null,
     ...overrides,
   };
 }
@@ -87,6 +91,7 @@ function bundledProvider(overrides: Partial<IdentityProvider> = {}): IdentityPro
       scim_push: false,
       subject_before_login: true,
       deprovision: true,
+      creates_logins: true,
       adapters: ["authelia_file"],
     },
     ...overrides,
@@ -133,6 +138,15 @@ function routes(
     if (url.pathname === "/api/admin/identity-events") {
       return jsonResponse([]);
     }
+    if (url.pathname === "/api/admin/users/status-counts") {
+      return jsonResponse({ awaiting_approval: 0, invited: 0, active: total, disabled: 0 });
+    }
+    if (url.pathname === "/api/admin/email") {
+      return jsonResponse({ host: "", port: 587, username: "", from_address: "", has_password: false, source: "environment", enabled: false });
+    }
+    if (url.pathname === "/api/admin/users/invite-text" || /\/invite-text$/.test(url.pathname)) {
+      return jsonResponse({ sign_in_url: "/chat", invite_text: "You've been given access. Sign in." });
+    }
     if (url.pathname === "/api/admin/users" && method === "GET") {
       seen.users.push(url.searchParams);
       const q = url.searchParams.get("q") ?? "";
@@ -165,10 +179,24 @@ function routes(
         groups: (payload.groups as string[] | undefined) ?? [],
       });
       everyone.push(created);
-      return new Response(JSON.stringify({ ...created, password: "one-time-pw-123" }), {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      });
+      // ADR 0095: a payload with a login went to the bundled backend and
+      // gets the one-time password; one without invites and gets the text.
+      if (payload.login) {
+        return new Response(JSON.stringify({ ...created, password: "one-time-pw-123" }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          user: created,
+          sign_in_url: "/chat",
+          invite_text: `You've been given access. Sign in with ${payload.email}.`,
+          email_sent: false,
+          email_error: null,
+        }),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
     }
     const signIn = url.pathname.match(/^\/api\/admin\/users\/([^/]+)\/sign-in$/);
     if (method === "POST" && signIn) {
@@ -519,17 +547,34 @@ describe("AdminUsers bundled Authelia actions", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("hides every bundled action and explains accounts live at the identity provider, with an external IdP", async () => {
+  it("offers Invite (not the bundled dialogs) with an external IdP", async () => {
     vi.stubGlobal(
       "fetch",
-      routes(1, undefined, {}, [bundledProvider({ kind: "keycloak", is_enabled: true })]),
+      routes(1, undefined, {}, [
+        bundledProvider({
+          kind: "keycloak",
+          is_enabled: true,
+          capabilities: {
+            claims_groups: true,
+            pull_adapters: [],
+            scim_push: false,
+            subject_before_login: true,
+            deprovision: true,
+            creates_logins: false,
+            adapters: [],
+          },
+        }),
+      ]),
     );
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    // ADR 0095: an external provider invites — the button is the invite
+    // dialog's door, and the subtitle says how people arrive now.
     expect(
-      screen.getByText(/Accounts live at the identity provider/),
+      screen.getByText(/People arrive when you invite them/),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Invite" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add user" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Create sign-in" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reset password" })).not.toBeInTheDocument();
@@ -1033,5 +1078,131 @@ describe("AdminUsers activity", () => {
 
     await waitFor(() => expect(within(activity).getByText("user.disable")).toBeInTheDocument());
     expect(within(activity).getByText("root@example.org")).toBeInTheDocument();
+  });
+});
+
+describe("AdminUsers join modes (ADR 0095)", () => {
+  it("filter chips query by status and show the counts", async () => {
+    const seen: Seen = { users: [], patches: [], posts: [] };
+    vi.stubGlobal("fetch", routes(2, seen, {}, [bundledProvider()]));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Invited (0)" })).toBeInTheDocument());
+    await userEvent.setup({ delay: null }).click(screen.getByRole("button", { name: /Awaiting approval/ }));
+    await waitFor(() => expect(seen.users.at(-1)?.get("status")).toBe("awaiting_approval"));
+    await userEvent.setup({ delay: null }).click(screen.getByRole("button", { name: "All" }));
+    await waitFor(() => expect(seen.users.at(-1)?.get("status")).toBeNull());
+  });
+
+  it("an awaiting-approval row offers Approve, and approving PATCHes is_active", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    const seen: Seen = { users: [], patches: [], posts: [] };
+    vi.stubGlobal(
+      "fetch",
+      routes(
+        1,
+        seen,
+        { is_active: false, deactivated_by: "approval" },
+        [bundledProvider()],
+      ),
+    );
+    renderScreen(<AdminUsers />);
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+
+    expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
+    await user_.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() =>
+      expect(seen.patches).toEqual([{ id: "u0", body: { is_active: true } }]),
+    );
+  });
+
+  it("an invited row shows its badge, an expiry marker and re-issue", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    const seen: Seen = { users: [], patches: [], posts: [] };
+    const old = new Date(Date.now() - 20 * 86_400_000).toISOString();
+    const fetcher = routes(
+      1,
+      seen,
+      { invited_at: old, email: "pending@example.org" },
+      [bundledProvider()],
+    );
+    vi.stubGlobal("fetch", fetcher);
+    renderScreen(<AdminUsers />);
+    await waitFor(() => expect(screen.getByText("pending@example.org")).toBeInTheDocument());
+
+    expect(screen.getByText("Invited")).toBeInTheDocument();
+    expect(screen.getByText("Expired")).toBeInTheDocument();
+    await user_.click(screen.getByRole("button", { name: "Re-invite" }));
+    await waitFor(() =>
+      expect(
+        fetcher.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith("/invite-text") && (init as RequestInit).method === "POST",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("an external provider invites by email and answers with the text", async () => {
+    const user_ = userEvent.setup({ delay: null });
+    const seen: Seen = { users: [], patches: [], posts: [] };
+    vi.stubGlobal(
+      "fetch",
+      routes(1, seen, {}, [
+        bundledProvider({
+          kind: "keycloak",
+          is_enabled: true,
+          capabilities: {
+            claims_groups: true,
+            pull_adapters: [],
+            scim_push: false,
+            subject_before_login: true,
+            deprovision: true,
+            creates_logins: false,
+            adapters: [],
+          },
+        }),
+      ]),
+    );
+    renderScreen(<AdminUsers />);
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    await user_.click(screen.getByRole("button", { name: "Invite" }));
+    const dialog = screen.getByRole("dialog");
+    await user_.type(within(dialog).getByLabelText("Email"), "lea@example.org");
+    await user_.click(within(dialog).getByRole("button", { name: "Invite" }));
+
+    await waitFor(() =>
+      expect(seen.posts).toContainEqual({
+        path: "/api/admin/users",
+        body: { email: "lea@example.org", groups: [], send_email: false },
+      }),
+    );
+    expect(await within(dialog).findByText(/Sign in/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /Copy invite text/ })).toBeInTheDocument();
+  });
+
+  it("the invite dialog refuses a login field for an external provider", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes(1, { users: [], patches: [], posts: [] }, {}, [
+        bundledProvider({
+          kind: "keycloak",
+          is_enabled: true,
+          capabilities: {
+            claims_groups: true,
+            pull_adapters: [],
+            scim_push: false,
+            subject_before_login: true,
+            deprovision: true,
+            creates_logins: false,
+            adapters: [],
+          },
+        }),
+      ]),
+    );
+    renderScreen(<AdminUsers />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Invite" })).toBeInTheDocument());
+    await userEvent.setup({ delay: null }).click(screen.getByRole("button", { name: "Invite" }));
+    expect(within(screen.getByRole("dialog")).queryByLabelText("Login")).not.toBeInTheDocument();
   });
 });

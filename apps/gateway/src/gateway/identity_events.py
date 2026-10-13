@@ -28,7 +28,11 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     IdentityEventAction.USER_UPDATE: frozenset(),
     IdentityEventAction.USER_DISABLE: frozenset(),
     IdentityEventAction.USER_ENABLE: frozenset(),
-    IdentityEventAction.USER_DELETE: frozenset(),
+    # `pending` is true when the deleted row was an unclaimed invitation
+    # (ADR 0095) — no chat data was ever attached to it.
+    IdentityEventAction.USER_DELETE: frozenset({"pending"}),
+    # ADR 0095: `groups` is the requested console groups on the invitation.
+    IdentityEventAction.USER_INVITE: frozenset({"groups"}),
     # §5.1: "audit action admin.grant and detail.rule='email'"; the claim rule
     # (§5.2) uses the same column with rule="claim".
     IdentityEventAction.ADMIN_GRANT: frozenset({"rule"}),
@@ -48,7 +52,8 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     # §13.4/§8.2: a migration-created, unbound entry claimed at its first
     # real sign-in carries "claimed_unbound" so this row is distinguishable
     # from the ordinary bind_bundled_login case, which never sees one.
-    IdentityEventAction.IDENTITY_BIND: frozenset({"claimed_unbound"}),
+    # ADR 0095: an invite claimed by verified email carries "pending_claim".
+    IdentityEventAction.IDENTITY_BIND: frozenset({"claimed_unbound", "pending_claim"}),
     IdentityEventAction.IDENTITY_DROP: frozenset(),
     # §7.1 step 5: "the identity_events user.merge with the summary and the
     # reason" — summary is the counts-per-table dict the preview also shows.
@@ -85,6 +90,10 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     IdentityEventAction.GROUP_IMPORT: frozenset({"members"}),
     IdentityEventAction.GROUP_DISMISS: frozenset(),
     IdentityEventAction.GROUP_RESTORE: frozenset(),
+    # ADR 0095: `group` is the local group the IdP name now grants.
+    IdentityEventAction.GROUP_MAP: frozenset({"group"}),
+    # ADR 0095: `reason` is the join mode that refused (`invite`, `group`).
+    IdentityEventAction.ACCESS_REFUSED: frozenset({"reason"}),
 }
 
 #: Unconditional, whatever the action: the review's rule is "never a password,

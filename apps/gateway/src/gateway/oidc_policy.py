@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from gateway.config import OIDCSettings
-from gateway.models import OIDCPolicyConfig
+from gateway.models import Group, OIDCPolicyConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,26 +37,64 @@ DEFAULT_REFRESH_SECONDS = 10.0
 #: What a first-time sign-in does when provisioning is off. "refuse": the
 #: stranger is told to ask an administrator. "create_inactive": the account is
 #: created but disabled, waiting for an administrator to enable it.
+#: Legacy (ADR 0095): the fold still reads these columns, but new decisions
+#: are `join_mode` below.
 UNKNOWN_USER_POLICIES = ("refuse", "create_inactive")
+
+#: One answer to "who may join" (ADR 0095), for any issuer. `open` signs a
+#: stranger up at once; `approval` creates their account disabled for an
+#: administrator to enable; `invite` refuses anyone not pre-registered (or
+#: directory-created); `group` admits only carriers of a required group, on
+#: every sign-in and every `/v1` call.
+JOIN_MODES = ("open", "approval", "invite", "group")
+
+#: What a stranger without a required group gets in `group` mode.
+GROUP_FALLBACKS = ("refuse", "approval")
+
+
+def _legacy_from_join(join_mode: str, group_fallback: str) -> tuple[bool, str]:
+    """The old two-knob view of a join mode, for readers not yet converted.
+
+    One release only (ADR 0095): `oidc.py`'s gate still reads
+    `auto_provision`, and the console still saves it. `group` reads as
+    off-and-refusing, which fails closed until the gate step replaces it.
+    """
+    if join_mode == "open":
+        return True, "refuse"
+    if join_mode == "approval":
+        return False, "create_inactive"
+    return False, "refuse"
 
 
 @dataclass(frozen=True)
 class OIDCPolicy:
     """The policy in force on this worker."""
 
-    auto_provision: bool
-    unknown_user_policy: str
-    groups_claim: str
+    join_mode: str = "open"
+    required_groups: tuple[str, ...] = ()
+    group_fallback: str = "refuse"
+    groups_claim: str = "groups"
     #: IdP group name -> local group name. Unmapped groups keep their own name.
     group_mappings: dict[str, str] = field(default_factory=dict)
     #: Where each value came from — "environment" until a row carries one, and
     #: per field, because a row may answer one question and not the rest. The
     #: admin screen reports this, because "the console says X and the
-    #: environment says Y" is otherwise invisible.
+    #: environment says Y" is otherwise invisible. Only fields a row actually
+    #: decided carry a key; the legacy view below is derived, not decided.
     sources: dict[str, str] = field(default_factory=dict)
     config_id: object = None
     config_at: datetime | None = None
     config_reason: str = ""
+
+    @property
+    def auto_provision(self) -> bool:
+        """Legacy view (ADR 0095): derived from `join_mode`, one release."""
+        return _legacy_from_join(self.join_mode, self.group_fallback)[0]
+
+    @property
+    def unknown_user_policy(self) -> str:
+        """Legacy view (ADR 0095): derived from `join_mode`, one release."""
+        return _legacy_from_join(self.join_mode, self.group_fallback)[1]
 
     @property
     def source(self) -> str:
@@ -77,15 +115,62 @@ class OIDCPolicy:
                 seen.append(mapped)
         return seen
 
+    def map_claim_group_names(
+        self,
+        idp_names: list[str],
+        *,
+        allowlist: list[str] | None = None,
+        claim_source: bool = True,
+    ) -> list[str]:
+        """IdP group names from a sign-in's claims, to local names — the one
+        mapper both claim-bearing doors run (`sign_in` and the bearer sync),
+        so the gate's stranger check, the membership reconciliation and the
+        bearer path's divergence check all agree on what a claim named.
+
+        In `group` mode with a claim-source provider, an IdP name may resolve
+        to a REQUIRED local group only when it is a mapping key (resolving to
+        its target) or listed in the allowlist (resolving to itself): the
+        IdP's group namespace is user-writable — a GitLab user can create a
+        top-level group named exactly like a required local group — so an
+        unmapped name equal to a required local name is dropped here, before
+        any of the three sees it. Everything else maps as `map_group_names`
+        does: non-required names keep feeding model-access groups unchanged.
+        A directory-source provider drops nothing (`claim_source=False`): its
+        claims never reconcile into memberships, and its names arrive vouched
+        by the directory connection.
+        """
+        names = idp_names
+        if claim_source and self.join_mode == "group" and self.required_groups:
+            required = set(self.required_groups)
+            allowed = set(allowlist or ())
+            names = [
+                name
+                for name in names
+                if name not in required or name in self.group_mappings or name in allowed
+            ]
+        return self.map_group_names(names)
+
 
 def environment_policy(settings: OIDCSettings) -> OIDCPolicy:
     """The policy as the environment states it — the baseline every row folds onto."""
     return OIDCPolicy(
-        auto_provision=True,
-        unknown_user_policy="refuse",
+        join_mode=settings.join_mode,
+        required_groups=tuple(settings.required_groups),
+        group_fallback=settings.group_fallback,
         groups_claim=settings.groups_claim,
         group_mappings={},
     )
+
+
+def _legacy_join_mode(auto_provision: bool | None, unknown_user_policy: str | None) -> str:
+    """The join mode a legacy row's columns mean. `refuse` and silence both
+    read `invite`: refusing a stranger while nobody can be pre-registered was
+    the old behaviour, and pre-registration is what makes the name honest."""
+    if auto_provision:
+        return "open"
+    if unknown_user_policy == "create_inactive":
+        return "approval"
+    return "invite"
 
 
 def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OIDCPolicy:
@@ -94,10 +179,24 @@ def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OI
     Per-field: a null column defers. This is why the table can carry a row
     that changes one thing — the row never has to know the deployment's other
     answers to restate them.
+
+    For the join answer the fold tries, in order: the row's `join_mode`, the
+    row's legacy columns, the environment (ADR 0095 §1).
     """
     base = environment_policy(settings)
     if row is None:
         return base
+
+    join_mode = row.join_mode
+    if join_mode is not None and join_mode not in JOIN_MODES:
+        # The database check constraint holds for anything written through the
+        # API; a hand-edited row does not get to crash every login. Env stands.
+        logger.warning("ignoring oidc_config row %s: join mode %r", row.id, join_mode)
+        join_mode = None
+    group_fallback = row.group_fallback
+    if group_fallback is not None and group_fallback not in GROUP_FALLBACKS:
+        logger.warning("ignoring oidc_config row %s: group fallback %r", row.id, group_fallback)
+        group_fallback = None
 
     unknown = row.unknown_user_policy
     if unknown is not None and unknown not in UNKNOWN_USER_POLICIES:
@@ -107,15 +206,27 @@ def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OI
         unknown = None
 
     sources: dict[str, str] = {}
-    auto_provision = base.auto_provision
-    if row.auto_provision is not None:
-        auto_provision = row.auto_provision
-        sources["auto_provision"] = "console"
-    if unknown is not None:
-        base_unknown = unknown
-        sources["unknown_user_policy"] = "console"
+    if join_mode is not None:
+        mode = join_mode
+        sources["join_mode"] = "console"
+    elif row.auto_provision is not None or unknown is not None:
+        mode = _legacy_join_mode(row.auto_provision, unknown)
+        if row.auto_provision is not None:
+            sources["auto_provision"] = "console"
+        if unknown is not None:
+            sources["unknown_user_policy"] = "console"
     else:
-        base_unknown = base.unknown_user_policy
+        mode = base.join_mode
+    if group_fallback is not None:
+        fallback = group_fallback
+        sources["group_fallback"] = "console"
+    else:
+        fallback = base.group_fallback
+    if row.required_groups is not None:
+        required = tuple(name for name in (str(n).strip() for n in row.required_groups) if name)
+        sources["required_groups"] = "console"
+    else:
+        required = base.required_groups
     groups_claim = base.groups_claim
     if row.groups_claim:
         groups_claim = row.groups_claim
@@ -134,8 +245,9 @@ def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OI
                     mappings[idp] = local
 
     return OIDCPolicy(
-        auto_provision=auto_provision,
-        unknown_user_policy=base_unknown,
+        join_mode=mode,
+        required_groups=required,
+        group_fallback=fallback,
         groups_claim=groups_claim,
         group_mappings=mappings,
         sources=sources,
@@ -165,6 +277,7 @@ class OIDCPolicyResolver:
         self._session_factory = session_factory
         self._refresh_seconds = refresh_seconds
         self._policy = environment_policy(settings)
+        self._warned_missing_groups: frozenset[str] = frozenset()
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -184,7 +297,26 @@ class OIDCPolicyResolver:
                     select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc()).limit(1)
                 )
             ).scalar_one_or_none()
-        self._policy = effective_policy(self._settings, row)
+            policy = effective_policy(self._settings, row)
+            # Console-saved names are validated at PUT, but the group can be
+            # deleted afterwards — and env names have no PUT gate at all — so
+            # the load warns for whatever the folded policy names that does
+            # not exist. Warned once per distinct set: the poll runs every ten
+            # seconds and must not spam the log. No required names, no query.
+            required = policy.required_groups
+            local_names: set[str] = set()
+            if required:
+                local_names = set((await session.execute(select(Group.name))).scalars().all())
+        self._policy = policy
+        missing = frozenset(n for n in required if n not in local_names)
+        if missing and missing != self._warned_missing_groups:
+            logger.warning(
+                "The identity policy's required groups name unknown groups: %s. The "
+                "group gate admits nobody under those names — import the directory "
+                "name or map it to a local group first.",
+                ", ".join(sorted(missing)),
+            )
+        self._warned_missing_groups = missing
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._poll_forever())

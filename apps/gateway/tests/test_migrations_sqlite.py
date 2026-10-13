@@ -17,6 +17,8 @@ import sys
 from contextlib import closing
 from pathlib import Path
 
+import pytest
+
 _INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 # Dropped by 0035, when the vector store moved to the chat.
@@ -84,3 +86,36 @@ def test_0056_seen_groups_round_trips_on_sqlite(tmp_path: Path) -> None:
     tables, columns = schema()
     assert not {"seen_groups", "seen_group_users"} & tables
     assert not {"unresolved_group_names", "default_group_granted_at"} & columns
+
+
+def test_0057_join_modes_and_invites_round_trips_on_sqlite(tmp_path: Path) -> None:
+    """0057's columns arrive with their check constraints (including on the
+    batch-recreated `oidc_config`, whose 0018 constraint must survive), and
+    its downgrade leaves 0056."""
+    database = tmp_path / "join.db"
+    url = f"url=sqlite+aiosqlite:///{database}"
+    assert _alembic("-x", url, "upgrade", "0057").returncode == 0
+
+    with closing(sqlite3.connect(database)) as connection:
+        policy_columns = {row[1] for row in connection.execute("PRAGMA table_info(oidc_config)")}
+        user_columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
+        assert {"join_mode", "required_groups", "group_fallback"} <= policy_columns
+        assert {"invited_at", "invited_by"} <= user_columns
+        with pytest.raises(sqlite3.IntegrityError, match="ck_oidc_config_join_mode"):
+            connection.execute(
+                "INSERT INTO oidc_config (id, created_at, join_mode) VALUES "
+                "(lower(hex(randomblob(16))), '2026-10-12', 'nonsense')"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="ck_oidc_config_unknown_user_policy"):
+            connection.execute(
+                "INSERT INTO oidc_config (id, created_at, unknown_user_policy) VALUES "
+                "(lower(hex(randomblob(16))), '2026-10-12', 'nonsense')"
+            )
+
+    result = _alembic("-x", url, "downgrade", "0056")
+    assert result.returncode == 0, result.stderr[-2000:]
+    with closing(sqlite3.connect(database)) as connection:
+        policy_columns = {row[1] for row in connection.execute("PRAGMA table_info(oidc_config)")}
+        user_columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
+    assert not {"join_mode", "required_groups", "group_fallback"} & policy_columns
+    assert not {"invited_at", "invited_by"} & user_columns

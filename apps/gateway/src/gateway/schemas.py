@@ -1283,6 +1283,14 @@ class SeenGroupImportResponse(BaseModel):
     applied: Literal["now", "next_login"]
 
 
+class SeenGroupMapRequest(BaseModel):
+    """``POST /admin/groups/seen/{id}/map``: the IdP name now grants this
+    local group (ADR 0095 §4), instead of importing as a same-named one."""
+
+    group_id: uuid.UUID
+    reason: str = Field(default="", max_length=500)
+
+
 class GroupSearchBackendRequest(BaseModel):
     """Point a group's unified-search policy at a backend, or clear it.
 
@@ -1341,6 +1349,13 @@ class UserAdminResponse(BaseModel):
     default_billing_group: str | None
     active_key_count: int
     last_login_at: datetime | None
+    #: Who deactivated the account ("manual", "directory", or "approval" for
+    #: the join queue). The console's Awaiting-approval badge reads this, not
+    #: bare inactivity.
+    deactivated_by: str | None = None
+    #: When this person was invited (ADR 0095). The console's Invited badge
+    #: and its expiry marker read this.
+    invited_at: datetime | None = None
     #: Set only by `PATCH /admin/users/{id}` when it just tried to sync
     #: Authelia's own `disabled` flag and that write failed — the gateway
     #: side of the same action already stands regardless. `None` on a
@@ -1350,6 +1365,15 @@ class UserAdminResponse(BaseModel):
     #: retry (ADR 0093 §9.1).
     authelia_sync: Literal["failed"] | None = None
     authelia_sync_message: str | None = None
+
+
+class UserStatusCounts(BaseModel):
+    """The Users page's filter-chip counts (ADR 0095 §7)."""
+
+    awaiting_approval: int = 0
+    invited: int = 0
+    active: int = 0
+    disabled: int = 0
 
 
 def _clean_optional_text(value: str | None) -> str | None:
@@ -1437,6 +1461,51 @@ class BundledUserCreatedResponse(UserAdminResponse):
     """Includes the one-time password, shown once (§8.1)."""
 
     password: str
+
+
+class UserCreateRequest(BaseModel):
+    """``POST /admin/users`` for either account backend (ADR 0095).
+
+    The bundled Authelia backend needs ``login`` (and makes the password);
+    every other provider invites by email and the login is refused — it is
+    the directory's to mint, not the console's. ``send_email`` pastes nothing:
+    it sends the invite text through the configured SMTP, and is refused when
+    mail is not configured.
+    """
+
+    login: str | None = Field(default=None, max_length=64)
+    display_name: str = Field(default="", max_length=255)
+    email: str | None = Field(default=None, max_length=320)
+    groups: list[str] = Field(default_factory=list, max_length=100)
+    send_email: bool = False
+
+
+class InvitedUserResponse(BaseModel):
+    """An invitation for a provider that creates no logins (ADR 0095).
+
+    ``sign_in_url`` is where the invitee signs in: the chat when one is
+    deployed, else the console. ``invite_text`` is the ready-to-paste
+    paragraph; ``email_sent`` says whether ``send_email`` delivered it.
+    """
+
+    user: UserAdminResponse
+    sign_in_url: str
+    invite_text: str
+    email_sent: bool = False
+    # Set when `send_email` was asked for but delivery failed: the invitation
+    # itself stands (201), and the console falls back to Copy invite text.
+    email_error: str | None = None
+
+
+class InviteTextResponse(BaseModel):
+    """A regenerated invitation text (ADR 0095).
+
+    Re-issuing re-stamps ``invited_at``: copying the text to resend it *is*
+    re-inviting, and an expired invite becomes claimable again.
+    """
+
+    sign_in_url: str
+    invite_text: str
 
 
 class SignInCreateRequest(BaseModel):
@@ -1568,6 +1637,14 @@ class OidcPolicyUpdateRequest(BaseModel):
     # Only meaningful while auto-provisioning is off; the API refuses it
     # alongside `auto_provision: true`, where it would silently never apply.
     unknown_user_policy: Literal["refuse", "create_inactive"] | None = None
+    # ADR 0095: one join mode supersedes the two knobs above. Refused
+    # alongside either of them in the same payload, where it would silently
+    # win and they would silently never apply.
+    join_mode: Literal["open", "approval", "invite", "group"] | None = None
+    # The local group names `group` mode admits. Only meaningful in `group`
+    # mode; the API refuses it (and `group_fallback`) elsewhere.
+    required_groups: list[str] | None = None
+    group_fallback: Literal["refuse", "approval"] | None = None
     groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
     group_mappings: list[OidcMappingRule] | None = None
     reason: str = Field(default="", max_length=500)
@@ -1579,11 +1656,31 @@ class OidcPolicyChange(BaseModel):
     changed_by: str | None = None
 
 
+class OidcPolicyPreviewResponse(BaseModel):
+    """What switching to `group` mode with these required groups would do
+    (ADR 0095 §7): people counted over effective memberships, in SQL.
+
+    ``would_be_refused`` counts active, non-admin accounts holding none of
+    the named (active) groups — the people who lose access at their next
+    request. ``admins_exempt`` counts the administrators the gate stands
+    aside for.
+    """
+
+    active_users: int
+    would_be_refused: int
+    admins_exempt: int
+
+
 class OidcPolicyResponse(BaseModel):
     """The policy in force on this worker, and where each part came from."""
 
     auto_provision: bool
     unknown_user_policy: Literal["refuse", "create_inactive"]
+    # ADR 0095: the join answer, and the group gate's local names. The two
+    # fields above are the derived legacy view, kept one release.
+    join_mode: str
+    required_groups: list[str] = []
+    group_fallback: str = "refuse"
     groups_claim: str
     group_mappings: list[OidcMappingRule]
     # "console" when any field is a stored decision, "environment" otherwise;

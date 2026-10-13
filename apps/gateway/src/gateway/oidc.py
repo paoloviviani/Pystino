@@ -39,7 +39,7 @@ import logging
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -54,8 +54,18 @@ from sqlalchemy.orm import selectinload
 from gateway.config import OIDCSettings, Settings
 from gateway.deployment_state import get_or_create_deployment_state, mark_bootstrap_consumed
 from gateway.email_normalize import is_trusted_email, normalize_email
+from gateway.errors import OutsideAccessGroupsError
 from gateway.group_import import grant_default_group, record_unresolved
 from gateway.identity_events import record_event
+from gateway.join_gate import (
+    _matches_claim_rule,
+    _matches_email_rule,
+    exempt,
+    holds_required_group,
+    provider_label,
+    refusal_text,
+    stranger_passes,
+)
 from gateway.models import (
     DirectoryEntry,
     Group,
@@ -110,6 +120,10 @@ class OIDCMetadata:
     # Present when the provider supports the device flow; recorded now because
     # Phase 4 will need it and discovery is already being parsed.
     device_authorization_endpoint: str | None = None
+    # What grants the provider says it honours. Absent means "not said" — the
+    # device authorization endpoint's presence is the requirement; this list,
+    # when published, is the second witness `idp check` reports against.
+    grant_types_supported: tuple[str, ...] | None = None
     # RP-initiated logout. Optional in the spec, so a provider without it means
     # the gateway can only drop its own session — see `logout`.
     end_session_endpoint: str | None = None
@@ -281,6 +295,12 @@ class OIDCClient:
                 jwks_uri=self._backchannel_url(document["jwks_uri"]) or "",
                 userinfo_endpoint=self._backchannel_url(document.get("userinfo_endpoint")),
                 device_authorization_endpoint=document.get("device_authorization_endpoint"),
+                grant_types_supported=(
+                    tuple(document["grant_types_supported"])
+                    if isinstance(document.get("grant_types_supported"), list)
+                    and all(isinstance(g, str) for g in document["grant_types_supported"])
+                    else None
+                ),
                 end_session_endpoint=document.get("end_session_endpoint"),
                 introspection_endpoint=self._backchannel_url(
                     document.get("introspection_endpoint")
@@ -607,6 +627,11 @@ class OIDCClient:
 # made an administrator ahead of time (§5.4): an invite is not a grant.
 PENDING_USER_ISSUER = "pystino:pending"
 
+#: How long an invitation stays claimable (ADR 0095, the owner's decision).
+#: An older invite behaves as no invite under the join gate; re-issuing (the
+#: invite-text endpoint) re-stamps `invited_at`.
+INVITE_EXPIRY_DAYS = 14
+
 #: Serializes every last-admin guard against its peers until the surrounding
 #: transaction commits, so concurrent demotes/disables cannot both pass the
 #: check (ADR 0093 §5.5). Postgres only; arbitrary but fixed, and distinct
@@ -756,6 +781,95 @@ async def bind_bundled_login(
         issuer=issuer,
         subject=subject,
     )
+
+
+async def claim_pending_by_email(
+    session: AsyncSession,
+    record: IdentityProvider,
+    *,
+    issuer: str,
+    subject: str,
+    email: str | None,
+    email_verified: object,
+) -> User | None:
+    """Claim an invitation by verified email (ADR 0095 §2).
+
+    Runs in `sign_in` right after `bind_bundled_login`, before the
+    link-by-email block: a hit means `provision_user` finds an existing
+    person instead of creating one, so the join gate is never consulted for
+    someone an administrator vouched for. Never from the plain `/v1` path —
+    bearer claims may lack `email_verified`, and a sign-in to the chat or
+    console is what "sign in once" means. (Galopin enrolment already implies
+    a chat sign-in.)
+
+    Each refusal logs a WARNING naming its own number, like `link_by_email`.
+    Provider caveat, documented not solved: Entra ID sends no
+    `email_verified`, so its email claim cannot be trusted for matching
+    (nOAuth-class risk) — for Entra, use SCIM (pre-created by `oid`), or
+    `approval`.
+    """
+    # Self-gating: the bundled path is `bind_bundled_login`.
+    if record.kind == "authelia":
+        return None
+    # ... and an identity already known here needs no claim.
+    known = (await session.execute(_identity_select(issuer, subject))).scalar_one_or_none()
+    if known is not None:
+        return None
+    if email_verified is not True:
+        logger.warning("pending-claim declined (1): email_verified is not the literal true")
+        return None
+    claim_email, trusted = is_trusted_email(email or "")
+    if not trusted:
+        logger.warning("pending-claim declined (2): %r is not a trusted ASCII address", email)
+        return None
+    candidates = (
+        (
+            await session.execute(
+                select(User).where(
+                    User.issuer == PENDING_USER_ISSUER, User.email_normalized == claim_email
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(candidates) != 1:
+        logger.warning(
+            "pending-claim declined (3): %d pending account(s) hold %r, need exactly one",
+            len(candidates),
+            claim_email,
+        )
+        return None
+    target = candidates[0]
+    if not target.is_active:
+        logger.warning("pending-claim declined (4): %s is not active", target.id)
+        return None
+    if target.invited_at is None:
+        # A bundled pending account, not an invitation: `bind_bundled_login`
+        # owns that claim, and its directory entry already binds the user.
+        logger.warning("pending-claim declined (5): %s is not an invitation", target.id)
+        return None
+    if target.invited_at + timedelta(days=INVITE_EXPIRY_DAYS) < utcnow():
+        logger.warning("pending-claim declined (6): %s's invitation expired", target.id)
+        return None
+    # The same replacement the PENDING branch of `bind_bundled_login` does:
+    # the placeholder pair becomes the real one, in place, memberships kept.
+    target.issuer = issuer
+    target.subject = subject
+    await session.flush()
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.LOGIN,
+        actor_label=claim_email,
+        action=IdentityEventAction.IDENTITY_BIND,
+        target_user_id=target.id,
+        target_label=claim_email,
+        issuer=issuer,
+        subject=subject,
+        detail={"pending_claim": True},
+    )
+    logger.info("pending-claim: %s/%s claimed the invitation for %s", issuer, subject, claim_email)
+    return target
 
 
 async def claim_unbound_bundled_login(
@@ -946,6 +1060,10 @@ async def provision_user(
     group_source: str = "claim",
     claims: dict[str, Any] | None = None,
     group_mappings: dict[str, str] | None = None,
+    #: The `<provider>` refusal texts name (`join_gate.provider_label` of the
+    #: record's kind). Absent — `/v1`, whose caller has no record — the text
+    #: reads "identity provider".
+    idp_label: str | None = None,
 ) -> User:
     """Create or update a user and reconcile their group memberships.
 
@@ -985,27 +1103,48 @@ async def provision_user(
     # see it (stage (c) restores the adopted case).
     first_login_here = user is None
 
-    if user is None and policy is not None and not policy.auto_provision:
-        # Automatic provisioning is off (ADR 0048). Two answers, the operator's
-        # choice: refuse the stranger outright, or create the account *inactive*
-        # so an administrator can enable it — nobody signs in as a user nobody
-        # has looked at, but the request is a name on a list rather than a
-        # refusal to re-type next week.
-        if policy.unknown_user_policy == "create_inactive":
+    if user is None and policy is not None:
+        # ADR 0095: one join answer for strangers. An env admin rule vouches
+        # for this stranger — the rule promotes them below as today, so the
+        # gate stands aside first (`email_rule` follows `touch_login`: a
+        # bearer claim set may not carry `email_verified`'s literal boolean).
+        mode = policy.join_mode
+        if exempt(
+            None, claims, settings, group_mappings=group_mappings, email_rule=touch_login
+        ) or (mode == "group" and stranger_passes(group_names, frozenset(policy.required_groups))):
+            mode = "open"
+        if mode == "approval" or (mode == "group" and policy.group_fallback == "approval"):
+            # An inactive account waiting for an administrator — nobody signs
+            # in as a user nobody has looked at, but the request is a name on
+            # the approval queue rather than a refusal to re-type next week.
             user = User(
                 issuer=issuer,
                 subject=subject,
                 email=email,
+                email_normalized=normalize_email(email) if email else None,
                 display_name=display_name,
                 username=username,
                 is_active=False,
+                deactivated_by="approval",
             )
             session.add(user)
             await session.flush()
-        else:
+        elif mode != "open":
+            # invite, or group without a required group (and no approval
+            # fallback). Audited only at a sign-in door: `/v1` carries no
+            # login, and its bearer path must stay write-free.
+            if touch_login:
+                await record_event(
+                    session,
+                    actor_type=IdentityEventActor.LOGIN,
+                    actor_label=email or subject,
+                    action=IdentityEventAction.ACCESS_REFUSED,
+                    issuer=issuer,
+                    subject=subject,
+                    detail={"reason": mode},
+                )
             raise ProvisioningRefused(
-                "Automatic account creation is turned off. Ask an administrator "
-                "to create your account, then sign in again."
+                refusal_text(mode, email=email, provider=idp_label or provider_label(None))
             )
 
     if user is None:
@@ -1208,34 +1347,6 @@ async def apply_admin_answer(session: AsyncSession, user: User, is_admin: bool) 
     user.is_admin = False
     user.admin_rule = None
     return "revoked"
-
-
-def _matches_email_rule(claims: dict[str, Any], settings: OIDCSettings) -> bool:
-    """ADR 0093 §5.1. The literal boolean, an ASCII address, and list
-    membership — all three, or it does not grant."""
-    allowed = settings.admin_email_list()
-    if not allowed or claims.get("email_verified") is not True:
-        return False
-    email = claims.get("email")
-    if not isinstance(email, str):
-        return False
-    normalized, trusted = is_trusted_email(email)
-    if not trusted:
-        return False
-    return normalized in {normalize_email(candidate) for candidate in allowed}
-
-
-def _matches_claim_rule(
-    claims: dict[str, Any], settings: OIDCSettings, mappings: dict[str, str] | None
-) -> bool:
-    """ADR 0093 §5.2. The existing `AdminRule` shape, fed from `.env`."""
-    values = settings.admin_claim_value_list()
-    if not (settings.admin_claim and values):
-        return False
-    from gateway.identity_policy import AdminRule
-
-    rule = AdminRule(claim=settings.admin_claim, values=frozenset(values))
-    return rule.matches(claims, mappings)
 
 
 async def apply_env_admin_rules(
@@ -1504,7 +1615,11 @@ async def sign_in(
 
     groups = extract_groups(claims, settings.oidc, policy)
     if policy is not None:
-        groups = policy.map_group_names(groups)
+        groups = policy.map_claim_group_names(
+            groups,
+            allowlist=settings.oidc.group_allowlist,
+            claim_source=record.group_source == "claim",
+        )
 
     # ADR 0093 §8.2: a console-created account's login claims this identity
     # by login name and verified email, before anything below gets a chance
@@ -1516,6 +1631,19 @@ async def sign_in(
         subject=subject,
         preferred_username=preferred_username,
         email=email,
+        email_verified=email_verified,
+    )
+
+    # ADR 0095 §2: an invitation claims itself by verified email, before
+    # anything below gets a chance to treat it as a stranger. A hit means
+    # `provision_user` finds an existing person, so the join gate is never
+    # consulted for someone an administrator vouched for.
+    await claim_pending_by_email(
+        session,
+        record,
+        issuer=issuer,
+        subject=subject,
+        email=email if isinstance(email, str) else None,
         email_verified=email_verified,
     )
 
@@ -1551,6 +1679,7 @@ async def sign_in(
         group_source=record.group_source,
         claims=claims,
         group_mappings=policy.group_mappings if policy is not None else None,
+        idp_label=provider_label(record.kind),
     )
 
     # ADR 0093 §13.4/§8.2: a migration-created, unbound login claims itself
@@ -1594,6 +1723,37 @@ async def sign_in(
         kind=settings.oidc.kind,
     )
 
+    # ADR 0095: in `group` mode the gate answers on every sign-in, not just
+    # the first — losing the group refuses access dynamically, regaining it
+    # restores access, and the gate never writes `is_active` (deprovisioning
+    # stays the directory sync's job). After the bootstrap promotion so a
+    # just-promoted first administrator is exempt; administrators never meet
+    # the gate. The refresh re-reads memberships the linking above may have
+    # granted — a sign-in is not the hot path, so one query is affordable.
+    if (
+        policy is not None
+        and policy.join_mode == "group"
+        and user.is_active
+        and not exempt(user, claims, settings.oidc, group_mappings=policy.group_mappings)
+    ):
+        # Re-read memberships the linking above may have granted — a sign-in
+        # is not the hot path, so one query is affordable.
+        await session.refresh(user, attribute_names=["memberships"])
+        if not holds_required_group(user, frozenset(policy.required_groups)):
+            await record_event(
+                session,
+                actor_type=IdentityEventActor.LOGIN,
+                actor_label=email or subject,
+                action=IdentityEventAction.ACCESS_REFUSED,
+                target_user_id=user.id,
+                issuer=issuer,
+                subject=subject,
+                detail={"reason": "group"},
+            )
+            raise ProvisioningRefused(
+                refusal_text("group_lost", email=None, provider=provider_label(record.kind))
+            )
+
     return SignInResult(user=user, groups=groups)
 
 
@@ -1606,6 +1766,7 @@ async def sync_user_from_claims(
     group_sync: GroupSync = GroupSync.EVERY_LOGIN,
     group_source: str = "claim",
     group_mappings: dict[str, str] | None = None,
+    idp_label: str | None = None,
 ) -> User:
     """Resolve an access token's claims to the user row it names.
 
@@ -1636,7 +1797,11 @@ async def sync_user_from_claims(
     # Mapping first (ADR 0048): the rest of the flow — reconciliation,
     # divergence, admin — speaks local names only.
     group_names = (
-        policy.map_group_names(extract_groups(claims, settings, policy))
+        policy.map_claim_group_names(
+            extract_groups(claims, settings, policy),
+            allowlist=settings.group_allowlist,
+            claim_source=group_source == "claim",
+        )
         if policy is not None
         else extract_groups(claims, settings)
     )
@@ -1679,9 +1844,13 @@ async def sync_user_from_claims(
         )
         and not _admin_diverges(user, claims, group_sync, settings, group_mappings)
     ):
+        # ADR 0095: the group gate on the steady-state path — no divergence,
+        # so no reconciliation ran, and the memberships above are already
+        # loaded: this check costs no query and writes nothing.
+        _refuse_outside_groups(user, claims, settings, policy, group_mappings, group_source)
         return user
 
-    return await provision_user(
+    user = await provision_user(
         session,
         issuer=issuer,
         subject=subject,
@@ -1696,7 +1865,39 @@ async def sync_user_from_claims(
         group_source=group_source,
         claims=claims,
         group_mappings=group_mappings,
+        idp_label=idp_label,
     )
+    # ... and after provisioning settled whatever diverged. A stranger the
+    # gate refused never reaches here (`provision_user` raised); an existing
+    # account whose memberships just reconciled meets the same check.
+    _refuse_outside_groups(user, claims, settings, policy, group_mappings, group_source)
+    return user
+
+
+def _refuse_outside_groups(
+    user: User,
+    claims: dict[str, Any],
+    settings: OIDCSettings,
+    policy: OIDCPolicy | None,
+    group_mappings: dict[str, str] | None,
+    group_source: str,
+) -> None:
+    """The group gate for the `/v1` bearer path (ADR 0095), both return paths.
+
+    Refused with 403 `outside_access_groups`, never the 401 "Invalid API
+    key": the caller is authenticated, and a 401 would make Cerea's machine
+    revalidation revoke the device permanently for a loss that regaining the
+    group restores. No audit write here: this path must stay write-free in
+    steady state.
+    """
+    if (
+        policy is not None
+        and policy.join_mode == "group"
+        and user.is_active
+        and not exempt(user, claims, settings, group_mappings=group_mappings, email_rule=False)
+        and not holds_required_group(user, frozenset(policy.required_groups))
+    ):
+        raise OutsideAccessGroupsError(refusal_text("group_lost", email=None, provider=""))
 
 
 def _admin_diverges(

@@ -39,6 +39,12 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual") {
           members_added: 12,
           applied: "now",
         });
+      if (url.endsWith("/map"))
+        return jsonResponse({
+          group: { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, member_count: 3, models: [], search_backend: null },
+          members_added: 2,
+          applied: "now",
+        });
       return new Response(null, { status: 204 });
     }
     if (url.includes("/api/admin/groups/seen"))
@@ -50,7 +56,33 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual") {
         group_import: mode,
         default_group: "users",
       });
-    if (url.includes("/api/admin/groups")) return jsonResponse([]);
+    if (url.includes("/api/admin/oidc/policy") && method === "PUT")
+      return jsonResponse({ group_mappings: [] });
+    if (url.includes("/api/admin/oidc/policy"))
+      return jsonResponse({
+        auto_provision: true,
+        unknown_user_policy: "refuse",
+        join_mode: "open",
+        required_groups: [],
+        group_fallback: "refuse",
+        groups_claim: "groups",
+        group_mappings: [
+          { idp: "gitlab/old", local: "engineering" },
+        ],
+        source: "console",
+        sources: { group_mappings: "console" },
+        configured: null,
+        propagation_seconds: 10,
+      });
+    if (url.includes("/api/admin/groups"))
+      return jsonResponse({
+        items: [
+          { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, member_count: 1, models: [], search_backend: null },
+        ],
+        total: 1,
+        limit: 50,
+        offset: 0,
+      });
     return jsonResponse([]);
   });
 }
@@ -75,7 +107,7 @@ describe("AdminGroups — seen from your identity provider", () => {
     vi.stubGlobal("fetch", routes([seen(), seen({ id: "s2", name: "gitlab/ops", people: 1 })]));
     renderScreen();
 
-    const section = (await screen.findByText("Seen from your identity provider")).closest("section")!;
+    const section = (await screen.findByText("Groups from your identity provider")).closest("section")!;
     await waitFor(() => expect(within(section).getByText("gitlab/eng")).toBeInTheDocument());
     expect(within(section).getByText("12")).toBeInTheDocument();
     expect(within(section).getByText(/Nothing is created until you import it/)).toBeInTheDocument();
@@ -110,7 +142,7 @@ describe("AdminGroups — seen from your identity provider", () => {
       ),
     );
 
-    await user.click(screen.getAllByRole("button", { name: "Dismiss" })[0]!);
+    await user.click(screen.getAllByRole("button", { name: "Ignore" })[0]!);
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining("/api/admin/groups/seen/s1/dismiss"),
@@ -125,7 +157,7 @@ describe("AdminGroups — seen from your identity provider", () => {
     const user = userEvent.setup();
     renderScreen();
 
-    const section = (await screen.findByText("Seen from your identity provider")).closest("section")!;
+    const section = (await screen.findByText("Groups from your identity provider")).closest("section")!;
     await user.type(within(section).getByLabelText("Search"), "ops");
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith(
@@ -141,5 +173,62 @@ describe("AdminGroups — seen from your identity provider", () => {
         expect.anything(),
       ),
     );
+  });
+});
+
+describe("SeenGroups: map to existing (ADR 0095)", () => {
+  it("maps a seen name to an existing group through the map route", async () => {
+    const fetchMock = routes([seen()]);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderScreen();
+
+    await screen.findByText("gitlab/eng");
+    // The policy's existing mappings render with their Unmap.
+    expect(await screen.findByText("gitlab/old")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Unmap gitlab/old" })).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("button", { name: "Map…" })[0]!);
+    const dialog = screen.getByRole("dialog");
+    await user.selectOptions(
+      within(dialog).getByLabelText(/Local group/),
+      "g2",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Map" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/admin/groups/seen/s1/map"),
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    const call = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("/seen/s1/map"),
+    );
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      group_id: "g2",
+      reason: "",
+    });
+  });
+
+  it("unmaps through the policy PUT, dropping only that pair", async () => {
+    const fetchMock = routes([seen()]);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderScreen();
+
+    await user.click(await screen.findByRole("button", { name: "Unmap gitlab/old" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/admin/oidc/policy"),
+        expect.objectContaining({ method: "PUT" }),
+      ),
+    );
+    const call = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).includes("/oidc/policy") && (init as RequestInit).method === "PUT",
+    );
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      group_mappings: [],
+      reason: "Unmapped gitlab/old",
+    });
   });
 });

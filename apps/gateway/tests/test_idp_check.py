@@ -39,7 +39,16 @@ def _discovery(issuer: str, *, device: bool = False) -> dict[str, object]:
     }
     if device:
         doc["device_authorization_endpoint"] = f"{issuer}/device"
+        doc["grant_types_supported"] = [
+            "authorization_code",
+            "refresh_token",
+            "urn:ietf:params:oauth:grant-type:device_code",
+        ]
+    doc["introspection_endpoint"] = f"{issuer}/oauth/introspect"
     return doc
+
+
+_MISSING = object()
 
 
 def _make_token(key: RSAKey, **overrides: object) -> str:
@@ -56,6 +65,7 @@ def _make_token(key: RSAKey, **overrides: object) -> str:
         "groups": ["ops"],
     }
     claims.update(overrides)
+    claims = {k: v for k, v in claims.items() if v is not _MISSING}
     return jwt.encode({"alg": "RS256", "kid": key.kid}, claims, key)
 
 
@@ -65,9 +75,19 @@ class FakeIdp:
     depend on a slow real one succeeding first.
     """
 
-    def __init__(self, key: RSAKey, *, device: bool = False, wrong_issuer: bool = False) -> None:
+    def __init__(
+        self,
+        key: RSAKey,
+        *,
+        device: bool = True,
+        wrong_issuer: bool = False,
+        grant_types: list[str] | None = None,
+    ) -> None:
         self.key = key
         self.device = device
+        # An override for testing an issuer whose grant list omits the device
+        # flow while still publishing the endpoint.
+        self.grant_types = grant_types
         self.wrong_issuer = wrong_issuer
         self.requests: list[httpx.Request] = []
         self._polls = 0
@@ -77,7 +97,10 @@ class FakeIdp:
         path = request.url.path
         if path.endswith("/.well-known/openid-configuration"):
             issuer = f"{ISSUER}-wrong" if self.wrong_issuer else ISSUER
-            return httpx.Response(200, json=_discovery(issuer, device=self.device))
+            doc = _discovery(issuer, device=self.device)
+            if self.grant_types is not None:
+                doc["grant_types_supported"] = self.grant_types
+            return httpx.Response(200, json=doc)
         if path.endswith("/jwks"):
             return httpx.Response(200, json=KeySet([self.key]).as_dict())
         if path.endswith("/userinfo"):
@@ -287,9 +310,73 @@ class TestDeviceFlow:
             http=httpx.AsyncClient(transport=httpx.MockTransport(idp)),
         )
         assert not report.ok
-        assert any(
-            "does not publish a device_authorization_endpoint" in line for line in report.lines
+        assert any("no device_authorization_endpoint in discovery" in line for line in report.lines)
+
+    async def test_a_grant_list_omitting_the_device_grant_fails_too(
+        self, signing_key: RSAKey
+    ) -> None:
+        """The endpoint alone is not enough: Infomaniak (2026-10-10) publishes
+        grants limited to password/refresh/code/token-exchange."""
+        idp = FakeIdp(
+            signing_key,
+            device=True,
+            grant_types=[
+                "authorization_code",
+                "refresh_token",
+                "password",
+                "urn:ietf:params:oauth:grant-type:token-exchange",
+            ],
         )
+        report = await run_check(
+            _settings(),
+            http=httpx.AsyncClient(transport=httpx.MockTransport(idp)),
+        )
+        assert not report.ok
+        assert any("grant_types_supported omits" in line for line in report.lines)
+
+    async def test_group_mode_on_a_doorkeeper_issuer_warns_about_group_names(
+        self, signing_key: RSAKey
+    ) -> None:
+        """ADR 0095 review: GitLab users can create top-level groups, so a
+        required name must be mapped or allowlisted — the check says so."""
+        idp = FakeIdp(signing_key)
+        report = await run_check(
+            _settings(join_mode="group", required_groups=["staff"]),
+            http=httpx.AsyncClient(transport=httpx.MockTransport(idp)),
+        )
+        assert any("not trusted for the gate until it is mapped" in line for line in report.lines)
+
+    async def test_the_group_name_warning_names_nothing_but_group_mode(
+        self, signing_key: RSAKey
+    ) -> None:
+        idp = FakeIdp(signing_key)
+        report = await run_check(
+            _settings(join_mode="invite"),
+            http=httpx.AsyncClient(transport=httpx.MockTransport(idp)),
+        )
+        assert not any("not trusted for the gate" in line for line in report.lines)
+
+    async def test_the_join_mode_is_reported(self, signing_key: RSAKey) -> None:
+        idp = FakeIdp(signing_key)
+        report = await run_check(
+            _settings(join_mode="invite"),
+            token=_make_token(signing_key),
+            http=httpx.AsyncClient(transport=httpx.MockTransport(idp)),
+        )
+        assert any("join mode: 'invite'" in line for line in report.lines)
+
+    async def test_invite_mode_warns_when_email_verified_is_absent(
+        self, signing_key: RSAKey
+    ) -> None:
+        idp = FakeIdp(signing_key)
+        report = await run_check(
+            _settings(join_mode="invite"),
+            # email_verified absent, not merely false: the sentinel pops it
+            # from the claim set.
+            token=_make_token(signing_key, email_verified=_MISSING),
+            http=httpx.AsyncClient(transport=httpx.MockTransport(idp)),
+        )
+        assert any("cannot match" in line and "SCIM or approval" in line for line in report.lines)
 
 
 async def test_discovery_only_stops_before_any_token_work(signing_key: RSAKey) -> None:

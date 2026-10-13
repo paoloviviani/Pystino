@@ -15,10 +15,9 @@ This page is everything the gateway decides *after* the provider has answered.
 One provider at a time, named by the `OIDC_*` variables of the deployment's
 `.env`. The gateway takes its settings from there **at every start** and
 rewrites its provider row to match, so the console shows the provider
-read-only. What the console edits is the rest of identity: the provisioning
-policy (who may come to exist, which claim names their groups, what an IdP
-group means here, under **Settings**) and the people themselves (the
-**Users** page).
+read-only. What the console edits is the rest of identity: the identity
+policy (who may join, which claim names their groups, what an IdP group
+means here) and the people themselves (the **Users** page).
 
 If you need several sources of users, federate them in your own IdP
 (Keycloak, Authentik and the like) and point the stack at it. **If you need
@@ -37,6 +36,9 @@ multi-factor authentication, that is also the IdP's job**: the bundled Authelia 
 | `OIDC_GROUP_SYNC` | `GATEWAY_OIDC__GROUP_SYNC` | how often the groups claim applies: `every_login`, `first_login` or `never` |
 | `OIDC_GROUP_IMPORT` | `GATEWAY_OIDC__GROUP_IMPORT` | what a claimed group name no group carries yet does: `manual` (default) lists it in the console to import, `auto` creates it ([Groups](#groups)) |
 | `OIDC_GROUP_ALLOWLIST` | `GATEWAY_OIDC__GROUP_ALLOWLIST` | advanced, optional: only these group names are considered at all; comma-separated or a JSON list, empty for every name |
+| `OIDC_JOIN_MODE` | `GATEWAY_OIDC__JOIN_MODE` | who may join: `open` (default), `approval`, `invite` or `group` ([Who may join](#who-may-join)); the console's Identity page can set it instead, and a decision there wins |
+| `OIDC_REQUIRED_GROUPS` | `GATEWAY_OIDC__REQUIRED_GROUPS` | `join_mode: group` only: the local group names that confer access, comma-separated |
+| `OIDC_GROUP_FALLBACK` | `GATEWAY_OIDC__GROUP_FALLBACK` | `join_mode: group` only: what a stranger without a required group gets, `refuse` (default) or `approval` |
 | `OIDC_DEFAULT_GROUP` | `GATEWAY_OIDC__DEFAULT_GROUP` | the group everyone joins once, `users` by default; empty turns it off ([the default group](#the-default-group)) |
 | `OIDC_LOGOUT_URL` | `GATEWAY_OIDC__LOGOUT_URL` | for an issuer without `end_session_endpoint`: where the browser is sent to end the IdP session; `{redirect}` is where to land |
 | `OIDC_SCOPES_JSON` | `GATEWAY_OIDC__SCOPES` | the scopes the console asks for, as a JSON list; `["openid","profile","email","groups"]` unless the issuer does not offer one ([the `groups` scope](oidc-generic-provider.md#providers-that-reject-the-groups-scope)). The deploy kit writes it from the issuer's discovery; `deploy/compose.yaml` here sets the default literally |
@@ -65,6 +67,9 @@ refuse to start:
 
 - half a claim pair (`OIDC_ADMIN_CLAIM` without `OIDC_ADMIN_CLAIM_VALUE`, or the reverse);
 - an audience set with the accepted-clients list empty;
+- `OIDC_JOIN_MODE=group` with no `OIDC_REQUIRED_GROUPS`: a group gate with no
+  groups refuses everyone who is not an administrator, including the account
+  that would fix it;
 - a removed variable still set — `GATEWAY_OIDC__LINK_LOCAL_BY_EMAIL=true`,
   `GATEWAY_LOCAL_AUTH__ENABLED=true`, `GATEWAY_IDP__ENABLED=true`,
   `GATEWAY_OIDC__ADMIN_GROUPS`, or any `GATEWAY_LOCAL_AUTH__PASSWORD_RESET__*`
@@ -111,10 +116,74 @@ deployment at that issuer again creates the row afresh.
 
 Every other row is disabled, and the start logs one line per disabled row
 with its user count. The console keeps editing what the environment does not
-own: the provisioning policy and its group mappings, and directory sync on
+own: the identity policy and its group mappings, and directory sync on
 the active row (an Authelia users-file or Keycloak-admin pull, and SCIM 2.0
 pushes at `/scim/v2/<provider>`; a first sync is a dry run until an
 administrator confirms it).
+
+## Who may join
+
+One answer governs what a stranger's first sign-in does, for any identity
+provider. The console's **Identity** page sets it as one radio choice, or
+the environment states it (`OIDC_JOIN_MODE`; the console's decision wins,
+within the ten seconds a saved policy takes to reach every worker):
+
+| `join_mode` | A stranger — an identity not yet known here — who signs in… | Existing users |
+|---|---|---|
+| `open` | gets an active account at once | unaffected |
+| `approval` | gets an account created **disabled**, shown on the Users page under *Awaiting approval* | unaffected |
+| `invite` | is refused **unless** pre-invited (below) or created by the directory | unaffected |
+| `group` | gets an active account **only if** their groups include one of `OIDC_REQUIRED_GROUPS`; otherwise they are refused, or held for approval (`OIDC_GROUP_FALLBACK`) | gated on every sign-in and every `/v1` call: they must hold a required group |
+
+Cross-cutting, the same in every mode:
+
+- **Pre-invited people always get in.** An invitation (`Users` → **Invite**)
+  creates a pending account with no login; the person's first sign-in claims
+  it by *verified* email, keeping the groups the administrator pre-assigned.
+  An invitation expires after 14 days — re-inviting (the invite-text button)
+  re-issues it.
+- **Administrators are never refused by the gate.** `is_admin` accounts and
+  anyone matching an env admin rule get in whatever the mode says, so a
+  misconfigured group mode cannot lock every administrator out. Break-glass
+  is unchanged.
+- **An IdP group name is not trusted until you vouch for it.** With a
+  claim-source provider (the default), a claimed group name reaches the
+  `group` gate only when it is explicitly mapped (Console → Groups) or listed
+  in `OIDC_GROUP_ALLOWLIST`: IdP group namespaces are user-writable — a
+  GitLab user can create a top-level group named exactly like your required
+  group — so an unmapped same-name claim is dropped at sign-in, before any
+  membership is created, and refused. Memberships the console
+  granted, and everything a directory (SCIM or pull) pushed, count as
+  before.
+- **The gate never disables an account.** Losing the last required group
+  refuses access dynamically; regaining it restores access. Taking an account
+  away stays the directory sync's job.
+- The refusal texts name no group, and Cerea shows them as they arrive: a
+  stranger in `invite` or `group` mode is told to ask an administrator, and
+  an approval-queue account is told its request is waiting, which reads
+  differently from plain "disabled".
+
+On `/v1` — the chat's API calls and galopin — the group gate answers too:
+an authenticated caller outside the required groups is refused with **403
+`outside_access_groups`**, never the 401 that would make Cerea revoke a
+machine for a loss that regaining the group reverses. Cerea closes the
+machine link (`4404`) without revoking the device, and it reconnects by
+itself once the person is back in a required group. API keys meet the same
+gate; administrators are exempt there as everywhere.
+
+**One group-mapping surface.** The Groups page's *Groups from your identity
+provider* panel lists every seen IdP name with one decision per row:
+**Import** as a new group, **Map** to an existing group (the IdP name then
+grants that group), or **Ignore**. Current mappings are listed with their
+**Unmap**. `OIDC_GROUP_ALLOWLIST` stays env-only, and `OIDC_GROUP_IMPORT`
+keeps its meaning.
+
+**Where the invite link points:** the gateway builds it from its own host —
+the chat at `/chat` when one is deployed, else the console at `/console`.
+A satellite whose chat runs on a different host than its gateway will hand
+invitees the gateway's address; sign in there once and the invitation is
+claimed regardless. (Known limit; re-issue the text and point people at the
+right host by hand for now.)
 
 ## Groups
 
@@ -136,13 +205,16 @@ groups. `OIDC_GROUP_IMPORT` decides what a claimed name that no group
 carries does at a sign-in:
 
 - **`manual`** (the default): nothing is created. The name is recorded per
-  provider, and the console's **Groups** page lists it under *Seen from your
-  identity provider*, searchable, with how many people carry it and when it
-  was last seen. **Import** creates the group (source `oidc`, the same name)
-  and grants it straight away to the people recorded as carrying it when the
-  provider's `group_sync` is `every_login`; otherwise they get it at their
-  next sign-in, and the console says which. **Dismiss** stops listing it
-  (*Show dismissed* lists those, to import or restore).
+  provider, and the console's **Groups** page lists it under *Groups from
+  your identity provider*, searchable, with how many people carry it and when
+  it was last seen. One decision per row: **Import** creates the group
+  (source `oidc`, the same name) and grants it straight away to the people
+  recorded as carrying it when the provider's `group_sync` is `every_login`;
+  otherwise they get it at their next sign-in, and the console says which.
+  **Map** grants an existing local group instead of creating a same-named
+  twin — the mapping is a new row on the identity policy's history, and
+  unmapping goes at each person's next sign-in. **Ignore** stops listing it
+  (*Show dismissed* lists those, to import, map or restore).
 - **`auto`**: every name becomes a group at first sight, as before.
 
 Groups that already exist are granted from the claim in both modes, and

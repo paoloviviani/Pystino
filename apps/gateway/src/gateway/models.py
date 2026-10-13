@@ -421,8 +421,11 @@ class User(Base):
     # scoped to one rule (§5.1: the email list) never touches what the other
     # granted. Null unless `admin_source == "env"`.
     admin_rule: Mapped[str | None] = mapped_column(String(8), default=None)
-    # Who deactivated the account: "manual" or "directory" (a sync saw the
-    # person gone). A directory may only reactivate what it deactivated.
+    # Who deactivated the account: "manual", "directory" (a sync saw the
+    # person gone), or "approval" (ADR 0095: an `approval`-mode sign-in
+    # created them disabled, waiting for an administrator to enable them — the
+    # existing enable path already clears this). A directory may only
+    # reactivate what it deactivated.
     deactivated_by: Mapped[str | None] = mapped_column(String(16), default=None)
 
     # The last sign-in's address, normalised (ADR 0093 §6.1), and whether that
@@ -467,6 +470,14 @@ class User(Base):
     #: Once only: set, the grant never runs again, so an administrator who
     #: takes someone out of that group is not overruled at their next sign-in.
     default_group_granted_at: Mapped[datetime | None] = mapped_column(default=None)
+    #: When this person was invited (ADR 0095), and by whom. Re-invite
+    #: re-stamps `invited_at`. An invite older than 14 days behaves as no
+    #: invite under the join gate. `ON DELETE SET NULL`: erasing the issuer
+    #: must not erase the invitee. Null for everyone never invited.
+    invited_at: Mapped[datetime | None] = mapped_column(default=None)
+    invited_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
 
     memberships: Mapped[list[Membership]] = relationship(
         back_populates="user", cascade="all, delete-orphan", lazy="selectin"
@@ -1716,6 +1727,9 @@ class IdentityEventAction(enum.StrEnum):
     USER_DISABLE = "user.disable"
     USER_ENABLE = "user.enable"
     USER_DELETE = "user.delete"
+    #: ADR 0095: an administrator invited a person who has never signed in
+    #: (any provider). `detail.groups` is the requested console groups.
+    USER_INVITE = "user.invite"
     ADMIN_GRANT = "admin.grant"
     ADMIN_REVOKE = "admin.revoke"
     ADMIN_REFUSED_LAST = "admin.refused_last"
@@ -1729,6 +1743,10 @@ class IdentityEventAction(enum.StrEnum):
     # user.enable standing for both halves of the action.
     LOGIN_ENABLE = "login.enable"
     IDENTITY_LINK = "identity.link"
+    # §13.4/§8.2: a migration-created, unbound entry claimed at its first
+    # real sign-in carries "claimed_unbound" so this row is distinguishable
+    # from the ordinary bind_bundled_login case, which never sees one.
+    # ADR 0095: an invite claimed by verified email carries "pending_claim".
     IDENTITY_BIND = "identity.bind"
     IDENTITY_DROP = "identity.drop"
     USER_MERGE = "user.merge"
@@ -1756,6 +1774,15 @@ class IdentityEventAction(enum.StrEnum):
     GROUP_IMPORT = "group.import"
     GROUP_DISMISS = "group.dismiss"
     GROUP_RESTORE = "group.restore"
+    #: ADR 0095: an IdP group name mapped to an existing local group instead
+    #: of imported. `detail.group` is the local group; the target label is the
+    #: IdP name. Plain VARCHAR(32) column, so no migration.
+    GROUP_MAP = "group.map"
+    # ADR 0095: the join gate refused a sign-in (a stranger in `invite` or
+    # `group` mode, or an account outside the required groups).
+    # `detail.reason` is the mode that refused. Plain VARCHAR(32) column, so
+    # no migration.
+    ACCESS_REFUSED = "access.refused"
 
 
 #: Raised by both dialects' triggers, so a caller sees the same reason whether
@@ -1996,11 +2023,24 @@ class OIDCPolicyConfig(Base):
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     #: Whether a first-time sign-in may create a user row. Null = env decides.
+    #: Superseded by `join_mode` (ADR 0095): kept one release so the console
+    #: and scripts that still speak this field do not break, then deleted. The
+    #: fold derives its value from `join_mode`; nothing writes it any more.
     auto_provision: Mapped[bool | None] = mapped_column(Boolean, default=None)
     #: What a first-time sign-in does when provisioning is off: "refuse" the
     #: stranger, or create the account inactive for an administrator to enable.
-    #: Only meaningful while ``auto_provision`` is false in force.
+    #: Only meaningful while ``auto_provision`` is false in force. Superseded
+    #: by `join_mode` (ADR 0095): same one-release stay as `auto_provision`.
     unknown_user_policy: Mapped[str | None] = mapped_column(String(16), default=None)
+    #: One answer to "who may join" (ADR 0095): `open`, `approval`, `invite`
+    #: or `group`. Null = the legacy columns of this same row decide, else the
+    #: environment. Wins over the legacy columns when both are set.
+    join_mode: Mapped[str | None] = mapped_column(String(16), default=None)
+    #: The local group names `group` mode admits. Null = env decides.
+    required_groups: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    #: What a stranger without a required group gets in `group` mode:
+    #: `refuse`, or an inactive account via `approval`. Null = env decides.
+    group_fallback: Mapped[str | None] = mapped_column(String(16), default=None)
     #: Which claim names the person's groups — every IdP puts them somewhere
     #: different (Keycloak "realm_access.roles", Entra "groups", dot-paths
     #: resolved like the env setting's). Null = env decides.

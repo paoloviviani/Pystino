@@ -26,11 +26,13 @@ import httpx
 
 from gateway.config import OIDCSettings, Settings
 from gateway.email_normalize import is_trusted_email, normalize_email
+from gateway.join_gate import (
+    _matches_claim_rule,
+    _matches_email_rule,
+)
 from gateway.oidc import (
     OIDCClient,
     OIDCError,
-    _matches_claim_rule,
-    _matches_email_rule,
     resolve_claim,
 )
 
@@ -78,6 +80,27 @@ async def check_discovery(client: OIDCClient, settings: OIDCSettings, report: Ch
         "  device_authorization_endpoint: "
         f"{metadata.device_authorization_endpoint or '(none published)'}"
     )
+    # ADR 0095: fail loudly. Without the device flow galopin cannot enroll —
+    # a machine has no browser — and the deployment only finds out at
+    # enrollment time otherwise. Infomaniak (2026-10-10) is the real case:
+    # no device endpoint, and grants limited to password/refresh/code/
+    # token-exchange.
+    if not metadata.device_authorization_endpoint:
+        report.fail(
+            "  device flow: MISSING — no device_authorization_endpoint in discovery; "
+            "galopin cannot enroll, so agent machines will not work with this issuer"
+        )
+    elif (
+        metadata.grant_types_supported is not None
+        and "urn:ietf:params:oauth:grant-type:device_code" not in metadata.grant_types_supported
+    ):
+        report.fail(
+            "  device flow: MISSING — grant_types_supported omits "
+            "urn:ietf:params:oauth:grant-type:device_code; galopin cannot enroll, "
+            "so agent machines will not work with this issuer"
+        )
+    else:
+        report.say("  device flow: available (galopin can enroll)")
     report.say(
         "  end_session_endpoint: "
         f"{metadata.end_session_endpoint or '(none published — see OIDC_LOGOUT_URL)'}"
@@ -89,6 +112,23 @@ async def check_discovery(client: OIDCClient, settings: OIDCSettings, report: Ch
         report.fail(f"  jwks: FAILED — {exc}")
         return False
     report.say(f"  jwks: {len(keys.keys)} key(s)")
+    # ADR 0095 review: GitLab (and any Doorkeeper IdP — the introspection
+    # path gives it away) lets users create top-level groups, so a required
+    # group name is not trusted until the operator vouches for it. The gate
+    # already refuses unmapped same-name claims; the warning is for the
+    # operator who configured the gate and wonders why nobody gets in.
+    doorkeeper = bool(
+        metadata.introspection_endpoint
+        and metadata.introspection_endpoint.rstrip("/").endswith("/oauth/introspect")
+    )
+    if settings.join_mode == "group" and (settings.kind == "gitlab" or doorkeeper):
+        report.say(
+            "  WARNING: join_mode is group on a Doorkeeper issuer (GitLab-shaped). "
+            "GitLab users can create top-level groups, so an IdP group name is "
+            "not trusted for the gate until it is mapped (Console → Groups) or "
+            "listed in GATEWAY_OIDC__GROUP_ALLOWLIST — an unmapped claim naming "
+            "a required group is refused."
+        )
     return True
 
 
@@ -169,6 +209,16 @@ async def check_token(
     email = claims.get("email")
     verified = claims.get("email_verified")
     report.say(f"  email: {email!r}, email_verified: {verified!r} ({type(verified).__name__})")
+    report.say(
+        f"  join mode: {settings.join_mode!r} (as GATEWAY_OIDC__JOIN_MODE; the console's "
+        "policy row may override it within ten seconds of a save)"
+    )
+    if settings.join_mode == "invite" and "email_verified" not in claims:
+        report.say(
+            "  WARNING: invite mode matches invitations by *verified* email, and this "
+            "provider's tokens carry no email_verified — pre-registration cannot match "
+            "this provider's users by email; use SCIM or approval"
+        )
     groups_value = resolve_claim(claims, settings.groups_claim)
     report.say(f"  groups claim {settings.groups_claim!r}: {groups_value!r}")
     aud = claims.get("aud")

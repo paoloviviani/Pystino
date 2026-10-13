@@ -67,6 +67,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.deps import AuthenticatedCallerDep, SessionDep, SettingsDep, validate_bearer_token
 from gateway.errors import AuthenticationError, PermissionError_, TooManyRequestsError
+from gateway.join_gate import refusal_text
 from gateway.merges import resolve_merged_from
 from gateway.models import User, UserIdentity
 from gateway.oidc import OIDCError, ProvisioningRefused, sign_in
@@ -166,6 +167,8 @@ async def announce(request: Request, session: SessionDep, settings: SettingsDep)
     user = result.user
     if not user.is_active:
         logger.warning("announce: account %s is disabled", user.id)
+        if user.deactivated_by == "approval":
+            raise PermissionError_(refusal_text("approval", email=None, provider=""))
         raise PermissionError_(
             "This account is not enabled. Ask an administrator to enable it, then sign in again."
         )

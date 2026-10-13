@@ -27,9 +27,9 @@ from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Protocol, runtime_checkable
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from llmp_shared import EntitySpan, PlaceholderMap
 from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select, update
@@ -66,7 +66,7 @@ from gateway.errors import (
     ServiceUnavailableError,
     UpstreamUnavailableError,
 )
-from gateway.group_import import import_seen_group
+from gateway.group_import import grant_default_group, import_seen_group, map_seen_group
 from gateway.identity_events import record_event
 from gateway.identity_registry import (
     active_bundled_provider,
@@ -76,6 +76,7 @@ from gateway.identity_registry import (
 from gateway.identity_registry import (
     list_providers as list_provider_records,
 )
+from gateway.join_gate import provider_label
 from gateway.mail import MailDeliveryError, send_mail_async
 from gateway.merge import (
     MERGE_RULES,
@@ -128,7 +129,7 @@ from gateway.models import (
     UserModelAccess,
 )
 from gateway.oidc import PENDING_USER_ISSUER, other_active_admin_exists
-from gateway.oidc_policy import environment_policy
+from gateway.oidc_policy import GROUP_FALLBACKS, JOIN_MODES, effective_policy, environment_policy
 from gateway.pagination import Page, PageDep, count_of
 from gateway.periods import PeriodKind
 from gateway.plugins import registry as plugin_registry
@@ -166,7 +167,6 @@ from gateway.reporting import (
 )
 from gateway.schemas import (
     BundledUserCreatedResponse,
-    BundledUserCreateRequest,
     CatalogueDiscoveryResponse,
     CatalogueDriftRow,
     CatalogueTagsResponse,
@@ -185,6 +185,8 @@ from gateway.schemas import (
     GroupUsageRow,
     IdentityProviderResponse,
     IdentityRef,
+    InvitedUserResponse,
+    InviteTextResponse,
     LimitRuleCreateRequest,
     LimitRuleResetRequest,
     LimitRuleResponse,
@@ -200,6 +202,7 @@ from gateway.schemas import (
     ModelUpdateRequest,
     OidcMappingRule,
     OidcPolicyChange,
+    OidcPolicyPreviewResponse,
     OidcPolicyResponse,
     OidcPolicyUpdateRequest,
     PasswordResetResponse,
@@ -231,11 +234,14 @@ from gateway.schemas import (
     RedactionStatusResponse,
     SearchBackendDeleteResponse,
     SeenGroupImportResponse,
+    SeenGroupMapRequest,
     SeenGroupPage,
     SeenGroupResponse,
     SignInCreateRequest,
     UsageReport,
     UserAdminResponse,
+    UserCreateRequest,
+    UserStatusCounts,
     UserUpdateRequest,
 )
 from gateway.secrets import SecretBox, SecretsUnavailableError, hint_for
@@ -1905,6 +1911,103 @@ async def import_seen(
     )
 
 
+@router.post("/groups/seen/{seen_id}/map", response_model=SeenGroupImportResponse)
+async def map_seen(
+    seen_id: uuid.UUID,
+    payload: SeenGroupMapRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+    settings: SettingsDep,
+) -> SeenGroupImportResponse:
+    """Map a directory's group name to an existing local group (ADR 0095 §4).
+
+    The IdP name now grants that group: recorded carriers are granted now
+    when their provider's group answer applies at every login, otherwise at
+    their next sign-in — the same immediacy rule as an import. The mapping
+    is a new `oidc_config` row on the append-only history (built through the
+    same carry-forward helper as PUT, so the join answers ride along), the
+    seen row goes, and the audit names both sides.
+    """
+    seen = await _load_seen_group(seen_id, session)
+    name, issuer = seen.name, seen.issuer
+    group = (
+        await session.execute(select(Group).where(Group.id == payload.group_id))
+    ).scalar_one_or_none()
+    if group is None:
+        raise NotFoundError(f"No group with id {payload.group_id}.")
+
+    stored = await _latest_oidc_config(session)
+    # The pairs come from the stored row, never the worker's in-memory
+    # policy: the poll lags a save on another worker by up to ten seconds,
+    # and a mapping saved in that window must survive this one.
+    current: dict[str, str] = {}
+    if stored is not None and stored.group_mappings is not None:
+        for pair in stored.group_mappings:
+            if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                idp, local = pair
+                if isinstance(idp, str) and isinstance(local, str) and idp and local:
+                    current[idp] = local
+    if name in current:
+        raise BadRequestError(
+            f"Group {name!r} is already mapped to {current[name]!r}. Unmap it first."
+        )
+    pairs = [[idp, local] for idp, local in current.items()] + [[name, group.name]]
+    row = _pending_policy_row(
+        stored, {"group_mappings": pairs}, required_groups=None, mappings=pairs
+    )
+    row.reason = payload.reason.strip()
+    row.created_by = admin.id
+    session.add(row)
+
+    result = await map_seen_group(session, seen, group)
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.GROUP_MAP,
+        target_label=name,
+        issuer=issuer,
+        detail={"group": group.name},
+    )
+    await session.commit()
+    await _refresh_policy_resolver(request)
+    member_count = (
+        await session.execute(
+            select(func.count()).select_from(Membership).where(Membership.group_id == group.id)
+        )
+    ).scalar_one()
+    return SeenGroupImportResponse(
+        group=GroupAdminResponse(
+            id=group.id,
+            name=group.name,
+            description=group.description,
+            source=group.source.value,
+            is_active=group.is_active,
+            member_count=member_count,
+            models=[],
+            search_backend=None,
+        ),
+        members_added=result.members_added,
+        applied="now" if result.applied == "now" else "next_login",
+    )
+
+
+async def _refresh_policy_resolver(request: Request) -> None:
+    """This worker picks a saved policy decision up now; the others within
+    the poll interval. Best effort: a failed refresh leaves the poll to
+    catch up."""
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    if resolver is not None:
+        try:
+            await resolver.refresh_once()
+        except Exception:
+            # The ten-second poll catches up; a failed refresh here must not
+            # turn a saved decision into an error the console reports.
+            logger.warning("oidc policy refresh after save failed", exc_info=True)
+
+
 @router.post("/groups/seen/{seen_id}/dismiss", status_code=status.HTTP_204_NO_CONTENT)
 async def dismiss_seen(seen_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
     """Stop listing a name. Sign-ins keep counting it; nothing is created."""
@@ -1942,7 +2045,9 @@ async def restore_seen(seen_id: uuid.UUID, admin: AdminUserDep, session: Session
 
 
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_group(group_id: uuid.UUID, admin: AdminUserDep, session: SessionDep) -> None:
+async def delete_group(
+    group_id: uuid.UUID, admin: AdminUserDep, session: SessionDep, request: Request
+) -> None:
     """Delete a group.
 
     Model access rows die with it (cascade); members lose it, and anyone whose
@@ -1956,6 +2061,18 @@ async def delete_group(group_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
     if group is None:
         raise NotFoundError(f"No group with id {group_id}.")
+    # ADR 0095: a required group is load-bearing for the join gate — deleting
+    # it would fail the gate open for nobody (everyone refused) or strand the
+    # policy naming a ghost. Refused until the name leaves the required list.
+    # (There is no rename or deactivate endpoint to guard: this is the only
+    # group mutation besides membership edits.)
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    policy = resolver.policy if resolver is not None else None
+    if policy is not None and group.name in policy.required_groups:
+        raise BadRequestError(
+            f"Group '{group.name}' is named in the identity policy's required "
+            "groups (join_mode 'group'). Remove it from the required groups first."
+        )
     await session.delete(group)
     await session.commit()
 
@@ -2673,6 +2790,8 @@ async def _user_responses(
             ),
             active_key_count=int(key_counts.get(user.id, 0)),
             last_login_at=user.last_login_at,
+            deactivated_by=user.deactivated_by,
+            invited_at=user.invited_at,
         )
         for user in users
     ]
@@ -2691,11 +2810,45 @@ async def _bundled_provider(session: AsyncSession) -> IdentityProvider:
     return row
 
 
-@router.post(
-    "/users", response_model=BundledUserCreatedResponse, status_code=status.HTTP_201_CREATED
-)
+@router.post("/users", status_code=status.HTTP_201_CREATED)
 async def create_user(
-    payload: BundledUserCreateRequest,
+    payload: UserCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+    settings: SettingsDep,
+) -> BundledUserCreatedResponse | InvitedUserResponse:
+    """Add a person, through the deployment's account backend (ADR 0095).
+
+    The bundled Authelia creates the login itself (plus a one-time
+    password); every other provider invites by email, and the invitee's
+    first sign-in claims the pending row by verified email. The backend is
+    chosen from the provider's capabilities, never the kind name, so a
+    future kind that creates logins through the IdP's admin API slots in
+    without rewriting this route. No ``response_model``: the two backends
+    answer different shapes, documented on their schemas.
+    """
+    bundled = await active_bundled_provider(session)
+    if bundled is not None and _account_backend(bundled.kind) == "authelia":
+        return await _create_bundled_user(payload, bundled, admin, session, secrets, settings)
+    return await _invite_user(payload, admin, session, secrets, settings)
+
+
+def _account_backend(kind: str) -> str:
+    """Which user-creation backend serves this provider kind (ADR 0095).
+
+    ``authelia`` creates the login itself; ``pending`` invites by email for
+    a later claim. A future kind that creates logins through the IdP's
+    admin API (Zitadel, Layer 2) adds a third backend here.
+    """
+    if identity_policy.capabilities(kind).creates_logins:
+        return "authelia"
+    return "pending"
+
+
+async def _create_bundled_user(
+    payload: UserCreateRequest,
+    provider: IdentityProvider,
     admin: AdminUserDep,
     session: SessionDep,
     secrets: SecretsDep,
@@ -2713,12 +2866,15 @@ async def create_user(
     the Authelia entry is removed again: a login with no account behind it
     is worse than the create simply having failed outright.
     """
-    provider = await _bundled_provider(session)
+    if not payload.login:
+        raise BadRequestError("login is required to create a bundled user.")
+    if not payload.email:
+        raise BadRequestError("email is required to create a bundled user.")
     users_file = bundled_users_file(provider, secrets)
 
     try:
         _authelia_user, password = users_file.create(
-            payload.login, payload.email, payload.display_name
+            payload.login, payload.email, payload.display_name or ""
         )
     except UsersFileLockedError as exc:
         raise ServiceUnavailableError(str(exc)) from exc
@@ -2806,6 +2962,201 @@ async def create_user(
     await session.refresh(user, attribute_names=["memberships"])
     response = (await _user_responses(session, [user]))[0]
     return BundledUserCreatedResponse(**response.model_dump(), password=password)
+
+
+async def _invite_user(
+    payload: UserCreateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    secrets: SecretsDep,
+    settings: SettingsDep,
+) -> InvitedUserResponse:
+    """Invite a person for a provider that creates no logins (ADR 0095 §2).
+
+    A pending user with no login and no `directory_entries` row: the
+    invitee's first sign-in claims it by verified email
+    (`claim_pending_by_email`), keeping the pre-assigned groups. An
+    invitation older than 14 days behaves as no invitation; re-issuing (the
+    invite-text endpoint) re-stamps it.
+    """
+    if payload.login:
+        raise BadRequestError(
+            "login is managed by the identity provider on this deployment: "
+            "invite by email, without a login."
+        )
+    if not payload.email:
+        raise BadRequestError("email is required to invite someone.")
+    normalized_email, trusted = is_trusted_email(payload.email)
+    if not trusted:
+        raise BadRequestError(f"{payload.email!r} is not a trusted address.")
+    duplicate = (
+        (await session.execute(select(User).where(User.email_normalized == normalized_email)))
+        .scalars()
+        .all()
+    )
+    if duplicate:
+        holder = duplicate[0]
+        if holder.issuer == PENDING_USER_ISSUER:
+            status = "pending"
+        elif not holder.is_active:
+            status = "disabled"
+        else:
+            status = "active"
+        raise ConflictError(f"{payload.email} already has an account ({status}).")
+
+    # Refused before anything is written: a misconfigured-mail invite must
+    # leave nothing behind for its retry to 409 against.
+    smtp_settings = None
+    if payload.send_email:
+        smtp = await effective_smtp(session, settings, secrets)
+        if not smtp.usable:
+            raise BadRequestError(
+                "Email is not configured: set the SMTP host and a From address first."
+            )
+        smtp_settings = smtp.to_smtp_settings()
+
+    user = User(
+        issuer=PENDING_USER_ISSUER,
+        subject=str(uuid.uuid4()),
+        email=payload.email,
+        email_normalized=normalized_email,
+        display_name=payload.display_name or None,
+        # The administrator just set it; it must not revert at this person's
+        # first login the way an ordinary directory claim would.
+        admin_edited_fields=["email"],
+        is_active=True,
+        invited_at=utcnow(),
+        invited_by=admin.id,
+    )
+    session.add(user)
+    await session.flush()
+    # Same MissingGreenlet reason as the bundled path above: a brand-new row
+    # has never loaded `memberships`.
+    await session.refresh(user, attribute_names=["memberships"])
+
+    await add_manual_memberships(session, user, payload.groups)
+    await grant_default_group(session, user, settings.oidc.default_group)
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.USER_INVITE,
+        target_user_id=user.id,
+        target_label=payload.email,
+        detail={"groups": sorted(payload.groups)},
+    )
+    await session.commit()
+
+    sign_in_url = _invite_sign_in_url(settings)
+    deployment = _invite_deployment(settings)
+    idp = await _invite_provider_label(session, settings, secrets)
+    invite_text = (
+        f"You've been given access to {deployment}. Sign in at {sign_in_url} "
+        f"with your {idp} account {payload.email}."
+    )
+    email_sent = False
+    email_error = None
+    if smtp_settings is not None:
+        try:
+            await send_mail_async(
+                smtp_settings,
+                payload.email,
+                f"You've been given access to {deployment}",
+                invite_text,
+            )
+            email_sent = True
+        except MailDeliveryError as exc:
+            # The invitation stands — 201, not 500 — and the console falls
+            # back to Copy invite text. The send was best-effort delivery of
+            # a paragraph the administrator can paste instead.
+            logger.warning("invite email to %s failed: %s", payload.email, exc)
+            email_error = str(exc) or "delivery failed"
+
+    await session.refresh(user, attribute_names=["memberships"])
+    response = (await _user_responses(session, [user]))[0]
+    return InvitedUserResponse(
+        user=response,
+        sign_in_url=sign_in_url,
+        invite_text=invite_text,
+        email_sent=email_sent,
+        email_error=email_error,
+    )
+
+
+def _invite_sign_in_url(settings: Settings) -> str:
+    """Where an invitee signs in: the chat when one is deployed, else the console.
+
+    The gateway knows the chat by its erasure URL, and its own public origin
+    by the OIDC redirect URI — Cerea serves the chat at `/chat` on that same
+    origin, the console at `/console`. No redirect URI, no origin: a bare
+    path, which is still the right door on this host.
+    """
+    path = "/chat" if settings.chat.erasure_url else "/console"
+    redirect = (settings.oidc.redirect_uri or "").strip()
+    if redirect:
+        parts = urlsplit(redirect)
+        if parts.scheme and parts.hostname:
+            origin = f"{parts.scheme}://{parts.hostname}"
+            if parts.port:
+                origin += f":{parts.port}"
+            return origin + path
+    return path
+
+
+def _invite_deployment(settings: Settings) -> str:
+    """The deployment name the invite text grants access to: the public host."""
+    redirect = (settings.oidc.redirect_uri or "").strip()
+    if redirect:
+        host = urlsplit(redirect).hostname or ""
+        if host:
+            return host
+    return "this deployment"
+
+
+async def _invite_provider_label(
+    session: SessionDep, settings: SettingsDep, secrets: SecretsDep
+) -> str:
+    """The `<IdP display name>` the invite text names: the enabled external
+    provider, else the environment's, else the honest generic."""
+    for record in await list_provider_records(session, settings, secrets, enabled_only=True):
+        if record.kind != "authelia":
+            return provider_label(record.kind)
+    if settings.oidc.enabled and settings.oidc.kind != "authelia":
+        return provider_label(settings.oidc.kind)
+    return provider_label(None)
+
+
+@router.post("/users/{user_id}/invite-text", response_model=InviteTextResponse)
+async def invite_text(
+    user_id: uuid.UUID,
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    secrets: SecretsDep,
+) -> InviteTextResponse:
+    """Regenerate an invitation's text, for the console's Copy button.
+
+    Re-issuing re-stamps ``invited_at``: copying the text to resend it *is*
+    re-inviting, and an expired invitation becomes claimable again. Only
+    invitations qualify — a bundled pending account (no ``invited_at``) must
+    never be stamped into one, or it would pass the invite-claim check.
+    """
+    user = await session.get(User, user_id)
+    if user is None or user.issuer != PENDING_USER_ISSUER or user.invited_at is None:
+        raise NotFoundError("No pending invitation with that id.")
+    user.invited_at = utcnow()
+    await session.commit()
+    sign_in_url = _invite_sign_in_url(settings)
+    return InviteTextResponse(
+        sign_in_url=sign_in_url,
+        invite_text=(
+            f"You've been given access to {_invite_deployment(settings)}. Sign in at "
+            f"{sign_in_url} with your "
+            f"{await _invite_provider_label(session, settings, secrets)} account "
+            f"{user.email or ''}."
+        ),
+    )
 
 
 @router.post(
@@ -2963,13 +3314,24 @@ async def list_users(
     page: PageDep,
     q: str = "",
     is_active: bool | None = None,
+    status: str | None = None,
 ) -> Page[UserAdminResponse]:
     """Accounts, by email.
 
     ``q`` matches email, display name or the identity provider's subject. The
     subject is in there because that is all there is to search on for an
-    account whose IdP does not release an email claim.
+    account whose IdP does not release an email claim. ``status`` is one of
+    ``awaiting_approval`` (inactive, held by the join queue), ``invited``
+    (never signed in), ``active`` or ``disabled`` — the console's filter
+    chips, which a bare ``is_active`` cannot express.
     """
+    if status is not None and status not in (
+        "awaiting_approval",
+        "invited",
+        "active",
+        "disabled",
+    ):
+        raise BadRequestError("status must be one of awaiting_approval, invited, active, disabled.")
     stmt = (
         select(User)
         .options(selectinload(User.memberships).selectinload(Membership.group))
@@ -2985,10 +3347,53 @@ async def list_users(
         )
     if is_active is not None:
         stmt = stmt.where(User.is_active.is_(is_active))
+    if status == "awaiting_approval":
+        stmt = stmt.where(User.is_active.is_(False), User.deactivated_by == "approval")
+    elif status == "invited":
+        stmt = stmt.where(User.issuer == PENDING_USER_ISSUER)
+    elif status == "active":
+        stmt = stmt.where(User.is_active.is_(True), User.issuer != PENDING_USER_ISSUER)
+    elif status == "disabled":
+        stmt = stmt.where(
+            User.is_active.is_(False),
+            or_(User.deactivated_by.is_(None), User.deactivated_by != "approval"),
+        )
 
     total = await count_of(session, stmt)
     users = (await session.execute(page.apply(stmt))).scalars().all()
     return page.page(await _user_responses(session, users), total)
+
+
+@router.get("/users/status-counts", response_model=UserStatusCounts)
+async def user_status_counts(admin: AdminUserDep, session: SessionDep) -> UserStatusCounts:
+    """The Users page's filter-chip counts, in one round trip."""
+    awaiting = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(User.is_active.is_(False), User.deactivated_by == "approval")
+    )
+    invited = await session.scalar(
+        select(func.count()).select_from(User).where(User.issuer == PENDING_USER_ISSUER)
+    )
+    active = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(User.is_active.is_(True), User.issuer != PENDING_USER_ISSUER)
+    )
+    disabled = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(
+            User.is_active.is_(False),
+            or_(User.deactivated_by.is_(None), User.deactivated_by != "approval"),
+        )
+    )
+    return UserStatusCounts(
+        awaiting_approval=awaiting or 0,
+        invited=invited or 0,
+        active=active or 0,
+        disabled=disabled or 0,
+    )
 
 
 async def _bundled_entry_for(
@@ -3466,7 +3871,7 @@ async def delete_user(
     http: ControlHttpDep,
     secrets: SecretsDep,
     body: DeleteUserRequest = DeleteUserRequest(),
-) -> DeleteUserResponse:
+) -> DeleteUserResponse | Response:
     """Delete an account everywhere (ADR 0093 §9.2, §9.3): the gateway's own
     rows in one transaction with the ``chat_erasures`` row that records the
     chat still owes an answer, then — after that commits — the bound
@@ -3521,6 +3926,24 @@ async def delete_user(
         raise LastAdminError(
             "This would leave no active administrator. Make another account an administrator first."
         )
+
+    if user.issuer == PENDING_USER_ISSUER:
+        # An invitation, never a working account: no chat data was ever
+        # attached to it, so there is nothing to erase and no queue row to
+        # leave behind — just the row and its memberships (CASCADE).
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.USER_DELETE,
+            target_user_id=user.id,
+            target_label=user.email or "",
+            detail={"pending": True},
+        )
+        await session.delete(user)
+        await session.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     published = await _published_by(session, user_id)
     if published:
@@ -3647,6 +4070,9 @@ async def _oidc_policy_response(request: Request, session: SessionDep) -> OidcPo
     return OidcPolicyResponse(
         auto_provision=policy.auto_provision,
         unknown_user_policy=policy.unknown_user_policy,
+        join_mode=policy.join_mode,
+        required_groups=list(policy.required_groups),
+        group_fallback=policy.group_fallback,
         groups_claim=policy.groups_claim,
         group_mappings=[
             OidcMappingRule(idp=idp, local=local) for idp, local in policy.group_mappings.items()
@@ -3672,6 +4098,62 @@ async def _latest_oidc_config(session: SessionDep) -> OIDCPolicyConfig | None:
             select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc()).limit(1)
         )
     ).scalar_one_or_none()
+
+
+@router.get("/oidc/policy/preview", response_model=OidcPolicyPreviewResponse)
+async def preview_oidc_policy(
+    admin: AdminUserDep,
+    session: SessionDep,
+    join_mode: str = "group",
+    #: Repeated `?required_groups=a&required_groups=b`: the console sends the
+    #: set as it is, and a comma inside a group name cannot be mistaken for a
+    #: separator.
+    required_groups: list[str] = Query(default=[]),
+) -> OidcPolicyPreviewResponse:
+    """What saving this group gate would do (ADR 0095 §7).
+
+    Counted over effective memberships, in SQL: ``would_be_refused`` is the
+    active, non-admin accounts holding none of the named active groups —
+    the people who lose access at their next request, which the console
+    confirms before saving. Only ``group`` mode is previewable; anything
+    else is a 400.
+    """
+    if join_mode != "group":
+        raise BadRequestError("Only join_mode 'group' has a preview.")
+    names = [name.strip() for name in required_groups if name.strip()]
+    if not names:
+        raise BadRequestError("Name at least one required group to preview.")
+    active_users = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(User.is_active.is_(True), User.issuer != PENDING_USER_ISSUER)
+    )
+    admins_exempt = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(User.is_active.is_(True), User.is_admin.is_(True))
+    )
+    held = (
+        select(Membership.user_id)
+        .join(Group, Group.id == Membership.group_id)
+        .where(Group.name.in_(names), Group.is_active.is_(True))
+        .distinct()
+    )
+    would_be_refused = await session.scalar(
+        select(func.count())
+        .select_from(User)
+        .where(
+            User.is_active.is_(True),
+            User.is_admin.is_(False),
+            User.issuer != PENDING_USER_ISSUER,
+            User.id.not_in(held),
+        )
+    )
+    return OidcPolicyPreviewResponse(
+        active_users=active_users or 0,
+        would_be_refused=would_be_refused or 0,
+        admins_exempt=admins_exempt or 0,
+    )
 
 
 @router.get("/oidc/policy", response_model=OidcPolicyResponse)
@@ -3879,6 +4361,68 @@ async def remove_identity_provider(
     await session.commit()
 
 
+def _pending_policy_row(
+    stored: OIDCPolicyConfig | None,
+    fields: dict[str, Any],
+    *,
+    required_groups: list[str] | None,
+    mappings: list[list[str]] | None,
+) -> OIDCPolicyConfig:
+    """The row a policy save would store: the newest stored row's answers
+    carried forward for every field the payload does not send.
+
+    Only the newest `oidc_config` row is ever in force, and the console saves
+    one field at a time — so a save that stored null for every unsent field
+    would reset the other saves' answers to the environment (a group-mode
+    save followed by a fallback-only save would fail open). Unsent fields
+    carry the newest row's values instead; an explicitly sent null clears the
+    field back to the environment. A payload that names a join mode clears
+    the carried legacy columns (and a payload naming legacy columns clears
+    the carried join ones), so a stored row never mixes the two spellings —
+    the fold would let one silently win. The future map-to-existing endpoint
+    builds its row through this same helper.
+    """
+    row = OIDCPolicyConfig(
+        auto_provision=stored.auto_provision if stored is not None else None,
+        unknown_user_policy=stored.unknown_user_policy if stored is not None else None,
+        join_mode=stored.join_mode if stored is not None else None,
+        required_groups=(
+            list(stored.required_groups)
+            if stored is not None and stored.required_groups is not None
+            else None
+        ),
+        group_fallback=stored.group_fallback if stored is not None else None,
+        groups_claim=stored.groups_claim if stored is not None else None,
+        group_mappings=(
+            [list(pair) for pair in stored.group_mappings]
+            if stored is not None and stored.group_mappings is not None
+            else None
+        ),
+    )
+    if "auto_provision" in fields:
+        row.auto_provision = fields["auto_provision"]
+    if "unknown_user_policy" in fields:
+        row.unknown_user_policy = fields["unknown_user_policy"]
+    if "join_mode" in fields:
+        row.join_mode = fields["join_mode"]
+    if "required_groups" in fields:
+        row.required_groups = required_groups
+    if "group_fallback" in fields:
+        row.group_fallback = fields["group_fallback"]
+    if "groups_claim" in fields:
+        row.groups_claim = fields["groups_claim"]
+    if "group_mappings" in fields:
+        row.group_mappings = mappings
+    if fields.get("join_mode") is not None:
+        row.auto_provision = None
+        row.unknown_user_policy = None
+    if fields.get("auto_provision") is not None or fields.get("unknown_user_policy") is not None:
+        row.join_mode = None
+        row.required_groups = None
+        row.group_fallback = None
+    return row
+
+
 @router.put("/oidc/policy", response_model=OidcPolicyResponse)
 async def set_oidc_policy(
     payload: OidcPolicyUpdateRequest,
@@ -3889,74 +4433,109 @@ async def set_oidc_policy(
 ) -> OidcPolicyResponse:
     """Record a new identity-policy decision.
 
-    Append-only, newest row wins, and every unset field stores ``null`` —
-    "the environment decides this one" — so a change to one knob never has to
-    know the deployment's other answers. The change reaches every worker
-    within the poll interval; the answering worker refreshes immediately so a
-    console that saves and re-reads sees its own decision.
+    Append-only, newest row wins. The new row carries the newest stored row's
+    answers forward for every field the payload does not send — the console
+    saves one field at a time, and storing null for the unsent fields would
+    reset the other saves' answers to the environment (a group-mode save
+    followed by a fallback-only save would fail open). An explicitly sent
+    null still clears the field back to the environment. The change reaches
+    every worker within the poll interval; the answering worker refreshes
+    immediately so a console that saves and re-reads sees its own decision.
     """
     fields = payload.model_dump(exclude_unset=True)
 
-    unknown = fields.get("unknown_user_policy")
-    if unknown is not None and unknown not in ("refuse", "create_inactive"):
-        raise BadRequestError("unknown_user_policy must be 'refuse' or 'create_inactive'.")
-    if unknown is not None:
-        # Refused rather than stored-never-applied: a knob that does nothing
-        # because of another knob's value reads as a bug, not as a policy. The
-        # check is against the policy that would be in force *after* this row
-        # — per-field saves are the normal case, so "the previous decision
-        # already turned provisioning off" is a valid state, not an error.
-        policy_in_force = getattr(request.app.state, "oidc_policy", None)
-        default_after = (
-            policy_in_force.policy.auto_provision if policy_in_force is not None else True
+    join_mode = fields.get("join_mode")
+    if join_mode is not None and join_mode not in JOIN_MODES:
+        raise BadRequestError(f"join_mode must be one of {', '.join(JOIN_MODES)}.")
+    if join_mode is not None and ("auto_provision" in fields or "unknown_user_policy" in fields):
+        # join_mode wins over the legacy columns in the fold, so saving both
+        # at once would store a knob that silently never applies.
+        raise BadRequestError(
+            "join_mode replaces auto_provision and unknown_user_policy: "
+            "save one or the other, not both."
         )
-        auto_after = fields.get("auto_provision", default_after)
-        if auto_after:
-            raise BadRequestError(
-                "unknown_user_policy only applies when automatic provisioning "
-                "is off. Turn provisioning off, or drop the unknown-user policy."
-            )
 
     groups_claim = fields.get("groups_claim")
     if groups_claim is not None and not str(groups_claim).strip():
         raise BadRequestError("groups_claim must name a claim (e.g. 'groups').")
 
     mappings: list[list[str]] | None = None
-    if payload.group_mappings is not None:
-        mappings = []
-        seen_idp: set[str] = set()
-        for rule in payload.group_mappings:
-            idp, local = rule.idp.strip(), rule.local.strip()
-            if not idp or not local:
-                raise BadRequestError("Mapping rules need both an IdP name and a local name.")
-            if idp in seen_idp:
-                # Two rows naming the same IdP group cannot both apply; storing
-                # one silently would make the form disagree with the policy.
-                raise BadRequestError(f"Group '{idp}' is mapped more than once.")
-            seen_idp.add(idp)
-            mappings.append([idp, local])
+    if "group_mappings" in fields:
+        # An explicitly sent null clears back to env (stored None), not [].
+        mappings = None
+        if payload.group_mappings is not None:
+            mappings = []
+            seen_idp: set[str] = set()
+            for rule in payload.group_mappings:
+                idp, local = rule.idp.strip(), rule.local.strip()
+                if not idp or not local:
+                    raise BadRequestError("Mapping rules need both an IdP name and a local name.")
+                if idp in seen_idp:
+                    # Two rows naming the same IdP group cannot both apply; storing
+                    # one silently would make the form disagree with the policy.
+                    raise BadRequestError(f"Group '{idp}' is mapped more than once.")
+                seen_idp.add(idp)
+                mappings.append([idp, local])
 
-    row = OIDCPolicyConfig(
-        auto_provision=fields.get("auto_provision"),
-        unknown_user_policy=unknown,
-        groups_claim=groups_claim,
-        group_mappings=mappings,
-        reason=payload.reason.strip(),
-        created_by=admin.id,
-    )
+    cleaned_groups: list[str] | None = None
+    if "required_groups" in fields:
+        # Same null-clears rule as mappings above.
+        cleaned_groups = None
+        if payload.required_groups is not None:
+            cleaned_groups = []
+            for name in payload.required_groups:
+                name = str(name).strip()
+                if name and name not in cleaned_groups:
+                    cleaned_groups.append(name)
+            local_names = set((await session.execute(select(Group.name))).scalars().all())
+            missing = [name for name in cleaned_groups if name not in local_names]
+            if missing:
+                raise BadRequestError(
+                    f"Unknown groups: {', '.join(missing)}. required_groups names "
+                    "local groups — import the directory name or map it to one first."
+                )
+
+    group_fallback = fields.get("group_fallback")
+    if group_fallback is not None and group_fallback not in GROUP_FALLBACKS:
+        raise BadRequestError("group_fallback must be 'refuse' or 'approval'.")
+
+    stored = await _latest_oidc_config(session)
+    row = _pending_policy_row(stored, fields, required_groups=cleaned_groups, mappings=mappings)
+    folded = effective_policy(settings.oidc, row)
+
+    unknown = fields.get("unknown_user_policy")
+    if unknown is not None and unknown not in ("refuse", "create_inactive"):
+        raise BadRequestError("unknown_user_policy must be 'refuse' or 'create_inactive'.")
+    if row.unknown_user_policy is not None and folded.auto_provision:
+        # Refused rather than stored-never-applied: a knob that does nothing
+        # because of another knob's value reads as a bug, not as a policy.
+        # Checked against this exact row folded over env, which is what the
+        # row would do in force — a save that turns provisioning off carries
+        # that decision with it, so it is valid, not an error.
+        raise BadRequestError(
+            "unknown_user_policy only applies when automatic provisioning "
+            "is off. Turn provisioning off, or drop the unknown-user policy."
+        )
+    if folded.join_mode == "group" and not folded.required_groups:
+        raise BadRequestError(
+            "join_mode 'group' needs required_groups: a group gate with no "
+            "groups refuses everyone who is not an administrator. Name at "
+            "least one local group first."
+        )
+    groups_sent = "required_groups" in fields and fields["required_groups"] is not None
+    if (groups_sent or group_fallback is not None) and folded.join_mode != "group":
+        # Same "knob that does nothing" rule as unknown_user_policy above.
+        raise BadRequestError(
+            "required_groups and group_fallback only apply in join_mode "
+            "'group'. Switch the join mode, or drop them."
+        )
+
+    row.reason = payload.reason.strip()
+    row.created_by = admin.id
     session.add(row)
     await session.commit()
 
-    # This worker picks the decision up now; the others within the poll
-    # interval. Best effort: a failed refresh leaves the poll to catch up.
-    resolver = getattr(request.app.state, "oidc_policy", None)
-    if resolver is not None:
-        try:
-            await resolver.refresh_once()
-        except Exception:
-            # The ten-second poll catches up; a failed refresh here must not
-            # turn a saved decision into an error the console reports.
-            logger.warning("oidc policy refresh after save failed", exc_info=True)
+    await _refresh_policy_resolver(request)
     return await _oidc_policy_response(request, session)
 
 

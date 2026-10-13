@@ -239,6 +239,19 @@ export interface AdminUser {
    * §9.1). Null on every other response, including a successful sync. */
   authelia_sync: "failed" | null;
   authelia_sync_message: string | null;
+  /** Who deactivated the account ("manual", "directory", "approval"). */
+  deactivated_by: string | null;
+  /** When this person was invited (ADR 0095); the expiry marker reads this. */
+  invited_at: string | null;
+}
+
+/** `POST /admin/users`, either account backend (ADR 0095). */
+export interface UserCreateInput {
+  login?: string;
+  display_name?: string;
+  email?: string;
+  groups?: string[];
+  send_email?: boolean;
 }
 
 /** `POST /admin/users`, bundled Authelia only (ADR 0093 §8.1/§8.2). */
@@ -252,6 +265,30 @@ export interface BundledUserCreateInput {
 /** Includes the one-time password, shown once (§8.1). */
 export interface BundledUserCreated extends AdminUser {
   password: string;
+}
+
+/** An invitation for a provider that creates no logins (ADR 0095). */
+export interface InvitedUser {
+  user: AdminUser;
+  sign_in_url: string;
+  invite_text: string;
+  email_sent: boolean;
+  email_error: string | null;
+}
+
+/** A regenerated invitation text (ADR 0095). */
+export interface InviteText {
+  sign_in_url: string;
+  invite_text: string;
+}
+
+export type UserStatus = "awaiting_approval" | "invited" | "active" | "disabled";
+
+export interface UserStatusCounts {
+  awaiting_approval: number;
+  invited: number;
+  active: number;
+  disabled: number;
 }
 
 /** One `(issuer, subject)` (ADR 0093). */
@@ -780,13 +817,18 @@ export interface SearchBackendDeleteResult {
 
 
 /**
- * The identity policy in force (ADR 0048), as `GET /api/admin/oidc/policy`
- * reports it: the effective values, where each came from, and the newest
- * decision behind them.
+ * The identity policy in force (ADR 0048, join modes ADR 0095), as
+ * `GET /api/admin/oidc/policy` reports it: the effective values, where each
+ * came from, and the newest decision behind them.
  */
+export type JoinMode = "open" | "approval" | "invite" | "group";
+
 export interface OidcPolicy {
   auto_provision: boolean;
   unknown_user_policy: "refuse" | "create_inactive";
+  join_mode: JoinMode;
+  required_groups: string[];
+  group_fallback: "refuse" | "approval";
   groups_claim: string;
   group_mappings: { idp: string; local: string }[];
   source: "console" | "environment";
@@ -801,16 +843,26 @@ export interface OidcPolicy {
 }
 
 /**
- * A policy change. Unset fields store as null — "the environment decides this
- * one" — so a change to one knob never restates the deployment's other
- * answers.
+ * A policy change. Unset fields carry the newest stored row's answers
+ * forward (ADR 0095) — an explicitly sent null clears back to the
+ * environment — so a change to one knob never resets the others.
  */
 export interface OidcPolicyInput {
   auto_provision?: boolean;
   unknown_user_policy?: "refuse" | "create_inactive";
+  join_mode?: JoinMode;
+  required_groups?: string[] | null;
+  group_fallback?: "refuse" | "approval";
   groups_claim?: string;
-  group_mappings?: { idp: string; local: string }[];
+  group_mappings?: { idp: string; local: string }[] | null;
   reason?: string;
+}
+
+/** What saving a group gate would do (ADR 0095). */
+export interface OidcPolicyPreview {
+  active_users: number;
+  would_be_refused: number;
+  admins_exempt: number;
 }
 
 /** Creating a group (ADR 0050). Manual is the point: it is the one kind whose
@@ -896,6 +948,9 @@ export interface IdentityCapabilities {
   scim_push: boolean;
   subject_before_login: boolean;
   deprovision: boolean;
+  /** The provider kind creates logins itself (ADR 0095): the console shows
+   * the Add-user dialog. Without it, the Invite dialog. */
+  creates_logins: boolean;
   adapters: SyncAdapter[];
 }
 

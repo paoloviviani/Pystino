@@ -267,6 +267,44 @@ class TestEngine:
         assert user.issuer == "https://kc.example.org/realms/corp"
         assert await _groups(session, user) == {"ops"}
 
+    async def test_a_pushed_entry_claims_a_pending_invite(self, session: AsyncSession) -> None:
+        """ADR 0095 §6.1: no duplicate when the directory pushes someone the
+        console already invited — the invitation is claimed in place,
+        memberships kept, and the report says so under `linked`."""
+        from gateway.oidc import PENDING_USER_ISSUER
+        from gateway.types import utcnow
+
+        row = await _provider(
+            session,
+            name="scim",
+            kind="keycloak",
+            sync_adapter="keycloak_admin",
+            issuer="https://kc.example.org/realms/corp",
+        )
+        pending = User(
+            issuer=PENDING_USER_ISSUER,
+            subject="pending-w",
+            email="w@x.org",
+            email_normalized="w@x.org",
+            invited_at=utcnow(),
+        )
+        session.add(pending)
+        await session.commit()
+        report = await apply_entries(
+            session,
+            record_from_row(row, BOX),
+            [Entry("u-9", "w", "w@x.org", "W", ("ops",), is_subject=True)],
+            settings=OIDCSettings(**LEGACY_GROUPS),
+            dry_run=False,
+            full=True,
+        )
+        assert report.created == 0
+        assert report.linked == 1
+        assert {"change": "claim_pending", "who": "w"} in report.changes
+        user = (await session.execute(select(User).where(User.subject == "u-9"))).scalar_one()
+        assert user.id == pending.id
+        assert user.issuer == "https://kc.example.org/realms/corp"
+
     async def test_admin_from_directory_groups(self, session: AsyncSession) -> None:
         row = await _provider(session, admin_source="claim", admin_values=["ops"])
         keeper = _user("k", "keeper", is_admin=True)

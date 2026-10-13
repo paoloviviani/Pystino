@@ -10,6 +10,7 @@
 
 import { Badge, Button, Card, Dialog, EmptyState, Input, Notice, Spinner } from "@llmp/ui";
 import { useState } from "react";
+import { Link } from "react-router";
 import {
   useEmailSettings,
   useIdentityProviders,
@@ -306,8 +307,14 @@ function ProviderRow({
         <div className={`mt-1 text-sm ${MUTED}`}>{provider.issuer}</div>
         <div className="mt-1 text-xs text-ink-faint">
           client {provider.client_id} · groups claim{" "}
-          <span className={CODE}>{provider.groups_claim}</span> ·{" "}
-          {provider.group_mappings.length} mapping rule(s) · groups from{" "}
+          <span className={CODE}>{provider.groups_claim}</span> · group
+          mappings are decided on the{" "}
+          {/* ADR 0095: one mapping surface, the Groups page — this line only
+              points there now. */}
+          <Link to="/admin/groups" className="underline">
+            Groups
+          </Link>{" "}
+          page · groups from{" "}
           {provider.group_source === "claim"
             ? "the token"
             : provider.group_source === "directory"

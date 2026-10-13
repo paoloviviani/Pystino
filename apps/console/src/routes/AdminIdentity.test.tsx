@@ -12,15 +12,17 @@ import { ProvisioningPolicySection as AdminIdentity } from "./AdminIdentity";
  *
  * What matters here is not the form — it is that the screen edits *decisions*,
  * not settings: it opens showing what is in force (and where each value came
- * from), disables Save until something differs, and the unknown-user rule is
- * unreachable while provisioning is on, because storing a knob that cannot
- * apply reads as a bug.
+ * from), saves each choice as its own row in the policy history, and never
+ * saves a group gate without saying how many people it would cut off.
  */
 
 function policyFixture(overrides: Partial<OidcPolicy> = {}): OidcPolicy {
   return {
     auto_provision: true,
     unknown_user_policy: "refuse",
+    join_mode: "open",
+    required_groups: [],
+    group_fallback: "refuse",
     groups_claim: "groups",
     group_mappings: [],
     source: "environment",
@@ -49,9 +51,42 @@ function renderScreen(element: ReactElement) {
   );
 }
 
-function mockGet(policy: OidcPolicy) {
-  fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+function mockRoutes({
+  policy,
+  groups,
+  putStatus = 200,
+}: {
+  policy: OidcPolicy;
+  groups?: { id: string; name: string }[];
+  putStatus?: number;
+}) {
+  fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.includes("/api/admin/oidc/policy") && (init?.method ?? "GET") === "PUT") {
+      if (putStatus !== 200)
+        return new Response(
+          JSON.stringify({ error: { message: "the server refused that" } }),
+          { status: putStatus, headers: { "content-type": "application/json" } },
+        );
+      return new Response(JSON.stringify(policy), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.includes("/api/admin/oidc/policy/preview")) {
+      const params = new URL(url, "http://x").searchParams;
+      const refused = params.getAll("required_groups").includes("cut-off") ? 2 : 0;
+      return new Response(
+        JSON.stringify({ active_users: 5, would_be_refused: refused, admins_exempt: 1 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.includes("/api/admin/groups")) {
+      return new Response(
+        JSON.stringify({ items: groups ?? [], total: (groups ?? []).length }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
     if (url.includes("/api/admin/oidc/policy")) {
       return new Response(JSON.stringify(policy), {
         status: 200,
@@ -62,83 +97,163 @@ function mockGet(policy: OidcPolicy) {
   });
 }
 
+const putBodies = () =>
+  fetchMock.mock.calls
+    .filter(([url, init]) => String(url).includes("/oidc/policy") && (init as RequestInit).method === "PUT")
+    .map(([, init]) => JSON.parse((init as RequestInit).body as string));
+
 describe("AdminIdentity", () => {
-  it("seeds the form from the policy in force", async () => {
-    mockGet(policyFixture());
+  it("seeds the radio group from the policy in force", async () => {
+    mockRoutes({ policy: policyFixture({ join_mode: "invite" }) });
     renderScreen(<AdminIdentity />);
-    // The provisioning checkbox is on, because the environment's default is on.
-    expect(
-      await screen.findByRole("checkbox", { name: /create an account on first sign-in/i }),
-    ).toBeChecked();
+    expect(await screen.findByRole("radio", { name: /^Invite/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^Open/ })).not.toBeChecked();
   });
 
-  it("seeds a console decision as its own", async () => {
-    mockGet(
-      policyFixture({
+  it("says where each answer came from", async () => {
+    mockRoutes({
+      policy: policyFixture({
+        join_mode: "approval",
+        sources: { join_mode: "console" },
+      }),
+    });
+    renderScreen(<AdminIdentity />);
+    expect(await screen.findByText(/join mode set here/i)).toBeInTheDocument();
+  });
+
+  it("shows the group controls only in group mode", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({
+      policy: policyFixture({ join_mode: "group", required_groups: [] }),
+      groups: [
+        { id: "g1", name: "staff" },
+        { id: "g2", name: "ops" },
+      ],
+    });
+    renderScreen(<AdminIdentity />);
+    expect(await screen.findByRole("radio", { name: /^Group/ })).toBeChecked();
+    expect(await screen.findByRole("checkbox", { name: "staff" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "ops" })).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText(/someone without a required group/i),
+    ).toHaveValue("refuse");
+
+    // Switching away hides them; the save is the radio click itself.
+    await user.click(screen.getByRole("radio", { name: /^Invite/ }));
+    await waitFor(() => expect(putBodies()).toContainEqual({ join_mode: "invite" }));
+    expect(screen.queryByRole("checkbox", { name: "staff" })).not.toBeInTheDocument();
+  });
+
+  it("refuses to enter group mode with no groups picked", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({ policy: policyFixture(), groups: [] });
+    renderScreen(<AdminIdentity />);
+    await screen.findByRole("radio", { name: /^Open/ });
+    await user.click(screen.getByRole("radio", { name: /^Group/ }));
+    expect(
+      await screen.findByText(/pick at least one required group first/i),
+    ).toBeInTheDocument();
+    expect(putBodies()).toEqual([]);
+  });
+
+  it("previews a group gate that would cut people off, and saves only on confirm", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({
+      policy: policyFixture(),
+      groups: [
+        { id: "g1", name: "cut-off" },
+        { id: "g2", name: "staff" },
+      ],
+    });
+    renderScreen(<AdminIdentity />);
+    await screen.findByRole("radio", { name: /^Open/ });
+
+    // Pick the groups first (they persist in local state), then the mode.
+    await user.click(screen.getByRole("radio", { name: /^Group/ }));
+    expect(
+      await screen.findByText(/pick at least one required group first/i),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "cut-off" }));
+    // Ticking is local: no save, no preview, no row.
+    expect(putBodies()).toEqual([]);
+
+    await user.click(screen.getByRole("button", { name: /save access groups/i }));
+
+    const warning = await screen.findByText(/will lose access/i);
+    expect(warning).toBeInTheDocument();
+    expect(putBodies()).toEqual([]);
+
+    await user.click(screen.getByRole("button", { name: /save anyway/i }));
+    await waitFor(() =>
+      expect(putBodies()).toEqual([
+        { join_mode: "group", required_groups: ["cut-off"], group_fallback: "refuse" },
+      ]),
+    );
+  });
+
+  it("saves group mode straight away when nobody would be refused", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({
+      policy: policyFixture(),
+      groups: [{ id: "g2", name: "staff" }],
+    });
+    renderScreen(<AdminIdentity />);
+    await screen.findByRole("radio", { name: /^Open/ });
+    await user.click(screen.getByRole("radio", { name: /^Group/ }));
+    expect(
+      await screen.findByText(/pick at least one required group first/i),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "staff" }));
+    expect(putBodies()).toEqual([]);
+    // The set saves as one decision, once.
+    await user.click(screen.getByRole("button", { name: /save access groups/i }));
+    await waitFor(() =>
+      expect(putBodies()).toEqual([
+        { join_mode: "group", required_groups: ["staff"], group_fallback: "refuse" },
+      ]),
+    );
+  });
+
+  it("saves the fallback as its own decision", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({
+      policy: policyFixture({ join_mode: "group", required_groups: ["staff"] }),
+      groups: [{ id: "g2", name: "staff" }],
+    });
+    renderScreen(<AdminIdentity />);
+    const select = await screen.findByLabelText(/someone without a required group/i);
+    await user.selectOptions(select, "approval");
+    await waitFor(() =>
+      expect(putBodies()).toEqual([
+        { join_mode: "group", required_groups: ["staff"], group_fallback: "approval" },
+      ]),
+    );
+  });
+
+  it("a refused save puts the radio back to the mode in force", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({ policy: policyFixture({ join_mode: "open" }), putStatus: 400 });
+    renderScreen(<AdminIdentity />);
+    await screen.findByRole("radio", { name: /^Open/ });
+
+    await user.click(screen.getByRole("radio", { name: /^Invite/ }));
+    expect(await screen.findByText(/the server refused that/i)).toBeInTheDocument();
+    // The radio never shows a mode the server declined.
+    expect(screen.getByRole("radio", { name: /^Open/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /^Invite/ })).not.toBeChecked();
+  });
+
+  it("still opens showing the legacy view for an old row", async () => {
+    // A deployment upgraded mid-flight reads derived values; the screen
+    // speaks join modes either way.
+    mockRoutes({
+      policy: policyFixture({
+        join_mode: "approval",
         auto_provision: false,
         unknown_user_policy: "create_inactive",
-        source: "console",
-        sources: { auto_provision: "console", unknown_user_policy: "console" },
-        configured: {
-          reason: "approval required",
-          changed_at: "2026-09-02T12:00:00Z",
-          changed_by: "ops@example.org",
-        },
       }),
-    );
-    renderScreen(<AdminIdentity />);
-    expect(
-      await screen.findByRole("checkbox", { name: /create an account on first sign-in/i }),
-    ).not.toBeChecked();
-    // And the rule seeded with it is the one the decision named.
-    expect(
-      await screen.findByLabelText(/first-time sign-in while provisioning is off/i),
-    ).toHaveValue("create_inactive");
-  });
-
-  it("offers the unknown-user rule only while provisioning is off", async () => {
-    const user = userEvent.setup({ delay: null });
-    mockGet(policyFixture());
-    renderScreen(<AdminIdentity />);
-
-    await screen.findByRole("checkbox", { name: /create an account on first sign-in/i });
-    // On: no rule to choose, because it could not apply — and the hint says
-    // what On does, never "the rule below" that is not there.
-    expect(
-      screen.queryByLabelText(/first-time sign-in while provisioning is off/i),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText(/gets an active account at once/i)).toBeInTheDocument();
-    expect(screen.queryByText(/rule below/i)).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("checkbox", { name: /create an account on first sign-in/i }));
-    expect(
-      await screen.findByLabelText(/first-time sign-in while provisioning is off/i),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/follows the rule below/i)).toBeInTheDocument();
-  });
-
-  it("saves each setting as its own decision", async () => {
-    const user = userEvent.setup({ delay: null });
-    fetchMock.mockResolvedValue(
-      new Response(JSON.stringify(policyFixture()), { status: 200 }),
-    );
-    mockGet(policyFixture());
-    renderScreen(<AdminIdentity />);
-    await screen.findByRole("checkbox", { name: /create an account on first sign-in/i });
-
-    // Toggling the checkbox is the save: no form, no second button.
-    await user.click(screen.getByRole("checkbox", { name: /create an account on first sign-in/i }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
-      "/api/admin/oidc/policy",
-      expect.objectContaining({ method: "PUT" }),
-    ));
-    const call = fetchMock.mock.calls.find(
-      ([url, init]) => String(url).includes("/oidc/policy") && (init as RequestInit).method === "PUT",
-    );
-    // One knob, one decision — the body carries that knob and nothing else,
-    // which is what the per-field rows in the policy history mean.
-    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
-      auto_provision: false,
     });
+    renderScreen(<AdminIdentity />);
+    expect(await screen.findByRole("radio", { name: /^Approval/ })).toBeChecked();
   });
 });

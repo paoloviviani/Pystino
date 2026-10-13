@@ -65,6 +65,22 @@ class BadRequestError(GatewayError):
     code = "bad_request"
 
 
+class OutsideAccessGroupsError(GatewayError):
+    """The join gate refused an authenticated `/v1` caller (ADR 0095).
+
+    403 rather than 401: the caller *is* authenticated — the credential
+    verified — and what is refused is access under the group policy, which
+    regaining the group restores. A 401 would tell Cerea's machine
+    revalidation the token died and make it revoke the device permanently,
+    forcing a re-enrol for a loss that was meant to be temporary. The
+    message names no group: a prober learns nothing to ask for.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    error_type = "invalid_request_error"
+    code = "outside_access_groups"
+
+
 class ContentBlockedError(GatewayError):
     """A redaction policy refused the request before any provider saw it.
 

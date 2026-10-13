@@ -171,3 +171,47 @@ class TestTheMeteredPath:
         # which is the asymmetry this test exists to bound, and it has not
         # grown.
         assert len(selects) <= 5, f"{len(selects)} selects:\n{summarise(selects)}"
+
+    async def test_bearer_group_gate_adds_no_queries(
+        self,
+        bearer_app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        signing_key: object,
+        session_factory: object,
+    ) -> None:
+        """ADR 0095: the group gate on the steady-state path reads the
+        memberships authentication already loaded — no query, no write, same
+        budget as without the gate."""
+        from gateway.models import OIDCPolicyConfig
+        from test_bearer_auth import auth, make_token
+
+        async with session_factory() as session:  # type: ignore[attr-defined]
+            # The self-mapping is the operator's vouch for the IdP name (ADR
+            # 0095 review): without it the claim-sourced membership would not
+            # count toward the gate.
+            session.add(
+                OIDCPolicyConfig(
+                    join_mode="group",
+                    required_groups=["research"],
+                    group_mappings=[["research", "research"]],
+                )
+            )
+            await session.commit()
+        await bearer_app.state.oidc_policy.refresh_once()  # type: ignore[attr-defined]
+
+        engine = bearer_app.state.engine  # type: ignore[attr-defined]
+        token = make_token(signing_key)  # type: ignore[arg-type]
+        assert (await client.get("/v1/models", headers=auth(token))).status_code == 200
+
+        with counted(engine) as statements:
+            assert (await client.get("/v1/models", headers=auth(token))).status_code == 200
+
+        selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+        writes = [
+            s for s in statements if s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+        ]
+        print(f"\n  /v1/models (bearer, group mode): {len(selects)} selects, {len(writes)} writes")
+        print(summarise(selects))
+        assert not writes, f"a steady-state token request wrote:\n{summarise(writes)}"
+        assert len(selects) <= 5, f"{len(selects)} selects:\n{summarise(selects)}"

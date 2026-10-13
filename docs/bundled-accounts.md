@@ -100,8 +100,19 @@ password from the edit panel.
 ### With an external provider
 
 The Users page still lists the people and still disables and enables them on
-the gateway side, but it cannot add a login or reset a password, and says so:
-accounts live at the identity provider. Add user, Create sign-in and Reset
-password appear only while the enabled provider is the bundled Authelia.
+the gateway side. It cannot reset a password — that is the provider's — and
+**Create sign-in** and **Reset password** appear only while the enabled
+provider is the bundled Authelia. What it *can* do is **Invite** (ADR 0095):
+the button invites a person by email for any provider that creates no logins,
+with the groups to pre-assign, and answers with a ready-to-paste invitation
+("You've been given access to <deployment>. Sign in at <url> with your <IdP>
+account <email>.") — sent by email too, when SMTP is configured. The person's
+first sign-in claims the invitation by verified email. An invitation expires
+after 14 days; the row is badged *Invited* (and *Expired* once it is), and
+**Re-invite** re-issues the text.
+
+Who may sign in at all — strangers included — is the [join mode](identity.md#who-may-join)
+on the Identity page: **approval** holds a stranger's new account in the same
+list's *Awaiting approval* queue, with **Approve** and **Reject** on the row.
 Optional [User sync](oidc-generic-provider.md#user-sync) is the external
-provider's counterpart.
+provider's other counterpart.
