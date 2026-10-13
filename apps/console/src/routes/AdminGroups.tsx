@@ -440,9 +440,10 @@ function DeleteGroupDialog({ group, onClose }: { group: AdminGroup | null; onClo
 }
 
 /** What deleting a directory's group leads to depends on the import mode:
- * under `auto` the next sign-in recreates it; under `manual` its name only
- * comes back to the "Seen" list below, to import again or dismiss. */
-function IdpGroupDeleteNotice() {
+  * under `auto` the next sign-in recreates it (as a self-mapping); under
+  * `manual` its name only comes back to the "Seen" list below, to map again
+  * or dismiss. */
+ function IdpGroupDeleteNotice() {
   const seen = useSeenGroups({ limit: 1 });
   return seen.data?.group_import === "auto" ? (
     <Notice tone="warn" title="This group comes from the identity provider">
@@ -452,17 +453,17 @@ function IdpGroupDeleteNotice() {
   ) : (
     <Notice tone="info" title="This group comes from the identity provider">
       Its members lose it now. When one of them next signs in, its name is
-      listed under “Seen from your identity provider” again, and nothing is
-      recreated unless you import it.
+      listed under “Groups from your identity provider” again, and nothing is
+      recreated unless you map it.
     </Notice>
   );
 }
 
 /**
- * Group names the identity provider reported that no group here carries
+ * Group names the identity provider reported that nothing maps yet
  * (GATEWAY_OIDC__GROUP_IMPORT=manual, the default). A real directory reports
  * every group a person is in: one GitLab sign-in used to create 67 groups.
- * Now they wait here, most-carried first, for Import or Dismiss.
+ * Now they wait here, most-carried first, for Map or Dismiss.
  */
 function SeenGroups() {
   const paged = usePaginated();
@@ -477,24 +478,15 @@ function SeenGroups() {
   const page = seen.data;
   const rows = page?.items ?? [];
 
-  const run = (row: SeenGroup, action: "import" | "dismiss" | "restore") =>
+  const run = (row: SeenGroup, action: "dismiss" | "restore") =>
     act.mutate(
       { id: row.id, action },
       {
-        onSuccess: (result) => {
-          if (action === "import") {
-            const imported = result as SeenGroupImport;
-            toast?.add({
-              title: `Group ${row.name} imported`,
-              description: importedDescription(imported),
-              type: "success",
-            });
-          } else {
-            toast?.add({
-              title: action === "dismiss" ? `${row.name} ignored` : `${row.name} listed again`,
-              type: "success",
-            });
-          }
+        onSuccess: () => {
+          toast?.add({
+            title: action === "dismiss" ? `${row.name} ignored` : `${row.name} listed again`,
+            type: "success",
+          });
         },
         onError: (error) =>
           toast?.add({
@@ -510,9 +502,6 @@ function SeenGroups() {
 
   const actions = (row: SeenGroup) => (
     <>
-      <Button variant="ghost" busy={busy(row, "import")} onClick={() => run(row, "import")}>
-        Import
-      </Button>
       <Button variant="ghost" onClick={() => setMapping(row)}>
         Map…
       </Button>
@@ -647,10 +636,10 @@ function SeenGroups() {
           <Spinner label="Loading the groups your identity provider reported" />
         ) : rows.length === 0 && !paged.query ? (
           <EmptyState
-            title={showDismissed ? "Nothing dismissed." : "Nothing waiting to be imported."}
+            title={showDismissed ? "Nothing dismissed." : "Nothing waiting to be mapped."}
             detail={
               showDismissed
-                ? "Names you dismiss are kept here, to import or list again later."
+                ? "Names you dismiss are kept here, to map or list again later."
                 : "Group names your identity provider reports appear here after someone signs in with them."
             }
           />
@@ -679,24 +668,33 @@ function SeenGroups() {
   );
 }
 
-/** Map one seen IdP name to an existing local group (ADR 0095 §4): the name
- * now grants that group — a better answer than a same-named twin when the
- * deployment already has the group the directory means. */
+/** Map one seen IdP name: the one decision the rule leaves. Three answers to
+ * "what does this name mean here" — a new group of the same name, a new group
+ * under another name, or an existing group — and whichever it is, the
+ * mapping is what the token's name resolves through. */
 function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () => void }) {
   const groups = useGroups();
   const map = useMapSeenGroup();
   const toast = useOptionalToast();
+  const [target, setTarget] = useState<"new_same_name" | "new_named" | "existing">(
+    "new_same_name",
+  );
+  const [name, setName] = useState("");
   const [groupId, setGroupId] = useState("");
   const [reason, setReason] = useState("");
 
   const close = () => {
     map.reset();
+    setTarget("new_same_name");
+    setName("");
     setGroupId("");
     setReason("");
     onClose();
   };
 
   const options = groups.data?.items ?? [];
+  const ready =
+    target === "existing" ? groupId !== "" : target === "new_named" ? name.trim() !== "" : true;
 
   return (
     <Dialog
@@ -708,12 +706,18 @@ function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () 
           <Button onClick={close}>Cancel</Button>
           <Button
             variant="primary"
-            disabled={!groupId}
+            disabled={!ready}
             busy={map.isPending}
             onClick={() => {
               if (!seen) return;
               map.mutate(
-                { id: seen.id, group_id: groupId, reason: reason.trim() || undefined },
+                {
+                  id: seen.id,
+                  target,
+                  ...(target === "new_named" ? { name: name.trim() } : {}),
+                  ...(target === "existing" ? { group_id: groupId } : {}),
+                  reason: reason.trim() || undefined,
+                },
                 {
                   onSuccess: (result) => {
                     toast?.add({
@@ -744,19 +748,52 @@ function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () 
             {map.error instanceof Error ? map.error.message : "Unknown error."}
           </Notice>
         ) : null}
-        <Select
-          label="Local group"
-          value={groupId}
-          onChange={(event) => setGroupId(event.target.value)}
-          hint="The IdP name now grants this group, wherever it is claimed."
-        >
-          <option value="">Pick a group…</option>
-          {options.map((group) => (
-            <option key={group.id} value={group.id}>
-              {group.name}
-            </option>
-          ))}
-        </Select>
+        <fieldset>
+          <legend className="p-0 text-sm">What this name grants</legend>
+          <div className="flex flex-col gap-1.5">
+            {(
+              [
+                ["new_same_name", "New group with the same name"],
+                ["new_named", "New group named…"],
+                ["existing", "Existing group…"],
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value} className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="map-target"
+                  checked={target === value}
+                  onChange={() => setTarget(value)}
+                  className="mt-[0.2em] accent-accent"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {target === "new_named" ? (
+          <Input
+            label="Name the new group"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="engineering"
+          />
+        ) : null}
+        {target === "existing" ? (
+          <Select
+            label="Local group"
+            value={groupId}
+            onChange={(event) => setGroupId(event.target.value)}
+            hint="The IdP name now grants this group, wherever it is claimed."
+          >
+            <option value="">Pick a group…</option>
+            {options.map((group) => (
+              <option key={group.id} value={group.id}>
+                {group.name}
+              </option>
+            ))}
+          </Select>
+        ) : null}
         <Input
           label="Reason (optional)"
           value={reason}
@@ -773,19 +810,19 @@ function ModeLine({ page }: { page: SeenGroupPage }) {
   const everyone = page.default_group ? (
     <>
       {" "}Everyone joins <strong>{page.default_group}</strong> at their first sign-in, so
-      new people can use public models before anything is imported.
+      new people can use public models before anything is mapped.
     </>
   ) : null;
   return page.group_import === "auto" ? (
     <>
-      Groups are imported automatically at sign-in. Names listed here were seen
+      Every name is mapped automatically at sign-in. Names listed here were seen
       before that was turned on.{everyone}
     </>
   ) : (
     <>
-      Nothing is created until you import it. Importing creates the group and
-      gives it to the people who carry it now, or at their next sign-in where
-      the provider's groups only apply then.{everyone}
+      Nothing is created until you map it. Mapping creates the group (or names
+      one that exists) and gives it to the people who carry it now — or at
+      their next sign-in where the provider's groups only apply then.{everyone}
     </>
   );
 }

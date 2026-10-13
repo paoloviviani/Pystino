@@ -802,14 +802,13 @@ export function useSeenGroups(query: PageQuery, dismissed = false) {
   });
 }
 
-/** Import, dismiss or restore one seen name. Import invalidates every group
- * listing (`adminKeys.groups` prefix-matches the seen one too) and the users,
- * whose memberships it may just have changed. */
+/** Dismiss or restore one seen name. Dismissing invalidates nothing but the
+ * list itself; memberships are not touched (only map does that). */
 export function useSeenGroupAction() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, action }: { id: string; action: "import" | "dismiss" | "restore" }) =>
-      request<SeenGroupImport | void>(`/api/admin/groups/seen/${id}/${action}`, {
+    mutationFn: ({ id, action }: { id: string; action: "dismiss" | "restore" }) =>
+      request<void>(`/api/admin/groups/seen/${id}/${action}`, {
         method: "POST",
       }),
     onSuccess: () => {
@@ -819,15 +818,34 @@ export function useSeenGroupAction() {
   });
 }
 
-/** Map one seen name to an existing local group (ADR 0095 §4). Invalidates
- * the policy too: the mapping is a new row on its history. */
+/** Map one seen name — the one decision: a new group of the same name, a new
+ * group under another name, or an existing group. The mapping is a new row on
+ * the policy's history, so the policy is invalidated too, beside the groups
+ * and the users the carriers' grants may have changed. */
 export function useMapSeenGroup() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, group_id, reason }: { id: string; group_id: string; reason?: string }) =>
+    mutationFn: ({
+      id,
+      target,
+      name,
+      group_id,
+      reason,
+    }: {
+      id: string;
+      target: "new_same_name" | "new_named" | "existing";
+      name?: string;
+      group_id?: string;
+      reason?: string;
+    }) =>
       request<SeenGroupImport>(`/api/admin/groups/seen/${id}/map`, {
         method: "POST",
-        body: { group_id, reason: reason ?? "" },
+        body: {
+          target,
+          ...(name !== undefined ? { name } : {}),
+          ...(group_id !== undefined ? { group_id } : {}),
+          reason: reason ?? "",
+        },
       }),
     onSuccess: () => {
       client.invalidateQueries({ queryKey: adminKeys.groups });

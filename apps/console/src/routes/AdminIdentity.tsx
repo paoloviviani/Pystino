@@ -230,28 +230,45 @@ export function ProvisioningPolicySection() {
           ) : null}
           <fieldset>
             <legend className="p-0 text-sm">Required groups</legend>
-            <div className="flex flex-wrap gap-x-4 gap-y-1">
-              {(groups.data?.items ?? []).map((group) => (
-                <label key={group.id} className="inline-flex items-center gap-1.5 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={requiredGroups.includes(group.name)}
-                    onChange={(event) =>
-                      changeGroups(
-                        event.target.checked
-                          ? [...requiredGroups, group.name].sort()
-                          : requiredGroups.filter((name) => name !== group.name),
-                      )
-                    }
-                    className="accent-accent"
-                  />
-                  {group.name}
-                </label>
-              ))}
+            <div className="flex flex-col gap-1.5">
+              {(groups.data?.items ?? []).map((group) => {
+                // The mapping-only rule: a claimed name reaches the group only
+                // through a mapping. A required group nothing maps is one the
+                // gate can only admit by hand — say so where it is picked.
+                const mapped = (policy.data?.group_mappings ?? []).some(
+                  (rule) => rule.local === group.name,
+                );
+                const chosen = requiredGroups.includes(group.name);
+                return (
+                  <div key={group.id}>
+                    <label className="inline-flex items-center gap-1.5 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={chosen}
+                        onChange={(event) =>
+                          changeGroups(
+                            event.target.checked
+                              ? [...requiredGroups, group.name].sort()
+                              : requiredGroups.filter((name) => name !== group.name),
+                          )
+                        }
+                        className="accent-accent"
+                      />
+                      {group.name}
+                    </label>
+                    {chosen && !mapped ? (
+                      <p className="text-xs text-ink-faint">
+                        No IdP group maps to this: only members added here or by
+                        SCIM count.
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })}
             </div>
             {(groups.data?.items ?? []).length === 0 ? (
               <p className="text-xs text-ink-faint">
-                No groups yet. A directory name must first be imported or mapped
+                No groups yet. An identity provider's name must first be mapped
                 on the Groups page.
               </p>
             ) : (
