@@ -26,6 +26,14 @@ would either change nothing or make things worse:
 The additions ride one appended ``oidc_config`` row (the newest row carried
 forward, so the join answers survive), the same append the console's saves
 and the map endpoint make.
+
+The group answers read from the newest row defer to the environment per
+field, exactly as ``effective_policy`` folds them: a null column stands
+down, and ``GATEWAY_OIDC__JOIN_MODE`` / ``GATEWAY_OIDC__REQUIRED_GROUPS``
+answer instead — which is how a deployment running ``group`` mode from the
+environment alone (no console decision, and the ``migrate`` service carries
+those variables since this revision) still gets its required manual groups
+kept out of the self-mappings.
 """
 
 from __future__ import annotations
@@ -78,6 +86,26 @@ _memberships = sa.Table(
 REASON = "migration 0058: self-mappings for groups claimed by name"
 
 
+def _required_from_env(raw: str | None) -> set[str]:
+    """`GATEWAY_OIDC__REQUIRED_GROUPS` as the environment spells it: a JSON
+    list or a comma-separated list, parsed the way ``config.py`` parses it
+    (its ``field_validator`` mode="before"), blanks dropped."""
+    if raw is None or not raw.strip():
+        return set()
+    text = raw.strip()
+    if text.startswith("["):
+        import json
+
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return set()
+        if not isinstance(data, list):
+            return set()
+        return {str(name).strip() for name in data if str(name).strip()}
+    return {part.strip() for part in text.split(",") if part.strip()}
+
+
 def upgrade() -> None:
     # Imported here rather than at module level (0041's way): a migration
     # keeps loading against the application tree as it stands, and utcnow()
@@ -101,12 +129,24 @@ def upgrade() -> None:
                 if isinstance(idp, str) and isinstance(local, str) and idp and local:
                     current[idp] = local
     targets = set(current.values())
+    # The fold order matches effective_policy: the row decides per field, and
+    # a column it leaves null defers to the environment. The migrate service
+    # carries GATEWAY_OIDC__* since this revision (deploy/compose.yaml), so a
+    # deployment running group mode from the environment alone gets the same
+    # answer here the gateway will fold at its next start.
+    import os
+
+    join_mode = (
+        stored["join_mode"]
+        if stored is not None and stored["join_mode"]
+        else os.environ.get("GATEWAY_OIDC__JOIN_MODE") or None
+    )
     required = (
         set(stored["required_groups"])
-        if stored is not None and stored["required_groups"]
-        else set()
+        if stored is not None and stored["required_groups"] is not None
+        else _required_from_env(os.environ.get("GATEWAY_OIDC__REQUIRED_GROUPS"))
     )
-    group_mode = stored is not None and stored["join_mode"] == "group"
+    group_mode = join_mode == "group"
 
     fed = bind.execute(
         sa.select(_groups.c.name, _groups.c.source).where(
@@ -147,22 +187,31 @@ def upgrade() -> None:
         return stored[column] if stored is not None else None
 
     pairs = [[idp, local] for idp, local in current.items()] + [[name, name] for name in additions]
-    bind.execute(
-        sa.insert(_oidc_config).values(
-            id=uuid.uuid4(),
-            auto_provision=carry("auto_provision"),
-            unknown_user_policy=carry("unknown_user_policy"),
-            join_mode=carry("join_mode"),
-            required_groups=carry("required_groups"),
-            group_fallback=carry("group_fallback"),
-            groups_claim=carry("groups_claim"),
-            admin_groups=carry("admin_groups"),
-            group_mappings=pairs,
-            reason=REASON,
-            created_by=carry("created_by"),
-            created_at=utcnow(),
-        )
-    )
+    # Columns the carry-forward leaves unset are OMITTED, not bound: a JSON
+    # column bound with None stores the four characters `null`, which the ORM
+    # would then read back as a decision ("this row says required_groups is
+    # null") and the fold would crash iterating it. An omitted column is a
+    # SQL NULL, which is what "this row does not decide" means.
+    values: dict[str, object] = {
+        "id": uuid.uuid4(),
+        "group_mappings": pairs,
+        "reason": REASON,
+        "created_at": utcnow(),
+    }
+    for column in (
+        "auto_provision",
+        "unknown_user_policy",
+        "join_mode",
+        "required_groups",
+        "group_fallback",
+        "groups_claim",
+        "admin_groups",
+        "created_by",
+    ):
+        value = carry(column)
+        if value is not None:
+            values[column] = value
+    bind.execute(sa.insert(_oidc_config).values(**values))
 
 
 def downgrade() -> None:

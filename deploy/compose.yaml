@@ -106,6 +106,13 @@ services:
       GATEWAY_UPSTREAM__BASE_URL: ${GATEWAY_UPSTREAM__BASE_URL:-https://api.cortecs.ai/v1}
       GATEWAY_UPSTREAM__API_KEY: ${GATEWAY_UPSTREAM__API_KEY:-}
       GATEWAY_SECRET_KEY: ${GATEWAY_SECRET_KEY:?set GATEWAY_SECRET_KEY in .env}
+      # Migration 0058 reads the identity policy's group answers when the
+      # newest oidc_config row does not decide them (null defers to the
+      # environment, exactly as the fold does), so the migrate service needs
+      # the same environment variables the gateway gets.
+      GATEWAY_OIDC__JOIN_MODE: ${OIDC_JOIN_MODE:-open}
+      GATEWAY_OIDC__REQUIRED_GROUPS: ${OIDC_REQUIRED_GROUPS:-}
+      GATEWAY_OIDC__GROUP_FALLBACK: ${OIDC_GROUP_FALLBACK:-refuse}
     depends_on:
       postgres:
         condition: service_healthy

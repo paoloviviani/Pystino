@@ -244,6 +244,72 @@ def test_an_empty_eligible_set_appends_nothing(run_migration) -> None:
         assert rows == [], "no groups, no row"
 
 
+def test_the_environment_group_mode_keeps_a_required_manual_group_out(
+    run_migration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Group mode set from the ENVIRONMENT alone (no console row deciding it —
+    and the migrate service carries GATEWAY_OIDC__* since this revision):
+    the same skip the row-driven case gets, or the self-mapping would reopen
+    the spoof against a required manual group."""
+    monkeypatch.setenv("GATEWAY_OIDC__JOIN_MODE", "group")
+    monkeypatch.setenv("GATEWAY_OIDC__REQUIRED_GROUPS", "staff")  # the CSV spelling
+    engine = run_migration(seed=True, row=None)
+    with engine.connect() as conn:
+        mappings = json.loads(_newest_config(conn)["group_mappings"])  # type: ignore[arg-type]
+        # staff is required and manual under the env's group gate: out. Every
+        # other claim-fed group is in — with no row there is no history, so the
+        # key/target skips have nothing to read.
+        assert sorted(map(tuple, mappings)) == [
+            ("eng", "eng"),
+            ("keyed", "keyed"),
+            ("vouched", "vouched"),
+            ("x", "x"),
+        ]
+        newest = _newest_config(conn)
+        assert newest["join_mode"] is None and newest["required_groups"] is None
+
+
+def test_the_environment_open_mode_self_maps_the_by_name_group(
+    run_migration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same env-only deployment with the environment saying `open`: the
+    claims really did resolve by name, so the self-mapping is added — and the
+    required-manual skip must not leak into it."""
+    monkeypatch.setenv("GATEWAY_OIDC__JOIN_MODE", "open")
+    monkeypatch.setenv("GATEWAY_OIDC__REQUIRED_GROUPS", "")
+    engine = run_migration(seed=True, row=None)
+    with engine.connect() as conn:
+        mappings = json.loads(_newest_config(conn)["group_mappings"])  # type: ignore[arg-type]
+    # The environment stops gating: every claim-fed group is self-mapped,
+    # staff included — the skips that need the row's mappings have no row to
+    # read them from.
+    assert sorted(map(tuple, mappings)) == [
+        ("eng", "eng"),
+        ("keyed", "keyed"),
+        ("staff", "staff"),
+        ("vouched", "vouched"),
+        ("x", "x"),
+    ]
+
+
+def test_the_row_decides_over_the_environment(
+    run_migration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fold order is row, then environment: a row that says `open` stands
+    even when the environment says `group`, so the by-name self-mappings for
+    its groups are added despite GATEWAY_OIDC__JOIN_MODE=group."""
+    monkeypatch.setenv("GATEWAY_OIDC__JOIN_MODE", "group")
+    monkeypatch.setenv("GATEWAY_OIDC__REQUIRED_GROUPS", '["staff"]')
+    # The seeded row decides open; the env required_groups must be ignored
+    # with the row's own list in force.
+    engine = run_migration(
+        row={"join_mode": "open", "required_groups": "[]", "mappings": GROUP_MODE_ROW["mappings"]}
+    )
+    with engine.connect() as conn:
+        mappings = json.loads(_newest_config(conn)["group_mappings"])  # type: ignore[arg-type]
+    assert ("staff", "staff") in sorted(map(tuple, mappings))
+
+
 def test_no_required_manual_group_is_self_mapped_outside_group_mode(run_migration) -> None:
     """The required-and-manual skip is scoped to `group` mode: an open
     deployment's claims really did resolve by name into its manual groups, so
