@@ -496,7 +496,8 @@ class TestTheAdminApi:
         # And a mapped name stops being listed: decided, not waiting.
         ops = next(i for i in listing["items"] if i["name"] == "gitlab/ops")
         ops_group_id = next(
-            i["id"] for i in (await client.get("/api/admin/groups")).json()["items"]
+            i["id"]
+            for i in (await client.get("/api/admin/groups")).json()["items"]
             if i["name"] == "gitlab/ops"
         )
         mapped = await client.post(
@@ -543,7 +544,11 @@ class TestTheAdminApi:
 
         response = await client.post(
             f"/api/admin/groups/seen/{eng['id']}/map",
-            json={"target": "existing", "group_id": str(target_id), "reason": "eng is engineering here"},
+            json={
+                "target": "existing",
+                "group_id": str(target_id),
+                "reason": "eng is engineering here",
+            },
         )
         assert response.status_code == 200, response.text
         body = response.json()
@@ -641,7 +646,8 @@ class TestTheAdminApi:
             if i["name"] == "gitlab/eng"
         )
         response = await client.post(
-            f"/api/admin/groups/seen/{eng['id']}/map", json={"target": "existing", "group_id": str(target_id)}
+            f"/api/admin/groups/seen/{eng['id']}/map",
+            json={"target": "existing", "group_id": str(target_id)},
         )
         assert response.status_code == 200, response.text
         body = response.json()
@@ -690,7 +696,8 @@ class TestTheAdminApi:
             if i["name"] == "gitlab/eng"
         )
         response = await client.post(
-            f"/api/admin/groups/seen/{eng['id']}/map", json={"target": "existing", "group_id": str(target_id)}
+            f"/api/admin/groups/seen/{eng['id']}/map",
+            json={"target": "existing", "group_id": str(target_id)},
         )
         assert response.status_code == 200, response.text
         policy = (await client.get("/api/admin/oidc/policy")).json()
@@ -718,12 +725,14 @@ class TestTheAdminApi:
             if i["name"] == "gitlab/eng"
         )
         first = await client.post(
-            f"/api/admin/groups/seen/{eng['id']}/map", json={"target": "existing", "group_id": str(target_id)}
+            f"/api/admin/groups/seen/{eng['id']}/map",
+            json={"target": "existing", "group_id": str(target_id)},
         )
         assert first.status_code == 200, first.text
         # The seen row is gone with the mapping, so a second map 404s...
         again = await client.post(
-            f"/api/admin/groups/seen/{eng['id']}/map", json={"target": "existing", "group_id": str(target_id)}
+            f"/api/admin/groups/seen/{eng['id']}/map",
+            json={"target": "existing", "group_id": str(target_id)},
         )
         assert again.status_code == 404
         # ...and a mapped name is never seen again: the next sign-in resolves
