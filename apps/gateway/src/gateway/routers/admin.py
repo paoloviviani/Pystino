@@ -4625,6 +4625,21 @@ async def set_oidc_policy(
             "groups refuses everyone who is not an administrator. Name at "
             "least one local group first."
         )
+    if folded.code_agents_mode == "groups":
+        accepted = settings.oidc.accepted_client_list()
+        machine = settings.oidc.machine_client_id
+        if accepted and machine not in accepted:
+            # ADR 0096: a machine token is refused before the gate runs, so a
+            # 'groups' decision that cannot match any machine token fails
+            # silently open. Refused, naming the setting to fix — set
+            # GATEWAY_OIDC__MACHINE_CLIENT_ID to the client the deployment
+            # accepts, then save again.
+            raise BadRequestError(
+                "code_agents_mode 'groups' needs a machine client the deployment "
+                f"accepts: GATEWAY_OIDC__MACHINE_CLIENT_ID={machine!r} names a "
+                "client not in GATEWAY_OIDC__ACCEPTED_CLIENTS "
+                f"({', '.join(accepted)}), so the restriction could never fire."
+            )
     groups_sent = "required_groups" in fields and fields["required_groups"] is not None
     if (groups_sent or group_fallback is not None) and folded.join_mode != "group":
         # Same "knob that does nothing" rule as unknown_user_policy above.

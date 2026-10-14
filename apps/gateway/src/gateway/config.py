@@ -1221,6 +1221,35 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _groups_baseline_needs_its_machine_client(self) -> Settings:
+        """ADR 0096: a code_agents restriction in use that can never fire is
+        refused, default or explicit.
+
+        The check above catches an explicitly named machine client the
+        deployment does not accept. This one catches the other half: the
+        environment baseline itself says `groups`
+        (`GATEWAY_ACCESS__CODE_AGENTS`), while the machine client — named or
+        defaulted — is not among a non-empty allowlist. The restriction is in
+        use and a machine token is refused before the gate runs, so the
+        refusal names the baseline and both values. An empty allowlist stays
+        the escape hatch that enforces nothing. Not production-gated, like
+        the check above: a dev deployment with the same mismatch is broken in
+        exactly the same silent way.
+        """
+        machine = self.oidc.machine_client_id
+        accepted = self.oidc.accepted_client_list()
+        if self.access.code_agents == "groups" and machine and accepted and machine not in accepted:
+            raise ValueError(
+                "GATEWAY_ACCESS__CODE_AGENTS='groups' restricts coding agents to "
+                f"flagged groups, but GATEWAY_OIDC__MACHINE_CLIENT_ID={machine!r} "
+                f"names a client not in GATEWAY_OIDC__ACCEPTED_CLIENTS "
+                f"({', '.join(accepted)}): the restriction is in use and could "
+                "never fire — a machine token is refused before the gate runs. "
+                "Name the machine client the deployment accepts."
+            )
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -1258,5 +1287,19 @@ def startup_warnings(settings: Settings) -> list[str]:
             "GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE is set but GATEWAY_OIDC__CHAT_CLIENT_ID "
             "is not: POST /v1/session/announce refuses every token until it is set, "
             "which means every chat login fails closed."
+        )
+    machine = settings.oidc.machine_client_id
+    accepted = settings.oidc.accepted_client_list()
+    if (
+        "machine_client_id" not in settings.oidc.model_fields_set
+        and machine
+        and accepted
+        and machine not in accepted
+    ):
+        warnings.append(
+            f"GATEWAY_OIDC__MACHINE_CLIENT_ID is unset, and the default {machine!r} "
+            f"is not among GATEWAY_OIDC__ACCEPTED_CLIENTS ({', '.join(accepted)}): "
+            "the code_agents restriction would not apply to machine tokens until "
+            "GATEWAY_OIDC__MACHINE_CLIENT_ID names the right client."
         )
     return warnings

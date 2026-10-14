@@ -377,6 +377,7 @@ class OIDCPolicyResolver:
         self._refresh_seconds = refresh_seconds
         self._policy = environment_policy(settings, access)
         self._warned_missing_groups: frozenset[str] = frozenset()
+        self._warned_machine_mismatch: tuple[str, tuple[str, ...]] | None = None
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -416,6 +417,34 @@ class OIDCPolicyResolver:
                 ", ".join(sorted(missing)),
             )
         self._warned_missing_groups = missing
+        # ADR 0096: a console decision of code_agents_mode 'groups' whose
+        # machine client the deployment does not accept is a restriction that
+        # can never fire — the PUT refuses the save, but the row may predate
+        # the refusal or the environment may have changed under it, so the
+        # poll logs it too. ERROR, not warning: unlike an unknown group name
+        # (which fails closed) this fails silently open. Once per distinct
+        # state, like the warning above: the poll runs every ten seconds.
+        machine = self._settings.machine_client_id
+        accepted = tuple(self._settings.accepted_client_list())
+        mismatch = (
+            (machine, accepted)
+            if policy.code_agents_mode == "groups"
+            and machine
+            and accepted
+            and machine not in accepted
+            else None
+        )
+        if mismatch is not None and mismatch != self._warned_machine_mismatch:
+            logger.error(
+                "The identity policy restricts coding agents to flagged groups, but "
+                "GATEWAY_OIDC__MACHINE_CLIENT_ID=%r names a client not in "
+                "GATEWAY_OIDC__ACCEPTED_CLIENTS (%s): the restriction can never "
+                "fire, and a chat-only person's machine keeps working. Name the "
+                "machine client the deployment accepts.",
+                machine,
+                ", ".join(accepted),
+            )
+        self._warned_machine_mismatch = mismatch
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._poll_forever())

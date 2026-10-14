@@ -171,6 +171,52 @@ class TestJoinModeFold:
             await resolver.refresh_once()
         assert "ghost" not in caplog.text
 
+    async def test_groups_code_agents_with_unaccepted_machine_client_logs_once(
+        self, session_factory: async_sessionmaker[AsyncSession], caplog: Any
+    ) -> None:
+        """ADR 0096: a console decision of code_agents 'groups' whose machine
+        client the deployment does not accept is a restriction that can never
+        fire — the poll logs it as an error (a silent-open failure, not a
+        fail-closed warning), once per distinct state."""
+        import logging as _logging
+
+        await write_policy(session_factory, code_agents_mode="groups")
+        settings = OIDCSettings(machine_client_id="gitlab-uid", accepted_clients="console,chat")
+        resolver = OIDCPolicyResolver(settings, session_factory)
+        with caplog.at_level(_logging.ERROR, logger="gateway.oidc_policy"):
+            await resolver.refresh_once()
+        assert "MACHINE_CLIENT_ID" in caplog.text
+        assert "gitlab-uid" in caplog.text
+        caplog.clear()
+        with caplog.at_level(_logging.ERROR, logger="gateway.oidc_policy"):
+            await resolver.refresh_once()
+        assert "MACHINE_CLIENT_ID" not in caplog.text
+
+    async def test_groups_code_agents_with_accepted_machine_client_is_quiet(
+        self, session_factory: async_sessionmaker[AsyncSession], caplog: Any
+    ) -> None:
+        import logging as _logging
+
+        await write_policy(session_factory, code_agents_mode="groups")
+        settings = OIDCSettings(
+            machine_client_id="gitlab-uid", accepted_clients="console,gitlab-uid"
+        )
+        resolver = OIDCPolicyResolver(settings, session_factory)
+        with caplog.at_level(_logging.ERROR, logger="gateway.oidc_policy"):
+            await resolver.refresh_once()
+        assert "MACHINE_CLIENT_ID" not in caplog.text
+
+    async def test_everyone_code_agents_with_unaccepted_machine_client_is_quiet(
+        self, session_factory: async_sessionmaker[AsyncSession], caplog: Any
+    ) -> None:
+        import logging as _logging
+
+        settings = OIDCSettings(machine_client_id="gitlab-uid", accepted_clients="console,chat")
+        resolver = OIDCPolicyResolver(settings, session_factory)
+        with caplog.at_level(_logging.ERROR, logger="gateway.oidc_policy"):
+            await resolver.refresh_once()
+        assert "MACHINE_CLIENT_ID" not in caplog.text
+
 
 class TestMapGroupNames:
     def test_an_unmapped_name_is_dropped_even_when_it_names_a_group(self) -> None:
@@ -527,6 +573,46 @@ class TestOidcPolicyEndpoints:
         )
         assert response.status_code == 200, response.text
         assert response.json()["configured"]["reason"] == ""
+
+    async def test_put_code_agents_groups_with_unaccepted_machine_client_is_refused(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Any,
+        admin_session: dict[str, str],
+    ) -> None:
+        """ADR 0096: a 'groups' save whose machine client the deployment does
+        not accept could never fire — refused with the setting to fix,
+        rather than stored into a silent no-op."""
+        app.state.settings.oidc = OIDCSettings(
+            machine_client_id="other", accepted_clients="console,chat"
+        )
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={"code_agents_mode": "groups"},
+            headers=admin_session,
+        )
+        assert response.status_code == 400, response.text
+        assert "MACHINE_CLIENT_ID" in response.text
+
+    async def test_put_code_agents_groups_with_accepted_machine_client_saves(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        session_factory: async_sessionmaker[AsyncSession],
+        seeded: Any,
+        admin_session: dict[str, str],
+    ) -> None:
+        app.state.settings.oidc = OIDCSettings(
+            machine_client_id="machine", accepted_clients="console,machine"
+        )
+        response = await client.put(
+            "/api/admin/oidc/policy",
+            json={"code_agents_mode": "groups"},
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["code_agents_mode"] == "groups"
 
         async with session_factory() as session:
             row = (
