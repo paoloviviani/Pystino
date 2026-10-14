@@ -180,7 +180,12 @@ class TestEngine:
         record = record_from_row(row, BOX)
         both = [Entry("alice", "alice"), Entry("bob", "bob")]
         await apply_entries(
-            session, record, both, settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True,
+            session,
+            record,
+            both,
+            settings=OIDCSettings(**LEGACY_GROUPS),
+            dry_run=False,
+            full=True,
             defaults=DEFAULTS,
         )
         report = await apply_entries(
@@ -198,7 +203,12 @@ class TestEngine:
             await session.refresh(fresh)
             assert not fresh.is_active and fresh.deactivated_by == "directory"
         back = await apply_entries(
-            session, record, both, settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True,
+            session,
+            record,
+            both,
+            settings=OIDCSettings(**LEGACY_GROUPS),
+            dry_run=False,
+            full=True,
             defaults=DEFAULTS,
         )
         # Both come back: the directory deactivated them, so it may reactivate them.
@@ -238,7 +248,12 @@ class TestEngine:
             defaults=DEFAULTS,
         )
         report = await apply_entries(
-            session, record, [], settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True,
+            session,
+            record,
+            [],
+            settings=OIDCSettings(**LEGACY_GROUPS),
+            dry_run=False,
+            full=True,
             defaults=DEFAULTS,
         )
         assert report.status == "needs_confirmation" and report.deactivated == 8
