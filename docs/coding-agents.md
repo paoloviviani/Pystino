@@ -15,6 +15,12 @@ installation and operation are documented in the chat repository's
 `CODE_AGENTS_ENABLED=true` in `.env` (the full stack's; a Pystino-only
 deployment has no chat, so no `/code` panel to dial into).
 
+The commands on this page use one variable, the gateway's public address:
+
+```bash
+export GATEWAY_BASE_URL=https://pystino.example.org   # your PUBLIC_ORIGIN
+```
+
 ## Two ways in
 
 | How | Credential | Bills |
@@ -32,11 +38,11 @@ holds no standing secret and shows up in the chat's `/code` panel.
    also shows the command below with your address filled in) and copy it. The script cannot
    do this for you: minting needs a signed-in browser session, which a script
    holding a key does not have.
-2. On the machine where you use opencode, run this, with your gateway's address
-   in place of `llm.example.org`:
+2. On the machine where you use opencode, run this (`GATEWAY_BASE_URL` is
+   your gateway's address, defined at the top of this page):
 
     ```bash
-    curl -fsSL https://llm.example.org/opencode/install.sh | bash
+    curl -fsSL "$GATEWAY_BASE_URL/opencode/install.sh" | bash
     ```
 
     It asks for the key at the terminal (hidden, never echoed), lists the chat
@@ -46,7 +52,7 @@ holds no standing secret and shows up in the chat's `/code` panel.
 3. Start opencode and pick a model with `/models`.
 
 The script needs only `bash` and `python3`. Read it first if you like:
-`curl -fsSL https://llm.example.org/opencode/install.sh | less`.
+`curl -fsSL "$GATEWAY_BASE_URL/opencode/install.sh" | less`.
 
 ### What it writes, and where
 
@@ -81,7 +87,7 @@ hidden prompt. For an unattended run, set it on the right-hand side of the pipe,
 since a prefix on `curl` would reach only `curl`:
 
 ```bash
-curl -fsSL https://llm.example.org/opencode/install.sh | PYSTINO_API_KEY=gwk_… bash
+curl -fsSL "$GATEWAY_BASE_URL/opencode/install.sh" | PYSTINO_API_KEY=gwk_… bash
 ```
 
 By default the key is written into the file, which is created readable by you
@@ -92,7 +98,7 @@ opencode (a desktop launcher will not see a variable set only in a shell
 profile). The script still uses the key once to discover your models.
 
 ```bash
-curl -fsSL https://llm.example.org/opencode/install.sh | bash -s -- --key-in-env
+curl -fsSL "$GATEWAY_BASE_URL/opencode/install.sh" | bash -s -- --key-in-env
 ```
 
 ### Other options
