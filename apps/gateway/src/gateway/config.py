@@ -67,6 +67,22 @@ class UpstreamSettings(BaseModel):
         return value.rstrip("/")
 
 
+class AccessSettings(BaseModel):
+    """Who may hold each capability (ADR 0096).
+
+    ``everyone`` (the default, so an upgrade changes nothing) or ``groups``
+    (only people in a group carrying the flag). The console's ``oidc_config``
+    row decides per field when it names one; this is the baseline it folds
+    onto. The effective capability is a pure function of the person's
+    memberships and the folded setting — see :mod:`gateway.capabilities`.
+    """
+
+    #: The /code panel and the machine links that serve it.
+    code_agents: Literal["everyone", "groups"] = "everyone"
+    #: Minting and using ``gwk_`` API keys.
+    api_keys: Literal["everyone", "groups"] = "everyone"
+
+
 class OIDCSettings(BaseModel):
     """OIDC for the management API, and — when an audience is named — for ``/v1``.
 
@@ -322,6 +338,15 @@ class OIDCSettings(BaseModel):
     # `OIDC_CHAT_CLIENT_ID` and `OIDC_MACHINE_CLIENT_ID`; see `accepted_client_list`
     # for why this is a string. Enforced on `/v1` once the re-seed lands.
     accepted_clients: str = ""
+
+    # ADR 0096: which of `accepted_clients` is the machine client, specifically.
+    # The code_agents gate keys on it: a bearer token whose `azp`/`client_id`
+    # names this client is a coding agent's credential, and a person without
+    # the code_agents capability is refused 403 `agents_not_allowed` when it is
+    # presented (see `gateway.capabilities`). `opencode-enrollment` is the
+    # default because that is the client id Cerea's deploy kit and galopin's
+    # enrollment flow use; a deployment that renamed it sets this to match.
+    machine_client_id: str = "opencode-enrollment"
 
     # ADR 0093 §4.1: which of `accepted_clients` is the chat, specifically.
     # `POST /v1/session/announce` is the chat's own sign-in door and refuses a
@@ -1049,6 +1074,7 @@ class Settings(BaseSettings):
 
     upstream: UpstreamSettings = Field(default_factory=UpstreamSettings)
     oidc: OIDCSettings = Field(default_factory=OIDCSettings)
+    access: AccessSettings = Field(default_factory=AccessSettings)
     smtp: SmtpSettings = Field(default_factory=SmtpSettings)
     chat: ChatSettings = Field(default_factory=ChatSettings)
     local_auth: LocalAuthSettings = Field(default_factory=LocalAuthSettings)

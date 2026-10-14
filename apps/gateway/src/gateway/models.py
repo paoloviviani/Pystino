@@ -339,6 +339,18 @@ class Group(Base):
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
+    # ADR 0096: the two capability flags. Default false — a flag grants, it
+    # never withholds — so a group carries a capability only when an
+    # administrator switched it on. The effective capability for a person is
+    # the deployment setting ("everyone" | "groups") folded with these and
+    # their memberships; see `gateway.capabilities`.
+    code_agents_allowed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+    api_keys_allowed: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+
     # The one search backend this group searches through on the unified
     # ``POST /v1/search`` route. Null means no policy: the group cannot use
     # that route at all, instead of searching through whatever backend happens
@@ -2051,6 +2063,11 @@ class OIDCPolicyConfig(Base):
     #: Which local group names confer ``is_admin``. Compared against *mapped*
     #: names — what a group is called here, not what the IdP calls it.
     admin_groups: Mapped[list[str] | None] = mapped_column(JSON, default=None)
+    #: ADR 0096: who may hold each capability, as an administrator set it.
+    #: ``everyone`` or ``groups``; null = the environment decides
+    #: (``GATEWAY_ACCESS__CODE_AGENTS`` / ``GATEWAY_ACCESS__API_KEYS``).
+    code_agents_mode: Mapped[str | None] = mapped_column(String(16), default=None)
+    api_keys_mode: Mapped[str | None] = mapped_column(String(16), default=None)
     #: [[idp_name, local_name], ...]: what an IdP group means here. Unmapped
     #: groups keep their own name. Many IdP groups may map to one local group.
     group_mappings: Mapped[list[list[str]] | None] = mapped_column(JSON, default=None)
