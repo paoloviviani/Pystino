@@ -1188,6 +1188,39 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _machine_client_needs_acceptance(self) -> Settings:
+        """ADR 0096: a named machine client the deployment does not accept is
+        a configuration that can only fail silently.
+
+        The code_agents gate matches a machine token's `azp`/`client_id`
+        against `machine_client_id` — but a token from a client outside
+        `accepted_clients` is refused before that gate ever runs. A machine
+        client set here and missing there (a renamed client passed to the
+        audience list but not to the machine slot, a GitLab app uid the kit
+        did not forward) would therefore never match, and a chat-only
+        person's machine would pass silently. Refused here, naming both
+        values, rather than debugged from a machine that keeps working.
+
+        Only when the operator named one: the default stands for "no machine
+        client configured", and an empty allowlist is the escape hatch that
+        enforces nothing, so neither alone is a mistake. Unlike the check
+        above this one is not production-gated — a dev deployment with the
+        same mismatch is broken in exactly the same silent way.
+        """
+        machine = self.oidc.machine_client_id
+        accepted = self.oidc.accepted_client_list()
+        explicitly_named = "machine_client_id" in self.oidc.model_fields_set
+        if explicitly_named and machine and accepted and machine not in accepted:
+            raise ValueError(
+                f"GATEWAY_OIDC__MACHINE_CLIENT_ID={machine!r} names a client not in "
+                f"GATEWAY_OIDC__ACCEPTED_CLIENTS ({', '.join(accepted)}): a machine "
+                "token is refused before the agents capability could ever apply, "
+                "so a person without code_agents would keep their machine "
+                "silently. Name the machine client the deployment accepts."
+            )
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:

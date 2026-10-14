@@ -73,6 +73,44 @@ class TestAcceptedClients:
         _production_settings(kind="authelia", access_token_audience="")
 
 
+class TestMachineClientAcceptance:
+    def test_a_named_machine_client_missing_from_accepted_clients_is_refused(self) -> None:
+        # ADR 0096: the code_agents gate matches azp/client_id against the
+        # machine client, but a token from an unaccepted client is refused
+        # before the gate ever runs — the mismatch fails silently as a
+        # chat-only person's working machine, so it fails loudly here, naming
+        # both values.
+        with pytest.raises(ValidationError, match="could ever apply") as caught:
+            Settings(
+                oidc=OIDCSettings(
+                    machine_client_id="gitlab-uid-123",
+                    accepted_clients="pystino-console,cerea",
+                )
+            )
+        message = str(caught.value)
+        assert "gitlab-uid-123" in message
+        assert "pystino-console, cerea" in message
+
+    def test_a_named_machine_client_in_accepted_clients_is_fine(self) -> None:
+        Settings(
+            oidc=OIDCSettings(
+                machine_client_id="gitlab-uid-123",
+                accepted_clients="pystino-console,cerea,gitlab-uid-123",
+            )
+        )
+
+    def test_the_default_machine_client_needs_no_acceptance(self) -> None:
+        # The default stands for "no machine client configured": a default
+        # deployment (accepted clients without it) starts as before.
+        Settings(oidc=OIDCSettings(accepted_clients="pystino-console"))
+
+    def test_an_empty_allowlist_is_still_the_escape_hatch(self) -> None:
+        Settings(oidc=OIDCSettings(machine_client_id="gitlab-uid-123", accepted_clients=""))
+
+    def test_an_emptied_machine_client_is_not_a_mismatch(self) -> None:
+        Settings(oidc=OIDCSettings(machine_client_id="", accepted_clients="pystino-console"))
+
+
 class TestCsvFields:
     def test_admin_email_list_strips_and_drops_empties(self) -> None:
         settings = OIDCSettings(admin_emails=" a@example.org, b@example.org ,, ")
