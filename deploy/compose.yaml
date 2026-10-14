@@ -113,6 +113,12 @@ services:
       GATEWAY_OIDC__JOIN_MODE: ${OIDC_JOIN_MODE:-open}
       GATEWAY_OIDC__REQUIRED_GROUPS: ${OIDC_REQUIRED_GROUPS:-}
       GATEWAY_OIDC__GROUP_FALLBACK: ${OIDC_GROUP_FALLBACK:-refuse}
+      # ADR 0096: who may hold each capability, and which accepted client is
+      # the coding-agent machine client. Same baseline for both services, so
+      # the migrate service and the gateway fold the same answers.
+      GATEWAY_ACCESS__CODE_AGENTS: ${ACCESS_CODE_AGENTS:-everyone}
+      GATEWAY_ACCESS__API_KEYS: ${ACCESS_API_KEYS:-everyone}
+      GATEWAY_OIDC__MACHINE_CLIENT_ID: ${OIDC_MACHINE_CLIENT_ID:-opencode-enrollment}
     depends_on:
       postgres:
         condition: service_healthy
@@ -184,6 +190,12 @@ services:
       GATEWAY_OIDC__JOIN_MODE: ${OIDC_JOIN_MODE:-open}
       GATEWAY_OIDC__REQUIRED_GROUPS: ${OIDC_REQUIRED_GROUPS:-}
       GATEWAY_OIDC__GROUP_FALLBACK: ${OIDC_GROUP_FALLBACK:-refuse}
+      # ADR 0096: who may hold each capability, and which accepted client is
+      # the coding-agent machine client. Same baseline for both services, so
+      # the migrate service and the gateway fold the same answers.
+      GATEWAY_ACCESS__CODE_AGENTS: ${ACCESS_CODE_AGENTS:-everyone}
+      GATEWAY_ACCESS__API_KEYS: ${ACCESS_API_KEYS:-everyone}
+      GATEWAY_OIDC__MACHINE_CLIENT_ID: ${OIDC_MACHINE_CLIENT_ID:-opencode-enrollment}
       # The group everyone joins once, so a new account can bill; `-`, not
       # `:-`, so an explicitly empty value turns it off.
       GATEWAY_OIDC__DEFAULT_GROUP: ${OIDC_DEFAULT_GROUP-users}

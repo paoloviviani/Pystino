@@ -559,6 +559,22 @@ class MeResponse(BaseModel):
     # from one without — the set of states ADR 0043 made three.
     issuer: str
     has_password: bool = False
+    #: ADR 0096: which capabilities this person holds. The console's key page
+    #: reads `api_keys` to decide whether to offer minting.
+    capabilities: CapabilityFlags | None = None
+
+
+class CapabilityFlags(BaseModel):
+    """The two ADR 0096 capabilities, as one person effectively holds them.
+
+    ``code_agents``: the /code panel and the machine links that serve it.
+    ``api_keys``: minting and using ``gwk_`` keys. Computed from the folded
+    deployment setting and the person's memberships — see
+    ``gateway.capabilities``.
+    """
+
+    code_agents: bool
+    api_keys: bool
 
 
 class CallerIdentity(BaseModel):
@@ -603,6 +619,11 @@ class CallerIdentity(BaseModel):
     #: The newest time another account was merged into this one. A chat that
     #: has not folded its records since then asks `/v1/me/identities`.
     merged_at: datetime | None = None
+    #: ADR 0096: which capabilities this person holds. Absent (an older
+    #: gateway without the field) means *allowed* — the chat must treat a
+    #: missing answer as permission, never as a refusal, so an upgrade never
+    #: locks a chat-only person out of a surface they had.
+    capabilities: CapabilityFlags | None = None
 
 
 class IdentityRef(BaseModel):
@@ -1243,12 +1264,30 @@ class GroupAdminResponse(BaseModel):
     description: str | None
     source: str
     is_active: bool
+    # ADR 0096: the two capability flags the Groups page shows as toggles.
+    # False by default; a flag grants a capability and never withholds one.
+    code_agents_allowed: bool = False
+    api_keys_allowed: bool = False
     member_count: int
     models: list[str]
     #: The search backend this group searches through on ``POST /v1/search``,
     #: by model-row name. Null means no policy: the group cannot use the
     #: unified route at all.
     search_backend: str | None = None
+
+
+class GroupUpdateRequest(BaseModel):
+    """What an administrator may change about an existing group.
+
+    ADR 0096 adds the two capability toggles; only the flags are editable
+    today (the console has never been able to edit ``is_active`` or
+    ``description`` in place, and that is not this change's to fix).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    code_agents_allowed: bool | None = None
+    api_keys_allowed: bool | None = None
 
 
 class SeenGroupResponse(BaseModel):
@@ -1359,6 +1398,12 @@ class UserAdminResponse(BaseModel):
     # login and a second directory entry for the same person).
     bundled_login: str | None = None
     groups: list[str]
+    # ADR 0096: which capabilities this person effectively holds, so the
+    # Users page can badge a chat-only person. Null when the listing did not
+    # ask (the group-members route), which is how the console tells "no
+    # answer" from "chat only".
+    code_agents_allowed: bool | None = None
+    api_keys_allowed: bool | None = None
     # Who granted *this* person's membership of the group being listed (ADR
     # 0057): "manual" for an administrator's grant, "oidc" for the directory's.
     # Only the group-members route can answer it — a user has many memberships
@@ -1666,6 +1711,10 @@ class OidcPolicyUpdateRequest(BaseModel):
     group_fallback: Literal["refuse", "approval"] | None = None
     groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
     group_mappings: list[OidcMappingRule] | None = None
+    # ADR 0096: who may hold each capability. `everyone` (default) or
+    # `groups`; null clears back to the environment (GATEWAY_ACCESS__*).
+    code_agents_mode: Literal["everyone", "groups"] | None = None
+    api_keys_mode: Literal["everyone", "groups"] | None = None
     reason: str = Field(default="", max_length=500)
 
 
@@ -1683,11 +1732,18 @@ class OidcPolicyPreviewResponse(BaseModel):
     the named (active) groups — the people who lose access at their next
     request. ``admins_exempt`` counts the administrators the gate stands
     aside for.
+
+    ADR 0096 adds the two capability previews: ``would_lose_code_agents`` /
+    ``would_lose_api_keys`` count the active, non-admin people who would stop
+    holding that capability if the deployment setting moved to ``groups`` and
+    the named flags were not already theirs.
     """
 
     active_users: int
     would_be_refused: int
     admins_exempt: int
+    would_lose_code_agents: int | None = None
+    would_lose_api_keys: int | None = None
 
 
 class OidcPolicyResponse(BaseModel):
@@ -1702,6 +1758,9 @@ class OidcPolicyResponse(BaseModel):
     group_fallback: str = "refuse"
     groups_claim: str
     group_mappings: list[OidcMappingRule]
+    # ADR 0096: who may hold each capability, folded like the rest.
+    code_agents_mode: str = "everyone"
+    api_keys_mode: str = "everyone"
     # "console" when any field is a stored decision, "environment" otherwise;
     # `sources` says which, per field — "the console says X and the
     # environment says Y" is otherwise invisible.

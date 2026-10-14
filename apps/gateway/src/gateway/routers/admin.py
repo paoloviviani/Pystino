@@ -39,6 +39,7 @@ from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from gateway import identity_policy
 from gateway.accounting.cost import select_price
+from gateway.capabilities import Capabilities, effective_capabilities
 from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings, Settings
 from gateway.deployment_state import mark_bootstrap_consumed
 from gateway.deps import (
@@ -130,8 +131,10 @@ from gateway.models import (
 )
 from gateway.oidc import PENDING_USER_ISSUER, other_active_admin_exists
 from gateway.oidc_policy import (
+    CAPABILITY_MODES,
     GROUP_FALLBACKS,
     JOIN_MODES,
+    OIDCPolicy,
     effective_policy,
     environment_policy,
     pending_policy_row,
@@ -188,6 +191,7 @@ from gateway.schemas import (
     GroupCreateRequest,
     GroupMemberAddRequest,
     GroupSearchBackendRequest,
+    GroupUpdateRequest,
     GroupUsageRow,
     IdentityProviderResponse,
     IdentityRef,
@@ -2096,6 +2100,63 @@ async def delete_group(
     await session.commit()
 
 
+@router.patch("/groups/{group_id}", response_model=GroupAdminResponse)
+async def update_group(
+    group_id: uuid.UUID,
+    payload: GroupUpdateRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+) -> GroupAdminResponse:
+    """Flip a group's capability flags (ADR 0096).
+
+    A flag grants a capability and never withholds one, so the two toggles are
+    all an administrator can change about a group in place today — the
+    console's Groups page has no other edit surface, and this change is not
+    the one that adds one. A capability flip takes effect at the next
+    decision: the bearer path reads the group's memberships on every request.
+    """
+    group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
+    if group is None:
+        raise NotFoundError(f"No group with id {group_id}.")
+    fields = payload.model_dump(exclude_unset=True)
+    if "code_agents_allowed" in fields:
+        group.code_agents_allowed = payload.code_agents_allowed is True
+    if "api_keys_allowed" in fields:
+        group.api_keys_allowed = payload.api_keys_allowed is True
+    await session.commit()
+    await session.refresh(group)
+    member_count = await session.scalar(
+        select(func.count()).select_from(Membership).where(Membership.group_id == group.id)
+    )
+    models = [
+        name
+        for (name,) in (
+            await session.execute(
+                select(ModelDef.name)
+                .join(GroupModelAccess, GroupModelAccess.model_id == ModelDef.id)
+                .where(GroupModelAccess.group_id == group.id)
+                .order_by(ModelDef.name)
+            )
+        ).all()
+    ]
+    return GroupAdminResponse(
+        id=group.id,
+        name=group.name,
+        description=group.description,
+        source=group.source.value,
+        is_active=group.is_active,
+        code_agents_allowed=group.code_agents_allowed,
+        api_keys_allowed=group.api_keys_allowed,
+        member_count=member_count or 0,
+        models=models,
+        search_backend=(
+            await session.scalar(select(ModelDef.name).where(ModelDef.id == group.search_model_id))
+            if group.search_model_id is not None
+            else None
+        ),
+    )
+
+
 async def _load_group_for_membership(group_id: uuid.UUID, session: SessionDep) -> Group:
     """The group a membership change is aimed at.
 
@@ -2700,7 +2761,11 @@ _PROFILE_FIELDS = ("email", "display_name", "username")
 
 
 async def _user_responses(
-    session: SessionDep, users: Sequence[User], *, membership_in: uuid.UUID | None = None
+    session: SessionDep,
+    users: Sequence[User],
+    *,
+    membership_in: uuid.UUID | None = None,
+    policy: OIDCPolicy | None = None,
 ) -> list[UserAdminResponse]:
     """Decorate user rows with the counts and names the console shows.
 
@@ -2785,6 +2850,12 @@ async def _user_responses(
             if user_id is not None:
                 bundled_logins[user_id] = external_id
 
+    # ADR 0096: effective capabilities, from the memberships already loaded
+    # — one pure pass over rows authentication or the listing loaded, no query.
+    capabilities_by_id: dict[uuid.UUID, Capabilities] = {}
+    if policy is not None:
+        capabilities_by_id = {user.id: effective_capabilities(user, policy) for user in users}
+
     return [
         UserAdminResponse(
             id=user.id,
@@ -2802,6 +2873,14 @@ async def _user_responses(
                 None if membership_in is None else ("manual" if user.id in granted_here else "oidc")
             ),
             groups=sorted(m.group.name for m in user.memberships),
+            # The Users page's "Chat only" badge reads these: null means the
+            # listing did not ask (the group-members route), never "chat only".
+            code_agents_allowed=(
+                capabilities_by_id[user.id].code_agents if user.id in capabilities_by_id else None
+            ),
+            api_keys_allowed=(
+                capabilities_by_id[user.id].api_keys if user.id in capabilities_by_id else None
+            ),
             default_billing_group=(
                 group_names.get(user.default_billing_group_id)
                 if user.default_billing_group_id
@@ -3331,6 +3410,7 @@ async def list_users(
     admin: AdminUserDep,
     session: SessionDep,
     page: PageDep,
+    request: Request,
     q: str = "",
     is_active: bool | None = None,
     status: str | None = None,
@@ -3380,7 +3460,9 @@ async def list_users(
 
     total = await count_of(session, stmt)
     users = (await session.execute(page.apply(stmt))).scalars().all()
-    return page.page(await _user_responses(session, users), total)
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    policy = resolver.policy if resolver is not None else None
+    return page.page(await _user_responses(session, users, policy=policy), total)
 
 
 @router.get("/users/status-counts", response_model=UserStatusCounts)
@@ -4080,7 +4162,7 @@ async def _oidc_policy_response(request: Request, session: SessionDep) -> OidcPo
     policy = (
         resolver.policy
         if resolver is not None
-        else environment_policy(request.app.state.settings.oidc)
+        else environment_policy(request.app.state.settings.oidc, request.app.state.settings.access)
     )
     stored = await _latest_oidc_config(session)
     changed_by: str | None = None
@@ -4096,6 +4178,8 @@ async def _oidc_policy_response(request: Request, session: SessionDep) -> OidcPo
         group_mappings=[
             OidcMappingRule(idp=idp, local=local) for idp, local in policy.group_mappings.items()
         ],
+        code_agents_mode=policy.code_agents_mode,
+        api_keys_mode=policy.api_keys_mode,
         source=policy.source,
         sources=policy.sources,
         configured=(
@@ -4128,20 +4212,32 @@ async def preview_oidc_policy(
     #: set as it is, and a comma inside a group name cannot be mistaken for a
     #: separator.
     required_groups: list[str] = Query(default=[]),
+    # ADR 0096: the two capability modes, each optionally previewed. When
+    # either is given the join-mode check below is skipped, because a
+    # capability preview does not need a join answer.
+    code_agents_mode: str | None = None,
+    api_keys_mode: str | None = None,
 ) -> OidcPolicyPreviewResponse:
-    """What saving this group gate would do (ADR 0095 §7).
+    """What saving this group gate would do (ADR 0095 §7, ADR 0096).
 
     Counted over effective memberships, in SQL: ``would_be_refused`` is the
     active, non-admin accounts holding none of the named active groups —
     the people who lose access at their next request, which the console
     confirms before saving. Only ``group`` mode is previewable; anything
     else is a 400.
+
+    A capability preview (`code_agents_mode` / `api_keys_mode`) counts the
+    active, non-admin people who would stop holding that capability if the
+    deployment setting moved to ``groups`` and the flags were not already
+    theirs — the console's "how many would lose it" line.
     """
-    if join_mode != "group":
-        raise BadRequestError("Only join_mode 'group' has a preview.")
-    names = [name.strip() for name in required_groups if name.strip()]
-    if not names:
-        raise BadRequestError("Name at least one required group to preview.")
+    want_capabilities = code_agents_mode is not None or api_keys_mode is not None
+    if not want_capabilities:
+        if join_mode != "group":
+            raise BadRequestError("Only join_mode 'group' has a preview.")
+        names = [name.strip() for name in required_groups if name.strip()]
+        if not names:
+            raise BadRequestError("Name at least one required group to preview.")
     active_users = await session.scalar(
         select(func.count())
         .select_from(User)
@@ -4152,13 +4248,59 @@ async def preview_oidc_policy(
         .select_from(User)
         .where(User.is_active.is_(True), User.is_admin.is_(True))
     )
+    would_be_refused: int = 0
+    if not want_capabilities:
+        held = (
+            select(Membership.user_id)
+            .join(Group, Group.id == Membership.group_id)
+            .where(Group.name.in_(names), Group.is_active.is_(True))
+            .distinct()
+        )
+        would_be_refused = (
+            await session.scalar(
+                select(func.count())
+                .select_from(User)
+                .where(
+                    User.is_active.is_(True),
+                    User.is_admin.is_(False),
+                    User.issuer != PENDING_USER_ISSUER,
+                    User.id.not_in(held),
+                )
+            )
+            or 0
+        )
+
+    would_lose_code_agents = None
+    if code_agents_mode is not None:
+        if code_agents_mode not in CAPABILITY_MODES:
+            raise BadRequestError("code_agents_mode must be 'everyone' or 'groups'.")
+        if code_agents_mode == "groups":
+            would_lose_code_agents = await _would_lose(session, Group.code_agents_allowed.is_(True))
+    would_lose_api_keys = None
+    if api_keys_mode is not None:
+        if api_keys_mode not in CAPABILITY_MODES:
+            raise BadRequestError("api_keys_mode must be 'everyone' or 'groups'.")
+        if api_keys_mode == "groups":
+            would_lose_api_keys = await _would_lose(session, Group.api_keys_allowed.is_(True))
+
+    return OidcPolicyPreviewResponse(
+        active_users=active_users or 0,
+        would_be_refused=would_be_refused or 0,
+        admins_exempt=admins_exempt or 0,
+        would_lose_code_agents=would_lose_code_agents,
+        would_lose_api_keys=would_lose_api_keys,
+    )
+
+
+async def _would_lose(session: SessionDep, flag_condition: ColumnElement[bool]) -> int:
+    """Active, non-admin people holding no active group with the flag."""
     held = (
         select(Membership.user_id)
         .join(Group, Group.id == Membership.group_id)
-        .where(Group.name.in_(names), Group.is_active.is_(True))
+        .where(Group.is_active.is_(True), flag_condition)
         .distinct()
     )
-    would_be_refused = await session.scalar(
+    count = await session.scalar(
         select(func.count())
         .select_from(User)
         .where(
@@ -4168,11 +4310,7 @@ async def preview_oidc_policy(
             User.id.not_in(held),
         )
     )
-    return OidcPolicyPreviewResponse(
-        active_users=active_users or 0,
-        would_be_refused=would_be_refused or 0,
-        admins_exempt=admins_exempt or 0,
-    )
+    return count or 0
 
 
 @router.get("/oidc/policy", response_model=OidcPolicyResponse)
@@ -4412,6 +4550,14 @@ async def set_oidc_policy(
             "save one or the other, not both."
         )
 
+    for knob, label in (
+        ("code_agents_mode", "code_agents_mode"),
+        ("api_keys_mode", "api_keys_mode"),
+    ):
+        value = fields.get(knob)
+        if value is not None and value not in CAPABILITY_MODES:
+            raise BadRequestError(f"{label} must be 'everyone' or 'groups'.")
+
     groups_claim = fields.get("groups_claim")
     if groups_claim is not None and not str(groups_claim).strip():
         raise BadRequestError("groups_claim must name a claim (e.g. 'groups').")
@@ -4458,7 +4604,7 @@ async def set_oidc_policy(
 
     stored = await _latest_oidc_config(session)
     row = pending_policy_row(stored, fields, required_groups=cleaned_groups, mappings=mappings)
-    folded = effective_policy(settings.oidc, row)
+    folded = effective_policy(settings.oidc, row, settings.access)
 
     unknown = fields.get("unknown_user_policy")
     if unknown is not None and unknown not in ("refuse", "create_inactive"):
