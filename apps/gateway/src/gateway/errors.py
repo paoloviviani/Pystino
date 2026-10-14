@@ -21,14 +21,27 @@ class GatewayError(Exception):
     error_type = "gateway_error"
     code: str | None = None
 
-    def __init__(self, message: str, *, code: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        extra_payload: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         if code is not None:
             self.code = code
+        #: Extra top-level fields for the response body, beside the OpenAI
+        #: `error` envelope. Used by the code_agents gate so a refused /v1/me
+        #: still tells the client its capabilities (ADR 0096).
+        self.extra_payload = extra_payload
 
     def to_payload(self) -> dict[str, Any]:
-        return error_payload(self.message, type_=self.error_type, code=self.code)
+        payload = error_payload(self.message, type_=self.error_type, code=self.code)
+        if self.extra_payload:
+            payload.update(self.extra_payload)
+        return payload
 
 
 class AuthenticationError(GatewayError):
@@ -79,6 +92,36 @@ class OutsideAccessGroupsError(GatewayError):
     status_code = status.HTTP_403_FORBIDDEN
     error_type = "invalid_request_error"
     code = "outside_access_groups"
+
+
+class AgentsNotAllowedError(GatewayError):
+    """A machine-client token from a person without the code_agents
+    capability (ADR 0096).
+
+    403 rather than 401 for the same reason as ``outside_access_groups``:
+    the token is valid, the loss is one a group flag restores, and a 401
+    would make Cerea's machine revalidation revoke the device permanently.
+    On ``/v1/me`` the body still carries ``capabilities`` so the client can
+    tell why.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    error_type = "invalid_request_error"
+    code = "agents_not_allowed"
+
+
+class ApiKeysNotAllowedError(GatewayError):
+    """An API key its owner may not hold, or may not mint (ADR 0096).
+
+    Refused, never deleted: a key whose owner loses the api_keys capability
+    stops working until a group flag restores it, and comes back the moment
+    it does. The mint refusal and the use refusal are the same code so a
+    client (the install script included) needs one string to recognise.
+    """
+
+    status_code = status.HTTP_403_FORBIDDEN
+    error_type = "invalid_request_error"
+    code = "api_keys_not_allowed"
 
 
 class ContentBlockedError(GatewayError):

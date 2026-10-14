@@ -105,6 +105,8 @@ describe("AdminSettings providers card", () => {
     group_fallback: "refuse",
     groups_claim: "groups",
     group_mappings: [],
+    code_agents_mode: "everyone",
+    api_keys_mode: "everyone",
     source: "environment",
     sources: {},
     configured: null,

@@ -27,7 +27,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from gateway.config import OIDCSettings
+from gateway.config import AccessSettings, OIDCSettings
 from gateway.models import Group, OIDCPolicyConfig
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,12 @@ JOIN_MODES = ("open", "approval", "invite", "group")
 
 #: What a stranger without a required group gets in `group` mode.
 GROUP_FALLBACKS = ("refuse", "approval")
+
+#: One answer to "who may hold a capability" (ADR 0096): `everyone` (the
+#: default, so an upgrade changes nothing) or `groups` (only people in a
+#: group carrying the flag). The per-group booleans live on `groups`; the
+#: effective capability is computed by `gateway.capabilities`.
+CAPABILITY_MODES = ("everyone", "groups")
 
 
 def _legacy_from_join(join_mode: str, group_fallback: str) -> tuple[bool, str]:
@@ -74,6 +80,10 @@ class OIDCPolicy:
     required_groups: tuple[str, ...] = ()
     group_fallback: str = "refuse"
     groups_claim: str = "groups"
+    #: ADR 0096: who may hold each capability — `everyone` or `groups`. The
+    #: per-group booleans decide who holds one in `groups` mode.
+    code_agents_mode: str = "everyone"
+    api_keys_mode: str = "everyone"
     #: IdP group name -> local group name. A claimed name resolves to a local
     #: group only through this table: an unmapped name resolves to nothing,
     #: even when a local group carries the same name.
@@ -142,7 +152,7 @@ class OIDCPolicy:
         return seen
 
 
-def environment_policy(settings: OIDCSettings) -> OIDCPolicy:
+def environment_policy(settings: OIDCSettings, access: AccessSettings | None = None) -> OIDCPolicy:
     """The policy as the environment states it — the baseline every row folds onto."""
     return OIDCPolicy(
         join_mode=settings.join_mode,
@@ -150,6 +160,8 @@ def environment_policy(settings: OIDCSettings) -> OIDCPolicy:
         group_fallback=settings.group_fallback,
         groups_claim=settings.groups_claim,
         group_mappings={},
+        code_agents_mode=access.code_agents if access is not None else "everyone",
+        api_keys_mode=access.api_keys if access is not None else "everyone",
     )
 
 
@@ -164,7 +176,11 @@ def _legacy_join_mode(auto_provision: bool | None, unknown_user_policy: str | No
     return "invite"
 
 
-def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OIDCPolicy:
+def effective_policy(
+    settings: OIDCSettings,
+    row: OIDCPolicyConfig | None,
+    access: AccessSettings | None = None,
+) -> OIDCPolicy:
     """The newest row's decisions folded over the environment's baseline.
 
     Per-field: a null column defers. This is why the table can carry a row
@@ -172,9 +188,11 @@ def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OI
     answers to restate them.
 
     For the join answer the fold tries, in order: the row's `join_mode`, the
-    row's legacy columns, the environment (ADR 0095 §1).
+    row's legacy columns, the environment (ADR 0095 §1). For the capability
+    settings (ADR 0096) it tries the row's column, then the environment
+    (``GATEWAY_ACCESS__*``, via ``access``).
     """
-    base = environment_policy(settings)
+    base = environment_policy(settings, access)
     if row is None:
         return base
 
@@ -235,12 +253,33 @@ def effective_policy(settings: OIDCSettings, row: OIDCPolicyConfig | None) -> OI
                 if isinstance(idp, str) and isinstance(local, str) and idp and local:
                     mappings[idp] = local
 
+    code_agents_mode = base.code_agents_mode
+    if row.code_agents_mode is not None:
+        if row.code_agents_mode not in CAPABILITY_MODES:
+            logger.warning(
+                "ignoring oidc_config row %s: code_agents_mode %r", row.id, row.code_agents_mode
+            )
+        else:
+            code_agents_mode = row.code_agents_mode
+            sources["code_agents_mode"] = "console"
+    api_keys_mode = base.api_keys_mode
+    if row.api_keys_mode is not None:
+        if row.api_keys_mode not in CAPABILITY_MODES:
+            logger.warning(
+                "ignoring oidc_config row %s: api_keys_mode %r", row.id, row.api_keys_mode
+            )
+        else:
+            api_keys_mode = row.api_keys_mode
+            sources["api_keys_mode"] = "console"
+
     return OIDCPolicy(
         join_mode=mode,
         required_groups=required,
         group_fallback=fallback,
         groups_claim=groups_claim,
         group_mappings=mappings,
+        code_agents_mode=code_agents_mode,
+        api_keys_mode=api_keys_mode,
         sources=sources,
         config_id=row.id,
         config_at=row.created_at,
@@ -286,6 +325,8 @@ def pending_policy_row(
             if stored is not None and stored.group_mappings is not None
             else None
         ),
+        code_agents_mode=stored.code_agents_mode if stored is not None else None,
+        api_keys_mode=stored.api_keys_mode if stored is not None else None,
     )
     if "auto_provision" in fields:
         row.auto_provision = fields["auto_provision"]  # type: ignore[assignment]
@@ -301,6 +342,10 @@ def pending_policy_row(
         row.groups_claim = fields["groups_claim"]  # type: ignore[assignment]
     if "group_mappings" in fields:
         row.group_mappings = mappings
+    if "code_agents_mode" in fields:
+        row.code_agents_mode = fields["code_agents_mode"]  # type: ignore[assignment]
+    if "api_keys_mode" in fields:
+        row.api_keys_mode = fields["api_keys_mode"]  # type: ignore[assignment]
     if fields.get("join_mode") is not None:
         row.auto_provision = None
         row.unknown_user_policy = None
@@ -323,13 +368,16 @@ class OIDCPolicyResolver:
         settings: OIDCSettings,
         session_factory: async_sessionmaker[AsyncSession],
         *,
+        access: AccessSettings | None = None,
         refresh_seconds: float = DEFAULT_REFRESH_SECONDS,
     ) -> None:
         self._settings = settings
+        self._access = access
         self._session_factory = session_factory
         self._refresh_seconds = refresh_seconds
-        self._policy = environment_policy(settings)
+        self._policy = environment_policy(settings, access)
         self._warned_missing_groups: frozenset[str] = frozenset()
+        self._warned_machine_mismatch: tuple[str, tuple[str, ...]] | None = None
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -349,7 +397,7 @@ class OIDCPolicyResolver:
                     select(OIDCPolicyConfig).order_by(OIDCPolicyConfig.created_at.desc()).limit(1)
                 )
             ).scalar_one_or_none()
-            policy = effective_policy(self._settings, row)
+            policy = effective_policy(self._settings, row, self._access)
             # Console-saved names are validated at PUT, but the group can be
             # deleted afterwards — and env names have no PUT gate at all — so
             # the load warns for whatever the folded policy names that does
@@ -369,6 +417,34 @@ class OIDCPolicyResolver:
                 ", ".join(sorted(missing)),
             )
         self._warned_missing_groups = missing
+        # ADR 0096: a console decision of code_agents_mode 'groups' whose
+        # machine client the deployment does not accept is a restriction that
+        # can never fire — the PUT refuses the save, but the row may predate
+        # the refusal or the environment may have changed under it, so the
+        # poll logs it too. ERROR, not warning: unlike an unknown group name
+        # (which fails closed) this fails silently open. Once per distinct
+        # state, like the warning above: the poll runs every ten seconds.
+        machine = self._settings.machine_client_id
+        accepted = tuple(self._settings.accepted_client_list())
+        mismatch = (
+            (machine, accepted)
+            if policy.code_agents_mode == "groups"
+            and machine
+            and accepted
+            and machine not in accepted
+            else None
+        )
+        if mismatch is not None and mismatch != self._warned_machine_mismatch:
+            logger.error(
+                "The identity policy restricts coding agents to flagged groups, but "
+                "GATEWAY_OIDC__MACHINE_CLIENT_ID=%r names a client not in "
+                "GATEWAY_OIDC__ACCEPTED_CLIENTS (%s): the restriction can never "
+                "fire, and a chat-only person's machine keeps working. Name the "
+                "machine client the deployment accepts.",
+                machine,
+                ", ".join(accepted),
+            )
+        self._warned_machine_mismatch = mismatch
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._poll_forever())

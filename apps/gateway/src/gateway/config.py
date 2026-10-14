@@ -67,6 +67,22 @@ class UpstreamSettings(BaseModel):
         return value.rstrip("/")
 
 
+class AccessSettings(BaseModel):
+    """Who may hold each capability (ADR 0096).
+
+    ``everyone`` (the default, so an upgrade changes nothing) or ``groups``
+    (only people in a group carrying the flag). The console's ``oidc_config``
+    row decides per field when it names one; this is the baseline it folds
+    onto. The effective capability is a pure function of the person's
+    memberships and the folded setting — see :mod:`gateway.capabilities`.
+    """
+
+    #: The /code panel and the machine links that serve it.
+    code_agents: Literal["everyone", "groups"] = "everyone"
+    #: Minting and using ``gwk_`` API keys.
+    api_keys: Literal["everyone", "groups"] = "everyone"
+
+
 class OIDCSettings(BaseModel):
     """OIDC for the management API, and — when an audience is named — for ``/v1``.
 
@@ -322,6 +338,15 @@ class OIDCSettings(BaseModel):
     # `OIDC_CHAT_CLIENT_ID` and `OIDC_MACHINE_CLIENT_ID`; see `accepted_client_list`
     # for why this is a string. Enforced on `/v1` once the re-seed lands.
     accepted_clients: str = ""
+
+    # ADR 0096: which of `accepted_clients` is the machine client, specifically.
+    # The code_agents gate keys on it: a bearer token whose `azp`/`client_id`
+    # names this client is a coding agent's credential, and a person without
+    # the code_agents capability is refused 403 `agents_not_allowed` when it is
+    # presented (see `gateway.capabilities`). `opencode-enrollment` is the
+    # default because that is the client id Cerea's deploy kit and galopin's
+    # enrollment flow use; a deployment that renamed it sets this to match.
+    machine_client_id: str = "opencode-enrollment"
 
     # ADR 0093 §4.1: which of `accepted_clients` is the chat, specifically.
     # `POST /v1/session/announce` is the chat's own sign-in door and refuses a
@@ -1049,6 +1074,7 @@ class Settings(BaseSettings):
 
     upstream: UpstreamSettings = Field(default_factory=UpstreamSettings)
     oidc: OIDCSettings = Field(default_factory=OIDCSettings)
+    access: AccessSettings = Field(default_factory=AccessSettings)
     smtp: SmtpSettings = Field(default_factory=SmtpSettings)
     chat: ChatSettings = Field(default_factory=ChatSettings)
     local_auth: LocalAuthSettings = Field(default_factory=LocalAuthSettings)
@@ -1162,6 +1188,68 @@ class Settings(BaseSettings):
             )
         return self
 
+    @model_validator(mode="after")
+    def _machine_client_needs_acceptance(self) -> Settings:
+        """ADR 0096: a named machine client the deployment does not accept is
+        a configuration that can only fail silently.
+
+        The code_agents gate matches a machine token's `azp`/`client_id`
+        against `machine_client_id` — but a token from a client outside
+        `accepted_clients` is refused before that gate ever runs. A machine
+        client set here and missing there (a renamed client passed to the
+        audience list but not to the machine slot, a GitLab app uid the kit
+        did not forward) would therefore never match, and a chat-only
+        person's machine would pass silently. Refused here, naming both
+        values, rather than debugged from a machine that keeps working.
+
+        Only when the operator named one: the default stands for "no machine
+        client configured", and an empty allowlist is the escape hatch that
+        enforces nothing, so neither alone is a mistake. Unlike the check
+        above this one is not production-gated — a dev deployment with the
+        same mismatch is broken in exactly the same silent way.
+        """
+        machine = self.oidc.machine_client_id
+        accepted = self.oidc.accepted_client_list()
+        explicitly_named = "machine_client_id" in self.oidc.model_fields_set
+        if explicitly_named and machine and accepted and machine not in accepted:
+            raise ValueError(
+                f"GATEWAY_OIDC__MACHINE_CLIENT_ID={machine!r} names a client not in "
+                f"GATEWAY_OIDC__ACCEPTED_CLIENTS ({', '.join(accepted)}): a machine "
+                "token is refused before the agents capability could ever apply, "
+                "so a person without code_agents would keep their machine "
+                "silently. Name the machine client the deployment accepts."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _groups_baseline_needs_its_machine_client(self) -> Settings:
+        """ADR 0096: a code_agents restriction in use that can never fire is
+        refused, default or explicit.
+
+        The check above catches an explicitly named machine client the
+        deployment does not accept. This one catches the other half: the
+        environment baseline itself says `groups`
+        (`GATEWAY_ACCESS__CODE_AGENTS`), while the machine client — named or
+        defaulted — is not among a non-empty allowlist. The restriction is in
+        use and a machine token is refused before the gate runs, so the
+        refusal names the baseline and both values. An empty allowlist stays
+        the escape hatch that enforces nothing. Not production-gated, like
+        the check above: a dev deployment with the same mismatch is broken in
+        exactly the same silent way.
+        """
+        machine = self.oidc.machine_client_id
+        accepted = self.oidc.accepted_client_list()
+        if self.access.code_agents == "groups" and machine and accepted and machine not in accepted:
+            raise ValueError(
+                "GATEWAY_ACCESS__CODE_AGENTS='groups' restricts coding agents to "
+                f"flagged groups, but GATEWAY_OIDC__MACHINE_CLIENT_ID={machine!r} "
+                f"names a client not in GATEWAY_OIDC__ACCEPTED_CLIENTS "
+                f"({', '.join(accepted)}): the restriction is in use and could "
+                "never fire — a machine token is refused before the gate runs. "
+                "Name the machine client the deployment accepts."
+            )
+        return self
+
 
 @lru_cache
 def get_settings() -> Settings:
@@ -1199,5 +1287,19 @@ def startup_warnings(settings: Settings) -> list[str]:
             "GATEWAY_OIDC__ACCESS_TOKEN_AUDIENCE is set but GATEWAY_OIDC__CHAT_CLIENT_ID "
             "is not: POST /v1/session/announce refuses every token until it is set, "
             "which means every chat login fails closed."
+        )
+    machine = settings.oidc.machine_client_id
+    accepted = settings.oidc.accepted_client_list()
+    if (
+        "machine_client_id" not in settings.oidc.model_fields_set
+        and machine
+        and accepted
+        and machine not in accepted
+    ):
+        warnings.append(
+            f"GATEWAY_OIDC__MACHINE_CLIENT_ID is unset, and the default {machine!r} "
+            f"is not among GATEWAY_OIDC__ACCEPTED_CLIENTS ({', '.join(accepted)}): "
+            "the code_agents restriction would not apply to machine tokens until "
+            "GATEWAY_OIDC__MACHINE_CLIENT_ID names the right client."
         )
     return warnings

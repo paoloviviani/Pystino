@@ -10,7 +10,7 @@ production is what keeps this change from breaking every one of them.
 from __future__ import annotations
 
 import pytest
-from gateway.config import OIDCSettings, Settings, SmtpSettings, startup_warnings
+from gateway.config import AccessSettings, OIDCSettings, Settings, SmtpSettings, startup_warnings
 from pydantic import ValidationError
 
 _PRODUCTION_SECRETS = {"session_secret": "s", "secret_key": "k"}
@@ -71,6 +71,73 @@ class TestAcceptedClients:
 
     def test_no_audience_needs_no_accepted_clients(self) -> None:
         _production_settings(kind="authelia", access_token_audience="")
+
+
+class TestMachineClientAcceptance:
+    def test_a_named_machine_client_missing_from_accepted_clients_is_refused(self) -> None:
+        # ADR 0096: the code_agents gate matches azp/client_id against the
+        # machine client, but a token from an unaccepted client is refused
+        # before the gate ever runs — the mismatch fails silently as a
+        # chat-only person's working machine, so it fails loudly here, naming
+        # both values.
+        with pytest.raises(ValidationError, match="could ever apply") as caught:
+            Settings(
+                oidc=OIDCSettings(
+                    machine_client_id="gitlab-uid-123",
+                    accepted_clients="pystino-console,cerea",
+                )
+            )
+        message = str(caught.value)
+        assert "gitlab-uid-123" in message
+        assert "pystino-console, cerea" in message
+
+    def test_a_named_machine_client_in_accepted_clients_is_fine(self) -> None:
+        Settings(
+            oidc=OIDCSettings(
+                machine_client_id="gitlab-uid-123",
+                accepted_clients="pystino-console,cerea,gitlab-uid-123",
+            )
+        )
+
+    def test_the_default_machine_client_needs_no_acceptance(self) -> None:
+        # The default stands for "no machine client configured": a default
+        # deployment (accepted clients without it) starts as before.
+        Settings(oidc=OIDCSettings(accepted_clients="pystino-console"))
+
+    def test_an_empty_allowlist_is_still_the_escape_hatch(self) -> None:
+        Settings(oidc=OIDCSettings(machine_client_id="gitlab-uid-123", accepted_clients=""))
+
+    def test_an_emptied_machine_client_is_not_a_mismatch(self) -> None:
+        Settings(oidc=OIDCSettings(machine_client_id="", accepted_clients="pystino-console"))
+
+
+class TestGroupsBaselineMachineClient:
+    def test_groups_baseline_with_unaccepted_machine_client_is_refused(self) -> None:
+        # ADR 0096: the env baseline itself says "groups" while the machine
+        # client — defaulted here, as in a hand-written .env with only
+        # ACCEPTED_CLIENTS set — is not among a non-empty allowlist. The
+        # restriction is in use and could never fire.
+        with pytest.raises(ValidationError, match="could never fire") as caught:
+            Settings(
+                access=AccessSettings(code_agents="groups"),
+                oidc=OIDCSettings(accepted_clients="pystino-console,cerea"),
+            )
+        message = str(caught.value)
+        assert "GATEWAY_ACCESS__CODE_AGENTS" in message
+        assert "opencode-enrollment" in message
+        assert "pystino-console, cerea" in message
+
+    def test_groups_baseline_with_accepted_machine_client_is_fine(self) -> None:
+        Settings(
+            access=AccessSettings(code_agents="groups"),
+            oidc=OIDCSettings(machine_client_id="m", accepted_clients="pystino-console,m"),
+        )
+
+    def test_groups_baseline_with_empty_allowlist_is_fine(self) -> None:
+        Settings(access=AccessSettings(code_agents="groups"), oidc=OIDCSettings())
+
+    def test_everyone_baseline_needs_no_machine_client(self) -> None:
+        Settings(oidc=OIDCSettings(accepted_clients="pystino-console"))
 
 
 class TestCsvFields:
@@ -142,6 +209,27 @@ class TestStartupWarnings:
         """No audience means /v1 takes no OIDC tokens, announce included."""
         settings = Settings(oidc=OIDCSettings())
         assert not any("CHAT_CLIENT_ID" in w for w in startup_warnings(settings))
+
+    def test_default_machine_client_missing_from_accepted_clients_warns(self) -> None:
+        # ADR 0096: a hand-written .env with the IdP's client in
+        # ACCEPTED_CLIENTS and no MACHINE_CLIENT_ID keeps the default, which
+        # matches nothing — the code_agents restriction would not apply to
+        # machine tokens until the setting names the right client.
+        settings = Settings(oidc=OIDCSettings(accepted_clients="pystino-console,gitlab-uid"))
+        matching = [w for w in startup_warnings(settings) if "MACHINE_CLIENT_ID" in w]
+        assert len(matching) == 1
+        assert "opencode-enrollment" in matching[0]
+        assert "pystino-console, gitlab-uid" in matching[0]
+        assert "would not apply" in matching[0]
+
+    def test_no_warning_when_the_default_machine_client_is_accepted(self) -> None:
+        settings = Settings(
+            oidc=OIDCSettings(accepted_clients="pystino-console,opencode-enrollment")
+        )
+        assert not any("MACHINE_CLIENT_ID" in w for w in startup_warnings(settings))
+
+    def test_no_warning_with_no_accepted_clients(self) -> None:
+        assert not any("MACHINE_CLIENT_ID" in w for w in startup_warnings(Settings()))
 
 
 class TestSmtpSettings:

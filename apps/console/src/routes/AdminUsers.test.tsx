@@ -46,6 +46,8 @@ function user(index: number, overrides: Partial<AdminUser> = {}): AdminUser {
     // rather than left for the spread to make `undefined`.
     deactivated_by: null,
     invited_at: null,
+    code_agents_allowed: true,
+    api_keys_allowed: true,
     ...overrides,
   };
 }
@@ -384,6 +386,18 @@ describe("AdminUsers", () => {
     await user_.type(screen.getByLabelText("Search"), "nobody");
 
     await waitFor(() => expect(screen.getByText("No user matches that.")).toBeInTheDocument());
+  });
+
+  it("badges a person with neither capability as chat-only, and nobody else", async () => {
+    // ADR 0096: the badge reads the two effective flags the listing answers
+    // with. Null (a listing that did not answer) is never the badge — here
+    // every other row holds one capability, so exactly one badge renders.
+    const first: Partial<AdminUser> = { code_agents_allowed: false, api_keys_allowed: false };
+    vi.stubGlobal("fetch", routes(3, undefined, first));
+    renderScreen(<AdminUsers />);
+
+    await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
+    expect(screen.getAllByText("Chat only")).toHaveLength(1);
   });
 });
 

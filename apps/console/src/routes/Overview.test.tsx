@@ -23,6 +23,7 @@ const ME: Me = {
   default_billing_group: { id: "g1", name: "research", description: null },
   issuer: "local",
   has_password: true,
+  capabilities: { code_agents: true, api_keys: true },
 };
 
 function report(overrides: Partial<UsageReport> = {}): UsageReport {
@@ -348,6 +349,19 @@ describe("Overview", () => {
       await waitFor(() =>
         expect(screen.getByText("Set a default billing group first.")).toBeInTheDocument(),
       );
+    });
+
+    it("explains the refusal instead of offering Create to a person without the capability", async () => {
+      // ADR 0096: the key page reads /api/me's `api_keys` answer. No button,
+      // so there is no 403 to catch — the refusal is stated where Create
+      // would have been.
+      vi.stubGlobal("fetch", keyRoutes([]));
+      renderScreen(<Overview me={{ ...ME, capabilities: { code_agents: true, api_keys: false } }} />);
+
+      await waitFor(() =>
+        expect(screen.getByText(/may not use API keys/i)).toBeInTheDocument(),
+      );
+      expect(screen.queryByRole("button", { name: "New key" })).not.toBeInTheDocument();
     });
 
     it("asks before revoking, and says the bill is unaffected", async () => {

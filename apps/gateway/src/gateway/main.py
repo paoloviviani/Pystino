@@ -195,7 +195,9 @@ async def init_app_state(
     # test fixtures the schema does not exist yet at this point, and in
     # production a database blip must not refuse to boot — the poll catches up,
     # and until then the environment's policy stands.
-    oidc_policy_resolver = OIDCPolicyResolver(settings.oidc, session_factory)
+    oidc_policy_resolver = OIDCPolicyResolver(
+        settings.oidc, session_factory, access=settings.access
+    )
     app.state.oidc_policy = oidc_policy_resolver
     try:
         await oidc_policy_resolver.refresh_once()

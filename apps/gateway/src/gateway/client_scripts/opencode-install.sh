@@ -208,7 +208,12 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def discover(base_url, api_key):
-    """-> (http status or None, cards or None, detail). Never raises."""
+    """-> (http status or None, cards or None, detail, error code or "").
+
+    Never raises. The error code is the gateway's `error.code` from a refused
+    response body, so the caller can tell "the key is bad" from "this account
+    may not use API keys" (ADR 0096) — both arrive as a 403.
+    """
     request = urllib.request.Request(
         base_url + "/models",
         headers={
@@ -223,13 +228,27 @@ def discover(base_url, api_key):
             body = json.load(response)
     except urllib.error.HTTPError as exc:
         where = exc.headers.get("Location") if exc.code in (301, 302, 303, 307, 308) else None
-        return exc.code, None, ("redirected to %s" % where) if where else ""
+        if where:
+            return exc.code, None, ("redirected to %s" % where), ""
+        return exc.code, None, "", _error_code(exc)
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        return None, None, str(getattr(exc, "reason", exc))
+        return None, None, str(getattr(exc, "reason", exc)), ""
     data = body.get("data") if isinstance(body, dict) else None
     if not isinstance(data, list):
-        return 200, None, "the answer is not an OpenAI model list"
-    return 200, data, ""
+        return 200, None, "the answer is not an OpenAI model list", ""
+    return 200, data, "", ""
+
+
+def _error_code(exc):
+    """The gateway's `error.code` from a refused response, when it sent one."""
+    try:
+        body = json.load(exc)
+    except (ValueError, OSError):
+        return ""
+    error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error, dict):
+        return error.get("code") or ""
+    return ""
 
 
 # --- the config file --------------------------------------------------------
@@ -485,7 +504,10 @@ def main():
         say("note: --no-discover; writing a placeholder model")
         models = placeholder_models()
     else:
-        status, cards, detail = discover(base_url, api_key)
+        status, cards, detail, error_code = discover(base_url, api_key)
+        if status == 403 and error_code == "api_keys_not_allowed":
+            die(5, "error: your account may not use API keys on this deployment.\n"
+                   "Ask an administrator to grant the capability, then run this again.")
         if status in (401, 403):
             die(3, "error: the gateway refused the key (HTTP %d). Mint a fresh key in the console;\n"
                    "check for a truncated paste." % status)

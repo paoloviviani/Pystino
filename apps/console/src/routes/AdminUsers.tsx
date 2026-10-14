@@ -259,6 +259,11 @@ export function AdminUsers() {
             <Badge tone="danger">Disabled</Badge>
           )}
           {isInvited(user) && inviteExpired(user) && <Badge tone="danger">Expired</Badge>}
+          {/* ADR 0096: neither capability — a chat-only person. Null means
+              the listing did not answer, which is never the badge. */}
+          {user.code_agents_allowed === false && user.api_keys_allowed === false && (
+            <Badge tone="neutral">Chat only</Badge>
+          )}
         </div>
       ),
     },

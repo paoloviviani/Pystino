@@ -15,8 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from gateway.accounting import TokenEstimator
+from gateway.capabilities import effective_capabilities
 from gateway.config import Settings
 from gateway.errors import (
+    AgentsNotAllowedError,
+    ApiKeysNotAllowedError,
     AuthenticationError,
     OutsideAccessGroupsError,
     PermissionError_,
@@ -244,6 +247,68 @@ def _refuse_key_outside_groups(request: Request, user: User) -> None:
         raise OutsideAccessGroupsError(refusal_text("group_lost", email=None, provider=""))
 
 
+def _refuse_key_without_api_keys(request: Request, user: User) -> None:
+    """ADR 0096: an API key from a person without the api_keys capability.
+
+    Refused, never deleted — the key stops working until a group flag
+    restores its owner's capability, and comes back the moment it does, so
+    a temporary loss is not a re-mint. Same shape as the join-gate check
+    above: reads the memberships the key's resolution already loaded, so it
+    costs no query and writes nothing.
+    """
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    policy = resolver.policy if resolver is not None else None
+    if policy is not None and not effective_capabilities(user, policy).api_keys:
+        raise ApiKeysNotAllowedError(
+            "This account may not use API keys on this deployment. Ask an "
+            "administrator to grant the capability."
+        )
+
+
+def _refuse_machine_without_code_agents(
+    request: Request, claims: dict[str, Any], user: User
+) -> None:
+    """ADR 0096: a machine-client token from a person without the code_agents
+    capability is refused on every `/v1` route — `/v1/me` included.
+
+    Matched on the token's `azp`/`client_id` exactly as the accepted-clients
+    check does, against the configured machine client (``opencode-enrollment``
+    by default, ``GATEWAY_OIDC__MACHINE_CLIENT_ID``). Chat-client tokens are
+    untouched. Refused with 403, never 401: the token is valid and the loss is
+    one a group flag restores, so a 401 would make Cerea's machine
+    revalidation revoke the device permanently. No audit write — the bearer
+    path stays write-free, like the join gate. On `/v1/me` the body still
+    carries `capabilities`, so Cerea can tell why.
+    """
+    settings: Settings = request.app.state.settings
+    machine_client = settings.oidc.machine_client_id
+    if not machine_client:
+        return
+    client = claims.get("azp") or claims.get("client_id")
+    if client != machine_client:
+        return
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    policy = resolver.policy if resolver is not None else None
+    if policy is None:
+        return
+    capabilities = effective_capabilities(user, policy)
+    if capabilities.code_agents:
+        return
+    extra_payload = None
+    if request.url.path.rstrip("/") == "/v1/me":
+        extra_payload = {
+            "capabilities": {
+                "code_agents": capabilities.code_agents,
+                "api_keys": capabilities.api_keys,
+            }
+        }
+    raise AgentsNotAllowedError(
+        "This account may not use coding agents on this deployment. Ask an "
+        "administrator to grant the capability.",
+        extra_payload=extra_payload,
+    )
+
+
 def resolve_billing_group(user: User, *, pinned: Group | None = None) -> Group:
     """Decide which group pays, and check the caller may still charge it.
 
@@ -407,6 +472,7 @@ async def get_principal(
     else:
         pinned = api_key.billing_group
     _refuse_key_outside_groups(request, api_key.user)
+    _refuse_key_without_api_keys(request, api_key.user)
     group = resolve_billing_group(api_key.user, pinned=pinned)
     await _touch_last_used(session, api_key)
     return Principal(user=api_key.user, billing_group=group, api_key=api_key)
@@ -593,7 +659,13 @@ async def _authenticate_bearer_user(request: Request, session: AsyncSession, tok
         logger.warning("access token rejected: account %s is disabled", user.id)
         raise AuthenticationError("Invalid API key provided.")
 
+    # Commit the identity sync before the gate below: a refused machine token
+    # must not re-provision on every request — the steady-state path is
+    # write-free, and the sync is identity reconciliation, not the audit the
+    # gate is asked to skip.
     await session.commit()
+    _refuse_machine_without_code_agents(request, claims, user)
+
     return user
 
 
@@ -683,6 +755,7 @@ async def _caller_from_key(
         else api_key.billing_group
     )
     _refuse_key_outside_groups(request, api_key.user)
+    _refuse_key_without_api_keys(request, api_key.user)
     await _touch_last_used(session, api_key)
     return AuthenticatedCaller(
         user=api_key.user,

@@ -65,13 +65,20 @@ from fastapi import APIRouter, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gateway.capabilities import effective_capabilities
 from gateway.deps import AuthenticatedCallerDep, SessionDep, SettingsDep, validate_bearer_token
 from gateway.errors import AuthenticationError, PermissionError_, TooManyRequestsError
 from gateway.join_gate import refusal_text
 from gateway.merges import resolve_merged_from
 from gateway.models import User, UserIdentity
 from gateway.oidc import OIDCError, ProvisioningRefused, sign_in
-from gateway.schemas import CallerIdentity, IdentityRef, MeIdentities, SessionAnnounce
+from gateway.schemas import (
+    CallerIdentity,
+    CapabilityFlags,
+    IdentityRef,
+    MeIdentities,
+    SessionAnnounce,
+)
 from gateway.security import parse_authorization_header
 
 logger = logging.getLogger(__name__)
@@ -217,7 +224,7 @@ async def my_identities(caller: AuthenticatedCallerDep, session: SessionDep) -> 
 
 
 @router.get("/me", response_model=CallerIdentity)
-async def whoami(caller: AuthenticatedCallerDep) -> CallerIdentity:
+async def whoami(caller: AuthenticatedCallerDep, request: Request) -> CallerIdentity:
     # No query. Authentication already loaded the user with its memberships,
     # and each membership's group comes with it (`lazy="joined"`), so this
     # route adds nothing to the round-trip budget `test_query_counts.py` pins.
@@ -254,6 +261,19 @@ async def whoami(caller: AuthenticatedCallerDep) -> CallerIdentity:
         None,
     )
 
+    # ADR 0096: the folded capability setting and the person's memberships,
+    # both already in hand — no query. Absent on an older gateway means
+    # allowed, which is the contract's "so Cerea can tell why" side: a client
+    # that sees no `capabilities` field must read it as permission.
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    policy = resolver.policy if resolver is not None else None
+    flags = effective_capabilities(user, policy) if policy is not None else None
+    capabilities = (
+        CapabilityFlags(code_agents=flags.code_agents, api_keys=flags.api_keys)
+        if flags is not None
+        else None
+    )
+
     return CallerIdentity(
         id=user.id,
         email=user.email,
@@ -273,4 +293,5 @@ async def whoami(caller: AuthenticatedCallerDep) -> CallerIdentity:
         billing_group=caller.billing_group.name if caller.billing_group else None,
         sessions_valid_after=user.sessions_valid_after,
         merged_at=user.merged_at,
+        capabilities=capabilities,
     )

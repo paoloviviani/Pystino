@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
@@ -25,6 +25,8 @@ function policyFixture(overrides: Partial<OidcPolicy> = {}): OidcPolicy {
     group_fallback: "refuse",
     groups_claim: "groups",
     group_mappings: [],
+    code_agents_mode: "everyone",
+    api_keys_mode: "everyone",
     source: "environment",
     sources: {},
     configured: null,
@@ -76,8 +78,16 @@ function mockRoutes({
     if (url.includes("/api/admin/oidc/policy/preview")) {
       const params = new URL(url, "http://x").searchParams;
       const refused = params.getAll("required_groups").includes("cut-off") ? 2 : 0;
+      const loseCode = params.get("code_agents_mode") === "groups" ? 2 : null;
+      const loseApi = params.get("api_keys_mode") === "groups" ? 2 : null;
       return new Response(
-        JSON.stringify({ active_users: 5, would_be_refused: refused, admins_exempt: 1 }),
+        JSON.stringify({
+          active_users: 5,
+          would_be_refused: refused,
+          admins_exempt: 1,
+          would_lose_code_agents: loseCode,
+          would_lose_api_keys: loseApi,
+        }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }
@@ -279,5 +289,74 @@ describe("AdminIdentity", () => {
     });
     renderScreen(<AdminIdentity />);
     expect(await screen.findByRole("radio", { name: /^Approval/ })).toBeChecked();
+  });
+
+  it("seeds the capability settings from the policy in force", async () => {
+    mockRoutes({
+      policy: policyFixture({ code_agents_mode: "groups", api_keys_mode: "everyone" }),
+    });
+    renderScreen(<AdminIdentity />);
+    const codeRow = await screen.findByRole("group", { name: "Coding agents" });
+    const apiRow = screen.getByRole("group", { name: "API keys" });
+    expect(within(codeRow).getByRole("radio", { name: "Flagged groups only" })).toBeChecked();
+    expect(within(apiRow).getByRole("radio", { name: "Everyone" })).toBeChecked();
+  });
+
+  it("says where each capability answer came from", async () => {
+    mockRoutes({
+      policy: policyFixture({
+        code_agents_mode: "groups",
+        sources: { code_agents_mode: "console" },
+      }),
+    });
+    renderScreen(<AdminIdentity />);
+    expect(await screen.findByText(/Coding agents set here/i)).toBeInTheDocument();
+  });
+
+  it("previews a capability move and saves only on confirm", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({ policy: policyFixture() });
+    renderScreen(<AdminIdentity />);
+    const codeRow = await screen.findByRole("group", { name: "Coding agents" });
+
+    // Picking groups runs the preview first — no save yet.
+    await user.click(
+      within(codeRow).getByRole("radio", { name: "Flagged groups only" }),
+    );
+    const warning = await screen.findByText(/will lose coding agents/i);
+    expect(warning).toBeInTheDocument();
+    expect(putBodies()).toEqual([]);
+
+    await user.click(screen.getByRole("button", { name: /save anyway/i }));
+    await waitFor(() => expect(putBodies()).toEqual([{ code_agents_mode: "groups" }]));
+  });
+
+  it("moves a capability back to everyone straight away", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({ policy: policyFixture({ api_keys_mode: "groups" }) });
+    renderScreen(<AdminIdentity />);
+    const apiRow = await screen.findByRole("group", { name: "API keys" });
+    await user.click(within(apiRow).getByRole("radio", { name: "Everyone" }));
+    await waitFor(() => expect(putBodies()).toEqual([{ api_keys_mode: "everyone" }]));
+  });
+
+  it("a refused capability save puts the radios back", async () => {
+    const user = userEvent.setup({ delay: null });
+    mockRoutes({ policy: policyFixture(), putStatus: 400 });
+    renderScreen(<AdminIdentity />);
+    const codeRow = await screen.findByRole("group", { name: "Coding agents" });
+
+    await user.click(
+      within(codeRow).getByRole("radio", { name: "Flagged groups only" }),
+    );
+    await screen.findByRole("button", { name: /save anyway/i });
+    await user.click(screen.getByRole("button", { name: /save anyway/i }));
+    expect(await screen.findByText(/the server refused that/i)).toBeInTheDocument();
+    // The radios never show a mode the server declined.
+    expect(
+      within(await screen.findByRole("group", { name: "Coding agents" })).getByRole("radio", {
+        name: "Everyone",
+      }),
+    ).toBeChecked();
   });
 });
