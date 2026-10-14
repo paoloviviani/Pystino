@@ -13,7 +13,7 @@ Each card says what the screen decides, not what it is called.
 
 | Screen | What it shows |
 |---|---|
-| **Overview** | where you stand this period, your quotas and the API keys you spend with (create and revoke them here) |
+| **Overview** | where you stand this period, your quotas and the API keys you spend with (create and revoke them here; a person without the API-keys capability is told so instead of being offered Create) |
 | **Your usage** | what you spent, and what the figures rest on. Administrators have it too: their own spend is not administration |
 
 Money is shown to three decimal places and never rounds a real amount down to
@@ -31,9 +31,11 @@ the **Exact figures** toggle.
 | change what models are on offer, who may use them and what they cost | **Models** | [Three cost figures](accounting-and-quotas.md#three-cost-figures-one-meaning-each) |
 | choose the search backends and see how many searches each group spent | **Web search** | [Surfaces](gateway.md#surfaces) |
 | add, disable, reset or merge a person | **Users** | [Bundled accounts](bundled-accounts.md), [Identity](identity.md) |
+| see at a glance who may use only the chat | **Users** (the **Chat only** badge) | [Chat-only people](identity.md#chat-only-people) |
 | decide who belongs together and what a group may use | **Groups** | [Groups](identity.md#groups) |
+| grant a group coding agents or API keys | **Groups** (the two **Capabilities** toggles) | [Chat-only people](identity.md#chat-only-people) |
 | map or dismiss the group names your identity provider reports | **Groups**, *Groups from your identity provider* | [Mapping the provider's groups](identity.md#mapping-the-providers-groups) |
-| configure mail, read the identity provider, or decide who may become a user | **Settings** | [Identity](identity.md) |
+| configure mail, read the identity provider, decide who may become a user, or decide who may hold each capability | **Settings** | [Identity](identity.md) |
 | see what happened to a person's account, and who did it | **Users → Edit → Activity** | [The audit trail](identity.md#the-audit-trail) |
 
 Two things on the **Settings** screen are worth knowing before you look for

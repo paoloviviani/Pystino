@@ -112,6 +112,14 @@ the key was revoked), if the key's group is over its cap, or if the gateway
 cannot be reached. It does not follow redirects, so a mistyped address cannot
 send your key somewhere else.
 
+A person without the `api_keys` capability ([Chat-only
+people](identity.md#chat-only-people)) gets a different refusal: the script
+says the account may not use API keys on this deployment, instead of telling
+them to mint a fresh key they are not allowed to. The same 403
+(`api_keys_not_allowed`) answers any later use of a key whose owner loses the
+capability — the key is not deleted, so regaining it restores the script's
+access with no re-mint.
+
 ### Undo
 
 Restore the backup, or take the block out:
@@ -145,6 +153,11 @@ unchanged, which Caddy does by default.
 - Revoking the grant at the IdP ends the machine's `/v1` access and its chat link
   together within one access-token lifetime, because both use the same enrolment
   credential.
+- A person without the `code_agents` capability ([Chat-only
+  people](identity.md#chat-only-people)) is refused on every route — `/v1/me`
+  included — with 403 `agents_not_allowed`, and the chat closes the link
+  without revoking the device. Chat tokens are unaffected: a chat-only
+  person's chat keeps working; only their machine is refused.
 
 ## What the IdP side needs
 
