@@ -61,10 +61,17 @@ CATALOGUE = [
 class FakeGateway:
     """Answers GET /v1/models and remembers who asked, and how."""
 
-    def __init__(self, cards: list[dict[str, Any]], status: int = 200, delay: float = 0.0):
+    def __init__(
+        self,
+        cards: list[dict[str, Any]],
+        status: int = 200,
+        delay: float = 0.0,
+        error_code: str = "",
+    ):
         self.cards = cards
         self.status = status
         self.delay = delay
+        self.error_code = error_code
         self.seen: list[tuple[str, str]] = []  # (path, authorization)
         self.redirect_to: str | None = None
         gateway = self
@@ -79,7 +86,12 @@ class FakeGateway:
                     self.send_header("Location", gateway.redirect_to)
                     self.end_headers()
                     return
-                body = json.dumps({"object": "list", "data": gateway.cards}).encode()
+                if gateway.error_code:
+                    body = json.dumps(
+                        {"error": {"message": "refused", "code": gateway.error_code}}
+                    ).encode()
+                else:
+                    body = json.dumps({"object": "list", "data": gateway.cards}).encode()
                 self.send_response(gateway.status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
@@ -454,6 +466,18 @@ def test_quota_exhaustion_is_not_an_auth_failure(run: Run, gateway: FakeGateway)
     result = run(gateway.origin)
     assert result.returncode == 4
     assert "over its cap" in result.stderr
+
+
+def test_a_chat_only_account_gets_the_capability_refusal(run: Run, gateway: FakeGateway) -> None:
+    """ADR 0096: the gateway answers a key whose owner may not use API keys
+    with 403 `api_keys_not_allowed`, and the script says so plainly instead of
+    telling the person to mint a fresh key they are not allowed to."""
+    gateway.status = 403
+    gateway.error_code = "api_keys_not_allowed"
+    result = run(gateway.origin)
+    assert result.returncode == 5
+    assert "may not use API keys" in result.stderr
+    assert not run.global_config.exists()
 
 
 def test_an_unreachable_gateway_writes_nothing_unless_asked(run: Run) -> None:

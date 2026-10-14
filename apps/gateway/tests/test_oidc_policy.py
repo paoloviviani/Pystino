@@ -867,6 +867,9 @@ class TestOidcPolicyEndpoints:
             "active_users": 2,
             "would_be_refused": 1,
             "admins_exempt": 1,
+            # ADR 0096: the capability previews answer only when asked.
+            "would_lose_code_agents": None,
+            "would_lose_api_keys": None,
         }
         assert (
             await client.get(

@@ -119,3 +119,43 @@ def test_0057_join_modes_and_invites_round_trips_on_sqlite(tmp_path: Path) -> No
         user_columns = {row[1] for row in connection.execute("PRAGMA table_info(users)")}
     assert not {"join_mode", "required_groups", "group_fallback"} & policy_columns
     assert not {"invited_at", "invited_by"} & user_columns
+
+
+def test_0059_capability_flags_round_trip_on_sqlite(tmp_path: Path) -> None:
+    """0059's capability columns arrive — the two group flags defaulting to
+    false, the two policy modes with their check constraints — and its
+    downgrade leaves 0058."""
+    database = tmp_path / "capabilities.db"
+    url = f"url=sqlite+aiosqlite:///{database}"
+    assert _alembic("-x", url, "upgrade", "0059").returncode == 0
+
+    with closing(sqlite3.connect(database)) as connection:
+        group_columns = {row[1] for row in connection.execute("PRAGMA table_info(groups)")}
+        policy_columns = {row[1] for row in connection.execute("PRAGMA table_info(oidc_config)")}
+        assert {"code_agents_allowed", "api_keys_allowed"} <= group_columns
+        assert {"code_agents_mode", "api_keys_mode"} <= policy_columns
+        defaults = dict(
+            connection.execute(
+                "SELECT name, dflt_value FROM pragma_table_info('groups') "
+                "WHERE name IN ('code_agents_allowed', 'api_keys_allowed')"
+            ).fetchall()
+        )
+        assert defaults == {"code_agents_allowed": "false", "api_keys_allowed": "false"}
+        with pytest.raises(sqlite3.IntegrityError, match="ck_oidc_config_code_agents_mode"):
+            connection.execute(
+                "INSERT INTO oidc_config (id, created_at, code_agents_mode) VALUES "
+                "(lower(hex(randomblob(16))), '2026-10-12', 'nonsense')"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="ck_oidc_config_api_keys_mode"):
+            connection.execute(
+                "INSERT INTO oidc_config (id, created_at, api_keys_mode) VALUES "
+                "(lower(hex(randomblob(16))), '2026-10-12', 'nonsense')"
+            )
+
+    result = _alembic("-x", url, "downgrade", "0058")
+    assert result.returncode == 0, result.stderr[-2000:]
+    with closing(sqlite3.connect(database)) as connection:
+        group_columns = {row[1] for row in connection.execute("PRAGMA table_info(groups)")}
+        policy_columns = {row[1] for row in connection.execute("PRAGMA table_info(oidc_config)")}
+    assert not {"code_agents_allowed", "api_keys_allowed"} & group_columns
+    assert not {"code_agents_mode", "api_keys_mode"} & policy_columns

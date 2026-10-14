@@ -84,6 +84,10 @@ class TestIdentity:
             "billing_group": "research",
             "sessions_valid_after": None,
             "merged_at": None,
+            # ADR 0096: the default setting is "everyone", so the seeded
+            # person holds both capabilities even though no group carries a
+            # flag — the upgrade-change-nothing guarantee.
+            "capabilities": {"code_agents": True, "api_keys": True},
         }
 
     async def test_sessions_valid_after_and_merged_at_are_read_from_the_row(
