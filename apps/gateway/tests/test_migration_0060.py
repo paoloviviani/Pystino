@@ -46,7 +46,11 @@ CREATE TABLE oidc_config (
     api_keys_mode VARCHAR(16),
     reason VARCHAR(500) NOT NULL,
     created_by CHAR(32),
-    created_at DATETIME NOT NULL
+    created_at DATETIME NOT NULL,
+    CONSTRAINT ck_oidc_config_code_agents_mode
+        CHECK (code_agents_mode IS NULL OR code_agents_mode IN ('everyone', 'groups')),
+    CONSTRAINT ck_oidc_config_api_keys_mode
+        CHECK (api_keys_mode IS NULL OR api_keys_mode IN ('everyone', 'groups'))
 );
 CREATE TABLE groups (
     id CHAR(32) PRIMARY KEY,

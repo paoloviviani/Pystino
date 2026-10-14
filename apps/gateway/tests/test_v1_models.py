@@ -136,7 +136,11 @@ class TestUnauthenticatedListing:
         from gateway.security import generate_api_key
 
         async with session_factory() as db:
-            group = Group(name="ungranted", description="no grants on purpose")
+            # ADR 0096 (amended): the api_keys flag rides along — this test
+            # is about model narrowing, not capabilities.
+            group = Group(
+                name="ungranted", description="no grants on purpose", api_keys_allowed=True
+            )
             user = User(issuer="https://idp.test", subject="ungranted-lister")
             db.add_all([group, user])
             await db.flush()

@@ -85,6 +85,23 @@ def _fold_mode(stored: object, env_var: str) -> str:
 
 
 def upgrade() -> None:
+    # The values this revision writes (`on`/`off`) sit outside 0059's check
+    # constraint (`everyone`/`groups`), so the constraint is widened here —
+    # the old spellings stay valid, the new ones become valid — before any
+    # row is written, and dropped-with-the-columns in the downgrade. Without
+    # this, the very first append fails the check on every dialect.
+    with op.batch_alter_table("oidc_config") as batch:
+        batch.drop_constraint("ck_oidc_config_api_keys_mode", type_="check")
+        batch.drop_constraint("ck_oidc_config_code_agents_mode", type_="check")
+        batch.create_check_constraint(
+            "ck_oidc_config_code_agents_mode",
+            "code_agents_mode IS NULL OR code_agents_mode IN ('on', 'off', 'everyone', 'groups')",
+        )
+        batch.create_check_constraint(
+            "ck_oidc_config_api_keys_mode",
+            "api_keys_mode IS NULL OR api_keys_mode IN ('on', 'off', 'everyone', 'groups')",
+        )
+
     # Imported here rather than at module level (0041's way): a migration
     # keeps loading against the application tree as it stands, and utcnow()
     # is what the model's own column default writes. `sa.func.now()` would
@@ -145,11 +162,39 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Nothing to undo, and nothing that could be undone honestly.
+    """The constraint narrows back; the row and the flags stay.
 
     The appended row is configuration, not schema; deleting it by reason
     would delete what the operator wrote since. The flags it set are the
     state the previous revision's setting implied, and a downgrade that
     cleared them would take capabilities away the deployment had granted.
+    A row carrying `on`/`off` would violate the narrowed check on the next
+    write that touches it, so the downgrade replaces the mode columns'
+    spellings back to the 0.7.x vocabulary first.
     """
-    pass
+    bind = op.get_bind()
+    bind.execute(
+        sa.text(
+            "UPDATE oidc_config SET code_agents_mode = 'everyone' WHERE code_agents_mode = 'on'"
+        )
+    )
+    bind.execute(
+        sa.text("UPDATE oidc_config SET code_agents_mode = 'groups' WHERE code_agents_mode = 'off'")
+    )
+    bind.execute(
+        sa.text("UPDATE oidc_config SET api_keys_mode = 'everyone' WHERE api_keys_mode = 'on'")
+    )
+    bind.execute(
+        sa.text("UPDATE oidc_config SET api_keys_mode = 'groups' WHERE api_keys_mode = 'off'")
+    )
+    with op.batch_alter_table("oidc_config") as batch:
+        batch.drop_constraint("ck_oidc_config_api_keys_mode", type_="check")
+        batch.drop_constraint("ck_oidc_config_code_agents_mode", type_="check")
+        batch.create_check_constraint(
+            "ck_oidc_config_code_agents_mode",
+            "code_agents_mode IS NULL OR code_agents_mode IN ('everyone', 'groups')",
+        )
+        batch.create_check_constraint(
+            "ck_oidc_config_api_keys_mode",
+            "api_keys_mode IS NULL OR api_keys_mode IN ('everyone', 'groups')",
+        )

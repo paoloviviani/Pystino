@@ -46,7 +46,10 @@ async def outsider(seeded, session: AsyncSession) -> tuple[User, str]:
     for the spend to land and still no grant — so a success here can only come
     from the public flag.
     """
-    group = Group(name="outsiders", description="no grants on purpose")
+    # ADR 0096 (amended): the api_keys capability is a flag this group
+    # carries — the test is about *model* access, and without the flag the
+    # key itself would be refused before any model question could be asked.
+    group = Group(name="outsiders", description="no grants on purpose", api_keys_allowed=True)
     user = User(issuer="https://idp.test", subject="outsider", email="outsider@example.org")
     session.add_all([group, user])
     await session.flush()
@@ -114,9 +117,17 @@ class TestPublicAccess:
     ) -> None:
         """Access is granted; billing is not. Public is not free."""
         async with session_factory() as db:
+            # ADR 0096 (amended): a person in *no* group holds no capability,
+            # so a bare groupless caller is refused at the capability gate
+            # before billing could answer. The billing-not-free shape this
+            # test pins is a caller with a group to bill *from* — the flag
+            # rides on it — whose key pins no billing group and whose
+            # default resolves to nothing.
+            group = Group(name="bill-nowhere", api_keys_allowed=True)
             groupless = User(issuer="https://idp.test", subject="groupless")
-            db.add(groupless)
+            db.add_all([group, groupless])
             await db.flush()
+            db.add(Membership(user_id=groupless.id, group_id=group.id))
             generated = generate_api_key()
             db.add(
                 ApiKey(
