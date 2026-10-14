@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 from conftest import LEGACY_GROUPS, Seeded
+from gateway.capabilities import Capabilities
 from gateway.config import OIDCSettings
 from gateway.directory.adapters import (
     AdapterError,
@@ -30,6 +31,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
 
 BOX = SecretBox(["test-encryption-key-not-for-production"])
+# The folded default (ADR 0096, amended) these engine tests run with: on/on,
+# what a deployment that never decides creates. Not what any of them asserts.
+DEFAULTS = Capabilities(code_agents=True, api_keys=True)
 ISS = "https://llm.example.org/authelia"
 USERS = """users:
   alice:
@@ -138,6 +142,7 @@ class TestEngine:
             settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
+            defaults=DEFAULTS,
         )
         assert report.linked == 1 and report.updated == 1
         assert await _groups(session, alice) == {"users", "ops"}
@@ -157,6 +162,7 @@ class TestEngine:
             settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=True,
             full=True,
+            defaults=DEFAULTS,
         )
         assert report.dry_run and report.linked == 1
         assert any(c["change"] == "groups" for c in report.changes)
@@ -174,7 +180,8 @@ class TestEngine:
         record = record_from_row(row, BOX)
         both = [Entry("alice", "alice"), Entry("bob", "bob")]
         await apply_entries(
-            session, record, both, settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True
+            session, record, both, settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True,
+            defaults=DEFAULTS,
         )
         report = await apply_entries(
             session,
@@ -183,6 +190,7 @@ class TestEngine:
             settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
+            defaults=DEFAULTS,
         )
         assert report.deactivated == 2
         for user in (alice, bob):
@@ -190,7 +198,8 @@ class TestEngine:
             await session.refresh(fresh)
             assert not fresh.is_active and fresh.deactivated_by == "directory"
         back = await apply_entries(
-            session, record, both, settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True
+            session, record, both, settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True,
+            defaults=DEFAULTS,
         )
         # Both come back: the directory deactivated them, so it may reactivate them.
         assert back.reactivated == 2
@@ -207,6 +216,7 @@ class TestEngine:
             settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
+            defaults=DEFAULTS,
         )
         await session.refresh(alice)
         assert not alice.is_active
@@ -225,9 +235,11 @@ class TestEngine:
             settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
+            defaults=DEFAULTS,
         )
         report = await apply_entries(
-            session, record, [], settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True
+            session, record, [], settings=OIDCSettings(**LEGACY_GROUPS), dry_run=False, full=True,
+            defaults=DEFAULTS,
         )
         assert report.status == "needs_confirmation" and report.deactivated == 8
         active = (
@@ -241,6 +253,7 @@ class TestEngine:
             settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
+            defaults=DEFAULTS,
             force=True,
         )
         assert forced.status == "ok"
@@ -261,6 +274,7 @@ class TestEngine:
             settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
+            defaults=DEFAULTS,
         )
         assert report.created == 1
         user = (await session.execute(select(User).where(User.subject == "u-1"))).scalar_one()
@@ -297,6 +311,7 @@ class TestEngine:
             settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
+            defaults=DEFAULTS,
         )
         assert report.created == 0
         assert report.linked == 1
@@ -319,6 +334,7 @@ class TestEngine:
             settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=False,
+            defaults=DEFAULTS,
         )
         await session.refresh(alice)
         assert alice.is_admin and alice.admin_source == "env"
@@ -329,6 +345,7 @@ class TestEngine:
             settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=False,
+            defaults=DEFAULTS,
         )
         await session.refresh(alice)
         assert not alice.is_admin
@@ -345,6 +362,7 @@ class TestEngine:
             settings=OIDCSettings(**LEGACY_GROUPS),
             dry_run=False,
             full=True,
+            defaults=DEFAULTS,
         )
         entry = (await session.execute(select(DirectoryEntry))).scalar_one()
         entry.preassigned_groups = ["research"]
@@ -358,6 +376,7 @@ class TestEngine:
             carol,
             {"preferred_username": "carol", "email": "carol@example.org", "email_verified": "true"},
             settings=OIDCSettings(**LEGACY_GROUPS),
+            defaults=DEFAULTS,
         )
         assert await link_at_login(
             session,
@@ -365,6 +384,7 @@ class TestEngine:
             carol,
             {"preferred_username": "carol", "email": "carol@example.org", "email_verified": True},
             settings=OIDCSettings(**LEGACY_GROUPS),
+            defaults=DEFAULTS,
         )
         await session.commit()
         await session.refresh(carol, attribute_names=["memberships"])

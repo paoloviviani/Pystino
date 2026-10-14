@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gateway.capabilities import load_defaults
 from gateway.config import Settings
 from gateway.deployment_state import mark_bootstrap_consumed
 from gateway.directory.authelia_users import LOGIN, UsersFile, UsersFileError, UsersFileLockedError
@@ -239,7 +240,12 @@ async def break_glass(
         # never a billing group, but this person may still want to call
         # `/v1` directly, and a fresh pending user has nothing to bill from
         # otherwise.
-        await ensure_bundled_default_group(session, target, settings.oidc.default_group)
+        await ensure_bundled_default_group(
+            session,
+            target,
+            settings.oidc.default_group,
+            defaults=await load_defaults(session, settings),
+        )
         await mark_bootstrap_consumed(session)
         await record_event(
             session,

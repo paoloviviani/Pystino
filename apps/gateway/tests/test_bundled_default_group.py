@@ -10,12 +10,17 @@ and the one place "an external IdP gets nothing" is a real question.
 
 from __future__ import annotations
 
+from gateway.capabilities import Capabilities
 from gateway.config import OIDCSettings, Settings
 from gateway.directory.engine import ensure_bundled_default_group
 from gateway.models import Group, GroupSource, Membership, MembershipSource, User
 from gateway.oidc import sign_in
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+#: The folded default (ADR 0096, amended) these tests run with: on/on, what a
+#: deployment that never decides creates.
+DEFAULTS = Capabilities(code_agents=True, api_keys=True)
 
 ISS = "https://gw.example.org/authelia"
 
@@ -31,7 +36,7 @@ async def _bare_user(session: AsyncSession, *, issuer: str = ISS, subject: str =
 class TestEnsureBundledDefaultGroup:
     async def test_creates_the_group_when_missing(self, session: AsyncSession) -> None:
         user = await _bare_user(session)
-        added = await ensure_bundled_default_group(session, user)
+        added = await ensure_bundled_default_group(session, user, defaults=DEFAULTS)
         assert added is True
 
         memberships = (
@@ -56,7 +61,7 @@ class TestEnsureBundledDefaultGroup:
         await session.flush()
 
         user = await _bare_user(session, subject="s2")
-        await ensure_bundled_default_group(session, user)
+        await ensure_bundled_default_group(session, user, defaults=DEFAULTS)
 
         rows = (await session.execute(select(Group).where(Group.name == "users"))).scalars().all()
         assert len(rows) == 1
@@ -72,7 +77,7 @@ class TestEnsureBundledDefaultGroup:
         await session.flush()
         await session.refresh(user, attribute_names=["memberships"])
 
-        added = await ensure_bundled_default_group(session, user)
+        added = await ensure_bundled_default_group(session, user, defaults=DEFAULTS)
         assert added is False
 
         memberships = (

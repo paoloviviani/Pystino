@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
@@ -25,8 +25,8 @@ function policyFixture(overrides: Partial<OidcPolicy> = {}): OidcPolicy {
     group_fallback: "refuse",
     groups_claim: "groups",
     group_mappings: [],
-    code_agents_mode: "everyone",
-    api_keys_mode: "everyone",
+    code_agents_mode: "on",
+    api_keys_mode: "on",
     source: "environment",
     sources: {},
     configured: null,
@@ -45,7 +45,9 @@ beforeEach(() => {
 function renderScreen(element: ReactElement) {
   // Fresh cache per render: the policy query must be this test's fetch, not a
   // previous test's answer.
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>{element}</MemoryRouter>
@@ -62,54 +64,71 @@ function mockRoutes({
   groups?: { id: string; name: string }[];
   putStatus?: number;
 }) {
-  fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    if (url.includes("/api/admin/oidc/policy") && (init?.method ?? "GET") === "PUT") {
-      if (putStatus !== 200)
+  fetchMock.mockImplementation(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (
+        url.includes("/api/admin/oidc/policy") &&
+        (init?.method ?? "GET") === "PUT"
+      ) {
+        if (putStatus !== 200)
+          return new Response(
+            JSON.stringify({ error: { message: "the server refused that" } }),
+            {
+              status: putStatus,
+              headers: { "content-type": "application/json" },
+            },
+          );
+        return new Response(JSON.stringify(policy), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/api/admin/oidc/policy/preview")) {
+        const params = new URL(url, "http://x").searchParams;
+        const refused = params.getAll("required_groups").includes("cut-off")
+          ? 2
+          : 0;
+        const loseCode = params.get("code_agents_mode") === "groups" ? 2 : null;
+        const loseApi = params.get("api_keys_mode") === "groups" ? 2 : null;
         return new Response(
-          JSON.stringify({ error: { message: "the server refused that" } }),
-          { status: putStatus, headers: { "content-type": "application/json" } },
+          JSON.stringify({
+            active_users: 5,
+            would_be_refused: refused,
+            admins_exempt: 1,
+            would_lose_code_agents: loseCode,
+            would_lose_api_keys: loseApi,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
         );
-      return new Response(JSON.stringify(policy), {
+      }
+      if (url.includes("/api/admin/groups")) {
+        return new Response(
+          JSON.stringify({ items: groups ?? [], total: (groups ?? []).length }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("/api/admin/oidc/policy")) {
+        return new Response(JSON.stringify(policy), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("{}", {
         status: 200,
         headers: { "content-type": "application/json" },
       });
-    }
-    if (url.includes("/api/admin/oidc/policy/preview")) {
-      const params = new URL(url, "http://x").searchParams;
-      const refused = params.getAll("required_groups").includes("cut-off") ? 2 : 0;
-      const loseCode = params.get("code_agents_mode") === "groups" ? 2 : null;
-      const loseApi = params.get("api_keys_mode") === "groups" ? 2 : null;
-      return new Response(
-        JSON.stringify({
-          active_users: 5,
-          would_be_refused: refused,
-          admins_exempt: 1,
-          would_lose_code_agents: loseCode,
-          would_lose_api_keys: loseApi,
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }
-    if (url.includes("/api/admin/groups")) {
-      return new Response(
-        JSON.stringify({ items: groups ?? [], total: (groups ?? []).length }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    }
-    if (url.includes("/api/admin/oidc/policy")) {
-      return new Response(JSON.stringify(policy), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-  });
+    },
+  );
 }
 
 const putBodies = () =>
   fetchMock.mock.calls
-    .filter(([url, init]) => String(url).includes("/oidc/policy") && (init as RequestInit).method === "PUT")
+    .filter(
+      ([url, init]) =>
+        String(url).includes("/oidc/policy") &&
+        (init as RequestInit).method === "PUT",
+    )
     .map(([, init]) => JSON.parse((init as RequestInit).body as string));
 
 describe("AdminIdentity", () => {
@@ -142,7 +161,9 @@ describe("AdminIdentity", () => {
     });
     renderScreen(<AdminIdentity />);
     expect(await screen.findByRole("radio", { name: /^Group/ })).toBeChecked();
-    expect(await screen.findByRole("checkbox", { name: "staff" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("checkbox", { name: "staff" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "ops" })).toBeInTheDocument();
     expect(
       await screen.findByLabelText(/someone without a required group/i),
@@ -150,8 +171,12 @@ describe("AdminIdentity", () => {
 
     // Switching away hides them; the save is the radio click itself.
     await user.click(screen.getByRole("radio", { name: /^Invite/ }));
-    await waitFor(() => expect(putBodies()).toContainEqual({ join_mode: "invite" }));
-    expect(screen.queryByRole("checkbox", { name: "staff" })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(putBodies()).toContainEqual({ join_mode: "invite" }),
+    );
+    expect(
+      screen.queryByRole("checkbox", { name: "staff" }),
+    ).not.toBeInTheDocument();
   });
 
   it("notes when a required group no IdP name maps to", async () => {
@@ -168,11 +193,15 @@ describe("AdminIdentity", () => {
     });
     renderScreen(<AdminIdentity />);
     await screen.findByRole("checkbox", { name: "staff" });
-    const staffRow = screen.getByRole("checkbox", { name: "staff" }).closest("label")!
-      .parentElement!;
-    const opsRow = screen.getByRole("checkbox", { name: "ops" }).closest("label")!
-      .parentElement!;
-    await waitFor(() => expect(opsRow.textContent).toContain("No IdP group maps to this"));
+    const staffRow = screen
+      .getByRole("checkbox", { name: "staff" })
+      .closest("label")!.parentElement!;
+    const opsRow = screen
+      .getByRole("checkbox", { name: "ops" })
+      .closest("label")!.parentElement!;
+    await waitFor(() =>
+      expect(opsRow.textContent).toContain("No IdP group maps to this"),
+    );
     // staff is mapped, so it says nothing; ops is required with no mapping
     // targeting it, so the note says where its members can come from.
     expect(staffRow.textContent).not.toContain("No IdP group maps to this");
@@ -211,7 +240,9 @@ describe("AdminIdentity", () => {
     // Ticking is local: no save, no preview, no row.
     expect(putBodies()).toEqual([]);
 
-    await user.click(screen.getByRole("button", { name: /save access groups/i }));
+    await user.click(
+      screen.getByRole("button", { name: /save access groups/i }),
+    );
 
     const warning = await screen.findByText(/will lose access/i);
     expect(warning).toBeInTheDocument();
@@ -220,7 +251,11 @@ describe("AdminIdentity", () => {
     await user.click(screen.getByRole("button", { name: /save anyway/i }));
     await waitFor(() =>
       expect(putBodies()).toEqual([
-        { join_mode: "group", required_groups: ["cut-off"], group_fallback: "refuse" },
+        {
+          join_mode: "group",
+          required_groups: ["cut-off"],
+          group_fallback: "refuse",
+        },
       ]),
     );
   });
@@ -240,10 +275,16 @@ describe("AdminIdentity", () => {
     await user.click(screen.getByRole("checkbox", { name: "staff" }));
     expect(putBodies()).toEqual([]);
     // The set saves as one decision, once.
-    await user.click(screen.getByRole("button", { name: /save access groups/i }));
+    await user.click(
+      screen.getByRole("button", { name: /save access groups/i }),
+    );
     await waitFor(() =>
       expect(putBodies()).toEqual([
-        { join_mode: "group", required_groups: ["staff"], group_fallback: "refuse" },
+        {
+          join_mode: "group",
+          required_groups: ["staff"],
+          group_fallback: "refuse",
+        },
       ]),
     );
   });
@@ -255,23 +296,34 @@ describe("AdminIdentity", () => {
       groups: [{ id: "g2", name: "staff" }],
     });
     renderScreen(<AdminIdentity />);
-    const select = await screen.findByLabelText(/someone without a required group/i);
+    const select = await screen.findByLabelText(
+      /someone without a required group/i,
+    );
     await user.selectOptions(select, "approval");
     await waitFor(() =>
       expect(putBodies()).toEqual([
-        { join_mode: "group", required_groups: ["staff"], group_fallback: "approval" },
+        {
+          join_mode: "group",
+          required_groups: ["staff"],
+          group_fallback: "approval",
+        },
       ]),
     );
   });
 
   it("a refused save puts the radio back to the mode in force", async () => {
     const user = userEvent.setup({ delay: null });
-    mockRoutes({ policy: policyFixture({ join_mode: "open" }), putStatus: 400 });
+    mockRoutes({
+      policy: policyFixture({ join_mode: "open" }),
+      putStatus: 400,
+    });
     renderScreen(<AdminIdentity />);
     await screen.findByRole("radio", { name: /^Open/ });
 
     await user.click(screen.getByRole("radio", { name: /^Invite/ }));
-    expect(await screen.findByText(/the server refused that/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/the server refused that/i),
+    ).toBeInTheDocument();
     // The radio never shows a mode the server declined.
     expect(screen.getByRole("radio", { name: /^Open/ })).toBeChecked();
     expect(screen.getByRole("radio", { name: /^Invite/ })).not.toBeChecked();
@@ -288,75 +340,8 @@ describe("AdminIdentity", () => {
       }),
     });
     renderScreen(<AdminIdentity />);
-    expect(await screen.findByRole("radio", { name: /^Approval/ })).toBeChecked();
-  });
-
-  it("seeds the capability settings from the policy in force", async () => {
-    mockRoutes({
-      policy: policyFixture({ code_agents_mode: "groups", api_keys_mode: "everyone" }),
-    });
-    renderScreen(<AdminIdentity />);
-    const codeRow = await screen.findByRole("group", { name: "Coding agents" });
-    const apiRow = screen.getByRole("group", { name: "API keys" });
-    expect(within(codeRow).getByRole("radio", { name: "Flagged groups only" })).toBeChecked();
-    expect(within(apiRow).getByRole("radio", { name: "Everyone" })).toBeChecked();
-  });
-
-  it("says where each capability answer came from", async () => {
-    mockRoutes({
-      policy: policyFixture({
-        code_agents_mode: "groups",
-        sources: { code_agents_mode: "console" },
-      }),
-    });
-    renderScreen(<AdminIdentity />);
-    expect(await screen.findByText(/Coding agents set here/i)).toBeInTheDocument();
-  });
-
-  it("previews a capability move and saves only on confirm", async () => {
-    const user = userEvent.setup({ delay: null });
-    mockRoutes({ policy: policyFixture() });
-    renderScreen(<AdminIdentity />);
-    const codeRow = await screen.findByRole("group", { name: "Coding agents" });
-
-    // Picking groups runs the preview first — no save yet.
-    await user.click(
-      within(codeRow).getByRole("radio", { name: "Flagged groups only" }),
-    );
-    const warning = await screen.findByText(/will lose coding agents/i);
-    expect(warning).toBeInTheDocument();
-    expect(putBodies()).toEqual([]);
-
-    await user.click(screen.getByRole("button", { name: /save anyway/i }));
-    await waitFor(() => expect(putBodies()).toEqual([{ code_agents_mode: "groups" }]));
-  });
-
-  it("moves a capability back to everyone straight away", async () => {
-    const user = userEvent.setup({ delay: null });
-    mockRoutes({ policy: policyFixture({ api_keys_mode: "groups" }) });
-    renderScreen(<AdminIdentity />);
-    const apiRow = await screen.findByRole("group", { name: "API keys" });
-    await user.click(within(apiRow).getByRole("radio", { name: "Everyone" }));
-    await waitFor(() => expect(putBodies()).toEqual([{ api_keys_mode: "everyone" }]));
-  });
-
-  it("a refused capability save puts the radios back", async () => {
-    const user = userEvent.setup({ delay: null });
-    mockRoutes({ policy: policyFixture(), putStatus: 400 });
-    renderScreen(<AdminIdentity />);
-    const codeRow = await screen.findByRole("group", { name: "Coding agents" });
-
-    await user.click(
-      within(codeRow).getByRole("radio", { name: "Flagged groups only" }),
-    );
-    await screen.findByRole("button", { name: /save anyway/i });
-    await user.click(screen.getByRole("button", { name: /save anyway/i }));
-    expect(await screen.findByText(/the server refused that/i)).toBeInTheDocument();
-    // The radios never show a mode the server declined.
     expect(
-      within(await screen.findByRole("group", { name: "Coding agents" })).getByRole("radio", {
-        name: "Everyone",
-      }),
+      await screen.findByRole("radio", { name: /^Approval/ }),
     ).toBeChecked();
   });
 });

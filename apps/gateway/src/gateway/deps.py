@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from gateway.accounting import TokenEstimator
-from gateway.capabilities import effective_capabilities
+from gateway.capabilities import Capabilities, default_flags, effective_capabilities
 from gateway.config import Settings
 from gateway.errors import (
     AgentsNotAllowedError,
@@ -247,22 +247,30 @@ def _refuse_key_outside_groups(request: Request, user: User) -> None:
         raise OutsideAccessGroupsError(refusal_text("group_lost", email=None, provider=""))
 
 
-def _refuse_key_without_api_keys(request: Request, user: User) -> None:
+def _refuse_key_without_api_keys(user: User) -> None:
     """ADR 0096: an API key from a person without the api_keys capability.
 
     Refused, never deleted — the key stops working until a group flag
     restores its owner's capability, and comes back the moment it does, so
-    a temporary loss is not a re-mint. Same shape as the join-gate check
-    above: reads the memberships the key's resolution already loaded, so it
-    costs no query and writes nothing.
+    a temporary loss is not a re-mint. Reads the memberships the key's
+    resolution already loaded, so it costs no query and writes nothing.
     """
-    resolver = getattr(request.app.state, "oidc_policy", None)
-    policy = resolver.policy if resolver is not None else None
-    if policy is not None and not effective_capabilities(user, policy).api_keys:
+    if not effective_capabilities(user).api_keys:
         raise ApiKeysNotAllowedError(
             "This account may not use API keys on this deployment. Ask an "
             "administrator to grant the capability."
         )
+
+
+def capability_defaults(request: Request) -> Capabilities:
+    """The flags a newly created group carries (ADR 0096, amended): the
+    folded default off the worker's policy, so creation costs no query. The
+    row's answer wins when it names one, else the environment baseline, else
+    on — a deployment that never decides creates groups exactly as usable
+    as before."""
+    resolver = getattr(request.app.state, "oidc_policy", None)
+    policy = resolver.policy if resolver is not None else None
+    return default_flags(policy)
 
 
 def _refuse_machine_without_code_agents(
@@ -287,11 +295,7 @@ def _refuse_machine_without_code_agents(
     client = claims.get("azp") or claims.get("client_id")
     if client != machine_client:
         return
-    resolver = getattr(request.app.state, "oidc_policy", None)
-    policy = resolver.policy if resolver is not None else None
-    if policy is None:
-        return
-    capabilities = effective_capabilities(user, policy)
+    capabilities = effective_capabilities(user)
     if capabilities.code_agents:
         return
     extra_payload = None
@@ -472,7 +476,7 @@ async def get_principal(
     else:
         pinned = api_key.billing_group
     _refuse_key_outside_groups(request, api_key.user)
-    _refuse_key_without_api_keys(request, api_key.user)
+    _refuse_key_without_api_keys(api_key.user)
     group = resolve_billing_group(api_key.user, pinned=pinned)
     await _touch_last_used(session, api_key)
     return Principal(user=api_key.user, billing_group=group, api_key=api_key)
@@ -755,7 +759,7 @@ async def _caller_from_key(
         else api_key.billing_group
     )
     _refuse_key_outside_groups(request, api_key.user)
-    _refuse_key_without_api_keys(request, api_key.user)
+    _refuse_key_without_api_keys(api_key.user)
     await _touch_last_used(session, api_key)
     return AuthenticatedCaller(
         user=api_key.user,

@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Response, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import selectinload
@@ -82,20 +82,14 @@ def _key_response(key: ApiKey) -> ApiKeyResponse:
 
 
 @router.get("/me", response_model=MeResponse)
-async def me(user: ManagementUserDep, session: SessionDep, request: Request) -> MeResponse:
+async def me(user: ManagementUserDep, session: SessionDep) -> MeResponse:
     groups = [membership.group for membership in user.memberships]
     default = next((group for group in groups if group.id == user.default_billing_group_id), None)
-    # ADR 0096: the folded capability setting and the person's memberships,
-    # both already loaded by `get_management_user` — no query. The console's
-    # key page reads `api_keys` to decide whether to offer minting.
-    resolver = getattr(request.app.state, "oidc_policy", None)
-    policy = resolver.policy if resolver is not None else None
-    flags = effective_capabilities(user, policy) if policy is not None else None
-    capabilities = (
-        CapabilityFlags(code_agents=flags.code_agents, api_keys=flags.api_keys)
-        if flags is not None
-        else None
-    )
+    # ADR 0096 (amended): the person's memberships, already loaded by
+    # `get_management_user` — no query. The console's key page reads
+    # `api_keys` to decide whether to offer minting.
+    flags = effective_capabilities(user)
+    capabilities = CapabilityFlags(code_agents=flags.code_agents, api_keys=flags.api_keys)
     return MeResponse(
         id=user.id,
         email=user.email,
@@ -119,7 +113,6 @@ async def set_default_billing_group(
     payload: SetDefaultBillingGroupRequest,
     user: ManagementUserDep,
     session: SessionDep,
-    request: Request,
 ) -> MeResponse:
     """Users pick their own default billing group, from their own groups only."""
     if payload.group_id not in user.group_ids():
@@ -128,7 +121,7 @@ async def set_default_billing_group(
     user.default_billing_group_id = payload.group_id
     await session.commit()
     await session.refresh(user)
-    return await me(user, session, request)
+    return await me(user, session)
 
 
 @router.get("/me/keys", response_model=Page[ApiKeyResponse])
@@ -164,15 +157,12 @@ async def create_key(
     user: ManagementUserDep,
     session: SessionDep,
     settings: SettingsDep,
-    request: Request,
 ) -> ApiKeyCreatedResponse:
     """Mint a key. The secret is in this response and nowhere else, ever."""
     # ADR 0096: a person without the api_keys capability may not mint. Refused
     # with 403, never silently: the console's key page reads the same fact
     # from /api/me and explains instead of offering Create.
-    resolver = getattr(request.app.state, "oidc_policy", None)
-    policy = resolver.policy if resolver is not None else None
-    if policy is not None and not effective_capabilities(user, policy).api_keys:
+    if not effective_capabilities(user).api_keys:
         raise ApiKeysNotAllowedError(
             "This account may not use API keys on this deployment. Ask an "
             "administrator to grant the capability."

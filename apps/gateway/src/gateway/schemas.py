@@ -1290,6 +1290,22 @@ class GroupUpdateRequest(BaseModel):
     api_keys_allowed: bool | None = None
 
 
+class GroupCapabilityBulkResponse(BaseModel):
+    """What the bulk flip did (ADR 0096, amended): how many groups the
+    statement touched, which is also the audit row's ``count``."""
+
+    updated: int
+
+
+class GroupCapabilityBulkRequest(BaseModel):
+    """``POST /admin/groups/capabilities`` (ADR 0096, amended): flip one
+    capability's flag on every group, from the Settings screen's two bulk
+    actions. Applied in one transaction, audited once."""
+
+    capability: Literal["code_agents", "api_keys"]
+    value: bool
+
+
 class SeenGroupResponse(BaseModel):
     """A group name a directory reported that no group here carries yet."""
 
@@ -1711,10 +1727,12 @@ class OidcPolicyUpdateRequest(BaseModel):
     group_fallback: Literal["refuse", "approval"] | None = None
     groups_claim: str | None = Field(default=None, min_length=1, max_length=255)
     group_mappings: list[OidcMappingRule] | None = None
-    # ADR 0096: who may hold each capability. `everyone` (default) or
-    # `groups`; null clears back to the environment (GATEWAY_ACCESS__*).
-    code_agents_mode: Literal["everyone", "groups"] | None = None
-    api_keys_mode: Literal["everyone", "groups"] | None = None
+    # ADR 0096 (amended): the default flag new groups are created with —
+    # `on` or `off`; the 0.7.x `everyone`/`groups` spellings still save
+    # (meaning on/off) for one release, with a deprecation warning logged.
+    # Null clears back to the environment (GATEWAY_ACCESS__*).
+    code_agents_mode: Literal["on", "off", "everyone", "groups"] | None = None
+    api_keys_mode: Literal["on", "off", "everyone", "groups"] | None = None
     reason: str = Field(default="", max_length=500)
 
 
@@ -1725,25 +1743,26 @@ class OidcPolicyChange(BaseModel):
 
 
 class OidcPolicyPreviewResponse(BaseModel):
-    """What switching to `group` mode with these required groups would do
-    (ADR 0095 §7): people counted over effective memberships, in SQL.
+    """What saving this group gate would do (ADR 0095 §7), and what a bulk
+    capability flip would do (ADR 0096, amended): people counted over
+    effective memberships, in SQL.
 
     ``would_be_refused`` counts active, non-admin accounts holding none of
     the named (active) groups — the people who lose access at their next
     request. ``admins_exempt`` counts the administrators the gate stands
     aside for.
 
-    ADR 0096 adds the two capability previews: ``would_lose_code_agents`` /
-    ``would_lose_api_keys`` count the active, non-admin people who would stop
-    holding that capability if the deployment setting moved to ``groups`` and
-    the named flags were not already theirs.
+    A bulk preview fills exactly one of ``would_gain`` / ``would_lose``:
+    the active, non-admin people who would gain or lose that capability —
+    "how many" is the confirm dialog's whole content. Admins are exempt,
+    so they never count. Both are None for a join-mode preview.
     """
 
     active_users: int
     would_be_refused: int
     admins_exempt: int
-    would_lose_code_agents: int | None = None
-    would_lose_api_keys: int | None = None
+    would_gain: int | None = None
+    would_lose: int | None = None
 
 
 class OidcPolicyResponse(BaseModel):
@@ -1758,9 +1777,11 @@ class OidcPolicyResponse(BaseModel):
     group_fallback: str = "refuse"
     groups_claim: str
     group_mappings: list[OidcMappingRule]
-    # ADR 0096: who may hold each capability, folded like the rest.
-    code_agents_mode: str = "everyone"
-    api_keys_mode: str = "everyone"
+    # ADR 0096 (amended): the default flag new groups are created with,
+    # folded like the rest — the canonical `on`/`off`, with the 0.7.x
+    # `everyone`/`groups` still readable for one release.
+    code_agents_mode: str = "on"
+    api_keys_mode: str = "on"
     # "console" when any field is a stored decision, "environment" otherwise;
     # `sources` says which, per field — "the console says X and the
     # environment says Y" is otherwise invisible.

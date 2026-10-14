@@ -171,16 +171,20 @@ class TestJoinModeFold:
             await resolver.refresh_once()
         assert "ghost" not in caplog.text
 
-    async def test_groups_code_agents_with_unaccepted_machine_client_logs_once(
+    async def test_a_group_with_code_agents_off_and_an_unaccepted_machine_client_logs_once(
         self, session_factory: async_sessionmaker[AsyncSession], caplog: Any
     ) -> None:
-        """ADR 0096: a console decision of code_agents 'groups' whose machine
-        client the deployment does not accept is a restriction that can never
-        fire — the poll logs it as an error (a silent-open failure, not a
-        fail-closed warning), once per distinct state."""
+        """ADR 0096 (amended): an active group with code_agents off while the
+        machine client is not accepted is a restriction whose machine-link
+        half can never fire — the poll logs it as an error (a silent-open
+        failure, not a fail-closed warning), once per distinct state."""
         import logging as _logging
 
-        await write_policy(session_factory, code_agents_mode="groups")
+        from gateway.models import Group
+
+        async with session_factory() as session:
+            session.add(Group(name="closed", code_agents_allowed=False))
+            await session.commit()
         settings = OIDCSettings(machine_client_id="gitlab-uid", accepted_clients="console,chat")
         resolver = OIDCPolicyResolver(settings, session_factory)
         with caplog.at_level(_logging.ERROR, logger="gateway.oidc_policy"):
@@ -192,12 +196,16 @@ class TestJoinModeFold:
             await resolver.refresh_once()
         assert "MACHINE_CLIENT_ID" not in caplog.text
 
-    async def test_groups_code_agents_with_accepted_machine_client_is_quiet(
+    async def test_a_group_with_code_agents_off_and_an_accepted_machine_client_is_quiet(
         self, session_factory: async_sessionmaker[AsyncSession], caplog: Any
     ) -> None:
         import logging as _logging
 
-        await write_policy(session_factory, code_agents_mode="groups")
+        from gateway.models import Group
+
+        async with session_factory() as session:
+            session.add(Group(name="closed", code_agents_allowed=False))
+            await session.commit()
         settings = OIDCSettings(
             machine_client_id="gitlab-uid", accepted_clients="console,gitlab-uid"
         )
@@ -206,7 +214,7 @@ class TestJoinModeFold:
             await resolver.refresh_once()
         assert "MACHINE_CLIENT_ID" not in caplog.text
 
-    async def test_everyone_code_agents_with_unaccepted_machine_client_is_quiet(
+    async def test_no_group_off_with_an_unaccepted_machine_client_is_quiet(
         self, session_factory: async_sessionmaker[AsyncSession], caplog: Any
     ) -> None:
         import logging as _logging
@@ -574,28 +582,7 @@ class TestOidcPolicyEndpoints:
         assert response.status_code == 200, response.text
         assert response.json()["configured"]["reason"] == ""
 
-    async def test_put_code_agents_groups_with_unaccepted_machine_client_is_refused(
-        self,
-        app: Any,
-        client: httpx.AsyncClient,
-        seeded: Any,
-        admin_session: dict[str, str],
-    ) -> None:
-        """ADR 0096: a 'groups' save whose machine client the deployment does
-        not accept could never fire — refused with the setting to fix,
-        rather than stored into a silent no-op."""
-        app.state.settings.oidc = OIDCSettings(
-            machine_client_id="other", accepted_clients="console,chat"
-        )
-        response = await client.put(
-            "/api/admin/oidc/policy",
-            json={"code_agents_mode": "groups"},
-            headers=admin_session,
-        )
-        assert response.status_code == 400, response.text
-        assert "MACHINE_CLIENT_ID" in response.text
-
-    async def test_put_code_agents_groups_with_accepted_machine_client_saves(
+    async def test_put_code_agents_off_saves_whatever_the_machine_client_is(
         self,
         app: Any,
         client: httpx.AsyncClient,
@@ -603,16 +590,20 @@ class TestOidcPolicyEndpoints:
         seeded: Any,
         admin_session: dict[str, str],
     ) -> None:
+        """ADR 0096 (amended): the mode no longer gates anything, so an
+        off-default save never trips a machine-client check — the refusal
+        moved onto the flips that switch a group's flag off (bulk and
+        PATCH), which is where a restriction is actually put in force."""
         app.state.settings.oidc = OIDCSettings(
-            machine_client_id="machine", accepted_clients="console,machine"
+            machine_client_id="other", accepted_clients="console,chat"
         )
         response = await client.put(
             "/api/admin/oidc/policy",
-            json={"code_agents_mode": "groups"},
+            json={"code_agents_mode": "off"},
             headers=admin_session,
         )
         assert response.status_code == 200, response.text
-        assert response.json()["code_agents_mode"] == "groups"
+        assert response.json()["code_agents_mode"] == "off"
 
         async with session_factory() as session:
             row = (
@@ -953,9 +944,9 @@ class TestOidcPolicyEndpoints:
             "active_users": 2,
             "would_be_refused": 1,
             "admins_exempt": 1,
-            # ADR 0096: the capability previews answer only when asked.
-            "would_lose_code_agents": None,
-            "would_lose_api_keys": None,
+            # ADR 0096 (amended): the bulk previews answer only when asked.
+            "would_gain": None,
+            "would_lose": None,
         }
         assert (
             await client.get(

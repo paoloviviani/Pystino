@@ -1793,6 +1793,11 @@ class IdentityEventAction(enum.StrEnum):
     #: of imported. `detail.group` is the local group; the target label is the
     #: IdP name. Plain VARCHAR(32) column, so no migration.
     GROUP_MAP = "group.map"
+    #: ADR 0096 (amended): every group's capability flag flipped at once from
+    #: the console. `detail.capability` names the flag, `detail.value` the
+    #: new state, `detail.count` how many groups changed. Plain VARCHAR(32)
+    #: column, so no migration.
+    GROUP_CAPABILITY_BULK = "group.capability_bulk"
     # ADR 0095: the join gate refused a sign-in (a stranger in `invite` or
     # `group` mode, or an account outside the required groups).
     # `detail.reason` is the mode that refused. Plain VARCHAR(32) column, so

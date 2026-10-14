@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gateway.capabilities import load_defaults
 from gateway.directory.adapters import Entry
 from gateway.directory.engine import apply_entries, record_run
 from gateway.identity_registry import record_from_row
@@ -154,6 +155,7 @@ async def _apply(
         dry_run=False,
         full=False,
         force=True,
+        defaults=await load_defaults(session, request.app.state.settings),
     )
     if report.changes:
         await record_run(session, row.id, report, trigger="push", started_at=started)

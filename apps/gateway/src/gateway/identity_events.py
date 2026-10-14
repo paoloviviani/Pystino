@@ -93,6 +93,9 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     # ADR 0095: `target` is which of map's three answers ran, `group` the
     # local group the IdP name now grants.
     IdentityEventAction.GROUP_MAP: frozenset({"group", "target"}),
+    # ADR 0096 (amended): which capability, its new state, how many groups
+    # changed — counts and a flag state, never a person's data.
+    IdentityEventAction.GROUP_CAPABILITY_BULK: frozenset({"capability", "value", "count"}),
     # ADR 0095: `reason` is the join mode that refused (`invite`, `group`).
     IdentityEventAction.ACCESS_REFUSED: frozenset({"reason"}),
 }

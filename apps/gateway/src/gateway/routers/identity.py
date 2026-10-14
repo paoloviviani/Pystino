@@ -224,7 +224,7 @@ async def my_identities(caller: AuthenticatedCallerDep, session: SessionDep) -> 
 
 
 @router.get("/me", response_model=CallerIdentity)
-async def whoami(caller: AuthenticatedCallerDep, request: Request) -> CallerIdentity:
+async def whoami(caller: AuthenticatedCallerDep) -> CallerIdentity:
     # No query. Authentication already loaded the user with its memberships,
     # and each membership's group comes with it (`lazy="joined"`), so this
     # route adds nothing to the round-trip budget `test_query_counts.py` pins.
@@ -261,18 +261,12 @@ async def whoami(caller: AuthenticatedCallerDep, request: Request) -> CallerIden
         None,
     )
 
-    # ADR 0096: the folded capability setting and the person's memberships,
-    # both already in hand — no query. Absent on an older gateway means
-    # allowed, which is the contract's "so Cerea can tell why" side: a client
-    # that sees no `capabilities` field must read it as permission.
-    resolver = getattr(request.app.state, "oidc_policy", None)
-    policy = resolver.policy if resolver is not None else None
-    flags = effective_capabilities(user, policy) if policy is not None else None
-    capabilities = (
-        CapabilityFlags(code_agents=flags.code_agents, api_keys=flags.api_keys)
-        if flags is not None
-        else None
-    )
+    # ADR 0096 (amended): the person's memberships, already in hand — no
+    # query. Absent on an older gateway means allowed, which is the
+    # contract's "so Cerea can tell why" side: a client that sees no
+    # `capabilities` field must read it as permission.
+    flags = effective_capabilities(user)
+    capabilities = CapabilityFlags(code_agents=flags.code_agents, api_keys=flags.api_keys)
 
     return CallerIdentity(
         id=user.id,

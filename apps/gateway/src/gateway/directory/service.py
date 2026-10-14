@@ -14,6 +14,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from gateway.capabilities import load_defaults
 from gateway.config import Settings
 from gateway.directory.adapters import AdapterError, build_adapter
 from gateway.directory.authelia_users import UsersFile
@@ -86,6 +87,7 @@ async def run_pull(
                     dry_run=dry_run,
                     full=True,
                     force=force,
+                    defaults=await load_defaults(session, settings),
                 )
             except Exception as exc:  # recorded, not raised: a run's outcome is data
                 await session.rollback()

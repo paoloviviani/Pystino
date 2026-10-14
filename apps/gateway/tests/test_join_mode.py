@@ -490,6 +490,10 @@ class TestV1DoorsAnswer403:
     ) -> None:
         async with session_factory() as session:
             group = (await session.execute(select(Group).where(Group.name == "staff"))).scalar_one()
+            # ADR 0096 (amended): the capability is a flag now, so the key's
+            # owner needs it to use the key at all — this test is about the
+            # join gate, so the flag is granted outright.
+            group.api_keys_allowed = True
             session.add(
                 Membership(
                     user_id=seeded.user.id,
@@ -529,7 +533,10 @@ async def acme_staff_policy(
     """Group mode with the operator's mapping `acme/staff -> staff`: the
     mapped IdP name vouches; the target's own name does not."""
     async with session_factory() as session:
-        session.add(Group(name="staff"))
+        # ADR 0096 (amended): the capability is a flag now. This fixture is
+        # about the join gate's refusal text, so the group carries the flag,
+        # keeping the key usable once admission lands.
+        session.add(Group(name="staff", api_keys_allowed=True))
         session.add(
             OIDCPolicyConfig(
                 join_mode="group",

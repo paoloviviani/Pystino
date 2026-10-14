@@ -405,7 +405,18 @@ async def seeded(session_factory: async_sessionmaker[AsyncSession], app: FastAPI
     1 EUR per million input tokens, 2 EUR per million output tokens.
     """
     async with session_factory() as db:
-        group = Group(name="research", description="test group")
+        # ADR 0096 (amended): the seeded group is an ordinary *working*
+        # group — models granted, and both capability flags on — because
+        # that is what the fixture has always represented for its key and
+        # its billable member. The tests that need a chat-only person flip
+        # these off; the fleet of tests that use the key to make /v1 calls
+        # must keep working without each one knowing about capabilities.
+        group = Group(
+            name="research",
+            description="test group",
+            code_agents_allowed=True,
+            api_keys_allowed=True,
+        )
         db.add(group)
         await db.flush()
 
