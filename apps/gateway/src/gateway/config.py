@@ -1190,52 +1190,27 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _machine_client_needs_acceptance(self) -> Settings:
-        """ADR 0096: a named machine client the deployment does not accept is
-        a configuration that can only fail silently.
-
-        The code_agents gate matches a machine token's `azp`/`client_id`
-        against `machine_client_id` — but a token from a client outside
-        `accepted_clients` is refused before that gate ever runs. A machine
-        client set here and missing there (a renamed client passed to the
-        audience list but not to the machine slot, a GitLab app uid the kit
-        did not forward) would therefore never match, and a chat-only
-        person's machine would pass silently. Refused here, naming both
-        values, rather than debugged from a machine that keeps working.
-
-        Only when the operator named one: the default stands for "no machine
-        client configured", and an empty allowlist is the escape hatch that
-        enforces nothing, so neither alone is a mistake. Unlike the check
-        above this one is not production-gated — a dev deployment with the
-        same mismatch is broken in exactly the same silent way.
-        """
-        machine = self.oidc.machine_client_id
-        accepted = self.oidc.accepted_client_list()
-        explicitly_named = "machine_client_id" in self.oidc.model_fields_set
-        if explicitly_named and machine and accepted and machine not in accepted:
-            raise ValueError(
-                f"GATEWAY_OIDC__MACHINE_CLIENT_ID={machine!r} names a client not in "
-                f"GATEWAY_OIDC__ACCEPTED_CLIENTS ({', '.join(accepted)}): a machine "
-                "token is refused before the agents capability could ever apply, "
-                "so a person without code_agents would keep their machine "
-                "silently. Name the machine client the deployment accepts."
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _groups_baseline_needs_its_machine_client(self) -> Settings:
         """ADR 0096: a code_agents restriction in use that can never fire is
-        refused, default or explicit.
+        refused.
 
-        The check above catches an explicitly named machine client the
-        deployment does not accept. This one catches the other half: the
+        The gate matches a machine token's `azp`/`client_id` against
+        `machine_client_id` — but a token from a client outside
+        `accepted_clients` is refused before that gate ever runs. When the
         environment baseline itself says `groups`
-        (`GATEWAY_ACCESS__CODE_AGENTS`), while the machine client — named or
-        defaulted — is not among a non-empty allowlist. The restriction is in
+        (`GATEWAY_ACCESS__CODE_AGENTS`) while the machine client — defaulted
+        or named — is not among a non-empty allowlist, the restriction is in
         use and a machine token is refused before the gate runs, so the
         refusal names the baseline and both values. An empty allowlist stays
-        the escape hatch that enforces nothing. Not production-gated, like
-        the check above: a dev deployment with the same mismatch is broken in
-        exactly the same silent way.
+        the escape hatch that enforces nothing. Not production-gated: a dev
+        deployment with the same mismatch is broken in exactly the same
+        silent way.
+
+        Deliberately not provenance-based: compose fills the variable from
+        its own default whether or not the operator wrote it, so
+        "explicitly set" cannot tell a hand-written mismatch from a default
+        one. What decides is semantic — a restriction in use that cannot
+        fire — and the default-only shape (no restriction in use) starts
+        clean, with at most a warning (see `startup_warnings`).
         """
         machine = self.oidc.machine_client_id
         accepted = self.oidc.accepted_client_list()
@@ -1259,6 +1234,14 @@ def get_settings() -> Settings:
     via the ``settings`` fixture rather than mutating the object.
     """
     return Settings()
+
+
+#: The two composes' conventional console and chat client ids. `startup_warnings`
+#: falls back to these when the deployment did not name its own: without them
+#: a default Pystino-only stack (accepted `pystino-console`, console id unset)
+#: would warn on every start about a machine client it was never given.
+_CONSOLE_CLIENT_FALLBACK = "pystino-console"
+_CHAT_CLIENT_FALLBACK = "cerea"
 
 
 def startup_warnings(settings: Settings) -> list[str]:
@@ -1290,16 +1273,22 @@ def startup_warnings(settings: Settings) -> list[str]:
         )
     machine = settings.oidc.machine_client_id
     accepted = settings.oidc.accepted_client_list()
-    if (
-        "machine_client_id" not in settings.oidc.model_fields_set
-        and machine
-        and accepted
-        and machine not in accepted
-    ):
+    # ADR 0096: a likely misnamed machine client. The allowlist holds a
+    # client that is neither the console's nor the chat's — the GitLab-uid
+    # shape, where the audience list names the machine's app but nothing told
+    # the gateway which accepted client the machine is — while the machine
+    # client itself is not accepted. The code_agents restriction then cannot
+    # reach machine tokens. Advisory only: a deployment without machines
+    # starts clean, and the folded-`groups` cases fail loudly elsewhere.
+    console_id = settings.oidc.client_id or _CONSOLE_CLIENT_FALLBACK
+    chat_id = settings.oidc.chat_client_id or _CHAT_CLIENT_FALLBACK
+    others = [name for name in accepted if name not in (console_id, chat_id)]
+    if others and machine and machine not in accepted:
         warnings.append(
-            f"GATEWAY_OIDC__MACHINE_CLIENT_ID is unset, and the default {machine!r} "
-            f"is not among GATEWAY_OIDC__ACCEPTED_CLIENTS ({', '.join(accepted)}): "
-            "the code_agents restriction would not apply to machine tokens until "
+            f"GATEWAY_OIDC__ACCEPTED_CLIENTS accepts {', '.join(others)} besides "
+            f"the console and chat clients, but GATEWAY_OIDC__MACHINE_CLIENT_ID="
+            f"{machine!r} is not accepted: likely a misnamed machine client — "
+            "the code_agents restriction won't reach machine tokens until "
             "GATEWAY_OIDC__MACHINE_CLIENT_ID names the right client."
         )
     return warnings
