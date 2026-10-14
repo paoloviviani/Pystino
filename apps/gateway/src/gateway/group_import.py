@@ -30,6 +30,7 @@ from typing import Any
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gateway.capabilities import Capabilities, new_group_flags
 from gateway.models import (
     Group,
     GroupSource,
@@ -66,17 +67,33 @@ def _insert(session: AsyncSession, model: type[Any]) -> Any:
 # -- the default group ---------------------------------------------------------
 
 
-async def _group_named(session: AsyncSession, name: str) -> Group:
-    """The group called *name*, created (as the console's) if it is missing."""
+async def _group_named(session: AsyncSession, name: str, defaults: Capabilities) -> Group:
+    """The group called *name*, created (as the console's) if it is missing.
+
+    A group CREATED here carries *defaults* — the deployment's default for
+    new groups (ADR 0096, amended) — written in this very insert: with only
+    name and source, the flags fell back to the column default (off), and a
+    fresh deployment landed every new person in a chat-only ``users`` (the
+    0.13.0 fresh-kit check caught it). An existing group's flags are never
+    touched: the conflict keeps ``do nothing``, so the values bind only on
+    the insert that wins.
+    """
     await session.execute(
         _insert(session, Group)
-        .values(id=uuid.uuid4(), name=name, source=GroupSource.MANUAL)
+        .values(
+            id=uuid.uuid4(),
+            name=name,
+            source=GroupSource.MANUAL,
+            **new_group_flags(defaults),
+        )
         .on_conflict_do_nothing(index_elements=["name"])
     )
     return (await session.execute(select(Group).where(Group.name == name))).scalar_one()
 
 
-async def grant_default_group(session: AsyncSession, user: User, name: str) -> Group | None:
+async def grant_default_group(
+    session: AsyncSession, user: User, name: str, *, defaults: Capabilities
+) -> Group | None:
     """Put *user* in the default group, once in their life here.
 
     Returns the group when this call is the one that granted it, else None.
@@ -85,11 +102,13 @@ async def grant_default_group(session: AsyncSession, user: User, name: str) -> G
     it happen once, so an administrator's removal sticks. An existing
     membership is kept and becomes the console's: the bundled Authelia's
     ``users`` group is this same group by name, and the people already in it
-    stay in it, now beyond the reach of any directory's sync.
+    stay in it, now beyond the reach of any directory's sync. A group this
+    call CREATES carries *defaults* — the deployment's default for new
+    groups (ADR 0096, amended); one that exists is left as it stands.
     """
     if not name or user.default_group_granted_at is not None:
         return None
-    group = await _group_named(session, name)
+    group = await _group_named(session, name, defaults)
     await session.execute(
         _insert(session, Membership)
         .values(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL)
@@ -120,7 +139,7 @@ async def grant_default_group(session: AsyncSession, user: User, name: str) -> G
 
 
 async def self_map_new_names(
-    session: AsyncSession, names: list[str], *, reason: str
+    session: AsyncSession, names: list[str], *, reason: str, defaults: Capabilities
 ) -> dict[str, str]:
     """`auto` import's answer to the mapping-only rule: each new claimed name
     becomes a self-mapping (name -> a local group of the same name), appended
@@ -129,11 +148,13 @@ async def self_map_new_names(
     The group is created when missing (source ``oidc``, conflict-safe against
     two first sign-ins racing) and used as it stands when one exists — a
     manual group the IdP also names gets the mapping, which is what keeps the
-    memberships ``auto`` was already granting. The row carries the newest
-    row's other answers forward through the same helper the console saves
-    with: a bare row would reset the join mode to the environment on the next
-    poll. Returns the mappings to add, so the caller re-maps in the same
-    login and the membership lands now, as ``auto`` always did.
+    memberships ``auto`` was already granting. A group CREATED here carries
+    *defaults*, the deployment's default for new groups (ADR 0096, amended),
+    through the same helper every creation path uses. The row carries the
+    newest row's other answers forward through the same helper the console
+    saves with: a bare row would reset the join mode to the environment on
+    the next poll. Returns the mappings to add, so the caller re-maps in the
+    same login and the membership lands now, as ``auto`` always did.
 
     Two workers auto-mapping at once can each read the same newest row and
     append one row, one pair lost to the other's carry-forward. That
@@ -143,7 +164,17 @@ async def self_map_new_names(
     wanted = sorted(set(names))
     await session.execute(
         _insert(session, Group)
-        .values([{"id": uuid.uuid4(), "name": name, "source": GroupSource.OIDC} for name in wanted])
+        .values(
+            [
+                {
+                    "id": uuid.uuid4(),
+                    "name": name,
+                    "source": GroupSource.OIDC,
+                    **new_group_flags(defaults),
+                }
+                for name in wanted
+            ]
+        )
         .on_conflict_do_nothing(index_elements=["name"])
     )
     await session.flush()

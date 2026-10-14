@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gateway.capabilities import new_group_flags
 from gateway.config import OIDCSettings
 from gateway.directory.adapters import Entry
 from gateway.email_normalize import is_trusted_email
@@ -155,12 +156,7 @@ async def add_manual_memberships(
             await session.execute(select(Group).where(Group.name == name))
         ).scalar_one_or_none()
         if group is None:
-            group = Group(
-                name=name,
-                source=GroupSource.MANUAL,
-                code_agents_allowed=defaults.code_agents,
-                api_keys_allowed=defaults.api_keys,
-            )
+            group = Group(name=name, source=GroupSource.MANUAL, **new_group_flags(defaults))
             session.add(group)
             await session.flush()
         if group.id in have:
