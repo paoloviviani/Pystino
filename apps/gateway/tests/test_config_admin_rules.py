@@ -74,22 +74,19 @@ class TestAcceptedClients:
 
 
 class TestMachineClientAcceptance:
-    def test_a_named_machine_client_missing_from_accepted_clients_is_refused(self) -> None:
-        # ADR 0096: the code_agents gate matches azp/client_id against the
-        # machine client, but a token from an unaccepted client is refused
-        # before the gate ever runs — the mismatch fails silently as a
-        # chat-only person's working machine, so it fails loudly here, naming
-        # both values.
-        with pytest.raises(ValidationError, match="could ever apply") as caught:
-            Settings(
-                oidc=OIDCSettings(
-                    machine_client_id="gitlab-uid-123",
-                    accepted_clients="pystino-console,cerea",
-                )
+    def test_a_named_machine_client_missing_from_accepted_clients_starts(self) -> None:
+        # Changed meaning (was: refused): without a code_agents restriction
+        # in use there is nothing that could silently fail — the machine flow
+        # itself is what refuses the token, loudly, at the accepted-clients
+        # check. The refusal lives on the restriction now
+        # (TestGroupsBaselineMachineClient), and the likely-misnaming warns
+        # (TestStartupWarnings).
+        Settings(
+            oidc=OIDCSettings(
+                machine_client_id="gitlab-uid-123",
+                accepted_clients="pystino-console,cerea",
             )
-        message = str(caught.value)
-        assert "gitlab-uid-123" in message
-        assert "pystino-console, cerea" in message
+        )
 
     def test_a_named_machine_client_in_accepted_clients_is_fine(self) -> None:
         Settings(
@@ -210,21 +207,31 @@ class TestStartupWarnings:
         settings = Settings(oidc=OIDCSettings())
         assert not any("CHAT_CLIENT_ID" in w for w in startup_warnings(settings))
 
-    def test_default_machine_client_missing_from_accepted_clients_warns(self) -> None:
-        # ADR 0096: a hand-written .env with the IdP's client in
-        # ACCEPTED_CLIENTS and no MACHINE_CLIENT_ID keeps the default, which
-        # matches nothing — the code_agents restriction would not apply to
-        # machine tokens until the setting names the right client.
+    def test_the_stacks_default_allowlist_starts_with_no_warning(self) -> None:
+        # The Pystino-only compose default: accepted pystino-console, console
+        # id unset. Nothing here looks like a machine client, so there is
+        # nothing to warn about — a deployment without machines starts clean.
+        settings = Settings(oidc=OIDCSettings(accepted_clients="pystino-console"))
+        assert not any("MACHINE_CLIENT_ID" in w for w in startup_warnings(settings))
+
+    def test_a_third_client_with_an_unaccepted_machine_client_warns(self) -> None:
+        # ADR 0096: the allowlist holds a client that is neither the
+        # console's nor the chat's — the GitLab-uid shape — while the
+        # (default) machine client is not accepted. Likely a misnamed
+        # machine client; the warning names both values.
         settings = Settings(oidc=OIDCSettings(accepted_clients="pystino-console,gitlab-uid"))
         matching = [w for w in startup_warnings(settings) if "MACHINE_CLIENT_ID" in w]
         assert len(matching) == 1
+        assert "gitlab-uid" in matching[0]
         assert "opencode-enrollment" in matching[0]
-        assert "pystino-console, gitlab-uid" in matching[0]
-        assert "would not apply" in matching[0]
+        assert "names the right client" in matching[0]
 
-    def test_no_warning_when_the_default_machine_client_is_accepted(self) -> None:
+    def test_no_warning_when_the_machine_client_is_accepted(self) -> None:
         settings = Settings(
-            oidc=OIDCSettings(accepted_clients="pystino-console,opencode-enrollment")
+            oidc=OIDCSettings(
+                machine_client_id="gitlab-uid",
+                accepted_clients="pystino-console,gitlab-uid",
+            )
         )
         assert not any("MACHINE_CLIENT_ID" in w for w in startup_warnings(settings))
 
