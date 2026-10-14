@@ -59,11 +59,12 @@ sign-in makes it the administrator. The gateway itself has no password form: eve
 [opencode](https://opencode.ai) is a coding agent that runs in your terminal.
 To point it at your gateway, mint an API key in the console (**API keys** on the
 Overview page, which also shows this command with your address filled in), then
-run this on the machine where you use opencode, replacing `llm.example.org` with
-your gateway's address:
+run this on the machine where you use opencode, with `GATEWAY_BASE_URL` set to
+your gateway's address (its `PUBLIC_ORIGIN`):
 
 ```bash
-curl -fsSL https://llm.example.org/opencode/install.sh | bash
+export GATEWAY_BASE_URL=https://pystino.example.org
+curl -fsSL "$GATEWAY_BASE_URL/opencode/install.sh" | bash
 ```
 
 It asks for the key, adds the gateway as a provider in opencode's global config,
