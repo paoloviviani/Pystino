@@ -39,8 +39,8 @@ multi-factor authentication, that is also the IdP's job**: the bundled Authelia 
 | `OIDC_JOIN_MODE` | `GATEWAY_OIDC__JOIN_MODE` | who may join: `open` (default), `approval`, `invite` or `group` ([Who may join](#who-may-join)); the console's Identity page can set it instead, and a decision there wins |
 | `OIDC_REQUIRED_GROUPS` | `GATEWAY_OIDC__REQUIRED_GROUPS` | `join_mode: group` only: the local group names that confer access, comma-separated |
 | `OIDC_GROUP_FALLBACK` | `GATEWAY_OIDC__GROUP_FALLBACK` | `join_mode: group` only: what a stranger without a required group gets, `refuse` (default) or `approval` |
-| `ACCESS_CODE_AGENTS` | `GATEWAY_ACCESS__CODE_AGENTS` | who may use coding agents: `everyone` (default) or `groups` ([Chat-only people](#chat-only-people)); the console's Identity page can set it instead, and a decision there wins |
-| `ACCESS_API_KEYS` | `GATEWAY_ACCESS__API_KEYS` | who may hold API keys: `everyone` (default) or `groups`; the console's Identity page can set it instead, and a decision there wins |
+| `ACCESS_CODE_AGENTS` | `GATEWAY_ACCESS__CODE_AGENTS` | the default `code_agents` flag new groups are created with: `on` (default) or `off`; the console's Settings page decides once it saves, and the old `everyone`/`groups` spellings still parse for one release ([Chat-only people](#chat-only-people)) |
+| `ACCESS_API_KEYS` | `GATEWAY_ACCESS__API_KEYS` | the default `api_keys` flag new groups are created with: `on` (default) or `off`; the console's Settings page decides once it saves, and the old `everyone`/`groups` spellings still parse for one release ([Chat-only people](#chat-only-people)) |
 | `OIDC_DEFAULT_GROUP` | `GATEWAY_OIDC__DEFAULT_GROUP` | the group everyone joins once, `users` by default; empty turns it off ([the default group](#the-default-group)) |
 | `OIDC_LOGOUT_URL` | `GATEWAY_OIDC__LOGOUT_URL` | for an issuer without `end_session_endpoint`: where the browser is sent to end the IdP session; `{redirect}` is where to land |
 | `OIDC_SCOPES_JSON` | `GATEWAY_OIDC__SCOPES` | the scopes the console asks for, as a JSON list; `["openid","profile","email","groups"]` unless the issuer does not offer one ([the `groups` scope](oidc-generic-provider.md#providers-that-reject-the-groups-scope)). The deploy kit writes it from the issuer's discovery; `deploy/compose.yaml` here sets the default literally |
@@ -86,6 +86,11 @@ Warnings, logged at every start, never fatal:
   the bootstrap is the bundled IdP's only, so the variable is ignored there.
 - an audience set without `GATEWAY_OIDC__CHAT_CLIENT_ID`: every chat sign-in
   is refused until the chat's client id is set.
+- an allowlist that accepts clients besides the console's and the chat's
+  while `OIDC_MACHINE_CLIENT_ID` names none of them: likely a misnamed
+  machine client, and the `code_agents` restriction will not reach machine
+  tokens until that variable names a client the list accepts
+  ([Chat-only people](#chat-only-people)).
 
 ## The provider row follows the environment
 
@@ -196,42 +201,85 @@ right host by hand for now.)
 
 A deployment may want some people to use the chat and nothing else — no
 coding agents, no API keys — while others keep everything. Two capabilities
-(ADR 0096) answer that, granted per group rather than per person:
+(ADR 0096, amended) answer that, and each is **only a per-group flag**: a
+person holds one when they are an administrator, or hold an active
+membership (any source — a directory grant counts the same as a hand grant)
+in an active group with the flag on. There is no "everyone | groups" mode
+that gates access any more.
 
 | Capability | What it gates |
 |---|---|
 | `code_agents` | the `/code` panel and the machine links that serve it (galopin's enrolment and the agent session; the plain-API-key opencode script is an **API-key** use, not this) |
 | `api_keys` | minting API keys, and using one already minted |
 
-Each has a deployment setting — `everyone` (the default, so an upgrade
-changes nothing) or `groups` — set on the console's **Identity** page beside
-the join mode, or in the environment (`ACCESS_CODE_AGENTS`,
-`ACCESS_API_KEYS`; a console decision wins, within the ten seconds a saved
-policy takes to reach every worker). In `groups` mode a person holds a
-capability through an active membership (any source) in an active group
-carrying the flag — flip the two toggles per group on **Groups**. The
-effective capability for a person is reported on `GET /v1/me` (and on
+**A person in no group holds neither capability.** That is the edge case the
+flag model allows; in practice the default group covers everyone —
+`OIDC_DEFAULT_GROUP` (`users`) is granted once at first sign-in and its
+flags start on — so a fresh person holds both until an administrator says
+otherwise, and only an administrator's removal of that membership (or of the
+group) can leave someone with neither.
+
+**The deployment setting is the default flag new groups are created with**,
+nothing more. `ACCESS_CODE_AGENTS` and `ACCESS_API_KEYS`
+(`GATEWAY_ACCESS__CODE_AGENTS`, `GATEWAY_ACCESS__API_KEYS`) keep their names
+and take `on` (the default) or `off`; the old `everyone` and `groups`
+spellings still parse for one release, each with a deprecation warning. Every
+group created from now on gets its flags from that default — a console
+**New group**, the Map dialog's *new group*, `OIDC_GROUP_IMPORT=auto`'s
+auto-created groups, and the groups a directory (SCIM or pull) creates. The
+console's **Settings** page shows and saves the default with the same
+row-over-env fold as before (a decision there wins, within the ten seconds a
+saved policy takes to reach every worker), and migration 0060 recorded the
+folded defaults in an appended carry-forward row (reason `migration 0060:
+capabilities became per-group`), so an upgraded deployment's new groups start
+exactly as usable as its existing ones were.
+
+**Settings** also holds the bulk levers, one pair per capability: **Turn on
+for all groups** and **Turn off for all groups**. Each first shows a confirm
+with the preview — how many active, non-admin people gain or lose the
+capability — and then applies to every group in one transaction, audited once
+as `group.capability_bulk` with the capability, the value and the count. On
+**Groups**, each group's two capability checkboxes are always live and show
+the stored flag; a flip takes effect at the next decision, because the bearer
+path re-reads memberships on every request.
+
+The effective capability for a person is reported on `GET /v1/me` (and on
 `GET /api/me` for the console's own key page), so Cerea can tell a chat-only
 person why `/code` is not there for them. The **Users** page badges a person
 holding neither as **Chat only**.
 
 Cross-cutting, the same as the join gate:
 
-- **Administrators are exempt from both capabilities**, so a wrong setting
+- **Administrators are exempt from both capabilities**, so a wrong flag
   cannot lock the people who fix it out of the surfaces that fix it.
 - **A lost capability is refused dynamically, never disabled and never
   deleted.** A machine-client token (matched on `azp`/`client_id` against
   `OIDC_MACHINE_CLIENT_ID`, `opencode-enrollment` by default) from a person
   without `code_agents` is refused on every `/v1` route — `/v1/me` included,
-  whose body still carries `capabilities` — with **403
-  `agents_not_allowed`**; Cerea closes the link (`4404`) without revoking the
-  device, and it reconnects by itself once a group grants the flag. (Chat
-  tokens are unaffected: the chat keeps working for a chat-only person.) Using
-  a key whose owner lost `api_keys` is refused with **403
-  `api_keys_not_allowed`**, at key resolution next to the join gate's own
-  check; regaining the capability restores the same key, no re-mint needed.
-  The install script explains that refusal instead of telling the person to
-  mint a fresh key they are not allowed to.
+  whose body still carries `capabilities` so the client can tell why — with
+  **403 `agents_not_allowed`**; Cerea gates `/code` on that report and closes
+  the link (`4404`) without revoking the device, and it reconnects by itself
+  once a group grants the flag. (Chat tokens are unaffected: the chat keeps
+  working for a chat-only person.) A key whose owner lost `api_keys` is
+  refused with **403 `api_keys_not_allowed`**, at the mint and at key
+  resolution alike; the key is refused, not deleted, so regaining the
+  capability restores the same key, no re-mint needed. The install script
+  explains that refusal instead of telling the person to mint a fresh key
+  they are not allowed to.
+- **Switching `code_agents` off is refused while the machine client cannot
+  match it.** A machine token is refused before the gate runs, so a
+  restriction the machine client never matches would fail silently open for
+  machines while still applying to the panel. A per-group toggle to off, and
+  the bulk turn-off alike, answer **400** naming the setting to fix when
+  `OIDC_MACHINE_CLIENT_ID` names a client that is not in a non-empty
+  `OIDC_ACCEPTED_CLIENTS`. Granting is always fine, and `api_keys` never
+  trips this. For flags that predate that refusal — or an environment
+  changed under them — the policy resolver logs an **ERROR** once per
+  distinct state while any active group has `code_agents` off and the
+  machine client is not accepted, and the startup warning above flags the
+  likely misnamed machine client (the GitLab-uid shape). The 0.7.x startup
+  refusal for an env-baseline mismatch is gone: there is no mode left to
+  read.
 - **The `/v1` path stays query-free and write-free.** The effective
   capability is computed from memberships authentication already loaded, and
   neither refusal writes anything — an audit write on a path a machine link

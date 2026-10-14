@@ -32,10 +32,9 @@ the **Exact figures** toggle.
 | choose the search backends and see how many searches each group spent | **Web search** | [Surfaces](gateway.md#surfaces) |
 | add, disable, reset or merge a person | **Users** | [Bundled accounts](bundled-accounts.md), [Identity](identity.md) |
 | see at a glance who may use only the chat | **Users** (the **Chat only** badge) | [Chat-only people](identity.md#chat-only-people) |
-| decide who belongs together and what a group may use | **Groups** | [Groups](identity.md#groups) |
-| grant a group coding agents or API keys | **Groups** (the two **Capabilities** toggles) | [Chat-only people](identity.md#chat-only-people) |
+| decide who belongs together, what a group may use, and who holds coding agents or API keys | **Groups** (the two **Capabilities** toggles) | [Groups](identity.md#groups), [Chat-only people](identity.md#chat-only-people) |
 | map or dismiss the group names your identity provider reports | **Groups**, *Groups from your identity provider* | [Mapping the provider's groups](identity.md#mapping-the-providers-groups) |
-| configure mail, read the identity provider, decide who may become a user, or decide who may hold each capability | **Settings** | [Identity](identity.md) |
+| configure mail, read the identity provider, decide who may become a user, set what new groups start with, or turn a capability on or off for every group | **Settings** | [Identity](identity.md) |
 | see what happened to a person's account, and who did it | **Users → Edit → Activity** | [The audit trail](identity.md#the-audit-trail) |
 
 Two things on the **Settings** screen are worth knowing before you look for
@@ -44,7 +43,8 @@ at every start ([One provider, set in the environment](identity.md#one-provider-
 so the console shows it and offers **User sync…** only for an external provider
 ([User sync](oidc-generic-provider.md#user-sync)). What the console *does* edit
 is the provisioning policy: who may come to exist, which claim names their
-groups, and what an IdP group means here.
+groups, what an IdP group means here, and what new groups start with
+([Chat-only people](identity.md#chat-only-people)).
 
 **Reasons are optional.** Every form that offers one (resetting a quota, merging
 users, a redaction rule, the sign-in policy) labels the field *Reason
