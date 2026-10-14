@@ -74,10 +74,28 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual") {
         configured: null,
         propagation_seconds: 10,
       });
+    if (method === "PATCH" && /\/api\/admin\/groups\/[^/]+$/.test(url)) {
+      const payload = JSON.parse(String(init?.body ?? "{}")) as {
+        code_agents_allowed?: boolean;
+        api_keys_allowed?: boolean;
+      };
+      return jsonResponse({
+        id: "g2",
+        name: "engineering",
+        description: null,
+        source: "manual",
+        is_active: true,
+        code_agents_allowed: payload.code_agents_allowed ?? false,
+        api_keys_allowed: payload.api_keys_allowed ?? true,
+        member_count: 1,
+        models: [],
+        search_backend: null,
+      });
+    }
     if (url.includes("/api/admin/groups"))
       return jsonResponse({
         items: [
-          { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, member_count: 1, models: [], search_backend: null },
+          { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, code_agents_allowed: false, api_keys_allowed: true, member_count: 1, models: [], search_backend: null },
         ],
         total: 1,
         limit: 50,
@@ -271,6 +289,43 @@ describe("SeenGroups: the Map dialog's three paths", () => {
     expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
       group_mappings: [],
       reason: "Unmapped gitlab/old",
+    });
+  });
+});
+
+describe("AdminGroups — capability flags (ADR 0096)", () => {
+  it("shows the two toggles per group, seeded from the listing", async () => {
+    vi.stubGlobal("fetch", routes([]));
+    renderScreen();
+
+    const agents = await screen.findByRole("checkbox", { name: "engineering: coding agents" });
+    const keys = screen.getByRole("checkbox", { name: "engineering: API keys" });
+    // The listing seeds the mock: agents off, keys on.
+    expect(agents).not.toBeChecked();
+    expect(keys).toBeChecked();
+  });
+
+  it("flips a flag through the group PATCH route", async () => {
+    const fetchMock = routes([]);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderScreen();
+
+    await user.click(
+      await screen.findByRole("checkbox", { name: "engineering: coding agents" }),
+    );
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/admin/groups/g2"),
+        expect.objectContaining({ method: "PATCH" }),
+      ),
+    );
+    const call = fetchMock.mock.calls.find(
+      ([url, init]) =>
+        String(url).includes("/api/admin/groups/g2") && (init as RequestInit).method === "PATCH",
+    );
+    expect(JSON.parse((call?.[1] as RequestInit).body as string)).toEqual({
+      code_agents_allowed: true,
     });
   });
 });

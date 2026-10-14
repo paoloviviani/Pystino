@@ -77,6 +77,8 @@ function group(overrides: Partial<AdminGroup> = {}): AdminGroup {
     description: null,
     source: "manual",
     is_active: true,
+    code_agents_allowed: false,
+    api_keys_allowed: false,
     member_count: 3,
     models: ["linkup"],
     search_backend: "linkup",

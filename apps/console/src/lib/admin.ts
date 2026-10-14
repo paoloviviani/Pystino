@@ -41,6 +41,7 @@ import type {
   EmailSettings,
   EmailTestResult,
   GroupCreateInput,
+  GroupUpdateInput,
   SeenGroup,
   SeenGroupImport,
   DirectoryPerson,
@@ -875,6 +876,21 @@ export function useDeleteGroup() {
   });
 }
 
+/** Flip a group's capability flags (ADR 0096). The flags take effect at the
+ * next decision, so the users listing is re-read: someone's badge may have
+ * changed with this one toggle. */
+export function useUpdateGroup() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: GroupUpdateInput }) =>
+      request<AdminGroup>(`/api/admin/groups/${id}`, { method: "PATCH", body }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.groups });
+      client.invalidateQueries({ queryKey: adminKeys.users });
+    },
+  });
+}
+
 export function useGroupMembers(groupId: string | null, query: PageQuery = { limit: MAX_LIMIT }) {
   const search = pageParams(query);
   return useQuery({
@@ -1139,16 +1155,29 @@ export function useUpdateOidcPolicy() {
   });
 }
 
-/** What saving a group gate would do (ADR 0095). Fetched on demand — the
- * console asks before saving, not on every render. The groups go as
- * repeated `required_groups` params: a comma inside a name cannot be
- * mistaken for a separator. */
+/** What saving a group gate or a capability setting would do (ADR 0095, ADR
+ * 0096). Fetched on demand — the console asks before saving, not on every
+ * render. The groups go as repeated `required_groups` params: a comma inside
+ * a name cannot be mistaken for a separator. */
+export interface PolicyPreviewQuery {
+  join_mode?: string;
+  required_groups?: string[];
+  /** Preview moving this capability to `groups`; omit to skip it. */
+  code_agents_mode?: "everyone" | "groups";
+  api_keys_mode?: "everyone" | "groups";
+}
+
 export function usePolicyPreview() {
   return useMutation({
-    mutationFn: ({ join_mode, required_groups }: { join_mode: string; required_groups: string[] }) => {
+    mutationFn: (query: PolicyPreviewQuery) => {
       const params = new URLSearchParams();
-      params.set("join_mode", join_mode);
-      for (const group of required_groups) params.append("required_groups", group);
+      if (query.join_mode !== undefined) params.set("join_mode", query.join_mode);
+      for (const group of query.required_groups ?? [])
+        params.append("required_groups", group);
+      if (query.code_agents_mode !== undefined)
+        params.set("code_agents_mode", query.code_agents_mode);
+      if (query.api_keys_mode !== undefined)
+        params.set("api_keys_mode", query.api_keys_mode);
       return request<OidcPolicyPreview>(`/api/admin/oidc/policy/preview?${params.toString()}`);
     },
   });

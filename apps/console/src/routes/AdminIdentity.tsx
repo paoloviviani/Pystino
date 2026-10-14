@@ -18,7 +18,8 @@
 import { Button, Card, Notice, Select, Spinner } from "@llmp/ui";
 import { useEffect, useState } from "react";
 import { useGroups, useOidcPolicy, usePolicyPreview, useUpdateOidcPolicy } from "../lib/admin";
-import type { JoinMode, OidcPolicyInput } from "../lib/types";
+import type { PolicyPreviewQuery } from "../lib/admin";
+import type { CapabilityMode, JoinMode, OidcPolicyInput } from "../lib/types";
 import { FORM } from "../lib/layout";
 import { useOptionalToast } from "../lib/toast";
 
@@ -49,6 +50,9 @@ export function ProvisioningPolicySection() {
   const policy = useOidcPolicy();
   const save = useUpdateOidcPolicy();
   const preview = usePolicyPreview();
+  // A second, independent preview for the capability settings below: sharing
+  // the join gate's would overwrite its "Save anyway" confirm.
+  const capabilityPreview = usePolicyPreview();
   const groups = useGroups();
   const toast = useOptionalToast();
 
@@ -61,12 +65,18 @@ export function ProvisioningPolicySection() {
   // Picking Group with nothing required would save a gate that refuses
   // everyone but the admins; said inline rather than allowed.
   const [needsGroups, setNeedsGroups] = useState(false);
+  // ADR 0096: who may hold each capability — everyone, or flagged groups
+  // only. Each saves as its own decision, like the join mode.
+  const [codeAgentsMode, setCodeAgentsMode] = useState<CapabilityMode>("everyone");
+  const [apiKeysMode, setApiKeysMode] = useState<CapabilityMode>("everyone");
 
   useEffect(() => {
     if (!policy.data) return;
     setJoinMode(policy.data.join_mode);
     setRequiredGroups(policy.data.required_groups);
     setGroupFallback(policy.data.group_fallback);
+    setCodeAgentsMode(policy.data.code_agents_mode);
+    setApiKeysMode(policy.data.api_keys_mode);
   }, [policy.data]);
 
   // A refused save must not leave the radio (or the checkboxes) showing a
@@ -76,8 +86,10 @@ export function ProvisioningPolicySection() {
     setJoinMode(policy.data.join_mode);
     setRequiredGroups(policy.data.required_groups);
     setGroupFallback(policy.data.group_fallback);
+    setCodeAgentsMode(policy.data.code_agents_mode);
+    setApiKeysMode(policy.data.api_keys_mode);
     setNeedsGroups(false);
-    preview.reset();
+    capabilityPreview.reset();
   };
 
   const put = (body: OidcPolicyInput, ok: string) =>
@@ -166,6 +178,45 @@ export function ProvisioningPolicySection() {
     }
   };
 
+  // ADR 0096: moving a capability to flagged groups asks the preview first —
+  // "N people will lose this at their next request" is worth reading before
+  // it becomes true, like the join gate's. A move nobody loses saves straight
+  // away, and so does a move back to everyone: granting needs no preview.
+  const [pendingCapability, setPendingCapability] = useState<
+    "code_agents_mode" | "api_keys_mode" | null
+  >(null);
+
+  const pickCapability = (knob: "code_agents_mode" | "api_keys_mode", mode: CapabilityMode) => {
+    const set = knob === "code_agents_mode" ? setCodeAgentsMode : setApiKeysMode;
+    set(mode);
+    setPendingCapability(null);
+    capabilityPreview.reset();
+    if (mode === "everyone") {
+      put({ [knob]: "everyone" } as OidcPolicyInput, "Capability updated");
+      return;
+    }
+    capabilityPreview.mutate({ [knob]: "groups" } as PolicyPreviewQuery, {
+      onSuccess: (result) => {
+        const lost =
+          knob === "code_agents_mode"
+            ? result.would_lose_code_agents
+            : result.would_lose_api_keys;
+        if (lost === 0) {
+          put({ [knob]: "groups" } as OidcPolicyInput, "Capability updated");
+        } else {
+          setPendingCapability(knob);
+        }
+      },
+      onError: (caught: unknown) => {
+        toast?.add({
+          title: caught instanceof Error ? caught.message : "Could not preview the change",
+          type: "error",
+        });
+        resetToPolicy();
+      },
+    });
+  };
+
   if (policy.isPending || policy.error) {
     return (
       <Card>
@@ -218,6 +269,34 @@ export function ProvisioningPolicySection() {
           Join mode {sourceOf("join_mode")}. Administrators are never refused by
           this gate, so a wrong group cannot lock you out.
         </p>
+      </fieldset>
+
+      {/* ADR 0096: who may hold each capability — everyone, or flagged groups
+          only. Grant the flags on the Groups page; a person with neither
+          capability is a chat-only person. */}
+      <fieldset>
+        <legend className="p-0 text-sm">Capabilities</legend>
+        <p className="text-xs text-ink-faint">
+          A person holds a capability under Everyone, or through an active
+          membership in an active group carrying the flag. Administrators hold
+          everything, whatever is set here.
+        </p>
+        <CapabilityRow
+          name="capability-code-agents"
+          title="Coding agents"
+          hint="The /code panel and the machine links that serve it."
+          value={codeAgentsMode}
+          source={sourceOf("code_agents_mode")}
+          onPick={(mode) => pickCapability("code_agents_mode", mode)}
+        />
+        <CapabilityRow
+          name="capability-api-keys"
+          title="API keys"
+          hint="Minting and using API keys."
+          value={apiKeysMode}
+          source={sourceOf("api_keys_mode")}
+          onPick={(mode) => pickCapability("api_keys_mode", mode)}
+        />
       </fieldset>
 
       {joinMode === "group" ? (
@@ -315,27 +394,117 @@ export function ProvisioningPolicySection() {
         >
           {preview.data.admins_exempt}{" "}
           {preview.data.admins_exempt === 1 ? "administrator is" : "administrators are"} exempt.
-          <div className="mt-2 flex gap-2">
-            <Button
-              variant="primary"
-              busy={save.isPending}
-              onClick={() =>
-                put(
-                  {
-                    join_mode: "group",
-                    required_groups: requiredGroups,
-                    group_fallback: groupFallback,
-                  },
-                  "Join mode updated",
-                )
-              }
-            >
-              Save anyway
-            </Button>
-            <Button onClick={() => preview.reset()}>Go back</Button>
-          </div>
-        </Notice>
-      ) : null}
-    </div>
+<div className="mt-2 flex gap-2">
+              <Button
+                variant="primary"
+                busy={save.isPending}
+                onClick={() =>
+                  put(
+                    {
+                      join_mode: "group",
+                      required_groups: requiredGroups,
+                      group_fallback: groupFallback,
+                    },
+                    "Join mode updated",
+                  )
+                }
+              >
+                Save anyway
+              </Button>
+              <Button onClick={() => preview.reset()}>Go back</Button>
+            </div>
+          </Notice>
+        ) : null}
+
+        {pendingCapability && capabilityPreview.data ? (
+          <CapabilityConfirm
+            knob={pendingCapability}
+            preview={capabilityPreview.data}
+            saving={save.isPending}
+            onSave={() => {
+              put({ [pendingCapability]: "groups" } as OidcPolicyInput, "Capability updated");
+              setPendingCapability(null);
+            }}
+            onBack={() => {
+              capabilityPreview.reset();
+              setPendingCapability(null);
+              resetToPolicy();
+            }}
+          />
+        ) : null}
+      </div>
+    );
+}
+
+function CapabilityRow({
+  name,
+  title,
+  hint,
+  value,
+  source,
+  onPick,
+}: {
+  name: string;
+  title: string;
+  hint: string;
+  value: CapabilityMode;
+  source: string;
+  onPick: (mode: CapabilityMode) => void;
+}) {
+  return (
+    <fieldset className="mt-3">
+      <legend className="p-0 text-sm">{title}</legend>
+      <p className="text-xs text-ink-faint">{hint}</p>
+      <div className="mt-1 flex flex-col gap-1.5">
+        {(["everyone", "groups"] as CapabilityMode[]).map((mode) => (
+          <label key={mode} className="inline-flex items-center gap-1.5 text-sm">
+            <input
+              type="radio"
+              name={name}
+              value={mode}
+              checked={value === mode}
+              onChange={() => onPick(mode)}
+              className="accent-accent"
+            />
+            {mode === "everyone" ? "Everyone" : "Flagged groups only"}
+          </label>
+        ))}
+      </div>
+      <p className="mt-1 text-xs text-ink-faint">
+        {title} {source}. A person with neither capability below is chat-only.
+      </p>
+    </fieldset>
+  );
+}
+
+function CapabilityConfirm({
+  knob,
+  preview,
+  saving,
+  onSave,
+  onBack,
+}: {
+  knob: "code_agents_mode" | "api_keys_mode";
+  preview: { would_lose_code_agents: number | null; would_lose_api_keys: number | null };
+  saving: boolean;
+  onSave: () => void;
+  onBack: () => void;
+}) {
+  const lost =
+    knob === "code_agents_mode" ? (preview.would_lose_code_agents ?? 0) : (preview.would_lose_api_keys ?? 0);
+  const title = knob === "code_agents_mode" ? "Coding agents" : "API keys";
+  return (
+    <Notice
+      tone="warn"
+      title={`${lost} ${lost === 1 ? "person" : "people"} will lose ${title.toLowerCase()} at their next request`}
+    >
+      Administrators are exempt, whatever is set here.
+      <div className="mt-2 flex gap-2">
+        <Button variant="primary" busy={saving} onClick={onSave}>
+          Save anyway
+        </Button>
+        <Button onClick={onBack}>Go back</Button>
+      </div>
+    </Notice>
   );
 }

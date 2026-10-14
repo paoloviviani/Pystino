@@ -32,6 +32,7 @@ import {
   useOidcPolicy,
   useSeenGroupAction,
   useSeenGroups,
+  useUpdateGroup,
   useUpdateOidcPolicy,
 } from "../lib/admin";
 import { CHIPS, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
@@ -46,6 +47,8 @@ import { useOptionalToast } from "../lib/toast";
 export function AdminGroups() {
   const paged = usePaginated();
   const groups = useGroups(paged.page);
+  const updateGroup = useUpdateGroup();
+  const toast = useOptionalToast();
 
   const [creating, setCreating] = useState(false);
   const [managing, setManaging] = useState<AdminGroup | null>(null);
@@ -53,6 +56,22 @@ export function AdminGroups() {
 
   const page = groups.data;
   const rows = page?.items ?? [];
+
+  const flipCapability = (
+    group: AdminGroup,
+    knob: "code_agents_allowed" | "api_keys_allowed",
+    value: boolean,
+  ) =>
+    updateGroup.mutate(
+      { id: group.id, body: { [knob]: value } },
+      {
+        onError: (caught: unknown) =>
+          toast?.add({
+            title: caught instanceof Error ? caught.message : "Could not update the group",
+            type: "error",
+          }),
+      },
+    );
 
   const columns: Column<AdminGroup>[] = [
     {
@@ -78,6 +97,44 @@ export function AdminGroups() {
       header: "Members",
       numeric: true,
       render: (group) => group.member_count.toLocaleString(),
+    },
+    {
+      key: "capabilities",
+      header: "Capabilities",
+      // ADR 0096: the two toggles. A flag grants a capability to the group's
+      // active members and never withholds one, so the toggle is the whole
+      // editor — no dialog, no confirm. The mutation invalidates the users
+      // too, so a badge there changes with the flag that decides it.
+      render: (group) => (
+        <div className="flex flex-col gap-1.5">
+          <label className="inline-flex items-center gap-1.5 text-sm">
+            <input
+              type="checkbox"
+              aria-label={`${group.name}: coding agents`}
+              checked={group.code_agents_allowed}
+              onChange={(event) =>
+                flipCapability(group, "code_agents_allowed", event.target.checked)
+              }
+              disabled={updateGroup.isPending}
+              className="accent-accent"
+            />
+            Agents
+          </label>
+          <label className="inline-flex items-center gap-1.5 text-sm">
+            <input
+              type="checkbox"
+              aria-label={`${group.name}: API keys`}
+              checked={group.api_keys_allowed}
+              onChange={(event) =>
+                flipCapability(group, "api_keys_allowed", event.target.checked)
+              }
+              disabled={updateGroup.isPending}
+              className="accent-accent"
+            />
+            API keys
+          </label>
+        </div>
+      ),
     },
     {
       key: "models",

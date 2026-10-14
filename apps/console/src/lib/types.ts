@@ -29,6 +29,15 @@ export interface Me {
    * (ADR 0049) — the account menu offers password management on that basis. */
   issuer: string;
   has_password: boolean;
+  /** ADR 0096: which capabilities this person holds. The key page reads
+   * `api_keys` to decide whether to offer minting. */
+  capabilities: Capabilities | null;
+}
+
+/** The two ADR 0096 capabilities, as one person effectively holds them. */
+export interface Capabilities {
+  code_agents: boolean;
+  api_keys: boolean;
 }
 
 
@@ -190,6 +199,10 @@ export interface AdminGroup {
   description: string | null;
   source: string;
   is_active: boolean;
+  /** ADR 0096: a flag granting the capability, never withholding it. The
+   * Groups page shows these as two toggles. */
+  code_agents_allowed: boolean;
+  api_keys_allowed: boolean;
   member_count: number;
   models: string[];
   /** The search backend this group searches through on POST /v1/search, by
@@ -243,6 +256,11 @@ export interface AdminUser {
   deactivated_by: string | null;
   /** When this person was invited (ADR 0095); the expiry marker reads this. */
   invited_at: string | null;
+  /** ADR 0096: which capabilities this person effectively holds. The Users
+   * page badges a person with neither as "Chat only". Null means the listing
+   * did not answer it (the group-members route) — never "chat only". */
+  code_agents_allowed: boolean | null;
+  api_keys_allowed: boolean | null;
 }
 
 /** `POST /admin/users`, either account backend (ADR 0095). */
@@ -823,6 +841,9 @@ export interface SearchBackendDeleteResult {
  */
 export type JoinMode = "open" | "approval" | "invite" | "group";
 
+/** ADR 0096: who may hold a capability — everyone, or only flagged groups. */
+export type CapabilityMode = "everyone" | "groups";
+
 export interface OidcPolicy {
   auto_provision: boolean;
   unknown_user_policy: "refuse" | "create_inactive";
@@ -831,6 +852,8 @@ export interface OidcPolicy {
   group_fallback: "refuse" | "approval";
   groups_claim: string;
   group_mappings: { idp: string; local: string }[];
+  code_agents_mode: CapabilityMode;
+  api_keys_mode: CapabilityMode;
   source: "console" | "environment";
   /** Which fields a stored row decides; the rest are the environment's. */
   sources: Record<string, string>;
@@ -855,14 +878,20 @@ export interface OidcPolicyInput {
   group_fallback?: "refuse" | "approval";
   groups_claim?: string;
   group_mappings?: { idp: string; local: string }[] | null;
+  code_agents_mode?: CapabilityMode | null;
+  api_keys_mode?: CapabilityMode | null;
   reason?: string;
 }
 
-/** What saving a group gate would do (ADR 0095). */
+/** What saving a group gate would do (ADR 0095), and what moving a
+ * capability setting to `groups` would do (ADR 0096). */
 export interface OidcPolicyPreview {
   active_users: number;
   would_be_refused: number;
   admins_exempt: number;
+  /** Present only when the matching mode was previewed. */
+  would_lose_code_agents: number | null;
+  would_lose_api_keys: number | null;
 }
 
 /** Creating a group (ADR 0050). Manual is the point: it is the one kind whose
@@ -870,6 +899,12 @@ export interface OidcPolicyPreview {
 export interface GroupCreateInput {
   name: string;
   description?: string;
+}
+
+/** Flipping a group's capability flags (ADR 0096) — `PATCH /api/admin/groups/{id}`. */
+export interface GroupUpdateInput {
+  code_agents_allowed?: boolean;
+  api_keys_allowed?: boolean;
 }
 
 

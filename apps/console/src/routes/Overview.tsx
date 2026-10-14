@@ -252,22 +252,36 @@ export function Overview({ me }: OverviewProps) {
           <Spinner />
         ) : (
           <>
-            <div className="p-5">
-              <SummaryStrip
-                headline={`${(keys.data?.items ?? []).length} ${(keys.data?.items ?? []).length === 1 ? "key" : "keys"}`}
-                detail={
-                  (keys.data?.items ?? []).length === 0
-                    ? "none yet — mint the first one"
-                    : `${(keys.data?.items ?? []).filter((key) => !key.revoked_at && !isExpired(key)).length} working`
-                }
-                active={(keys.data?.items ?? []).length > 0}
-                actions={
-                  <Button variant="primary" onClick={() => setMinting(true)}>
-                    New key
-                  </Button>
-                }
-              />
-            </div>
+            {me.capabilities !== null && !me.capabilities.api_keys ? (
+              <div className="p-5">
+                <Notice
+                  tone="warn"
+                  title="Your account may not use API keys on this deployment"
+                >
+                  Ask an administrator to grant the capability. Your existing
+                  keys keep working the moment it is granted — nothing was
+                  deleted.
+                </Notice>
+              </div>
+            ) : (
+              <div className="p-5">
+                <SummaryStrip
+                  headline={`${(keys.data?.items ?? []).length} ${(keys.data?.items ?? []).length === 1 ? "key" : "keys"}`}
+                  detail={
+                    (keys.data?.items ?? []).length === 0
+                      ? "none yet — mint the first one"
+                      : `${(keys.data?.items ?? []).filter((key) => !key.revoked_at && !isExpired(key)).length} working`
+                  }
+                  active={(keys.data?.items ?? []).length > 0}
+                  actions={
+                    <Button variant="primary" onClick={() => setMinting(true)}>
+                      New key
+                    </Button>
+                  }
+                />
+              </div>
+            )}
+
             <Table
               columns={keyColumns(setRevoking, setDeleting)}
               rows={keys.data?.items ?? []}
