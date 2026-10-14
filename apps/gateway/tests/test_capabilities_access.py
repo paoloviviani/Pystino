@@ -1,29 +1,40 @@
-"""ADR 0096: per-group capabilities — coding agents and API keys.
+"""ADR 0096 (amended): capabilities are per-group flags only.
 
-Covers the pure effective-capability function, the ``/v1/me`` report, the
-machine-client gate (403 ``agents_not_allowed`` on every ``/v1`` route),
-the api_keys gate at mint and at use (403 ``api_keys_not_allowed``, keys
-never deleted so a re-grant restores them), and the query budget staying
-unchanged under both gates.
+A person holds code_agents / api_keys when they are an administrator, or
+hold an active membership in an active group with the flag on. There is no
+mode that gates access anymore — the deployment setting is the default new
+groups are created with. A person in no group holds neither (in practice the
+default group covers everyone; see the ADR edge).
+
+Covers the pure function, the /v1/me report, the machine-client gate (403
+agents_not_allowed), the api_keys gate at mint and use (403
+api_keys_not_allowed, keys never deleted), creation-path defaults, the bulk
+on/off with preview, the list showing the flags, and the query budget.
 """
 
 from __future__ import annotations
 
 import httpx
 from conftest import Seeded, bearer_auth, make_token
-from gateway.capabilities import Capabilities, effective_capabilities
-from gateway.models import Group, Membership, MembershipSource, OIDCPolicyConfig, User
+from gateway.capabilities import Capabilities, default_flags, effective_capabilities
+from gateway.models import (
+    Group,
+    IdentityEvent,
+    Membership,
+    MembershipSource,
+    OIDCPolicyConfig,
+    SeenGroup,
+    User,
+)
 from gateway.oidc_policy import OIDCPolicy
+from sqlalchemy import select
 from test_me_keys import as_user
+from test_oidc_policy import admin_session as admin_session
 from test_query_counts import counted
 
 #: The default machine client (opencode-enrollment): the token's azp/client_id
 #: that the code_agents gate keys on.
 MACHINE_CLIENT = "opencode-enrollment"
-
-
-def _caps(code_agents: bool, api_keys: bool) -> Capabilities:
-    return Capabilities(code_agents=code_agents, api_keys=api_keys)
 
 
 def _user(
@@ -62,81 +73,107 @@ def _membership(group: Group, source: MembershipSource = MembershipSource.MANUAL
     return Membership(group=group, source=source)
 
 
+def _caps(code_agents: bool, api_keys: bool) -> Capabilities:
+    return Capabilities(code_agents=code_agents, api_keys=api_keys)
+
+
 class TestEffectiveCapabilities:
-    def test_everyone_mode_grants_both_to_anyone(self) -> None:
-        policy = OIDCPolicy(code_agents_mode="everyone", api_keys_mode="everyone")
-        lonely = _user()
-        assert effective_capabilities(lonely, policy) == _caps(True, True)
+    def test_admin_holds_both_with_no_groups(self) -> None:
+        assert effective_capabilities(_user(is_admin=True)) == _caps(True, True)
 
-    def test_groups_mode_needs_a_flagged_active_group(self) -> None:
-        policy = OIDCPolicy(code_agents_mode="groups", api_keys_mode="groups")
-        flagged = _group("agents", code_agents=True, api_keys=True)
-        member = _user(memberships=[_membership(flagged)])
-        assert effective_capabilities(member, policy) == _caps(True, True)
+    def test_flagged_active_group_grants(self) -> None:
+        member = _user(memberships=[_membership(_group("agents", code_agents=True, api_keys=True))])
+        assert effective_capabilities(member) == _caps(True, True)
 
-    def test_groups_mode_refuses_without_a_flag(self) -> None:
-        policy = OIDCPolicy(code_agents_mode="groups", api_keys_mode="groups")
-        plain = _group("chat")
-        member = _user(memberships=[_membership(plain)])
-        assert effective_capabilities(member, policy) == _caps(False, False)
+    def test_unflagged_group_grants_neither(self) -> None:
+        member = _user(memberships=[_membership(_group("chat"))])
+        assert effective_capabilities(member) == _caps(False, False)
+
+    def test_no_group_grants_neither(self) -> None:
+        # The ADR edge: a person in no group has neither capability. In
+        # practice the default group covers everyone at first sign-in.
+        assert effective_capabilities(_user()) == _caps(False, False)
 
     def test_flags_are_independent(self) -> None:
-        policy = OIDCPolicy(code_agents_mode="groups", api_keys_mode="groups")
-        group = _group("agents", code_agents=True)
-        member = _user(memberships=[_membership(group)])
-        assert effective_capabilities(member, policy) == _caps(True, False)
-
-    def test_admin_is_exempt_in_groups_mode(self) -> None:
-        policy = OIDCPolicy(code_agents_mode="groups", api_keys_mode="groups")
-        admin = _user(is_admin=True)
-        assert effective_capabilities(admin, policy) == _caps(True, True)
+        member = _user(memberships=[_membership(_group("agents", code_agents=True))])
+        assert effective_capabilities(member) == _caps(True, False)
 
     def test_disabled_group_does_not_grant(self) -> None:
-        policy = OIDCPolicy(code_agents_mode="groups", api_keys_mode="groups")
         disabled = _group("agents", active=False, code_agents=True, api_keys=True)
-        member = _user(memberships=[_membership(disabled)])
-        assert effective_capabilities(member, policy) == _caps(False, False)
+        assert effective_capabilities(_user(memberships=[_membership(disabled)])) == _caps(
+            False, False
+        )
 
     def test_inactive_user_does_not_grant(self) -> None:
-        policy = OIDCPolicy(code_agents_mode="groups", api_keys_mode="groups")
         flagged = _group("agents", code_agents=True, api_keys=True)
         member = _user(is_active=False, memberships=[_membership(flagged)])
-        assert effective_capabilities(member, policy) == _caps(False, False)
+        assert effective_capabilities(member) == _caps(False, False)
 
     def test_any_source_counts(self) -> None:
-        policy = OIDCPolicy(code_agents_mode="groups", api_keys_mode="groups")
         flagged = _group("agents", code_agents=True, api_keys=True)
         oidc = _user(memberships=[_membership(flagged, MembershipSource.OIDC)])
-        assert effective_capabilities(oidc, policy) == _caps(True, True)
+        assert effective_capabilities(oidc) == _caps(True, True)
 
-    def test_everyone_mode_ignores_flags_and_admin(self) -> None:
-        # The default must change nothing for an upgrade: flags and admin are
-        # irrelevant while the setting says "everyone".
-        policy = OIDCPolicy(code_agents_mode="everyone", api_keys_mode="everyone")
-        plain = _group("chat")
-        member = _user(memberships=[_membership(plain)])
-        assert effective_capabilities(member, policy) == _caps(True, True)
-        assert effective_capabilities(_user(is_admin=False), policy) == _caps(True, True)
+
+class TestDefaultFlags:
+    def test_no_policy_means_on(self) -> None:
+        assert default_flags(None) == _caps(True, True)
+
+    def test_on_off_follow_the_folded_default(self) -> None:
+        assert default_flags(OIDCPolicy(code_agents_mode="on", api_keys_mode="off")) == _caps(
+            True, False
+        )
+
+    def test_legacy_values_fold_without_behaviour_change(self) -> None:
+        assert default_flags(
+            OIDCPolicy(code_agents_mode="everyone", api_keys_mode="groups")
+        ) == _caps(True, False)
 
 
 async def _fold_policy(app: object, session_factory: object, **row: object) -> None:
     """Insert an oidc_config decision and fold it onto the worker's policy."""
-
     async with session_factory() as session:  # type: ignore[attr-defined]
         session.add(OIDCPolicyConfig(**row))
         await session.commit()
     await app.state.oidc_policy.refresh_once()  # type: ignore[attr-defined]
 
 
+async def _reload_user(session_factory: object, user_id: object) -> User:
+    """A user with its memberships and groups, freshly read — the object the
+    management routes would load, so in-memory flags reflect a re-grant."""
+    from sqlalchemy.orm import selectinload
+
+    async with session_factory() as session:  # type: ignore[attr-defined]
+        return await session.get(
+            User, user_id, options=[selectinload(User.memberships).selectinload(Membership.group)]
+        )
+
+
 class TestV1MeReportsCapabilities:
-    async def test_everyone_mode_reports_both(
-        self, bearer_app: object, client: httpx.AsyncClient, signing_key: object
+    async def test_reports_both_from_the_persons_flags(
+        self,
+        bearer_app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        signing_key: object,
     ) -> None:
         response = await client.get("/v1/me", headers=bearer_auth(make_token(signing_key)))
         assert response.status_code == 200
+        # The seeded person holds "research", an ordinary working group with
+        # both flags on.
         assert response.json()["capabilities"] == {"code_agents": True, "api_keys": True}
 
-    async def test_groups_mode_reflects_the_persons_flags(
+    async def test_a_person_in_no_group_holds_neither(
+        self, bearer_app: object, client: httpx.AsyncClient, signing_key: object
+    ) -> None:
+        # The ADR edge, over a real door: a token whose claim nothing maps
+        # provisions a person with no membership, and /v1/me answers both
+        # False — the chat-only extreme.
+        response = await client.get("/v1/me", headers=bearer_auth(make_token(signing_key)))
+        assert response.status_code == 200
+        assert response.json()["capabilities"] == {"code_agents": False, "api_keys": False}
+
+    async def test_reflects_the_persons_flags(
         self,
         bearer_app: object,
         client: httpx.AsyncClient,
@@ -144,23 +181,12 @@ class TestV1MeReportsCapabilities:
         signing_key: object,
         session_factory: object,
     ) -> None:
-        await _fold_policy(
-            bearer_app,
-            session_factory,
-            code_agents_mode="groups",
-            api_keys_mode="groups",
-            group_mappings=[["research", "research"]],
-        )
-        response = await client.get("/v1/me", headers=bearer_auth(make_token(signing_key)))
-        assert response.status_code == 200
-        # The seeded user holds "research", which carries neither flag.
-        assert response.json()["capabilities"] == {"code_agents": False, "api_keys": False}
-
+        # The seeded group carries both flags; clearing api_keys makes the
+        # person's answer follow the flags alone.
         async with session_factory() as session:  # type: ignore[attr-defined]
             group = await session.get(Group, seeded.group.id)
-            group.code_agents_allowed = True
+            group.api_keys_allowed = False
             await session.commit()
-        await bearer_app.state.oidc_policy.refresh_once()  # type: ignore[attr-defined]
 
         response = await client.get("/v1/me", headers=bearer_auth(make_token(signing_key)))
         assert response.json()["capabilities"] == {"code_agents": True, "api_keys": False}
@@ -171,14 +197,11 @@ class TestMachineClientGate:
     with 403 agents_not_allowed on every /v1 route — /v1/me included — and a
     chat-client token for the same person passes."""
 
-    async def _deny_code_agents(self, bearer_app: object, session_factory: object) -> None:
-        await _fold_policy(
-            bearer_app,
-            session_factory,
-            code_agents_mode="groups",
-            api_keys_mode="groups",
-            group_mappings=[["research", "research"]],
-        )
+    async def _deny_code_agents(self, session_factory: object, seeded: Seeded) -> None:
+        async with session_factory() as session:  # type: ignore[attr-defined]
+            group = await session.get(Group, seeded.group.id)
+            group.code_agents_allowed = False
+            await session.commit()
 
     async def test_machine_token_is_refused_everywhere(
         self,
@@ -188,7 +211,7 @@ class TestMachineClientGate:
         signing_key: object,
         session_factory: object,
     ) -> None:
-        await self._deny_code_agents(bearer_app, session_factory)
+        await self._deny_code_agents(session_factory, seeded)
         machine = make_token(signing_key, azp=MACHINE_CLIENT)
         for path in ("/v1/me", "/v1/models", "/v1/me/identities"):
             response = await client.get(path, headers=bearer_auth(machine))
@@ -199,34 +222,48 @@ class TestMachineClientGate:
         self,
         bearer_app: object,
         client: httpx.AsyncClient,
+        seeded: Seeded,
         signing_key: object,
         session_factory: object,
     ) -> None:
-        await self._deny_code_agents(bearer_app, session_factory)
+        await self._deny_code_agents(session_factory, seeded)
         response = await client.get(
             "/v1/me", headers=bearer_auth(make_token(signing_key, azp=MACHINE_CLIENT))
         )
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "agents_not_allowed"
-        assert response.json()["capabilities"] == {"code_agents": False, "api_keys": False}
+        assert response.json()["capabilities"] == {"code_agents": False, "api_keys": True}
 
     async def test_chat_client_token_for_the_same_user_passes(
         self,
         bearer_app: object,
         client: httpx.AsyncClient,
         signing_key: object,
-        session_factory: object,
     ) -> None:
-        await self._deny_code_agents(bearer_app, session_factory)
         response = await client.get("/v1/models", headers=bearer_auth(make_token(signing_key)))
         assert response.status_code == 200
 
-    async def test_everyone_mode_changes_nothing_for_a_machine_token(
+    async def test_a_flagged_machine_token_passes(
         self,
         bearer_app: object,
         client: httpx.AsyncClient,
+        seeded: Seeded,
         signing_key: object,
+        session_factory: object,
     ) -> None:
+        # Deny, then re-grant: the machine token passes again the moment the
+        # flag comes back — a loss one group flag restores.
+        await self._deny_code_agents(session_factory, seeded)
+        denied = await client.get(
+            "/v1/models", headers=bearer_auth(make_token(signing_key, azp=MACHINE_CLIENT))
+        )
+        assert denied.status_code == 403
+
+        async with session_factory() as session:  # type: ignore[attr-defined]
+            group = await session.get(Group, seeded.group.id)
+            group.code_agents_allowed = True
+            await session.commit()
+
         response = await client.get(
             "/v1/models", headers=bearer_auth(make_token(signing_key, azp=MACHINE_CLIENT))
         )
@@ -237,9 +274,7 @@ class TestMachineClientGate:
         bearer_app: object,
         client: httpx.AsyncClient,
         signing_key: object,
-        session_factory: object,
     ) -> None:
-        await self._deny_code_agents(bearer_app, session_factory)
         engine = bearer_app.state.engine  # type: ignore[attr-defined]
         machine = make_token(signing_key, azp=MACHINE_CLIENT)
         # Warm-up like test_query_counts does: the first token request syncs
@@ -259,26 +294,12 @@ class TestMachineClientGate:
         assert len(selects) <= 5
 
 
-async def _reload_user(session_factory: object, user_id: object) -> User:
-    """A user with its memberships and groups, freshly read — the object the
-    management routes would load, so in-memory flags reflect a re-grant."""
-    from sqlalchemy.orm import selectinload
-
-    async with session_factory() as session:  # type: ignore[attr-defined]
-        return await session.get(
-            User, user_id, options=[selectinload(User.memberships).selectinload(Membership.group)]
-        )
-
-
 class TestApiKeysGate:
-    async def _deny_api_keys(self, app: object, session_factory: object) -> None:
-        await _fold_policy(
-            app,
-            session_factory,
-            code_agents_mode="groups",
-            api_keys_mode="groups",
-            group_mappings=[["research", "research"]],
-        )
+    async def _deny_api_keys(self, session_factory: object, seeded: Seeded) -> None:
+        async with session_factory() as session:  # type: ignore[attr-defined]
+            group = await session.get(Group, seeded.group.id)
+            group.api_keys_allowed = False
+            await session.commit()
 
     async def test_mint_is_refused_and_restored_by_regrant(
         self,
@@ -287,7 +308,7 @@ class TestApiKeysGate:
         seeded: Seeded,
         session_factory: object,
     ) -> None:
-        await self._deny_api_keys(app, session_factory)
+        await self._deny_api_keys(session_factory, seeded)
         as_user(app, await _reload_user(session_factory, seeded.user.id))
 
         response = await client.post(
@@ -297,13 +318,10 @@ class TestApiKeysGate:
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "api_keys_not_allowed"
 
-        # Regaining the capability restores minting; the denied key was never
-        # created, so nothing to resurrect here.
         async with session_factory() as session:  # type: ignore[attr-defined]
             group = await session.get(Group, seeded.group.id)
             group.api_keys_allowed = True
             await session.commit()
-        await app.state.oidc_policy.refresh_once()  # type: ignore[attr-defined]
 
         as_user(app, await _reload_user(session_factory, seeded.user.id))
         response = await client.post(
@@ -319,8 +337,7 @@ class TestApiKeysGate:
         seeded: Seeded,
         session_factory: object,
     ) -> None:
-        await self._deny_api_keys(app, session_factory)
-
+        await self._deny_api_keys(session_factory, seeded)
         response = await client.get("/v1/models", headers=seeded.auth)
         assert response.status_code == 403
         assert response.json()["error"]["code"] == "api_keys_not_allowed"
@@ -331,7 +348,6 @@ class TestApiKeysGate:
             group = await session.get(Group, seeded.group.id)
             group.api_keys_allowed = True
             await session.commit()
-        await app.state.oidc_policy.refresh_once()  # type: ignore[attr-defined]
 
         response = await client.get("/v1/models", headers=seeded.auth)
         assert response.status_code == 200
@@ -343,10 +359,288 @@ class TestApiKeysGate:
         seeded: Seeded,
         session_factory: object,
     ) -> None:
-        await self._deny_api_keys(app, session_factory)
         async with session_factory() as session:  # type: ignore[attr-defined]
             user = await session.get(User, seeded.user.id)
             user.is_admin = True
             await session.commit()
         response = await client.get("/v1/models", headers=seeded.auth)
         assert response.status_code == 200
+
+
+class TestNewGroupsGetTheDefault:
+    """Every creation path stamps the folded default onto a new group (ADR
+    0096, amended). Each test folds an `off` decision in, creates through the
+    path, and expects the flag off; a second case with no decision expects
+    on — the upgrade-changes-nothing guarantee."""
+
+    async def _fold(self, app: object, session_factory: object, **row: object) -> None:
+        await _fold_policy(app, session_factory, group_mappings=[["research", "research"]], **row)
+
+    async def test_console_create(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        admin_session: dict[str, str],
+        session_factory: object,
+    ) -> None:
+        await self._fold(app, session_factory, code_agents_mode="off")
+        created = await client.post(
+            "/api/admin/groups", json={"name": "new-group"}, headers=admin_session
+        )
+        assert created.status_code == 201
+        assert created.json()["code_agents_allowed"] is False
+
+    async def test_console_create_defaults_on(
+        self, app: object, client: httpx.AsyncClient, admin_session: dict[str, str]
+    ) -> None:
+        created = await client.post(
+            "/api/admin/groups", json={"name": "new-group"}, headers=admin_session
+        )
+        assert created.status_code == 201
+        assert created.json()["code_agents_allowed"] is True
+
+    async def test_map_new_group(
+        self, client: httpx.AsyncClient, admin_session: dict[str, str], session_factory: object
+    ) -> None:
+        # The seen-group surface: a mapped IdP name creating a new group.
+        async with session_factory() as session:
+            session.add(SeenGroup(issuer="https://idp.test", name="gitlab/eng"))
+            await session.commit()
+        seen = (await client.get("/api/admin/groups/seen", headers=admin_session)).json()["items"]
+        response = await client.post(
+            f"/api/admin/groups/seen/{seen[0]['id']}/map",
+            json={"target": "new_same_name"},
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["group"]["code_agents_allowed"] is True
+
+    async def test_auto_import(
+        self,
+        bearer_app: object,
+        client: httpx.AsyncClient,
+        signing_key: object,
+        session_factory: object,
+    ) -> None:
+        # group_import=auto creates a group for a claimed name at sign-in;
+        # the folded default must ride along.
+        from gateway.config import OIDCSettings
+
+        bearer_app.state.settings.oidc = OIDCSettings(  # type: ignore[attr-defined]
+            enabled=True,
+            issuer="https://idp.test",
+            client_id="llm-gateway",
+            groups_claim="groups",
+            access_token_audience="pystino-api",
+            group_import="auto",
+        )
+        async with session_factory() as session:  # type: ignore[attr-defined]
+            session.add(
+                OIDCPolicyConfig(code_agents_mode="off", group_mappings=[["fresh", "fresh"]])
+            )
+            await session.commit()
+        await bearer_app.state.oidc_policy.refresh_once()  # type: ignore[attr-defined]
+
+        token = make_token(signing_key, groups=["fresh"])
+        response = await client.get("/v1/models", headers=bearer_auth(token))
+        assert response.status_code == 200
+
+        async with session_factory() as session:  # type: ignore[attr-defined]
+            group = (await session.execute(select(Group).where(Group.name == "fresh"))).scalar_one()
+            assert group.code_agents_allowed is False
+
+
+class TestGroupFlagsListed:
+    """The list shows the stored flags: PATCH a flag, GET the list, and it
+    shows — set it back, and it shows false."""
+
+    async def test_patch_then_list_shows_the_flag(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        admin_session: dict[str, str],
+    ) -> None:
+        """The list shows the stored flag — the bug this pins: the list once
+        built GroupAdminResponse by hand and answered always-false, so the
+        console's refetch snapped every toggle back."""
+        group_id = str(seeded.group.id)
+        # The seeded group carries both flags; clear one, and the list says so.
+        await client.patch(
+            f"/api/admin/groups/{group_id}",
+            json={"code_agents_allowed": False},
+            headers=admin_session,
+        )
+        listing = (await client.get("/api/admin/groups", headers=admin_session)).json()
+        row = next(item for item in listing["items"] if item["id"] == group_id)
+        assert row["code_agents_allowed"] is False
+        assert row["api_keys_allowed"] is True
+
+        patched = await client.patch(
+            f"/api/admin/groups/{group_id}",
+            json={"code_agents_allowed": True},
+            headers=admin_session,
+        )
+        assert patched.status_code == 200
+        assert patched.json()["code_agents_allowed"] is True
+
+        listing = (await client.get("/api/admin/groups", headers=admin_session)).json()
+        row = next(item for item in listing["items"] if item["id"] == group_id)
+        assert row["code_agents_allowed"] is True
+
+
+class TestCapabilityBulk:
+    async def _plain_member(self, session_factory: object, group_id: object, email: str) -> None:
+        """An active, non-admin person holding the group — the preview's unit."""
+        import uuid
+
+        from gateway.models import MembershipSource
+
+        async with session_factory() as session:  # type: ignore[attr-defined]
+            user = User(
+                issuer="https://idp.test",
+                subject=f"subject-{uuid.uuid4().hex[:8]}",
+                email=email,
+            )
+            session.add(user)
+            await session.flush()
+            session.add(
+                Membership(user_id=user.id, group_id=group_id, source=MembershipSource.MANUAL)  # type: ignore[arg-type]
+            )
+            await session.commit()
+
+    async def test_preview_counts_who_would_gain(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        admin_session: dict[str, str],
+        session_factory: object,
+    ) -> None:
+        # The seeded person is an administrator here (the fixture promotes
+        # them) and the seeded group carries the flag, so the preview needs a
+        # plain member of an *unflagged* group — the people a bulk turn-on
+        # would grant.
+        unflagged = Group(name="plain", description="no flags")
+        async with session_factory() as session:  # type: ignore[attr-defined]
+            session.add(unflagged)
+            await session.commit()
+        await self._plain_member(session_factory, unflagged.id, "plain@example.org")
+        response = await client.get(
+            "/api/admin/oidc/policy/preview?bulk_capability=code_agents&bulk_value=true",
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["would_gain"] == 1
+        assert body["would_lose"] is None
+
+    async def test_preview_counts_who_would_lose(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        admin_session: dict[str, str],
+        session_factory: object,
+    ) -> None:
+        await self._plain_member(session_factory, seeded.group.id, "plain@example.org")
+        async with session_factory() as session:  # type: ignore[attr-defined]
+            group = await session.get(Group, seeded.group.id)
+            group.code_agents_allowed = True
+            await session.commit()
+
+        response = await client.get(
+            "/api/admin/oidc/policy/preview?bulk_capability=code_agents&bulk_value=false",
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["would_lose"] == 1
+        assert body["would_gain"] is None
+
+    async def test_bulk_on_flips_every_group_and_audits(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        admin_session: dict[str, str],
+        session_factory: object,
+    ) -> None:
+        response = await client.post(
+            "/api/admin/groups/capabilities",
+            json={"capability": "code_agents", "value": True},
+            headers=admin_session,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["updated"] >= 1
+
+        listing = (await client.get("/api/admin/groups", headers=admin_session)).json()
+        assert listing["items"]
+        assert all(item["code_agents_allowed"] for item in listing["items"])
+
+        async with session_factory() as session:  # type: ignore[attr-defined]
+            events = (
+                (
+                    await session.execute(
+                        select(IdentityEvent).where(IdentityEvent.action == "group.capability_bulk")
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert len(events) == 1
+        assert events[0].detail == {
+            "capability": "code_agents",
+            "value": True,
+            "count": response.json()["updated"],
+        }
+
+    async def test_bulk_off_refused_when_machine_client_unaccepted(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        admin_session: dict[str, str],
+    ) -> None:
+        from gateway.config import OIDCSettings
+
+        app.state.settings.oidc = OIDCSettings(  # type: ignore[attr-defined]
+            machine_client_id="other", accepted_clients="console,chat"
+        )
+        response = await client.post(
+            "/api/admin/groups/capabilities",
+            json={"capability": "code_agents", "value": False},
+            headers=admin_session,
+        )
+        assert response.status_code == 400, response.text
+        assert "MACHINE_CLIENT_ID" in response.text
+
+    async def test_patch_off_refused_when_machine_client_unaccepted(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        admin_session: dict[str, str],
+    ) -> None:
+        from gateway.config import OIDCSettings
+
+        app.state.settings.oidc = OIDCSettings(  # type: ignore[attr-defined]
+            machine_client_id="other", accepted_clients="console,chat"
+        )
+        refused = await client.patch(
+            f"/api/admin/groups/{seeded.group.id}",
+            json={"code_agents_allowed": False},
+            headers=admin_session,
+        )
+        assert refused.status_code == 400, refused.text
+        assert "MACHINE_CLIENT_ID" in refused.text
+
+        # Granting is always fine, and api_keys never touches the machine check.
+        granted = await client.patch(
+            f"/api/admin/groups/{seeded.group.id}",
+            json={"code_agents_allowed": True},
+            headers=admin_session,
+        )
+        assert granted.status_code == 200
+        cleared = await client.patch(
+            f"/api/admin/groups/{seeded.group.id}",
+            json={"api_keys_allowed": False},
+            headers=admin_session,
+        )
+        assert cleared.status_code == 200

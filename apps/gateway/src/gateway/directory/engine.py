@@ -28,7 +28,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,6 +54,9 @@ from gateway.oidc import (
     apply_admin_answer,
 )
 from gateway.types import utcnow
+
+if TYPE_CHECKING:
+    from gateway.capabilities import Capabilities
 
 logger = logging.getLogger(__name__)
 
@@ -135,9 +138,14 @@ async def _claim_pending_invite(session: AsyncSession, entry: Entry) -> User | N
 
 
 async def add_manual_memberships(
-    session: AsyncSession, user: User, names: Iterable[str]
+    session: AsyncSession, user: User, names: Iterable[str], *, defaults: Capabilities
 ) -> list[str]:
-    """Pre-assigned groups become *manual* memberships: the console's, not the directory's."""
+    """Pre-assigned groups become *manual* memberships: the console's, not the directory's.
+
+    A group created here carries *defaults* (ADR 0096, amended) — the caller
+    folds the deployment default, so this helper never decides and never
+    queries for it.
+    """
     from gateway.models import Group, GroupSource
 
     added = []
@@ -147,7 +155,12 @@ async def add_manual_memberships(
             await session.execute(select(Group).where(Group.name == name))
         ).scalar_one_or_none()
         if group is None:
-            group = Group(name=name, source=GroupSource.MANUAL)
+            group = Group(
+                name=name,
+                source=GroupSource.MANUAL,
+                code_agents_allowed=defaults.code_agents,
+                api_keys_allowed=defaults.api_keys,
+            )
             session.add(group)
             await session.flush()
         if group.id in have:
@@ -174,7 +187,11 @@ BUNDLED_DEFAULT_GROUP_NAME = "users"
 
 
 async def ensure_bundled_default_group(
-    session: AsyncSession, user: User, name: str = BUNDLED_DEFAULT_GROUP_NAME
+    session: AsyncSession,
+    user: User,
+    name: str = BUNDLED_DEFAULT_GROUP_NAME,
+    *,
+    defaults: Capabilities,
 ) -> bool:
     """Give a bundled-Authelia user with *no* membership at all the console's
     ``users`` group (created the first time it's needed), so every bundled
@@ -197,7 +214,9 @@ async def ensure_bundled_default_group(
     await session.refresh(user, attribute_names=["memberships"])
     if user.memberships:
         return False
-    await add_manual_memberships(session, user, [name or BUNDLED_DEFAULT_GROUP_NAME])
+    await add_manual_memberships(
+        session, user, [name or BUNDLED_DEFAULT_GROUP_NAME], defaults=defaults
+    )
     await session.refresh(user, attribute_names=["memberships"])
     # Always the sole group right after being added from empty, but stated
     # the same way as `provision_user`'s own rule rather than assumed.
@@ -221,6 +240,7 @@ async def _apply_to_user(
     newly_linked: bool,
     settings: OIDCSettings,
     report: SyncReport,
+    defaults: Capabilities,
 ) -> None:
     mappings = record.mappings_dict()
     answers = record.group_sync is GroupSync.EVERY_LOGIN or (
@@ -229,7 +249,7 @@ async def _apply_to_user(
     if answers and record.group_source == "directory":
         before = await _oidc_group_names(session, user)
         wanted = [mappings.get(g, g) for g in entry.groups]
-        groups, missing = await _resolve_group_names(session, wanted, settings)
+        groups, missing = await _resolve_group_names(session, wanted, settings, defaults=defaults)
         await _reconcile_memberships(session, user, groups)
         # A sync run is a sighting like a sign-in: under group_import=manual
         # the names nothing here carries are listed for import, not created.
@@ -280,6 +300,7 @@ async def apply_entries(
     dry_run: bool,
     full: bool,
     force: bool = False,
+    defaults: Capabilities,
 ) -> SyncReport:
     """Mirror `entries` and apply them. `full` means "this is everyone": absence is departure.
 
@@ -373,7 +394,9 @@ async def apply_entries(
             newly_linked = True
             if row.preassigned_groups:
                 await session.refresh(user, attribute_names=["memberships"])
-                added = await add_manual_memberships(session, user, row.preassigned_groups)
+                added = await add_manual_memberships(
+                    session, user, row.preassigned_groups, defaults=defaults
+                )
                 if added:
                     report.note("preassigned", _who(entry), groups=added)
         row.username = entry.username
@@ -392,6 +415,7 @@ async def apply_entries(
                 newly_linked=newly_linked,
                 settings=settings,
                 report=report,
+                defaults=defaults,
             )
 
     if full:
@@ -463,6 +487,7 @@ async def link_at_login(
     claims: dict[str, Any],
     *,
     settings: OIDCSettings,
+    defaults: Capabilities,
 ) -> bool:
     """Link a mirrored entry to the person signing in, for directories whose
     subject is unknown until then (Authelia).
@@ -495,7 +520,7 @@ async def link_at_login(
     row.user_id = user.id
     await session.refresh(user, attribute_names=["memberships"])
     if row.preassigned_groups:
-        await add_manual_memberships(session, user, row.preassigned_groups)
+        await add_manual_memberships(session, user, row.preassigned_groups, defaults=defaults)
     report = SyncReport()
     entry = Entry(
         external_id=row.external_id,
@@ -506,6 +531,13 @@ async def link_at_login(
         active=row.active,
     )
     await _apply_to_user(
-        session, record, user, entry, newly_linked=True, settings=settings, report=report
+        session,
+        record,
+        user,
+        entry,
+        newly_linked=True,
+        settings=settings,
+        report=report,
+        defaults=defaults,
     )
     return True

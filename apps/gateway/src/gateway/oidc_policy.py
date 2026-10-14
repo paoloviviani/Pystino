@@ -51,11 +51,25 @@ JOIN_MODES = ("open", "approval", "invite", "group")
 #: What a stranger without a required group gets in `group` mode.
 GROUP_FALLBACKS = ("refuse", "approval")
 
-#: One answer to "who may hold a capability" (ADR 0096): `everyone` (the
-#: default, so an upgrade changes nothing) or `groups` (only people in a
-#: group carrying the flag). The per-group booleans live on `groups`; the
-#: effective capability is computed by `gateway.capabilities`.
-CAPABILITY_MODES = ("everyone", "groups")
+#: One answer to "what flag do new groups get" (ADR 0096, amended): `on`
+#: or `off`. The per-group booleans decide who holds a capability; this
+#: setting only defaults them at creation.
+CAPABILITY_MODES = ("on", "off")
+
+#: The 0.7.x vocabulary, still read for one release — a stored row or an old
+#: environment spelling keeps its behaviour (`everyone` allowed by default,
+#: `groups` denied by default) while the new one is adopted.
+LEGACY_CAPABILITY_MODES = {"everyone": "on", "groups": "off"}
+
+
+def _normalize_capability_mode(value: str | None) -> str | None:
+    """A row or environment spelling as the canonical `on`/`off`, else None
+    for the caller to log-and-defer on."""
+    if value is None:
+        return None
+    if value in CAPABILITY_MODES:
+        return value
+    return LEGACY_CAPABILITY_MODES.get(value)
 
 
 def _legacy_from_join(join_mode: str, group_fallback: str) -> tuple[bool, str]:
@@ -80,10 +94,10 @@ class OIDCPolicy:
     required_groups: tuple[str, ...] = ()
     group_fallback: str = "refuse"
     groups_claim: str = "groups"
-    #: ADR 0096: who may hold each capability — `everyone` or `groups`. The
-    #: per-group booleans decide who holds one in `groups` mode.
-    code_agents_mode: str = "everyone"
-    api_keys_mode: str = "everyone"
+    #: ADR 0096 (amended): the default flag new groups are created with —
+    #: `on` or `off`. The per-group booleans decide who holds a capability.
+    code_agents_mode: str = "on"
+    api_keys_mode: str = "on"
     #: IdP group name -> local group name. A claimed name resolves to a local
     #: group only through this table: an unmapped name resolves to nothing,
     #: even when a local group carries the same name.
@@ -189,8 +203,9 @@ def effective_policy(
 
     For the join answer the fold tries, in order: the row's `join_mode`, the
     row's legacy columns, the environment (ADR 0095 §1). For the capability
-    settings (ADR 0096) it tries the row's column, then the environment
-    (``GATEWAY_ACCESS__*``, via ``access``).
+    defaults (ADR 0096, amended) it tries the row's column — normalising the
+    0.7.x `everyone`/`groups` spellings — then the environment
+    (``GATEWAY_ACCESS__*``, via ``access``, same normalisation).
     """
     base = environment_policy(settings, access)
     if row is None:
@@ -254,23 +269,21 @@ def effective_policy(
                     mappings[idp] = local
 
     code_agents_mode = base.code_agents_mode
-    if row.code_agents_mode is not None:
-        if row.code_agents_mode not in CAPABILITY_MODES:
-            logger.warning(
-                "ignoring oidc_config row %s: code_agents_mode %r", row.id, row.code_agents_mode
-            )
-        else:
-            code_agents_mode = row.code_agents_mode
-            sources["code_agents_mode"] = "console"
+    normalized = _normalize_capability_mode(row.code_agents_mode)
+    if row.code_agents_mode is not None and normalized is None:
+        logger.warning(
+            "ignoring oidc_config row %s: code_agents_mode %r", row.id, row.code_agents_mode
+        )
+    elif normalized is not None:
+        code_agents_mode = normalized
+        sources["code_agents_mode"] = "console"
     api_keys_mode = base.api_keys_mode
-    if row.api_keys_mode is not None:
-        if row.api_keys_mode not in CAPABILITY_MODES:
-            logger.warning(
-                "ignoring oidc_config row %s: api_keys_mode %r", row.id, row.api_keys_mode
-            )
-        else:
-            api_keys_mode = row.api_keys_mode
-            sources["api_keys_mode"] = "console"
+    normalized = _normalize_capability_mode(row.api_keys_mode)
+    if row.api_keys_mode is not None and normalized is None:
+        logger.warning("ignoring oidc_config row %s: api_keys_mode %r", row.id, row.api_keys_mode)
+    elif normalized is not None:
+        api_keys_mode = normalized
+        sources["api_keys_mode"] = "console"
 
     return OIDCPolicy(
         join_mode=mode,
@@ -377,7 +390,7 @@ class OIDCPolicyResolver:
         self._refresh_seconds = refresh_seconds
         self._policy = environment_policy(settings, access)
         self._warned_missing_groups: frozenset[str] = frozenset()
-        self._warned_machine_mismatch: tuple[str, tuple[str, ...]] | None = None
+        self._warned_machine_mismatch: tuple[str, tuple[str, ...], bool] | None = None
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -417,30 +430,37 @@ class OIDCPolicyResolver:
                 ", ".join(sorted(missing)),
             )
         self._warned_missing_groups = missing
-        # ADR 0096: a console decision of code_agents_mode 'groups' whose
-        # machine client the deployment does not accept is a restriction that
-        # can never fire — the PUT refuses the save, but the row may predate
-        # the refusal or the environment may have changed under it, so the
-        # poll logs it too. ERROR, not warning: unlike an unknown group name
-        # (which fails closed) this fails silently open. Once per distinct
-        # state, like the warning above: the poll runs every ten seconds.
+        # ADR 0096 (amended): a code_agents flag switched off somewhere while
+        # the accepted machine client cannot match it is a restriction whose
+        # machine-link half can never fire — the bulk and patch paths refuse
+        # the change, but the flags may predate the refusal or the
+        # environment may have changed under them, so the poll logs it too.
+        # ERROR, not warning: unlike an unknown group name (which fails
+        # closed) this fails silently open. Once per distinct state, like
+        # the warning above: the poll runs every ten seconds. One cheap
+        # EXISTS, and only when the machine client mismatches at all — the
+        # common case (aligned, or no allowlist) costs nothing.
         machine = self._settings.machine_client_id
         accepted = tuple(self._settings.accepted_client_list())
-        mismatch = (
-            (machine, accepted)
-            if policy.code_agents_mode == "groups"
-            and machine
-            and accepted
-            and machine not in accepted
-            else None
-        )
+        any_off: bool | None = None
+        if machine and accepted and machine not in accepted:
+            async with self._session_factory() as flag_session:
+                any_off = (
+                    await flag_session.execute(
+                        select(Group.id)
+                        .where(Group.is_active.is_(True), Group.code_agents_allowed.is_(False))
+                        .limit(1)
+                    )
+                ).scalar_one_or_none() is not None
+        mismatch = (machine, accepted, any_off) if any_off else None
         if mismatch is not None and mismatch != self._warned_machine_mismatch:
             logger.error(
-                "The identity policy restricts coding agents to flagged groups, but "
+                "An active group has code_agents off while "
                 "GATEWAY_OIDC__MACHINE_CLIENT_ID=%r names a client not in "
-                "GATEWAY_OIDC__ACCEPTED_CLIENTS (%s): the restriction can never "
-                "fire, and a chat-only person's machine keeps working. Name the "
-                "machine client the deployment accepts.",
+                "GATEWAY_OIDC__ACCEPTED_CLIENTS (%s): the code_agents "
+                "restriction cannot reach machine tokens, and a chat-only "
+                "person's machine keeps working. Name the machine client the "
+                "deployment accepts.",
                 machine,
                 ", ".join(accepted),
             )

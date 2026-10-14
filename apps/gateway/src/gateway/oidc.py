@@ -51,6 +51,7 @@ from sqlalchemy import Select, and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from gateway.capabilities import Capabilities, default_flags
 from gateway.config import OIDCSettings, Settings
 from gateway.deployment_state import get_or_create_deployment_state, mark_bootstrap_consumed
 from gateway.email_normalize import is_trusted_email, normalize_email
@@ -1250,7 +1251,9 @@ async def provision_user(
                 # gains them: the group was created above, so resolution and
                 # reconciliation land the membership in this same login.
                 group_names = list(dict.fromkeys([*group_names, *unmapped]))
-        groups, missing = await _resolve_group_names(session, group_names, settings)
+        groups, missing = await _resolve_group_names(
+            session, group_names, settings, defaults=default_flags(policy)
+        )
         await _reconcile_memberships(session, user, groups)
         resolved = {group.name for group in groups}
         if claimed_names is None:
@@ -1756,7 +1759,14 @@ async def sign_in(
     from gateway.directory.engine import ensure_bundled_default_group, link_at_login
 
     if record.sync_adapter != "none" and getattr(record, "source", "") != "environment":
-        await link_at_login(session, record, user, claims, settings=settings.oidc)
+        await link_at_login(
+            session,
+            record,
+            user,
+            claims,
+            settings=settings.oidc,
+            defaults=default_flags(policy),
+        )
 
     # ADR 0093 to-do item 1: a bundled-Authelia sign-in with no membership at
     # all — a brand new account, or one provisioned before this existed —
@@ -1764,7 +1774,9 @@ async def sign_in(
     # external IdP's groups are the claim's or the admin's to answer for, as
     # today, so this only ever runs for the bundled provider.
     if record.kind == "authelia":
-        await ensure_bundled_default_group(session, user, settings.oidc.default_group)
+        await ensure_bundled_default_group(
+            session, user, settings.oidc.default_group, defaults=default_flags(policy)
+        )
 
     # OIDC-only deployments have no password door to make the first
     # administrator through; the configured address, verified, is it.
@@ -2036,15 +2048,21 @@ def _claims_diverge(
 
 
 async def _resolve_group_names(
-    session: AsyncSession, names: list[str], settings: OIDCSettings
+    session: AsyncSession,
+    names: list[str],
+    settings: OIDCSettings,
+    *,
+    defaults: Capabilities,
 ) -> tuple[list[Group], list[str]]:
     """The active groups *names* resolve to, and the names no group carries.
 
     Under ``group_import=auto`` a missing name is created here, as it always
-    was; under ``manual`` (the default) it is returned as missing for the
-    caller to record as seen. A group that exists resolves in both modes,
-    which is what lets an upgrade to ``manual`` keep every membership it was
-    already granting.
+    was — carrying *defaults* (ADR 0096, amended), folded by the caller, so
+    an auto-created group is as usable as the deployment's default says and
+    this hot path pays no query for it; under ``manual`` (the default) it is
+    returned as missing for the caller to record as seen. A group that exists
+    resolves in both modes, which is what lets an upgrade to ``manual`` keep
+    every membership it was already granting.
     """
     if not names:
         return [], []
@@ -2056,7 +2074,12 @@ async def _resolve_group_names(
     if settings.group_import == "auto":
         for name in names:
             if name not in by_name:
-                group = Group(name=name, source=GroupSource.OIDC)
+                group = Group(
+                    name=name,
+                    source=GroupSource.OIDC,
+                    code_agents_allowed=defaults.code_agents,
+                    api_keys_allowed=defaults.api_keys,
+                )
                 session.add(group)
                 by_name[name] = group
         await session.flush()

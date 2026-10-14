@@ -26,13 +26,24 @@ import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from llmp_shared import EntitySpan, PlaceholderMap
-from sqlalchemy import ColumnElement, Row, case, delete, func, or_, select, true, update
+from sqlalchemy import (
+    ColumnElement,
+    CursorResult,
+    Row,
+    case,
+    delete,
+    func,
+    or_,
+    select,
+    true,
+    update,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute, selectinload
@@ -50,6 +61,7 @@ from gateway.deps import (
     SecretsDep,
     SessionDep,
     SettingsDep,
+    capability_defaults,
 )
 from gateway.directory.authelia_users import (
     UsersFileError,
@@ -134,7 +146,7 @@ from gateway.oidc_policy import (
     CAPABILITY_MODES,
     GROUP_FALLBACKS,
     JOIN_MODES,
-    OIDCPolicy,
+    LEGACY_CAPABILITY_MODES,
     effective_policy,
     environment_policy,
     pending_policy_row,
@@ -188,6 +200,8 @@ from gateway.schemas import (
     EmailTestRequest,
     EmailTestResponse,
     GroupAdminResponse,
+    GroupCapabilityBulkRequest,
+    GroupCapabilityBulkResponse,
     GroupCreateRequest,
     GroupMemberAddRequest,
     GroupSearchBackendRequest,
@@ -1748,12 +1762,8 @@ async def list_groups(
 
     return page.page(
         [
-            GroupAdminResponse(
-                id=group.id,
-                name=group.name,
-                description=group.description,
-                source=group.source.value,
-                is_active=group.is_active,
+            _group_admin_response(
+                group,
                 member_count=int(counts.get(group.id, 0)),
                 models=sorted(models.get(group.id, [])),
                 search_backend=(
@@ -1768,15 +1778,43 @@ async def list_groups(
     )
 
 
+def _group_admin_response(
+    group: Group,
+    *,
+    member_count: int,
+    models: list[str],
+    search_backend: str | None,
+) -> GroupAdminResponse:
+    """One constructor for every GroupAdminResponse, so the capability flags
+    (ADR 0096) cannot drift between the list and the write answers again —
+    the list once built the response by hand beside the routes that set the
+    flags, and answered them always-false while the console's refetch
+    snapped every toggle back.
+    """
+    return GroupAdminResponse(
+        id=group.id,
+        name=group.name,
+        description=group.description,
+        source=group.source.value,
+        is_active=group.is_active,
+        code_agents_allowed=group.code_agents_allowed,
+        api_keys_allowed=group.api_keys_allowed,
+        member_count=member_count,
+        models=models,
+        search_backend=search_backend,
+    )
+
+
 @router.post("/groups", response_model=GroupAdminResponse, status_code=status.HTTP_201_CREATED)
 async def create_group(
-    payload: GroupCreateRequest, admin: AdminUserDep, session: SessionDep
+    payload: GroupCreateRequest, admin: AdminUserDep, session: SessionDep, request: Request
 ) -> GroupAdminResponse:
     """Create a manual group (ADR 0050).
 
     Manual is not a label of convenience: a manual group is the one kind whose
     membership this screen may edit, because nobody's identity provider will
-    reconcile it away.
+    reconcile it away. The capability flags start at the folded default (ADR
+    0096, amended): a new group is as usable as the deployment's default says.
     """
     name = payload.name.strip()
     if not name:
@@ -1784,23 +1822,17 @@ async def create_group(
     existing = await session.execute(select(Group).where(Group.name == name))
     if existing.scalar_one_or_none() is not None:
         raise BadRequestError(f"A group named {name!r} already exists.", code="group_exists")
+    defaults = capability_defaults(request)
     group = Group(
         name=name,
         description=payload.description or None,
         source=GroupSource.MANUAL,
+        code_agents_allowed=defaults.code_agents,
+        api_keys_allowed=defaults.api_keys,
     )
     session.add(group)
     await session.commit()
-    return GroupAdminResponse(
-        id=group.id,
-        name=group.name,
-        description=group.description,
-        source=group.source.value,
-        is_active=group.is_active,
-        member_count=0,
-        models=[],
-        search_backend=None,
-    )
+    return _group_admin_response(group, member_count=0, models=[], search_backend=None)
 
 
 @router.get("/groups/seen", response_model=SeenGroupPage)
@@ -1957,6 +1989,11 @@ async def _map_seen_group(
                 f"A group named {target_name!r} already exists.", code="group_exists"
             )
         group = Group(name=target_name, source=GroupSource.OIDC)
+        # A mapped-new group starts at the folded default, like a
+        # console-created one (ADR 0096, amended).
+        defaults = capability_defaults(request)
+        group.code_agents_allowed = defaults.code_agents
+        group.api_keys_allowed = defaults.api_keys
         session.add(group)
         await session.flush()
 
@@ -2002,15 +2039,8 @@ async def _map_seen_group(
         )
     ).scalar_one()
     return SeenGroupImportResponse(
-        group=GroupAdminResponse(
-            id=group.id,
-            name=group.name,
-            description=group.description,
-            source=group.source.value,
-            is_active=group.is_active,
-            member_count=member_count,
-            models=[],
-            search_backend=None,
+        group=_group_admin_response(
+            group, member_count=member_count, models=[], search_backend=None
         ),
         members_added=result.members_added,
         applied="now" if result.applied == "now" else "next_login",
@@ -2106,19 +2136,26 @@ async def update_group(
     payload: GroupUpdateRequest,
     admin: AdminUserDep,
     session: SessionDep,
+    request: Request,
+    settings: SettingsDep,
 ) -> GroupAdminResponse:
-    """Flip a group's capability flags (ADR 0096).
+    """Flip a group's capability flags (ADR 0096, amended).
 
     A flag grants a capability and never withholds one, so the two toggles are
     all an administrator can change about a group in place today — the
     console's Groups page has no other edit surface, and this change is not
     the one that adds one. A capability flip takes effect at the next
     decision: the bearer path reads the group's memberships on every request.
+    Switching code_agents *off* is refused while the machine client the
+    deployment accepts cannot match it — a restriction whose machine-link
+    half could never fire. Granting is always fine.
     """
     group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
     if group is None:
         raise NotFoundError(f"No group with id {group_id}.")
     fields = payload.model_dump(exclude_unset=True)
+    if fields.get("code_agents_allowed") is False:
+        _refuse_code_agents_off(settings)
     if "code_agents_allowed" in fields:
         group.code_agents_allowed = payload.code_agents_allowed is True
     if "api_keys_allowed" in fields:
@@ -2139,14 +2176,8 @@ async def update_group(
             )
         ).all()
     ]
-    return GroupAdminResponse(
-        id=group.id,
-        name=group.name,
-        description=group.description,
-        source=group.source.value,
-        is_active=group.is_active,
-        code_agents_allowed=group.code_agents_allowed,
-        api_keys_allowed=group.api_keys_allowed,
+    return _group_admin_response(
+        group,
         member_count=member_count or 0,
         models=models,
         search_backend=(
@@ -2155,6 +2186,69 @@ async def update_group(
             else None
         ),
     )
+
+
+def _refuse_code_agents_off(settings: Settings) -> None:
+    """Refuse a change that would switch code_agents off somewhere while the
+    machine client cannot match it (ADR 0096, amended).
+
+    A machine token is refused before the gate runs, so the restriction's
+    machine-link half could never fire — it fails silently open while the
+    panel half still applies, which is the confusion this refuses. Names the
+    setting to fix. Granting, and anything about api_keys, never trips it.
+    """
+    accepted = settings.oidc.accepted_client_list()
+    machine = settings.oidc.machine_client_id
+    if accepted and machine not in accepted:
+        raise BadRequestError(
+            "Switching code_agents off needs a machine client the deployment "
+            f"accepts: GATEWAY_OIDC__MACHINE_CLIENT_ID={machine!r} names a "
+            "client not in GATEWAY_OIDC__ACCEPTED_CLIENTS "
+            f"({', '.join(accepted)}), so the restriction could never reach "
+            "machine tokens."
+        )
+
+
+@router.post("/groups/capabilities", response_model=GroupCapabilityBulkResponse)
+async def bulk_group_capabilities(
+    payload: GroupCapabilityBulkRequest,
+    admin: AdminUserDep,
+    session: SessionDep,
+    request: Request,
+    settings: SettingsDep,
+) -> GroupCapabilityBulkResponse:
+    """Turn a capability on or off for every group, in one transaction.
+
+    One write per group and one audit row, all inside the request's
+    transaction — never a sequence of commits a crash could halve, with
+    half the groups flipped and no record of which. A flip takes effect at
+    the next decision: the bearer path reads the group's memberships on
+    every request.
+
+    Switching code_agents *off* is refused while the machine client the
+    deployment accepts cannot match it — the same state a per-group turn-off
+    refuses, because the restriction's machine-link half could never fire.
+    Granting is always fine.
+    """
+    flag_column = (
+        Group.code_agents_allowed if payload.capability == "code_agents" else Group.api_keys_allowed
+    )
+    if payload.capability == "code_agents" and payload.value is False:
+        _refuse_code_agents_off(settings)
+    result = await session.execute(update(Group).values({flag_column: payload.value}))
+    updated = cast(CursorResult[Any], result).rowcount or 0
+    await record_event(
+        session,
+        actor_type=IdentityEventActor.USER,
+        actor_user_id=admin.id,
+        actor_label=admin.email or "",
+        action=IdentityEventAction.GROUP_CAPABILITY_BULK,
+        target_label=payload.capability,
+        detail={"capability": payload.capability, "value": payload.value, "count": updated},
+    )
+    await session.commit()
+    await _refresh_policy_resolver(request)
+    return GroupCapabilityBulkResponse(updated=updated)
 
 
 async def _load_group_for_membership(group_id: uuid.UUID, session: SessionDep) -> Group:
@@ -2765,7 +2859,6 @@ async def _user_responses(
     users: Sequence[User],
     *,
     membership_in: uuid.UUID | None = None,
-    policy: OIDCPolicy | None = None,
 ) -> list[UserAdminResponse]:
     """Decorate user rows with the counts and names the console shows.
 
@@ -2850,11 +2943,11 @@ async def _user_responses(
             if user_id is not None:
                 bundled_logins[user_id] = external_id
 
-    # ADR 0096: effective capabilities, from the memberships already loaded
-    # — one pure pass over rows authentication or the listing loaded, no query.
-    capabilities_by_id: dict[uuid.UUID, Capabilities] = {}
-    if policy is not None:
-        capabilities_by_id = {user.id: effective_capabilities(user, policy) for user in users}
+    # ADR 0096 (amended): effective capabilities, from the memberships already loaded
+    # — one pure pass over the rows the listing loaded, no query.
+    capabilities_by_id: dict[uuid.UUID, Capabilities] = {
+        user.id: effective_capabilities(user) for user in users
+    }
 
     return [
         UserAdminResponse(
@@ -2876,10 +2969,14 @@ async def _user_responses(
             # The Users page's "Chat only" badge reads these: null means the
             # listing did not ask (the group-members route), never "chat only".
             code_agents_allowed=(
-                capabilities_by_id[user.id].code_agents if user.id in capabilities_by_id else None
+                capabilities_by_id[user.id].code_agents
+                if membership_in is None and user.id in capabilities_by_id
+                else None
             ),
             api_keys_allowed=(
-                capabilities_by_id[user.id].api_keys if user.id in capabilities_by_id else None
+                capabilities_by_id[user.id].api_keys
+                if membership_in is None and user.id in capabilities_by_id
+                else None
             ),
             default_billing_group=(
                 group_names.get(user.default_billing_group_id)
@@ -2913,6 +3010,7 @@ async def create_user(
     payload: UserCreateRequest,
     admin: AdminUserDep,
     session: SessionDep,
+    request: Request,
     secrets: SecretsDep,
     settings: SettingsDep,
 ) -> BundledUserCreatedResponse | InvitedUserResponse:
@@ -2928,8 +3026,10 @@ async def create_user(
     """
     bundled = await active_bundled_provider(session)
     if bundled is not None and _account_backend(bundled.kind) == "authelia":
-        return await _create_bundled_user(payload, bundled, admin, session, secrets, settings)
-    return await _invite_user(payload, admin, session, secrets, settings)
+        return await _create_bundled_user(
+            payload, bundled, admin, session, request, secrets, settings
+        )
+    return await _invite_user(payload, admin, session, request, secrets, settings)
 
 
 def _account_backend(kind: str) -> str:
@@ -2949,6 +3049,7 @@ async def _create_bundled_user(
     provider: IdentityProvider,
     admin: AdminUserDep,
     session: SessionDep,
+    request: Request,
     secrets: SecretsDep,
     settings: SettingsDep,
 ) -> BundledUserCreatedResponse:
@@ -3003,12 +3104,19 @@ async def _create_bundled_user(
         # wrong answer, but a crash on every create.
         await session.refresh(user, attribute_names=["memberships"])
 
-        await add_manual_memberships(session, user, payload.groups)
+        await add_manual_memberships(
+            session, user, payload.groups, defaults=capability_defaults(request)
+        )
         # An operator who picked no groups still gets a person who can bill
         # something (ADR 0093 to-do item 1) — the same `users` group a
         # bundled sign-in's own token used to carry before the redesign made
         # groups console-authoritative.
-        await ensure_bundled_default_group(session, user, settings.oidc.default_group)
+        await ensure_bundled_default_group(
+            session,
+            user,
+            settings.oidc.default_group,
+            defaults=capability_defaults(request),
+        )
 
         session.add(
             DirectoryEntry(
@@ -3066,6 +3174,7 @@ async def _invite_user(
     payload: UserCreateRequest,
     admin: AdminUserDep,
     session: SessionDep,
+    request: Request,
     secrets: SecretsDep,
     settings: SettingsDep,
 ) -> InvitedUserResponse:
@@ -3132,7 +3241,9 @@ async def _invite_user(
     # has never loaded `memberships`.
     await session.refresh(user, attribute_names=["memberships"])
 
-    await add_manual_memberships(session, user, payload.groups)
+    await add_manual_memberships(
+        session, user, payload.groups, defaults=capability_defaults(request)
+    )
     await grant_default_group(session, user, settings.oidc.default_group)
     await record_event(
         session,
@@ -3267,6 +3378,7 @@ async def create_sign_in(
     payload: SignInCreateRequest,
     admin: AdminUserDep,
     session: SessionDep,
+    request: Request,
     secrets: SecretsDep,
     settings: SettingsDep,
 ) -> BundledUserCreatedResponse:
@@ -3329,7 +3441,12 @@ async def create_sign_in(
         # the bundled Authelia — or may be a break-glass pending user with
         # none at all; either way, this is one of the to-do's named call
         # sites, so the same gap-filler runs here too.
-        await ensure_bundled_default_group(session, user, settings.oidc.default_group)
+        await ensure_bundled_default_group(
+            session,
+            user,
+            settings.oidc.default_group,
+            defaults=capability_defaults(request),
+        )
         await record_event(
             session,
             actor_type=IdentityEventActor.USER,
@@ -3410,7 +3527,6 @@ async def list_users(
     admin: AdminUserDep,
     session: SessionDep,
     page: PageDep,
-    request: Request,
     q: str = "",
     is_active: bool | None = None,
     status: str | None = None,
@@ -3460,9 +3576,7 @@ async def list_users(
 
     total = await count_of(session, stmt)
     users = (await session.execute(page.apply(stmt))).scalars().all()
-    resolver = getattr(request.app.state, "oidc_policy", None)
-    policy = resolver.policy if resolver is not None else None
-    return page.page(await _user_responses(session, users, policy=policy), total)
+    return page.page(await _user_responses(session, users), total)
 
 
 @router.get("/users/status-counts", response_model=UserStatusCounts)
@@ -4212,9 +4326,13 @@ async def preview_oidc_policy(
     #: set as it is, and a comma inside a group name cannot be mistaken for a
     #: separator.
     required_groups: list[str] = Query(default=[]),
-    # ADR 0096: the two capability modes, each optionally previewed. When
-    # either is given the join-mode check below is skipped, because a
-    # capability preview does not need a join answer.
+    # ADR 0096 (amended): the bulk actions' preview. `bulk_capability` names
+    # the flag and `bulk_value` its new state; the counts answer "how many
+    # active non-admin people gain / lose it", which the console confirms
+    # before applying. Either may be asked alone, and together they are a
+    # preview of the same flag both ways.
+    bulk_capability: Literal["code_agents", "api_keys"] | None = None,
+    bulk_value: bool | None = None,
     code_agents_mode: str | None = None,
     api_keys_mode: str | None = None,
 ) -> OidcPolicyPreviewResponse:
@@ -4226,18 +4344,22 @@ async def preview_oidc_policy(
     confirms before saving. Only ``group`` mode is previewable; anything
     else is a 400.
 
-    A capability preview (`code_agents_mode` / `api_keys_mode`) counts the
-    active, non-admin people who would stop holding that capability if the
-    deployment setting moved to ``groups`` and the flags were not already
-    theirs — the console's "how many would lose it" line.
+    A bulk preview (`bulk_capability` + `bulk_value`) counts the active,
+    non-admin people who would gain or lose that capability — "how many"
+    is the confirm dialog's whole content. A person gains when they hold
+    no active flagged group today and would hold one after; loses when the
+    reverse. Admins are exempt either way, so they never count.
     """
+    want_bulk = bulk_capability is not None or bulk_value is not None
     want_capabilities = code_agents_mode is not None or api_keys_mode is not None
-    if not want_capabilities:
+    if not want_bulk and not want_capabilities:
         if join_mode != "group":
             raise BadRequestError("Only join_mode 'group' has a preview.")
         names = [name.strip() for name in required_groups if name.strip()]
         if not names:
             raise BadRequestError("Name at least one required group to preview.")
+    elif want_bulk and (bulk_capability is None or bulk_value is None):
+        raise BadRequestError("bulk_capability and bulk_value go together.")
     active_users = await session.scalar(
         select(func.count())
         .select_from(User)
@@ -4249,7 +4371,7 @@ async def preview_oidc_policy(
         .where(User.is_active.is_(True), User.is_admin.is_(True))
     )
     would_be_refused: int = 0
-    if not want_capabilities:
+    if not want_bulk and not want_capabilities:
         held = (
             select(Membership.user_id)
             .join(Group, Group.id == Membership.group_id)
@@ -4270,25 +4392,54 @@ async def preview_oidc_policy(
             or 0
         )
 
-    would_lose_code_agents = None
-    if code_agents_mode is not None:
-        if code_agents_mode not in CAPABILITY_MODES:
-            raise BadRequestError("code_agents_mode must be 'everyone' or 'groups'.")
-        if code_agents_mode == "groups":
-            would_lose_code_agents = await _would_lose(session, Group.code_agents_allowed.is_(True))
-    would_lose_api_keys = None
-    if api_keys_mode is not None:
-        if api_keys_mode not in CAPABILITY_MODES:
-            raise BadRequestError("api_keys_mode must be 'everyone' or 'groups'.")
-        if api_keys_mode == "groups":
-            would_lose_api_keys = await _would_lose(session, Group.api_keys_allowed.is_(True))
+    would_gain: int | None = None
+    would_lose: int | None = None
+    if want_bulk:
+        assert bulk_capability is not None and bulk_value is not None
+        flag = (
+            Group.code_agents_allowed
+            if bulk_capability == "code_agents"
+            else Group.api_keys_allowed
+        )
+        if bulk_value:
+            # Gaining: active non-admin people holding no active flagged
+            # group today — exactly the people the bulk turn-on grants it to.
+            would_gain = await _would_lose(session, flag.is_(True))
+        else:
+            # Losing: active non-admin people whose every active group is
+            # flagged — the turn-off takes their last one away. Someone with
+            # one unflagged group left keeps the capability.
+            flagged_only = (
+                select(Membership.user_id)
+                .join(Group, Group.id == Membership.group_id)
+                .where(Group.is_active.is_(True), flag.is_(False))
+                .distinct()
+            )
+            holds_flagged = (
+                select(Membership.user_id)
+                .join(Group, Group.id == Membership.group_id)
+                .where(Group.is_active.is_(True), flag.is_(True))
+                .distinct()
+            )
+            would_lose = await session.scalar(
+                select(func.count())
+                .select_from(User)
+                .where(
+                    User.is_active.is_(True),
+                    User.is_admin.is_(False),
+                    User.issuer != PENDING_USER_ISSUER,
+                    User.id.in_(holds_flagged),
+                    User.id.not_in(flagged_only),
+                )
+            )
+            would_lose = would_lose or 0
 
     return OidcPolicyPreviewResponse(
         active_users=active_users or 0,
         would_be_refused=would_be_refused or 0,
         admins_exempt=admins_exempt or 0,
-        would_lose_code_agents=would_lose_code_agents,
-        would_lose_api_keys=would_lose_api_keys,
+        would_gain=would_gain,
+        would_lose=would_lose,
     )
 
 
@@ -4555,8 +4706,11 @@ async def set_oidc_policy(
         ("api_keys_mode", "api_keys_mode"),
     ):
         value = fields.get(knob)
-        if value is not None and value not in CAPABILITY_MODES:
-            raise BadRequestError(f"{label} must be 'everyone' or 'groups'.")
+        # The 0.7.x spellings still save — meaning on/off — for one release
+        # (ADR 0096, amended); the fold normalises them on read, so a stored
+        # legacy value keeps its behaviour until the console re-saves it.
+        if value is not None and value not in (*CAPABILITY_MODES, *LEGACY_CAPABILITY_MODES):
+            raise BadRequestError(f"{label} must be 'on' or 'off'.")
 
     groups_claim = fields.get("groups_claim")
     if groups_claim is not None and not str(groups_claim).strip():
@@ -4625,21 +4779,6 @@ async def set_oidc_policy(
             "groups refuses everyone who is not an administrator. Name at "
             "least one local group first."
         )
-    if folded.code_agents_mode == "groups":
-        accepted = settings.oidc.accepted_client_list()
-        machine = settings.oidc.machine_client_id
-        if accepted and machine not in accepted:
-            # ADR 0096: a machine token is refused before the gate runs, so a
-            # 'groups' decision that cannot match any machine token fails
-            # silently open. Refused, naming the setting to fix — set
-            # GATEWAY_OIDC__MACHINE_CLIENT_ID to the client the deployment
-            # accepts, then save again.
-            raise BadRequestError(
-                "code_agents_mode 'groups' needs a machine client the deployment "
-                f"accepts: GATEWAY_OIDC__MACHINE_CLIENT_ID={machine!r} names a "
-                "client not in GATEWAY_OIDC__ACCEPTED_CLIENTS "
-                f"({', '.join(accepted)}), so the restriction could never fire."
-            )
     groups_sent = "required_groups" in fields and fields["required_groups"] is not None
     if (groups_sent or group_fallback is not None) and folded.join_mode != "group":
         # Same "knob that does nothing" rule as unknown_user_policy above.

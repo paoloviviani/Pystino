@@ -1,4 +1,9 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { ApiError, request } from "./api";
 import { MAX_LIMIT, type Page, type PageQuery, pageParams } from "./paging";
 import type {
@@ -40,6 +45,7 @@ import type {
   RedactionStatus,
   EmailSettings,
   EmailTestResult,
+  GroupCapabilityBulkInput,
   GroupCreateInput,
   GroupUpdateInput,
   SeenGroup,
@@ -72,18 +78,22 @@ export const adminKeys = {
   discovery: ["admin", "models", "discover"] as const,
   tags: ["admin", "models", "tags"] as const,
   groups: ["admin", "groups"] as const,
-  groupMembers: (groupId: string) => ["admin", "groups", groupId, "members"] as const,
+  groupMembers: (groupId: string) =>
+    ["admin", "groups", groupId, "members"] as const,
   seenGroups: ["admin", "groups", "seen"] as const,
   limits: ["admin", "limits"] as const,
   quotaHealth: ["admin", "quota", "health"] as const,
   resets: (ruleId: string) => ["admin", "limits", ruleId, "resets"] as const,
   users: ["admin", "users"] as const,
   pendingErasures: ["admin", "erasures", "pending"] as const,
-  identityEvents: (userId: string) => ["admin", "identity-events", userId] as const,
+  identityEvents: (userId: string) =>
+    ["admin", "identity-events", userId] as const,
   email: ["admin", "email"] as const,
   identityProviders: ["admin", "identity-providers"] as const,
-  syncRuns: (id: string) => ["admin", "identity-providers", id, "runs"] as const,
-  directory: (id: string) => ["admin", "identity-providers", id, "directory"] as const,
+  syncRuns: (id: string) =>
+    ["admin", "identity-providers", id, "runs"] as const,
+  directory: (id: string) =>
+    ["admin", "identity-providers", id, "directory"] as const,
   oidcPolicy: ["admin", "oidc-policy"] as const,
   redaction: ["admin", "redaction"] as const,
   redactionRules: ["admin", "redaction", "rules"] as const,
@@ -126,7 +136,8 @@ export function useProviders(query: PageQuery = { limit: MAX_LIMIT }) {
   const search = pageParams(query);
   return useQuery({
     queryKey: pagedKey(adminKeys.providers, search),
-    queryFn: () => request<Page<AdminProvider>>(`/api/admin/providers?${search}`),
+    queryFn: () =>
+      request<Page<AdminProvider>>(`/api/admin/providers?${search}`),
     ...pagedOptions,
   });
 }
@@ -159,8 +170,12 @@ export function useCreateProvider() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (input: ProviderInput) =>
-      request<AdminProvider>("/api/admin/providers", { method: "POST", body: input }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.providers }),
+      request<AdminProvider>("/api/admin/providers", {
+        method: "POST",
+        body: input,
+      }),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: adminKeys.providers }),
   });
 }
 
@@ -211,7 +226,11 @@ export function useSetRedactionEngine() {
       reason: string;
       presidio_pattern_matching?: boolean | null;
       presidio_ner?: boolean | null;
-    }) => request<RedactionStatus>("/api/admin/redaction/engine", { method: "PUT", body }),
+    }) =>
+      request<RedactionStatus>("/api/admin/redaction/engine", {
+        method: "PUT",
+        body,
+      }),
     onSuccess: (status) => {
       client.setQueryData(adminKeys.redaction, status);
     },
@@ -245,7 +264,8 @@ export function useRedactionRules(
   });
   return useQuery({
     queryKey: pagedKey(adminKeys.redactionRules, search),
-    queryFn: () => request<Page<RedactionRule>>(`/api/admin/redaction/rules?${search}`),
+    queryFn: () =>
+      request<Page<RedactionRule>>(`/api/admin/redaction/rules?${search}`),
     ...pagedOptions,
   });
 }
@@ -264,8 +284,12 @@ export function useCreateRedactionRule() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (input: RedactionRuleInput) =>
-      request<RedactionRule>("/api/admin/redaction/rules", { method: "POST", body: input }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
+      request<RedactionRule>("/api/admin/redaction/rules", {
+        method: "POST",
+        body: input,
+      }),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
   });
 }
 
@@ -292,8 +316,13 @@ export function useUpdateRedactionRule() {
       policy?: RedactionPolicy;
       is_active?: boolean;
       reason?: string;
-    }) => request<RedactionRule>(`/api/admin/redaction/rules/${id}`, { method: "PATCH", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
+    }) =>
+      request<RedactionRule>(`/api/admin/redaction/rules/${id}`, {
+        method: "PATCH",
+        body,
+      }),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
   });
 }
 
@@ -302,7 +331,8 @@ export function useDeleteRedactionRule() {
   return useMutation({
     mutationFn: (id: string) =>
       request<void>(`/api/admin/redaction/rules/${id}`, { method: "DELETE" }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: adminKeys.redactionRules }),
   });
 }
 
@@ -315,8 +345,15 @@ export function useDeleteRedactionRule() {
  */
 export function usePreviewRedaction() {
   return useMutation({
-    mutationFn: (body: { text: string; scope?: RedactionScope; scope_id?: string }) =>
-      request<RedactionPreview>("/api/admin/redaction/preview", { method: "POST", body }),
+    mutationFn: (body: {
+      text: string;
+      scope?: RedactionScope;
+      scope_id?: string;
+    }) =>
+      request<RedactionPreview>("/api/admin/redaction/preview", {
+        method: "POST",
+        body,
+      }),
   });
 }
 
@@ -324,7 +361,10 @@ export function useUpdateProvider() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }: ProviderInput & { id: string }) =>
-      request<AdminProvider>(`/api/admin/providers/${id}`, { method: "PATCH", body }),
+      request<AdminProvider>(`/api/admin/providers/${id}`, {
+        method: "PATCH",
+        body,
+      }),
     onSuccess: () => {
       client.invalidateQueries({ queryKey: adminKeys.providers });
       // A deactivated provider takes its models out of service, and the
@@ -337,8 +377,10 @@ export function useUpdateProvider() {
 export function useDeleteProvider() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => request<void>(`/api/admin/providers/${id}`, { method: "DELETE" }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.providers }),
+    mutationFn: (id: string) =>
+      request<void>(`/api/admin/providers/${id}`, { method: "DELETE" }),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: adminKeys.providers }),
   });
 }
 
@@ -358,7 +400,9 @@ export function useDeleteSearchBackend() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      request<SearchBackendDeleteResult>(`/api/admin/providers/${id}`, { method: "DELETE" }),
+      request<SearchBackendDeleteResult>(`/api/admin/providers/${id}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => {
       client.invalidateQueries({ queryKey: adminKeys.providers });
       client.invalidateQueries({ queryKey: adminKeys.models });
@@ -377,7 +421,9 @@ export function useDeleteSearchBackend() {
 export function useTestProvider() {
   return useMutation({
     mutationFn: (id: string) =>
-      request<ProviderTestResult>(`/api/admin/providers/${id}/test`, { method: "POST" }),
+      request<ProviderTestResult>(`/api/admin/providers/${id}/test`, {
+        method: "POST",
+      }),
   });
 }
 
@@ -408,11 +454,15 @@ export function useModel(modelId: string | null) {
   });
 }
 
-export function usePrices(modelId: string | null, query: PageQuery = { limit: MAX_LIMIT }) {
+export function usePrices(
+  modelId: string | null,
+  query: PageQuery = { limit: MAX_LIMIT },
+) {
   const search = pageParams(query);
   return useQuery({
     queryKey: pagedKey(adminKeys.prices(modelId ?? ""), search),
-    queryFn: () => request<Page<Price>>(`/api/admin/models/${modelId}/prices?${search}`),
+    queryFn: () =>
+      request<Page<Price>>(`/api/admin/models/${modelId}/prices?${search}`),
     enabled: modelId !== null,
     ...pagedOptions,
   });
@@ -549,7 +599,11 @@ export function useImportModels() {
           (tag ? `&tag=${encodeURIComponent(tag)}` : ""),
         {
           method: "POST",
-          body: { models: upstreamModels.map((upstream_model) => ({ upstream_model })) },
+          body: {
+            models: upstreamModels.map((upstream_model) => ({
+              upstream_model,
+            })),
+          },
         },
       ),
     onSuccess: () => {
@@ -571,7 +625,8 @@ export function useImportModels() {
 export function useDeleteModel() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => request<void>(`/api/admin/models/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      request<void>(`/api/admin/models/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       // The provider listing shows model_count, which just changed.
       client.invalidateQueries({ queryKey: adminKeys.models });
@@ -585,7 +640,15 @@ export function useDeleteModel() {
 export function useModelAccess() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ groupId, modelId, grant }: { groupId: string; modelId: string; grant: boolean }) =>
+    mutationFn: ({
+      groupId,
+      modelId,
+      grant,
+    }: {
+      groupId: string;
+      modelId: string;
+      grant: boolean;
+    }) =>
       request<void>(`/api/admin/groups/${groupId}/models/${modelId}`, {
         method: grant ? "PUT" : "DELETE",
       }),
@@ -606,7 +669,13 @@ export function useModelAccess() {
 export function useSetGroupSearchBackend() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ groupId, modelId }: { groupId: string; modelId: string | null }) =>
+    mutationFn: ({
+      groupId,
+      modelId,
+    }: {
+      groupId: string;
+      modelId: string | null;
+    }) =>
       request<void>(`/api/admin/groups/${groupId}/search-backend`, {
         method: "PUT",
         body: { model_id: modelId },
@@ -621,7 +690,15 @@ export function useSetGroupSearchBackend() {
 export function useUserModelAccess() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ userId, modelId, grant }: { userId: string; modelId: string; grant: boolean }) =>
+    mutationFn: ({
+      userId,
+      modelId,
+      grant,
+    }: {
+      userId: string;
+      modelId: string;
+      grant: boolean;
+    }) =>
       request<void>(`/api/admin/users/${userId}/models/${modelId}`, {
         method: grant ? "PUT" : "DELETE",
       }),
@@ -657,9 +734,14 @@ export function useCreatePrice() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ modelId, ...body }: CreatePriceInput) =>
-      request<Price>(`/api/admin/models/${modelId}/prices`, { method: "POST", body }),
+      request<Price>(`/api/admin/models/${modelId}/prices`, {
+        method: "POST",
+        body,
+      }),
     onSuccess: (_price, variables) => {
-      client.invalidateQueries({ queryKey: adminKeys.prices(variables.modelId) });
+      client.invalidateQueries({
+        queryKey: adminKeys.prices(variables.modelId),
+      });
       // The catalogue shows each model's current price, which may have changed.
       client.invalidateQueries({ queryKey: adminKeys.models });
     },
@@ -684,7 +766,8 @@ export function useResets(ruleId: string | null, query: PageQuery = {}) {
   const search = pageParams(query);
   return useQuery({
     queryKey: pagedKey(adminKeys.resets(ruleId ?? ""), search),
-    queryFn: () => request<Page<QuotaReset>>(`/api/admin/limits/${ruleId}/resets?${search}`),
+    queryFn: () =>
+      request<Page<QuotaReset>>(`/api/admin/limits/${ruleId}/resets?${search}`),
     enabled: ruleId !== null,
     ...pagedOptions,
   });
@@ -712,7 +795,14 @@ export function useCreateLimit() {
 export function useUpdateLimit() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; limit_value?: string; is_active?: boolean }) =>
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string;
+      limit_value?: string;
+      is_active?: boolean;
+    }) =>
       request<LimitRule>(`/api/admin/limits/${id}`, { method: "PATCH", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.limits }),
   });
@@ -721,7 +811,8 @@ export function useUpdateLimit() {
 export function useDeleteLimit() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => request<void>(`/api/admin/limits/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      request<void>(`/api/admin/limits/${id}`, { method: "DELETE" }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.limits }),
   });
 }
@@ -737,7 +828,10 @@ export function useQuotaHealth() {
 export function useReconcileQuota() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: () => request<QuotaReconcileResult>("/api/admin/quota/reconcile", { method: "POST" }),
+    mutationFn: () =>
+      request<QuotaReconcileResult>("/api/admin/quota/reconcile", {
+        method: "POST",
+      }),
     onSuccess: () => {
       client.invalidateQueries({ queryKey: adminKeys.quotaHealth });
       client.invalidateQueries({ queryKey: adminKeys.limits });
@@ -749,7 +843,10 @@ export function useResetLimit() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
-      request<QuotaReset>(`/api/admin/limits/${id}/reset`, { method: "POST", body: { reason } }),
+      request<QuotaReset>(`/api/admin/limits/${id}/reset`, {
+        method: "POST",
+        body: { reason },
+      }),
     onSuccess: (_reset, variables) => {
       client.invalidateQueries({ queryKey: adminKeys.limits });
       client.invalidateQueries({ queryKey: adminKeys.resets(variables.id) });
@@ -769,10 +866,16 @@ export function useResetLimit() {
  * searches for a person passes `false` until something is typed, rather than
  * fetching the first fifty people nobody asked for.
  */
-export function useUsers(query: PageQuery = { limit: MAX_LIMIT }, enabled = true, status?: UserStatus) {
+export function useUsers(
+  query: PageQuery = { limit: MAX_LIMIT },
+  enabled = true,
+  status?: UserStatus,
+) {
   const search = pageParams(query, status ? { status } : {});
   return useQuery({
-    queryKey: status ? [...pagedKey(adminKeys.users, search), status] : pagedKey(adminKeys.users, search),
+    queryKey: status
+      ? [...pagedKey(adminKeys.users, search), status]
+      : pagedKey(adminKeys.users, search),
     queryFn: () => request<Page<AdminUser>>(`/api/admin/users?${search}`),
     enabled,
     ...pagedOptions,
@@ -808,7 +911,13 @@ export function useSeenGroups(query: PageQuery, dismissed = false) {
 export function useSeenGroupAction() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, action }: { id: string; action: "dismiss" | "restore" }) =>
+    mutationFn: ({
+      id,
+      action,
+    }: {
+      id: string;
+      action: "dismiss" | "restore";
+    }) =>
       request<void>(`/api/admin/groups/seen/${id}/${action}`, {
         method: "POST",
       }),
@@ -868,7 +977,8 @@ export function useCreateGroup() {
 export function useDeleteGroup() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => request<void>(`/api/admin/groups/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      request<void>(`/api/admin/groups/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       client.invalidateQueries({ queryKey: adminKeys.groups });
       client.invalidateQueries({ queryKey: adminKeys.users });
@@ -891,12 +1001,17 @@ export function useUpdateGroup() {
   });
 }
 
-export function useGroupMembers(groupId: string | null, query: PageQuery = { limit: MAX_LIMIT }) {
+export function useGroupMembers(
+  groupId: string | null,
+  query: PageQuery = { limit: MAX_LIMIT },
+) {
   const search = pageParams(query);
   return useQuery({
     queryKey: pagedKey(adminKeys.groupMembers(groupId ?? "none"), search),
     queryFn: () =>
-      request<Page<AdminUser>>(`/api/admin/groups/${groupId}/members?${search}`),
+      request<Page<AdminUser>>(
+        `/api/admin/groups/${groupId}/members?${search}`,
+      ),
     enabled: groupId !== null,
     ...pagedOptions,
   });
@@ -911,7 +1026,9 @@ export function useAddGroupMember(groupId: string | null) {
         body: { user_id: userId },
       }),
     onSuccess: () => {
-      client.invalidateQueries({ queryKey: adminKeys.groupMembers(groupId ?? "none") });
+      client.invalidateQueries({
+        queryKey: adminKeys.groupMembers(groupId ?? "none"),
+      });
       client.invalidateQueries({ queryKey: adminKeys.groups });
       client.invalidateQueries({ queryKey: adminKeys.users });
     },
@@ -922,9 +1039,13 @@ export function useRemoveGroupMember(groupId: string | null) {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (userId: string) =>
-      request<void>(`/api/admin/groups/${groupId}/members/${userId}`, { method: "DELETE" }),
+      request<void>(`/api/admin/groups/${groupId}/members/${userId}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => {
-      client.invalidateQueries({ queryKey: adminKeys.groupMembers(groupId ?? "none") });
+      client.invalidateQueries({
+        queryKey: adminKeys.groupMembers(groupId ?? "none"),
+      });
       client.invalidateQueries({ queryKey: adminKeys.groups });
       client.invalidateQueries({ queryKey: adminKeys.users });
     },
@@ -952,7 +1073,8 @@ export function useUpdateUser() {
       email?: string | null;
       display_name?: string | null;
       username?: string | null;
-    }) => request<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body }),
+    }) =>
+      request<AdminUser>(`/api/admin/users/${id}`, { method: "PATCH", body }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
   });
 }
@@ -984,7 +1106,9 @@ export function useInviteUser() {
 export function useInviteText() {
   return useMutation({
     mutationFn: (userId: string) =>
-      request<InviteText>(`/api/admin/users/${userId}/invite-text`, { method: "POST" }),
+      request<InviteText>(`/api/admin/users/${userId}/invite-text`, {
+        method: "POST",
+      }),
   });
 }
 
@@ -1008,9 +1132,12 @@ export function useCreateBundledSignIn() {
 export function useResetBundledPassword() {
   return useMutation({
     mutationFn: (userId: string) =>
-      request<{ password: string }>(`/api/admin/users/${userId}/reset-password`, {
-        method: "POST",
-      }),
+      request<{ password: string }>(
+        `/api/admin/users/${userId}/reset-password`,
+        {
+          method: "POST",
+        },
+      ),
   });
 }
 
@@ -1054,8 +1181,11 @@ export function useRemoveIdentityProvider() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      request<void>(`/api/admin/identity-providers/${id}`, { method: "DELETE" }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
+      request<void>(`/api/admin/identity-providers/${id}`, {
+        method: "DELETE",
+      }),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
   });
 }
 
@@ -1074,7 +1204,13 @@ export function useIdentityProviders() {
 export function useDeleteUser() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, confirmSharedLoss }: { id: string; confirmSharedLoss: boolean }) =>
+    mutationFn: ({
+      id,
+      confirmSharedLoss,
+    }: {
+      id: string;
+      confirmSharedLoss: boolean;
+    }) =>
       request<DeleteUserResult>(`/api/admin/users/${id}`, {
         method: "DELETE",
         body: { confirm_shared_loss: confirmSharedLoss },
@@ -1091,7 +1227,8 @@ export function useDeleteUser() {
 export function useDeletePreview(userId: string | undefined) {
   return useQuery({
     queryKey: [...adminKeys.users, "delete-preview", userId],
-    queryFn: () => request<DeletePreview>(`/api/admin/users/${userId}/delete-preview`),
+    queryFn: () =>
+      request<DeletePreview>(`/api/admin/users/${userId}/delete-preview`),
     enabled: Boolean(userId),
   });
 }
@@ -1111,12 +1248,15 @@ export function usePendingErasures() {
 /** `GET /admin/users/{source}/merge-preview?into=` (ADR 0093 §7.1). Only
  * fetched once both accounts are chosen -- there is nothing to preview
  * before then, and the endpoint itself would 404/400 on a half-made pair. */
-export function useMergePreview(sourceId: string | undefined, targetId: string | undefined) {
+export function useMergePreview(
+  sourceId: string | undefined,
+  targetId: string | undefined,
+) {
   return useQuery({
     queryKey: [...adminKeys.users, "merge-preview", sourceId, targetId],
     queryFn: () =>
       request<MergePreview>(
-        `/api/admin/users/${sourceId}/merge-preview?into=${encodeURIComponent(targetId ?? "")}`
+        `/api/admin/users/${sourceId}/merge-preview?into=${encodeURIComponent(targetId ?? "")}`,
       ),
     enabled: Boolean(sourceId && targetId),
   });
@@ -1126,7 +1266,10 @@ export function useMergeUser() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: ({ sourceId, ...body }: MergeInput & { sourceId: string }) =>
-      request<MergeResult>(`/api/admin/users/${sourceId}/merge`, { method: "POST", body }),
+      request<MergeResult>(`/api/admin/users/${sourceId}/merge`, {
+        method: "POST",
+        body,
+      }),
     onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.users }),
   });
 }
@@ -1151,7 +1294,8 @@ export function useUpdateOidcPolicy() {
   return useMutation({
     mutationFn: (body: OidcPolicyInput) =>
       request<OidcPolicy>("/api/admin/oidc/policy", { method: "PUT", body }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.oidcPolicy }),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: adminKeys.oidcPolicy }),
   });
 }
 
@@ -1162,23 +1306,44 @@ export function useUpdateOidcPolicy() {
 export interface PolicyPreviewQuery {
   join_mode?: string;
   required_groups?: string[];
-  /** Preview moving this capability to `groups`; omit to skip it. */
-  code_agents_mode?: "everyone" | "groups";
-  api_keys_mode?: "everyone" | "groups";
+  /** ADR 0096 (amended): preview a bulk flip; both fields together. */
+  bulk_capability?: "code_agents" | "api_keys";
+  bulk_value?: boolean;
 }
 
 export function usePolicyPreview() {
   return useMutation({
     mutationFn: (query: PolicyPreviewQuery) => {
       const params = new URLSearchParams();
-      if (query.join_mode !== undefined) params.set("join_mode", query.join_mode);
+      if (query.join_mode !== undefined)
+        params.set("join_mode", query.join_mode);
       for (const group of query.required_groups ?? [])
         params.append("required_groups", group);
-      if (query.code_agents_mode !== undefined)
-        params.set("code_agents_mode", query.code_agents_mode);
-      if (query.api_keys_mode !== undefined)
-        params.set("api_keys_mode", query.api_keys_mode);
-      return request<OidcPolicyPreview>(`/api/admin/oidc/policy/preview?${params.toString()}`);
+      if (query.bulk_capability !== undefined)
+        params.set("bulk_capability", query.bulk_capability);
+      if (query.bulk_value !== undefined)
+        params.set("bulk_value", String(query.bulk_value));
+      return request<OidcPolicyPreview>(
+        `/api/admin/oidc/policy/preview?${params.toString()}`,
+      );
+    },
+  });
+}
+
+/** Turn a capability on or off for every group, in one transaction (ADR 0096,
+ * amended). Applied from Settings, after the preview's confirm. */
+export function useBulkGroupCapabilities() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: GroupCapabilityBulkInput) =>
+      request<{ updated: number }>("/api/admin/groups/capabilities", {
+        method: "POST",
+        body,
+      }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: adminKeys.groups });
+      client.invalidateQueries({ queryKey: adminKeys.users });
+      client.invalidateQueries({ queryKey: adminKeys.oidcPolicy });
     },
   });
 }
@@ -1212,14 +1377,15 @@ export function useAdminReport(query: ReportQuery) {
   });
 }
 
-
-
 // --- directory sync, SCIM and the bundled Authelia's users (ADR 0088) -------
 
 export function useSyncRuns(providerId: string, enabled = true) {
   return useQuery({
     queryKey: adminKeys.syncRuns(providerId),
-    queryFn: () => request<SyncRun[]>(`/api/admin/identity-providers/${providerId}/sync/runs`),
+    queryFn: () =>
+      request<SyncRun[]>(
+        `/api/admin/identity-providers/${providerId}/sync/runs`,
+      ),
     enabled,
     retry: retryUnlessRejected,
   });
@@ -1228,7 +1394,10 @@ export function useSyncRuns(providerId: string, enabled = true) {
 export function useDirectory(providerId: string, enabled = true) {
   return useQuery({
     queryKey: adminKeys.directory(providerId),
-    queryFn: () => request<DirectoryPerson[]>(`/api/admin/identity-providers/${providerId}/directory`),
+    queryFn: () =>
+      request<DirectoryPerson[]>(
+        `/api/admin/identity-providers/${providerId}/directory`,
+      ),
     enabled,
     retry: retryUnlessRejected,
   });
@@ -1251,32 +1420,53 @@ export function useSetSyncConfig() {
       sync_interval_minutes?: number;
       config?: Record<string, string>;
     }) =>
-      request<{ has_config: boolean; sync_adapter: SyncAdapter; sync_interval_minutes: number }>(
-        `/api/admin/identity-providers/${id}/sync-config`,
-        { method: "PUT", body },
-      ),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
+      request<{
+        has_config: boolean;
+        sync_adapter: SyncAdapter;
+        sync_interval_minutes: number;
+      }>(`/api/admin/identity-providers/${id}/sync-config`, {
+        method: "PUT",
+        body,
+      }),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
   });
 }
 
 export function useTestSync() {
   return useMutation({
     mutationFn: (id: string) =>
-      request<{ total: number; sample: { username: string | null; email: string | null; groups: string[]; active: boolean }[] }>(
-        `/api/admin/identity-providers/${id}/sync/test`,
-        { method: "POST" },
-      ),
+      request<{
+        total: number;
+        sample: {
+          username: string | null;
+          email: string | null;
+          groups: string[];
+          active: boolean;
+        }[];
+      }>(`/api/admin/identity-providers/${id}/sync/test`, { method: "POST" }),
   });
 }
 
 export function useRunSync() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, dryRun, force }: { id: string; dryRun: boolean; force?: boolean }) =>
-      request<{ run: SyncRun; confirmed: boolean }>(`/api/admin/identity-providers/${id}/sync`, {
-        method: "POST",
-        body: { dry_run: dryRun, force: force ?? false },
-      }),
+    mutationFn: ({
+      id,
+      dryRun,
+      force,
+    }: {
+      id: string;
+      dryRun: boolean;
+      force?: boolean;
+    }) =>
+      request<{ run: SyncRun; confirmed: boolean }>(
+        `/api/admin/identity-providers/${id}/sync`,
+        {
+          method: "POST",
+          body: { dry_run: dryRun, force: force ?? false },
+        },
+      ),
     onSuccess: (_result, { id }) => {
       client.invalidateQueries({ queryKey: adminKeys.syncRuns(id) });
       client.invalidateQueries({ queryKey: adminKeys.directory(id) });
@@ -1289,31 +1479,47 @@ export function useConfirmSync() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      request<{ confirmed: boolean }>(`/api/admin/identity-providers/${id}/sync/confirm`, {
-        method: "POST",
-      }),
-    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
+      request<{ confirmed: boolean }>(
+        `/api/admin/identity-providers/${id}/sync/confirm`,
+        {
+          method: "POST",
+        },
+      ),
+    onSuccess: () =>
+      client.invalidateQueries({ queryKey: adminKeys.identityProviders }),
   });
 }
 
 export function usePreassignGroups() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, entryId, groups }: { id: string; entryId: string; groups: string[] }) =>
+    mutationFn: ({
+      id,
+      entryId,
+      groups,
+    }: {
+      id: string;
+      entryId: string;
+      groups: string[];
+    }) =>
       request<{ preassigned_groups: string[] }>(
         `/api/admin/identity-providers/${id}/directory/${entryId}/preassigned`,
         { method: "PUT", body: { groups } },
       ),
-    onSuccess: (_result, { id }) => client.invalidateQueries({ queryKey: adminKeys.directory(id) }),
+    onSuccess: (_result, { id }) =>
+      client.invalidateQueries({ queryKey: adminKeys.directory(id) }),
   });
 }
 
 export function useMintScimToken() {
   return useMutation({
     mutationFn: (id: string) =>
-      request<{ token: string; endpoint: string }>(`/api/admin/identity-providers/${id}/scim-token`, {
-        method: "POST",
-      }),
+      request<{ token: string; endpoint: string }>(
+        `/api/admin/identity-providers/${id}/scim-token`,
+        {
+          method: "POST",
+        },
+      ),
   });
 }
 

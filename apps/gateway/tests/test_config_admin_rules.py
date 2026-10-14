@@ -75,12 +75,11 @@ class TestAcceptedClients:
 
 class TestMachineClientAcceptance:
     def test_a_named_machine_client_missing_from_accepted_clients_starts(self) -> None:
-        # Changed meaning (was: refused): without a code_agents restriction
-        # in use there is nothing that could silently fail — the machine flow
-        # itself is what refuses the token, loudly, at the accepted-clients
-        # check. The refusal lives on the restriction now
-        # (TestGroupsBaselineMachineClient), and the likely-misnaming warns
-        # (TestStartupWarnings).
+        # Changed meaning twice over (was: refused; then: refused only with
+        # the groups baseline): the capability mode is gone as a rule — the
+        # setting is the default new groups get — so there is no baseline
+        # whose mismatch this validator could read. The folded-default
+        # machinery and the resolver's ERROR stand instead.
         Settings(
             oidc=OIDCSettings(
                 machine_client_id="gitlab-uid-123",
@@ -97,8 +96,6 @@ class TestMachineClientAcceptance:
         )
 
     def test_the_default_machine_client_needs_no_acceptance(self) -> None:
-        # The default stands for "no machine client configured": a default
-        # deployment (accepted clients without it) starts as before.
         Settings(oidc=OIDCSettings(accepted_clients="pystino-console"))
 
     def test_an_empty_allowlist_is_still_the_escape_hatch(self) -> None:
@@ -107,34 +104,30 @@ class TestMachineClientAcceptance:
     def test_an_emptied_machine_client_is_not_a_mismatch(self) -> None:
         Settings(oidc=OIDCSettings(machine_client_id="", accepted_clients="pystino-console"))
 
-
-class TestGroupsBaselineMachineClient:
-    def test_groups_baseline_with_unaccepted_machine_client_is_refused(self) -> None:
-        # ADR 0096: the env baseline itself says "groups" while the machine
-        # client — defaulted here, as in a hand-written .env with only
-        # ACCEPTED_CLIENTS set — is not among a non-empty allowlist. The
-        # restriction is in use and could never fire.
-        with pytest.raises(ValidationError, match="could never fire") as caught:
-            Settings(
-                access=AccessSettings(code_agents="groups"),
-                oidc=OIDCSettings(accepted_clients="pystino-console,cerea"),
-            )
-        message = str(caught.value)
-        assert "GATEWAY_ACCESS__CODE_AGENTS" in message
-        assert "opencode-enrollment" in message
-        assert "pystino-console, cerea" in message
-
-    def test_groups_baseline_with_accepted_machine_client_is_fine(self) -> None:
+    def test_no_validator_remains_for_the_capability_baseline(self) -> None:
+        # The env baseline is a creation default now: `groups` (or `off`)
+        # beside an unaccepted machine client starts, because nothing is in
+        # force that could silently fail. Changed meaning: was a refusal.
         Settings(
             access=AccessSettings(code_agents="groups"),
-            oidc=OIDCSettings(machine_client_id="m", accepted_clients="pystino-console,m"),
+            oidc=OIDCSettings(accepted_clients="pystino-console"),
         )
 
-    def test_groups_baseline_with_empty_allowlist_is_fine(self) -> None:
-        Settings(access=AccessSettings(code_agents="groups"), oidc=OIDCSettings())
 
-    def test_everyone_baseline_needs_no_machine_client(self) -> None:
-        Settings(oidc=OIDCSettings(accepted_clients="pystino-console"))
+class TestCapabilityModeSpellings:
+    def test_on_and_off_are_the_canonical_values(self) -> None:
+        settings = Settings(access=AccessSettings(code_agents="on", api_keys="off"))
+        assert settings.access.code_agents == "on"
+        assert settings.access.api_keys == "off"
+
+    def test_the_legacy_spellings_parse_with_the_same_meaning(self) -> None:
+        settings = Settings(access=AccessSettings(code_agents="everyone", api_keys="groups"))
+        assert settings.access.code_agents == "on"
+        assert settings.access.api_keys == "off"
+
+    def test_an_unknown_word_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="code_agents"):
+            AccessSettings(code_agents="maybe")
 
 
 class TestCsvFields:

@@ -180,11 +180,21 @@ class TestIdentity:
         holds) -- `/v1/me` authenticates them and reports null instead.
         """
         async with session_factory() as db:
+            # ADR 0096 (amended): the person holds a group, but it grants no
+            # model access and nothing billable — the "no billing group"
+            # shape this test is about. The group carries the api_keys flag,
+            # because the capability is a per-group flag now and a key is a
+            # capability question, not a billing one; what this test pins is
+            # that /v1/me authenticates a caller with nothing billable.
+            group = Group(name="identity-only", api_keys_allowed=True)
+            db.add(group)
+            await db.flush()
             user = User(
                 issuer="pystino:pending", subject="groupless", email="groupless@example.org"
             )
             db.add(user)
             await db.flush()
+            db.add(Membership(user_id=user.id, group_id=group.id, source=MembershipSource.MANUAL))
             generated = generate_api_key()
             db.add(
                 ApiKey(
@@ -201,7 +211,9 @@ class TestIdentity:
         )
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["groups"] == []
+        # The capability-only group is listed (an effective membership), but
+        # it is not billable: no default, nothing resolved for this request.
+        assert body["groups"] == ["identity-only"]
         assert body["default_billing_group"] is None
         assert body["billing_group"] is None
 

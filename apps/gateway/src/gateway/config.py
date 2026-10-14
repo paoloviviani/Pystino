@@ -8,6 +8,7 @@ a double underscore, e.g. ``GATEWAY_OIDC__ISSUER``.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
     # Annotation-only: `from __future__ import annotations` means the dataclass
     # field below never evaluates it at runtime.
     import uuid
+
+
+logger = logging.getLogger(__name__)
 
 
 def _split_csv(value: str) -> list[str]:
@@ -68,19 +72,42 @@ class UpstreamSettings(BaseModel):
 
 
 class AccessSettings(BaseModel):
-    """Who may hold each capability (ADR 0096).
+    """Who holds each capability by default (ADR 0096, amended).
 
-    ``everyone`` (the default, so an upgrade changes nothing) or ``groups``
-    (only people in a group carrying the flag). The console's ``oidc_config``
-    row decides per field when it names one; this is the baseline it folds
-    onto. The effective capability is a pure function of the person's
-    memberships and the folded setting — see :mod:`gateway.capabilities`.
+    A capability is only a per-group flag now: a person holds it as an
+    administrator, or through an active membership in an active flagged
+    group. This setting is the DEFAULT new groups are created with — `on`
+    (the default, so an upgrade changes nothing) or `off` — decided per
+    field by the console's `oidc_config` row when it names one, else this
+    baseline. The old `everyone`/`groups` spellings still parse (`everyone`
+    is `on`, `groups` is `off`) for one release, with a deprecation warning;
+    the "groups"-as-a-rule is gone.
     """
 
     #: The /code panel and the machine links that serve it.
-    code_agents: Literal["everyone", "groups"] = "everyone"
+    code_agents: Literal["on", "off"] = "on"
     #: Minting and using ``gwk_`` API keys.
-    api_keys: Literal["everyone", "groups"] = "everyone"
+    api_keys: Literal["on", "off"] = "on"
+
+    @field_validator("code_agents", "api_keys", mode="before")
+    @classmethod
+    def _legacy_modes_still_parse(cls, value: object) -> object:
+        # One release only: a deployment that set the 0.7.x vocabulary keeps
+        # its behaviour (`everyone` was the default-allow, `groups` the
+        # default-deny), loudly, until it re-spells the variable.
+        if value == "everyone":
+            logger.warning(
+                "GATEWAY_ACCESS__*='everyone' is deprecated: use 'on'. It still "
+                "means on for one release."
+            )
+            return "on"
+        if value == "groups":
+            logger.warning(
+                "GATEWAY_ACCESS__*='groups' is deprecated: use 'off'. It still "
+                "means off for one release."
+            )
+            return "off"
+        return value
 
 
 class OIDCSettings(BaseModel):
@@ -1189,40 +1216,17 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _machine_client_needs_acceptance(self) -> Settings:
-        """ADR 0096: a code_agents restriction in use that can never fire is
-        refused.
+    def _no_mode_to_read_any_more(self) -> Settings:
+        """ADR 0096 (amended): the capability mode is gone as a rule.
 
-        The gate matches a machine token's `azp`/`client_id` against
-        `machine_client_id` — but a token from a client outside
-        `accepted_clients` is refused before that gate ever runs. When the
-        environment baseline itself says `groups`
-        (`GATEWAY_ACCESS__CODE_AGENTS`) while the machine client — defaulted
-        or named — is not among a non-empty allowlist, the restriction is in
-        use and a machine token is refused before the gate runs, so the
-        refusal names the baseline and both values. An empty allowlist stays
-        the escape hatch that enforces nothing. Not production-gated: a dev
-        deployment with the same mismatch is broken in exactly the same
-        silent way.
-
-        Deliberately not provenance-based: compose fills the variable from
-        its own default whether or not the operator wrote it, so
-        "explicitly set" cannot tell a hand-written mismatch from a default
-        one. What decides is semantic — a restriction in use that cannot
-        fire — and the default-only shape (no restriction in use) starts
-        clean, with at most a warning (see `startup_warnings`).
-        """
-        machine = self.oidc.machine_client_id
-        accepted = self.oidc.accepted_client_list()
-        if self.access.code_agents == "groups" and machine and accepted and machine not in accepted:
-            raise ValueError(
-                "GATEWAY_ACCESS__CODE_AGENTS='groups' restricts coding agents to "
-                f"flagged groups, but GATEWAY_OIDC__MACHINE_CLIENT_ID={machine!r} "
-                f"names a client not in GATEWAY_OIDC__ACCEPTED_CLIENTS "
-                f"({', '.join(accepted)}): the restriction is in use and could "
-                "never fire — a machine token is refused before the gate runs. "
-                "Name the machine client the deployment accepts."
-            )
+        The 0.7.x baseline refusal ("env baseline `groups` + machine client
+        not accepted") read a mode that no longer gates anything — the
+        setting is the default new groups are created with now, so a
+        baseline mismatch could not make a restriction fail silently. What
+        stands is the folded-default machinery and, for a machine client the
+        deployment does not accept, the startup warning below and the
+        resolver's once-per-change ERROR when an active group has the flag
+        off (`oidc_policy.refresh_once`)."""
         return self
 
 

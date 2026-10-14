@@ -8,35 +8,57 @@
  * provisioning rule.
  */
 
-import { Badge, Button, Card, Dialog, EmptyState, Input, Notice, Spinner } from "@llmp/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  Dialog,
+  EmptyState,
+  Input,
+  Notice,
+  Spinner,
+} from "@llmp/ui";
 import { useState } from "react";
 import { Link } from "react-router";
 import {
+  useBulkGroupCapabilities,
   useEmailSettings,
   useIdentityProviders,
+  useOidcPolicy,
+  usePolicyPreview,
   useRemoveIdentityProvider,
   useTestEmail,
+  useUpdateOidcPolicy,
 } from "../lib/admin";
-import type { IdentityProvider } from "../lib/types";
+import type { CapabilityMode, IdentityProvider } from "../lib/types";
 import { DirectoryDialog } from "./IdentityDirectory";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
 import { ProvisioningPolicySection } from "./AdminIdentity";
-import { CHIPS, CODE, DETAIL_LABEL, FORM, MUTED, PAGE, SECRET_ROW } from "../lib/layout";
+import {
+  CHIPS,
+  CODE,
+  DETAIL_LABEL,
+  FORM,
+  MUTED,
+  PAGE,
+  SECRET_ROW,
+} from "../lib/layout";
 
 export function AdminSettings() {
   return (
     <div className={PAGE}>
       <PageHeader
         title="Settings"
-        subtitle="The mail server, the identity providers, and who may become a user.
-          Each section saves on its own."
+        subtitle="The mail server, the identity providers, who may become a user, and
+          what new groups start with. Each section saves on its own."
       />
       <EmailCard />
       <ProvidersCard />
       <Card title="Provisioning policy">
         <ProvisioningPolicySection />
       </Card>
+      <CapabilityDefaultsCard />
     </div>
   );
 }
@@ -78,7 +100,9 @@ function EmailCard() {
     >
       {email.error ? (
         <Notice tone="danger" title="Could not load the email settings">
-          {email.error instanceof Error ? email.error.message : "Unknown error."}
+          {email.error instanceof Error
+            ? email.error.message
+            : "Unknown error."}
         </Notice>
       ) : email.data ? (
         <div className={FORM}>
@@ -98,7 +122,9 @@ function EmailCard() {
           </div>
           <div>
             <div className={DETAIL_LABEL}>Password</div>
-            <div className={CODE}>{email.data.has_password ? "set" : "(none)"}</div>
+            <div className={CODE}>
+              {email.data.has_password ? "set" : "(none)"}
+            </div>
           </div>
           <div>
             <div className={DETAIL_LABEL}>From address</div>
@@ -117,13 +143,18 @@ function EmailCard() {
                 test.mutate(testTo.trim(), {
                   onSuccess: (result) =>
                     toast?.add({
-                      title: result.ok ? "Test email sent" : "Test email failed",
+                      title: result.ok
+                        ? "Test email sent"
+                        : "Test email failed",
                       description: result.detail,
                       type: result.ok ? "success" : "error",
                     }),
                   onError: (caught: unknown) =>
                     toast?.add({
-                      title: caught instanceof Error ? caught.message : "Test email failed",
+                      title:
+                        caught instanceof Error
+                          ? caught.message
+                          : "Test email failed",
                       type: "error",
                     }),
                 })
@@ -187,7 +218,9 @@ export function RedirectUri({ name }: { name: string }) {
         Register exactly this at the provider — never a wildcard.
       </p>
       {copied === false && (
-        <p className="text-sm text-warn">Could not reach the clipboard; copy it by hand.</p>
+        <p className="text-sm text-warn">
+          Could not reach the clipboard; copy it by hand.
+        </p>
       )}
     </div>
   );
@@ -224,7 +257,9 @@ function ProvidersCard() {
         <Spinner label="Loading providers" />
       ) : providers.error ? (
         <Notice tone="danger" title="Could not load the identity providers">
-          {providers.error instanceof Error ? providers.error.message : "Unknown error."}
+          {providers.error instanceof Error
+            ? providers.error.message
+            : "Unknown error."}
         </Notice>
       ) : rows.length === 0 ? (
         <EmptyState
@@ -264,7 +299,10 @@ function ProvidersCard() {
         provider={rows.find((p) => p.id === directoryOf?.id) ?? null}
         onClose={() => setDirectoryOf(null)}
       />
-      <RemoveProviderDialog provider={removing} onClose={() => setRemoving(null)} />
+      <RemoveProviderDialog
+        provider={removing}
+        onClose={() => setRemoving(null)}
+      />
     </Card>
   );
 }
@@ -293,22 +331,34 @@ function ProviderRow({
             {provider.is_enabled ? "enabled" : "disabled"}
           </Badge>
           <Badge tone="neutral">{provider.kind}</Badge>
-          {provider.admin_source === "claim" && <Badge tone="warn">admin from IdP</Badge>}
+          {provider.admin_source === "claim" && (
+            <Badge tone="warn">admin from IdP</Badge>
+          )}
           {provider.link_by_email && (
-            <Badge tone="danger">links new sign-ins to existing accounts by verified email</Badge>
+            <Badge tone="danger">
+              links new sign-ins to existing accounts by verified email
+            </Badge>
           )}
           {syncable && provider.sync_adapter !== "none" && (
-            <Badge tone={provider.sync_confirmed || provider.sync_adapter === "scim" ? "ok" : "warn"}>
+            <Badge
+              tone={
+                provider.sync_confirmed || provider.sync_adapter === "scim"
+                  ? "ok"
+                  : "warn"
+              }
+            >
               sync: {provider.sync_adapter}
-              {provider.sync_confirmed || provider.sync_adapter === "scim" ? "" : " (awaiting review)"}
+              {provider.sync_confirmed || provider.sync_adapter === "scim"
+                ? ""
+                : " (awaiting review)"}
             </Badge>
           )}
         </div>
         <div className={`mt-1 text-sm ${MUTED}`}>{provider.issuer}</div>
         <div className="mt-1 text-xs text-ink-faint">
           client {provider.client_id} · groups claim{" "}
-          <span className={CODE}>{provider.groups_claim}</span> · group
-          mappings are decided on the{" "}
+          <span className={CODE}>{provider.groups_claim}</span> · group mappings
+          are decided on the{" "}
           {/* ADR 0095: one mapping surface, the Groups page — this line only
               points there now. */}
           <Link to="/admin/groups" className="underline">
@@ -388,13 +438,17 @@ function RemoveProviderDialog({
               provider &&
               remove.mutate(provider.id, {
                 onSuccess: () => {
-                  toast?.add({ title: "Identity provider removed", type: "success" });
+                  toast?.add({
+                    title: "Identity provider removed",
+                    type: "success",
+                  });
                   onClose();
                 },
                 onError: (error) =>
                   toast?.add({
                     title: "Could not remove the identity provider",
-                    description: error instanceof Error ? error.message : undefined,
+                    description:
+                      error instanceof Error ? error.message : undefined,
                     type: "error",
                   }),
               })
@@ -406,10 +460,314 @@ function RemoveProviderDialog({
       }
     >
       <p>
-        Nobody ever signed in through <span className={CODE}>{provider?.issuer}</span>, so
-        removing it unlinks no one. Its directory entries and sync history are deleted with
-        it. Pointing the deployment at this issuer again in .env creates it afresh.
+        Nobody ever signed in through{" "}
+        <span className={CODE}>{provider?.issuer}</span>, so removing it unlinks
+        no one. Its directory entries and sync history are deleted with it.
+        Pointing the deployment at this issuer again in .env creates it afresh.
       </p>
+    </Dialog>
+  );
+}
+
+// -- capability defaults (ADR 0096, amended) -----------------------------------
+
+const CAPABILITIES: {
+  key: "code_agents" | "api_keys";
+  title: string;
+  hint: string;
+}[] = [
+  {
+    key: "code_agents",
+    title: "Coding agents",
+    hint: "The /code panel and the machine links that serve it.",
+  },
+  { key: "api_keys", title: "API keys", hint: "Minting and using API keys." },
+];
+
+/**
+ * What new groups start with, and the two bulk flips over existing ones.
+ *
+ * A capability is a per-group flag now; there is no mode that gates anyone.
+ * The default here is stamped on every group created from now on — console
+ * New group, a mapped new group, an auto-imported one, a directory push —
+ * and never gates an existing group. The bulk actions are the explicit way
+ * to move the existing ones, each confirmed with the preview of how many
+ * active non-admin people gain or lose it, applied in one transaction.
+ */
+function CapabilityDefaultsCard() {
+  const policy = useOidcPolicy();
+  const save = useUpdateOidcPolicy();
+  const preview = usePolicyPreview();
+  const bulk = useBulkGroupCapabilities();
+  const toast = useOptionalToast();
+
+  const [pending, setPending] = useState<{
+    capability: "code_agents" | "api_keys";
+    value: boolean;
+  } | null>(null);
+
+  if (policy.isPending || policy.error) {
+    return (
+      <Card title="Capabilities">
+        {policy.isPending ? (
+          <Spinner label="Loading the capability defaults" />
+        ) : (
+          <Notice tone="danger" title="Could not load the capability defaults">
+            {policy.error instanceof Error
+              ? policy.error.message
+              : "Unknown error."}
+          </Notice>
+        )}
+      </Card>
+    );
+  }
+
+  return (
+    <Card
+      title="Capabilities"
+      description="A person holds a capability as an administrator, or through an
+        active membership in a group carrying its flag. This sets what new
+        groups start with; the toggles on the Groups page decide the existing
+        ones. Grant or remove the flags in bulk below."
+    >
+      <div className={FORM}>
+        {CAPABILITIES.map((entry) => {
+          const mode: CapabilityMode =
+            entry.key === "code_agents"
+              ? (policy.data?.code_agents_mode ?? "on")
+              : (policy.data?.api_keys_mode ?? "on");
+          return (
+            <div
+              key={entry.key}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line p-4"
+            >
+              <div className="min-w-0">
+                <div className={CHIPS}>
+                  <span className="font-medium">{entry.title}</span>
+                  <Badge tone={mode === "on" ? "ok" : "neutral"}>
+                    {mode === "on" ? "new groups: on" : "new groups: off"}
+                  </Badge>
+                </div>
+                <div className={`mt-1 text-sm ${MUTED}`}>{entry.hint}</div>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <Button
+                  variant="ghost"
+                  disabled={mode === "on"}
+                  busy={save.isPending}
+                  onClick={() =>
+                    save.mutate(
+                      { [`${entry.key}_mode`]: "on" } as Record<string, never>,
+                      {
+                        onSuccess: () =>
+                          toast?.add({
+                            title: `${entry.title} default saved`,
+                            type: "success",
+                          }),
+                        onError: (caught: unknown) =>
+                          toast?.add({
+                            title:
+                              caught instanceof Error
+                                ? caught.message
+                                : "Could not save",
+                            type: "error",
+                          }),
+                      },
+                    )
+                  }
+                >
+                  Turn on for new groups
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={mode === "off"}
+                  busy={save.isPending}
+                  onClick={() =>
+                    save.mutate(
+                      { [`${entry.key}_mode`]: "off" } as Record<string, never>,
+                      {
+                        onSuccess: () =>
+                          toast?.add({
+                            title: `${entry.title} default saved`,
+                            type: "success",
+                          }),
+                        onError: (caught: unknown) =>
+                          toast?.add({
+                            title:
+                              caught instanceof Error
+                                ? caught.message
+                                : "Could not save",
+                            type: "error",
+                          }),
+                      },
+                    )
+                  }
+                >
+                  Turn off for new groups
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    preview.mutate(
+                      { bulk_capability: entry.key, bulk_value: true },
+                      {
+                        onSuccess: (result) => {
+                          if (result.would_gain === 0) {
+                            applyBulk(entry.key, true, 0);
+                          } else {
+                            setPending({ capability: entry.key, value: true });
+                          }
+                        },
+                        onError: (caught: unknown) =>
+                          toast?.add({
+                            title:
+                              caught instanceof Error
+                                ? caught.message
+                                : "Could not preview",
+                            type: "error",
+                          }),
+                      },
+                    );
+                  }}
+                >
+                  Turn on for all groups
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    preview.mutate(
+                      { bulk_capability: entry.key, bulk_value: false },
+                      {
+                        onSuccess: (result) => {
+                          if (result.would_lose === 0) {
+                            applyBulk(entry.key, false, 0);
+                          } else {
+                            setPending({ capability: entry.key, value: false });
+                          }
+                        },
+                        onError: (caught: unknown) =>
+                          toast?.add({
+                            title:
+                              caught instanceof Error
+                                ? caught.message
+                                : "Could not preview",
+                            type: "error",
+                          }),
+                      },
+                    );
+                  }}
+                >
+                  Turn off for all groups
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <CapabilityBulkConfirm
+        pending={pending}
+        preview={preview.data}
+        saving={bulk.isPending}
+        onSave={(capability, value) =>
+          bulk.mutate(
+            { capability, value },
+            {
+              onSuccess: (result) => {
+                toast?.add({
+                  title: `Updated ${result.updated} groups`,
+                  type: "success",
+                });
+                setPending(null);
+              },
+              onError: (caught: unknown) =>
+                toast?.add({
+                  title:
+                    caught instanceof Error
+                      ? caught.message
+                      : "Could not apply",
+                  type: "error",
+                }),
+            },
+          )
+        }
+        onClose={() => {
+          setPending(null);
+          preview.reset();
+        }}
+      />
+    </Card>
+  );
+
+  function applyBulk(
+    capability: "code_agents" | "api_keys",
+    value: boolean,
+    count: number,
+  ) {
+    bulk.mutate(
+      { capability, value },
+      {
+        onSuccess: (result) => {
+          toast?.add({
+            title: `Updated ${result.updated} groups`,
+            type: "success",
+          });
+          setPending(null);
+        },
+        onError: (caught: unknown) =>
+          toast?.add({
+            title: caught instanceof Error ? caught.message : "Could not apply",
+            type: "error",
+          }),
+      },
+    );
+    void count;
+  }
+}
+
+function CapabilityBulkConfirm({
+  pending,
+  preview,
+  saving,
+  onSave,
+  onClose,
+}: {
+  pending: { capability: "code_agents" | "api_keys"; value: boolean } | null;
+  preview: { would_gain: number | null; would_lose: number | null } | undefined;
+  saving: boolean;
+  onSave: (capability: "code_agents" | "api_keys", value: boolean) => void;
+  onClose: () => void;
+}) {
+  const title =
+    pending?.capability === "code_agents" ? "Coding agents" : "API keys";
+  const count = pending?.value
+    ? (preview?.would_gain ?? 0)
+    : (preview?.would_lose ?? 0);
+  return (
+    <Dialog
+      open={pending !== null}
+      title={
+        pending?.value
+          ? `Turn ${title.toLowerCase()} on for all groups?`
+          : `Turn ${title.toLowerCase()} off for all groups?`
+      }
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant={pending?.value ? "primary" : "danger"}
+            busy={saving}
+            onClick={() => pending && onSave(pending.capability, pending.value)}
+          >
+            {pending?.value ? "Turn on" : "Turn off"}
+          </Button>
+        </>
+      }
+    >
+      {pending?.value
+        ? `${count} ${count === 1 ? "person" : "people"} would gain ${title.toLowerCase()} — everyone holding no flagged group today. Administrators hold it either way.`
+        : `${count} ${count === 1 ? "person" : "people"} would lose ${title.toLowerCase()} at their next request — everyone whose only flagged group is this one being cleared. Administrators are exempt.`}
     </Dialog>
   );
 }

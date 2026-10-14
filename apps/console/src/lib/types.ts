@@ -40,7 +40,6 @@ export interface Capabilities {
   api_keys: boolean;
 }
 
-
 /** A self-service default billing group choice, from the caller's own groups. */
 export interface SetDefaultBillingGroupInput {
   group_id: string;
@@ -300,7 +299,8 @@ export interface InviteText {
   invite_text: string;
 }
 
-export type UserStatus = "awaiting_approval" | "invited" | "active" | "disabled";
+export type UserStatus =
+  "awaiting_approval" | "invited" | "active" | "disabled";
 
 export interface UserStatusCounts {
   awaiting_approval: number;
@@ -434,7 +434,13 @@ export interface QuotaHealth {
 }
 
 export interface QuotaReconcileResult {
-  reconciled: { rule_id: string; rule_name: string; window_id: string; before: string; after: string }[];
+  reconciled: {
+    rule_id: string;
+    rule_name: string;
+    window_id: string;
+    before: string;
+    after: string;
+  }[];
   corrected: number;
 }
 
@@ -585,7 +591,8 @@ export interface RedactionConfigChange {
  * Two questions, not one: what the model sees, and what the reader gets back.
  * Ordered weakest to strongest, which is the order the screen lists them.
  */
-export type EntityMode = "off" | "anonymise_restore" | "anonymise" | "redact" | "block";
+export type EntityMode =
+  "off" | "anonymise_restore" | "anonymise" | "redact" | "block";
 
 export interface EntityPolicy {
   mode: EntityMode;
@@ -657,7 +664,8 @@ export interface RedactionStatus {
 }
 
 /** The five subjects a redaction rule can name (ADR 0038). */
-export type RedactionScope = "all" | "provider" | "model" | "group" | "user" | "api_key";
+export type RedactionScope =
+  "all" | "provider" | "model" | "group" | "user" | "api_key";
 
 export interface RedactionRule {
   id: string;
@@ -833,7 +841,6 @@ export interface SearchBackendDeleteResult {
   cleared_groups: string[];
 }
 
-
 /**
  * The identity policy in force (ADR 0048, join modes ADR 0095), as
  * `GET /api/admin/oidc/policy` reports it: the effective values, where each
@@ -841,8 +848,8 @@ export interface SearchBackendDeleteResult {
  */
 export type JoinMode = "open" | "approval" | "invite" | "group";
 
-/** ADR 0096: who may hold a capability — everyone, or only flagged groups. */
-export type CapabilityMode = "everyone" | "groups";
+/** ADR 0096 (amended): the default flag new groups are created with. */
+export type CapabilityMode = "on" | "off";
 
 export interface OidcPolicy {
   auto_provision: boolean;
@@ -883,15 +890,15 @@ export interface OidcPolicyInput {
   reason?: string;
 }
 
-/** What saving a group gate would do (ADR 0095), and what moving a
- * capability setting to `groups` would do (ADR 0096). */
+/** What saving a group gate would do (ADR 0095), and what a bulk capability
+ * flip would do (ADR 0096, amended). */
 export interface OidcPolicyPreview {
   active_users: number;
   would_be_refused: number;
   admins_exempt: number;
-  /** Present only when the matching mode was previewed. */
-  would_lose_code_agents: number | null;
-  would_lose_api_keys: number | null;
+  /** Exactly one is filled for a bulk preview; both null for a join gate. */
+  would_gain: number | null;
+  would_lose: number | null;
 }
 
 /** Creating a group (ADR 0050). Manual is the point: it is the one kind whose
@@ -907,6 +914,11 @@ export interface GroupUpdateInput {
   api_keys_allowed?: boolean;
 }
 
+/** The bulk flip (ADR 0096, amended) — `POST /api/admin/groups/capabilities`. */
+export interface GroupCapabilityBulkInput {
+  capability: "code_agents" | "api_keys";
+  value: boolean;
+}
 
 // -- Settings (ADR 0051) ------------------------------------------------------
 
@@ -1019,7 +1031,6 @@ export interface DirectoryPerson {
   user_id: string | null;
 }
 
-
 /** The SMTP configuration in force — the row's, or the environment's. */
 export interface EmailSettings {
   host: string;
@@ -1030,7 +1041,6 @@ export interface EmailSettings {
   source: "console" | "environment";
   enabled: boolean;
 }
-
 
 export interface EmailTestResult {
   ok: boolean;
