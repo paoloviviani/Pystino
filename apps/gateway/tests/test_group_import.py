@@ -10,13 +10,16 @@ person able to bill something when nothing of theirs has been imported.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import pytest
 from conftest import BEARER_ISSUER, FakeUpstream, Seeded, make_token
 from conftest import bearer_auth as auth
 from fastapi import FastAPI
+from gateway.capabilities import Capabilities, effective_capabilities
 from gateway.config import OIDCSettings, Settings
+from gateway.directory.engine import add_manual_memberships
 from gateway.models import (
     Group,
     GroupSource,
@@ -48,6 +51,7 @@ async def _login(
     settings: OIDCSettings | None = None,
     *,
     touch_login: bool = True,
+    policy: OIDCPolicy | None = None,
 ) -> User:
     user = await provision_user(
         session,
@@ -58,6 +62,7 @@ async def _login(
         group_names=groups,
         settings=settings or OIDCSettings(),
         touch_login=touch_login,
+        policy=policy,
     )
     await session.commit()
     return user
@@ -282,6 +287,106 @@ class TestTheDefaultGroup:
         user = await _login(session, "new", [], OIDCSettings(default_group=""))
         assert user.memberships == []
         assert (await session.execute(select(Group))).scalars().all() == []
+
+
+class TestTheDefaultGroupCarriesTheCapabilityDefaults:
+    """`_group_named`'s insert used to write only name and source, so the
+    default group's flags fell back to the column default (off): a fresh
+    deployment whose default for new groups is "on" landed every new person
+    in a chat-only `users` — the fresh-kit check caught it at the 0.13.0
+    release. A group CREATED by the default-group rule carries the
+    deployment's default; an existing group's flags are never touched."""
+
+    async def test_the_first_sign_in_creates_users_usable(self, session: AsyncSession) -> None:
+        """The deployment default "on" (what `ACCESS_*:-everyone` folds to)."""
+        user = await _login(session, "new", [])
+        group = (await session.execute(select(Group).where(Group.name == "users"))).scalar_one()
+        assert group.code_agents_allowed is True
+        assert group.api_keys_allowed is True
+        assert effective_capabilities(user).code_agents is True
+
+    async def test_the_default_off_creates_users_chat_only(self, session: AsyncSession) -> None:
+        user = await _login(
+            session, "new", [], policy=OIDCPolicy(code_agents_mode="off", api_keys_mode="off")
+        )
+        group = (await session.execute(select(Group).where(Group.name == "users"))).scalar_one()
+        assert group.code_agents_allowed is False
+        assert group.api_keys_allowed is False
+        assert effective_capabilities(user).code_agents is False
+
+    async def test_an_existing_users_group_keeps_its_flags(self, session: AsyncSession) -> None:
+        """The flags apply only when the row is created: a `users` an
+        administrator left off stays off, whatever the default says."""
+        session.add(Group(name="users", code_agents_allowed=False, api_keys_allowed=False))
+        await session.commit()
+        user = await _login(session, "new", [])
+        group = (await session.execute(select(Group).where(Group.name == "users"))).scalar_one()
+        assert group.code_agents_allowed is False
+        assert group.api_keys_allowed is False
+        assert effective_capabilities(user).code_agents is False
+
+
+_OFF = OIDCPolicy(code_agents_mode="off", api_keys_mode="off")
+
+
+class TestEveryCreationPathCarriesTheDefaults:
+    """One shared helper decides the flags a new group gets; each path that
+    inserts a group is checked here for both answers of the default."""
+
+    @pytest.mark.parametrize(("policy", "expected"), [(None, True), (_OFF, False)])
+    async def test_auto_import_and_its_self_mapping(
+        self, session: AsyncSession, policy: OIDCPolicy | None, expected: bool
+    ) -> None:
+        await _login(session, "op", ["gitlab/a"], OIDCSettings(group_import="auto"), policy=policy)
+        group = (await session.execute(select(Group).where(Group.name == "gitlab/a"))).scalar_one()
+        assert group.code_agents_allowed is expected
+        assert group.api_keys_allowed is expected
+
+    @pytest.mark.parametrize("expected", [True, False])
+    async def test_the_directory_engine(self, session: AsyncSession, expected: bool) -> None:
+        user = User(issuer="https://idp.test", subject="pre", email="pre@example.org")
+        session.add(user)
+        await session.flush()
+        await session.refresh(user, attribute_names=["memberships"])
+        await add_manual_memberships(
+            session,
+            user,
+            ["pre-assigned"],
+            defaults=Capabilities(code_agents=expected, api_keys=expected),
+        )
+        await session.commit()
+        group = (
+            await session.execute(select(Group).where(Group.name == "pre-assigned"))
+        ).scalar_one()
+        assert group.code_agents_allowed is expected
+        assert group.api_keys_allowed is expected
+
+    @pytest.mark.parametrize("access", ["on", "off"])
+    async def test_gateway_seed(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        monkeypatch: pytest.MonkeyPatch,
+        access: str,
+    ) -> None:
+        from gateway import cli
+        from gateway.config import AccessSettings
+
+        seeded = settings.model_copy(
+            update={"access": AccessSettings(code_agents=access, api_keys=access)}  # type: ignore[arg-type]
+        )
+        monkeypatch.setattr(cli, "get_settings", lambda: seeded)
+        await cli._seed(
+            group_name="demo",
+            model_name="demo-model",
+            upstream_model="up",
+            input_price=Decimal("1"),
+            output_price=Decimal("1"),
+            email="seed@example.org",
+        )
+        group = (await session.execute(select(Group).where(Group.name == "demo"))).scalar_one()
+        assert group.code_agents_allowed is (access == "on")
+        assert group.api_keys_allowed is (access == "on")
 
 
 class TestTheHotPath:

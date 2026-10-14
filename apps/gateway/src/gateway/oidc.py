@@ -51,7 +51,7 @@ from sqlalchemy import Select, and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from gateway.capabilities import Capabilities, default_flags
+from gateway.capabilities import Capabilities, default_flags, new_group_flags
 from gateway.config import OIDCSettings, Settings
 from gateway.deployment_state import get_or_create_deployment_state, mark_bootstrap_consumed
 from gateway.email_normalize import is_trusted_email, normalize_email
@@ -1215,7 +1215,9 @@ async def provision_user(
     # account's creation, never a plain `/v1` call on an existing account:
     # that is the hot path, and a backfill can wait for the next sign-in.
     if touch_login or first_login_here:
-        await grant_default_group(session, user, settings.default_group)
+        await grant_default_group(
+            session, user, settings.default_group, defaults=default_flags(policy)
+        )
     # `group_source` says *where* that answer comes from: the token here, the
     # directory mirror (applied by a sync run, never from a token), or nowhere.
     if directory_answers and group_source == "claim":
@@ -1244,6 +1246,7 @@ async def provision_user(
                     unmapped,
                     reason="auto-import: self-mapping for claimed group name(s) "
                     + ", ".join(unmapped),
+                    defaults=default_flags(policy),
                 )
                 mappings = {**mappings, **added}
                 group_mappings = mappings
@@ -2074,12 +2077,7 @@ async def _resolve_group_names(
     if settings.group_import == "auto":
         for name in names:
             if name not in by_name:
-                group = Group(
-                    name=name,
-                    source=GroupSource.OIDC,
-                    code_agents_allowed=defaults.code_agents,
-                    api_keys_allowed=defaults.api_keys,
-                )
+                group = Group(name=name, source=GroupSource.OIDC, **new_group_flags(defaults))
                 session.add(group)
                 by_name[name] = group
         await session.flush()

@@ -168,7 +168,10 @@ class TestV1MeReportsCapabilities:
     ) -> None:
         # The ADR edge, over a real door: a token whose claim nothing maps
         # provisions a person with no membership, and /v1/me answers both
-        # False — the chat-only extreme.
+        # False — the chat-only extreme. The default group is switched off
+        # here: it would otherwise be created with the deployment's default
+        # (on) and put this person in a group that holds both.
+        bearer_app.state.settings.oidc.default_group = ""  # type: ignore[attr-defined]
         response = await client.get("/v1/me", headers=bearer_auth(make_token(signing_key)))
         assert response.status_code == 200
         assert response.json()["capabilities"] == {"code_agents": False, "api_keys": False}
@@ -276,6 +279,9 @@ class TestMachineClientGate:
         signing_key: object,
     ) -> None:
         engine = bearer_app.state.engine  # type: ignore[attr-defined]
+        # No default group, so this person holds no group and the gate refuses
+        # (the default group is otherwise created holding code_agents).
+        bearer_app.state.settings.oidc.default_group = ""  # type: ignore[attr-defined]
         machine = make_token(signing_key, azp=MACHINE_CLIENT)
         # Warm-up like test_query_counts does: the first token request syncs
         # the identity and may write memberships; the steady-state one after it

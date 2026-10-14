@@ -15,6 +15,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
+from gateway.capabilities import load_defaults, new_group_flags
 from gateway.config import get_settings
 from gateway.db import create_engine, create_session_factory
 from gateway.logging_config import configure_logging
@@ -63,6 +64,7 @@ async def _seed(
                     name=group_name,
                     description="Created by `gateway seed`",
                     source=GroupSource.MANUAL,
+                    **new_group_flags(await load_defaults(session, settings)),
                 )
                 session.add(group)
                 await session.flush()

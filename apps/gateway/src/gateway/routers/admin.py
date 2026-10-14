@@ -50,7 +50,7 @@ from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from gateway import identity_policy
 from gateway.accounting.cost import select_price
-from gateway.capabilities import Capabilities, effective_capabilities
+from gateway.capabilities import Capabilities, effective_capabilities, new_group_flags
 from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings, Settings
 from gateway.deployment_state import mark_bootstrap_consumed
 from gateway.deps import (
@@ -1827,8 +1827,7 @@ async def create_group(
         name=name,
         description=payload.description or None,
         source=GroupSource.MANUAL,
-        code_agents_allowed=defaults.code_agents,
-        api_keys_allowed=defaults.api_keys,
+        **new_group_flags(defaults),
     )
     session.add(group)
     await session.commit()
@@ -1988,12 +1987,13 @@ async def _map_seen_group(
             raise ConflictError(
                 f"A group named {target_name!r} already exists.", code="group_exists"
             )
-        group = Group(name=target_name, source=GroupSource.OIDC)
         # A mapped-new group starts at the folded default, like a
         # console-created one (ADR 0096, amended).
-        defaults = capability_defaults(request)
-        group.code_agents_allowed = defaults.code_agents
-        group.api_keys_allowed = defaults.api_keys
+        group = Group(
+            name=target_name,
+            source=GroupSource.OIDC,
+            **new_group_flags(capability_defaults(request)),
+        )
         session.add(group)
         await session.flush()
 
@@ -3244,7 +3244,9 @@ async def _invite_user(
     await add_manual_memberships(
         session, user, payload.groups, defaults=capability_defaults(request)
     )
-    await grant_default_group(session, user, settings.oidc.default_group)
+    await grant_default_group(
+        session, user, settings.oidc.default_group, defaults=capability_defaults(request)
+    )
     await record_event(
         session,
         actor_type=IdentityEventActor.USER,

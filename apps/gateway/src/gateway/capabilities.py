@@ -70,6 +70,21 @@ def _default_on(mode: str) -> bool:
     return mode in ("on", "everyone")
 
 
+def new_group_flags(defaults: Capabilities) -> dict[str, bool]:
+    """The capability flag columns a newly created group carries (ADR 0096, amended).
+
+    Every path that INSERTs a group — the console's create, map-to-new, auto
+    import and the self-mapping it mints, the directory engine, the default
+    group, ``gateway seed`` — takes its flag values from here, so a new group
+    is as usable as the deployment's default says and no path can silently
+    fall back to the column default (off) again: `_group_named` did exactly
+    that, and the fresh-kit check caught every fresh ``users`` chat-only. The
+    flags apply only when the row is CREATED; an existing group's flags are
+    never touched (the conflict-safe inserts keep ``on conflict do nothing``).
+    """
+    return {"code_agents_allowed": defaults.code_agents, "api_keys_allowed": defaults.api_keys}
+
+
 async def load_defaults(session: AsyncSession, settings: Settings) -> Capabilities:
     """The folded capability default, reading the newest row (ADR 0096 amended).
 
