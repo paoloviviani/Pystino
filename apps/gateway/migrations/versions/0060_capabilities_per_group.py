@@ -103,12 +103,19 @@ def upgrade() -> None:
         )
 
     # Imported here rather than at module level (0041's way): a migration
-    # keeps loading against the application tree as it stands, and utcnow()
-    # is what the model's own column default writes. `sa.func.now()` would
-    # spell CURRENT_TIMESTAMP on SQLite ("YYYY-MM-DD HH:MM:SS"), which does
-    # not sort against the ISO stamps the ORM writes — newest-first could
-    # then pick the seeded row and these defaults would never take.
-    from gateway.types import utcnow
+    # keeps loading against the application tree as it stands.
+    #
+    # The stamp is naive UTC on purpose. `gateway.types.utcnow()` is
+    # offset-aware — right for the ORM, whose column default psycopg/asyncpg
+    # adapt per the mapped type — but this revision binds it into a raw
+    # `sa.DateTime` column, which PostgreSQL types as TIMESTAMP WITHOUT TIME
+    # ZONE, and asyncpg refuses an aware datetime there ("can't subtract
+    # offset-naive and offset-aware"). Naive-UTC sorts identically against
+    # the ORM's own stamps (which land in the same naive column), so
+    # newest-first still picks this row. `sa.func.now()` was never an
+    # option: it spells CURRENT_TIMESTAMP on SQLite ("YYYY-MM-DD HH:MM:SS"),
+    # which does not sort against the ISO stamps the ORM writes.
+    from datetime import UTC, datetime
 
     bind = op.get_bind()
     stored_row = (
@@ -142,7 +149,7 @@ def upgrade() -> None:
         "code_agents_mode": code_mode,
         "api_keys_mode": api_mode,
         "reason": REASON,
-        "created_at": utcnow(),
+        "created_at": datetime.now(UTC).replace(tzinfo=None),
     }
     for column in (
         "join_mode",
