@@ -18,12 +18,12 @@ import type { Column } from "@llmp/ui";
 import { useState } from "react";
 
 import { PageHeader } from "../components/PageHeader";
+import { Disclosures } from "../components/Disclosures";
 import { downloadCsv } from "../lib/api";
 import { recentPeriods } from "../lib/periods";
 import { useMyReport } from "../lib/queries";
 import type { UsageReportRow } from "../lib/types";
 import {
-  DISCLOSURES,
   FILTERS,
   MUTED,
   PAGE,
@@ -180,17 +180,9 @@ export function Reports() {
               />
             </div>
 
-            {/* The API's own wording, verbatim. Restating a caveat in the UI is
-                how the two end up disagreeing about what the number means. */}
-            {report.data.disclosures.length > 0 && (
-              <div className={DISCLOSURES}>
-                {report.data.disclosures.map((note) => (
-                  <Notice key={note} tone="warn">
-                    {note}
-                  </Notice>
-                ))}
-              </div>
-            )}
+            {/* The caveats collapse to one line; the component keeps the
+                API's wording verbatim and remembers the choice per page. */}
+            <Disclosures notes={report.data.disclosures} storageKey="llmp.console.disclosures.reports" />
           </>
         )}
       </Card>
