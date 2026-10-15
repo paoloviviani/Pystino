@@ -714,6 +714,8 @@ class LimitRuleResponse(BaseModel):
     # "3600s" or "month" — one string a UI can print without branching.
     window_label: str = ""
     limit_value: Money
+    #: "aggregate" or "each_member" (ADR 0098): whose budget this rule is.
+    applies_to: str = "aggregate"
     is_active: bool
     current_value: Money | None = None
     # Null unless the rule has ever been reset. Consumption before this instant
@@ -731,6 +733,8 @@ class QuotaWindowHealth(BaseModel):
     metric: str
     window_label: str
     is_active: bool
+    #: Set on rows of a per-member rule (ADR 0098): whose budget this is.
+    member_id: uuid.UUID | None = None
     # What the counter key is called for this window ("g3600", "p2026-10"), so an
     # operator can find it in Valkey. The key itself is not returned.
     window_id: str
@@ -759,6 +763,8 @@ class QuotaReconcileEntry(BaseModel):
     window_id: str
     before: Money
     after: Money
+    #: Set on windows of a per-member rule (ADR 0098): whose budget moved.
+    member_id: uuid.UUID | None = None
 
 
 class QuotaReconcileResponse(BaseModel):
@@ -783,6 +789,10 @@ class MyLimitResponse(BaseModel):
     name: str
     #: "global", "group" or "user" — enough to say whose ceiling this is.
     scope: str
+    #: "aggregate" or "each_member" (ADR 0098): a per-member rule answers for
+    #: the caller's own share, an aggregate rule for the scope's total. Additive,
+    #: so existing consumers keep parsing.
+    applies_to: str = "aggregate"
     metric: str
     window_label: str = ""
     limit_value: Money
@@ -1798,6 +1808,11 @@ class LimitRuleCreateRequest(BaseModel):
     name: str = Field(default="", max_length=255)
     scope: Literal["global", "group", "user", "api_key"]
     scope_id: uuid.UUID | None = None
+    # "aggregate" caps the scope's total; "each_member" caps each member's own
+    # usage billed to the group (ADR 0098). Only meaningful for group scope —
+    # the route refuses it elsewhere with a readable 400, and the database
+    # refuses it regardless of writer.
+    applies_to: Literal["aggregate", "each_member"] = "aggregate"
     # `own_search_requests` bounds **volume, not spend**: it counts calls to
     # our own web-search backends, whose per-request prices differ by more than
     # an order of magnitude between tiers (Exa `deep-reasoning` against

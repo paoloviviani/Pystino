@@ -33,7 +33,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from gateway.config import QuotaSettings
-from gateway.models import LimitMetric, LimitRule, LimitScope
+from gateway.models import (
+    LimitAppliesTo,
+    LimitMetric,
+    LimitRule,
+    LimitScope,
+    Membership,
+    UsageRecord,
+    UsageStatus,
+)
 from gateway.periods import Period, period_containing
 from gateway.quota.counters import (
     CounterDelta,
@@ -126,8 +134,12 @@ class Violation:
     def describe(self) -> str:
         # window_label renders either kind: "3600s" or "month". Reading
         # window_seconds directly here printed "per Nones" for a calendar rule.
+        # A per-member refusal names the member's share — their own current,
+        # which they are entitled to know — and never the group's total, so
+        # one member's 429 cannot report the group's spend to another member.
+        kind = " per member" if self.rule.applies_to is LimitAppliesTo.EACH_MEMBER else ""
         return (
-            f"{self.rule.scope.value} limit of {self.limit} {self.rule.metric.value}"
+            f"{self.rule.scope.value}{kind} limit of {self.limit} {self.rule.metric.value}"
             f" per {self.rule.window_label} exceeded (current {self.current})"
         )
 
@@ -188,7 +200,12 @@ def _negate(delta: CounterDelta) -> CounterDelta:
 
 @dataclass(frozen=True, slots=True)
 class WindowHealth:
-    """One rule's current window as the counter and the ledger each see it."""
+    """One rule's current window as the counter and the ledger each see it.
+
+    For a per-member rule there is one of these per member: each member's
+    budget is enforced independently, so drift in one member's counter is a
+    fact about that member, and ``member_id`` says which.
+    """
 
     rule: LimitRule
     window_id: str
@@ -196,6 +213,7 @@ class WindowHealth:
     ledger: Decimal
     counter_ttl_seconds: int | None
     stale_in_progress: int
+    member_id: uuid.UUID | None = None
 
     @property
     def difference(self) -> Decimal | None:
@@ -215,6 +233,7 @@ class Reconciled:
     window_id: str
     before: Decimal
     after: Decimal
+    member_id: uuid.UUID | None = None
 
 
 class QuotaEngine:
@@ -304,8 +323,29 @@ class QuotaEngine:
             return 0
         return int(max(reset.effective_at for reset in rule.resets).timestamp())
 
+    @staticmethod
+    def scope_for_rule(rule: LimitRule, subject: QuotaSubject) -> ScopeRef | None:
+        """The counter scope a rule counts under for this subject.
+
+        An ``each_member`` group rule counts the member's own usage billed to
+        the group — ``(group, member)`` — so the scope carries both ids. A
+        subject with no user cannot be attributed to a member, and those rules
+        are skipped: every path that reserves today carries an authenticated
+        user, and the guard is what keeps a future user-less path from
+        enforcing a budget it cannot count.
+        """
+        if rule.scope is LimitScope.GROUP and rule.applies_to is LimitAppliesTo.EACH_MEMBER:
+            if subject.user_id is None:
+                return None
+            return ScopeRef(LimitScope.GROUP, rule.scope_id, member_id=subject.user_id)
+        return ScopeRef(rule.scope, rule.scope_id)
+
     async def current_values(
-        self, rules: Sequence[LimitRule], *, now: float | None = None
+        self,
+        rules: Sequence[LimitRule],
+        *,
+        now: float | None = None,
+        subject: QuotaSubject | None = None,
     ) -> dict[uuid.UUID, Decimal]:
         """Consumption so far for each rule, in the rule's own metric.
 
@@ -313,6 +353,11 @@ class QuotaEngine:
         reset watermark — so what an administrator sees is what the next request
         will be judged against, rather than a separate calculation that can drift
         from it.
+
+        A per-member rule answers for one member only, so it needs the subject
+        to attribute to: without one it is skipped, and the caller reads the
+        absence as "no single figure" rather than zero. Callers that show one
+        person's budget pass them; callers that list every rule do not.
 
         Best-effort: if the counter store cannot answer this returns nothing at
         all, because a page rendering "EUR 0.00 of EUR 10" during an outage is
@@ -324,11 +369,19 @@ class QuotaEngine:
         as_datetime = datetime.fromtimestamp(moment, tz=UTC)
 
         queries = []
+        answerable = []
         for rule in rules:
             spec, period = self.window_for(rule, as_datetime)
+            if rule.scope is LimitScope.GROUP and rule.applies_to is LimitAppliesTo.EACH_MEMBER:
+                if subject is None or subject.user_id is None:
+                    continue
+                scope = ScopeRef(LimitScope.GROUP, rule.scope_id, member_id=subject.user_id)
+            else:
+                scope = ScopeRef(rule.scope, rule.scope_id)
+            answerable.append(rule)
             queries.append(
                 WindowQuery(
-                    scope=ScopeRef(rule.scope, rule.scope_id),
+                    scope=scope,
                     metric=rule.metric,
                     spec=spec,
                     period=period,
@@ -342,14 +395,26 @@ class QuotaEngine:
             return {}
         return {
             rule.id: from_units(rule.metric, total.units)
-            for rule, total in zip(rules, totals, strict=True)
+            for rule, total in zip(answerable, totals, strict=True)
         }
 
-    def query_for(self, rule: LimitRule, moment: float) -> WindowQuery:
-        """The rule's current window as a counter query, reset watermark included."""
+    def query_for(
+        self, rule: LimitRule, moment: float, member_id: uuid.UUID | None = None
+    ) -> WindowQuery:
+        """The rule's current window as a counter query, reset watermark included.
+
+        A per-member rule needs the member: without one there is no key to
+        ask about. An aggregate rule takes none.
+        """
+        if rule.scope is LimitScope.GROUP and rule.applies_to is LimitAppliesTo.EACH_MEMBER:
+            assert member_id is not None, "a per-member query needs its member"
+            scope = ScopeRef(LimitScope.GROUP, rule.scope_id, member_id=member_id)
+        else:
+            assert member_id is None, "only a per-member rule takes a member"
+            scope = ScopeRef(rule.scope, rule.scope_id)
         spec, period = self.window_for(rule, datetime.fromtimestamp(moment, tz=UTC))
         return WindowQuery(
-            scope=ScopeRef(rule.scope, rule.scope_id),
+            scope=scope,
             metric=rule.metric,
             spec=spec,
             period=period,
@@ -372,7 +437,87 @@ class QuotaEngine:
             .all()
         )
 
-    async def seed_rule(self, rule: LimitRule, *, now: float | None = None) -> bool:
+    @staticmethod
+    async def _member_ids(session: AsyncSession, group_id: uuid.UUID) -> list[uuid.UUID]:
+        """Everyone holding a membership in the group: the counter namespace.
+
+        Membership is the only per-user fact, so a member here is a holder of
+        a membership row — including a disabled user's, whose settled counters
+        still exist and still need repairing even though they can spend no
+        more.
+        """
+        return list(
+            (
+                await session.execute(
+                    select(Membership.user_id).where(Membership.group_id == group_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    @staticmethod
+    async def _member_ids_with_usage(
+        session: AsyncSession, group_id: uuid.UUID, since: datetime
+    ) -> list[uuid.UUID]:
+        """Members with settled usage billed to the group since *since*.
+
+        The cheap enumeration for seeding and cold rebuilds: a member with no
+        usage rebuilds to nothing, so asking the ledger per member would spend
+        a query to write no keys. Reconcile and health do not use this — their
+        job is drift, and a zero-usage member with a non-zero counter is
+        exactly the drift they must reach.
+        """
+        # The is_not(None) filter is not part of the SQL type; the cast states
+        # what the filter guarantees.
+        rows: Sequence[uuid.UUID | None] = (
+            (
+                await session.execute(
+                    select(UsageRecord.user_id)
+                    .where(
+                        UsageRecord.group_id == group_id,
+                        UsageRecord.created_at >= since,
+                        UsageRecord.status != UsageStatus.IN_PROGRESS,
+                        UsageRecord.user_id.is_not(None),
+                    )
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [user_id for user_id in rows if user_id is not None]
+
+    def _window_since(self, rule: LimitRule, moment: float) -> datetime:
+        """The earliest instant that can still count towards the rule's window."""
+        spec, period = self.window_for(rule, datetime.fromtimestamp(moment, tz=UTC))
+        if period is not None:
+            return period.start
+        assert spec is not None
+        return datetime.fromtimestamp(moment - spec.window_seconds, tz=UTC)
+
+    async def _queries_for_rule(
+        self, session: AsyncSession, rule: LimitRule, moment: float, *, with_usage_only: bool
+    ) -> list[tuple[uuid.UUID | None, WindowQuery]]:
+        """The rule's current windows as counter queries: one per member for a
+        per-member rule, each paired with its member, else the rule's own."""
+        if (
+            rule.scope is LimitScope.GROUP
+            and rule.applies_to is LimitAppliesTo.EACH_MEMBER
+            and rule.scope_id is not None
+        ):
+            if with_usage_only:
+                members = await self._member_ids_with_usage(
+                    session, rule.scope_id, self._window_since(rule, moment)
+                )
+            else:
+                members = await self._member_ids(session, rule.scope_id)
+            return [(member, self.query_for(rule, moment, member)) for member in members]
+        return [(None, self.query_for(rule, moment))]
+
+    async def seed_rule(
+        self, session: AsyncSession, rule: LimitRule, *, now: float | None = None
+    ) -> bool:
         """Prime a newly created rule's counter from the ledger.
 
         Without this, a rule added mid-period starts from an empty counter — which
@@ -380,6 +525,10 @@ class QuotaEngine:
         means the cap is wrong for eleven days: the group has already spent the
         money, and the gateway does not know. The cold-cache rebuild does not help,
         because the cache is not cold; only this rule is.
+
+        A per-member rule primes each member that already spent in the window —
+        a new per-member rule starts every member at zero otherwise, the same
+        wrong-for-the-rest-of-the-month once per member.
 
         The same argument is weaker for a rolling window, which self-corrects within
         one window, but seeding is correct for both and the code is the same.
@@ -391,13 +540,18 @@ class QuotaEngine:
             return False
 
         moment = now if now is not None else utcnow().timestamp()
-        query = self.query_for(rule, moment)
+        queries = [
+            query
+            for _, query in await self._queries_for_rule(
+                session, rule, moment, with_usage_only=True
+            )
+        ]
         try:
             # A replace, so seeding is safe at any time: a rule created, edited or
             # re-activated while its counter already carries traffic ends at the
             # ledger's figure, not at the sum of both. A scope with no history
             # costs one query and no keys.
-            await self._fallback.rebuild_into(self._store, [query], now=moment)  # type: ignore[attr-defined]
+            await self._fallback.rebuild_into(self._store, queries, now=moment)  # type: ignore[attr-defined]
         except Exception:
             logger.error(
                 "could not seed counters for new limit rule %s; it will under-count "
@@ -458,7 +612,13 @@ class QuotaEngine:
         if not rules:
             return False
 
-        queries = [self.query_for(rule, moment) for rule in rules]
+        queries = [
+            query
+            for rule in rules
+            for _, query in await self._queries_for_rule(
+                session, rule, moment, with_usage_only=True
+            )
+        ]
         try:
             current = await self._store.totals(queries, now=moment)
             cold = [query for query, total in zip(queries, current, strict=True) if not total.units]
@@ -522,7 +682,13 @@ class QuotaEngine:
             raise QuotaUnavailable("no ledger to reconcile against")
         moment = now if now is not None else utcnow().timestamp()
         rules = await self._active_rules(session)
-        queries = [self.query_for(rule, moment) for rule in rules]
+        expanded: list[tuple[LimitRule, uuid.UUID | None, WindowQuery]] = []
+        for rule in rules:
+            for member, query in await self._queries_for_rule(
+                session, rule, moment, with_usage_only=False
+            ):
+                expanded.append((rule, member, query))
+        queries = [query for _, _, query in expanded]
         before = await self._store.totals(queries, now=moment)
         written = await self._fallback.rebuild_into(  # type: ignore[attr-defined]
             self._store, queries, now=moment
@@ -533,8 +699,9 @@ class QuotaEngine:
                 window_id=query.window_id,
                 before=from_units(rule.metric, was.units),
                 after=from_units(rule.metric, now_.units),
+                member_id=member,
             )
-            for rule, query, was, now_ in zip(rules, queries, before, written, strict=True)
+            for (rule, member, query), was, now_ in zip(expanded, before, written, strict=True)
         ]
 
     async def health(self, session: AsyncSession, *, now: float | None = None) -> QuotaHealth:
@@ -543,6 +710,10 @@ class QuotaEngine:
         Reads only; nothing here writes a counter. A counter that cannot be read
         is reported as unknown (``None``), never as zero, because "zero" is
         exactly the confident wrong answer this view exists to catch.
+
+        A per-member rule reports one window per member: each member's budget
+        is enforced independently, so drift in one member's counter is a fact
+        about that member.
         """
         if self._fallback is None:
             raise QuotaUnavailable("no ledger to compare against")
@@ -559,7 +730,13 @@ class QuotaEngine:
             .scalars()
             .all()
         )
-        queries = [self.query_for(rule, moment) for rule in rules]
+        expanded: list[tuple[LimitRule, uuid.UUID | None, WindowQuery]] = []
+        for rule in rules:
+            for member, query in await self._queries_for_rule(
+                session, rule, moment, with_usage_only=False
+            ):
+                expanded.append((rule, member, query))
+        queries = [query for _, _, query in expanded]
         ledger = await self._fallback.totals(queries, now=moment)
         stale = await self._fallback.stale_in_progress(  # type: ignore[attr-defined]
             queries, now=moment, older_than_seconds=_STALE_IN_PROGRESS_SECONDS
@@ -585,9 +762,10 @@ class QuotaEngine:
                     ledger=from_units(rule.metric, total.units),
                     counter_ttl_seconds=ttl,
                     stale_in_progress=count,
+                    member_id=member,
                 )
-                for rule, query, units, total, ttl, count in zip(
-                    rules, queries, counters, ledger, ttls, stale, strict=True
+                for (rule, member, query), units, total, ttl, count in zip(
+                    expanded, counters, ledger, ttls, stale, strict=True
                 )
             ],
             lock_present=lock_present,
@@ -621,11 +799,16 @@ class QuotaEngine:
         scoped: list[tuple[LimitRule, WindowQuery]] = []
         for rule in rules:
             spec, period = self.window_for(rule, as_datetime)
+            scope = self.scope_for_rule(rule, subject)
+            if scope is None:
+                # No user to attribute a per-member rule to: skipped, not
+                # evaluated. See scope_for_rule.
+                continue
             scoped.append(
                 (
                     rule,
                     WindowQuery(
-                        scope=ScopeRef(rule.scope, rule.scope_id),
+                        scope=scope,
                         metric=rule.metric,
                         spec=spec,
                         period=period,

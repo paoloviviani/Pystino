@@ -133,6 +133,19 @@ class LimitScope(enum.StrEnum):
     API_KEY = "api_key"
 
 
+class LimitAppliesTo(enum.StrEnum):
+    """Who a group rule's budget belongs to (ADR 0098).
+
+    ``aggregate`` is every rule that existed before: one budget for the whole
+    scope, every member's usage together. ``each_member`` is only meaningful
+    for group scope: one budget per member, each counting only what that
+    member had billed to the group.
+    """
+
+    AGGREGATE = "aggregate"
+    EACH_MEMBER = "each_member"
+
+
 class RedactionScope(enum.StrEnum):
     """What a redaction rule attaches to.
 
@@ -1389,12 +1402,24 @@ class LimitRule(Base):
             text("metric"),
             text("coalesce(window_seconds, -1)"),
             text("coalesce(period, '')"),
+            # A group may hold both an aggregate rule and a per-member rule
+            # for the same metric and window (ADR 0098).
+            text("applies_to"),
             unique=True,
         ),
         CheckConstraint(
             "(scope = 'global' AND scope_id IS NULL)"
             " OR (scope <> 'global' AND scope_id IS NOT NULL)",
             name="ck_limit_rules_scope_id_presence",
+        ),
+        # Per-member only means something for a group (ADR 0098): one
+        # constraint covers the value set and the scope, so a writer that
+        # bypasses the API still cannot store a per-member user rule — or any
+        # other spelling — and the admin route's 400 stays the explanation,
+        # not the enforcement.
+        CheckConstraint(
+            "(applies_to = 'aggregate') OR (applies_to = 'each_member' AND scope = 'group')",
+            name="ck_limit_rules_applies_to_group",
         ),
         # Correct as-is for a nullable column: a CHECK passes when its expression
         # is NULL, so a calendar rule with no window_seconds satisfies it.
@@ -1417,6 +1442,14 @@ class LimitRule(Base):
     scope_id: Mapped[uuid.UUID | None] = mapped_column(default=None)
 
     metric: Mapped[LimitMetric] = mapped_column(_enum(LimitMetric, "limit_metric"))
+
+    # Aggregate or per member (ADR 0098). NOT NULL with a server default, so
+    # pre-0098 rows read as the aggregate budgets they always were.
+    applies_to: Mapped[LimitAppliesTo] = mapped_column(
+        _enum(LimitAppliesTo, "limit_applies_to"),
+        default=LimitAppliesTo.AGGREGATE,
+        server_default=text("'aggregate'"),
+    )
 
     # Exactly one of these. A rolling window is bucket-approximated and right for
     # rate limiting; a calendar period is exact, resets at the boundary, and is what

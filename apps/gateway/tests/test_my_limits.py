@@ -14,7 +14,16 @@ from typing import Any
 import httpx
 import pytest
 from conftest import Seeded
-from gateway.models import Group, LimitMetric, LimitRule, LimitScope, User
+from gateway.models import (
+    Group,
+    LimitAppliesTo,
+    LimitMetric,
+    LimitRule,
+    LimitScope,
+    Membership,
+    MembershipSource,
+    User,
+)
 from gateway.oidc import issue_session_token
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -36,6 +45,8 @@ async def add_rule(
     scope_id: uuid.UUID | None,
     value: str = "100",
     active: bool = True,
+    applies_to: LimitAppliesTo = LimitAppliesTo.AGGREGATE,
+    metric: LimitMetric = LimitMetric.COST,
 ) -> None:
     async with factory() as db:
         db.add(
@@ -43,10 +54,11 @@ async def add_rule(
                 name=name,
                 scope=scope,
                 scope_id=scope_id,
-                metric=LimitMetric.COST,
+                metric=metric,
                 window_seconds=86400,
                 limit_value=Decimal(value),
                 is_active=active,
+                applies_to=applies_to,
             )
         )
         await db.commit()
@@ -182,3 +194,74 @@ class TestMyLimits:
     @pytest.mark.asyncio
     async def test_no_session_is_401(self, client: httpx.AsyncClient, seeded: Seeded) -> None:
         assert (await client.get("/api/me/limits")).status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_a_per_member_rule_is_the_callers_own_limit(
+        self,
+        app: Any,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A per-member rule answers for the caller, labelled as such.
+
+        The current value is the caller's own spend billed to the group — not
+        the group's total — and the additive ``applies_to`` says which kind
+        each entry is, so existing consumers keep parsing.
+        """
+        from gateway.quota import QuotaAmounts, QuotaSubject
+
+        await add_rule(
+            session_factory,
+            name="my share",
+            scope=LimitScope.GROUP,
+            scope_id=seeded.group.id,
+            value="100",
+            applies_to=LimitAppliesTo.EACH_MEMBER,
+            metric=LimitMetric.REQUESTS,
+        )
+        await add_rule(
+            session_factory,
+            name="group total",
+            scope=LimitScope.GROUP,
+            scope_id=seeded.group.id,
+            metric=LimitMetric.REQUESTS,
+        )
+        async with session_factory() as db:
+            teammate = User(issuer="https://idp.test", subject="teammate")
+            db.add(teammate)
+            await db.flush()
+            db.add(
+                Membership(
+                    user_id=teammate.id,
+                    group_id=seeded.group.id,
+                    source=MembershipSource.MANUAL,
+                )
+            )
+            await db.commit()
+            teammate_id = teammate.id
+        # One request as the caller, two as a teammate — through the engine,
+        # so the counters (which is what current_value reads) move.
+        engine = app.state.quota_engine
+        async with session_factory() as db:
+            reservation = await engine.check_and_reserve(
+                db, QuotaSubject(seeded.user.id, seeded.group.id), QuotaAmounts()
+            )
+            await engine.settle(reservation, QuotaAmounts())
+        async with session_factory() as db:
+            for _ in range(2):
+                reservation = await engine.check_and_reserve(
+                    db, QuotaSubject(teammate_id, seeded.group.id), QuotaAmounts()
+                )
+                await engine.settle(reservation, QuotaAmounts())
+
+        rules = (
+            await client.get("/api/me/limits", headers=session_cookie(seeded.user.id, app))
+        ).json()["items"]
+        share = next(rule for rule in rules if rule["name"] == "my share")
+        total = next(rule for rule in rules if rule["name"] == "group total")
+        assert share["applies_to"] == "each_member"
+        assert total["applies_to"] == "aggregate"
+        # 1 of my own, not the 3 the group spent together.
+        assert Decimal(share["current_value"]) == Decimal(1)
+        assert Decimal(total["current_value"]) == Decimal(3)

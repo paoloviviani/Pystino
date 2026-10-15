@@ -21,6 +21,7 @@ import httpx
 from conftest import FakeUpstream, Seeded
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 @contextmanager
@@ -215,3 +216,78 @@ class TestTheMeteredPath:
         print(summarise(selects))
         assert not writes, f"a steady-state token request wrote:\n{summarise(writes)}"
         assert len(selects) <= 5, f"{len(selects)} selects:\n{summarise(selects)}"
+
+    async def test_a_per_member_rule_adds_no_queries(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        app: object,
+        fake_upstream: FakeUpstream,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A per-member rule rides the same single rule query and Valkey keys.
+
+        The member attribution is a second counter key, not a second query:
+        rule loading is still one SELECT (plus the resets selectinload any
+        rule incurs), and the reserve is Valkey INCRBYs. Measured against the
+        same setup with only the aggregate rule, so the assertion is that the
+        per-member kind costs nothing further — not a new absolute number.
+        """
+        from decimal import Decimal
+
+        from gateway.models import LimitAppliesTo, LimitMetric, LimitRule, LimitScope
+        from test_chat_completions import basic_request
+
+        engine = app.state.engine  # type: ignore[attr-defined]
+        completion = {
+            "id": "c1",
+            "object": "chat.completion",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        }
+
+        async def make_rules(applies: list[str]) -> None:
+            async with session_factory() as db:
+                for mode in applies:
+                    db.add(
+                        LimitRule(
+                            name=f"rule {mode}",
+                            scope=LimitScope.GROUP,
+                            scope_id=seeded.group.id,
+                            metric=LimitMetric.COST,
+                            window_seconds=3600,
+                            limit_value=Decimal("1000"),
+                            applies_to=LimitAppliesTo(mode),
+                        )
+                    )
+                await db.commit()
+
+        async def metered() -> tuple[int, int]:
+            fake_upstream.set_json(completion)
+            with counted(engine) as statements:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    json=basic_request(),
+                    headers=seeded.auth,
+                )
+            assert response.status_code == 200
+            selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+            writes = [
+                s
+                for s in statements
+                if s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+            ]
+            return len(selects), len(writes)
+
+        await make_rules(["aggregate"])
+        # Warm anything one-off, as the budget test above does.
+        await metered()
+        aggregate = await metered()
+
+        await make_rules(["each_member"])
+        member = await metered()
+
+        print(f"\n  aggregate-only: {aggregate[0]} selects, {aggregate[1]} writes")
+        print(f"  aggregate+per-member: {member[0]} selects, {member[1]} writes")
+        assert member == aggregate, f"per-member rules cost extra queries: {aggregate} -> {member}"
+        assert member[1] <= 2

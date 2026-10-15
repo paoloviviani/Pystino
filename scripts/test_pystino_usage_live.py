@@ -168,6 +168,15 @@ def check_document(label: str, status: int, body: Any) -> None:
             isinstance(rule.get("limit_value"), str),
             repr(rule.get("limit_value")),
         )
+        # ADR 0098, additive: which kind of budget this entry is. Present on a
+        # current gateway; its absence is not a failure here because an older
+        # gateway legitimately omits it.
+        if "applies_to" in rule:
+            expect(
+                f"{label}: applies_to is aggregate or each_member",
+                rule["applies_to"] in ("aggregate", "each_member"),
+                repr(rule["applies_to"]),
+            )
 
     for name, summary in body.get("groups", {}).items():
         expect(
@@ -175,6 +184,63 @@ def check_document(label: str, status: int, body: Any) -> None:
             isinstance(summary, dict) and "cost" in summary,
             str(summary),
         )
+
+
+def per_member_rules(opener: Any) -> list[str]:
+    """Create one rule of each kind on the caller's default group (ADR 0098).
+
+    What a live gateway can prove that the unit suite cannot: the rules a
+    person actually sees through `/v1/pystino/usage` come from real rows, the
+    per-member entry is labelled `each_member`, and the current value it
+    reports is the caller's own counter key — zero here, since nothing calls a
+    model, but present and readable, not absent. Returns the ids, for cleanup.
+    """
+    status, groups = api(opener, "/api/admin/groups")
+    payload = groups.get("items") if isinstance(groups, dict) else groups
+    if status != 200 or not isinstance(payload, list) or not payload:
+        expect("a group to hang the per-member rule on", False, f"HTTP {status}: {groups}")
+        return []
+    group_id = next(
+        (str(group["id"]) for group in payload if isinstance(group, dict) and group.get("id")),
+        None,
+    )
+    if group_id is None:
+        expect("the billable groups carry ids", False, str(payload))
+        return []
+
+    made: list[str] = []
+    for kind, limit in (("aggregate", "1000"), ("each_member", "50")):
+        status, created = api(
+            opener,
+            "/api/admin/limits",
+            json_body={
+                "name": f"usage-live {kind}",
+                "scope": "group",
+                "scope_id": group_id,
+                "metric": "cost",
+                "period": "month",
+                "limit_value": limit,
+                "applies_to": kind,
+            },
+            method="POST",
+        )
+        if status == 201:
+            made.append(str(created["id"]))
+        else:
+            # A 409 means a rule of that kind already exists on this group —
+            # from an earlier run or a seeded demo. Either way the document
+            # check below still reads whatever is there.
+            expect(
+                f"created the {kind} rule (or one already exists)",
+                status == 409,
+                f"HTTP {status}: {created}",
+            )
+    return made
+
+
+def cleanup_rules(opener: Any, rule_ids: list[str]) -> None:
+    for rule_id in rule_ids:
+        api(opener, f"/api/admin/limits/{rule_id}", method="DELETE")
 
 
 def main() -> int:
@@ -205,10 +271,31 @@ def main() -> int:
     opener = login(*admin)
     if opener is None:
         return 1
-    secret = key_for(opener, "pystino-usage-live-check")
-    if secret is not None:
-        status, body = bearer_get(secret, "/v1/pystino/usage")
-        check_document("api key", status, body)
+    made_rules: list[str] = []
+    try:
+        made_rules = per_member_rules(opener)
+        secret = key_for(opener, "pystino-usage-live-check")
+        if secret is not None:
+            status, body = bearer_get(secret, "/v1/pystino/usage")
+            check_document("api key", status, body)
+            if status == 200 and made_rules:
+                share = next(
+                    (r for r in body.get("limits", []) if r.get("applies_to") == "each_member"),
+                    None,
+                )
+                expect(
+                    "a per-member rule appears in the document",
+                    share is not None,
+                    str([r.get("name") for r in body.get("limits", [])]),
+                )
+                if share is not None:
+                    expect(
+                        "the share's current value is the caller's own counter (0: nothing spent)",
+                        share.get("current_value") is not None,
+                        repr(share.get("current_value")),
+                    )
+    finally:
+        cleanup_rules(opener, made_rules)
 
     print("\n=== an OIDC access token reads its own usage ===")
     token = access_token()

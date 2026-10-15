@@ -176,3 +176,48 @@ class TestBearerCaller:
         assert body["usage"]["requests"] == 1
         assert Decimal(body["usage"]["cost"]) == Decimal(3)
         assert body["usage"]["currency"] == "EUR"
+
+    async def test_a_per_member_rule_is_the_callers_own_limit(
+        self,
+        app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The same document through the bearer door: own share, labelled.
+
+        A per-member rule on the caller's group appears with the caller's own
+        spend as its current value and an additive ``applies_to`` naming the
+        kind; the aggregate rule beside it is unchanged.
+        """
+        from gateway.models import LimitAppliesTo, LimitMetric
+        from gateway.quota import QuotaAmounts, QuotaSubject
+
+        await add_rule(
+            session_factory,
+            name="my share",
+            scope=LimitScope.GROUP,
+            scope_id=seeded.group.id,
+            applies_to=LimitAppliesTo.EACH_MEMBER,
+            metric=LimitMetric.REQUESTS,
+        )
+        await add_rule(
+            session_factory,
+            name="group total",
+            scope=LimitScope.GROUP,
+            scope_id=seeded.group.id,
+            metric=LimitMetric.REQUESTS,
+        )
+        engine = app.state.quota_engine
+        async with session_factory() as db:
+            reservation = await engine.check_and_reserve(
+                db, QuotaSubject(seeded.user.id, seeded.group.id), QuotaAmounts()
+            )
+            await engine.settle(reservation, QuotaAmounts())
+
+        response = await client.get("/v1/pystino/usage", headers=seeded.auth)
+        assert response.status_code == 200, response.text
+        limits = {rule["name"]: rule for rule in response.json()["limits"]}
+        assert limits["my share"]["applies_to"] == "each_member"
+        assert limits["group total"]["applies_to"] == "aggregate"
+        assert Decimal(limits["my share"]["current_value"]) == Decimal(1)

@@ -91,7 +91,10 @@ export function AdminQuotas() {
               ? formatMoney(rule.limit_value, "EUR", { exact })
               : `${Number(rule.limit_value).toLocaleString()} ${unitFor(rule.metric)}`}
           </div>
-          <div className={`${MUTED} ${NOWRAP}`}>per {describeWindow(rule)}</div>
+          <div className={`${MUTED} ${NOWRAP}`}>
+            per {describeWindow(rule)}
+            {rule.applies_to === "each_member" ? " per member" : ""}
+          </div>
         </>
       ),
     },
@@ -221,6 +224,12 @@ function QuotaHealthPanel() {
   const reconcile = useReconcileQuota();
   const toast = useOptionalToast();
   const exact = useExactMoney();
+  const users = useUsers();
+
+  const memberName = (memberId: string): string => {
+    const user = users.data?.items.find((entry) => entry.id === memberId);
+    return user?.email ?? user?.display_name ?? shortId(memberId);
+  };
 
   const rows = Array.isArray(health.data?.windows) ? health.data.windows : [];
 
@@ -240,6 +249,7 @@ function QuotaHealthPanel() {
           <div>{row.rule_name || <em className={MUTED}>unnamed</em>}</div>
           <div className={MUTED}>
             {row.scope} · {row.metric} · {row.window_label}
+            {row.member_id ? ` · ${memberName(row.member_id)}` : ""}
             {row.is_active ? "" : " · inactive"}
           </div>
         </>
@@ -315,7 +325,7 @@ function QuotaHealthPanel() {
         <Table
           columns={columns}
           rows={rows}
-          rowKey={(row) => `${row.rule_id}:${row.window_id}`}
+          rowKey={(row) => `${row.rule_id}:${row.member_id ?? "-"}:${row.window_id}`}
           empty="No quota rules to check."
           caption="Counter and ledger totals for each rule's current window."
         />
@@ -333,6 +343,13 @@ function QuotaHealthPanel() {
  */
 function Consumption({ rule }: { rule: LimitRule }) {
   const exact = useExactMoney();
+  if (rule.applies_to === "each_member") {
+    // No single figure exists for a per-member rule — one budget per member,
+    // and the per-member consumption lives in the health table below. Say so
+    // plainly rather than borrowing the "counter unavailable" badge, which
+    // means the store could not be read and would be the wrong fact.
+    return <span className={MUTED}>per member · see health</span>;
+  }
   if (rule.current_value === null) {
     // A status, so a pill in the warn tone — but the words stay exactly as
     // they were ("counter unavailable", lowercase): the route tests pin that
@@ -371,6 +388,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const [name, setName] = useState("");
   const [scope, setScope] = useState("group");
   const [scopeId, setScopeId] = useState("");
+  const [appliesTo, setAppliesTo] = useState("aggregate");
   const [metric, setMetric] = useState("cost");
   const [kind, setKind] = useState<"period" | "rolling">("period");
   const [period, setPeriod] = useState("month");
@@ -385,6 +403,9 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
         // A non-global rule needs a target; the API refuses a null one, which is
         // deliberate — an accidentally global cap is far too easy otherwise.
         scope_id: scope === "global" ? null : scopeId || null,
+        // Per-member only means something for a group; the choice is offered
+        // there alone, and anything else goes out as the aggregate default.
+        applies_to: scope === "group" ? appliesTo : "aggregate",
         metric,
         window_seconds: kind === "rolling" ? Math.round(Number(hours) * 3600) : null,
         period: kind === "period" ? period : null,
@@ -423,11 +444,18 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
       <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="research monthly budget" />
 
       <div className={FORM_ROW}>
-        <Select label="Scope" value={scope} onChange={(e) => { setScope(e.target.value); setScopeId(""); }}>
+        <Select label="Scope" value={scope} onChange={(e) => { setScope(e.target.value); setScopeId(""); setAppliesTo("aggregate"); }}>
           <option value="global">Everyone</option>
           <option value="group">A group</option>
           <option value="user">A user</option>
         </Select>
+
+        {scope === "group" && (
+          <Select label="Applies to" value={appliesTo} onChange={(e) => setAppliesTo(e.target.value)}>
+            <option value="aggregate">The group's total</option>
+            <option value="each_member">Each member</option>
+          </Select>
+        )}
 
         {scope === "group" && (
           <Select label="Group" value={scopeId} onChange={(e) => setScopeId(e.target.value)}>

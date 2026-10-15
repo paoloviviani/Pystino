@@ -159,6 +159,52 @@ must not raise a ceiling someone else set.
   *consumption*; a reason is optional and recorded in the audit log when given.
   Billing history is never touched.
 
+### Group rules: the total, or each member
+
+A group rule caps **who** its budget belongs to, chosen when the rule is
+created (`applies_to`; immutable like the scope and window, because either
+change would abandon the consumption already counted):
+
+- **`aggregate`** (the default, and every rule that predates the choice): one
+  budget for the group's total. Every request *billed to* the group counts,
+  by all members together — including an API key's spend, which counts for
+  the key's owner as a member.
+- **`each_member`**: one budget per member of the group. A request billed to
+  group G by user U counts against U's own share and nothing else: U's usage
+  billed to other groups does not count, and other members' usage does not
+  count. Spend through an API key counts against the key's owner. A member
+  is a holder of a membership in the group; a request that has no user at
+  all (no path reserves one today) would skip per-member rules, because
+  there is nobody to attribute the spend to.
+
+Where both kinds exist on one group, **both are enforced** — a request must
+pass every rule that matches it, as everywhere. Neither kind raises the
+other: a per-member rule does not lift the group ceiling, and the group
+ceiling does not absorb a member's overrun.
+
+A worked example, on one group with a €500 aggregate rule and a €50
+per-member rule, both monthly:
+
+| Situation | Aggregate (€500/month) | Per member (€50/month) |
+|---|---|---|
+| Ada has spent €30 this month, Bill €20 | group total €50 — fine | each share fine |
+| Ada reaches €50 | still fine (group at €50) | **Ada refused**, Bill unaffected |
+| The group together reaches €500 | **everyone refused** | irrelevant once the aggregate refuses first |
+| Ada bills €40 of her spend to a *different* group | does not count here | does not count against her share here |
+
+A member can see their own share on the usage page (`/v1/pystino/usage`,
+`/api/me/limits`): a per-member rule appears as *their* limit with *their*
+own consumption, marked `"applies_to": "each_member"`. It never shows
+another member's spend, and a 429 for a per-member rule says the member's
+share ran out — a 429 for an aggregate rule says the group's total did.
+
+Operationally, a per-member rule is one counter key per member: the health
+view and **Reconcile** expand to one row per member (each member's budget is
+enforced independently, so drift is per member too), and seeding a new rule
+primes the members who already spent in the window. The rules list carries
+no single consumption figure for a per-member rule — the per-member figures
+live in the health table.
+
 ### Rebuilds replace; they never add
 
 Every path that fills a counter from the ledger (the start-up rebuild, seeding

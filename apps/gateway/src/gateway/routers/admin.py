@@ -114,6 +114,7 @@ from gateway.models import (
     IdentityEventActor,
     IdentityProvider,
     IdpAuthorizationCode,
+    LimitAppliesTo,
     LimitMetric,
     LimitRule,
     LimitScope,
@@ -2533,6 +2534,7 @@ def _limit_response(rule: LimitRule, current: Decimal | None = None) -> LimitRul
         period=rule.period.value if rule.period else None,
         window_label=rule.window_label,
         limit_value=rule.limit_value,
+        applies_to=rule.applies_to.value,
         is_active=rule.is_active,
         current_value=current,
         # Requires `resets` to be loaded; every caller here does so explicitly,
@@ -2600,6 +2602,7 @@ async def quota_health(
                 metric=w.rule.metric.value,
                 window_label=w.rule.window_label,
                 is_active=w.rule.is_active,
+                member_id=w.member_id,
                 window_id=w.window_id,
                 counter_value=w.counter,
                 ledger_total=w.ledger,
@@ -2646,6 +2649,7 @@ async def quota_reconcile(
                 window_id=entry.window_id,
                 before=entry.before,
                 after=entry.after,
+                member_id=entry.member_id,
             )
             for entry in done
         ],
@@ -2668,6 +2672,8 @@ async def create_limit(
         raise BadRequestError("A global rule must not carry a scope_id.")
     if scope is not LimitScope.GLOBAL and payload.scope_id is None:
         raise BadRequestError(f"A {scope.value} rule needs a scope_id.")
+    if payload.applies_to == "each_member" and scope is not LimitScope.GROUP:
+        raise BadRequestError("Only a group rule can apply per member.")
 
     # Fail now with a readable message rather than later with a rule that silently
     # matches nothing.
@@ -2699,6 +2705,7 @@ async def create_limit(
         period=PeriodKind(payload.period) if payload.period else None,
         limit_value=payload.limit_value,
         is_active=payload.is_active,
+        applies_to=LimitAppliesTo(payload.applies_to),
     )
     session.add(rule)
     try:
@@ -2706,14 +2713,14 @@ async def create_limit(
     except IntegrityError as exc:
         await session.rollback()
         raise ConflictError(
-            "A rule already exists for that scope, metric and window. Update it "
-            "instead of adding a second one."
+            "A rule already exists for that scope, metric, window and applies-to. "
+            "Update it instead of adding a second one."
         ) from exc
     await session.refresh(rule, attribute_names=["resets"])
     # Start the counter from the spend already in the ledger for this window. A
     # monthly rule created on the 20th otherwise begins at zero and the cap is
     # wrong for the rest of the month.
-    await quota.seed_rule(rule)
+    await quota.seed_rule(session, rule)
     current = await quota.current_values([rule])
     return _limit_response(rule, current.get(rule.id))
 
@@ -2753,7 +2760,7 @@ async def update_limit(
         # rule watches get written), so re-activating one would read whatever
         # was left. Replace it from the ledger; seeding is a replace, so this
         # cannot double anything.
-        await quota.seed_rule(rule)
+        await quota.seed_rule(session, rule)
     current = await quota.current_values([rule])
     return _limit_response(rule, current.get(rule.id))
 

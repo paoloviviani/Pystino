@@ -24,6 +24,7 @@ function rule(overrides: Partial<LimitRule> = {}): LimitRule {
     scope: "group",
     scope_id: "g1",
     metric: "cost",
+    applies_to: "aggregate",
     window_seconds: null,
     period: "month",
     window_label: "month",
@@ -35,7 +36,7 @@ function rule(overrides: Partial<LimitRule> = {}): LimitRule {
   };
 }
 
-function routes(rules: LimitRule[], health: unknown = { windows: [] }) {
+function routes(rules: LimitRule[], health: unknown = { windows: [] }, users: unknown[] = []) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -46,7 +47,7 @@ function routes(rules: LimitRule[], health: unknown = { windows: [] }) {
       payload = { reconciled: [], corrected: 1 };
     else if (url.includes("/api/admin/limits") && method === "GET") payload = rules;
     else if (url.includes("/api/admin/groups")) payload = [{ id: "g1", name: "research", description: null, source: "idp", is_active: true, member_count: 3, models: [] }];
-    else if (url.includes("/api/admin/users")) payload = [];
+    else if (url.includes("/api/admin/users")) payload = users;
     return jsonResponse(payload);
   });
 }
@@ -311,6 +312,140 @@ describe("AdminQuotas", () => {
           ),
         ).toBe(true),
       );
+    });
+  });
+
+  describe("per-member rules", () => {
+    const member = { id: "u1", email: "ada@example.org", display_name: "Ada" };
+    const share = () =>
+      rule({
+        id: "r2",
+        name: "member share",
+        limit_value: "50.000000000000",
+        current_value: "12.500000000000",
+        applies_to: "each_member",
+      });
+
+    it("offers the choice for a group scope, and nowhere else", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      vi.stubGlobal("fetch", routes([rule()]));
+      renderScreen(<AdminQuotas />);
+      await user.click(await screen.findByRole("button", { name: "New rule" }));
+
+      // Group is the default scope, and the choice is there.
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).getByLabelText("Applies to")).toBeInTheDocument();
+      expect(
+        within(within(dialog).getByLabelText("Applies to")).getByRole("option", {
+          name: "Each member",
+        }),
+      ).toBeInTheDocument();
+
+      await user.selectOptions(within(dialog).getByLabelText("Scope"), "user");
+      expect(within(dialog).queryByLabelText("Applies to")).toBeNull();
+
+      await user.selectOptions(within(dialog).getByLabelText("Scope"), "global");
+      expect(within(dialog).queryByLabelText("Applies to")).toBeNull();
+    });
+
+    it("sends applies_to when creating a per-member rule", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const fetchMock = routes([rule()]);
+      vi.stubGlobal("fetch", fetchMock);
+      renderScreen(<AdminQuotas />);
+      await user.click(await screen.findByRole("button", { name: "New rule" }));
+
+      const dialog = await screen.findByRole("dialog");
+      await user.selectOptions(within(dialog).getByLabelText("Group"), "g1");
+      await user.selectOptions(within(dialog).getByLabelText("Applies to"), "each_member");
+      const limit = within(dialog).getByLabelText(/Limit/);
+      await user.clear(limit);
+      await user.type(limit, "50");
+      await user.click(within(dialog).getByRole("button", { name: "Create" }));
+
+      await waitFor(() => {
+        const post = fetchMock.mock.calls.find(
+          ([url, init]) =>
+            String(url).endsWith("/api/admin/limits") && init?.method === "POST",
+        );
+        expect(post).toBeDefined();
+        expect(JSON.parse(String(post![1]!.body))).toMatchObject({
+          scope: "group",
+          scope_id: "g1",
+          applies_to: "each_member",
+        });
+      });
+    });
+
+    it("prints the mode with the limit in the rules list", async () => {
+      vi.stubGlobal("fetch", routes([rule(), share()]));
+      renderScreen(<AdminQuotas />);
+
+      await waitFor(() => expect(screen.getByText("member share")).toBeInTheDocument());
+      const tables = screen.getAllByRole("table");
+      const rulesTable = tables[0]!;
+      const memberRow = within(rulesTable)
+        .getAllByRole("row")
+        .find((row) => within(row).queryByText("member share"));
+      expect(memberRow).toBeDefined();
+      expect(within(memberRow!).getByText("per month per member")).toBeInTheDocument();
+    });
+
+    it("says plainly that per-member consumption has no single figure", async () => {
+      vi.stubGlobal("fetch", routes([share()]));
+      renderScreen(<AdminQuotas />);
+
+      await waitFor(() => expect(screen.getByText("member share")).toBeInTheDocument());
+      // Not the "counter unavailable" badge: the counter is fine, there is
+      // simply no one number for a per-member rule.
+      expect(screen.queryByText("counter unavailable")).toBeNull();
+      const tables = screen.getAllByRole("table");
+      const memberRow = within(tables[0]!)
+        .getAllByRole("row")
+        .find((row) => within(row).queryByText("member share"));
+      expect(within(memberRow!).getByText("per member · see health")).toBeInTheDocument();
+    });
+
+    it("names the member on per-member health rows", async () => {
+      vi.stubGlobal(
+        "fetch",
+        routes(
+          [share()],
+          {
+            windows: [
+              {
+                rule_id: "r2",
+                rule_name: "member share",
+                scope: "group",
+                scope_id: "g1",
+                metric: "cost",
+                window_label: "month",
+                is_active: true,
+                window_id: "p2026-10",
+                counter_value: "12.500000000000",
+                ledger_total: "12.500000000000",
+                difference: "0.000000000000",
+                counter_ttl_seconds: 3600,
+                stale_in_progress: 0,
+                member_id: "u1",
+              },
+            ],
+            rebuild_lock_present: false,
+            rebuild_lock_ttl_seconds: null,
+          },
+          [member],
+        ),
+      );
+      renderScreen(<AdminQuotas />);
+
+      await waitFor(() => expect(screen.getByText("Quota health")).toBeInTheDocument());
+      const tables = screen.getAllByRole("table");
+      const healthTable = tables[tables.length - 1]!;
+      const memberRow = within(healthTable)
+        .getAllByRole("row")
+        .find((row) => within(row).queryByText("member share"));
+      expect(memberRow).toBeDefined();
+      expect(memberRow!.textContent).toContain("ada@example.org");
     });
   });
 });
