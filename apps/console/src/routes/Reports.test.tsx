@@ -10,7 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { jsonResponse } from "../test-helpers";
 import type { UsageReport } from "../lib/types";
@@ -85,15 +85,50 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+beforeEach(() => {
+  // The disclosures remember their open-or-closed choice per page; one
+  // test's expanded section must not leak into the next test's render.
+  window.localStorage.clear();
+});
+
 describe("Reports", () => {
-  it("shows the caveats the API returned, verbatim", async () => {
+  it("collapses the caveats to one line, and shows them verbatim on expand", async () => {
     // Wording a caveat twice — once in the API, once here — is how the two end
     // up disagreeing about what the number means.
     const note = "9 request(s) are charged from our price table: their provider reported none.";
-    vi.stubGlobal("fetch", respondWith(report({ disclosures: [note] })));
+    const second = "Searches through the gateway's own backends are counted and never priced.";
+    vi.stubGlobal("fetch", respondWith(report({ disclosures: [note, second] })));
     renderScreen();
 
-    await waitFor(() => expect(screen.getByText(note)).toBeInTheDocument());
+    const toggle = await screen.findByRole("button", { name: /2 notes about these figures/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    // One line, not two paragraphs: the accessibility tree sees the summary
+    // alone until it opens.
+    expect(screen.getAllByRole("note")).toHaveLength(1);
+    const user = userEvent.setup();
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const notes = screen.getAllByRole("note");
+    expect(notes.map((el) => el.textContent)).toContain(note);
+    expect(notes.map((el) => el.textContent)).toContain(second);
+  });
+
+  it("remembers this page's open-or-closed choice", async () => {
+    vi.stubGlobal(
+      "fetch",
+      respondWith(report({ disclosures: ["A first note.", "A second note."] })),
+    );
+    const first = renderScreen();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /2 notes/ }));
+    expect(window.localStorage.getItem("llmp.console.disclosures.reports")).toBe("true");
+    first.unmount();
+
+    renderScreen();
+    expect(await screen.findByRole("button", { name: /2 notes/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 
   it("shows the person's own spend and breakdown", async () => {

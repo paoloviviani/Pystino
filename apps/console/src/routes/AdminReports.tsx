@@ -3,10 +3,11 @@ import type { Column } from "@llmp/ui";
 import { useState } from "react";
 import { downloadCsv } from "../lib/api";
 import { reportQueryString, useAdminReport, useGroups, useModels } from "../lib/admin";
-import { DISCLOSURES, FILTERS, MUTED, PAGE, STATS } from "../lib/layout";
+import { FILTERS, MUTED, PAGE, STATS } from "../lib/layout";
 import { recentPeriods } from "../lib/periods";
 import type { UsageReportRow } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
+import { Disclosures } from "../components/Disclosures";
 
 const BREAKDOWNS = [
   { value: "group", label: "By group" },
@@ -152,17 +153,12 @@ export function AdminReports() {
               />
             </div>
 
-            {/* The API's own words. Restating a caveat here is how the two end
-                up disagreeing about what the number means. */}
-            {report.data.disclosures.length > 0 && (
-              <div className={DISCLOSURES}>
-                {report.data.disclosures.map((note) => (
-                  <Notice key={note} tone="warn">
-                    {note}
-                  </Notice>
-                ))}
-              </div>
-            )}
+            {/* The caveats collapse to one line; the component keeps the
+                API's wording verbatim and remembers the choice per page. */}
+            <Disclosures
+              notes={report.data.disclosures}
+              storageKey="llmp.console.disclosures.adminReports"
+            />
           </>
         )}
       </Card>

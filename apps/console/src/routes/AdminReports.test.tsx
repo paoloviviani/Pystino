@@ -75,6 +75,9 @@ function renderScreen(element: ReactElement) {
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date(2026, 7, 15));
+  // The disclosures remember their open-or-closed choice per page; one
+  // test's expanded section must not leak into the next test's render.
+  window.localStorage.clear();
 });
 
 afterEach(() => {
@@ -109,9 +112,31 @@ describe("AdminReports", () => {
     renderScreen(<AdminReports />);
 
     await waitFor(() => expect(screen.getByText("75%")).toBeInTheDocument());
-    expect(
-      screen.getByText("20 of 100 requests have estimated token counts."),
-    ).toBeInTheDocument();
+    // The caveat collapses to one line; the note itself is behind the toggle.
+    const toggle = screen.getByRole("button", { name: /1 note about these figures/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getAllByRole("note")).toHaveLength(1);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const [, caveat] = screen.getAllByRole("note");
+    expect(caveat).toHaveTextContent("20 of 100 requests have estimated token counts.");
+    expect(caveat).toBeVisible();
+  });
+
+  it("remembers this page's open-or-closed choice", async () => {
+    vi.stubGlobal("fetch", routes(report({ disclosures: ["A first note.", "A second note."] })));
+    const first = renderScreen(<AdminReports />);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    await user.click(await screen.findByRole("button", { name: /2 notes/ }));
+    expect(window.localStorage.getItem("llmp.console.disclosures.adminReports")).toBe("true");
+    first.unmount();
+
+    renderScreen(<AdminReports />);
+    expect(await screen.findByRole("button", { name: /2 notes/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 
   it("sends the chosen breakdown and filters to the API", async () => {
