@@ -167,8 +167,8 @@ class TestRebuildNeverDoubles:
         quota = engine_for(cache, fallback=DatabaseCounterStore(session_factory))
         await spend(session, group_id=group.id, cost="2")
 
-        await quota.seed_rule(rule)
-        await quota.seed_rule(rule)  # an edit, a re-activation, a second worker
+        await quota.seed_rule(session, rule)
+        await quota.seed_rule(session, rule)  # an edit, a re-activation, a second worker
 
         assert await counter(cache, cost_query(group, period=False), time.time()) == Decimal(2)
 

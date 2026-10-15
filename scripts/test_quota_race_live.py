@@ -81,6 +81,17 @@ async def main() -> int:
     def delta(amount: int) -> CounterDelta:
         return CounterDelta(scope=scope, metric=LimitMetric.TOKENS, units=amount, spec=spec)
 
+    # The per-member half (ADR 0098): a second group whose budget belongs to
+    # each member separately. Forty callers, but only a quarter of them are
+    # the same member — so the member's cap governs, not the group's, and the
+    # arithmetic number admitted is per member, not per group.
+    member = uuid.uuid4()
+    member_scope = ScopeRef(LimitScope.GROUP, uuid.uuid4(), member_id=member)
+    member_query = WindowQuery(scope=member_scope, metric=LimitMetric.TOKENS, spec=spec)
+
+    def member_delta(amount: int) -> CounterDelta:
+        return CounterDelta(scope=member_scope, metric=LimitMetric.TOKENS, units=amount, spec=spec)
+
     # One client per caller. Sharing a connection would serialise them inside
     # the client library and prove nothing about the server.
     clients = [redis.from_url(VALKEY_URL) for _ in range(CALLERS)]
@@ -116,6 +127,31 @@ async def main() -> int:
             "and the refused leave nothing on the counter",
             held == EXPECTED * EACH,
             f"counter holds {held}, expected {EXPECTED * EACH}",
+        )
+        await clients[0].flushdb()
+
+        # The same race, per member (ADR 0098): every caller is the same
+        # member, so the per-member key races exactly like a scope key did.
+        async def member_attempt(store: ValkeyCounterStore) -> bool:
+            totals = await store.apply_and_total([member_delta(units)], [member_query], now=now)
+            before = max(0, totals[0].units - units)
+            if before >= LIMIT:
+                await store.apply([member_delta(-units)], now=now)
+                return False
+            return True
+
+        print(f"=== {CALLERS} concurrent callers, one member, ceiling {LIMIT} ===")
+        member_admitted = sum(await asyncio.gather(*(member_attempt(store) for store in stores)))
+        member_held = (await stores[0].totals([member_query], now=now))[0].units
+        expect(
+            "the member's own budget admits exactly the arithmetic number",
+            member_admitted == EXPECTED,
+            f"{member_admitted} of {CALLERS}, expected {EXPECTED}",
+        )
+        expect(
+            "and the refused leave nothing on the member's counter",
+            member_held == EXPECTED * EACH,
+            f"counter holds {member_held}, expected {EXPECTED * EACH}",
         )
         await clients[0].flushdb()
     finally:

@@ -26,7 +26,7 @@ from sqlalchemy.orm import selectinload
 
 from gateway.config import Settings
 from gateway.models import Group, LimitRule, LimitScope, UsageRecord, UsageSource, UsageStatus
-from gateway.quota import QuotaEngine
+from gateway.quota import QuotaEngine, QuotaSubject
 from gateway.quota.notifications import thresholds_for_user
 from gateway.schemas import MyLimitResponse, UsageSummaryResponse
 from gateway.types import utcnow
@@ -77,8 +77,11 @@ async def caller_limits(
 
     # Absent, not zero, when the counter store cannot be reached — a budget
     # shown as 0% used because Valkey is down is worse than one shown as
-    # unknown.
-    current = await quota.current_values(rules)
+    # unknown. A per-member rule answers for the caller themself: the subject
+    # carries their user id, and the rule's group is its own scope.
+    current = await quota.current_values(
+        rules, subject=QuotaSubject(user_id=user_id, group_id=None)
+    )
     my_thresholds = await thresholds_for_user(session, user_id)
 
     return [
@@ -86,6 +89,7 @@ async def caller_limits(
             id=rule.id,
             name=rule.name,
             scope=rule.scope.value,
+            applies_to=rule.applies_to.value,
             metric=rule.metric.value,
             window_label=rule.window_label,
             limit_value=rule.limit_value,

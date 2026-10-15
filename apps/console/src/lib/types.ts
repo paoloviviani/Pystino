@@ -397,6 +397,8 @@ export interface LimitRule {
   scope: "global" | "group" | "user" | "api_key";
   scope_id: string | null;
   metric: "requests" | "tokens" | "cost";
+  /** "aggregate" caps the scope's total; "each_member" caps each member (group scope only). */
+  applies_to: "aggregate" | "each_member";
   window_seconds: number | null;
   period: string | null;
   /** "3600s" or "month" — one string to print, whichever kind of rule it is. */
@@ -414,6 +416,8 @@ export interface QuotaWindowHealth {
   rule_name: string;
   scope: "global" | "group" | "user" | "api_key";
   scope_id: string | null;
+  /** Set on rows of a per-member rule: whose budget this is. */
+  member_id: string | null;
   metric: "requests" | "tokens" | "cost" | "own_search_requests";
   window_label: string;
   is_active: boolean;
@@ -440,6 +444,7 @@ export interface QuotaReconcileResult {
     window_id: string;
     before: string;
     after: string;
+    member_id: string | null;
   }[];
   corrected: number;
 }

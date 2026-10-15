@@ -71,20 +71,33 @@ def from_units(metric: LimitMetric, units: int) -> Decimal:
 
 @dataclass(frozen=True, slots=True)
 class ScopeRef:
-    """Who a counter belongs to."""
+    """Who a counter belongs to.
+
+    A per-member group budget (ADR 0098) names both the group and the member:
+    ``member_id`` rides beside ``scope_id`` rather than as a new scope, so the
+    group identity — and every place that matches on it — stays in one piece.
+    """
 
     scope: LimitScope
     scope_id: uuid.UUID | None = None
+    member_id: uuid.UUID | None = None
 
     def __post_init__(self) -> None:
         if self.scope is LimitScope.GLOBAL and self.scope_id is not None:
             raise ValueError("global scope must not carry a scope_id")
         if self.scope is not LimitScope.GLOBAL and self.scope_id is None:
             raise ValueError(f"{self.scope} scope requires a scope_id")
+        if self.member_id is not None and (
+            self.scope is not LimitScope.GROUP or self.scope_id is None
+        ):
+            raise ValueError("a member_id names a member of a group, nothing else")
 
     @property
     def key_part(self) -> str:
-        return f"{self.scope.value}:{self.scope_id or '-'}"
+        base = f"{self.scope.value}:{self.scope_id or '-'}"
+        if self.member_id is None:
+            return base
+        return f"{base}:member:{self.member_id}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,6 +530,12 @@ class DatabaseCounterStore:
         match query.scope.scope:
             case LimitScope.GROUP:
                 stmt = stmt.where(UsageRecord.group_id == query.scope.scope_id)
+                # A per-member budget counts only what the member had billed
+                # to the group (ADR 0098): the group filter above stays, and
+                # the member filter narrows it. An aggregate group key carries
+                # no member_id and reads the whole group, as before.
+                if query.scope.member_id is not None:
+                    stmt = stmt.where(UsageRecord.user_id == query.scope.member_id)
             case LimitScope.USER:
                 stmt = stmt.where(UsageRecord.user_id == query.scope.scope_id)
             case LimitScope.API_KEY:

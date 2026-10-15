@@ -781,6 +781,8 @@ export interface CreateLimitInput {
   window_seconds: number | null;
   period: string | null;
   limit_value: string;
+  /** "aggregate" or "each_member" — only meaningful for group scope. */
+  applies_to?: string;
 }
 
 export function useCreateLimit() {
