@@ -146,9 +146,10 @@ Cross-cutting, the same in every mode:
 
 - **Pre-invited people always get in.** An invitation (`Users` → **Invite**)
   creates a pending account with no login; the person's first sign-in claims
-  it by *verified* email, keeping the groups the administrator pre-assigned.
-  An invitation expires after 14 days — re-inviting (the invite-text button)
-  re-issues it.
+  it by *verified* email, keeping the groups the administrator pre-assigned,
+  and the claim consumes the invitation — the account stops reading as
+  Invited. An invitation expires after 14 days — re-inviting (the invite-text
+  button) re-issues it.
 - **Administrators are never refused by the gate.** `is_admin` accounts and
   anyone matching an env admin rule get in whatever the mode says, so a
   misconfigured group mode cannot lock every administrator out. Break-glass

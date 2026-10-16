@@ -108,7 +108,8 @@ async def _claim_pending_invite(session: AsyncSession, entry: Entry) -> User | N
     Exactly one live, unexpired invitation for the entry's address — anything
     else (none, several, disabled, expired, or a bundled pending account that
     was never an invitation) is the caller's cue to create fresh. The caller
-    sets the real `(issuer, subject)` pair and keeps the memberships.
+    sets the real `(issuer, subject)` pair, clears the consumed invitation
+    stamp and keeps the memberships.
     """
     if not entry.email:
         return None
@@ -357,10 +358,15 @@ async def apply_entries(
                 # An administrator invited this address and the directory just
                 # pushed it: claim the invitation instead of minting a second
                 # row, keeping its memberships. Counted under linked, like
-                # every other resolution to an existing person.
+                # every other resolution to an existing person. The
+                # invitation is consumed with it: the Users list keys
+                # "Invited" off `invited_at`, so keeping the stamp would badge
+                # an active IdP account as Invited after the claim.
                 user = claimed
                 user.issuer = record.issuer
                 user.subject = entry.external_id
+                user.invited_at = None
+                user.invited_by = None
                 await session.flush()
                 by_subject[user.subject] = user
                 by_id[user.id] = user

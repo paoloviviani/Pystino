@@ -142,6 +142,40 @@ class TestBindsAPendingUser:
             assert event.target_user_id == user.id
             assert event.issuer == ISS
 
+    async def test_binding_consumes_the_invitation(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """An invitation claimed through the bundled login is consumed like
+        any other claim: the Users list keys "Invited" off invited_at, so
+        keeping the stamp would badge an active bundled account as Invited."""
+        from gateway.types import utcnow
+
+        async with session_factory() as session:
+            provider = await _provider(session)
+            inviter = await _pending_user(session, email="boss@example.org")
+            user = await _pending_user(session)
+            user.invited_at = utcnow()
+            user.invited_by = inviter.id
+            await session.commit()
+            await _bound_entry(session, provider, user)
+
+            await bind_bundled_login(
+                session,
+                provider,
+                issuer=ISS,
+                subject=NEW_SUBJECT,
+                preferred_username="carol",
+                email="carol@example.org",
+                email_verified=True,
+            )
+            await session.commit()
+
+            refreshed = (await session.execute(select(User).where(User.id == user.id))).scalar_one()
+            assert refreshed.issuer == ISS
+            assert refreshed.subject == NEW_SUBJECT
+            assert refreshed.invited_at is None
+            assert refreshed.invited_by is None
+
     async def test_a_pending_user_stays_unable_to_hold_admin_after_binding(
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:

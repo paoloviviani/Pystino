@@ -740,9 +740,14 @@ async def bind_bundled_login(
 
     if target.issuer == PENDING_USER_ISSUER:
         # The placeholder pair (§3.1) is replaced outright: it named nobody
-        # real, so there is nothing to keep a secondary record of.
+        # real, so there is nothing to keep a secondary record of. A consumed
+        # invitation's stamp goes with it: the Users list keys "Invited" off
+        # `invited_at`, so keeping it would badge an active bundled account
+        # as Invited after the bind.
         target.issuer = issuer
         target.subject = subject
+        target.invited_at = None
+        target.invited_by = None
     else:
         # Otherwise the identity is added — except when the target already
         # holds one at *this* issuer (a lost `authelia-data` volume mints a
@@ -855,8 +860,13 @@ async def claim_pending_by_email(
         return None
     # The same replacement the PENDING branch of `bind_bundled_login` does:
     # the placeholder pair becomes the real one, in place, memberships kept.
+    # The invitation is consumed with it: the Users list keys "Invited" off
+    # `invited_at`, so keeping the stamp would badge an active IdP account
+    # as Invited (and offer re-issue) after the claim.
     target.issuer = issuer
     target.subject = subject
+    target.invited_at = None
+    target.invited_by = None
     await session.flush()
     await record_event(
         session,

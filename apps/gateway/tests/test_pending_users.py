@@ -488,6 +488,11 @@ class TestClaimAtAnnounce:
             ).scalar_one_or_none()
             assert claimed is not None
             assert claimed.email_normalized == "invited@example.org"
+            # The invitation is consumed on claim: the Users list keys its
+            # "Invited" badge off invited_at, so a claimed row must not keep
+            # the stamp (it showed Invited for an active IdP account).
+            assert claimed.invited_at is None
+            assert claimed.invited_by is None
             # Still one row for the address: no second account was minted.
             count = await session.scalar(
                 select(func.count())
