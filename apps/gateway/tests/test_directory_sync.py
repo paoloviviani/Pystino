@@ -334,6 +334,11 @@ class TestEngine:
         user = (await session.execute(select(User).where(User.subject == "u-9"))).scalar_one()
         assert user.id == pending.id
         assert user.issuer == "https://kc.example.org/realms/corp"
+        # The invitation is consumed on claim: the Users list keys its
+        # "Invited" badge off invited_at, so a claimed row must not keep
+        # the stamp (it showed Invited for an active IdP account).
+        assert user.invited_at is None
+        assert user.invited_by is None
 
     async def test_admin_from_directory_groups(self, session: AsyncSession) -> None:
         row = await _provider(session, admin_source="claim", admin_values=["ops"])
