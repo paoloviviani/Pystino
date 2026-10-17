@@ -1,3 +1,6 @@
 {
-  "$schema": "https://inlang.com/schema/inlang-message-format"
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+
+  "not_found.title": "No such page",
+  "not_found.body": "No such address in the console. {#link}Back to your usage{/link}."
 }

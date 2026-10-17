@@ -1,3 +1,5 @@
 {
-  "$schema": "https://inlang.com/schema/inlang-message-format"
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "not_found.title": "[Ńó śúćȟ þáǧé]",
+  "not_found.body": "[Ńó śúćȟ áďďŕéśś íń ťȟé ćóńśóľé. {#link}Ɓáćķ ťó ýóúŕ úśáǧé{/link}.]"
 }
