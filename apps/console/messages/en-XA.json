@@ -946,5 +946,6 @@
     }
   ],
   "admin_search.delete.spend_note": "[Ŕéćóŕďéď śþéńď íś úńáƒƒéćťéď: þáśť śéáŕćȟéś ķééþ ťȟéíŕ áťťŕíƀúťíóń íń ťȟé ľéďǧéŕ.]",
-  "admin_search.unknown_error": "[Úńķńóŵń éŕŕóŕ.]"
+  "admin_search.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "quota_metric.unit.own_search_requests": "[ŵéƀ śéáŕćȟéś]"
 }
