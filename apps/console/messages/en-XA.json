@@ -947,5 +947,231 @@
   ],
   "admin_search.delete.spend_note": "[Ŕéćóŕďéď śþéńď íś úńáƒƒéćťéď: þáśť śéáŕćȟéś ķééþ ťȟéíŕ áťťŕíƀúťíóń íń ťȟé ľéďǧéŕ.]",
   "admin_search.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
-  "quota_metric.unit.own_search_requests": "[ŵéƀ śéáŕćȟéś]"
+  "quota_metric.unit.own_search_requests": "[ŵéƀ śéáŕćȟéś]",
+  "admin_quotas.title": "[Ǫúóťáś]",
+  "admin_quotas.subtitle": "[Áľľ ḿáťćȟíńǧ ŕúľéś ḿúśť þáśś, śó áďďíńǧ óńé ćáń óńľý ťíǧȟťéń á ƀúďǧéť.]",
+  "admin_quotas.new_rule": "[Ńéŵ ŕúľé]",
+  "admin_quotas.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ŕúľé]",
+        "countPlural=other": "[{n} ŕúľéś]"
+      }
+    }
+  ],
+  "admin_quotas.state.empty": "[ńóťȟíńǧ íś ćáþþéď]",
+  "admin_quotas.state.over": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} óǚéŕ ƀúďǧéť]"
+      }
+    }
+  ],
+  "admin_quotas.state.near": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ńéáŕľý śþéńť]"
+      }
+    }
+  ],
+  "admin_quotas.state.ok": "[áľľ ŵíťȟíń ƀúďǧéť]",
+  "admin_quotas.column.rule": "[Ŕúľé]",
+  "admin_quotas.column.limit": "[Ĺíḿíť]",
+  "admin_quotas.column.used": "[Úśéď]",
+  "admin_quotas.column.status": "[Śťáťúś]",
+  "admin_quotas.unnamed": "[úńńáḿéď]",
+  "admin_quotas.badge.inactive": "[Íńáćťíǚé]",
+  "admin_quotas.badge.over_budget": "[Óǚéŕ ƀúďǧéť]",
+  "admin_quotas.badge.nearly_spent": "[Ńéáŕľý śþéńť]",
+  "admin_quotas.badge.active": "[Áćťíǚé]",
+  "admin_quotas.badge.reset_date": "[Ŕéśéť {date}]",
+  "admin_quotas.action.history": "[Ȟíśťóŕý]",
+  "admin_quotas.action.reset": "[Ŕéśéť]",
+  "admin_quotas.action.delete": "[Ďéľéťé]",
+  "admin_quotas.toast.deleted": "[Ǫúóťá ŕúľé ďéľéťéď]",
+  "admin_quotas.toast.delete_failed": "[Ćóúľď ńóť ďéľéťé ťȟé ŕúľé]",
+  "admin_quotas.toast.created": "[Ǫúóťá ŕúľé ćŕéáťéď]",
+  "admin_quotas.toast.create_failed": "[Ćóúľď ńóť ćŕéáťé ťȟé ŕúľé]",
+  "admin_quotas.loading": "[Ĺóáďíńǧ ǫúóťá ŕúľéś]",
+  "admin_quotas.load_error.title": "[Ćóúľď ńóť ľóáď ǫúóťá ŕúľéś]",
+  "admin_quotas.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_quotas.empty": "[Ńó ǫúóťá ŕúľéś. Ńóťȟíńǧ íś ćáþþéď.]",
+  "admin_quotas.caption": "[Ǫúóťá ŕúľéś áńď ťȟéíŕ ľíǚé ćóńśúḿþťíóń.]",
+  "admin_quotas.window.days": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[24 ȟóúŕś]",
+        "countPlural=other": "[{n} ďáýś]"
+      }
+    }
+  ],
+  "admin_quotas.window.hours": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[ȟóúŕ]",
+        "countPlural=other": "[{n} ȟóúŕś]"
+      }
+    }
+  ],
+  "admin_quotas.window.minutes": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[ḿíńúťé]",
+        "countPlural=other": "[{n} ḿíńúťéś]"
+      }
+    }
+  ],
+  "admin_quotas.window.seconds": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number}ś]"
+      }
+    }
+  ],
+  "admin_quotas.window.per": "[þéŕ {window}]",
+  "admin_quotas.window.per_member": "[þéŕ {window} þéŕ ḿéḿƀéŕ]",
+  "admin_quotas.consumption.per_member_note": "[þéŕ ḿéḿƀéŕ · śéé ȟéáľťȟ]",
+  "admin_quotas.consumption.counter_unavailable": "[ćóúńťéŕ úńáǚáíľáƀľé]",
+  "admin_quotas.consumption.caption": "[{used} óƒ {limit}]",
+  "admin_quotas.consumption.label": "[{name} ćóńśúḿþťíóń]",
+  "admin_quotas.health.title": "[Ǫúóťá ȟéáľťȟ]",
+  "admin_quotas.health.body": "[Ŵȟáť éáćȟ ćóúńťéŕ ȟóľďś áǧáíńśť ŵȟáť ťȟé ľéďǧéŕ śáýś. Á ďíƒƒéŕéńćé íś ďŕíƒť; Ŕéćóńćíľé ŕéćóḿþúťéś éǚéŕý áćťíǚé ŕúľé ƒŕóḿ ťȟé ľéďǧéŕ.]",
+  "admin_quotas.health.reconcile": "[Ŕéćóńćíľé]",
+  "admin_quotas.health.toast.match": "[Ćóúńťéŕś áľŕéáďý ḿáťćȟ ťȟé ľéďǧéŕ]",
+  "admin_quotas.health.toast.corrected": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[Ćóŕŕéćťéď {n} ćóúńťéŕ]",
+        "countPlural=other": "[Ćóŕŕéćťéď {n} ćóúńťéŕś]"
+      }
+    }
+  ],
+  "admin_quotas.health.toast.failed": "[Ćóúľď ńóť ŕéćóńćíľé ťȟé ćóúńťéŕś]",
+  "admin_quotas.health.loading": "[Ĺóáďíńǧ ǫúóťá ȟéáľťȟ]",
+  "admin_quotas.health.load_error.title": "[Ćóúľď ńóť ľóáď ǫúóťá ȟéáľťȟ]",
+  "admin_quotas.health.column.rule": "[Ŕúľé]",
+  "admin_quotas.health.column.counter": "[Ćóúńťéŕ]",
+  "admin_quotas.health.column.ledger": "[Ĺéďǧéŕ]",
+  "admin_quotas.health.column.difference": "[Ďíƒƒéŕéńćé]",
+  "admin_quotas.health.column.ttl": "[Ćóúńťéŕ ŤŤĹ]",
+  "admin_quotas.health.column.stale": "[Śťúćķ íń þŕóǧŕéśś]",
+  "admin_quotas.health.unavailable": "[úńáǚáíľáƀľé]",
+  "admin_quotas.health.rule_line": "[{scope} · {metric} · {window}{member}{inactive}]",
+  "admin_quotas.health.inactive": "[íńáćťíǚé]",
+  "admin_quotas.health.counter_unavailable": "[ćóúńťéŕ úńáǚáíľáƀľé]",
+  "admin_quotas.health.none": "[ńóńé]",
+  "admin_quotas.health.no_counter": "[ńó ćóúńťéŕ]",
+  "admin_quotas.health.ttl": [
+    {
+      "declarations": [
+        "input hours"
+      ],
+      "match": {
+        "*": "[{hours: number} ȟ]"
+      }
+    }
+  ],
+  "admin_quotas.health.empty": "[Ńó ǫúóťá ŕúľéś ťó ćȟéćķ.]",
+  "admin_quotas.health.caption": "[Ćóúńťéŕ áńď ľéďǧéŕ ťóťáľś ƒóŕ éáćȟ ŕúľé'ś ćúŕŕéńť ŵíńďóŵ.]",
+  "admin_quotas.create.title": "[Ńéŵ ǫúóťá ŕúľé]",
+  "admin_quotas.create.cancel": "[Ćáńćéľ]",
+  "admin_quotas.create.submit": "[Ćŕéáťé]",
+  "admin_quotas.create.name": "[Ńáḿé]",
+  "admin_quotas.create.name_placeholder": "[ŕéśéáŕćȟ ḿóńťȟľý ƀúďǧéť]",
+  "admin_quotas.create.scope": "[Śćóþé]",
+  "admin_quotas.create.scope.global": "[Éǚéŕýóńé]",
+  "admin_quotas.create.scope.group": "[Á ǧŕóúþ]",
+  "admin_quotas.create.scope.user": "[Á úśéŕ]",
+  "admin_quotas.create.applies_to": "[Áþþľíéś ťó]",
+  "admin_quotas.create.applies.aggregate": "[Ťȟé ǧŕóúþ'ś ťóťáľ]",
+  "admin_quotas.create.applies.each_member": "[Éáćȟ ḿéḿƀéŕ]",
+  "admin_quotas.create.group": "[Ǧŕóúþ]",
+  "admin_quotas.create.user": "[Úśéŕ]",
+  "admin_quotas.create.choose": "[Ćȟóóśé…]",
+  "admin_quotas.create.metric": "[Ḿéťŕíć]",
+  "admin_quotas.create.metric.cost": "[Ćóśť]",
+  "admin_quotas.create.metric.tokens": "[Ťóķéńś]",
+  "admin_quotas.create.metric.requests": "[Ŕéǫúéśťś]",
+  "admin_quotas.create.metric.own_search": "[Ŵéƀ śéáŕćȟéś (óúŕś)]",
+  "admin_quotas.create.window": "[Ŵíńďóŵ]",
+  "admin_quotas.create.window.period": "[Ćáľéńďáŕ þéŕíóď]",
+  "admin_quotas.create.window.rolling": "[Ŕóľľíńǧ ŵíńďóŵ]",
+  "admin_quotas.create.period": "[Þéŕíóď]",
+  "admin_quotas.create.period.every": "[Éǚéŕý {period}]",
+  "admin_quotas.create.hours": "[Ȟóúŕś]",
+  "admin_quotas.create.hours_hint": "[Ŕóľľíńǧ, ƒŕóḿ ńóŵ ƀáćķŵáŕďś]",
+  "admin_quotas.create.limit_eur": "[Ĺíḿíť (ÉÚŔ)]",
+  "admin_quotas.create.limit_unit": "[Ĺíḿíť ({unit})]",
+  "admin_quotas.create.limit_hint.period": "[Ŕéśéťś óń ťȟé ćáľéńďáŕ ƀóúńďáŕý, íń ťȟé ƀíľľíńǧ ťíḿéźóńé.]",
+  "admin_quotas.create.limit_hint.rolling": "[Ćóúńťéď óǚéŕ ťȟé ŕóľľíńǧ ŵíńďóŵ.]",
+  "admin_quotas.create.volume_title": "[Ťȟíś ľíḿíťś ǚóľúḿé, ńóť śþéńď]",
+  "admin_quotas.create.volume_body": "[Ćóúńťś ćáľľś ťó óúŕ óŵń ŵéƀ-śéáŕćȟ ƀáćķéńďś. Ťȟéíŕ þéŕ-ŕéǫúéśť þŕíćéś ďíƒƒéŕ ƀý ḿóŕé ťȟáń ťéń ťíḿéś ƀéťŵééń ťíéŕś, śó á śéáŕćȟ ƀúďǧéť ďóéś ńóť ƀóúńď ŵȟáť śéáŕćȟéś ćóśť. Úśé á ćóśť ŕúľé ƒóŕ ťȟáť.]",
+  "admin_quotas.reset.title": "[Ŕéśéť {name}]",
+  "admin_quotas.reset.title_fallback": "[ťȟíś ŕúľé]",
+  "admin_quotas.reset.cancel": "[Ćáńćéľ]",
+  "admin_quotas.reset.submit": "[Ŕéśéť ćóńśúḿþťíóń]",
+  "admin_quotas.reset.notice_title": "[Ťȟíś ďóéś ńóť ćȟáńǧé áńýóńé'ś ƀíľľ]",
+  "admin_quotas.reset.notice_body": "[Óńľý ŵȟáť ťȟé ǫúóťá ćóúńťś ḿóǚéś; úśáǧé ŕéćóŕďś áŕé úńťóúćȟéď. Ťȟé ŕéśéť íś íḿḿéďíáťé áńď ćáńńóť ƀé śćȟéďúľéď.]",
+  "admin_quotas.reset.reason": "[Ŕéáśóń (óþťíóńáľ)]",
+  "admin_quotas.reset.reason_placeholder": "[ǧŕáńť éẋťéńśíóń áþþŕóǚéď]",
+  "admin_quotas.reset.reason_hint": "[Ķéþť þéŕḿáńéńťľý íń ťȟé áúďíť ľóǧ ŵȟéń ǧíǚéń.]",
+  "admin_quotas.reset.toast.done": "[Ćóńśúḿþťíóń ŕéśéť]",
+  "admin_quotas.reset.toast.failed": "[Ćóúľď ńóť ŕéśéť ćóńśúḿþťíóń]",
+  "admin_quotas.history.title": "[Ŕéśéťś · {name}]",
+  "admin_quotas.history.title_fallback": "[ŕúľé]",
+  "admin_quotas.history.empty": "[Ťȟíś ŕúľé ȟáś ńéǚéŕ ƀééń ŕéśéť.]",
+  "admin_quotas.history.column.when": "[Ŵȟéń]",
+  "admin_quotas.history.column.who": "[Ŵȟó]",
+  "admin_quotas.history.column.why": "[Ŕéáśóń]",
+  "admin_quotas.history.erased": "[(éŕáśéď úśéŕ)]",
+  "admin_quotas.history.noun": "[ŕéśéťś]"
 }

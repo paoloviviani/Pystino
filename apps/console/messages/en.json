@@ -947,5 +947,231 @@
   ],
   "admin_search.delete.spend_note": "Recorded spend is unaffected: past searches keep their attribution in the ledger.",
   "admin_search.unknown_error": "Unknown error.",
-  "quota_metric.unit.own_search_requests": "web searches"
+  "quota_metric.unit.own_search_requests": "web searches",
+  "admin_quotas.title": "Quotas",
+  "admin_quotas.subtitle": "All matching rules must pass, so adding one can only tighten a budget.",
+  "admin_quotas.new_rule": "New rule",
+  "admin_quotas.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} rule",
+        "countPlural=other": "{n} rules"
+      }
+    }
+  ],
+  "admin_quotas.state.empty": "nothing is capped",
+  "admin_quotas.state.over": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} over budget"
+      }
+    }
+  ],
+  "admin_quotas.state.near": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} nearly spent"
+      }
+    }
+  ],
+  "admin_quotas.state.ok": "all within budget",
+  "admin_quotas.column.rule": "Rule",
+  "admin_quotas.column.limit": "Limit",
+  "admin_quotas.column.used": "Used",
+  "admin_quotas.column.status": "Status",
+  "admin_quotas.unnamed": "unnamed",
+  "admin_quotas.badge.inactive": "Inactive",
+  "admin_quotas.badge.over_budget": "Over budget",
+  "admin_quotas.badge.nearly_spent": "Nearly spent",
+  "admin_quotas.badge.active": "Active",
+  "admin_quotas.badge.reset_date": "Reset {date}",
+  "admin_quotas.action.history": "History",
+  "admin_quotas.action.reset": "Reset",
+  "admin_quotas.action.delete": "Delete",
+  "admin_quotas.toast.deleted": "Quota rule deleted",
+  "admin_quotas.toast.delete_failed": "Could not delete the rule",
+  "admin_quotas.toast.created": "Quota rule created",
+  "admin_quotas.toast.create_failed": "Could not create the rule",
+  "admin_quotas.loading": "Loading quota rules",
+  "admin_quotas.load_error.title": "Could not load quota rules",
+  "admin_quotas.unknown_error": "Unknown error.",
+  "admin_quotas.empty": "No quota rules. Nothing is capped.",
+  "admin_quotas.caption": "Quota rules and their live consumption.",
+  "admin_quotas.window.days": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "24 hours",
+        "countPlural=other": "{n} days"
+      }
+    }
+  ],
+  "admin_quotas.window.hours": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "hour",
+        "countPlural=other": "{n} hours"
+      }
+    }
+  ],
+  "admin_quotas.window.minutes": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "minute",
+        "countPlural=other": "{n} minutes"
+      }
+    }
+  ],
+  "admin_quotas.window.seconds": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number}s"
+      }
+    }
+  ],
+  "admin_quotas.window.per": "per {window}",
+  "admin_quotas.window.per_member": "per {window} per member",
+  "admin_quotas.consumption.per_member_note": "per member · see health",
+  "admin_quotas.consumption.counter_unavailable": "counter unavailable",
+  "admin_quotas.consumption.caption": "{used} of {limit}",
+  "admin_quotas.consumption.label": "{name} consumption",
+  "admin_quotas.health.title": "Quota health",
+  "admin_quotas.health.body": "What each counter holds against what the ledger says. A difference is drift; Reconcile recomputes every active rule from the ledger.",
+  "admin_quotas.health.reconcile": "Reconcile",
+  "admin_quotas.health.toast.match": "Counters already match the ledger",
+  "admin_quotas.health.toast.corrected": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Corrected {n} counter",
+        "countPlural=other": "Corrected {n} counters"
+      }
+    }
+  ],
+  "admin_quotas.health.toast.failed": "Could not reconcile the counters",
+  "admin_quotas.health.loading": "Loading quota health",
+  "admin_quotas.health.load_error.title": "Could not load quota health",
+  "admin_quotas.health.column.rule": "Rule",
+  "admin_quotas.health.column.counter": "Counter",
+  "admin_quotas.health.column.ledger": "Ledger",
+  "admin_quotas.health.column.difference": "Difference",
+  "admin_quotas.health.column.ttl": "Counter TTL",
+  "admin_quotas.health.column.stale": "Stuck in progress",
+  "admin_quotas.health.unavailable": "unavailable",
+  "admin_quotas.health.rule_line": "{scope} · {metric} · {window}{member}{inactive}",
+  "admin_quotas.health.inactive": "inactive",
+  "admin_quotas.health.counter_unavailable": "counter unavailable",
+  "admin_quotas.health.none": "none",
+  "admin_quotas.health.no_counter": "no counter",
+  "admin_quotas.health.ttl": [
+    {
+      "declarations": [
+        "input hours"
+      ],
+      "match": {
+        "*": "{hours: number} h"
+      }
+    }
+  ],
+  "admin_quotas.health.empty": "No quota rules to check.",
+  "admin_quotas.health.caption": "Counter and ledger totals for each rule's current window.",
+  "admin_quotas.create.title": "New quota rule",
+  "admin_quotas.create.cancel": "Cancel",
+  "admin_quotas.create.submit": "Create",
+  "admin_quotas.create.name": "Name",
+  "admin_quotas.create.name_placeholder": "research monthly budget",
+  "admin_quotas.create.scope": "Scope",
+  "admin_quotas.create.scope.global": "Everyone",
+  "admin_quotas.create.scope.group": "A group",
+  "admin_quotas.create.scope.user": "A user",
+  "admin_quotas.create.applies_to": "Applies to",
+  "admin_quotas.create.applies.aggregate": "The group's total",
+  "admin_quotas.create.applies.each_member": "Each member",
+  "admin_quotas.create.group": "Group",
+  "admin_quotas.create.user": "User",
+  "admin_quotas.create.choose": "Choose…",
+  "admin_quotas.create.metric": "Metric",
+  "admin_quotas.create.metric.cost": "Cost",
+  "admin_quotas.create.metric.tokens": "Tokens",
+  "admin_quotas.create.metric.requests": "Requests",
+  "admin_quotas.create.metric.own_search": "Web searches (ours)",
+  "admin_quotas.create.window": "Window",
+  "admin_quotas.create.window.period": "Calendar period",
+  "admin_quotas.create.window.rolling": "Rolling window",
+  "admin_quotas.create.period": "Period",
+  "admin_quotas.create.period.every": "Every {period}",
+  "admin_quotas.create.hours": "Hours",
+  "admin_quotas.create.hours_hint": "Rolling, from now backwards",
+  "admin_quotas.create.limit_eur": "Limit (EUR)",
+  "admin_quotas.create.limit_unit": "Limit ({unit})",
+  "admin_quotas.create.limit_hint.period": "Resets on the calendar boundary, in the billing timezone.",
+  "admin_quotas.create.limit_hint.rolling": "Counted over the rolling window.",
+  "admin_quotas.create.volume_title": "This limits volume, not spend",
+  "admin_quotas.create.volume_body": "Counts calls to our own web-search backends. Their per-request prices differ by more than ten times between tiers, so a search budget does not bound what searches cost. Use a cost rule for that.",
+  "admin_quotas.reset.title": "Reset {name}",
+  "admin_quotas.reset.title_fallback": "this rule",
+  "admin_quotas.reset.cancel": "Cancel",
+  "admin_quotas.reset.submit": "Reset consumption",
+  "admin_quotas.reset.notice_title": "This does not change anyone's bill",
+  "admin_quotas.reset.notice_body": "Only what the quota counts moves; usage records are untouched. The reset is immediate and cannot be scheduled.",
+  "admin_quotas.reset.reason": "Reason (optional)",
+  "admin_quotas.reset.reason_placeholder": "grant extension approved",
+  "admin_quotas.reset.reason_hint": "Kept permanently in the audit log when given.",
+  "admin_quotas.reset.toast.done": "Consumption reset",
+  "admin_quotas.reset.toast.failed": "Could not reset consumption",
+  "admin_quotas.history.title": "Resets · {name}",
+  "admin_quotas.history.title_fallback": "rule",
+  "admin_quotas.history.empty": "This rule has never been reset.",
+  "admin_quotas.history.column.when": "When",
+  "admin_quotas.history.column.who": "Who",
+  "admin_quotas.history.column.why": "Reason",
+  "admin_quotas.history.erased": "(erased user)",
+  "admin_quotas.history.noun": "resets"
 }
