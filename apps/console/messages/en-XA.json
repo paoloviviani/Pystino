@@ -1662,5 +1662,161 @@
         "countPlural=other": "[{n} þéóþľé áďďéď ńóŵ. Ǧŕáńť íť ḿóďéľś óń ťȟé Ḿóďéľś śćŕééń.]"
       }
     }
-  ]
+  ],
+  "model_detail.loading": "[Ĺóáďíńǧ ťȟé ḿóďéľ]",
+  "model_detail.load_error.title": "[Ćóúľď ńóť ľóáď ťȟíś ḿóďéľ]",
+  "model_detail.back_link": "[Ɓáćķ ťó ťȟé ćáťáľóǧúé]",
+  "model_detail.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "model_detail.subtitle": "[{#link}Ḿóďéľś{/link} · śéŕǚéď áś {#code}{upstream}{/code} ƀý {provider}]",
+  "model_detail.toast.name_saved": "[Ďíśþľáý ńáḿé śáǚéď]",
+  "model_detail.toast.name_failed": "[Ćóúľď ńóť śáǚé ťȟé ďíśþľáý ńáḿé]",
+  "model_detail.toast.updated": "[Ḿóďéľ úþďáťéď]",
+  "model_detail.toast.update_failed": "[Ćóúľď ńóť úþďáťé ťȟé ḿóďéľ]",
+  "model_detail.toast.deleted": "[Ḿóďéľ ďéľéťéď]",
+  "model_detail.toast.delete_failed": "[Ćóúľď ńóť ďéľéťé ťȟé ḿóďéľ]",
+  "model_detail.action.deactivate": "[Ďéáćťíǚáťé]",
+  "model_detail.action.activate": "[Áćťíǚáťé]",
+  "model_detail.action.delete": "[Ďéľéťé]",
+  "model_detail.delete.title": "[Ďéľéťé {name}]",
+  "model_detail.delete.cancel": "[Ćáńćéľ]",
+  "model_detail.delete.confirm": "[Ďéľéťé þéŕḿáńéńťľý]",
+  "model_detail.delete.body": "[Ŕéḿóǚéď ƒŕóḿ ťȟé ćáťáľóǧúé áńď ƒŕóḿ {#code}/ǚ1/ḿóďéľś{/code}; íťś þŕíćéś áńď áććéśś ǧŕáńťś ǧó ŵíťȟ íť. Ťȟíś ćáńńóť ƀé úńďóńé.]",
+  "model_detail.delete.spend_note": "[Ŕéćóŕďéď śþéńď íś úńáƒƒéćťéď: þáśť úśáǧé ķééþś ťȟé ḿóďéľ'ś ńáḿé áńď śťáýś áťťŕíƀúťéď ťó ťȟé þéóþľé áńď ǧŕóúþś ťȟáť ŕáń íť.]",
+  "model_detail.no_price.title": "[Ťȟíś ḿóďéľ ȟáś ńó þŕíćé]",
+  "model_detail.no_price.body": "[Íť ŵíľľ śéŕǚé ŕéǫúéśťś áńď ŕéćóŕď á ćóśť óƒ źéŕó. Áþþéńď á þŕíćé ƀéľóŵ.]",
+  "model_detail.provider_inactive.title": "[{provider} íś ďéáćťíǚáťéď]",
+  "model_detail.provider_inactive.body": "[Éǚéŕý ḿóďéľ ƀéȟíńď íť íś óúť óƒ śéŕǚíćé.]",
+  "model_detail.details_card": "[Ďéťáíľś]",
+  "model_detail.detail.status": "[Śťáťúś]",
+  "model_detail.detail.visibility": "[Ǚíśíƀíľíťý]",
+  "model_detail.detail.callers_name": "[Ńáḿé ćáľľéŕś śéńď]",
+  "model_detail.detail.display_name": "[Ďíśþľáý ńáḿé]",
+  "model_detail.detail.upstream": "[Úþśťŕéáḿ ḿóďéľ]",
+  "model_detail.detail.provider": "[Þŕóǚíďéŕ]",
+  "model_detail.badge.active": "[Áćťíǚé]",
+  "model_detail.badge.inactive": "[Íńáćťíǚé]",
+  "model_detail.badge.public": "[Þúƀľíć]",
+  "model_detail.badge.private": "[Þŕíǚáťé]",
+  "model_detail.action.restrict": "[Ŕéśťŕíćť ťó ǧŕáńťś]",
+  "model_detail.action.make_public": "[Ḿáķé þúƀľíć]",
+  "model_detail.display_name_hint": "[Ŵȟáť á ćľíéńť śȟóŵś íń á ḿóďéľ þíćķéŕ, ƒŕóḿ /ǚ1/ḿóďéľś. Éḿþťý ḿéáńś ťȟé ńáḿé áƀóǚé. Íť ńéǚéŕ ćȟáńǧéś ŵȟáť ćáľľéŕś śéńď.]",
+  "model_detail.action.save_display_name": "[Śáǚé ďíśþľáý ńáḿé]",
+  "model_detail.action.clear_display_name": "[Ćľéáŕ ďíśþľáý ńáḿé]",
+  "model_detail.describe.card": "[Ćáþáƀíľíťíéś]",
+  "model_detail.describe.description": "[Ŵȟáť ćáľľéŕś áŕé ťóľď óń /ǚ1/ḿóďéľś. Ďíśćóǚéŕ ńéǚéŕ óǚéŕŵŕíťéś áń éďíť.]",
+  "model_detail.describe.saved": "[Śáǚéď.]",
+  "model_detail.describe.kind": "[Ķíńď]",
+  "model_detail.describe.kind_hint": "[Ŵȟíćȟ ŕóúťéś ŵíľľ śéŕǚé íť. Ďíśćóǚéŕý ćáń íńƒéŕ íť ŵŕóńǧ.]",
+  "model_detail.kind.chat": "[Ćȟáť — /ǚ1/ćȟáť/ćóḿþľéťíóńś, /ǚ1/ŕéśþóńśéś, /ǚ1/ḿéśśáǧéś]",
+  "model_detail.kind.embedding": "[Éḿƀéďďíńǧ — /ǚ1/éḿƀéďďíńǧś]",
+  "model_detail.kind.image": "[Íḿáǧé — /ǚ1/íḿáǧéś/ǧéńéŕáťíóńś]",
+  "model_detail.describe.accepts": "[Áććéþťś]",
+  "model_detail.describe.accepts_other": "[Óťȟéŕ íńþúť ḿóďáľíťíéś]",
+  "model_detail.describe.accepts_hint": "[Ŵȟáť ćáń ƀé śéńť ťó íť.]",
+  "model_detail.describe.produces": "[Þŕóďúćéś]",
+  "model_detail.describe.produces_other": "[Óťȟéŕ óúťþúť ḿóďáľíťíéś]",
+  "model_detail.describe.produces_hint": "[Ŵȟáť ćóḿéś ƀáćķ.]",
+  "model_detail.describe.features": "[Ƒéáťúŕéś]",
+  "model_detail.describe.features_other": "[Óťȟéŕ ƒéáťúŕéś]",
+  "model_detail.describe.features_hint": "[Ŵȟáťéǚéŕ ťȟé þŕóǚíďéŕ ŕéþóŕťś íś ķéþť.]",
+  "model_detail.describe.context_window": "[Ćóńťéẋť ŵíńďóŵ]",
+  "model_detail.describe.context_hint": "[Ťóťáľ ťóķéńś, íń áńď óúť. Ĺéáǚé éḿþťý íƒ úńķńóŵń.]",
+  "model_detail.describe.max_input": "[Ḿáẋ íńþúť ťóķéńś]",
+  "model_detail.describe.max_input_hint": "[Þŕóḿþť ćáþ ťȟé ǧáťéŵáý éńƒóŕćéś; śéť ƀý ȟáńď, ńó ćáťáľóǧúé ŕéþóŕťś íť. Éḿþťý ḿéáńś ńó ľóćáľ ľíḿíť.]",
+  "model_detail.describe.max_output": "[Ḿáẋ óúťþúť ťóķéńś]",
+  "model_detail.describe.max_output_hint": "[Ćóḿþľéťíóń ćáþ ŕéþóŕťéď óń /ǚ1/ḿóďéľś. Éḿþťý íƒ úńķńóŵń.]",
+  "model_detail.describe.save": "[Śáǚé ćáþáƀíľíťíéś]",
+  "model_detail.describe.toast_saved": "[Ćáþáƀíľíťíéś śáǚéď]",
+  "model_detail.describe.toast_failed": "[Ćóúľď ńóť śáǚé ťȟé ćáþáƀíľíťíéś]",
+  "model_detail.price.column.effective": "[Éƒƒéćťíǚé ƒŕóḿ]",
+  "model_detail.price.column.input": "[Íńþúť / Ḿťóķ]",
+  "model_detail.price.column.output": "[Óúťþúť / Ḿťóķ]",
+  "model_detail.price.column.cache": "[Ćáćȟé ŕéáď / ŵŕíťé]",
+  "model_detail.price.column.image": "[Þéŕ íḿáǧé]",
+  "model_detail.price.column.page": "[Þéŕ þáǧé]",
+  "model_detail.price.column.search": "[Þéŕ śéáŕćȟ]",
+  "model_detail.price.column.source": "[Śóúŕćé]",
+  "model_detail.price.scheduled": "[Śćȟéďúľéď]",
+  "model_detail.price.card": "[Þŕíćé ȟíśťóŕý]",
+  "model_detail.price.description": "[Ńéŵéśť ƒíŕśť. Á ćóŕŕéćťíóń íś á ńéŵ ŕóŵ.]",
+  "model_detail.price.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé þŕíćé ȟíśťóŕý]",
+  "model_detail.price.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} þŕíćé]",
+        "countPlural=other": "[{n} þŕíćéś]"
+      }
+    }
+  ],
+  "model_detail.price.current": [
+    {
+      "declarations": [
+        "input rates"
+      ],
+      "match": {
+        "*": "[ćúŕŕéńť: {rates}]"
+      }
+    }
+  ],
+  "model_detail.price.current_rates": [
+    {
+      "declarations": [
+        "input rin"
+      ],
+      "match": {
+        "*": "[{rin} íń / {rout} óúť]"
+      }
+    }
+  ],
+  "model_detail.price.no_current": "[ťȟíś ḿóďéľ ŕéćóŕďś á ćóśť óƒ źéŕó]",
+  "model_detail.price.empty": "[Ńó þŕíćé śéť. Ťȟíś ḿóďéľ ŕéćóŕďś á ćóśť óƒ źéŕó.]",
+  "model_detail.price.caption": "[Þŕíćé ȟíśťóŕý ƒóŕ {name}.]",
+  "model_detail.append.card": "[Ńéŵ þŕíćé]",
+  "model_detail.append.saved": "[Þŕíćé áþþéńďéď. Íť áþþľíéś ƒŕóḿ íťś éƒƒéćťíǚé ďáťé.]",
+  "model_detail.append.input": "[Íńþúť þéŕ Ḿťóķ]",
+  "model_detail.append.input_hint": "[Íń ťȟé ǧáťéŵáý'ś ƀíľľíńǧ ćúŕŕéńćý]",
+  "model_detail.append.output": "[Óúťþúť þéŕ Ḿťóķ]",
+  "model_detail.append.cache_read": "[Ćáćȟé ŕéáď þéŕ Ḿťóķ]",
+  "model_detail.append.cache_read_hint": "[Éḿþťý ƀíľľś ćáćȟéď íńþúť áť ťȟé ƒúľľ íńþúť ŕáťé.]",
+  "model_detail.append.cache_write": "[Ćáćȟé ŵŕíťé þéŕ Ḿťóķ]",
+  "model_detail.append.per_image": "[Þéŕ íḿáǧé]",
+  "model_detail.append.per_image_hint": "[Íḿáǧé ḿóďéľś óńľý, óń ťóþ óƒ áńý ťóķéń ŕáťéś.]",
+  "model_detail.append.per_page": "[Þéŕ þáǧé]",
+  "model_detail.append.per_page_hint": "[ÓĆŔ ḿóďéľś, ŵȟíćȟ ćȟáŕǧé ƀý ťȟé þáǧé áńď úśúáľľý ńóťȟíńǧ þéŕ ťóķéń.]",
+  "model_detail.append.per_search": "[Þéŕ śéáŕćȟ]",
+  "model_detail.append.per_search_hint": "[Þŕóǚíďéŕ-śíďé ŵéƀ śéáŕćȟ, ćȟáŕǧéď þéŕ śéáŕćȟ óń ťóþ óƒ ťóķéńś. Þŕóǚíďéŕś þúƀľíśȟ íť þéŕ ťȟóúśáńď — $10 þéŕ 1,000 íś 0.01 ȟéŕé.]",
+  "model_detail.append.effective": "[Éƒƒéćťíǚé ƒŕóḿ]",
+  "model_detail.append.effective_hint": "[Ĺéáǚé éḿþťý ƒóŕ ńóŵ. Á ƒúťúŕé ďáťé śćȟéďúľéś ťȟé ćȟáńǧé.]",
+  "model_detail.append.submit": "[Áþþéńď þŕíćé]",
+  "model_detail.append.toast_done": "[Þŕíćé áþþéńďéď]",
+  "model_detail.append.toast_failed": "[Ćóúľď ńóť áþþéńď ťȟé þŕíćé]",
+  "model_detail.access.card": "[Áććéśś]",
+  "model_detail.access.description": "[Ńó ǧŕáńť ḿéáńś ńó áććéśś; ťȟéŕé íś ńó áľľóŵ-áľľ.]",
+  "model_detail.access.groups": "[Ǧŕóúþś]",
+  "model_detail.access.individuals": "[Íńďíǚíďúáľś, íń áďďíťíóń ťó ťȟéíŕ ǧŕóúþś.]",
+  "model_detail.access.person_search": "[Þéŕśóń śéáŕćȟ]",
+  "model_detail.access.person_placeholder": "[éḿáíľ, ńáḿé óŕ śúƀĵéćť]",
+  "model_detail.access.no_grants": "[Ńó íńďíǚíďúáľ ǧŕáńťś.]",
+  "model_detail.access.type_to_find": "[Ťýþé ťó ƒíńď śóḿéóńé éľśé.]",
+  "model_detail.access.searching": "[Śéáŕćȟíńǧ…]",
+  "model_detail.access.no_match": "[Ńóƀóďý ḿáťćȟéś ťȟáť.]",
+  "model_detail.access.showing": [
+    {
+      "declarations": [
+        "input shown"
+      ],
+      "match": {
+        "*": "[Śȟóŵíńǧ {shown} óƒ {total} ḿáťćȟéś. Ńáŕŕóŵ ťȟé śéáŕćȟ ťó śéé ťȟé ŕéśť.]"
+      }
+    }
+  ],
+  "model_detail.access.revoke_note": "[Ŕéǚóķíńǧ ťáķéś éƒƒéćť óń ťȟé ńéẋť ŕéǫúéśť.]"
 }
