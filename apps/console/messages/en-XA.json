@@ -1,5 +1,13 @@
 {
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "not_found.title": "[Ńó śúćȟ þáǧé]",
-  "not_found.body": "[Ńó śúćȟ áďďŕéśś íń ťȟé ćóńśóľé. {#link}Ɓáćķ ťó ýóúŕ úśáǧé{/link}.]"
+  "not_found.body": "[Ńó śúćȟ áďďŕéśś íń ťȟé ćóńśóľé. {#link}Ɓáćķ ťó ýóúŕ úśáǧé{/link}.]",
+  "login.heading": "[Śíǧń íń]",
+  "login.loading_page": "[Ĺóáďíńǧ ťȟé śíǧń-íń þáǧé]",
+  "login.redirecting": "[Ŕéďíŕéćťíńǧ ťó śíǧń íń]",
+  "login.provider_button": "[Śíǧń íń ŵíťȟ {provider}]",
+  "login.gateway_unreachable.title": "[Ťȟé ćóńśóľé ćóúľď ńóť ŕéáćȟ ťȟé ǧáťéŵáý]",
+  "login.gateway_unreachable.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "login.no_provider.title": "[Ńó íďéńťíťý þŕóǚíďéŕ íś éńáƀľéď]",
+  "login.no_provider.body": "[Éǚéŕýóńé śíǧńś íń ťȟŕóúǧȟ áń ÓþéńÍĎ Ćóńńéćť þŕóǚíďéŕ, áńď ťȟíś ďéþľóýḿéńť ȟáś ńóńé éńáƀľéď. Áń óþéŕáťóŕ ćáń áďď óńé íń ťȟé ćóńśóľé áƒťéŕ {#code}þýśťíńó áďḿíń ǧŕáńť <éḿáíľ>{/code}, óŕ śéť ǦÁŤÉŴÁÝ_ÓÍĎĆ__* áńď ŕéśťáŕť.]"
 }

@@ -41,7 +41,7 @@ const MESSAGES = join(APP, "messages");
  * the same commit that converts it — and the heuristic below is there to catch
  * the text that slips back in afterwards.
  */
-const CONVERTED_FILES = ["src/routes/NotFound.tsx"];
+const CONVERTED_FILES = ["src/routes/NotFound.tsx", "src/routes/Login.tsx"];
 
 /** Props whose string value is read by a person, one way or another. */
 const TEXT_PROPS = ["title", "placeholder", "aria-label", "alt", "label"];

@@ -2,5 +2,14 @@
   "$schema": "https://inlang.com/schema/inlang-message-format",
 
   "not_found.title": "No such page",
-  "not_found.body": "No such address in the console. {#link}Back to your usage{/link}."
+  "not_found.body": "No such address in the console. {#link}Back to your usage{/link}.",
+
+  "login.heading": "Sign in",
+  "login.loading_page": "Loading the sign-in page",
+  "login.redirecting": "Redirecting to sign in",
+  "login.provider_button": "Sign in with {provider}",
+  "login.gateway_unreachable.title": "The console could not reach the gateway",
+  "login.gateway_unreachable.unknown_error": "Unknown error.",
+  "login.no_provider.title": "No identity provider is enabled",
+  "login.no_provider.body": "Everyone signs in through an OpenID Connect provider, and this deployment has none enabled. An operator can add one in the console after {#code}pystino admin grant <email>{/code}, or set GATEWAY_OIDC__* and restart."
 }

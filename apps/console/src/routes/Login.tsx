@@ -2,8 +2,10 @@ import { Button, Notice, Spinner } from "@llmp/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useSearchParams } from "react-router";
+import { Message } from "../components/Message";
 import { fetchAuthMethods, loginWith } from "../lib/api";
 import { FORM_STACK, LOGIN_CARD, LOGIN_CENTRE } from "../lib/layout";
+import { m } from "../paraglide/messages.js";
 
 /**
  * The sign-in page: OpenID Connect only (ADR 0088, decision D3).
@@ -40,7 +42,7 @@ export function Login() {
   if (methods.isPending) {
     return (
       <div className={LOGIN_CENTRE}>
-        <Spinner label="Loading the sign-in page" />
+        <Spinner label={m["login.loading_page"]()} />
       </div>
     );
   }
@@ -48,8 +50,11 @@ export function Login() {
   if (methods.error) {
     return (
       <div className={LOGIN_CENTRE}>
-        <Notice tone="danger" title="The console could not reach the gateway">
-          {methods.error instanceof Error ? methods.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["login.gateway_unreachable.title"]()}>
+          {/* i18n: server text — the API's own error message, not the console's. */}
+          {methods.error instanceof Error
+            ? methods.error.message
+            : m["login.gateway_unreachable.unknown_error"]()}
         </Notice>
       </div>
     );
@@ -58,10 +63,8 @@ export function Login() {
   if (providers.length === 0) {
     return (
       <div className={LOGIN_CENTRE}>
-        <Notice tone="danger" title="No identity provider is enabled">
-          Everyone signs in through an OpenID Connect provider, and this deployment has none
-          enabled. An operator can add one in the console after{" "}
-          <code>pystino admin grant &lt;email&gt;</code>, or set GATEWAY_OIDC__* and restart.
+        <Notice tone="danger" title={m["login.no_provider.title"]()}>
+          <Message message={m["login.no_provider.body"]} markup={{ code: (children) => <code>{children}</code> }} />
         </Notice>
       </div>
     );
@@ -70,7 +73,7 @@ export function Login() {
   if (providers.length === 1) {
     return (
       <div className={LOGIN_CENTRE}>
-        <Spinner label="Redirecting to sign in" />
+        <Spinner label={m["login.redirecting"]()} />
       </div>
     );
   }
@@ -78,11 +81,11 @@ export function Login() {
   return (
     <div className={LOGIN_CENTRE}>
       <div className={LOGIN_CARD}>
-        <h1 className="text-lg font-semibold">Sign in</h1>
+        <h1 className="text-lg font-semibold">{m["login.heading"]()}</h1>
         <div className={FORM_STACK}>
           {providers.map((provider) => (
             <Button key={provider.name} variant="primary" onClick={() => loginWith(provider.name, next)}>
-              Sign in with {provider.name}
+              {m["login.provider_button"]({ provider: provider.name })}
             </Button>
           ))}
         </div>
