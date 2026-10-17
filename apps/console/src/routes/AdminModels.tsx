@@ -133,9 +133,18 @@ export function AdminModels() {
             {/* The name is the link, not only the button beside it: it is what
                 someone points at, and a real anchor is what makes "open in a new
                 tab" and "copy link" work at all. */}
-            <Link to={`/admin/models/${model.id}`}>{model.name}</Link>{" "}
+            {/* A display name, when set, leads and the id follows: the id is
+                what a request carries and what every report is grouped by, so
+                it has to stay visible beside the friendlier name rather than
+                be replaced by it. */}
+            <Link to={`/admin/models/${model.id}`}>
+              {model.display_name || model.name}
+            </Link>{" "}
             {model.kind !== "chat" && <Badge tone="accent">{model.kind}</Badge>}
           </div>
+          {model.display_name && (
+            <div className={CODE}>{model.name}</div>
+          )}
           <div className={`${MUTED} ${CODE}`}>{model.upstream_model}</div>
         </>
       ),

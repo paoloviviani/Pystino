@@ -66,6 +66,18 @@ reservation is made, and it is unset for most models — no catalogue reports
 a provider's real input cap, so an operator records it by hand and null
 means "no local limit", never zero.
 
+### A model's name and its display name
+
+**A model's name and its display name answer different questions.** `id` is
+what a request sends and what stored references key on — a conversation's
+model, a custom model's base, the grants and prices behind it — so it is set
+once and never changed; `display_name` is the label a client's picker shows,
+set on the model's page and changeable at any time. Discovery suggests an id
+from the provider's own naming and imports do not overwrite one you have
+typed; the display name is yours alone and is served as `display_name` on
+`GET /v1/models`. Renaming a model's `id` is deliberately not offered: usage
+rows denormalise it, so a change would split the history rather than move it.
+
 Every management listing answers with `{items, total, limit, offset}` and takes
 `?limit=&offset=` (ceiling 200; out of range is a 400, not a clamp). Users,
 models and groups also take `?q=` for case-insensitive substring search.

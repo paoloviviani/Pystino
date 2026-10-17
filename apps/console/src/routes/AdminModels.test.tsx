@@ -268,6 +268,29 @@ async function openCatalogue(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("AdminModels", () => {
+  it("shows the display name a caller's picker will show, with the id beside it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes([model({ display_name: "Fast summariser" })]),
+    );
+    renderScreen(<AdminModels />);
+
+    // The catalogue answers both questions: the display name is what people
+    // read, the id is what a request has to carry — and a renamed model whose
+    // id is invisible is how an operator ends up sending the wrong one.
+    await waitFor(() => expect(screen.getByText("Fast summariser")).toBeInTheDocument());
+    expect(screen.getByText("fast-summariser")).toBeInTheDocument();
+  });
+
+  it("shows no display-name line for a model that has none", async () => {
+    vi.stubGlobal("fetch", routes([model()]));
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("fast-summariser")).toBeInTheDocument());
+    // Nothing to show, so nothing shown — not the id repeated as its own name.
+    expect(screen.queryByText("Unnamed")).not.toBeInTheDocument();
+  });
+
   it("groups the catalogue by what each model is for", async () => {
     // A chat model, an embedding model and an OCR model are not alternatives
     // an operator picks between — they are different things in one table, and

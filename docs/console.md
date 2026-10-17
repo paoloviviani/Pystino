@@ -28,7 +28,7 @@ the **Exact figures** toggle.
 | set a ceiling — the group's total or each member — see what it has consumed, check a counter against the ledger (**Quota health**, with **Reconcile**), or reset it on the record, with or without a reason | **Quotas** | [Quotas](accounting-and-quotas.md#quotas), [Group rules: the total, or each member](accounting-and-quotas.md#group-rules-the-total-or-each-member), [Quota health and reconcile](accounting-and-quotas.md#quota-health-and-reconcile) |
 | decide what is stripped from prompts before a provider sees them, and for whom | **Redaction** | [Redaction](redaction.md#operating-it) |
 | add a provider, its credentials and what it reports | **Providers** | [Providers and plugins](gateway.md#providers-and-plugins) |
-| change what models are on offer, who may use them and what they cost | **Models** | [Three cost figures](accounting-and-quotas.md#three-cost-figures-one-meaning-each) |
+| change what models are on offer, who may use them and what they cost, and name a model as your clients should show it | **Models** | [Three cost figures](accounting-and-quotas.md#three-cost-figures-one-meaning-each), [A model's name and its display name](gateway.md#a-models-name-and-its-display-name) |
 | choose the search backends and see how many searches each group spent | **Web search** | [Surfaces](gateway.md#surfaces) |
 | add, disable, reset or merge a person | **Users** | [Bundled accounts](bundled-accounts.md), [Identity](identity.md) |
 | see at a glance who may use only the chat | **Users** (the **Chat only** badge) | [Chat-only people](identity.md#chat-only-people) |
