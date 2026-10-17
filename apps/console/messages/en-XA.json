@@ -1173,5 +1173,150 @@
   "admin_quotas.history.column.who": "[Ŵȟó]",
   "admin_quotas.history.column.why": "[Ŕéáśóń]",
   "admin_quotas.history.erased": "[(éŕáśéď úśéŕ)]",
-  "admin_quotas.history.noun": "[ŕéśéťś]"
+  "admin_quotas.history.noun": "[ŕéśéťś]",
+  "admin_settings.title": "[Śéťťíńǧś]",
+  "admin_settings.subtitle": "[Ťȟé ḿáíľ śéŕǚéŕ, ťȟé íďéńťíťý þŕóǚíďéŕś, ŵȟó ḿáý ƀéćóḿé á úśéŕ, áńď ŵȟáť ńéŵ ǧŕóúþś śťáŕť ŵíťȟ. Éáćȟ śéćťíóń śáǚéś óń íťś óŵń.]",
+  "admin_settings.provisioning_policy_card": "[Þŕóǚíśíóńíńǧ þóľíćý]",
+  "admin_settings.email.card": "[Éḿáíľ]",
+  "admin_settings.email.description": "[Ćóńƒíǧúŕéď íń .éńǚ; ćȟáńǧé ŵíťȟ ./ćóńƒíǧúŕé. Úśéď ƒóŕ ǫúóťá ńóťíćéś áńď ťȟé ƀúńďľéď Áúťȟéľíá'ś śéľƒ-śéŕǚíćé þáśśŵóŕď ŕéśéť.]",
+  "admin_settings.email.loading": "[Ĺóáďíńǧ ťȟé éḿáíľ śéťťíńǧś]",
+  "admin_settings.email.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé éḿáíľ śéťťíńǧś]",
+  "admin_settings.email.enabled": "[éńáƀľéď]",
+  "admin_settings.email.disabled": "[ďíśáƀľéď]",
+  "admin_settings.email.host": "[ŚḾŤÞ ȟóśť]",
+  "admin_settings.email.port": "[Þóŕť]",
+  "admin_settings.email.username": "[Úśéŕńáḿé]",
+  "admin_settings.email.password": "[Þáśśŵóŕď]",
+  "admin_settings.email.from_address": "[Ƒŕóḿ áďďŕéśś]",
+  "admin_settings.email.not_set": "[(ńóť śéť)]",
+  "admin_settings.email.none": "[(ńóńé)]",
+  "admin_settings.email.set": "[śéť]",
+  "admin_settings.email.test_to": "[Śéńď á ťéśť éḿáíľ ťó]",
+  "admin_settings.email.send_test": "[Śéńď ťéśť]",
+  "admin_settings.email.toast_sent": "[Ťéśť éḿáíľ śéńť]",
+  "admin_settings.email.toast_failed": "[Ťéśť éḿáíľ ƒáíľéď]",
+  "admin_settings.redirect_uri.label": "[Ŕéďíŕéćť ÚŔÍ]",
+  "admin_settings.redirect_uri.copy": "[Ćóþý]",
+  "admin_settings.redirect_uri.copied": "[Ćóþíéď]",
+  "admin_settings.redirect_uri.note": "[Ŕéǧíśťéŕ éẋáćťľý ťȟíś áť ťȟé þŕóǚíďéŕ — ńéǚéŕ á ŵíľďćáŕď.]",
+  "admin_settings.redirect_uri.clipboard": "[Ćóúľď ńóť ŕéáćȟ ťȟé ćľíþƀóáŕď; ćóþý íť ƀý ȟáńď.]",
+  "admin_settings.providers.card": "[Íďéńťíťý þŕóǚíďéŕś]",
+  "admin_settings.providers.description": "[Ćóńƒíǧúŕéď íń .éńǚ; ćȟáńǧé ŵíťȟ ./ćóńƒíǧúŕé. Úśéŕś ƒŕóḿ ďíƒƒéŕéńť þŕóǚíďéŕś áŕé ďíƒƒéŕéńť áććóúńťś — íďéńťíťý íś (íśśúéŕ, śúƀĵéćť).]",
+  "admin_settings.providers.loading": "[Ĺóáďíńǧ þŕóǚíďéŕś]",
+  "admin_settings.providers.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé íďéńťíťý þŕóǚíďéŕś]",
+  "admin_settings.providers.empty_title": "[Ńó íďéńťíťý þŕóǚíďéŕ íś ćóńƒíǧúŕéď]",
+  "admin_settings.providers.empty_detail": "[Ńóƀóďý ćáń śíǧń íń ýéť: śéť ǦÁŤÉŴÁÝ_ÓÍĎĆ__* íń .éńǚ, óŕ ŕúń ./ćóńƒíǧúŕé.]",
+  "admin_settings.providers.disabled_heading": "[Ďíśáƀľéď þŕéǚíóúś þŕóǚíďéŕś]",
+  "admin_settings.badge.enabled": "[éńáƀľéď]",
+  "admin_settings.badge.disabled": "[ďíśáƀľéď]",
+  "admin_settings.badge.admin_from_idp": "[áďḿíń ƒŕóḿ ÍďÞ]",
+  "admin_settings.badge.email_link": "[ľíńķś ńéŵ śíǧń-íńś ťó éẋíśťíńǧ áććóúńťś ƀý ǚéŕíƒíéď éḿáíľ]",
+  "admin_settings.badge.sync": "[śýńć: {adapter}]",
+  "admin_settings.badge.sync_unreviewed": "[śýńć: {adapter} (áŵáíťíńǧ ŕéǚíéŵ)]",
+  "admin_settings.provider_row.line": "[ćľíéńť {client} · ǧŕóúþś ćľáíḿ {#code}{claim}{/code} · ǧŕóúþ ḿáþþíńǧś áŕé ďéćíďéď óń ťȟé {#link}Ǧŕóúþś{/link} þáǧé · ǧŕóúþś ƒŕóḿ {source} · śýńć éǚéŕý {cadence} · {users}]",
+  "admin_settings.provider_row.source.claim": "[ťȟé ťóķéń]",
+  "admin_settings.provider_row.source.directory": "[ťȟé ďíŕéćťóŕý]",
+  "admin_settings.provider_row.source.console": "[ťȟíś ćóńśóľé óńľý]",
+  "admin_settings.provider_row.sync.every_login": "[śíǧń-íń]",
+  "admin_settings.provider_row.sync.first_login": "[ƒíŕśť śíǧń-íń óńľý]",
+  "admin_settings.provider_row.sync.never": "[ńéǚéŕ]",
+  "admin_settings.provider_row.users": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} úśéŕ]",
+        "countPlural=other": "[{n} úśéŕś]"
+      }
+    }
+  ],
+  "admin_settings.provider_row.user_sync": "[Úśéŕ śýńć…]",
+  "admin_settings.provider_row.remove": "[Ŕéḿóǚé]",
+  "admin_settings.remove.title": "[Ŕéḿóǚé {provider}?]",
+  "admin_settings.remove.title_fallback": "[ťȟíś þŕóǚíďéŕ]",
+  "admin_settings.remove.cancel": "[Ćáńćéľ]",
+  "admin_settings.remove.confirm": "[Ŕéḿóǚé]",
+  "admin_settings.remove.toast_done": "[Íďéńťíťý þŕóǚíďéŕ ŕéḿóǚéď]",
+  "admin_settings.remove.toast_failed": "[Ćóúľď ńóť ŕéḿóǚé ťȟé íďéńťíťý þŕóǚíďéŕ]",
+  "admin_settings.remove.body": "[Ńóƀóďý éǚéŕ śíǧńéď íń ťȟŕóúǧȟ {#code}{issuer}{/code}, śó ŕéḿóǚíńǧ íť úńľíńķś ńó óńé. Íťś ďíŕéćťóŕý éńťŕíéś áńď śýńć ȟíśťóŕý áŕé ďéľéťéď ŵíťȟ íť. Þóíńťíńǧ ťȟé ďéþľóýḿéńť áť ťȟíś íśśúéŕ áǧáíń íń .éńǚ ćŕéáťéś íť áƒŕéśȟ.]",
+  "admin_settings.capabilities.card": "[Ćáþáƀíľíťíéś]",
+  "admin_settings.capabilities.description": "[Á þéŕśóń ȟóľďś á ćáþáƀíľíťý áś áń áďḿíńíśťŕáťóŕ, óŕ ťȟŕóúǧȟ áń áćťíǚé ḿéḿƀéŕśȟíþ íń á ǧŕóúþ ćáŕŕýíńǧ íťś ƒľáǧ. Ťȟíś śéťś ŵȟáť ńéŵ ǧŕóúþś śťáŕť ŵíťȟ; ťȟé ťóǧǧľéś óń ťȟé Ǧŕóúþś þáǧé ďéćíďé ťȟé éẋíśťíńǧ óńéś. Ǧŕáńť óŕ ŕéḿóǚé ťȟé ƒľáǧś íń ƀúľķ ƀéľóŵ.]",
+  "admin_settings.capabilities.loading": "[Ĺóáďíńǧ ťȟé ćáþáƀíľíťý ďéƒáúľťś]",
+  "admin_settings.capabilities.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé ćáþáƀíľíťý ďéƒáúľťś]",
+  "admin_settings.capability.code_agents": "[Ćóďíńǧ áǧéńťś]",
+  "admin_settings.capability.code_agents_lower": "[ćóďíńǧ áǧéńťś]",
+  "admin_settings.capability.api_keys": "[ÁÞÍ ķéýś]",
+  "admin_settings.capability.api_keys_lower": "[ÁÞÍ ķéýś]",
+  "admin_settings.capability.code_agents_hint": "[Ťȟé /ćóďé þáńéľ áńď ťȟé ḿáćȟíńé ľíńķś ťȟáť śéŕǚé íť.]",
+  "admin_settings.capability.api_keys_hint": "[Ḿíńťíńǧ áńď úśíńǧ ÁÞÍ ķéýś.]",
+  "admin_settings.capability.badge_on": "[ńéŵ ǧŕóúþś: óń]",
+  "admin_settings.capability.badge_off": "[ńéŵ ǧŕóúþś: óƒƒ]",
+  "admin_settings.capability.turn_on_new": "[Ťúŕń óń ƒóŕ ńéŵ ǧŕóúþś]",
+  "admin_settings.capability.turn_off_new": "[Ťúŕń óƒƒ ƒóŕ ńéŵ ǧŕóúþś]",
+  "admin_settings.capability.turn_on_all": "[Ťúŕń óń ƒóŕ áľľ ǧŕóúþś]",
+  "admin_settings.capability.turn_off_all": "[Ťúŕń óƒƒ ƒóŕ áľľ ǧŕóúþś]",
+  "admin_settings.capability.toast_saved": "[{capability} ďéƒáúľť śáǚéď]",
+  "admin_settings.capability.toast_save_failed": "[Ćóúľď ńóť śáǚé]",
+  "admin_settings.capability.toast_preview_failed": "[Ćóúľď ńóť þŕéǚíéŵ]",
+  "admin_settings.capability.toast_apply_failed": "[Ćóúľď ńóť áþþľý]",
+  "admin_settings.capability.toast_updated": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[Úþďáťéď {n} ǧŕóúþ]",
+        "countPlural=other": "[Úþďáťéď {n} ǧŕóúþś]"
+      }
+    }
+  ],
+  "admin_settings.bulk.title_on": "[Ťúŕń {capability} óń ƒóŕ áľľ ǧŕóúþś?]",
+  "admin_settings.bulk.title_off": "[Ťúŕń {capability} óƒƒ ƒóŕ áľľ ǧŕóúþś?]",
+  "admin_settings.bulk.cancel": "[Ćáńćéľ]",
+  "admin_settings.bulk.turn_on": "[Ťúŕń óń]",
+  "admin_settings.bulk.turn_off": "[Ťúŕń óƒƒ]",
+  "admin_settings.bulk.gain": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local count = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{count} þéŕśóń ŵóúľď ǧáíń {capability} — éǚéŕýóńé ȟóľďíńǧ ńó ƒľáǧǧéď ǧŕóúþ ťóďáý. Áďḿíńíśťŕáťóŕś ȟóľď íť éíťȟéŕ ŵáý.]",
+        "countPlural=other": "[{count} þéóþľé ŵóúľď ǧáíń {capability} — éǚéŕýóńé ȟóľďíńǧ ńó ƒľáǧǧéď ǧŕóúþ ťóďáý. Áďḿíńíśťŕáťóŕś ȟóľď íť éíťȟéŕ ŵáý.]"
+      }
+    }
+  ],
+  "admin_settings.bulk.lose": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local count = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{count} þéŕśóń ŵóúľď ľóśé {capability} áť ťȟéíŕ ńéẋť ŕéǫúéśť — éǚéŕýóńé ŵȟóśé óńľý ƒľáǧǧéď ǧŕóúþ íś ťȟíś óńé ƀéíńǧ ćľéáŕéď. Áďḿíńíśťŕáťóŕś áŕé éẋéḿþť.]",
+        "countPlural=other": "[{count} þéóþľé ŵóúľď ľóśé {capability} áť ťȟéíŕ ńéẋť ŕéǫúéśť — éǚéŕýóńé ŵȟóśé óńľý ƒľáǧǧéď ǧŕóúþ íś ťȟíś óńé ƀéíńǧ ćľéáŕéď. Áďḿíńíśťŕáťóŕś áŕé éẋéḿþť.]"
+      }
+    }
+  ],
+  "admin_settings.unknown_error": "[Úńķńóŵń éŕŕóŕ.]"
 }

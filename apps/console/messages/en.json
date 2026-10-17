@@ -1173,5 +1173,150 @@
   "admin_quotas.history.column.who": "Who",
   "admin_quotas.history.column.why": "Reason",
   "admin_quotas.history.erased": "(erased user)",
-  "admin_quotas.history.noun": "resets"
+  "admin_quotas.history.noun": "resets",
+  "admin_settings.title": "Settings",
+  "admin_settings.subtitle": "The mail server, the identity providers, who may become a user, and what new groups start with. Each section saves on its own.",
+  "admin_settings.provisioning_policy_card": "Provisioning policy",
+  "admin_settings.email.card": "Email",
+  "admin_settings.email.description": "Configured in .env; change with ./configure. Used for quota notices and the bundled Authelia's self-service password reset.",
+  "admin_settings.email.loading": "Loading the email settings",
+  "admin_settings.email.load_error.title": "Could not load the email settings",
+  "admin_settings.email.enabled": "enabled",
+  "admin_settings.email.disabled": "disabled",
+  "admin_settings.email.host": "SMTP host",
+  "admin_settings.email.port": "Port",
+  "admin_settings.email.username": "Username",
+  "admin_settings.email.password": "Password",
+  "admin_settings.email.from_address": "From address",
+  "admin_settings.email.not_set": "(not set)",
+  "admin_settings.email.none": "(none)",
+  "admin_settings.email.set": "set",
+  "admin_settings.email.test_to": "Send a test email to",
+  "admin_settings.email.send_test": "Send test",
+  "admin_settings.email.toast_sent": "Test email sent",
+  "admin_settings.email.toast_failed": "Test email failed",
+  "admin_settings.redirect_uri.label": "Redirect URI",
+  "admin_settings.redirect_uri.copy": "Copy",
+  "admin_settings.redirect_uri.copied": "Copied",
+  "admin_settings.redirect_uri.note": "Register exactly this at the provider — never a wildcard.",
+  "admin_settings.redirect_uri.clipboard": "Could not reach the clipboard; copy it by hand.",
+  "admin_settings.providers.card": "Identity providers",
+  "admin_settings.providers.description": "Configured in .env; change with ./configure. Users from different providers are different accounts — identity is (issuer, subject).",
+  "admin_settings.providers.loading": "Loading providers",
+  "admin_settings.providers.load_error.title": "Could not load the identity providers",
+  "admin_settings.providers.empty_title": "No identity provider is configured",
+  "admin_settings.providers.empty_detail": "Nobody can sign in yet: set GATEWAY_OIDC__* in .env, or run ./configure.",
+  "admin_settings.providers.disabled_heading": "Disabled previous providers",
+  "admin_settings.badge.enabled": "enabled",
+  "admin_settings.badge.disabled": "disabled",
+  "admin_settings.badge.admin_from_idp": "admin from IdP",
+  "admin_settings.badge.email_link": "links new sign-ins to existing accounts by verified email",
+  "admin_settings.badge.sync": "sync: {adapter}",
+  "admin_settings.badge.sync_unreviewed": "sync: {adapter} (awaiting review)",
+  "admin_settings.provider_row.line": "client {client} · groups claim {#code}{claim}{/code} · group mappings are decided on the {#link}Groups{/link} page · groups from {source} · sync every {cadence} · {users}",
+  "admin_settings.provider_row.source.claim": "the token",
+  "admin_settings.provider_row.source.directory": "the directory",
+  "admin_settings.provider_row.source.console": "this console only",
+  "admin_settings.provider_row.sync.every_login": "sign-in",
+  "admin_settings.provider_row.sync.first_login": "first sign-in only",
+  "admin_settings.provider_row.sync.never": "never",
+  "admin_settings.provider_row.users": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} user",
+        "countPlural=other": "{n} users"
+      }
+    }
+  ],
+  "admin_settings.provider_row.user_sync": "User sync…",
+  "admin_settings.provider_row.remove": "Remove",
+  "admin_settings.remove.title": "Remove {provider}?",
+  "admin_settings.remove.title_fallback": "this provider",
+  "admin_settings.remove.cancel": "Cancel",
+  "admin_settings.remove.confirm": "Remove",
+  "admin_settings.remove.toast_done": "Identity provider removed",
+  "admin_settings.remove.toast_failed": "Could not remove the identity provider",
+  "admin_settings.remove.body": "Nobody ever signed in through {#code}{issuer}{/code}, so removing it unlinks no one. Its directory entries and sync history are deleted with it. Pointing the deployment at this issuer again in .env creates it afresh.",
+  "admin_settings.capabilities.card": "Capabilities",
+  "admin_settings.capabilities.description": "A person holds a capability as an administrator, or through an active membership in a group carrying its flag. This sets what new groups start with; the toggles on the Groups page decide the existing ones. Grant or remove the flags in bulk below.",
+  "admin_settings.capabilities.loading": "Loading the capability defaults",
+  "admin_settings.capabilities.load_error.title": "Could not load the capability defaults",
+  "admin_settings.capability.code_agents": "Coding agents",
+  "admin_settings.capability.code_agents_lower": "coding agents",
+  "admin_settings.capability.api_keys": "API keys",
+  "admin_settings.capability.api_keys_lower": "API keys",
+  "admin_settings.capability.code_agents_hint": "The /code panel and the machine links that serve it.",
+  "admin_settings.capability.api_keys_hint": "Minting and using API keys.",
+  "admin_settings.capability.badge_on": "new groups: on",
+  "admin_settings.capability.badge_off": "new groups: off",
+  "admin_settings.capability.turn_on_new": "Turn on for new groups",
+  "admin_settings.capability.turn_off_new": "Turn off for new groups",
+  "admin_settings.capability.turn_on_all": "Turn on for all groups",
+  "admin_settings.capability.turn_off_all": "Turn off for all groups",
+  "admin_settings.capability.toast_saved": "{capability} default saved",
+  "admin_settings.capability.toast_save_failed": "Could not save",
+  "admin_settings.capability.toast_preview_failed": "Could not preview",
+  "admin_settings.capability.toast_apply_failed": "Could not apply",
+  "admin_settings.capability.toast_updated": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Updated {n} group",
+        "countPlural=other": "Updated {n} groups"
+      }
+    }
+  ],
+  "admin_settings.bulk.title_on": "Turn {capability} on for all groups?",
+  "admin_settings.bulk.title_off": "Turn {capability} off for all groups?",
+  "admin_settings.bulk.cancel": "Cancel",
+  "admin_settings.bulk.turn_on": "Turn on",
+  "admin_settings.bulk.turn_off": "Turn off",
+  "admin_settings.bulk.gain": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local count = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} person would gain {capability} — everyone holding no flagged group today. Administrators hold it either way.",
+        "countPlural=other": "{count} people would gain {capability} — everyone holding no flagged group today. Administrators hold it either way."
+      }
+    }
+  ],
+  "admin_settings.bulk.lose": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local count = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} person would lose {capability} at their next request — everyone whose only flagged group is this one being cleared. Administrators are exempt.",
+        "countPlural=other": "{count} people would lose {capability} at their next request — everyone whose only flagged group is this one being cleared. Administrators are exempt."
+      }
+    }
+  ],
+  "admin_settings.unknown_error": "Unknown error."
 }

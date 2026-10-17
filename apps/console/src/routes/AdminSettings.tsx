@@ -44,18 +44,19 @@ import {
   PAGE,
   SECRET_ROW,
 } from "../lib/layout";
+import { Message } from "../components/Message";
+import { m } from "../paraglide/messages.js";
 
 export function AdminSettings() {
   return (
     <div className={PAGE}>
       <PageHeader
-        title="Settings"
-        subtitle="The mail server, the identity providers, who may become a user, and
-          what new groups start with. Each section saves on its own."
+        title={m["admin_settings.title"]()}
+        subtitle={m["admin_settings.subtitle"]()}
       />
       <EmailCard />
       <ProvidersCard />
-      <Card title="Provisioning policy">
+      <Card title={m["admin_settings.provisioning_policy_card"]()}>
         <ProvisioningPolicySection />
       </Card>
       <CapabilityDefaultsCard />
@@ -79,60 +80,64 @@ function EmailCard() {
 
   if (email.isPending) {
     return (
-      <Card title="Email">
-        <Spinner label="Loading the email settings" />
+      <Card title={m["admin_settings.email.card"]()}>
+        <Spinner label={m["admin_settings.email.loading"]()} />
       </Card>
     );
   }
 
   return (
     <Card
-      title="Email"
-      description="Configured in .env; change with ./configure. Used for quota notices
-        and the bundled Authelia's self-service password reset."
+      title={m["admin_settings.email.card"]()}
+      description={m["admin_settings.email.description"]()}
       actions={
         email.data ? (
           <Badge tone={email.data.enabled ? "ok" : "neutral"}>
-            {email.data.enabled ? "enabled" : "disabled"}
+            {email.data.enabled
+              ? m["admin_settings.email.enabled"]()
+              : m["admin_settings.email.disabled"]()}
           </Badge>
         ) : null
       }
     >
       {email.error ? (
-        <Notice tone="danger" title="Could not load the email settings">
+        <Notice tone="danger" title={m["admin_settings.email.load_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
           {email.error instanceof Error
             ? email.error.message
-            : "Unknown error."}
+            : m["admin_settings.unknown_error"]()}
         </Notice>
       ) : email.data ? (
         <div className={FORM}>
           <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(10rem,1fr))]">
             <div>
-              <div className={DETAIL_LABEL}>SMTP host</div>
-              <div className={CODE}>{email.data.host || "(not set)"}</div>
+              <div className={DETAIL_LABEL}>{m["admin_settings.email.host"]()}</div>
+              <div className={CODE}>{email.data.host || m["admin_settings.email.not_set"]()}</div>
             </div>
             <div>
-              <div className={DETAIL_LABEL}>Port</div>
+              <div className={DETAIL_LABEL}>{m["admin_settings.email.port"]()}</div>
               <div className={CODE}>{email.data.port}</div>
             </div>
           </div>
           <div>
-            <div className={DETAIL_LABEL}>Username</div>
-            <div className={CODE}>{email.data.username || "(none)"}</div>
+            <div className={DETAIL_LABEL}>{m["admin_settings.email.username"]()}</div>
+            <div className={CODE}>{email.data.username || m["admin_settings.email.none"]()}</div>
           </div>
           <div>
-            <div className={DETAIL_LABEL}>Password</div>
+            <div className={DETAIL_LABEL}>{m["admin_settings.email.password"]()}</div>
             <div className={CODE}>
-              {email.data.has_password ? "set" : "(none)"}
+              {email.data.has_password ? m["admin_settings.email.set"]() : m["admin_settings.email.none"]()}
             </div>
           </div>
           <div>
-            <div className={DETAIL_LABEL}>From address</div>
-            <div className={CODE}>{email.data.from_address || "(not set)"}</div>
+            <div className={DETAIL_LABEL}>{m["admin_settings.email.from_address"]()}</div>
+            <div className={CODE}>
+              {email.data.from_address || m["admin_settings.email.not_set"]()}
+            </div>
           </div>
           <div className="flex flex-wrap items-end gap-2">
             <Input
-              label="Send a test email to"
+              label={m["admin_settings.email.test_to"]()}
               value={testTo}
               onChange={(e) => setTestTo(e.target.value)}
             />
@@ -144,23 +149,25 @@ function EmailCard() {
                   onSuccess: (result) =>
                     toast?.add({
                       title: result.ok
-                        ? "Test email sent"
-                        : "Test email failed",
+                        ? m["admin_settings.email.toast_sent"]()
+                        : m["admin_settings.email.toast_failed"](),
+                      // i18n: server text — the test result's own detail.
                       description: result.detail,
                       type: result.ok ? "success" : "error",
                     }),
                   onError: (caught: unknown) =>
                     toast?.add({
+                      // i18n: server text — the gateway's own error message.
                       title:
                         caught instanceof Error
                           ? caught.message
-                          : "Test email failed",
+                          : m["admin_settings.email.toast_failed"](),
                       type: "error",
                     }),
                 })
               }
             >
-              Send test
+              {m["admin_settings.email.send_test"]()}
             </Button>
           </div>
         </div>
@@ -209,18 +216,18 @@ export function RedirectUri({ name }: { name: string }) {
 
   return (
     <div>
-      <div className={DETAIL_LABEL}>Redirect URI</div>
+      <div className={DETAIL_LABEL}>{m["admin_settings.redirect_uri.label"]()}</div>
       <div className={SECRET_ROW}>
         <code className={CODE}>{uri}</code>
-        {slug && <Button onClick={copy}>{copied ? "Copied" : "Copy"}</Button>}
+        {slug && (
+          <Button onClick={copy}>
+            {copied ? m["admin_settings.redirect_uri.copied"]() : m["admin_settings.redirect_uri.copy"]()}
+          </Button>
+        )}
       </div>
-      <p className="mt-1 text-sm text-ink-muted">
-        Register exactly this at the provider — never a wildcard.
-      </p>
+      <p className="mt-1 text-sm text-ink-muted">{m["admin_settings.redirect_uri.note"]()}</p>
       {copied === false && (
-        <p className="text-sm text-warn">
-          Could not reach the clipboard; copy it by hand.
-        </p>
+        <p className="text-sm text-warn">{m["admin_settings.redirect_uri.clipboard"]()}</p>
       )}
     </div>
   );
@@ -249,22 +256,22 @@ function ProvidersCard() {
 
   return (
     <Card
-      title="Identity providers"
-      description="Configured in .env; change with ./configure. Users from different
-        providers are different accounts — identity is (issuer, subject)."
+      title={m["admin_settings.providers.card"]()}
+      description={m["admin_settings.providers.description"]()}
     >
       {providers.isPending ? (
-        <Spinner label="Loading providers" />
+        <Spinner label={m["admin_settings.providers.loading"]()} />
       ) : providers.error ? (
-        <Notice tone="danger" title="Could not load the identity providers">
+        <Notice tone="danger" title={m["admin_settings.providers.load_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
           {providers.error instanceof Error
             ? providers.error.message
-            : "Unknown error."}
+            : m["admin_settings.unknown_error"]()}
         </Notice>
       ) : rows.length === 0 ? (
         <EmptyState
-          title="No identity provider is configured"
-          detail="Nobody can sign in yet: set GATEWAY_OIDC__* in .env, or run ./configure."
+          title={m["admin_settings.providers.empty_title"]()}
+          detail={m["admin_settings.providers.empty_detail"]()}
         />
       ) : (
         <div className="flex flex-col gap-4">
@@ -279,7 +286,7 @@ function ProvidersCard() {
           </div>
           {disabled.length > 0 && (
             <div>
-              <div className={DETAIL_LABEL}>Disabled previous providers</div>
+              <div className={DETAIL_LABEL}>{m["admin_settings.providers.disabled_heading"]()}</div>
               <div className="mt-2 flex flex-col gap-2">
                 {disabled.map((provider) => (
                   <ProviderRow
@@ -328,16 +335,17 @@ function ProviderRow({
         <div className={CHIPS}>
           <span className="font-medium">{provider.name}</span>
           <Badge tone={provider.is_enabled ? "ok" : "neutral"}>
-            {provider.is_enabled ? "enabled" : "disabled"}
+            {provider.is_enabled
+              ? m["admin_settings.badge.enabled"]()
+              : m["admin_settings.badge.disabled"]()}
           </Badge>
+          {/* i18n: server text — the provider kind is the API's enum value. */}
           <Badge tone="neutral">{provider.kind}</Badge>
           {provider.admin_source === "claim" && (
-            <Badge tone="warn">admin from IdP</Badge>
+            <Badge tone="warn">{m["admin_settings.badge.admin_from_idp"]()}</Badge>
           )}
           {provider.link_by_email && (
-            <Badge tone="danger">
-              links new sign-ins to existing accounts by verified email
-            </Badge>
+            <Badge tone="danger">{m["admin_settings.badge.email_link"]()}</Badge>
           )}
           {syncable && provider.sync_adapter !== "none" && (
             <Badge
@@ -347,37 +355,45 @@ function ProviderRow({
                   : "warn"
               }
             >
-              sync: {provider.sync_adapter}
               {provider.sync_confirmed || provider.sync_adapter === "scim"
-                ? ""
-                : " (awaiting review)"}
+                ? m["admin_settings.badge.sync"]({ adapter: provider.sync_adapter })
+                : m["admin_settings.badge.sync_unreviewed"]({ adapter: provider.sync_adapter })}
             </Badge>
           )}
         </div>
         <div className={`mt-1 text-sm ${MUTED}`}>{provider.issuer}</div>
         <div className="mt-1 text-xs text-ink-faint">
-          client {provider.client_id} · groups claim{" "}
-          <span className={CODE}>{provider.groups_claim}</span> · group mappings
-          are decided on the{" "}
           {/* ADR 0095: one mapping surface, the Groups page — this line only
-              points there now. */}
-          <Link to="/admin/groups" className="underline">
-            Groups
-          </Link>{" "}
-          page · groups from{" "}
-          {provider.group_source === "claim"
-            ? "the token"
-            : provider.group_source === "directory"
-              ? "the directory"
-              : "this console only"}{" "}
-          · sync every{" "}
-          {provider.group_sync === "every_login"
-            ? "sign-in"
-            : provider.group_sync === "first_login"
-              ? "first sign-in only"
-              : "never"}
-          {" · "}
-          {provider.user_count} {provider.user_count === 1 ? "user" : "users"}
+              points there now. The link and the claim are inside the message, so
+              a translator moves the sentence and the target stays. */}
+          <Message
+            message={m["admin_settings.provider_row.line"]}
+            markup={{
+              code: (children) => <span className={CODE}>{children}</span>,
+              link: (children) => (
+                <Link to="/admin/groups" className="underline">
+                  {children}
+                </Link>
+              ),
+            }}
+            inputs={{
+              client: provider.client_id,
+              claim: provider.groups_claim,
+              source:
+                provider.group_source === "claim"
+                  ? m["admin_settings.provider_row.source.claim"]()
+                  : provider.group_source === "directory"
+                    ? m["admin_settings.provider_row.source.directory"]()
+                    : m["admin_settings.provider_row.source.console"](),
+              cadence:
+                provider.group_sync === "every_login"
+                  ? m["admin_settings.provider_row.sync.every_login"]()
+                  : provider.group_sync === "first_login"
+                    ? m["admin_settings.provider_row.sync.first_login"]()
+                    : m["admin_settings.provider_row.sync.never"](),
+              users: m["admin_settings.provider_row.users"]({ count: provider.user_count }),
+            }}
+          />
         </div>
         {/* Said up front, so a kept row explains itself instead of offering a
             button that would only answer 409. */}
@@ -394,12 +410,12 @@ function ProviderRow({
             disabled row has no user sync to open (see `syncable` above). */}
         {provider.source === "console" && syncable && (
           <Button variant="ghost" onClick={onDirectory}>
-            User sync…
+            {m["admin_settings.provider_row.user_sync"]()}
           </Button>
         )}
         {onRemove && !provider.is_enabled && provider.removable && (
           <Button variant="ghost" onClick={onRemove}>
-            Remove
+            {m["admin_settings.provider_row.remove"]()}
           </Button>
         )}
       </div>
@@ -426,11 +442,13 @@ function RemoveProviderDialog({
   return (
     <Dialog
       open={provider !== null}
-      title={`Remove ${provider?.name ?? "this provider"}?`}
+      title={m["admin_settings.remove.title"]({
+        provider: provider?.name ?? m["admin_settings.remove.title_fallback"](),
+      })}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{m["admin_settings.remove.cancel"]()}</Button>
           <Button
             variant="danger"
             busy={remove.isPending}
@@ -439,14 +457,14 @@ function RemoveProviderDialog({
               remove.mutate(provider.id, {
                 onSuccess: () => {
                   toast?.add({
-                    title: "Identity provider removed",
+                    title: m["admin_settings.remove.toast_done"](),
                     type: "success",
                   });
                   onClose();
                 },
                 onError: (error) =>
                   toast?.add({
-                    title: "Could not remove the identity provider",
+                    title: m["admin_settings.remove.toast_failed"](),
                     description:
                       error instanceof Error ? error.message : undefined,
                     type: "error",
@@ -454,16 +472,17 @@ function RemoveProviderDialog({
               })
             }
           >
-            Remove
+            {m["admin_settings.remove.confirm"]()}
           </Button>
         </>
       }
     >
       <p>
-        Nobody ever signed in through{" "}
-        <span className={CODE}>{provider?.issuer}</span>, so removing it unlinks
-        no one. Its directory entries and sync history are deleted with it.
-        Pointing the deployment at this issuer again in .env creates it afresh.
+        <Message
+          message={m["admin_settings.remove.body"]}
+          markup={{ code: (children) => <span className={CODE}>{children}</span> }}
+          inputs={{ issuer: provider?.issuer ?? "" }}
+        />
       </p>
     </Dialog>
   );
@@ -473,15 +492,22 @@ function RemoveProviderDialog({
 
 const CAPABILITIES: {
   key: "code_agents" | "api_keys";
-  title: string;
-  hint: string;
+  title: () => string;
+  titleLower: () => string;
+  hint: () => string;
 }[] = [
   {
     key: "code_agents",
-    title: "Coding agents",
-    hint: "The /code panel and the machine links that serve it.",
+    title: m["admin_settings.capability.code_agents"],
+    titleLower: m["admin_settings.capability.code_agents_lower"],
+    hint: m["admin_settings.capability.code_agents_hint"],
   },
-  { key: "api_keys", title: "API keys", hint: "Minting and using API keys." },
+  {
+    key: "api_keys",
+    title: m["admin_settings.capability.api_keys"],
+    titleLower: m["admin_settings.capability.api_keys_lower"],
+    hint: m["admin_settings.capability.api_keys_hint"],
+  },
 ];
 
 /**
@@ -508,14 +534,15 @@ function CapabilityDefaultsCard() {
 
   if (policy.isPending || policy.error) {
     return (
-      <Card title="Capabilities">
+      <Card title={m["admin_settings.capabilities.card"]()}>
         {policy.isPending ? (
-          <Spinner label="Loading the capability defaults" />
+          <Spinner label={m["admin_settings.capabilities.loading"]()} />
         ) : (
-          <Notice tone="danger" title="Could not load the capability defaults">
+          <Notice tone="danger" title={m["admin_settings.capabilities.load_error.title"]()}>
+            {/* i18n: server text — the API's own error message. */}
             {policy.error instanceof Error
               ? policy.error.message
-              : "Unknown error."}
+              : m["admin_settings.unknown_error"]()}
           </Notice>
         )}
       </Card>
@@ -524,11 +551,8 @@ function CapabilityDefaultsCard() {
 
   return (
     <Card
-      title="Capabilities"
-      description="A person holds a capability as an administrator, or through an
-        active membership in a group carrying its flag. This sets what new
-        groups start with; the toggles on the Groups page decide the existing
-        ones. Grant or remove the flags in bulk below."
+      title={m["admin_settings.capabilities.card"]()}
+      description={m["admin_settings.capabilities.description"]()}
     >
       <div className={FORM}>
         {CAPABILITIES.map((entry) => {
@@ -543,12 +567,14 @@ function CapabilityDefaultsCard() {
             >
               <div className="min-w-0">
                 <div className={CHIPS}>
-                  <span className="font-medium">{entry.title}</span>
+                  <span className="font-medium">{entry.title()}</span>
                   <Badge tone={mode === "on" ? "ok" : "neutral"}>
-                    {mode === "on" ? "new groups: on" : "new groups: off"}
+                    {mode === "on"
+                      ? m["admin_settings.capability.badge_on"]()
+                      : m["admin_settings.capability.badge_off"]()}
                   </Badge>
                 </div>
-                <div className={`mt-1 text-sm ${MUTED}`}>{entry.hint}</div>
+                <div className={`mt-1 text-sm ${MUTED}`}>{entry.hint()}</div>
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Button
@@ -561,22 +587,25 @@ function CapabilityDefaultsCard() {
                       {
                         onSuccess: () =>
                           toast?.add({
-                            title: `${entry.title} default saved`,
+                            title: m["admin_settings.capability.toast_saved"]({
+                              capability: entry.title(),
+                            }),
                             type: "success",
                           }),
                         onError: (caught: unknown) =>
                           toast?.add({
+                            // i18n: server text — the gateway's own error message.
                             title:
                               caught instanceof Error
                                 ? caught.message
-                                : "Could not save",
+                                : m["admin_settings.capability.toast_save_failed"](),
                             type: "error",
                           }),
                       },
                     )
                   }
                 >
-                  Turn on for new groups
+                  {m["admin_settings.capability.turn_on_new"]()}
                 </Button>
                 <Button
                   variant="ghost"
@@ -588,22 +617,25 @@ function CapabilityDefaultsCard() {
                       {
                         onSuccess: () =>
                           toast?.add({
-                            title: `${entry.title} default saved`,
+                            title: m["admin_settings.capability.toast_saved"]({
+                              capability: entry.title(),
+                            }),
                             type: "success",
                           }),
                         onError: (caught: unknown) =>
                           toast?.add({
+                            // i18n: server text — the gateway's own error message.
                             title:
                               caught instanceof Error
                                 ? caught.message
-                                : "Could not save",
+                                : m["admin_settings.capability.toast_save_failed"](),
                             type: "error",
                           }),
                       },
                     )
                   }
                 >
-                  Turn off for new groups
+                  {m["admin_settings.capability.turn_off_new"]()}
                 </Button>
                 <Button
                   variant="secondary"
@@ -620,17 +652,18 @@ function CapabilityDefaultsCard() {
                         },
                         onError: (caught: unknown) =>
                           toast?.add({
+                            // i18n: server text — the gateway's own error message.
                             title:
                               caught instanceof Error
                                 ? caught.message
-                                : "Could not preview",
+                                : m["admin_settings.capability.toast_preview_failed"](),
                             type: "error",
                           }),
                       },
                     );
                   }}
                 >
-                  Turn on for all groups
+                  {m["admin_settings.capability.turn_on_all"]()}
                 </Button>
                 <Button
                   variant="secondary"
@@ -647,17 +680,18 @@ function CapabilityDefaultsCard() {
                         },
                         onError: (caught: unknown) =>
                           toast?.add({
+                            // i18n: server text — the gateway's own error message.
                             title:
                               caught instanceof Error
                                 ? caught.message
-                                : "Could not preview",
+                                : m["admin_settings.capability.toast_preview_failed"](),
                             type: "error",
                           }),
                       },
                     );
                   }}
                 >
-                  Turn off for all groups
+                  {m["admin_settings.capability.turn_off_all"]()}
                 </Button>
               </div>
             </div>
@@ -675,17 +709,20 @@ function CapabilityDefaultsCard() {
             {
               onSuccess: (result) => {
                 toast?.add({
-                  title: `Updated ${result.updated} groups`,
+                  title: m["admin_settings.capability.toast_updated"]({
+                    count: result.updated,
+                  }),
                   type: "success",
                 });
                 setPending(null);
               },
               onError: (caught: unknown) =>
                 toast?.add({
+                  // i18n: server text — the gateway's own error message.
                   title:
                     caught instanceof Error
                       ? caught.message
-                      : "Could not apply",
+                      : m["admin_settings.capability.toast_apply_failed"](),
                   type: "error",
                 }),
             },
@@ -738,8 +775,8 @@ function CapabilityBulkConfirm({
   onSave: (capability: "code_agents" | "api_keys", value: boolean) => void;
   onClose: () => void;
 }) {
-  const title =
-    pending?.capability === "code_agents" ? "Coding agents" : "API keys";
+  const entry =
+    CAPABILITIES.find((candidate) => candidate.key === pending?.capability) ?? CAPABILITIES[1]!;
   const count = pending?.value
     ? (preview?.would_gain ?? 0)
     : (preview?.would_lose ?? 0);
@@ -748,26 +785,26 @@ function CapabilityBulkConfirm({
       open={pending !== null}
       title={
         pending?.value
-          ? `Turn ${title.toLowerCase()} on for all groups?`
-          : `Turn ${title.toLowerCase()} off for all groups?`
+          ? m["admin_settings.bulk.title_on"]({ capability: entry.titleLower() })
+          : m["admin_settings.bulk.title_off"]({ capability: entry.titleLower() })
       }
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{m["admin_settings.bulk.cancel"]()}</Button>
           <Button
             variant={pending?.value ? "primary" : "danger"}
             busy={saving}
             onClick={() => pending && onSave(pending.capability, pending.value)}
           >
-            {pending?.value ? "Turn on" : "Turn off"}
+            {pending?.value ? m["admin_settings.bulk.turn_on"]() : m["admin_settings.bulk.turn_off"]()}
           </Button>
         </>
       }
     >
       {pending?.value
-        ? `${count} ${count === 1 ? "person" : "people"} would gain ${title.toLowerCase()} — everyone holding no flagged group today. Administrators hold it either way.`
-        : `${count} ${count === 1 ? "person" : "people"} would lose ${title.toLowerCase()} at their next request — everyone whose only flagged group is this one being cleared. Administrators are exempt.`}
+        ? m["admin_settings.bulk.gain"]({ count, capability: entry.titleLower() })
+        : m["admin_settings.bulk.lose"]({ count, capability: entry.titleLower() })}
     </Dialog>
   );
 }
