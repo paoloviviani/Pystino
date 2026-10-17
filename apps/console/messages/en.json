@@ -270,5 +270,80 @@
   "redaction_rule.submit.create": "Create rule",
   "redaction_rule.toast.saved": "Rule saved.",
   "redaction_rule.toast.created": "Rule created.",
-  "redaction_rule.toast.cloned": "Clone created — it starts inactive."
+  "redaction_rule.toast.cloned": "Clone created — it starts inactive.",
+  "identity_directory.run.dry_run": "dry run",
+  "identity_directory.run.counts": [
+    {
+      "declarations": [
+        "input seen"
+      ],
+      "match": {
+        "*": "seen {seen: number} · created {created: number} · linked {linked: number} · groups changed {updated: number} · deactivated {deactivated: number} · reactivated {reactivated: number}"
+      }
+    }
+  ],
+  "identity_directory.run.change_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} change",
+        "countPlural=other": "{n} changes"
+      }
+    }
+  ],
+  "identity_directory.title": "User sync — {provider}",
+  "identity_directory.close": "Close",
+  "identity_directory.intro": "Optional. Keeps this console's user list in step with your identity provider: people exist, with their groups and pre-assigned access, before their first sign-in, and are deactivated when removed there. You don't need this to add users — people appear at their first sign-in.",
+  "identity_directory.just_in_time.title": "Just-in-time only",
+  "identity_directory.just_in_time.body": "A {kind} provider offers no way to list its users: OIDC itself has no listing API. People appear here when they first sign in.",
+  "identity_directory.adapter.label": "How this directory tells us about people",
+  "identity_directory.adapter.none": "Off (default) — people appear at their first sign-in",
+  "identity_directory.adapter.authelia_file": "Authelia users file (not needed: the Users page manages bundled accounts)",
+  "identity_directory.adapter.keycloak_admin": "Keycloak admin API — pulled on a schedule (service-account client)",
+  "identity_directory.adapter.scim": "SCIM 2.0 — your identity provider pushes changes here",
+  "identity_directory.pull_every.label": "Pull every (minutes)",
+  "identity_directory.pull_every.hint": "0 means only when run from here.",
+  "identity_directory.save": "Save",
+  "identity_directory.keycloak.detail": "Service-account client (view-users, query-groups)",
+  "identity_directory.keycloak.client_id": "Client ID",
+  "identity_directory.keycloak.client_secret": "Client secret",
+  "identity_directory.keycloak.client_secret_hint": "Stored encrypted, never shown again. Saving it makes the next run a dry run.",
+  "identity_directory.keycloak.save": "Save credentials",
+  "identity_directory.keycloak.saved": "Credentials saved",
+  "identity_directory.scim.detail": "SCIM endpoint and token",
+  "identity_directory.scim.body": "Give the identity provider's provisioning settings this endpoint and a token. Map the person's object id to {#code}externalId{/code} so accounts can exist before their first sign-in.",
+  "identity_directory.scim.once_title": "Shown once — copy it now",
+  "identity_directory.scim.generate": "Generate token (replaces the previous one)",
+  "identity_directory.runs.detail": "Runs",
+  "identity_directory.runs.first_run_title": "The first run is a dry run",
+  "identity_directory.runs.first_run_body": "Nothing changes until you have looked at what the adapter would do and confirmed it. A run that would deactivate more than max(5, 10%) of this directory's accounts always stops for confirmation.",
+  "identity_directory.runs.test": "Test connection",
+  "identity_directory.runs.test_failed": "Test failed",
+  "identity_directory.runs.sees": [
+    {
+      "declarations": [
+        "input people"
+      ],
+      "match": {
+        "*": "The adapter sees {people: number} people"
+      }
+    }
+  ],
+  "identity_directory.runs.dry_run": "Dry run",
+  "identity_directory.runs.confirm": "Confirm and enable",
+  "identity_directory.runs.run_now": "Run now",
+  "identity_directory.runs.apply_anyway": "Apply anyway ({deactivations: number} deactivations)",
+  "identity_directory.runs.loading": "Loading runs",
+  "identity_directory.settings_saved": "Sync settings saved",
+  "identity_directory.save_failed": "Could not save",
+  "identity_directory.pending.detail": "Not signed in yet",
+  "identity_directory.pending.all_accounted": "Everyone the directory lists has an account.",
+  "identity_directory.pending.groups_label": "Groups at first sign-in"
 }

@@ -270,5 +270,80 @@
   "redaction_rule.submit.create": "[Ćŕéáťé ŕúľé]",
   "redaction_rule.toast.saved": "[Ŕúľé śáǚéď.]",
   "redaction_rule.toast.created": "[Ŕúľé ćŕéáťéď.]",
-  "redaction_rule.toast.cloned": "[Ćľóńé ćŕéáťéď — íť śťáŕťś íńáćťíǚé.]"
+  "redaction_rule.toast.cloned": "[Ćľóńé ćŕéáťéď — íť śťáŕťś íńáćťíǚé.]",
+  "identity_directory.run.dry_run": "[ďŕý ŕúń]",
+  "identity_directory.run.counts": [
+    {
+      "declarations": [
+        "input seen"
+      ],
+      "match": {
+        "*": "[śééń {seen: number} · ćŕéáťéď {created: number} · ľíńķéď {linked: number} · ǧŕóúþś ćȟáńǧéď {updated: number} · ďéáćťíǚáťéď {deactivated: number} · ŕéáćťíǚáťéď {reactivated: number}]"
+      }
+    }
+  ],
+  "identity_directory.run.change_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ćȟáńǧé]",
+        "countPlural=other": "[{n} ćȟáńǧéś]"
+      }
+    }
+  ],
+  "identity_directory.title": "[Úśéŕ śýńć — {provider}]",
+  "identity_directory.close": "[Ćľóśé]",
+  "identity_directory.intro": "[Óþťíóńáľ. Ķééþś ťȟíś ćóńśóľé'ś úśéŕ ľíśť íń śťéþ ŵíťȟ ýóúŕ íďéńťíťý þŕóǚíďéŕ: þéóþľé éẋíśť, ŵíťȟ ťȟéíŕ ǧŕóúþś áńď þŕé-áśśíǧńéď áććéśś, ƀéƒóŕé ťȟéíŕ ƒíŕśť śíǧń-íń, áńď áŕé ďéáćťíǚáťéď ŵȟéń ŕéḿóǚéď ťȟéŕé. Ýóú ďóń'ť ńééď ťȟíś ťó áďď úśéŕś — þéóþľé áþþéáŕ áť ťȟéíŕ ƒíŕśť śíǧń-íń.]",
+  "identity_directory.just_in_time.title": "[Ĵúśť-íń-ťíḿé óńľý]",
+  "identity_directory.just_in_time.body": "[Á {kind} þŕóǚíďéŕ óƒƒéŕś ńó ŵáý ťó ľíśť íťś úśéŕś: ÓÍĎĆ íťśéľƒ ȟáś ńó ľíśťíńǧ ÁÞÍ. Þéóþľé áþþéáŕ ȟéŕé ŵȟéń ťȟéý ƒíŕśť śíǧń íń.]",
+  "identity_directory.adapter.label": "[Ȟóŵ ťȟíś ďíŕéćťóŕý ťéľľś úś áƀóúť þéóþľé]",
+  "identity_directory.adapter.none": "[Óƒƒ (ďéƒáúľť) — þéóþľé áþþéáŕ áť ťȟéíŕ ƒíŕśť śíǧń-íń]",
+  "identity_directory.adapter.authelia_file": "[Áúťȟéľíá úśéŕś ƒíľé (ńóť ńééďéď: ťȟé Úśéŕś þáǧé ḿáńáǧéś ƀúńďľéď áććóúńťś)]",
+  "identity_directory.adapter.keycloak_admin": "[Ķéýćľóáķ áďḿíń ÁÞÍ — þúľľéď óń á śćȟéďúľé (śéŕǚíćé-áććóúńť ćľíéńť)]",
+  "identity_directory.adapter.scim": "[ŚĆÍḾ 2.0 — ýóúŕ íďéńťíťý þŕóǚíďéŕ þúśȟéś ćȟáńǧéś ȟéŕé]",
+  "identity_directory.pull_every.label": "[Þúľľ éǚéŕý (ḿíńúťéś)]",
+  "identity_directory.pull_every.hint": "[0 ḿéáńś óńľý ŵȟéń ŕúń ƒŕóḿ ȟéŕé.]",
+  "identity_directory.save": "[Śáǚé]",
+  "identity_directory.keycloak.detail": "[Śéŕǚíćé-áććóúńť ćľíéńť (ǚíéŵ-úśéŕś, ǫúéŕý-ǧŕóúþś)]",
+  "identity_directory.keycloak.client_id": "[Ćľíéńť ÍĎ]",
+  "identity_directory.keycloak.client_secret": "[Ćľíéńť śéćŕéť]",
+  "identity_directory.keycloak.client_secret_hint": "[Śťóŕéď éńćŕýþťéď, ńéǚéŕ śȟóŵń áǧáíń. Śáǚíńǧ íť ḿáķéś ťȟé ńéẋť ŕúń á ďŕý ŕúń.]",
+  "identity_directory.keycloak.save": "[Śáǚé ćŕéďéńťíáľś]",
+  "identity_directory.keycloak.saved": "[Ćŕéďéńťíáľś śáǚéď]",
+  "identity_directory.scim.detail": "[ŚĆÍḾ éńďþóíńť áńď ťóķéń]",
+  "identity_directory.scim.body": "[Ǧíǚé ťȟé íďéńťíťý þŕóǚíďéŕ'ś þŕóǚíśíóńíńǧ śéťťíńǧś ťȟíś éńďþóíńť áńď á ťóķéń. Ḿáþ ťȟé þéŕśóń'ś óƀĵéćť íď ťó {#code}éẋťéŕńáľÍď{/code} śó áććóúńťś ćáń éẋíśť ƀéƒóŕé ťȟéíŕ ƒíŕśť śíǧń-íń.]",
+  "identity_directory.scim.once_title": "[Śȟóŵń óńćé — ćóþý íť ńóŵ]",
+  "identity_directory.scim.generate": "[Ǧéńéŕáťé ťóķéń (ŕéþľáćéś ťȟé þŕéǚíóúś óńé)]",
+  "identity_directory.runs.detail": "[Ŕúńś]",
+  "identity_directory.runs.first_run_title": "[Ťȟé ƒíŕśť ŕúń íś á ďŕý ŕúń]",
+  "identity_directory.runs.first_run_body": "[Ńóťȟíńǧ ćȟáńǧéś úńťíľ ýóú ȟáǚé ľóóķéď áť ŵȟáť ťȟé áďáþťéŕ ŵóúľď ďó áńď ćóńƒíŕḿéď íť. Á ŕúń ťȟáť ŵóúľď ďéáćťíǚáťé ḿóŕé ťȟáń ḿáẋ(5, 10%) óƒ ťȟíś ďíŕéćťóŕý'ś áććóúńťś áľŵáýś śťóþś ƒóŕ ćóńƒíŕḿáťíóń.]",
+  "identity_directory.runs.test": "[Ťéśť ćóńńéćťíóń]",
+  "identity_directory.runs.test_failed": "[Ťéśť ƒáíľéď]",
+  "identity_directory.runs.sees": [
+    {
+      "declarations": [
+        "input people"
+      ],
+      "match": {
+        "*": "[Ťȟé áďáþťéŕ śééś {people: number} þéóþľé]"
+      }
+    }
+  ],
+  "identity_directory.runs.dry_run": "[Ďŕý ŕúń]",
+  "identity_directory.runs.confirm": "[Ćóńƒíŕḿ áńď éńáƀľé]",
+  "identity_directory.runs.run_now": "[Ŕúń ńóŵ]",
+  "identity_directory.runs.apply_anyway": "[Áþþľý áńýŵáý ({deactivations: number} ďéáćťíǚáťíóńś)]",
+  "identity_directory.runs.loading": "[Ĺóáďíńǧ ŕúńś]",
+  "identity_directory.settings_saved": "[Śýńć śéťťíńǧś śáǚéď]",
+  "identity_directory.save_failed": "[Ćóúľď ńóť śáǚé]",
+  "identity_directory.pending.detail": "[Ńóť śíǧńéď íń ýéť]",
+  "identity_directory.pending.all_accounted": "[Éǚéŕýóńé ťȟé ďíŕéćťóŕý ľíśťś ȟáś áń áććóúńť.]",
+  "identity_directory.pending.groups_label": "[Ǧŕóúþś áť ƒíŕśť śíǧń-íń]"
 }
