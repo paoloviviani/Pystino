@@ -1,4 +1,12 @@
-import { baseLocale, getLocale, isLocale, locales, setLocale } from "../paraglide/runtime.js";
+import {
+  baseLocale,
+  defineCustomClientStrategy,
+  getLocale,
+  isLocale,
+  locales,
+  setLocale,
+  toLocale,
+} from "../paraglide/runtime.js";
 import type { Locale } from "../paraglide/runtime.js";
 
 /**
@@ -6,14 +14,22 @@ import type { Locale } from "../paraglide/runtime.js";
  *
  * The *order* the locale is picked in is configuration, not code: it lives in
  * `project.inlang/paraglide.config.ts` as Paraglide's strategy list —
- * `localStorage` (an explicit choice), `preferredLanguage` (the browser's own
- * preference, honoured only for a language the console has a catalogue for),
- * `baseLocale` (English). This module is the console's single door onto that
- * resolution, so there is one answer to "which language is this in" and no
+ * `localStorage` (an explicit choice), `custom-browser-language` (the browser's
+ * own preference, honoured only for a language the console has a catalogue
+ * for), `baseLocale` (English). This module is the console's single door onto
+ * that resolution, so there is one answer to "which language is this in" and no
  * second one to keep in step with it.
  *
  * English is the only real language today. The machinery is here so that
  * adding one is a file, not a change to the console.
+ *
+ * One consequence of `localStorage` being the first strategy, and worth knowing
+ * before a language menu exists: Paraglide writes the locale it resolved the
+ * first time one is asked for, so a reader's first visit turns their browser's
+ * language into a stored choice, and changing the browser afterwards changes
+ * nothing until `console.locale` is cleared. That is the documented behaviour
+ * of the strategy, and it is the right way round for an explicit choice; it is
+ * only surprising to whoever debugs it, which is why it is written down.
  */
 
 const LOCALE_KEY = "console.locale";
@@ -41,6 +57,34 @@ export { locales };
 export function realLocales(): Locale[] {
   return locales.filter((locale) => !PSEUDO_LOCALES.includes(locale));
 }
+
+/** The browser's own language, if the console has a catalogue for it. */
+function browserLocale(): Locale | undefined {
+  for (const tag of navigator.languages ?? []) {
+    // The full tag first, then the base language: a reader with `it-CH` gets
+    // an `it` catalogue if there is one and no answer otherwise.
+    const match = toLocale(tag) ?? toLocale(tag.split("-")[0] ?? tag);
+    // A pseudo-locale is a lens, not a language: a browser that happens to ask
+    // for `en-XA` must not be answered with one. It is reachable only by an
+    // explicit choice, which is the whole point of being able to ask for it.
+    if (match !== undefined && !PSEUDO_LOCALES.includes(match)) return match;
+  }
+  return undefined;
+}
+
+/**
+ * Registered here rather than left to Paraglide's `preferredLanguage`, which
+ * matches any declared tag: without this, one browser reporting `en-XA` would
+ * show a deployment a console of accented English.
+ *
+ * The `setLocale` half is empty on purpose — a language the browser states is
+ * not a language the console remembers, and the `localStorage` strategy is the
+ * one that writes.
+ */
+defineCustomClientStrategy("custom-browser-language", {
+  getLocale: browserLocale,
+  setLocale: () => {},
+});
 
 /**
  * The stored choice, if it names a locale this build has a catalogue for.

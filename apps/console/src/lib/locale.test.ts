@@ -11,9 +11,19 @@ import { activeLocale, applyLocale, realLocales, rememberLocale, storedLocale } 
 
 const KEY = "console.locale";
 
+/** What the browser says it speaks, in order — the second strategy's input. */
+function speaks(languages: string[]): void {
+  Object.defineProperty(window.navigator, "languages", { value: languages, configurable: true });
+  Object.defineProperty(window.navigator, "language", {
+    value: languages[0] ?? "",
+    configurable: true,
+  });
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   document.documentElement.lang = "en";
+  speaks(["en-US"]);
 });
 
 afterEach(() => {
@@ -44,20 +54,34 @@ describe("storedLocale", () => {
 
 describe("activeLocale", () => {
   it("is English when nothing has been chosen and the browser asks for nothing known", () => {
-    vi.spyOn(navigator, "language", "get").mockReturnValue("qq-ZZ");
+    speaks(["qq-ZZ"]);
     expect(activeLocale()).toBe("en");
   });
 
-  it("follows an explicit choice", () => {
+  it("follows the browser's own language when the console has that language", () => {
+    // `en-GB` has no catalogue of its own; its base language does.
+    speaks(["en-GB", "qq-ZZ"]);
+    expect(activeLocale()).toBe("en");
+  });
+
+  it("follows an explicit choice over the browser", () => {
+    speaks(["qq-ZZ"]);
     window.localStorage.setItem(KEY, "en-XA");
     expect(activeLocale()).toBe("en-XA");
   });
 
-  it("never reaches the pseudo-locale from the browser alone", () => {
-    // jsdom reports en-US, which resolves to the base locale; the point of the
-    // assertion is that the pseudo-locale is only ever a deliberate choice.
+  it("refuses the pseudo-locale when a browser asks for it", () => {
+    // The pseudo-locale is a lens, not a language: a deployment must never be
+    // shown accented English because somebody's browser says so.
+    speaks(["en-XA"]);
     expect(activeLocale()).toBe("en");
     expect(realLocales()).not.toContain("en-XA");
+  });
+
+  it("still offers the pseudo-locale to a reader who asks for it by hand", () => {
+    speaks(["en-US"]);
+    rememberLocale("en-XA");
+    expect(activeLocale()).toBe("en-XA");
   });
 });
 

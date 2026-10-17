@@ -10,9 +10,14 @@ import { defineConfig } from "@inlang/paraglide-js";
  *
  * `strategy` is the order the locale is picked in, and it is the console's
  * whole locale policy: an explicit choice the reader made (localStorage),
- * then the browser's own preference if the console has a catalogue for it,
- * then the base locale. `src/lib/locale.ts` is the console's single entry
- * point to this — it never re-implements the order.
+ * then the browser's own preference if the console has a catalogue for it
+ * (custom-browser-language, defined in src/lib/locale.ts, which is the
+ * console's single entry point to this and never re-implements the order),
+ * then the base locale.
+ *
+ * The middle one is Paraglide's `preferredLanguage` with one change: a
+ * pseudo-locale is not a language a browser may arrive with, so the custom
+ * strategy refuses it and only an explicit choice can select it.
  *
  * No `cookie` and no `url`: the console is served from one address
  * (/console/), so a per-locale URL would be a second routing scheme for a
@@ -35,7 +40,7 @@ export default defineConfig({
    * rather than a missing word on screen.
    */
   emitTsDeclarations: true,
-  strategy: ["localStorage", "preferredLanguage", "baseLocale"],
+  strategy: ["localStorage", "custom-browser-language", "baseLocale"],
   /** Read by `src/lib/locale.ts`; namespaced with the console like the rest. */
   localStorageKey: "console.locale",
 });
