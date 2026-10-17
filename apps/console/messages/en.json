@@ -2037,5 +2037,206 @@
         "*": "{count: number} search tiers offered by the provider."
       }
     }
+  ],
+  "admin_redaction.title": "Redaction",
+  "admin_redaction.subtitle": "What is stripped from prompts before they reach a provider.",
+  "admin_redaction.loading": "Loading redaction",
+  "admin_redaction.load_error.title": "Could not load redaction settings",
+  "admin_redaction.unknown_error": "Unknown error.",
+  "admin_redaction.stat.redaction": "Redaction",
+  "admin_redaction.stat.on": "On",
+  "admin_redaction.stat.off": "Off",
+  "admin_redaction.stat.engine_detail": "{engine} engine",
+  "admin_redaction.stat.off_detail": "prompts reach the provider unchanged",
+  "admin_redaction.stat.service": "Detection service",
+  "admin_redaction.stat.service_unknown": "—",
+  "admin_redaction.stat.service_ok": "Answering",
+  "admin_redaction.stat.service_down": "Not answering",
+  "admin_redaction.stat.service_none": "no service to call",
+  "admin_redaction.stat.entities": "Entities removed",
+  "admin_redaction.stat.entities_detail": "from {redacted: number} of {requests: number} requests, last {window}",
+  "admin_redaction.config.card": "Configuration",
+  "admin_redaction.config.description_console": "From the gateway's environment, except the engine, which was set here.",
+  "admin_redaction.config.description_env": "From the gateway's environment.",
+  "admin_redaction.config.engine": "Engine",
+  "admin_redaction.config.installed": "· installed: {engines}",
+  "admin_redaction.config.none_engines": "none",
+  "admin_redaction.config.source": "Source",
+  "admin_redaction.config.source_console": "This console",
+  "admin_redaction.config.source_env": "The deployment's environment",
+  "admin_redaction.config.endpoint": "Detection endpoint",
+  "admin_redaction.config.endpoint_none": "none — in-process engine",
+  "admin_redaction.config.failure_mode": "Failure mode",
+  "admin_redaction.config.fail_open": "Forward unredacted",
+  "admin_redaction.config.fail_closed": "Refuse the request",
+  "admin_redaction.config.language": "Language",
+  "admin_redaction.config.timeout": "Timeout",
+  "admin_redaction.config.timeout_value": [
+    {
+      "declarations": [
+        "input seconds"
+      ],
+      "match": {
+        "*": "{seconds}s"
+      }
+    }
+  ],
+  "admin_redaction.config.cache": "Detection cache",
+  "admin_redaction.config.cache_disabled": "disabled",
+  "admin_redaction.config.cache_texts": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} texts"
+      }
+    }
+  ],
+  "admin_redaction.config.placeholder_key": "Placeholder key",
+  "admin_redaction.config.key_set": "Set",
+  "admin_redaction.config.key_not_set": "Not set",
+  "admin_redaction.config.key_note": "placeholders derive from it, so it must stay stable",
+  "admin_redaction.entity_types.card": "Entity types",
+  "admin_redaction.entity_types.description": "GATEWAY_REDACTION__ENTITY_TYPES limits the search to these. It sets the policy below; the console overrides it.",
+  "admin_redaction.degraded.card": "Degraded languages",
+  "admin_redaction.degraded.description": "Served without a named-entity model.",
+  "admin_redaction.rules.column.applies_to": "Applies to",
+  "admin_redaction.rules.every_request": "Every request",
+  "admin_redaction.rules.deleted_subject": "deleted subject",
+  "admin_redaction.rules.column.policy": "Policy",
+  "admin_redaction.rules.column.state": "State",
+  "admin_redaction.badge.active": "Active",
+  "admin_redaction.badge.inactive": "Inactive",
+  "admin_redaction.action.edit": "Edit",
+  "admin_redaction.action.clone": "Clone",
+  "admin_redaction.action.deactivate": "Deactivate",
+  "admin_redaction.action.activate": "Activate",
+  "admin_redaction.action.delete": "Delete",
+  "admin_redaction.rules.no_catchall_title": "Nothing is redacted by default",
+  "admin_redaction.rules.no_catchall_body": "Prompts reach providers as callers wrote them unless a rule below says otherwise. Add a rule for every request to change that.",
+  "admin_redaction.rules.card": "Rules",
+  "admin_redaction.rules.description": "The strictest applicable rule wins, so adding one can only protect more.",
+  "admin_redaction.rules.loading": "Loading rules",
+  "admin_redaction.rules.load_error.title": "Could not load rules",
+  "admin_redaction.rules.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} rule",
+        "countPlural=other": "{n} rules"
+      }
+    }
+  ],
+  "admin_redaction.rules.covered": "every request is covered",
+  "admin_redaction.rules.not_covered": "no catch-all — some requests pass unredacted",
+  "admin_redaction.rules.new_rule": "New rule",
+  "admin_redaction.rules.empty": "No rules, so nothing is redacted.",
+  "admin_redaction.rules.caption": "Redaction rules and the subject each one applies to.",
+  "admin_redaction.coverage.unserved_title": "These types are protected by this rule but cannot be detected while their family is off, so matching values reach providers unprotected. The rule stays in force.",
+  "admin_redaction.coverage.unserved_badge": "Detection off: {types}",
+  "admin_redaction.coverage.default_title": "This rule protects unnamed types by default, and a detector family is switched off, so some of what it covers cannot be detected. The rule stays in force.",
+  "admin_redaction.coverage.default_badge": "Default covers a disabled family",
+  "admin_redaction.preview.toast_ran": "Preview ran.",
+  "admin_redaction.preview.toast_failed": "The preview did not run",
+  "admin_redaction.preview.column.match": "Match",
+  "admin_redaction.preview.column.detected": "Detected as",
+  "admin_redaction.preview.column.score": "Score",
+  "admin_redaction.preview.needs": "needs {threshold}",
+  "admin_redaction.preview.column.applied": "Applied",
+  "admin_redaction.preview.allow_listed": "Allow-listed",
+  "admin_redaction.preview.card": "Preview",
+  "admin_redaction.preview.description": "Run a sample through the policy in force.",
+  "admin_redaction.preview.sample": "Sample",
+  "admin_redaction.preview.sample_placeholder": "Riassumi le notizie del giorno da ilpost.it",
+  "admin_redaction.preview.not_logged": "Not logged anywhere.",
+  "admin_redaction.preview.preview_as": "Preview as",
+  "admin_redaction.preview.nobody": "Nobody in particular",
+  "admin_redaction.preview.run": "Run preview",
+  "admin_redaction.preview.blocked_title": "This request would be blocked",
+  "admin_redaction.preview.blocked_fallback": "A blocked entity type was found.",
+  "admin_redaction.preview.receives": "What the provider receives",
+  "admin_redaction.preview.summary_replaced": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} replaced"
+      }
+    }
+  ],
+  "admin_redaction.preview.summary_engine": "{engine} engine",
+  "admin_redaction.preview.summary_policy": "the deployment policy",
+  "admin_redaction.preview.summary_rule": "{scope} rule",
+  "admin_redaction.preview.empty": "Nothing was detected in this sample.",
+  "admin_redaction.preview.caption": "What the detector found, and what the policy did with it.",
+  "admin_redaction.families.toast_saved": "Detection families saved.",
+  "admin_redaction.families.toast_failed": "Detection families were not changed",
+  "admin_redaction.families.card": "Presidio detection families",
+  "admin_redaction.families.description": "These switches control the detection service's recognizer families, not custom gateway patterns.",
+  "admin_redaction.families.patterns": "Pattern matching",
+  "admin_redaction.families.patterns_description": "Structured identifiers: cards, accounts, emails, phones, national IDs.",
+  "admin_redaction.families.ner": "Named-entity recognition",
+  "admin_redaction.families.ner_description": "Names and places read by the language model.",
+  "admin_redaction.families.saving": "Saving…",
+  "admin_redaction.families.on": "On",
+  "admin_redaction.families.off": "Off",
+  "admin_redaction.engine.toast_in_force": "{label} is in force.",
+  "admin_redaction.engine.toast_failed": "The engine was not changed",
+  "admin_redaction.engine.card": "Engine",
+  "admin_redaction.engine.description": "One is in force at a time; llmp.redactors plugins appear here.",
+  "admin_redaction.engine.propagated": "Saved. Other workers apply it within {seconds}s.",
+  "admin_redaction.badge.in_force": "In force",
+  "admin_redaction.badge.redacts_nothing": "Redacts nothing",
+  "admin_redaction.engine.cannot_enable": "Cannot be enabled.",
+  "admin_redaction.engine.enabled": "Enabled",
+  "admin_redaction.engine.enable": "Enable",
+  "admin_redaction.engine.turn_off": "Turn redaction off",
+  "admin_redaction.engine.off_toast": "Redaction is off.",
+  "admin_redaction.confirm.title": "Turn redaction off",
+  "admin_redaction.confirm.cancel": "Cancel",
+  "admin_redaction.confirm.saving": "Saving…",
+  "admin_redaction.confirm.turn_off": "Turn it off",
+  "admin_redaction.confirm.warning": "Prompts will reach providers exactly as callers sent them.",
+  "admin_redaction.confirm.recorded": "Recorded with who changed it and when.",
+  "admin_redaction.activity.window_days": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "24 hours",
+        "countPlural=other": "{n} days"
+      }
+    }
+  ],
+  "admin_redaction.activity.window_hours": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "hour",
+        "countPlural=other": "{n} hours"
+      }
+    }
   ]
 }

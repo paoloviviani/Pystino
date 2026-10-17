@@ -2037,5 +2037,206 @@
         "*": "[{count: number} śéáŕćȟ ťíéŕś óƒƒéŕéď ƀý ťȟé þŕóǚíďéŕ.]"
       }
     }
+  ],
+  "admin_redaction.title": "[Ŕéďáćťíóń]",
+  "admin_redaction.subtitle": "[Ŵȟáť íś śťŕíþþéď ƒŕóḿ þŕóḿþťś ƀéƒóŕé ťȟéý ŕéáćȟ á þŕóǚíďéŕ.]",
+  "admin_redaction.loading": "[Ĺóáďíńǧ ŕéďáćťíóń]",
+  "admin_redaction.load_error.title": "[Ćóúľď ńóť ľóáď ŕéďáćťíóń śéťťíńǧś]",
+  "admin_redaction.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_redaction.stat.redaction": "[Ŕéďáćťíóń]",
+  "admin_redaction.stat.on": "[Óń]",
+  "admin_redaction.stat.off": "[Óƒƒ]",
+  "admin_redaction.stat.engine_detail": "[{engine} éńǧíńé]",
+  "admin_redaction.stat.off_detail": "[þŕóḿþťś ŕéáćȟ ťȟé þŕóǚíďéŕ úńćȟáńǧéď]",
+  "admin_redaction.stat.service": "[Ďéťéćťíóń śéŕǚíćé]",
+  "admin_redaction.stat.service_unknown": "[—]",
+  "admin_redaction.stat.service_ok": "[Áńśŵéŕíńǧ]",
+  "admin_redaction.stat.service_down": "[Ńóť áńśŵéŕíńǧ]",
+  "admin_redaction.stat.service_none": "[ńó śéŕǚíćé ťó ćáľľ]",
+  "admin_redaction.stat.entities": "[Éńťíťíéś ŕéḿóǚéď]",
+  "admin_redaction.stat.entities_detail": "[ƒŕóḿ {redacted: number} óƒ {requests: number} ŕéǫúéśťś, ľáśť {window}]",
+  "admin_redaction.config.card": "[Ćóńƒíǧúŕáťíóń]",
+  "admin_redaction.config.description_console": "[Ƒŕóḿ ťȟé ǧáťéŵáý'ś éńǚíŕóńḿéńť, éẋćéþť ťȟé éńǧíńé, ŵȟíćȟ ŵáś śéť ȟéŕé.]",
+  "admin_redaction.config.description_env": "[Ƒŕóḿ ťȟé ǧáťéŵáý'ś éńǚíŕóńḿéńť.]",
+  "admin_redaction.config.engine": "[Éńǧíńé]",
+  "admin_redaction.config.installed": "[· íńśťáľľéď: {engines}]",
+  "admin_redaction.config.none_engines": "[ńóńé]",
+  "admin_redaction.config.source": "[Śóúŕćé]",
+  "admin_redaction.config.source_console": "[Ťȟíś ćóńśóľé]",
+  "admin_redaction.config.source_env": "[Ťȟé ďéþľóýḿéńť'ś éńǚíŕóńḿéńť]",
+  "admin_redaction.config.endpoint": "[Ďéťéćťíóń éńďþóíńť]",
+  "admin_redaction.config.endpoint_none": "[ńóńé — íń-þŕóćéśś éńǧíńé]",
+  "admin_redaction.config.failure_mode": "[Ƒáíľúŕé ḿóďé]",
+  "admin_redaction.config.fail_open": "[Ƒóŕŵáŕď úńŕéďáćťéď]",
+  "admin_redaction.config.fail_closed": "[Ŕéƒúśé ťȟé ŕéǫúéśť]",
+  "admin_redaction.config.language": "[Ĺáńǧúáǧé]",
+  "admin_redaction.config.timeout": "[Ťíḿéóúť]",
+  "admin_redaction.config.timeout_value": [
+    {
+      "declarations": [
+        "input seconds"
+      ],
+      "match": {
+        "*": "[{seconds}ś]"
+      }
+    }
+  ],
+  "admin_redaction.config.cache": "[Ďéťéćťíóń ćáćȟé]",
+  "admin_redaction.config.cache_disabled": "[ďíśáƀľéď]",
+  "admin_redaction.config.cache_texts": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ťéẋťś]"
+      }
+    }
+  ],
+  "admin_redaction.config.placeholder_key": "[Þľáćéȟóľďéŕ ķéý]",
+  "admin_redaction.config.key_set": "[Śéť]",
+  "admin_redaction.config.key_not_set": "[Ńóť śéť]",
+  "admin_redaction.config.key_note": "[þľáćéȟóľďéŕś ďéŕíǚé ƒŕóḿ íť, śó íť ḿúśť śťáý śťáƀľé]",
+  "admin_redaction.entity_types.card": "[Éńťíťý ťýþéś]",
+  "admin_redaction.entity_types.description": "[ǦÁŤÉŴÁÝ_ŔÉĎÁĆŤÍÓŃ__ÉŃŤÍŤÝ_ŤÝÞÉŚ ľíḿíťś ťȟé śéáŕćȟ ťó ťȟéśé. Íť śéťś ťȟé þóľíćý ƀéľóŵ; ťȟé ćóńśóľé óǚéŕŕíďéś íť.]",
+  "admin_redaction.degraded.card": "[Ďéǧŕáďéď ľáńǧúáǧéś]",
+  "admin_redaction.degraded.description": "[Śéŕǚéď ŵíťȟóúť á ńáḿéď-éńťíťý ḿóďéľ.]",
+  "admin_redaction.rules.column.applies_to": "[Áþþľíéś ťó]",
+  "admin_redaction.rules.every_request": "[Éǚéŕý ŕéǫúéśť]",
+  "admin_redaction.rules.deleted_subject": "[ďéľéťéď śúƀĵéćť]",
+  "admin_redaction.rules.column.policy": "[Þóľíćý]",
+  "admin_redaction.rules.column.state": "[Śťáťé]",
+  "admin_redaction.badge.active": "[Áćťíǚé]",
+  "admin_redaction.badge.inactive": "[Íńáćťíǚé]",
+  "admin_redaction.action.edit": "[Éďíť]",
+  "admin_redaction.action.clone": "[Ćľóńé]",
+  "admin_redaction.action.deactivate": "[Ďéáćťíǚáťé]",
+  "admin_redaction.action.activate": "[Áćťíǚáťé]",
+  "admin_redaction.action.delete": "[Ďéľéťé]",
+  "admin_redaction.rules.no_catchall_title": "[Ńóťȟíńǧ íś ŕéďáćťéď ƀý ďéƒáúľť]",
+  "admin_redaction.rules.no_catchall_body": "[Þŕóḿþťś ŕéáćȟ þŕóǚíďéŕś áś ćáľľéŕś ŵŕóťé ťȟéḿ úńľéśś á ŕúľé ƀéľóŵ śáýś óťȟéŕŵíśé. Áďď á ŕúľé ƒóŕ éǚéŕý ŕéǫúéśť ťó ćȟáńǧé ťȟáť.]",
+  "admin_redaction.rules.card": "[Ŕúľéś]",
+  "admin_redaction.rules.description": "[Ťȟé śťŕíćťéśť áþþľíćáƀľé ŕúľé ŵíńś, śó áďďíńǧ óńé ćáń óńľý þŕóťéćť ḿóŕé.]",
+  "admin_redaction.rules.loading": "[Ĺóáďíńǧ ŕúľéś]",
+  "admin_redaction.rules.load_error.title": "[Ćóúľď ńóť ľóáď ŕúľéś]",
+  "admin_redaction.rules.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ŕúľé]",
+        "countPlural=other": "[{n} ŕúľéś]"
+      }
+    }
+  ],
+  "admin_redaction.rules.covered": "[éǚéŕý ŕéǫúéśť íś ćóǚéŕéď]",
+  "admin_redaction.rules.not_covered": "[ńó ćáťćȟ-áľľ — śóḿé ŕéǫúéśťś þáśś úńŕéďáćťéď]",
+  "admin_redaction.rules.new_rule": "[Ńéŵ ŕúľé]",
+  "admin_redaction.rules.empty": "[Ńó ŕúľéś, śó ńóťȟíńǧ íś ŕéďáćťéď.]",
+  "admin_redaction.rules.caption": "[Ŕéďáćťíóń ŕúľéś áńď ťȟé śúƀĵéćť éáćȟ óńé áþþľíéś ťó.]",
+  "admin_redaction.coverage.unserved_title": "[Ťȟéśé ťýþéś áŕé þŕóťéćťéď ƀý ťȟíś ŕúľé ƀúť ćáńńóť ƀé ďéťéćťéď ŵȟíľé ťȟéíŕ ƒáḿíľý íś óƒƒ, śó ḿáťćȟíńǧ ǚáľúéś ŕéáćȟ þŕóǚíďéŕś úńþŕóťéćťéď. Ťȟé ŕúľé śťáýś íń ƒóŕćé.]",
+  "admin_redaction.coverage.unserved_badge": "[Ďéťéćťíóń óƒƒ: {types}]",
+  "admin_redaction.coverage.default_title": "[Ťȟíś ŕúľé þŕóťéćťś úńńáḿéď ťýþéś ƀý ďéƒáúľť, áńď á ďéťéćťóŕ ƒáḿíľý íś śŵíťćȟéď óƒƒ, śó śóḿé óƒ ŵȟáť íť ćóǚéŕś ćáńńóť ƀé ďéťéćťéď. Ťȟé ŕúľé śťáýś íń ƒóŕćé.]",
+  "admin_redaction.coverage.default_badge": "[Ďéƒáúľť ćóǚéŕś á ďíśáƀľéď ƒáḿíľý]",
+  "admin_redaction.preview.toast_ran": "[Þŕéǚíéŵ ŕáń.]",
+  "admin_redaction.preview.toast_failed": "[Ťȟé þŕéǚíéŵ ďíď ńóť ŕúń]",
+  "admin_redaction.preview.column.match": "[Ḿáťćȟ]",
+  "admin_redaction.preview.column.detected": "[Ďéťéćťéď áś]",
+  "admin_redaction.preview.column.score": "[Śćóŕé]",
+  "admin_redaction.preview.needs": "[ńééďś {threshold}]",
+  "admin_redaction.preview.column.applied": "[Áþþľíéď]",
+  "admin_redaction.preview.allow_listed": "[Áľľóŵ-ľíśťéď]",
+  "admin_redaction.preview.card": "[Þŕéǚíéŵ]",
+  "admin_redaction.preview.description": "[Ŕúń á śáḿþľé ťȟŕóúǧȟ ťȟé þóľíćý íń ƒóŕćé.]",
+  "admin_redaction.preview.sample": "[Śáḿþľé]",
+  "admin_redaction.preview.sample_placeholder": "[Ŕíáśśúḿí ľé ńóťíźíé ďéľ ǧíóŕńó ďá íľþóśť.íť]",
+  "admin_redaction.preview.not_logged": "[Ńóť ľóǧǧéď áńýŵȟéŕé.]",
+  "admin_redaction.preview.preview_as": "[Þŕéǚíéŵ áś]",
+  "admin_redaction.preview.nobody": "[Ńóƀóďý íń þáŕťíćúľáŕ]",
+  "admin_redaction.preview.run": "[Ŕúń þŕéǚíéŵ]",
+  "admin_redaction.preview.blocked_title": "[Ťȟíś ŕéǫúéśť ŵóúľď ƀé ƀľóćķéď]",
+  "admin_redaction.preview.blocked_fallback": "[Á ƀľóćķéď éńťíťý ťýþé ŵáś ƒóúńď.]",
+  "admin_redaction.preview.receives": "[Ŵȟáť ťȟé þŕóǚíďéŕ ŕéćéíǚéś]",
+  "admin_redaction.preview.summary_replaced": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ŕéþľáćéď]"
+      }
+    }
+  ],
+  "admin_redaction.preview.summary_engine": "[{engine} éńǧíńé]",
+  "admin_redaction.preview.summary_policy": "[ťȟé ďéþľóýḿéńť þóľíćý]",
+  "admin_redaction.preview.summary_rule": "[{scope} ŕúľé]",
+  "admin_redaction.preview.empty": "[Ńóťȟíńǧ ŵáś ďéťéćťéď íń ťȟíś śáḿþľé.]",
+  "admin_redaction.preview.caption": "[Ŵȟáť ťȟé ďéťéćťóŕ ƒóúńď, áńď ŵȟáť ťȟé þóľíćý ďíď ŵíťȟ íť.]",
+  "admin_redaction.families.toast_saved": "[Ďéťéćťíóń ƒáḿíľíéś śáǚéď.]",
+  "admin_redaction.families.toast_failed": "[Ďéťéćťíóń ƒáḿíľíéś ŵéŕé ńóť ćȟáńǧéď]",
+  "admin_redaction.families.card": "[Þŕéśíďíó ďéťéćťíóń ƒáḿíľíéś]",
+  "admin_redaction.families.description": "[Ťȟéśé śŵíťćȟéś ćóńťŕóľ ťȟé ďéťéćťíóń śéŕǚíćé'ś ŕéćóǧńíźéŕ ƒáḿíľíéś, ńóť ćúśťóḿ ǧáťéŵáý þáťťéŕńś.]",
+  "admin_redaction.families.patterns": "[Þáťťéŕń ḿáťćȟíńǧ]",
+  "admin_redaction.families.patterns_description": "[Śťŕúćťúŕéď íďéńťíƒíéŕś: ćáŕďś, áććóúńťś, éḿáíľś, þȟóńéś, ńáťíóńáľ ÍĎś.]",
+  "admin_redaction.families.ner": "[Ńáḿéď-éńťíťý ŕéćóǧńíťíóń]",
+  "admin_redaction.families.ner_description": "[Ńáḿéś áńď þľáćéś ŕéáď ƀý ťȟé ľáńǧúáǧé ḿóďéľ.]",
+  "admin_redaction.families.saving": "[Śáǚíńǧ…]",
+  "admin_redaction.families.on": "[Óń]",
+  "admin_redaction.families.off": "[Óƒƒ]",
+  "admin_redaction.engine.toast_in_force": "[{label} íś íń ƒóŕćé.]",
+  "admin_redaction.engine.toast_failed": "[Ťȟé éńǧíńé ŵáś ńóť ćȟáńǧéď]",
+  "admin_redaction.engine.card": "[Éńǧíńé]",
+  "admin_redaction.engine.description": "[Óńé íś íń ƒóŕćé áť á ťíḿé; ľľḿþ.ŕéďáćťóŕś þľúǧíńś áþþéáŕ ȟéŕé.]",
+  "admin_redaction.engine.propagated": "[Śáǚéď. Óťȟéŕ ŵóŕķéŕś áþþľý íť ŵíťȟíń {seconds}ś.]",
+  "admin_redaction.badge.in_force": "[Íń ƒóŕćé]",
+  "admin_redaction.badge.redacts_nothing": "[Ŕéďáćťś ńóťȟíńǧ]",
+  "admin_redaction.engine.cannot_enable": "[Ćáńńóť ƀé éńáƀľéď.]",
+  "admin_redaction.engine.enabled": "[Éńáƀľéď]",
+  "admin_redaction.engine.enable": "[Éńáƀľé]",
+  "admin_redaction.engine.turn_off": "[Ťúŕń ŕéďáćťíóń óƒƒ]",
+  "admin_redaction.engine.off_toast": "[Ŕéďáćťíóń íś óƒƒ.]",
+  "admin_redaction.confirm.title": "[Ťúŕń ŕéďáćťíóń óƒƒ]",
+  "admin_redaction.confirm.cancel": "[Ćáńćéľ]",
+  "admin_redaction.confirm.saving": "[Śáǚíńǧ…]",
+  "admin_redaction.confirm.turn_off": "[Ťúŕń íť óƒƒ]",
+  "admin_redaction.confirm.warning": "[Þŕóḿþťś ŵíľľ ŕéáćȟ þŕóǚíďéŕś éẋáćťľý áś ćáľľéŕś śéńť ťȟéḿ.]",
+  "admin_redaction.confirm.recorded": "[Ŕéćóŕďéď ŵíťȟ ŵȟó ćȟáńǧéď íť áńď ŵȟéń.]",
+  "admin_redaction.activity.window_days": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[24 ȟóúŕś]",
+        "countPlural=other": "[{n} ďáýś]"
+      }
+    }
+  ],
+  "admin_redaction.activity.window_hours": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[ȟóúŕ]",
+        "countPlural=other": "[{n} ȟóúŕś]"
+      }
+    }
   ]
 }
