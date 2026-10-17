@@ -1318,5 +1318,191 @@
       }
     }
   ],
-  "admin_settings.unknown_error": "Unknown error."
+  "admin_settings.unknown_error": "Unknown error.",
+  "overview.title": "Overview",
+  "overview.subtitle": "Where you stand this period, and the keys you spend with.",
+  "overview.filter.period": "Period",
+  "overview.build": "Console build {sha}",
+  "overview.loading": "Loading your usage",
+  "overview.load_error.title": "Could not load your usage",
+  "overview.stat.spend": "Spend · {period}",
+  "overview.stat.period_detail": "{timezone} calendar period",
+  "overview.stat.requests": "Requests",
+  "overview.stat.tokens_detail": [
+    {
+      "declarations": [
+        "input tokens"
+      ],
+      "match": {
+        "*": "{tokens: number} tokens"
+      }
+    }
+  ],
+  "overview.stat.groups": "Groups",
+  "overview.stat.billing_to": "Billing to {group}",
+  "overview.stat.no_billing_group": "No default billing group",
+  "overview.breakdown_card": "Breakdown",
+  "overview.filter.breakdown": "Breakdown",
+  "overview.breakdown.model": "By model",
+  "overview.breakdown.day": "By day",
+  "overview.breakdown.group": "By group",
+  "overview.breakdown.api_key": "By API key",
+  "overview.column.requests": "Requests",
+  "overview.column.tokens": "Tokens",
+  "overview.column.cost": "Spend",
+  "overview.row_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} row",
+        "countPlural=other": "{n} rows"
+      }
+    }
+  ],
+  "overview.summary_detail": "{period} · {breakdown}",
+  "overview.export_csv": "Export CSV",
+  "overview.empty": "No usage in this period.",
+  "overview.caption": "Your spend for {period}, {breakdown}.",
+  "overview.caption_period_fallback": "the period",
+  "overview.heading.model": "Model",
+  "overview.heading.day": "Day",
+  "overview.heading.group": "Group",
+  "overview.heading.api_key": "API key",
+  "overview.heading.other": "Item",
+  "overview.heading_lower.model": "model",
+  "overview.heading_lower.day": "day",
+  "overview.heading_lower.group": "group",
+  "overview.heading_lower.api_key": "API key",
+  "overview.heading_lower.other": "item",
+  "overview.keys_card": "API keys",
+  "overview.keys_description": "The secret is shown once, at creation.",
+  "overview.keys.denied_title": "Your account may not use API keys on this deployment",
+  "overview.keys.denied_body": "Ask an administrator to grant the capability. Your existing keys keep working the moment it is granted — nothing was deleted.",
+  "overview.keys.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} key",
+        "countPlural=other": "{n} keys"
+      }
+    }
+  ],
+  "overview.keys.none_yet": "none yet — mint the first one",
+  "overview.keys.working": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} working"
+      }
+    }
+  ],
+  "overview.keys.new_key": "New key",
+  "overview.keys.empty": "No API keys.",
+  "overview.opencode_card": "Configure opencode with Pystino",
+  "overview.quotas.title": "Quotas",
+  "overview.quotas.load_error.title": "Could not load your quotas",
+  "overview.quotas.loading": "Loading your quotas",
+  "overview.quotas.none": "No limit applies to you.",
+  "overview.quotas.description": "Every ceiling that applies to you. All of them must pass.",
+  "overview.quotas.scope.global": "Everyone",
+  "overview.quotas.scope.group": "Your group",
+  "overview.quotas.scope.user": "You",
+  "overview.quotas.unavailable": "Consumption is unavailable — the counter store could not be reached.",
+  "overview.quotas.cost_of": "of",
+  "overview.quotas.count_line": "{used: number} of {limit: number} {unit} · {window}",
+  "overview.quotas.notices_saved": "Notices saved",
+  "overview.quotas.notices_failed": "Could not save the notices",
+  "overview.quotas.thresholds_placeholder": "e.g. 50, 80, 95",
+  "overview.quotas.thresholds_aria": "Notice thresholds for {name}",
+  "overview.quotas.cancel": "Cancel",
+  "overview.quotas.save": "Save",
+  "overview.quotas.threshold_set": "Email me at {thresholds}% — change",
+  "overview.quotas.threshold_unset": "Email me when this reaches…",
+  "overview.mint.title": "New API key",
+  "overview.mint.title_minted": "Your new API key",
+  "overview.mint.done": "Done",
+  "overview.mint.cancel": "Cancel",
+  "overview.mint.create": "Create",
+  "overview.mint.toast_created": "API key created",
+  "overview.mint.toast_failed": "Could not create the key",
+  "overview.mint.name": "Name",
+  "overview.mint.name_placeholder": "laptop, CI, notebook",
+  "overview.mint.name_hint": "For your own reference. Usage is reported per key.",
+  "overview.mint.billing_group": "Billing group",
+  "overview.mint.billing_group_hint": "Which group's budget this key spends from.",
+  "overview.mint.default_group": "My default group",
+  "overview.mint.default_group_current": "My default group — currently {group}",
+  "overview.mint.no_default_warning": "You have no default billing group. Choose a group above.",
+  "overview.mint.expires": "Expires",
+  "overview.mint.expires_hint": "An expiring key fails closed on its own.",
+  "overview.mint.expires.never": "Never",
+  "overview.mint.expires.30": "In 30 days",
+  "overview.mint.expires.90": "In 90 days",
+  "overview.mint.expires.365": "In a year",
+  "overview.minted.copy_title": "Copy it now",
+  "overview.minted.copy_body": "The gateway keeps a hash, not the key, so it cannot be shown again. If you lose it, revoke this one and mint another.",
+  "overview.minted.copy": "Copy",
+  "overview.minted.copied": "Copied",
+  "overview.minted.clipboard": "Could not reach the clipboard. Select the key and copy it by hand.",
+  "overview.minted.detail_expires": "Send it as {#code}Authorization: Bearer …{/code}. Billed to {group}, expires {date}.",
+  "overview.minted.detail_never": "Send it as {#code}Authorization: Bearer …{/code}. Billed to {group}, never expires.",
+  "overview.minted.group_fallback": "your default group at request time",
+  "overview.minted.next_heading": "Next: configure opencode",
+  "overview.revoke.title": "Revoke {name}",
+  "overview.revoke.title_fallback": "this key",
+  "overview.revoke.cancel": "Cancel",
+  "overview.revoke.confirm": "Revoke key",
+  "overview.revoke.toast_done": "Key revoked",
+  "overview.revoke.toast_failed": "Could not revoke the key",
+  "overview.revoke.body": "{#code}{prefix}{/code} stops working immediately and cannot be restored. Anything still using it starts failing to authenticate.",
+  "overview.revoke.spend_note": "Usage history is unaffected: the key is revoked, never deleted.",
+  "overview.delete.title": "Delete {name}",
+  "overview.delete.title_fallback": "this key",
+  "overview.delete.cancel": "Cancel",
+  "overview.delete.confirm": "Delete permanently",
+  "overview.delete.toast_done": "Key deleted",
+  "overview.delete.toast_failed": "Could not delete the key",
+  "overview.delete.body": "{#code}{prefix}{/code} is removed from this list and stops working immediately. This cannot be undone — revoking is the reversible-looking cousin, and even it cannot be restored.",
+  "overview.delete.history_note": "Past usage stays in the ledger, still attributed to you and your billing group. Those rows simply stop carrying this key's name in the by-key breakdown.",
+  "overview.key_column.name": "Name",
+  "overview.key_column.prefix": "Prefix",
+  "overview.key_column.billing_group": "Billing group",
+  "overview.key_column.group_fallback": "default group at request time",
+  "overview.key_column.status": "Status",
+  "overview.key_column.last_used": "Last used",
+  "overview.key_column.never": "never",
+  "overview.key_badge.revoked": "Revoked",
+  "overview.key_badge.expired": "Expired",
+  "overview.key_badge.active": "Active",
+  "overview.key_action.revoke": "Revoke",
+  "overview.key_action.delete": "Delete",
+  "overview.unnamed": "unnamed",
+  "overview.unknown_error": "Unknown error.",
+  "overview.quotas.meter_label": [
+    {
+      "declarations": [
+        "input name",
+        "input window"
+      ],
+      "match": {
+        "*": "{name}, {window}"
+      }
+    }
+  ]
 }

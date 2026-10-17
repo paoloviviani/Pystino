@@ -41,7 +41,7 @@ const MESSAGES = join(APP, "messages");
  * the same commit that converts it — and the heuristic below is there to catch
  * the text that slips back in afterwards.
  */
-const CONVERTED_FILES = ["src/routes/NotFound.tsx", "src/routes/Login.tsx", "src/components/RequireAdmin.tsx", "src/components/OpencodeSetup.tsx", "src/routes/Admin.tsx", "src/components/Disclosures.tsx", "src/components/SubjectPicker.tsx", "src/components/CapabilityPicker.tsx", "src/routes/AdminReports.tsx", "src/routes/Reports.tsx", "src/routes/AdminRedactionRule.tsx", "src/routes/IdentityDirectory.tsx", "src/routes/AdminIdentity.tsx", "src/components/Shell.tsx", "src/components/PolicyFields.tsx", "src/routes/AdminProviders.tsx", "src/routes/AdminSearch.tsx", "src/routes/AdminQuotas.tsx", "src/routes/AdminSettings.tsx"];
+const CONVERTED_FILES = ["src/routes/NotFound.tsx", "src/routes/Login.tsx", "src/components/RequireAdmin.tsx", "src/components/OpencodeSetup.tsx", "src/routes/Admin.tsx", "src/components/Disclosures.tsx", "src/components/SubjectPicker.tsx", "src/components/CapabilityPicker.tsx", "src/routes/AdminReports.tsx", "src/routes/Reports.tsx", "src/routes/AdminRedactionRule.tsx", "src/routes/IdentityDirectory.tsx", "src/routes/AdminIdentity.tsx", "src/components/Shell.tsx", "src/components/PolicyFields.tsx", "src/routes/AdminProviders.tsx", "src/routes/AdminSearch.tsx", "src/routes/AdminQuotas.tsx", "src/routes/AdminSettings.tsx", "src/routes/Overview.tsx"];
 
 /** Props whose string value is read by a person, one way or another. */
 const TEXT_PROPS = ["title", "placeholder", "aria-label", "alt", "label"];
@@ -164,7 +164,12 @@ function hardCoded(source, file) {
     const lineNumber = index + 1;
     // JSX text nodes: what sits between a tag's `>` and the next `<`, when it
     // carries a letter. Punctuation and an entity are not a missing message.
-    for (const node of line.match(/>([^<>{}]+)</g) ?? []) {
+    // JSX text nodes: what sits between a tag's `>` and the next `<`, when it
+    // carries a letter. The look-arounds keep the operators out: `=>`, `>=` and
+    // `<=` all contain the two characters this pattern would otherwise read as
+    // a tag closing and opening, and half the expressions in a console compare
+    // two things on the way to rendering a third.
+    for (const node of line.match(/(?<=[A-Za-z0-9"'/\}])>([^<>{}]+)<(?=[A-Za-z/!])/g) ?? []) {
       const value = node.slice(1, -1).trim();
       if (HAS_LETTERS.test(value)) problems.push({ file, lineNumber, value, kind: "JSX text" });
     }

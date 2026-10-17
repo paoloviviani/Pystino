@@ -34,6 +34,9 @@ import {
   STATS,
 } from "../lib/layout";
 import { unitFor } from "../lib/metrics";
+import { formatDate, formatNumber } from "../lib/format";
+import { Message } from "../components/Message";
+import { m } from "../paraglide/messages.js";
 import { recentPeriods } from "../lib/periods";
 import {
   useDeleteKey,
@@ -64,11 +67,12 @@ export interface OverviewProps {
  */
 const SPEND_DECIMALS = 3;
 
+/** Message functions, not strings: this list is built once, at import. */
 const BREAKDOWNS = [
-  { value: "model", label: "By model" },
-  { value: "day", label: "By day" },
-  { value: "group", label: "By group" },
-  { value: "api_key", label: "By API key" },
+  { value: "model", label: m["overview.breakdown.model"] },
+  { value: "day", label: m["overview.breakdown.day"] },
+  { value: "group", label: m["overview.breakdown.group"] },
+  { value: "api_key", label: m["overview.breakdown.api_key"] },
 ];
 
 export function Overview({ me }: OverviewProps) {
@@ -86,19 +90,19 @@ export function Overview({ me }: OverviewProps) {
     { key: "label", header: breakdownNoun(groupBy), render: (row) => row.label },
     {
       key: "requests",
-      header: "Requests",
+      header: m["overview.column.requests"](),
       numeric: true,
-      render: (row) => row.requests.toLocaleString(),
+      render: (row) => formatNumber(row.requests),
     },
     {
       key: "tokens",
-      header: "Tokens",
+      header: m["overview.column.tokens"](),
       numeric: true,
-      render: (row) => row.total_tokens.toLocaleString(),
+      render: (row) => formatNumber(row.total_tokens),
     },
     {
       key: "cost",
-      header: "Spend",
+      header: m["overview.column.cost"](),
       numeric: true,
       render: (row) => (
         <Money
@@ -112,18 +116,20 @@ export function Overview({ me }: OverviewProps) {
 
   return (
     <div className={PAGE}>
-      <PageHeader        title="Overview"
-        subtitle="Where you stand this period, and the keys you spend with."
+      <PageHeader
+        title={m["overview.title"]()}
+        subtitle={m["overview.subtitle"]()}
         /* "Overview", not "Your usage" — that name now belongs to the reports
             page next to it in the header, and two screens wearing it is worse
             than either name being imperfect. */
         actions={
           <Select
-            label="Period"
+            label={m["overview.filter.period"]()}
             hideLabel
             value={period}
             onChange={(event) => setPeriod(event.target.value)}
           >
+            {/* i18n: server text — the period labels are built by lib/periods.ts. */}
             {periods.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -138,21 +144,22 @@ export function Overview({ me }: OverviewProps) {
           without it, and the gateway's startup log still says which files are
           actually served. */}
       <p className={`${MUTED} -mt-2 text-xs`}>
-        Console build {import.meta.env.VITE_CONSOLE_BUILD_SHA ?? "unknown"}
+        {m["overview.build"]({ sha: import.meta.env.VITE_CONSOLE_BUILD_SHA ?? "unknown" })}
       </p>
 
       <Card>
-        {report.isPending && <Spinner label="Loading your usage" />}
+        {report.isPending && <Spinner label={m["overview.loading"]()} />}
         {report.error ? (
-          <Notice tone="danger" title="Could not load your usage">
-            {report.error instanceof Error ? report.error.message : "Unknown error."}
+          <Notice tone="danger" title={m["overview.load_error.title"]()}>
+            {/* i18n: server text — the API's own error message. */}
+            {report.error instanceof Error ? report.error.message : m["overview.unknown_error"]()}
           </Notice>
         ) : null}
         {report.data && (
           <>
             <div className={STATS}>
               <Stat
-                label={`Spend · ${report.data.period.label}`}
+                label={m["overview.stat.spend"]({ period: report.data.period.label })}
                 value={
                   <Money
                     amount={report.data.totals.cost}
@@ -160,20 +167,20 @@ export function Overview({ me }: OverviewProps) {
                     maxDecimals={SPEND_DECIMALS}
                   />
                 }
-                detail={`${report.data.period.timezone} calendar period`}
+                detail={m["overview.stat.period_detail"]({ timezone: report.data.period.timezone })}
               />
               <Stat
-                label="Requests"
-                value={report.data.totals.requests.toLocaleString()}
-                detail={`${report.data.totals.total_tokens.toLocaleString()} tokens`}
+                label={m["overview.stat.requests"]()}
+                value={formatNumber(report.data.totals.requests)}
+                detail={m["overview.stat.tokens_detail"]({ tokens: report.data.totals.total_tokens })}
               />
               <Stat
-                label="Groups"
-                value={me.groups.length.toLocaleString()}
+                label={m["overview.stat.groups"]()}
+                value={formatNumber(me.groups.length)}
                 detail={
                   me.default_billing_group
-                    ? `Billing to ${me.default_billing_group.name}`
-                    : "No default billing group"
+                    ? m["overview.stat.billing_to"]({ group: me.default_billing_group.name })
+                    : m["overview.stat.no_billing_group"]()
                 }
               />
             </div>
@@ -185,18 +192,18 @@ export function Overview({ me }: OverviewProps) {
       <QuotaCard currency={report.data?.currency ?? "EUR"} />
 
       <Card
-        title="Breakdown"
+        title={m["overview.breakdown_card"]()}
         flush
         actions={
           <Select
-            label="Breakdown"
+            label={m["overview.filter.breakdown"]()}
             hideLabel
             value={groupBy}
             onChange={(event) => setGroupBy(event.target.value)}
           >
             {BREAKDOWNS.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                {option.label()}
               </option>
             ))}
           </Select>
@@ -213,8 +220,11 @@ export function Overview({ me }: OverviewProps) {
             {report.data && (
               <div className="p-5">
                 <SummaryStrip
-                  headline={`${report.data.rows.length} ${report.data.rows.length === 1 ? "row" : "rows"}`}
-                  detail={`${report.data.period.label} · ${labelFor(groupBy)}`}
+                  headline={m["overview.row_count"]({ count: report.data.rows.length })}
+                  detail={m["overview.summary_detail"]({
+                    period: report.data.period.label,
+                    breakdown: labelFor(groupBy),
+                  })}
                   active={report.data.rows.length > 0}
                   actions={
                     <Button
@@ -225,7 +235,7 @@ export function Overview({ me }: OverviewProps) {
                         )
                       }
                     >
-                      Export CSV
+                      {m["overview.export_csv"]()}
                     </Button>
                   }
                 />
@@ -236,17 +246,20 @@ export function Overview({ me }: OverviewProps) {
               rows={report.data?.rows ?? []}
               rowKey={(row, index) => row.key ?? `row-${index}`}
               footer={report.data?.totals}
-              empty="No usage in this period."
-              caption={`Your spend ${describePeriod(report.data?.period.label)}, ${labelFor(groupBy)}.`}
+              empty={m["overview.empty"]()}
+              caption={m["overview.caption"]({
+                period: report.data?.period.label ?? m["overview.caption_period_fallback"](),
+                breakdown: labelFor(groupBy),
+              })}
             />
           </>
         )}
       </Card>
 
       <Card
-        title="API keys"
+        title={m["overview.keys_card"]()}
         flush
-        description="The secret is shown once, at creation."
+        description={m["overview.keys_description"]()}
       >
         {keys.isPending ? (
           <Spinner />
@@ -256,26 +269,28 @@ export function Overview({ me }: OverviewProps) {
               <div className="p-5">
                 <Notice
                   tone="warn"
-                  title="Your account may not use API keys on this deployment"
+                  title={m["overview.keys.denied_title"]()}
                 >
-                  Ask an administrator to grant the capability. Your existing
-                  keys keep working the moment it is granted — nothing was
-                  deleted.
+                  {m["overview.keys.denied_body"]()}
                 </Notice>
               </div>
             ) : (
               <div className="p-5">
                 <SummaryStrip
-                  headline={`${(keys.data?.items ?? []).length} ${(keys.data?.items ?? []).length === 1 ? "key" : "keys"}`}
+                  headline={m["overview.keys.count"]({ count: (keys.data?.items ?? []).length })}
                   detail={
                     (keys.data?.items ?? []).length === 0
-                      ? "none yet — mint the first one"
-                      : `${(keys.data?.items ?? []).filter((key) => !key.revoked_at && !isExpired(key)).length} working`
+                      ? m["overview.keys.none_yet"]()
+                      : m["overview.keys.working"]({
+                          count: (keys.data?.items ?? []).filter(
+                            (key) => !key.revoked_at && !isExpired(key),
+                          ).length,
+                        })
                   }
                   active={(keys.data?.items ?? []).length > 0}
                   actions={
                     <Button variant="primary" onClick={() => setMinting(true)}>
-                      New key
+                      {m["overview.keys.new_key"]()}
                     </Button>
                   }
                 />
@@ -286,13 +301,13 @@ export function Overview({ me }: OverviewProps) {
               columns={keyColumns(setRevoking, setDeleting)}
               rows={keys.data?.items ?? []}
               rowKey={(key) => key.id}
-              empty="No API keys."
+              empty={m["overview.keys.empty"]()}
             />
           </>
         )}
       </Card>
 
-      <Card title="Configure opencode with Pystino">
+      <Card title={m["overview.opencode_card"]()}>
         <OpencodeSetup />
       </Card>
 
@@ -321,9 +336,10 @@ function QuotaCard({ currency }: { currency: string }) {
 
   if (limits.error) {
     return (
-      <Card title="Quotas">
-        <Notice tone="danger" title="Could not load your quotas">
-          {limits.error instanceof Error ? limits.error.message : "Unknown error."}
+      <Card title={m["overview.quotas.title"]()}>
+        <Notice tone="danger" title={m["overview.quotas.load_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {limits.error instanceof Error ? limits.error.message : m["overview.unknown_error"]()}
         </Notice>
       </Card>
     );
@@ -331,8 +347,8 @@ function QuotaCard({ currency }: { currency: string }) {
 
   if (limits.isPending) {
     return (
-      <Card title="Quotas">
-        <Spinner label="Loading your quotas" />
+      <Card title={m["overview.quotas.title"]()}>
+        <Spinner label={m["overview.quotas.loading"]()} />
       </Card>
     );
   }
@@ -340,7 +356,7 @@ function QuotaCard({ currency }: { currency: string }) {
   const rules = limits.data?.items ?? [];
   if (rules.length === 0) {
     return (
-      <Card title="Quotas" description="No limit applies to you.">
+      <Card title={m["overview.quotas.title"]()} description={m["overview.quotas.none"]()}>
         {/* Said plainly rather than left blank: an empty card reads as a screen
             that failed to load, and "no limit" is a fact worth stating. */}
       </Card>
@@ -348,7 +364,7 @@ function QuotaCard({ currency }: { currency: string }) {
   }
 
   return (
-    <Card title="Quotas" description="Every ceiling that applies to you. All of them must pass.">
+    <Card title={m["overview.quotas.title"]()} description={m["overview.quotas.description"]()}>
       <div className={QUOTA_LIST}>
         {rules.map((rule) => (
           <QuotaMeter key={rule.id} rule={rule} currency={currency} />
@@ -374,23 +390,31 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
     <div className={QUOTA}>
       <div className={QUOTA_HEAD}>
         <span className={QUOTA_NAME}>{rule.name}</span>
-        <Badge>{SCOPE_LABEL[rule.scope] ?? rule.scope}</Badge>
+        <Badge>{SCOPE_LABEL[rule.scope]?.() ?? rule.scope}</Badge>
       </div>
       {used === null ? (
-        <p className={QUOTA_DETAIL}>
-          Consumption is unavailable — the counter store could not be reached.
-        </p>
+        <p className={QUOTA_DETAIL}>{m["overview.quotas.unavailable"]()}</p>
       ) : (
         <>
-          <Meter value={used} limit={limit} label={`${rule.name}, ${rule.window_label}`} />
+          <Meter
+            value={used}
+            limit={limit}
+            label={m["overview.quotas.meter_label"]({ name: rule.name, window: rule.window_label })}
+          />
           <p className={QUOTA_DETAIL}>
             {rule.metric === "cost" ? (
               <>
-                <Money amount={rule.current_value ?? "0"} currency={currency} /> of{" "}
+                <Money amount={rule.current_value ?? "0"} currency={currency} />{" "}
+                {m["overview.quotas.cost_of"]()}{" "}
                 <Money amount={rule.limit_value} currency={currency} />
               </>
             ) : (
-              `${used.toLocaleString()} of ${limit.toLocaleString()} ${unitFor(rule.metric)}`
+              m["overview.quotas.count_line"]({
+                used,
+                limit,
+                unit: unitFor(rule.metric),
+                window: rule.window_label,
+              })
             )}{" "}
             · {rule.window_label}
           </p>
@@ -409,11 +433,14 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
                   },
                   {
                     onSuccess: () => {
-                      toast?.add({ title: "Notices saved", type: "success" });
+                      toast?.add({ title: m["overview.quotas.notices_saved"](), type: "success" });
                       setEditing(false);
                     },
                     onError: () =>
-                      toast?.add({ title: "Could not save the notices", type: "error" }),
+                      toast?.add({
+                        title: m["overview.quotas.notices_failed"](),
+                        type: "error",
+                      }),
                   },
                 );
               }}
@@ -422,15 +449,15 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
                 className="w-40 rounded-md border border-line bg-surface px-2 py-1 text-sm"
                 value={value}
                 onChange={(event) => setValue(event.target.value)}
-                placeholder="e.g. 50, 80, 95"
-                aria-label={`Notice thresholds for ${rule.name}`}
+                placeholder={m["overview.quotas.thresholds_placeholder"]()}
+                aria-label={m["overview.quotas.thresholds_aria"]({ name: rule.name })}
                 autoFocus
               />
               <Button variant="ghost" onClick={() => setEditing(false)}>
-                Cancel
+                {m["overview.quotas.cancel"]()}
               </Button>
               <Button type="submit" busy={thresholds.isPending}>
-                Save
+                {m["overview.quotas.save"]()}
               </Button>
             </form>
           ) : (
@@ -440,10 +467,10 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
               className="cursor-pointer text-left text-xs text-ink-faint underline-offset-2 hover:text-ink-muted hover:underline"
             >
               {(rule.notification_thresholds ?? []).length > 0
-                ? `Email me at ${(
-                    rule.notification_thresholds ?? []
-                  ).join("%, ")}% — change`
-                : "Email me when this reaches…"}
+                ? m["overview.quotas.threshold_set"]({
+                    thresholds: (rule.notification_thresholds ?? []).join("%, "),
+                  })
+                : m["overview.quotas.threshold_unset"]()}
             </button>
           )}
         </>
@@ -452,10 +479,10 @@ function QuotaMeter({ rule, currency }: { rule: MyLimit; currency: string }) {
   );
 }
 
-const SCOPE_LABEL: Record<string, string> = {
-  global: "Everyone",
-  group: "Your group",
-  user: "You",
+const SCOPE_LABEL: Record<string, () => string> = {
+  global: m["overview.quotas.scope.global"],
+  group: m["overview.quotas.scope.group"],
+  user: m["overview.quotas.scope.user"],
 };
 
 
@@ -498,27 +525,27 @@ function MintKeyDialog({
           setMinted(created);
           // The dialog shows the secret itself; the toast is for after "Done",
           // when the dialog is gone and the list has quietly grown.
-          toast?.add({ title: "API key created", type: "success" });
+          toast?.add({ title: m["overview.mint.toast_created"](), type: "success" });
         },
-        onError: () => toast?.add({ title: "Could not create the key", type: "error" }),
+        onError: () => toast?.add({ title: m["overview.mint.toast_failed"](), type: "error" }),
       },
     );
 
   return (
     <Dialog
       open={open}
-      title={minted ? "Your new API key" : "New API key"}
+      title={minted ? m["overview.mint.title_minted"]() : m["overview.mint.title"]()}
       onClose={close}
       footer={
         minted ? (
           <Button variant="primary" onClick={close}>
-            Done
+            {m["overview.mint.done"]()}
           </Button>
         ) : (
           <>
-            <Button onClick={close}>Cancel</Button>
+            <Button onClick={close}>{m["overview.mint.cancel"]()}</Button>
             <Button variant="primary" busy={mint.isPending} onClick={submit}>
-              Create
+              {m["overview.mint.create"]()}
             </Button>
           </>
         )
@@ -530,29 +557,31 @@ function MintKeyDialog({
         <>
           {mint.error ? (
             <Notice tone="danger">
-              {mint.error instanceof Error ? mint.error.message : "Unknown error."}
+              {/* i18n: server text — the API's own error message. */}
+              {mint.error instanceof Error ? mint.error.message : m["overview.unknown_error"]()}
             </Notice>
           ) : null}
 
           <Input
-            label="Name"
+            label={m["overview.mint.name"]()}
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="laptop, CI, notebook"
-            hint="For your own reference. Usage is reported per key."
+            placeholder={m["overview.mint.name_placeholder"]()}
+            hint={m["overview.mint.name_hint"]()}
           />
 
           <Select
-            label="Billing group"
+            label={m["overview.mint.billing_group"]()}
             value={groupId}
             onChange={(event) => setGroupId(event.target.value)}
-            hint="Which group's budget this key spends from."
+            hint={m["overview.mint.billing_group_hint"]()}
           >
             {/* Empty means "resolve at request time", so the key follows a later
                 change of default rather than pinning today's answer. */}
             <option value="">
-              My default group
-              {me.default_billing_group ? ` — currently ${me.default_billing_group.name}` : ""}
+              {me.default_billing_group
+                ? m["overview.mint.default_group_current"]({ group: me.default_billing_group.name })
+                : m["overview.mint.default_group"]()}
             </option>
             {me.groups.map((group) => (
               <option key={group.id} value={group.id}>
@@ -564,21 +593,19 @@ function MintKeyDialog({
           {/* The API refuses this case with a sentence worth reading, but saying
               it before the click is better than after. */}
           {groupId === "" && me.default_billing_group === null && (
-            <Notice tone="warn">
-              You have no default billing group. Choose a group above.
-            </Notice>
+            <Notice tone="warn">{m["overview.mint.no_default_warning"]()}</Notice>
           )}
 
           <Select
-            label="Expires"
+            label={m["overview.mint.expires"]()}
             value={expiry}
             onChange={(event) => setExpiry(event.target.value)}
-            hint="An expiring key fails closed on its own."
+            hint={m["overview.mint.expires_hint"]()}
           >
-            <option value="">Never</option>
-            <option value="30">In 30 days</option>
-            <option value="90">In 90 days</option>
-            <option value="365">In a year</option>
+            <option value="">{m["overview.mint.expires.never"]()}</option>
+            <option value="30">{m["overview.mint.expires.30"]()}</option>
+            <option value="90">{m["overview.mint.expires.90"]()}</option>
+            <option value="365">{m["overview.mint.expires.365"]()}</option>
           </Select>
         </>
       )}
@@ -611,29 +638,33 @@ function MintedSecret({ minted }: { minted: MintedApiKey }) {
 
   return (
     <>
-      <Notice tone="warn" title="Copy it now">
-        The gateway keeps a hash, not the key, so it cannot be shown again. If you lose
-        it, revoke this one and mint another.
+      <Notice tone="warn" title={m["overview.minted.copy_title"]()}>
+        {m["overview.minted.copy_body"]()}
       </Notice>
 
       <div className={SECRET_ROW}>
         <code className={SECRET}>{minted.secret}</code>
-        <Button onClick={copy}>{copied ? "Copied" : "Copy"}</Button>
+        <Button onClick={copy}>
+          {copied ? m["overview.minted.copied"]() : m["overview.minted.copy"]()}
+        </Button>
       </div>
       {copied === false && (
         // Warn ink, small — a caveat about the fallback, not the failure itself.
-        <p className="text-sm text-warn">
-          Could not reach the clipboard. Select the key and copy it by hand.
-        </p>
+        <p className="text-sm text-warn">{m["overview.minted.clipboard"]()}</p>
       )}
 
       <p className={SECRET_DETAIL}>
-        Send it as <code className={CODE}>Authorization: Bearer …</code>. Billed to{" "}
-        {minted.billing_group?.name ?? "your default group at request time"}
-        {minted.expires_at ? `, expires ${formatDate(minted.expires_at)}` : ", never expires"}.
+        <Message
+          message={minted.expires_at ? m["overview.minted.detail_expires"] : m["overview.minted.detail_never"]}
+          markup={{ code: (children) => <code className={CODE}>{children}</code> }}
+          inputs={{
+            group: minted.billing_group?.name ?? m["overview.minted.group_fallback"](),
+            date: minted.expires_at ? formatDate(minted.expires_at) : "",
+          }}
+        />
       </p>
 
-      <OpencodeSetup heading="Next: configure opencode" />
+      <OpencodeSetup heading={m["overview.minted.next_heading"]()} />
     </>
   );
 }
@@ -653,11 +684,13 @@ function RevokeKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
   return (
     <Dialog
       open={apiKey !== null}
-      title={`Revoke ${apiKey?.name || "this key"}`}
+      title={m["overview.revoke.title"]({
+        name: apiKey?.name || m["overview.revoke.title_fallback"](),
+      })}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{m["overview.revoke.cancel"]()}</Button>
           <Button
             variant="danger"
             busy={revoke.isPending}
@@ -665,31 +698,33 @@ function RevokeKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
               apiKey &&
               revoke.mutate(apiKey.id, {
                 onSuccess: () => {
-                  toast?.add({ title: "Key revoked", type: "success" });
+                  toast?.add({ title: m["overview.revoke.toast_done"](), type: "success" });
                   onClose();
                 },
                 onError: () =>
-                  toast?.add({ title: "Could not revoke the key", type: "error" }),
+                  toast?.add({ title: m["overview.revoke.toast_failed"](), type: "error" }),
               })
             }
           >
-            Revoke key
+            {m["overview.revoke.confirm"]()}
           </Button>
         </>
       }
     >
       {revoke.error ? (
         <Notice tone="danger">
-          {revoke.error instanceof Error ? revoke.error.message : "Unknown error."}
+          {/* i18n: server text — the API's own error message. */}
+          {revoke.error instanceof Error ? revoke.error.message : m["overview.unknown_error"]()}
         </Notice>
       ) : null}
       <p>
-        <code className={CODE}>{apiKey?.prefix}</code> stops working immediately and
-        cannot be restored. Anything still using it starts failing to authenticate.
+        <Message
+          message={m["overview.revoke.body"]}
+          markup={{ code: (children) => <code className={CODE}>{children}</code> }}
+          inputs={{ prefix: apiKey?.prefix ?? "" }}
+        />
       </p>
-      <p className={SECRET_DETAIL}>
-        Usage history is unaffected: the key is revoked, never deleted.
-      </p>
+      <p className={SECRET_DETAIL}>{m["overview.revoke.spend_note"]()}</p>
     </Dialog>
   );
 }
@@ -710,11 +745,13 @@ function DeleteKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
   return (
     <Dialog
       open={apiKey !== null}
-      title={`Delete ${apiKey?.name || "this key"}`}
+      title={m["overview.delete.title"]({
+        name: apiKey?.name || m["overview.delete.title_fallback"](),
+      })}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{m["overview.delete.cancel"]()}</Button>
           <Button
             variant="danger"
             busy={del.isPending}
@@ -722,33 +759,33 @@ function DeleteKeyDialog({ apiKey, onClose }: { apiKey: ApiKey | null; onClose: 
               apiKey &&
               del.mutate(apiKey.id, {
                 onSuccess: () => {
-                  toast?.add({ title: "Key deleted", type: "success" });
+                  toast?.add({ title: m["overview.delete.toast_done"](), type: "success" });
                   onClose();
                 },
                 onError: () =>
-                  toast?.add({ title: "Could not delete the key", type: "error" }),
+                  toast?.add({ title: m["overview.delete.toast_failed"](), type: "error" }),
               })
             }
           >
-            Delete permanently
+            {m["overview.delete.confirm"]()}
           </Button>
         </>
       }
     >
       {del.error ? (
         <Notice tone="danger">
-          {del.error instanceof Error ? del.error.message : "Unknown error."}
+          {/* i18n: server text — the API's own error message. */}
+          {del.error instanceof Error ? del.error.message : m["overview.unknown_error"]()}
         </Notice>
       ) : null}
       <p>
-        <code className={CODE}>{apiKey?.prefix}</code> is removed from this list and stops
-        working immediately. This cannot be undone — revoking is the reversible-looking cousin,
-        and even it cannot be restored.
+        <Message
+          message={m["overview.delete.body"]}
+          markup={{ code: (children) => <code className={CODE}>{children}</code> }}
+          inputs={{ prefix: apiKey?.prefix ?? "" }}
+        />
       </p>
-      <p className={SECRET_DETAIL}>
-        Past usage stays in the ledger, still attributed to you and your billing group. Those rows
-        simply stop carrying this key's name in the by-key breakdown.
-      </p>
+      <p className={SECRET_DETAIL}>{m["overview.delete.history_note"]()}</p>
     </Dialog>
   );
 }
@@ -757,33 +794,37 @@ const keyColumns = (
   onRevoke: (key: ApiKey) => void,
   onDelete: (key: ApiKey) => void,
 ): Column<ApiKey>[] => [
-  { key: "name", header: "Name", render: (key) => key.name || <em>unnamed</em> },
+  {
+    key: "name",
+    header: m["overview.key_column.name"](),
+    render: (key) => key.name || <em>{m["overview.unnamed"]()}</em>,
+  },
   {
     key: "prefix",
-    header: "Prefix",
+    header: m["overview.key_column.prefix"](),
     render: (key) => <code className={CODE}>{key.prefix}</code>,
   },
   {
     key: "group",
-    header: "Billing group",
-    render: (key) => key.billing_group?.name ?? "default group at request time",
+    header: m["overview.key_column.billing_group"](),
+    render: (key) => key.billing_group?.name ?? m["overview.key_column.group_fallback"](),
   },
   {
     key: "status",
-    header: "Status",
+    header: m["overview.key_column.status"](),
     render: (key) =>
       key.revoked_at ? (
-        <Badge tone="danger">Revoked</Badge>
+        <Badge tone="danger">{m["overview.key_badge.revoked"]()}</Badge>
       ) : isExpired(key) ? (
-        <Badge tone="warn">Expired</Badge>
+        <Badge tone="warn">{m["overview.key_badge.expired"]()}</Badge>
       ) : (
-        <Badge tone="ok">Active</Badge>
+        <Badge tone="ok">{m["overview.key_badge.active"]()}</Badge>
       ),
   },
   {
     key: "used",
-    header: "Last used",
-    render: (key) => (key.last_used_at ? formatDate(key.last_used_at) : "never"),
+    header: m["overview.key_column.last_used"](),
+    render: (key) => (key.last_used_at ? formatDate(key.last_used_at) : m["overview.key_column.never"]()),
   },
   {
     key: "actions",
@@ -795,11 +836,11 @@ const keyColumns = (
       <div className={ROW_ACTIONS}>
         {key.revoked_at ? null : (
           <Button variant="ghost" className="text-danger" onClick={() => onRevoke(key)}>
-            Revoke
+            {m["overview.key_action.revoke"]()}
           </Button>
         )}
         <Button variant="ghost" className="text-danger" onClick={() => onDelete(key)}>
-          Delete
+          {m["overview.key_action.delete"]()}
         </Button>
       </div>
     ),
@@ -810,22 +851,25 @@ function isExpired(key: ApiKey): boolean {
   return key.expires_at !== null && new Date(key.expires_at) < new Date();
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
-
 function breakdownNoun(groupBy: string): string {
-  return { model: "Model", day: "Day", group: "Group", api_key: "API key" }[groupBy] ?? "Item";
+  return (
+    {
+      model: m["overview.heading.model"](),
+      day: m["overview.heading.day"](),
+      group: m["overview.heading.group"](),
+      api_key: m["overview.heading.api_key"](),
+    }[groupBy] ?? m["overview.heading.other"]()
+  );
 }
 
+/** The same nouns in the case the sentences need; see AdminReports.tsx. */
 function labelFor(groupBy: string): string {
-  return BREAKDOWNS.find((option) => option.value === groupBy)?.label.toLowerCase() ?? groupBy;
-}
-
-function describePeriod(label: string | undefined): string {
-  return label ? `for ${label}` : "";
+  return (
+    {
+      model: m["overview.heading_lower.model"](),
+      day: m["overview.heading_lower.day"](),
+      group: m["overview.heading_lower.group"](),
+      api_key: m["overview.heading_lower.api_key"](),
+    }[groupBy] ?? m["overview.heading_lower.other"]()
+  );
 }
