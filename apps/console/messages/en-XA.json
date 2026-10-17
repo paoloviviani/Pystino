@@ -636,5 +636,36 @@
         "*": "[{year} (ýéáŕ)]"
       }
     }
-  ]
+  ],
+  "policy_fields.default_mode": "[Ďéƒáúľť ḿóďé]",
+  "policy_fields.default_mode_hint": "[Áþþľíéś ťó áńýťȟíńǧ ńóť ľíśťéď ƀéľóŵ, íńćľúďíńǧ ťýþéś áďďéď ľáťéŕ.]",
+  "policy_fields.no_entity_types": "[Ńó éńťíťý ťýþéś ťó ľíśť. Ťȟé ďéƒáúľť áƀóǚé śťíľľ áþþľíéś.]",
+  "policy_fields.source.pattern": "[Þáťťéŕń]",
+  "policy_fields.source.model": "[Ḿóďéľ]",
+  "policy_fields.confidence_for": "[Ćóńƒíďéńćé ƒóŕ {name}]",
+  "policy_fields.confidence_default": "[ďéƒáúľť]",
+  "policy_fields.confidence_default_value": "[{value} (ďéƒáúľť)]",
+  "policy_fields.detection_note": "[Ťúŕńíńǧ á ťýþé óƒƒ ćȟáńǧéś ŵȟáť íś ŕéþľáćéď, ńóť ȟóŵ ľóńǧ ďéťéćťíóń ťáķéś.]",
+  "policy_fields.patterns_legend": "[Ćúśťóḿ þáťťéŕńś]",
+  "policy_fields.pattern_name_label": "[Þáťťéŕń {number} ńáḿé]",
+  "policy_fields.pattern_name_placeholder": "[ŤÍĆĶÉŤ_ÍĎ]",
+  "policy_fields.pattern_regex_label": "[Þáťťéŕń {number} ŕéǧéẋ]",
+  "policy_fields.pattern_regex_placeholder": "[ĹÍŃĶŚ-[0-9]\\{4,\\}]",
+  "policy_fields.pattern_mode_label": "[Þáťťéŕń {number} ḿóďé]",
+  "policy_fields.pattern_remove": "[Ŕéḿóǚé]",
+  "policy_fields.pattern_add": "[Áďď þáťťéŕń]",
+  "policy_fields.pattern_from_template": "[Áďď þáťťéŕń ƒŕóḿ ťéḿþľáťé]",
+  "policy_fields.pattern_note": "[Ťȟé ńáḿé ƀéćóḿéś ťȟé éńťíťý ľáƀéľ. ŔÉ2 śýńťáẋ: ńó ƀáćķŕéƒéŕéńćéś, ńó ľóóķáŕóúńď.]",
+  "policy_fields.templates_note": "[Ťȟé éńǧíńé ďéťéćťś ńó ćŕéďéńťíáľś. Ťȟé ťéḿþľáťéś ćóǚéŕ ťȟé þúƀľíśȟéď þŕéƒíẋéś; á ƀéśþóķé ƒóŕḿáť ńééďś íťś óŵń þáťťéŕń.]",
+  "policy_fields.templates.done": "[Ďóńé]",
+  "policy_fields.templates.kind.credential": "[Ćŕéďéńťíáľ]",
+  "policy_fields.templates.kind.identifier": "[Íďéńťíƒíéŕ]",
+  "policy_fields.templates.mode.block": "[Ɓľóćķ]",
+  "policy_fields.templates.mode.redact": "[Ŕéďáćť]",
+  "policy_fields.templates.add_aria": "[Áďď {name} þáťťéŕń]",
+  "policy_fields.templates.added": "[Áďďéď]",
+  "policy_fields.templates.add": "[Áďď]",
+  "policy_fields.allowlist.label": "[Áľľóŵľíśť]",
+  "policy_fields.allowlist.placeholder": "[íľþóśť.íť, éẋáḿþľé.óŕǧ]",
+  "policy_fields.allowlist.hint": "[Ćóḿḿá śéþáŕáťéď. Ḿáťćȟéď éẋáćťľý, ćáśé-íńśéńśíťíǚéľý.]"
 }

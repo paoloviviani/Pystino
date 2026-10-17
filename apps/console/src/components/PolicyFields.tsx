@@ -88,17 +88,15 @@ export function PolicyFields({
           why the safer direction is to protect by default rather than to let a
           new type through unnoticed. */}
       <ModeSelect
-        label="Default mode"
+        label={m["policy_fields.default_mode"]()}
         value={policy.default_mode}
         floor={floor?.default_mode ?? null}
-        hint="Applies to anything not listed below, including types added later."
+        hint={m["policy_fields.default_mode_hint"]()}
         onChange={(mode) => onChange({ ...policy, default_mode: mode })}
       />
 
       {known.length === 0 ? (
-        <p className="text-sm text-ink-muted">
-          No entity types to list. The default above still applies.
-        </p>
+        <p className="text-sm text-ink-muted">{m["policy_fields.no_entity_types"]()}</p>
       ) : (
         <>
           <ModeKey />
@@ -133,7 +131,13 @@ export function PolicyFields({
                       <span className="flex flex-wrap items-center gap-2">
                         {named && name}
                         <code className={CODE}>{entity}</code>
-                        {source && <Badge>{source === "pattern" ? "Pattern" : "Model"}</Badge>}
+                        {source && (
+                          <Badge>
+                            {source === "pattern"
+                              ? m["policy_fields.source.pattern"]()
+                              : m["policy_fields.source.model"]()}
+                          </Badge>
+                        )}
                       </span>
                     }
                     value={modeOf(entity)}
@@ -141,13 +145,17 @@ export function PolicyFields({
                     onChange={(mode) => setEntity(entity, { mode })}
                   />
                   <Input
-                    label={`Confidence for ${name}`}
+                    label={m["policy_fields.confidence_for"]({ name })}
                     hideLabel
                     type="number"
                     min="0"
                     max="1"
                     step="0.05"
-                    placeholder={scoreThreshold === null ? "default" : `${scoreThreshold} (default)`}
+                    placeholder={
+                      scoreThreshold === null
+                        ? m["policy_fields.confidence_default"]()
+                        : m["policy_fields.confidence_default_value"]({ value: scoreThreshold })
+                    }
                     value={policy.entities[entity]?.threshold ?? ""}
                     onChange={(event) =>
                       setEntity(entity, {
@@ -162,9 +170,7 @@ export function PolicyFields({
           {/* Measured, and the opposite of what a list of switches implies: the
               model pass runs over the whole prompt whichever types are asked
               for. See docs/performance.md. */}
-          <p className="text-sm text-ink-muted">
-            Turning a type off changes what is replaced, not how long detection takes.
-          </p>
+          <p className="text-sm text-ink-muted">{m["policy_fields.detection_note"]()}</p>
         </>
       )}
 
@@ -176,7 +182,7 @@ export function PolicyFields({
         {/* Deliberately identical to the field labels in `@llmp/ui` — a legend
             that styled itself differently would read as a section heading
             rather than as the label of the controls under it. */}
-        <legend className={`p-0 ${FIELD_LABEL}`}>Custom patterns</legend>
+        <legend className={`p-0 ${FIELD_LABEL}`}>{m["policy_fields.patterns_legend"]()}</legend>
         {policy.patterns.map((pattern, index) => (
           // Keyed by position: a name is edited character by character, so
           // keying on it would remount the field being typed into and lose
@@ -186,20 +192,20 @@ export function PolicyFields({
             className="grid grid-cols-[minmax(8rem,1fr)_minmax(12rem,2fr)_minmax(10rem,1fr)_auto] items-end gap-3 max-[48rem]:grid-cols-1"
           >
             <Input
-              label={`Pattern ${index + 1} name`}
+              label={m["policy_fields.pattern_name_label"]({ number: index + 1 })}
               value={pattern.name}
-              placeholder="TICKET_ID"
+              placeholder={m["policy_fields.pattern_name_placeholder"]()}
               onChange={(event) => setPattern(index, { name: event.target.value })}
             />
             <Input
-              label={`Pattern ${index + 1} regex`}
+              label={m["policy_fields.pattern_regex_label"]({ number: index + 1 })}
               className={CODE}
               value={pattern.regex}
-              placeholder="LINKS-[0-9]{4,}"
+              placeholder={m["policy_fields.pattern_regex_placeholder"]()}
               onChange={(event) => setPattern(index, { regex: event.target.value })}
             />
             <ModeSelect
-              label={`Pattern ${index + 1} mode`}
+              label={m["policy_fields.pattern_mode_label"]({ number: index + 1 })}
               value={pattern.mode}
               floor={null}
               onChange={(mode) => setPattern(index, { mode })}
@@ -213,7 +219,7 @@ export function PolicyFields({
                 })
               }
             >
-              Remove
+              {m["policy_fields.pattern_remove"]()}
             </Button>
           </div>
         ))}
@@ -228,15 +234,13 @@ export function PolicyFields({
               })
             }
           >
-            Add pattern
+            {m["policy_fields.pattern_add"]()}
           </Button>
           <Button variant="secondary" onClick={() => setTemplatesOpen(true)}>
-            Add pattern from template
+            {m["policy_fields.pattern_from_template"]()}
           </Button>
         </div>
-        <p className="text-sm text-ink-muted">
-          The name becomes the entity label. RE2 syntax: no backreferences, no lookaround.
-        </p>
+        <p className="text-sm text-ink-muted">{m["policy_fields.pattern_note"]()}</p>
 
         {/* Measured, not assumed: eight credential shapes were put through this
             deployment's detector and none was found. Two produced *wrong* hits —
@@ -246,10 +250,7 @@ export function PolicyFields({
             into every new rule. An empty pattern list is a deliberate choice;
             a seeded list would make it impossible to tell that choice from an
             omission. */}
-        <p className="text-sm text-ink-muted">
-          The engine detects no credentials. The templates cover the published
-          prefixes; a bespoke format needs its own pattern.
-        </p>
+        <p className="text-sm text-ink-muted">{m["policy_fields.templates_note"]()}</p>
         <PatternTemplatesDialog
           open={templatesOpen}
           policy={policy}
@@ -292,11 +293,11 @@ function PatternTemplatesDialog({
   return (
     <Dialog
       open={open}
-      title="Add pattern from template"
+      title={m["policy_fields.pattern_from_template"]()}
       onClose={onClose}
       footer={
         <Button variant="secondary" onClick={onClose}>
-          Done
+          {m["policy_fields.templates.done"]()}
         </Button>
       }
     >
@@ -313,15 +314,23 @@ function PatternTemplatesDialog({
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <strong>{template.name}</strong>
-                  <Badge>{template.kind === "credential" ? "Credential" : "Identifier"}</Badge>
-                  <Badge>{template.mode === "block" ? "Block" : "Redact"}</Badge>
+                  <Badge>
+                    {template.kind === "credential"
+                      ? m["policy_fields.templates.kind.credential"]()
+                      : m["policy_fields.templates.kind.identifier"]()}
+                  </Badge>
+                  <Badge>
+                    {template.mode === "block"
+                      ? m["policy_fields.templates.mode.block"]()
+                      : m["policy_fields.templates.mode.redact"]()}
+                  </Badge>
                 </div>
                 <p className={`m-0 text-sm ${MUTED}`}>{template.description()}</p>
                 <code className={CODE}>{template.regex}</code>
               </div>
               <Button
                 variant="secondary"
-                aria-label={`Add ${template.name} pattern`}
+                aria-label={m["policy_fields.templates.add_aria"]({ name: template.name })}
                 disabled={added}
                 onClick={() =>
                   onChange({
@@ -333,7 +342,7 @@ function PatternTemplatesDialog({
                   })
                 }
               >
-                {added ? "Added" : "Add"}
+                {added ? m["policy_fields.templates.added"]() : m["policy_fields.templates.add"]()}
               </Button>
             </div>
           );
@@ -377,7 +386,7 @@ function AllowList({
 
   return (
     <Input
-      label="Allowlist"
+      label={m["policy_fields.allowlist.label"]()}
       value={text}
       onChange={(event) => {
         setText(event.target.value);
@@ -388,8 +397,8 @@ function AllowList({
             .filter(Boolean),
         );
       }}
-      placeholder="ilpost.it, example.org"
-      hint="Comma separated. Matched exactly, case-insensitively."
+      placeholder={m["policy_fields.allowlist.placeholder"]()}
+      hint={m["policy_fields.allowlist.hint"]()}
     />
   );
 }

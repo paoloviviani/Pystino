@@ -636,5 +636,36 @@
         "*": "{year} (year)"
       }
     }
-  ]
+  ],
+  "policy_fields.default_mode": "Default mode",
+  "policy_fields.default_mode_hint": "Applies to anything not listed below, including types added later.",
+  "policy_fields.no_entity_types": "No entity types to list. The default above still applies.",
+  "policy_fields.source.pattern": "Pattern",
+  "policy_fields.source.model": "Model",
+  "policy_fields.confidence_for": "Confidence for {name}",
+  "policy_fields.confidence_default": "default",
+  "policy_fields.confidence_default_value": "{value} (default)",
+  "policy_fields.detection_note": "Turning a type off changes what is replaced, not how long detection takes.",
+  "policy_fields.patterns_legend": "Custom patterns",
+  "policy_fields.pattern_name_label": "Pattern {number} name",
+  "policy_fields.pattern_name_placeholder": "TICKET_ID",
+  "policy_fields.pattern_regex_label": "Pattern {number} regex",
+  "policy_fields.pattern_regex_placeholder": "LINKS-[0-9]\\{4,\\}",
+  "policy_fields.pattern_mode_label": "Pattern {number} mode",
+  "policy_fields.pattern_remove": "Remove",
+  "policy_fields.pattern_add": "Add pattern",
+  "policy_fields.pattern_from_template": "Add pattern from template",
+  "policy_fields.pattern_note": "The name becomes the entity label. RE2 syntax: no backreferences, no lookaround.",
+  "policy_fields.templates_note": "The engine detects no credentials. The templates cover the published prefixes; a bespoke format needs its own pattern.",
+  "policy_fields.templates.done": "Done",
+  "policy_fields.templates.kind.credential": "Credential",
+  "policy_fields.templates.kind.identifier": "Identifier",
+  "policy_fields.templates.mode.block": "Block",
+  "policy_fields.templates.mode.redact": "Redact",
+  "policy_fields.templates.add_aria": "Add {name} pattern",
+  "policy_fields.templates.added": "Added",
+  "policy_fields.templates.add": "Add",
+  "policy_fields.allowlist.label": "Allowlist",
+  "policy_fields.allowlist.placeholder": "ilpost.it, example.org",
+  "policy_fields.allowlist.hint": "Comma separated. Matched exactly, case-insensitively."
 }
