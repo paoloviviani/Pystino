@@ -669,7 +669,7 @@ function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: (
               onClose();
             }}
           >
-            Cancel
+            {m["admin_users.merge.cancel"]()}
           </Button>
           <Button
             variant="danger"
@@ -1599,10 +1599,14 @@ function EditUserDialog({
     update.mutate(
       { id: user.id, is_admin: isAdmin, ...profileChanges },
       {
-        onSuccess: () => toast?.add({ title: "User updated", type: "success" }),
+        onSuccess: () =>
+          toast?.add({ title: m["admin_users.edit.toast_done"](), type: "success" }),
         onError: (caught: unknown) =>
           toast?.add({
-            title: caught instanceof Error ? caught.message : "Could not update the user",
+            // i18n: server text — the API's own error message.
+            title: caught instanceof Error
+              ? caught.message
+              : m["admin_users.edit.toast_failed"](),
             type: "error",
           }),
       },
