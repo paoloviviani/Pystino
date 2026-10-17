@@ -445,5 +445,123 @@
   "shell.billing_group.error_title": "[Ćóúľď ńóť śéť ťȟé ďéƒáúľť ƀíľľíńǧ ǧŕóúþ]",
   "shell.billing_group.set": "[Ďéƒáúľť ƀíľľíńǧ ǧŕóúþ śéť]",
   "shell.billing_group.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
-  "shell.billing_group.group_label": "[Ǧŕóúþ]"
+  "shell.billing_group.group_label": "[Ǧŕóúþ]",
+  "entity_type.person": "[Þéŕśóń ńáḿé]",
+  "entity_type.location": "[Þľáćé]",
+  "entity_type.organization": "[Óŕǧáńíśáťíóń]",
+  "entity_type.nrp": "[Ńáťíóńáľíťý, ŕéľíǧíóń óŕ þóľíťíćś]",
+  "entity_type.credit_card": "[Þáýḿéńť ćáŕď ńúḿƀéŕ]",
+  "entity_type.crypto": "[Ćŕýþťó ŵáľľéť áďďŕéśś]",
+  "entity_type.date_time": "[Ďáťé óŕ ťíḿé]",
+  "entity_type.email_address": "[Éḿáíľ áďďŕéśś]",
+  "entity_type.iban_code": "[Ɓáńķ áććóúńť (ÍƁÁŃ)]",
+  "entity_type.ip_address": "[ÍÞ áďďŕéśś]",
+  "entity_type.phone_number": "[Þȟóńé ńúḿƀéŕ]",
+  "entity_type.medical_license": "[Ḿéďíćáľ ľíćéńćé ńúḿƀéŕ]",
+  "entity_type.url": "[Ŵéƀ áďďŕéśś]",
+  "entity_type.it_fiscal_code": "[Íťáľíáń ťáẋ ćóďé]",
+  "entity_type.it_driver_license": "[Íťáľíáń ďŕíǚíńǧ ľíćéńćé]",
+  "entity_type.it_vat_code": "[Íťáľíáń ǙÁŤ ńúḿƀéŕ]",
+  "entity_type.it_passport": "[Íťáľíáń þáśśþóŕť ńúḿƀéŕ]",
+  "entity_type.it_identity_card": "[Íťáľíáń íďéńťíťý ćáŕď]",
+  "entity_type.es_nif": "[Śþáńíśȟ ťáẋ ńúḿƀéŕ]",
+  "entity_type.es_nie": "[Śþáńíśȟ ƒóŕéíǧńéŕ ńúḿƀéŕ]",
+  "entity_type.pl_pesel": "[Þóľíśȟ ńáťíóńáľ ńúḿƀéŕ]",
+  "entity_type.fi_personal_identity_code": "[Ƒíńńíśȟ þéŕśóńáľ íďéńťíťý ćóďé]",
+  "entity_type.uk_nhs": "[ŃȞŚ ńúḿƀéŕ]",
+  "entity_type.uk_nino": "[ÚĶ ńáťíóńáľ íńśúŕáńćé ńúḿƀéŕ]",
+  "entity_type.us_bank_number": "[ÚŚ ƀáńķ áććóúńť]",
+  "entity_type.us_driver_license": "[ÚŚ ďŕíǚíńǧ ľíćéńćé]",
+  "entity_type.us_itin": "[ÚŚ ťáẋþáýéŕ ńúḿƀéŕ]",
+  "entity_type.us_passport": "[ÚŚ þáśśþóŕť ńúḿƀéŕ]",
+  "entity_type.us_ssn": "[ÚŚ śóćíáľ śéćúŕíťý ńúḿƀéŕ]",
+  "entity_type.sg_nric_fin": "[Śíńǧáþóŕé ŃŔÍĆ óŕ ƑÍŃ]",
+  "entity_type.sg_uen": "[Śíńǧáþóŕé éńťíťý ńúḿƀéŕ]",
+  "entity_type.au_abn": "[Áúśťŕáľíáń ƀúśíńéśś ńúḿƀéŕ]",
+  "entity_type.au_acn": "[Áúśťŕáľíáń ćóḿþáńý ńúḿƀéŕ]",
+  "entity_type.au_tfn": "[Áúśťŕáľíáń ťáẋ ƒíľé ńúḿƀéŕ]",
+  "entity_type.au_medicare": "[Áúśťŕáľíáń Ḿéďíćáŕé ńúḿƀéŕ]",
+  "entity_type.in_pan": "[Íńďíáń ÞÁŃ]",
+  "entity_type.in_aadhaar": "[Íńďíáń Ááďȟááŕ ńúḿƀéŕ]",
+  "entity_type.in_passport": "[Íńďíáń þáśśþóŕť ńúḿƀéŕ]",
+  "entity_type.in_voter": "[Íńďíáń ǚóťéŕ ÍĎ]",
+  "entity_type.in_vehicle_registration": "[Íńďíáń ǚéȟíćľé ŕéǧíśťŕáťíóń]",
+  "redaction_mode.off.label": "[Ńóť ŕéďáćťéď]",
+  "redaction_mode.off.short": "[Óƒƒ]",
+  "redaction_mode.off.hint": "[ľéƒť éẋáćťľý áś ťȟé ćáľľéŕ ŵŕóťé íť]",
+  "redaction_mode.anonymise_restore.label": "[Áńóńýḿíśé, ŕéśťóŕé íń ťȟé áńśŵéŕ]",
+  "redaction_mode.anonymise_restore.short": "[Ŕéśťóŕé]",
+  "redaction_mode.anonymise_restore.hint": "[þľáćéȟóľďéŕ úþśťŕéáḿ, ŕéáľ ǚáľúé ƀáćķ ťó ťȟé ŕéáďéŕ]",
+  "redaction_mode.anonymise.label": "[Áńóńýḿíśé]",
+  "redaction_mode.anonymise.short": "[Áńóńýḿíśé]",
+  "redaction_mode.anonymise.hint": "[þľáćéȟóľďéŕ úþśťŕéáḿ áńď íń ťȟé áńśŵéŕ]",
+  "redaction_mode.redact.label": "[Ŕéďáćť]",
+  "redaction_mode.redact.short": "[Ŕéďáćť]",
+  "redaction_mode.redact.hint": "[<ÞÉŔŚÓŃ>, śó ťŵó þéóþľé ľóóķ ťȟé śáḿé]",
+  "redaction_mode.block.label": "[Ɓľóćķ]",
+  "redaction_mode.block.short": "[Ɓľóćķ]",
+  "redaction_mode.block.hint": "[ťȟé ŕéǫúéśť íś ŕéƒúśéď ƀéƒóŕé á þŕóǚíďéŕ śééś íť]",
+  "policy_summary.default_mode": [
+    {
+      "declarations": [
+        "input mode"
+      ],
+      "match": {
+        "*": "[{mode} ƀý ďéƒáúľť]"
+      }
+    }
+  ],
+  "policy_summary.types": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ťýþé]",
+        "countPlural=other": "[{n} ťýþéś]"
+      }
+    }
+  ],
+  "policy_summary.patterns": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} þáťťéŕń]",
+        "countPlural=other": "[{n} þáťťéŕńś]"
+      }
+    }
+  ],
+  "policy_summary.allow_list": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} áľľóŵéď]"
+      }
+    }
+  ],
+  "redaction_mode.title": [
+    {
+      "declarations": [
+        "input label",
+        "input hint"
+      ],
+      "match": {
+        "*": "[{label} — {hint}]"
+      }
+    }
+  ]
 }

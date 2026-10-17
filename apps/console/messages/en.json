@@ -445,5 +445,123 @@
   "shell.billing_group.error_title": "Could not set the default billing group",
   "shell.billing_group.set": "Default billing group set",
   "shell.billing_group.unknown_error": "Unknown error.",
-  "shell.billing_group.group_label": "Group"
+  "shell.billing_group.group_label": "Group",
+  "entity_type.person": "Person name",
+  "entity_type.location": "Place",
+  "entity_type.organization": "Organisation",
+  "entity_type.nrp": "Nationality, religion or politics",
+  "entity_type.credit_card": "Payment card number",
+  "entity_type.crypto": "Crypto wallet address",
+  "entity_type.date_time": "Date or time",
+  "entity_type.email_address": "Email address",
+  "entity_type.iban_code": "Bank account (IBAN)",
+  "entity_type.ip_address": "IP address",
+  "entity_type.phone_number": "Phone number",
+  "entity_type.medical_license": "Medical licence number",
+  "entity_type.url": "Web address",
+  "entity_type.it_fiscal_code": "Italian tax code",
+  "entity_type.it_driver_license": "Italian driving licence",
+  "entity_type.it_vat_code": "Italian VAT number",
+  "entity_type.it_passport": "Italian passport number",
+  "entity_type.it_identity_card": "Italian identity card",
+  "entity_type.es_nif": "Spanish tax number",
+  "entity_type.es_nie": "Spanish foreigner number",
+  "entity_type.pl_pesel": "Polish national number",
+  "entity_type.fi_personal_identity_code": "Finnish personal identity code",
+  "entity_type.uk_nhs": "NHS number",
+  "entity_type.uk_nino": "UK national insurance number",
+  "entity_type.us_bank_number": "US bank account",
+  "entity_type.us_driver_license": "US driving licence",
+  "entity_type.us_itin": "US taxpayer number",
+  "entity_type.us_passport": "US passport number",
+  "entity_type.us_ssn": "US social security number",
+  "entity_type.sg_nric_fin": "Singapore NRIC or FIN",
+  "entity_type.sg_uen": "Singapore entity number",
+  "entity_type.au_abn": "Australian business number",
+  "entity_type.au_acn": "Australian company number",
+  "entity_type.au_tfn": "Australian tax file number",
+  "entity_type.au_medicare": "Australian Medicare number",
+  "entity_type.in_pan": "Indian PAN",
+  "entity_type.in_aadhaar": "Indian Aadhaar number",
+  "entity_type.in_passport": "Indian passport number",
+  "entity_type.in_voter": "Indian voter ID",
+  "entity_type.in_vehicle_registration": "Indian vehicle registration",
+  "redaction_mode.off.label": "Not redacted",
+  "redaction_mode.off.short": "Off",
+  "redaction_mode.off.hint": "left exactly as the caller wrote it",
+  "redaction_mode.anonymise_restore.label": "Anonymise, restore in the answer",
+  "redaction_mode.anonymise_restore.short": "Restore",
+  "redaction_mode.anonymise_restore.hint": "placeholder upstream, real value back to the reader",
+  "redaction_mode.anonymise.label": "Anonymise",
+  "redaction_mode.anonymise.short": "Anonymise",
+  "redaction_mode.anonymise.hint": "placeholder upstream and in the answer",
+  "redaction_mode.redact.label": "Redact",
+  "redaction_mode.redact.short": "Redact",
+  "redaction_mode.redact.hint": "<PERSON>, so two people look the same",
+  "redaction_mode.block.label": "Block",
+  "redaction_mode.block.short": "Block",
+  "redaction_mode.block.hint": "the request is refused before a provider sees it",
+  "policy_summary.default_mode": [
+    {
+      "declarations": [
+        "input mode"
+      ],
+      "match": {
+        "*": "{mode} by default"
+      }
+    }
+  ],
+  "policy_summary.types": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} type",
+        "countPlural=other": "{n} types"
+      }
+    }
+  ],
+  "policy_summary.patterns": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} pattern",
+        "countPlural=other": "{n} patterns"
+      }
+    }
+  ],
+  "policy_summary.allow_list": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} allowed"
+      }
+    }
+  ],
+  "redaction_mode.title": [
+    {
+      "declarations": [
+        "input label",
+        "input hint"
+      ],
+      "match": {
+        "*": "{label} — {hint}"
+      }
+    }
+  ]
 }

@@ -2,6 +2,7 @@ import { Badge, Button, Dialog, Input, Select } from "@llmp/ui";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { MODES, entityLabel, entitySource, modeRank } from "../lib/entities";
+import { m } from "../paraglide/messages.js";
 import { REDACTION_PATTERN_TEMPLATES } from "../lib/redactionTemplates";
 import type { EntityMode, EntityPolicy, RedactionPolicy } from "../lib/types";
 import { CODE, FIELD_LABEL, FORM, MUTED } from "../lib/layout";
@@ -443,7 +444,7 @@ function ModeRadios({
             <label
               key={mode.value}
               className="inline-flex cursor-pointer items-center gap-[0.35em] text-sm whitespace-nowrap data-disabled:cursor-not-allowed data-disabled:text-ink-faint"
-              title={`${mode.label} — ${mode.hint}`}
+              title={m["redaction_mode.title"]({ label: mode.label(), hint: mode.hint() })}
               data-disabled={disabled || undefined}
             >
               <input
@@ -455,7 +456,7 @@ function ModeRadios({
                 onChange={() => onChange(mode.value)}
                 className="m-0 accent-accent"
               />
-              {mode.short}
+              {mode.short()}
             </label>
           );
         })}
@@ -476,8 +477,8 @@ function ModeKey() {
     <dl className="m-0 grid gap-x-4 gap-y-1 bg-sunken p-3 text-sm [grid-template-columns:repeat(auto-fit,minmax(14rem,1fr))]">
       {MODES.map((mode) => (
         <div key={mode.value} className="flex items-baseline gap-2">
-          <dt className="font-medium whitespace-nowrap">{mode.short}</dt>
-          <dd className={`m-0 ${MUTED}`}>{mode.hint}</dd>
+          <dt className="font-medium whitespace-nowrap">{mode.short()}</dt>
+          <dd className={`m-0 ${MUTED}`}>{mode.hint()}</dd>
         </div>
       ))}
     </dl>
@@ -514,7 +515,7 @@ function ModeSelect({
     >
       {MODES.map((mode) => (
         <option key={mode.value} value={mode.value} disabled={modeRank(mode.value) < least}>
-          {mode.label}
+          {mode.label()}
         </option>
       ))}
     </Select>
