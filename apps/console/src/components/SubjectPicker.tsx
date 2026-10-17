@@ -135,3 +135,21 @@ export function scopeNoun(scope: RedactionScope): string {
     api_key: m["subject_picker.noun.api_key"](),
   }[scope];
 }
+
+/**
+ * The same nouns in the case a sentence needs them in.
+ *
+ * Separate messages rather than `.toLowerCase()` on the noun: lower-casing is a
+ * rule about English, and a language whose nouns inflect wants the form that
+ * reads in the sentence rather than a smaller letter.
+ */
+export function scopeNounLower(scope: RedactionScope): string {
+  return {
+    all: m["subject_picker.noun_lower.all"](),
+    provider: m["subject_picker.noun_lower.provider"](),
+    model: m["subject_picker.noun_lower.model"](),
+    group: m["subject_picker.noun_lower.group"](),
+    user: m["subject_picker.noun_lower.user"](),
+    api_key: m["subject_picker.noun_lower.api_key"](),
+  }[scope];
+}
