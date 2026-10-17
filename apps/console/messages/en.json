@@ -830,5 +830,121 @@
   ],
   "admin_providers.field.remove_key": "Remove the stored key",
   "admin_providers.unknown_error": "Unknown error.",
-  "admin_providers.no_key": "none"
+  "admin_providers.no_key": "none",
+  "admin_search.column.backend": "Backend",
+  "admin_search.column.api_key": "API key",
+  "admin_search.column.tiers": "Tiers",
+  "admin_search.column.status": "Status",
+  "admin_search.no_key": "none — set one before searching",
+  "admin_search.badge.active": "Active",
+  "admin_search.badge.inactive": "Inactive",
+  "admin_search.action.edit": "Edit",
+  "admin_search.action.delete": "Delete",
+  "admin_search.title": "Web search",
+  "admin_search.intro": "A search backend answers {#code}POST /v1/search/\\{backend\\}{/code} — an authenticated, metering passthrough: the gateway counts the request, attaches the backend's own credential, and forwards the caller's body to the vendor verbatim, returning the vendor's answer verbatim (ADR 0071). Backends are absent from {#code}/v1/models{/code} unless a client asks for them explicitly, so no other client will mistake one for a chat model. Who may search is the grant below; how much they may search is a request ceiling on Quotas.",
+  "admin_search.backends_card": "Backends",
+  "admin_search.loading_backends": "Loading backends",
+  "admin_search.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} backend",
+        "countPlural=other": "{n} backends"
+      }
+    }
+  ],
+  "admin_search.state.none": "none yet — add the first one",
+  "admin_search.state.active": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} active"
+      }
+    }
+  ],
+  "admin_search.add_backend": "Add backend",
+  "admin_search.backends_empty": "No backends yet.",
+  "admin_search.grants_heading": "Who may search",
+  "admin_search.grants_body": "One grant per backend — creating the backend made its row. What the caller sends inside the body (a depth, a result count) is the vendor's own pricing, not a decision this screen makes.",
+  "admin_search.loading_tiers": "Loading tiers",
+  "admin_search.tier_column.grants": "Groups that may run it",
+  "admin_search.no_groups_yet": "no groups yet",
+  "admin_search.tiers_empty": "No backends yet. Add one above.",
+  "admin_search.policy_heading": "Which backend each group searches through",
+  "admin_search.policy_body": "The policy behind {#code}POST /v1/search{/code} (no backend in the path): one request shape in, one answer shape out, through exactly this backend at its default depth. Only backends the group is granted above are offered — a group with none set cannot use the unified route at all.",
+  "admin_search.policy_error.title": "Could not set the search backend",
+  "admin_search.loading_groups": "Loading groups",
+  "admin_search.group_column.group": "Group",
+  "admin_search.group_column.backend": "Searches through",
+  "admin_search.backend_for_group": "Search backend for {group}",
+  "admin_search.backend_unset": "Unset — no unified search",
+  "admin_search.groups_empty": "No groups yet.",
+  "admin_search.toast.updated": "Backend updated",
+  "admin_search.toast.update_failed": "Could not update the backend",
+  "admin_search.toast.added": "Backend added",
+  "admin_search.toast.add_failed": "Could not add the backend",
+  "admin_search.dialog.edit_title": "Edit {provider}",
+  "admin_search.dialog.add_title": "Add a search backend",
+  "admin_search.dialog.cancel": "Cancel",
+  "admin_search.dialog.save": "Save",
+  "admin_search.dialog.add": "Add",
+  "admin_search.field.vendor": "Vendor",
+  "admin_search.field.vendor_hint": "The endpoint and the credential scheme are the vendor's own — configured here, not typed anywhere.",
+  "admin_search.field.vendor_choose": "Choose a vendor…",
+  "admin_search.field.endpoint": "Endpoint",
+  "admin_search.field.endpoint_hint": "Which of the vendor's documented hosts the searches go to.",
+  "admin_search.field.api_key": "API key",
+  "admin_search.field.api_key_placeholder_unset": "unset",
+  "admin_search.field.api_key_placeholder": "paste the vendor's key",
+  "admin_search.field.api_key_hint_edit": "Leave empty to keep the stored key; tick to remove it.",
+  "admin_search.field.api_key_hint_new": "Stored encrypted; shown back only as a hint.",
+  "admin_search.field.remove_key": "Remove the stored key",
+  "admin_search.delete.title": "Delete {backend}",
+  "admin_search.delete.title_fallback": "this backend",
+  "admin_search.delete.toast_plain": "Backend deleted",
+  "admin_search.delete.toast_with_groups": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "input groups"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Backend deleted — {groups} lost its unified-search policy",
+        "countPlural=other": "Backend deleted — {groups} lost their unified-search policy"
+      }
+    }
+  ],
+  "admin_search.delete.toast_failed": "Could not delete the backend",
+  "admin_search.delete.confirm": "Delete permanently",
+  "admin_search.delete.body": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Removes the backend and its {n} tier from the gateway outright. Callers of {#code}POST /v1/search/\\{backend\\}{/code} get \"unknown backend\" from the next request on, and groups searching through it lose their unified-search policy. This cannot be undone.",
+        "countPlural=other": "Removes the backend and its {n} tiers from the gateway outright. Callers of {#code}POST /v1/search/\\{backend\\}{/code} get \"unknown backend\" from the next request on, and groups searching through it lose their unified-search policy. This cannot be undone."
+      }
+    }
+  ],
+  "admin_search.delete.spend_note": "Recorded spend is unaffected: past searches keep their attribution in the ledger.",
+  "admin_search.unknown_error": "Unknown error."
 }

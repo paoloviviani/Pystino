@@ -27,13 +27,22 @@ export type MarkupRenderers = Record<string, (children: ReactNode) => ReactNode>
  * sentence with a missing placeholder in it and find out from a reader.
  */
 export type MessageProps<TInputs> = {
-  /** A compiled message: `m["not_found.body"]`. */
-  message: { parts: (inputs?: TInputs, options?: never) => MessagePart[] };
+  /**
+   * A compiled message: `m["not_found.body"]`.
+   *
+   * `inputs` is required here because that is how the compiler types a message
+   * that has inputs at all: `parts(inputs, options)` with no default. The
+   * prop below makes passing them optional for the messages that have none,
+   * which is the case the compiler types the other way round.
+   */
+  message: { parts: (inputs: TInputs, options?: never) => MessagePart[] };
   markup: MarkupRenderers;
 } & (keyof TInputs extends never ? { inputs?: TInputs } : { inputs: TInputs });
 
 export function Message<TInputs>({ message, markup, inputs }: MessageProps<TInputs>) {
-  const parts = message.parts(inputs);
+  // An input-less message is called with no inputs at all, which its generated
+  // signature accepts and this one has to say out loud.
+  const parts = message.parts(inputs as TInputs);
   const nodes: ReactNode[] = [];
   // The tags currently open, innermost last: each collects the text between its
   // own start and end so it can be handed to the renderer as children.

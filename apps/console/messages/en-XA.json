@@ -830,5 +830,121 @@
   ],
   "admin_providers.field.remove_key": "[Ŕéḿóǚé ťȟé śťóŕéď ķéý]",
   "admin_providers.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
-  "admin_providers.no_key": "[ńóńé]"
+  "admin_providers.no_key": "[ńóńé]",
+  "admin_search.column.backend": "[Ɓáćķéńď]",
+  "admin_search.column.api_key": "[ÁÞÍ ķéý]",
+  "admin_search.column.tiers": "[Ťíéŕś]",
+  "admin_search.column.status": "[Śťáťúś]",
+  "admin_search.no_key": "[ńóńé — śéť óńé ƀéƒóŕé śéáŕćȟíńǧ]",
+  "admin_search.badge.active": "[Áćťíǚé]",
+  "admin_search.badge.inactive": "[Íńáćťíǚé]",
+  "admin_search.action.edit": "[Éďíť]",
+  "admin_search.action.delete": "[Ďéľéťé]",
+  "admin_search.title": "[Ŵéƀ śéáŕćȟ]",
+  "admin_search.intro": "[Á śéáŕćȟ ƀáćķéńď áńśŵéŕś {#code}ÞÓŚŤ /ǚ1/śéáŕćȟ/\\{backend\\}{/code} — áń áúťȟéńťíćáťéď, ḿéťéŕíńǧ þáśśťȟŕóúǧȟ: ťȟé ǧáťéŵáý ćóúńťś ťȟé ŕéǫúéśť, áťťáćȟéś ťȟé ƀáćķéńď'ś óŵń ćŕéďéńťíáľ, áńď ƒóŕŵáŕďś ťȟé ćáľľéŕ'ś ƀóďý ťó ťȟé ǚéńďóŕ ǚéŕƀáťíḿ, ŕéťúŕńíńǧ ťȟé ǚéńďóŕ'ś áńśŵéŕ ǚéŕƀáťíḿ (ÁĎŔ 0071). Ɓáćķéńďś áŕé áƀśéńť ƒŕóḿ {#code}/ǚ1/ḿóďéľś{/code} úńľéśś á ćľíéńť áśķś ƒóŕ ťȟéḿ éẋþľíćíťľý, śó ńó óťȟéŕ ćľíéńť ŵíľľ ḿíśťáķé óńé ƒóŕ á ćȟáť ḿóďéľ. Ŵȟó ḿáý śéáŕćȟ íś ťȟé ǧŕáńť ƀéľóŵ; ȟóŵ ḿúćȟ ťȟéý ḿáý śéáŕćȟ íś á ŕéǫúéśť ćéíľíńǧ óń Ǫúóťáś.]",
+  "admin_search.backends_card": "[Ɓáćķéńďś]",
+  "admin_search.loading_backends": "[Ĺóáďíńǧ ƀáćķéńďś]",
+  "admin_search.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ƀáćķéńď]",
+        "countPlural=other": "[{n} ƀáćķéńďś]"
+      }
+    }
+  ],
+  "admin_search.state.none": "[ńóńé ýéť — áďď ťȟé ƒíŕśť óńé]",
+  "admin_search.state.active": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} áćťíǚé]"
+      }
+    }
+  ],
+  "admin_search.add_backend": "[Áďď ƀáćķéńď]",
+  "admin_search.backends_empty": "[Ńó ƀáćķéńďś ýéť.]",
+  "admin_search.grants_heading": "[Ŵȟó ḿáý śéáŕćȟ]",
+  "admin_search.grants_body": "[Óńé ǧŕáńť þéŕ ƀáćķéńď — ćŕéáťíńǧ ťȟé ƀáćķéńď ḿáďé íťś ŕóŵ. Ŵȟáť ťȟé ćáľľéŕ śéńďś íńśíďé ťȟé ƀóďý (á ďéþťȟ, á ŕéśúľť ćóúńť) íś ťȟé ǚéńďóŕ'ś óŵń þŕíćíńǧ, ńóť á ďéćíśíóń ťȟíś śćŕééń ḿáķéś.]",
+  "admin_search.loading_tiers": "[Ĺóáďíńǧ ťíéŕś]",
+  "admin_search.tier_column.grants": "[Ǧŕóúþś ťȟáť ḿáý ŕúń íť]",
+  "admin_search.no_groups_yet": "[ńó ǧŕóúþś ýéť]",
+  "admin_search.tiers_empty": "[Ńó ƀáćķéńďś ýéť. Áďď óńé áƀóǚé.]",
+  "admin_search.policy_heading": "[Ŵȟíćȟ ƀáćķéńď éáćȟ ǧŕóúþ śéáŕćȟéś ťȟŕóúǧȟ]",
+  "admin_search.policy_body": "[Ťȟé þóľíćý ƀéȟíńď {#code}ÞÓŚŤ /ǚ1/śéáŕćȟ{/code} (ńó ƀáćķéńď íń ťȟé þáťȟ): óńé ŕéǫúéśť śȟáþé íń, óńé áńśŵéŕ śȟáþé óúť, ťȟŕóúǧȟ éẋáćťľý ťȟíś ƀáćķéńď áť íťś ďéƒáúľť ďéþťȟ. Óńľý ƀáćķéńďś ťȟé ǧŕóúþ íś ǧŕáńťéď áƀóǚé áŕé óƒƒéŕéď — á ǧŕóúþ ŵíťȟ ńóńé śéť ćáńńóť úśé ťȟé úńíƒíéď ŕóúťé áť áľľ.]",
+  "admin_search.policy_error.title": "[Ćóúľď ńóť śéť ťȟé śéáŕćȟ ƀáćķéńď]",
+  "admin_search.loading_groups": "[Ĺóáďíńǧ ǧŕóúþś]",
+  "admin_search.group_column.group": "[Ǧŕóúþ]",
+  "admin_search.group_column.backend": "[Śéáŕćȟéś ťȟŕóúǧȟ]",
+  "admin_search.backend_for_group": "[Śéáŕćȟ ƀáćķéńď ƒóŕ {group}]",
+  "admin_search.backend_unset": "[Úńśéť — ńó úńíƒíéď śéáŕćȟ]",
+  "admin_search.groups_empty": "[Ńó ǧŕóúþś ýéť.]",
+  "admin_search.toast.updated": "[Ɓáćķéńď úþďáťéď]",
+  "admin_search.toast.update_failed": "[Ćóúľď ńóť úþďáťé ťȟé ƀáćķéńď]",
+  "admin_search.toast.added": "[Ɓáćķéńď áďďéď]",
+  "admin_search.toast.add_failed": "[Ćóúľď ńóť áďď ťȟé ƀáćķéńď]",
+  "admin_search.dialog.edit_title": "[Éďíť {provider}]",
+  "admin_search.dialog.add_title": "[Áďď á śéáŕćȟ ƀáćķéńď]",
+  "admin_search.dialog.cancel": "[Ćáńćéľ]",
+  "admin_search.dialog.save": "[Śáǚé]",
+  "admin_search.dialog.add": "[Áďď]",
+  "admin_search.field.vendor": "[Ǚéńďóŕ]",
+  "admin_search.field.vendor_hint": "[Ťȟé éńďþóíńť áńď ťȟé ćŕéďéńťíáľ śćȟéḿé áŕé ťȟé ǚéńďóŕ'ś óŵń — ćóńƒíǧúŕéď ȟéŕé, ńóť ťýþéď áńýŵȟéŕé.]",
+  "admin_search.field.vendor_choose": "[Ćȟóóśé á ǚéńďóŕ…]",
+  "admin_search.field.endpoint": "[Éńďþóíńť]",
+  "admin_search.field.endpoint_hint": "[Ŵȟíćȟ óƒ ťȟé ǚéńďóŕ'ś ďóćúḿéńťéď ȟóśťś ťȟé śéáŕćȟéś ǧó ťó.]",
+  "admin_search.field.api_key": "[ÁÞÍ ķéý]",
+  "admin_search.field.api_key_placeholder_unset": "[úńśéť]",
+  "admin_search.field.api_key_placeholder": "[þáśťé ťȟé ǚéńďóŕ'ś ķéý]",
+  "admin_search.field.api_key_hint_edit": "[Ĺéáǚé éḿþťý ťó ķééþ ťȟé śťóŕéď ķéý; ťíćķ ťó ŕéḿóǚé íť.]",
+  "admin_search.field.api_key_hint_new": "[Śťóŕéď éńćŕýþťéď; śȟóŵń ƀáćķ óńľý áś á ȟíńť.]",
+  "admin_search.field.remove_key": "[Ŕéḿóǚé ťȟé śťóŕéď ķéý]",
+  "admin_search.delete.title": "[Ďéľéťé {backend}]",
+  "admin_search.delete.title_fallback": "[ťȟíś ƀáćķéńď]",
+  "admin_search.delete.toast_plain": "[Ɓáćķéńď ďéľéťéď]",
+  "admin_search.delete.toast_with_groups": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "input groups"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[Ɓáćķéńď ďéľéťéď — {groups} ľóśť íťś úńíƒíéď-śéáŕćȟ þóľíćý]",
+        "countPlural=other": "[Ɓáćķéńď ďéľéťéď — {groups} ľóśť ťȟéíŕ úńíƒíéď-śéáŕćȟ þóľíćý]"
+      }
+    }
+  ],
+  "admin_search.delete.toast_failed": "[Ćóúľď ńóť ďéľéťé ťȟé ƀáćķéńď]",
+  "admin_search.delete.confirm": "[Ďéľéťé þéŕḿáńéńťľý]",
+  "admin_search.delete.body": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[Ŕéḿóǚéś ťȟé ƀáćķéńď áńď íťś {n} ťíéŕ ƒŕóḿ ťȟé ǧáťéŵáý óúťŕíǧȟť. Ćáľľéŕś óƒ {#code}ÞÓŚŤ /ǚ1/śéáŕćȟ/\\{backend\\}{/code} ǧéť \"úńķńóŵń ƀáćķéńď\" ƒŕóḿ ťȟé ńéẋť ŕéǫúéśť óń, áńď ǧŕóúþś śéáŕćȟíńǧ ťȟŕóúǧȟ íť ľóśé ťȟéíŕ úńíƒíéď-śéáŕćȟ þóľíćý. Ťȟíś ćáńńóť ƀé úńďóńé.]",
+        "countPlural=other": "[Ŕéḿóǚéś ťȟé ƀáćķéńď áńď íťś {n} ťíéŕś ƒŕóḿ ťȟé ǧáťéŵáý óúťŕíǧȟť. Ćáľľéŕś óƒ {#code}ÞÓŚŤ /ǚ1/śéáŕćȟ/\\{backend\\}{/code} ǧéť \"úńķńóŵń ƀáćķéńď\" ƒŕóḿ ťȟé ńéẋť ŕéǫúéśť óń, áńď ǧŕóúþś śéáŕćȟíńǧ ťȟŕóúǧȟ íť ľóśé ťȟéíŕ úńíƒíéď-śéáŕćȟ þóľíćý. Ťȟíś ćáńńóť ƀé úńďóńé.]"
+      }
+    }
+  ],
+  "admin_search.delete.spend_note": "[Ŕéćóŕďéď śþéńď íś úńáƒƒéćťéď: þáśť śéáŕćȟéś ķééþ ťȟéíŕ áťťŕíƀúťíóń íń ťȟé ľéďǧéŕ.]",
+  "admin_search.unknown_error": "[Úńķńóŵń éŕŕóŕ.]"
 }

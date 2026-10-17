@@ -41,7 +41,7 @@ const MESSAGES = join(APP, "messages");
  * the same commit that converts it — and the heuristic below is there to catch
  * the text that slips back in afterwards.
  */
-const CONVERTED_FILES = ["src/routes/NotFound.tsx", "src/routes/Login.tsx", "src/components/RequireAdmin.tsx", "src/components/OpencodeSetup.tsx", "src/routes/Admin.tsx", "src/components/Disclosures.tsx", "src/components/SubjectPicker.tsx", "src/components/CapabilityPicker.tsx", "src/routes/AdminReports.tsx", "src/routes/Reports.tsx", "src/routes/AdminRedactionRule.tsx", "src/routes/IdentityDirectory.tsx", "src/routes/AdminIdentity.tsx", "src/components/Shell.tsx", "src/components/PolicyFields.tsx", "src/routes/AdminProviders.tsx"];
+const CONVERTED_FILES = ["src/routes/NotFound.tsx", "src/routes/Login.tsx", "src/components/RequireAdmin.tsx", "src/components/OpencodeSetup.tsx", "src/routes/Admin.tsx", "src/components/Disclosures.tsx", "src/components/SubjectPicker.tsx", "src/components/CapabilityPicker.tsx", "src/routes/AdminReports.tsx", "src/routes/Reports.tsx", "src/routes/AdminRedactionRule.tsx", "src/routes/IdentityDirectory.tsx", "src/routes/AdminIdentity.tsx", "src/components/Shell.tsx", "src/components/PolicyFields.tsx", "src/routes/AdminProviders.tsx", "src/routes/AdminSearch.tsx"];
 
 /** Props whose string value is read by a person, one way or another. */
 const TEXT_PROPS = ["title", "placeholder", "aria-label", "alt", "label"];
@@ -121,9 +121,11 @@ async function usedKeys(files) {
   const used = new Map();
   // `m["not_found.body"]` — the form the compiler emits for a dotted key.
   const bracket = /\bm\[\s*"([^"]+)"\s*\]/g;
-  // `m.something` — a key with no dots, and the only other shape a message can
-  // be reached by.
-  const dotted = /\bm\.([A-Za-z_][A-Za-z0-9_]*)/g;
+  // `m.something(...)` — a key with no dots, and the other shape a message can
+  // be reached by. The call parenthesis is what keeps it apart from a lambda
+  // parameter: `.filter((m) => m.kind === "search")` has an `m` in it, and
+  // every file that imports the catalogue would then fail its own check.
+  const dotted = /\bm\.([A-Za-z_][A-Za-z0-9_]*)\s*\(/g;
   // `m` is a common enough name for a lambda parameter — `(m) => m.kind` in a
   // table filter reads exactly like a message — so only a file that imported
   // the catalogue is searched at all.
