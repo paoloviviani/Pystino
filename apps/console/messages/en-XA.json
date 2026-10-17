@@ -584,5 +584,57 @@
   "pattern_template.url_with_password.description": "[ÚŔĹ ŵíťȟ áń éḿƀéďďéď þáśśŵóŕď.]",
   "pattern_template.uuid.description": "[Úńíǚéŕśáľľý úńíǫúé íďéńťíƒíéŕ, óƒťéń á śéśśíóń óŕ ćóŕŕéľáťíóń ÍĎ.]",
   "pattern_template.internal_ticket.description": "[Śȟóŕť þŕéƒíẋéď ťíćķéť óŕ íśśúé ŕéƒéŕéńćé.]",
-  "pattern_template.date_of_birth.description": "[Ćáľéńďáŕ ďáťé íń ďáý-ḿóńťȟ-ýéáŕ óŕďéŕ.]"
+  "pattern_template.date_of_birth.description": "[Ćáľéńďáŕ ďáťé íń ďáý-ḿóńťȟ-ýéáŕ óŕďéŕ.]",
+  "period.month.january": "[Ĵáńúáŕý]",
+  "period.month.february": "[Ƒéƀŕúáŕý]",
+  "period.month.march": "[Ḿáŕćȟ]",
+  "period.month.april": "[Áþŕíľ]",
+  "period.month.may": "[Ḿáý]",
+  "period.month.june": "[Ĵúńé]",
+  "period.month.july": "[Ĵúľý]",
+  "period.month.august": "[Áúǧúśť]",
+  "period.month.september": "[Śéþťéḿƀéŕ]",
+  "period.month.october": "[Óćťóƀéŕ]",
+  "period.month.november": "[Ńóǚéḿƀéŕ]",
+  "period.month.december": "[Ďéćéḿƀéŕ]",
+  "period.month_with_year": [
+    {
+      "declarations": [
+        "input month"
+      ],
+      "match": {
+        "*": "[{month} {year}]"
+      }
+    }
+  ],
+  "period.month_with_year_current": [
+    {
+      "declarations": [
+        "input month"
+      ],
+      "match": {
+        "*": "[{month} {year} (ćúŕŕéńť)]"
+      }
+    }
+  ],
+  "period.quarter": [
+    {
+      "declarations": [
+        "input quarter"
+      ],
+      "match": {
+        "*": "[Ǫ{quarter} {year}]"
+      }
+    }
+  ],
+  "period.year": [
+    {
+      "declarations": [
+        "input year"
+      ],
+      "match": {
+        "*": "[{year} (ýéáŕ)]"
+      }
+    }
+  ]
 }

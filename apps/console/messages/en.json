@@ -584,5 +584,57 @@
   "pattern_template.url_with_password.description": "URL with an embedded password.",
   "pattern_template.uuid.description": "Universally unique identifier, often a session or correlation ID.",
   "pattern_template.internal_ticket.description": "Short prefixed ticket or issue reference.",
-  "pattern_template.date_of_birth.description": "Calendar date in day-month-year order."
+  "pattern_template.date_of_birth.description": "Calendar date in day-month-year order.",
+  "period.month.january": "January",
+  "period.month.february": "February",
+  "period.month.march": "March",
+  "period.month.april": "April",
+  "period.month.may": "May",
+  "period.month.june": "June",
+  "period.month.july": "July",
+  "period.month.august": "August",
+  "period.month.september": "September",
+  "period.month.october": "October",
+  "period.month.november": "November",
+  "period.month.december": "December",
+  "period.month_with_year": [
+    {
+      "declarations": [
+        "input month"
+      ],
+      "match": {
+        "*": "{month} {year}"
+      }
+    }
+  ],
+  "period.month_with_year_current": [
+    {
+      "declarations": [
+        "input month"
+      ],
+      "match": {
+        "*": "{month} {year} (current)"
+      }
+    }
+  ],
+  "period.quarter": [
+    {
+      "declarations": [
+        "input quarter"
+      ],
+      "match": {
+        "*": "Q{quarter} {year}"
+      }
+    }
+  ],
+  "period.year": [
+    {
+      "declarations": [
+        "input year"
+      ],
+      "match": {
+        "*": "{year} (year)"
+      }
+    }
+  ]
 }
