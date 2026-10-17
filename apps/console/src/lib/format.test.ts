@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   formatDate,
   formatDateTime,
@@ -9,43 +9,55 @@ import {
 } from "./format";
 
 /**
- * The formatters exist so that the shape of a figure follows the language the
- * console is in, not the language of the browser. What is pinned here is
- * therefore two things: that each one is an `Intl` call on the base locale
- * (compared against the same call made directly, which is the only honest way
- * to say "English formatting"), and that the plural inside a duration is the
- * formatter's business rather than a branch in a screen.
+ * The formatters exist so that every screen prints a date or a count the same
+ * way, instead of each growing its own `toLocale*` call.
+ *
+ * What is pinned here is the decision they currently carry: the locale is the
+ * browser's, which is what the screens did before they had these helpers, and
+ * not the catalogue's. That is a choice that will be reversed when a second
+ * language exists, and it is invisible on a machine whose browser already says
+ * English — so the last test asserts what was passed to `Intl` rather than what
+ * came out.
  */
 
 // Local noon, so that no timezone on a CI machine can move the date.
 const DAY = new Date(2026, 9, 16, 12);
+const DATE_STYLE = { year: "numeric", month: "short", day: "numeric" } as const;
+const SHORT_DATE_STYLE = { month: "short", day: "numeric" } as const;
+const DATE_TIME_STYLE = {
+  year: "numeric",
+  month: "short",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+} as const;
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.resetModules();
+});
 
 describe("dates", () => {
-  it("formats a date in the console's locale, not the browser's", () => {
-    expect(formatDate(DAY)).toBe(
-      new Intl.DateTimeFormat("en", { year: "numeric", month: "short", day: "numeric" }).format(DAY),
-    );
-    expect(formatDate(DAY)).toBe("Oct 16, 2026");
+  it("formats a date the way the browser's locale writes it", () => {
+    expect(formatDate(DAY)).toBe(new Intl.DateTimeFormat(undefined, DATE_STYLE).format(DAY));
   });
 
   it("drops the year for a figure known to be recent", () => {
-    expect(formatShortDate(DAY)).toBe("Oct 16");
+    expect(formatShortDate(DAY)).toBe(new Intl.DateTimeFormat(undefined, SHORT_DATE_STYLE).format(DAY));
   });
 
   it("adds the time of day to the minute", () => {
-    // The exact glyphs are the platform's: 12:00 and 12:00 PM are both correct,
-    // and which one appears is not the console's decision to make.
-    expect(formatDateTime(DAY)).toMatch(/Oct 16, 2026.*12:00/);
+    expect(formatDateTime(DAY)).toBe(new Intl.DateTimeFormat(undefined, DATE_TIME_STYLE).format(DAY));
   });
 
   it("accepts the ISO string the API sends", () => {
-    expect(formatDate(new Date(2026, 9, 16, 12).toISOString())).toBe("Oct 16, 2026");
+    expect(formatDate(new Date(2026, 9, 16, 12).toISOString())).toBe(formatDate(DAY));
   });
 });
 
 describe("numbers", () => {
-  it("groups digits the way the active locale does", () => {
-    expect(formatNumber(1_234_567)).toBe("1,234,567");
+  it("groups digits the way the browser's locale does", () => {
+    expect(formatNumber(1_234_567)).toBe(new Intl.NumberFormat(undefined).format(1_234_567));
   });
 });
 
@@ -53,8 +65,9 @@ describe("durations", () => {
   it("pluralizes the unit itself", () => {
     // The console used to write this as `value === 1 ? "hour" : `${value}
     // hours`` in more than one screen, which is a rule about English.
-    expect(formatDuration(1, "hour")).toBe("1 hour");
-    expect(formatDuration(6, "hour")).toBe("6 hours");
+    const long = { style: "unit", unit: "hour", unitDisplay: "long" } as const;
+    expect(formatDuration(1, "hour")).toBe(new Intl.NumberFormat(undefined, long).format(1));
+    expect(formatDuration(6, "hour")).toBe(new Intl.NumberFormat(undefined, long).format(6));
   });
 });
 
@@ -62,16 +75,48 @@ describe("relative time", () => {
   const now = new Date(2026, 9, 16, 12);
 
   it("uses the coarsest unit that still says something", () => {
-    expect(formatRelative(new Date(2026, 9, 13, 12), now)).toBe("3 days ago");
-    expect(formatRelative(new Date(2026, 9, 9, 12), now)).toBe("last week");
-    expect(formatRelative(new Date(2026, 9, 16, 11), now)).toBe("1 hour ago");
+    // The unit boundaries are the console's decision; the wording is the
+    // browser's, so it is compared rather than spelled out.
+    const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+    expect(formatRelative(new Date(2026, 9, 13, 12), now)).toBe(relative.format(-3, "day"));
+    expect(formatRelative(new Date(2026, 9, 16, 11), now)).toBe(relative.format(-1, "hour"));
   });
 
   it("counts seconds rather than rounding to now", () => {
-    expect(formatRelative(new Date(2026, 9, 16, 11, 59, 50), now)).toBe("10 seconds ago");
+    const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+    expect(formatRelative(new Date(2026, 9, 16, 11, 59, 50), now)).toBe(relative.format(-10, "second"));
   });
 
   it("says what is ahead of the reader as well as what is behind", () => {
-    expect(formatRelative(new Date(2026, 9, 18, 12), now)).toBe("in 2 days");
+    const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+    expect(formatRelative(new Date(2026, 9, 18, 12), now)).toBe(relative.format(2, "day"));
+  });
+});
+
+describe("the locale it is given", () => {
+  it("is the browser's, not the catalogue's, and not \"en\" either", async () => {
+    // Everything above compares against an `Intl` call with `undefined`, which
+    // on a machine whose browser already says English cannot tell `undefined`
+    // from `"en"`. This one watches the constructor instead.
+    vi.resetModules();
+    const seen: unknown[] = [];
+    const realDates = Intl.DateTimeFormat;
+    const realNumbers = Intl.NumberFormat;
+    vi.stubGlobal("Intl", {
+      ...Intl,
+      // `function`, not an arrow: the console calls these with `new`.
+      DateTimeFormat: function (locale?: string | string[], options?: Intl.DateTimeFormatOptions) {
+        seen.push(locale);
+        return new realDates(locale, options);
+      },
+      NumberFormat: function (locale?: string | string[], options?: Intl.NumberFormatOptions) {
+        seen.push(locale);
+        return new realNumbers(locale, options);
+      },
+    });
+    const fresh = await import("./format");
+    fresh.formatDate(DAY);
+    fresh.formatNumber(1_234);
+    expect(seen).toEqual([undefined, undefined]);
   });
 });

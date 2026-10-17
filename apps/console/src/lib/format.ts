@@ -1,52 +1,64 @@
-import { activeLocale } from "./locale";
-
 /**
  * Every date, number and duration the console shows, in one place.
  *
- * Screens used to call `toLocaleString()` with `undefined` as the locale, which
- * is the *browser's* language — so a reader whose browser is set to German saw
- * German formatting inside an English console, and the same console rendered
- * two different date columns on two machines. These helpers name the locale
- * explicitly, and it is the one the console is actually in: the catalogue's
- * locale, so the language of the words and the shape of the figures are
- * decided together. A future `<de>` catalogue therefore brings German
- * formatting with it, without a screen changing.
+ * The locale here is `undefined`, which is what every screen already passed to
+ * `toLocaleString()` and `toLocaleDateString()`: the browser's own language.
+ * That is deliberate for now, and it is the one thing here that will change
+ * with a translation. English is the only catalogue the console ships, so
+ * switching these to the catalogue's locale would change what a reader sees
+ * today — a reader whose browser says German gets German date formats in an
+ * English console, and would suddenly get English ones. Nobody asked for that
+ * as part of adding a message catalogue, and a change nobody asked for is
+ * still a change.
+ *
+ * **When a second language exists, pass `getLocale()` from lib/locale instead
+ * of `undefined`, and update the three tests that compare against an `Intl`
+ * call.** Then the language of the words and the shape of the figures are
+ * decided together, and the helper's callers do not change.
  *
  * None of them take a locale argument. A formatter that can be handed the
  * wrong locale is a formatter that will be, the first time somebody needs
  * "the reader's locale" for one field and "the console's" for the next.
+ *
+ * Money is not here at all: an amount stays a string from the API to
+ * `formatMoney` in packages/ui, and nothing in the console may parse one.
  */
 
 type Primitive = string | number | Date;
 
 /**
  * `Intl` constructors are not free and a screen re-renders a lot, so each one
- * is built once per (locale, style). The locale is part of the key: it is
- * fixed for the life of a page, and a cache that outlived a change of it would
- * be a screen in one language showing another language's figures.
+ * is built once per style. The locale is not in the key because it is not ours
+ * to name: it is the browser's, and it cannot change under a page that has
+ * already loaded. When it becomes `getLocale()`, add it back to the key — a
+ * locale the reader can change without a reload is exactly the case a cache
+ * keyed without it gets wrong.
+ *
+ * `BROWSER` stands in for that unnamed locale as the one key.
  */
+const BROWSER = "browser";
+
 const dates = new Map<string, Intl.DateTimeFormat>();
 const numbers = new Map<string, Intl.NumberFormat>();
 const relatives = new Map<string, Intl.RelativeTimeFormat>();
 
 function dateFormatter(style: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  const key = JSON.stringify([activeLocale(), style]);
-  const built = dates.get(key) ?? new Intl.DateTimeFormat(activeLocale(), style);
+  const key = JSON.stringify(style);
+  const built = dates.get(key) ?? new Intl.DateTimeFormat(undefined, style);
   dates.set(key, built);
   return built;
 }
 
 function numberFormatter(style?: Intl.NumberFormatOptions): Intl.NumberFormat {
-  const key = JSON.stringify([activeLocale(), style]);
-  const built = numbers.get(key) ?? new Intl.NumberFormat(activeLocale(), style);
+  const key = JSON.stringify(style);
+  const built = numbers.get(key) ?? new Intl.NumberFormat(undefined, style);
   numbers.set(key, built);
   return built;
 }
 
 function relativeFormatter(): Intl.RelativeTimeFormat {
-  const key = activeLocale();
-  const built = relatives.get(key) ?? new Intl.RelativeTimeFormat(key, { numeric: "auto" });
-  relatives.set(key, built);
+  const built = relatives.get(BROWSER) ?? new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  relatives.set(BROWSER, built);
   return built;
 }
 
@@ -75,11 +87,10 @@ function toNumber(value: Primitive): number {
 
 /**
  * A date, the way the tables and detail panels have always shown one —
- * `Oct 16, 2026` in English, `16 Oct 2026` in Italian, whatever the console's
- * language is.
- *
- * The style is not a preference, it is what every existing screen prints, and
- * a column of mixed date formats is harder to read than a uniform one.
+ * `Oct 16, 2026` for a reader in the United States, `16 Oct 2026` for one in
+ * Italy. The style is not a preference, it is what every existing screen
+ * prints, and a column of mixed date formats is harder to read than a
+ * uniform one.
  */
 export function formatDate(value: Primitive): string {
   return dateFormatter(DATE_STYLE).format(toDate(value));
@@ -100,8 +111,8 @@ export function formatDateTime(value: Primitive): string {
 }
 
 /**
- * A count, grouped the way the active locale groups: `1,234,567` in English,
- * `1.234.567` in German, `1 234 567` in French.
+ * A count, grouped the way the reader's browser groups: `1,234,567` in
+ * English, `1.234.567` in German, `1 234 567` in French.
  */
 export function formatNumber(value: number): string {
   return numberFormatter().format(value);
