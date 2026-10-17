@@ -46,6 +46,16 @@ is the provisioning policy: who may come to exist, which claim names their
 groups, what an IdP group means here, and what new groups start with
 ([Chat-only people](identity.md#chat-only-people)).
 
+The **Models** screen's **Discover** button reads a provider's catalogue and
+offers its models for import. A model the provider lists without a price is
+listed too, marked *No price yet*: tick it and a price field opens on the row —
+per million tokens, or per page for an OCR model — and typing one there is what
+makes the row importable; the import records it in the price history as a price
+entered by hand. If the provider (or the community file) turns out to publish a
+price after all, theirs is the one that is kept and the result says your
+figure was not used. See
+[Importing models from a provider's catalogue](gateway.md#importing-models-from-a-providers-catalogue).
+
 **Reasons are optional.** Every form that offers one (resetting a quota, merging
 users, a redaction rule, the sign-in policy) labels the field *Reason
 (optional)*; a reason you give is kept in the audit log.

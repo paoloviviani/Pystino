@@ -128,6 +128,37 @@ Two consequences worth knowing:
 - a plugin that does not read a cost reports none, which is the safe default —
   see [Accounting and quotas](accounting-and-quotas.md#three-cost-figures-one-meaning-each).
 
+### Importing models from a provider's catalogue
+
+`GET /api/admin/models/discover` compares a provider's catalogue with what this
+deployment serves and answers with rows to adopt, rows we still serve that the
+provider has dropped, and the models the provider listed and left unpriced.
+`POST /api/admin/models/import` adopts the rows an administrator names — never
+"import everything"; the allowlist stays a human decision — and grants no
+access: a newly imported model is invisible until a group is granted it.
+
+A model the provider lists **unpriced** is refused by the import, and the
+refusal stands: an unpriced model serves happily and records a cost of zero,
+which is a quiet way to give away money. What the import does accept is a price
+the operator supplies with the request — `manual_price` on the model item, the
+same amounts and money-as-string shape the model page's price form posts
+(`input_per_mtok` and `output_per_mtok` per million tokens, `per_page` for an
+OCR model, and an optional `currency` that defaults to the gateway's billing
+currency and is refused in any other, never converted). The price must carry
+the rates the kind is metered on — a chat model an input and an output rate, an
+embedding model an input rate, an OCR model a page rate; a search tier takes no
+price at all, because its meter counts requests. Each kind's missing rate is
+refused per item, so one bad price does not lose the rest of the batch.
+
+A catalogue price — the provider's own, or one the community file supplied when
+the import was made with `fill_missing_prices` — always outranks a hand-typed
+one: the counterparty's figure is the one that will actually invoice. When a
+manual price is set aside for that reason, the import result says so in its
+`reason`. Whichever figure was written, the append-only price history records
+where it came from: `catalogue`, `community`, or `manual` for one a person
+typed (ADR 0053), which is what makes a wrong figure traceable to the choice
+that took it.
+
 ## Document extraction: which formats are read
 
 `POST /v1/ocr` against the deployment's own extractor reads documents that

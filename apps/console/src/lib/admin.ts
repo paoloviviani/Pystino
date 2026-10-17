@@ -24,6 +24,7 @@ import type {
   MergeInput,
   MergePreview,
   MergeResult,
+  ModelImportItem,
   ModelImportResponse,
   OidcPolicy,
   OidcPolicyInput,
@@ -581,12 +582,14 @@ export function useImportModels() {
   return useMutation({
     mutationFn: ({
       providerId,
-      upstreamModels,
+      models,
       fillMissingPrices = false,
       tag = "",
     }: {
       providerId: string;
-      upstreamModels: string[];
+      // One entry per ticked row: the upstream id, and — for a row the
+      // provider listed and nobody prices — the price typed on the row itself.
+      models: ModelImportItem[];
       // Both must match what discovery was shown with, or the prices written
       // would not be the prices reviewed — and with the wrong tag the model
       // would not be in the catalogue the import reads at all.
@@ -600,9 +603,11 @@ export function useImportModels() {
         {
           method: "POST",
           body: {
-            models: upstreamModels.map((upstream_model) => ({
-              upstream_model,
-            })),
+            models: models.map((item) =>
+              item.manual_price
+                ? { upstream_model: item.upstream_model, manual_price: item.manual_price }
+                : { upstream_model: item.upstream_model },
+            ),
           },
         },
       ),
