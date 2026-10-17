@@ -37,5 +37,20 @@
   "admin.sections.web_search.title": "[Ŵéƀ śéáŕćȟ]",
   "admin.sections.web_search.description": "[Ťȟé śéáŕćȟ ƀáćķéńďś, ŵȟó ḿáý ŕúń ťȟéḿ, áńď ȟóŵ ḿáńý śéáŕćȟéś éáćȟ ǧŕóúþ ȟáś śþéńť.]",
   "admin.sections.settings.title": "[Śéťťíńǧś]",
-  "admin.sections.settings.description": "[Ťȟé ḿáíľ śéŕǚéŕ, ťȟé íďéńťíťý þŕóǚíďéŕś, áńď ŵȟó ḿáý ƀéćóḿé á úśéŕ.]"
+  "admin.sections.settings.description": "[Ťȟé ḿáíľ śéŕǚéŕ, ťȟé íďéńťíťý þŕóǚíďéŕś, áńď ŵȟó ḿáý ƀéćóḿé á úśéŕ.]",
+  "disclosures.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{count} ńóťé áƀóúť ťȟéśé ƒíǧúŕéś]",
+        "countPlural=other": "[{count} ńóťéś áƀóúť ťȟéśé ƒíǧúŕéś]"
+      }
+    }
+  ]
 }

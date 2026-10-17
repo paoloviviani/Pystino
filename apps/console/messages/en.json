@@ -37,5 +37,20 @@
   "admin.sections.web_search.title": "Web search",
   "admin.sections.web_search.description": "The search backends, who may run them, and how many searches each group has spent.",
   "admin.sections.settings.title": "Settings",
-  "admin.sections.settings.description": "The mail server, the identity providers, and who may become a user."
+  "admin.sections.settings.description": "The mail server, the identity providers, and who may become a user.",
+  "disclosures.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} note about these figures",
+        "countPlural=other": "{count} notes about these figures"
+      }
+    }
+  ]
 }

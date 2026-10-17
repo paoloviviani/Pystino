@@ -3,6 +3,7 @@ import { useId, useState } from "react";
 import { Notice } from "@llmp/ui";
 
 import { DISCLOSURES } from "../lib/layout";
+import { m } from "../paraglide/messages.js";
 
 export interface DisclosuresProps {
   /** The report's disclosure strings. Nothing renders when there are none. */
@@ -56,7 +57,6 @@ export function Disclosures({ notes, storageKey }: DisclosuresProps) {
   if (notes.length === 0) return null;
 
   const [first] = notes;
-  const count = notes.length === 1 ? "1 note about these figures" : `${notes.length} notes about these figures`;
 
   return (
     <div className={DISCLOSURES}>
@@ -74,7 +74,10 @@ export function Disclosures({ notes, storageKey }: DisclosuresProps) {
           }
           className="flex w-full cursor-pointer items-center gap-2 text-left"
         >
-          <span className="shrink-0 font-semibold">{count} ·</span>
+          {/* The middot separates the count from the note it stands for; it is
+              punctuation rather than a word, and reads the same in every
+              language a translator would be writing here. */}
+          <span className="shrink-0 font-semibold">{m["disclosures.count"]({ count: notes.length })} ·</span>
           <span className="min-w-0 flex-1 truncate">{first}</span>
           {/* The Select's chevron (Field.tsx): the same 16-grid inline SVG,
               drawn beside the control rather than invented here. It turns to
@@ -94,8 +97,9 @@ export function Disclosures({ notes, storageKey }: DisclosuresProps) {
         </button>
       </Notice>
       <div id={contentId} hidden={!open} className="[&>*+*]:mt-2">
-        {/* The API's own wording, verbatim. Restating a caveat in the UI is
-            how the two end up disagreeing about what the number means. */}
+        {/* i18n: server text — the API's own wording, verbatim. Restating a
+            caveat in the UI is how the two end up disagreeing about what the
+            number means. */}
         {notes.map((note) => (
           <Notice key={note} tone="warn">
             {note}
