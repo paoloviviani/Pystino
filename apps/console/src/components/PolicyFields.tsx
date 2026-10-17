@@ -316,7 +316,7 @@ function PatternTemplatesDialog({
                   <Badge>{template.kind === "credential" ? "Credential" : "Identifier"}</Badge>
                   <Badge>{template.mode === "block" ? "Block" : "Redact"}</Badge>
                 </div>
-                <p className={`m-0 text-sm ${MUTED}`}>{template.description}</p>
+                <p className={`m-0 text-sm ${MUTED}`}>{template.description()}</p>
                 <code className={CODE}>{template.regex}</code>
               </div>
               <Button

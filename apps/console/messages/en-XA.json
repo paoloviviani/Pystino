@@ -563,5 +563,26 @@
         "*": "[{label} — {hint}]"
       }
     }
-  ]
+  ],
+  "pattern_template.openai_key.description": "[ÓþéńÁÍ-śťýľé śéćŕéť ķéý.]",
+  "pattern_template.aws_access_key_id.description": "[ÁŴŚ áććéśś-ķéý íďéńťíƒíéŕ.]",
+  "pattern_template.github_token.description": "[ǦíťȞúƀ ťóķéń ŵíťȟ á þúƀľíśȟéď þŕéƒíẋ.]",
+  "pattern_template.github_fine_grained_token.description": "[ǦíťȞúƀ ƒíńé-ǧŕáíńéď þéŕśóńáľ áććéśś ťóķéń.]",
+  "pattern_template.gitlab_token.description": "[ǦíťĹáƀ þéŕśóńáľ áććéśś ťóķéń.]",
+  "pattern_template.slack_token.description": "[Śľáćķ ťóķéń ŵíťȟ á þúƀľíśȟéď þŕéƒíẋ.]",
+  "pattern_template.google_api_key.description": "[Ǧóóǧľé ÁÞÍ ķéý.]",
+  "pattern_template.stripe_secret_key.description": "[Śťŕíþé ľíǚé óŕ ťéśť śéćŕéť ķéý.]",
+  "pattern_template.hugging_face_token.description": "[Ȟúǧǧíńǧ Ƒáćé áććéśś ťóķéń.]",
+  "pattern_template.telegram_bot_token.description": "[Ťéľéǧŕáḿ ƀóť ťóķéń.]",
+  "pattern_template.sendgrid_api_key.description": "[ŚéńďǦŕíď ÁÞÍ ķéý.]",
+  "pattern_template.npm_token.description": "[ńþḿ áććéśś ťóķéń.]",
+  "pattern_template.pypi_token.description": "[ÞýÞÍ ÁÞÍ ťóķéń.]",
+  "pattern_template.private_key.description": "[ÞÉḾ þŕíǚáťé-ķéý ȟéáďéŕ.]",
+  "pattern_template.bearer_token.description": "[ĴŴŤ ƀý śȟáþé: ťȟŕéé ďóť-śéþáŕáťéď ƀáśé64úŕľ śéǧḿéńťś.]",
+  "pattern_template.bearer_token_opaque.description": "[Áúťȟóŕíźáťíóń ȟéáďéŕ ćáŕŕýíńǧ á ńóń-ĴŴŤ ƀéáŕéŕ ťóķéń.]",
+  "pattern_template.basic_auth_header.description": "[ȞŤŤÞ Ɓáśíć ćŕéďéńťíáľ.]",
+  "pattern_template.url_with_password.description": "[ÚŔĹ ŵíťȟ áń éḿƀéďďéď þáśśŵóŕď.]",
+  "pattern_template.uuid.description": "[Úńíǚéŕśáľľý úńíǫúé íďéńťíƒíéŕ, óƒťéń á śéśśíóń óŕ ćóŕŕéľáťíóń ÍĎ.]",
+  "pattern_template.internal_ticket.description": "[Śȟóŕť þŕéƒíẋéď ťíćķéť óŕ íśśúé ŕéƒéŕéńćé.]",
+  "pattern_template.date_of_birth.description": "[Ćáľéńďáŕ ďáťé íń ďáý-ḿóńťȟ-ýéáŕ óŕďéŕ.]"
 }

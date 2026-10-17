@@ -563,5 +563,26 @@
         "*": "{label} — {hint}"
       }
     }
-  ]
+  ],
+  "pattern_template.openai_key.description": "OpenAI-style secret key.",
+  "pattern_template.aws_access_key_id.description": "AWS access-key identifier.",
+  "pattern_template.github_token.description": "GitHub token with a published prefix.",
+  "pattern_template.github_fine_grained_token.description": "GitHub fine-grained personal access token.",
+  "pattern_template.gitlab_token.description": "GitLab personal access token.",
+  "pattern_template.slack_token.description": "Slack token with a published prefix.",
+  "pattern_template.google_api_key.description": "Google API key.",
+  "pattern_template.stripe_secret_key.description": "Stripe live or test secret key.",
+  "pattern_template.hugging_face_token.description": "Hugging Face access token.",
+  "pattern_template.telegram_bot_token.description": "Telegram bot token.",
+  "pattern_template.sendgrid_api_key.description": "SendGrid API key.",
+  "pattern_template.npm_token.description": "npm access token.",
+  "pattern_template.pypi_token.description": "PyPI API token.",
+  "pattern_template.private_key.description": "PEM private-key header.",
+  "pattern_template.bearer_token.description": "JWT by shape: three dot-separated base64url segments.",
+  "pattern_template.bearer_token_opaque.description": "Authorization header carrying a non-JWT bearer token.",
+  "pattern_template.basic_auth_header.description": "HTTP Basic credential.",
+  "pattern_template.url_with_password.description": "URL with an embedded password.",
+  "pattern_template.uuid.description": "Universally unique identifier, often a session or correlation ID.",
+  "pattern_template.internal_ticket.description": "Short prefixed ticket or issue reference.",
+  "pattern_template.date_of_birth.description": "Calendar date in day-month-year order."
 }
