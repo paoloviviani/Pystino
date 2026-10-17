@@ -42,14 +42,15 @@
     {
       "declarations": [
         "input count",
-        "local countPlural = count: plural"
+        "local countPlural = count: plural",
+        "local n = count: number"
       ],
       "selectors": [
         "countPlural"
       ],
       "match": {
-        "countPlural=one": "[{count} ńóťé áƀóúť ťȟéśé ƒíǧúŕéś]",
-        "countPlural=other": "[{count} ńóťéś áƀóúť ťȟéśé ƒíǧúŕéś]"
+        "countPlural=one": "[{n} ńóťé áƀóúť ťȟéśé ƒíǧúŕéś]",
+        "countPlural=other": "[{n} ńóťéś áƀóúť ťȟéśé ƒíǧúŕéś]"
       }
     }
   ],

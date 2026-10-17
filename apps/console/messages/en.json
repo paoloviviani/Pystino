@@ -42,14 +42,15 @@
     {
       "declarations": [
         "input count",
-        "local countPlural = count: plural"
+        "local countPlural = count: plural",
+        "local n = count: number"
       ],
       "selectors": [
         "countPlural"
       ],
       "match": {
-        "countPlural=one": "{count} note about these figures",
-        "countPlural=other": "{count} notes about these figures"
+        "countPlural=one": "{n} note about these figures",
+        "countPlural=other": "{n} notes about these figures"
       }
     }
   ],
