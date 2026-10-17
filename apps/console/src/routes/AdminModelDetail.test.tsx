@@ -183,6 +183,48 @@ describe("AdminModelDetail", () => {
     ).toBeInTheDocument();
   });
 
+  it("sends an edited display name to the API", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { bodies: [], prices: [] };
+    vi.stubGlobal("fetch", routes(model({ display_name: null }), [price()], captured));
+    renderScreen();
+    await ready();
+
+    const field = screen.getByLabelText("Display name");
+    await user.clear(field);
+    await user.type(field, "Fast summariser");
+    await user.click(screen.getByRole("button", { name: "Save display name" }));
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies[0] as Record<string, unknown>;
+    expect(body.display_name).toBe("Fast summariser");
+  });
+
+  it("clears a display name back to the name callers send", async () => {
+    const user = userEvent.setup({ delay: null });
+    const captured: Captured = { bodies: [], prices: [] };
+    vi.stubGlobal("fetch", routes(model({ display_name: "Fast summariser" }), [price()], captured));
+    renderScreen();
+    await ready();
+
+    await user.click(screen.getByRole("button", { name: "Clear display name" }));
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies[0] as Record<string, unknown>;
+    expect(body.display_name).toBeNull();
+  });
+
+  it("shows the display name callers are given, and which name they send", async () => {
+    vi.stubGlobal("fetch", routes(model({ display_name: "Fast summariser" })));
+    renderScreen();
+    await ready();
+
+    // Both, because they answer different questions: the id is what a request
+    // must carry, the display name is what a picker shows.
+    expect(screen.getByLabelText("Display name")).toHaveValue("Fast summariser");
+    expect(screen.getByText("fast-summariser", { selector: "code" })).toBeInTheDocument();
+  });
+
   it("sends an edited capability set to the API", async () => {
     const user = userEvent.setup({ delay: null });
     const captured: Captured = { bodies: [], prices: [] };

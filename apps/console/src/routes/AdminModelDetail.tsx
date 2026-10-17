@@ -100,6 +100,21 @@ function ModelPage({ model }: { model: AdminModel }) {
   const navigate = useNavigate();
   const toast = useOptionalToast();
   const [confirming, setConfirming] = useState(false);
+  // The name callers send is the identity of the model — a request carries it,
+  // every report is grouped by it — so it is shown, never edited here. What an
+  // operator names freely is the display name, which is what a picker shows.
+  const [displayName, setDisplayName] = useState(model.display_name ?? "");
+  const displayNameSaved = (displayName.trim() || null) === (model.display_name ?? null);
+
+  function saveDisplayName(value: string | null) {
+    update.mutate(
+      { id: model.id, display_name: value },
+      {
+        onSuccess: () => toast?.add({ title: "Display name saved", type: "success" }),
+        onError: () => toast?.add({ title: "Could not save the display name", type: "error" }),
+      },
+    );
+  }
 
   return (
     <div className={PAGE}>
@@ -228,6 +243,37 @@ function ModelPage({ model }: { model: AdminModel }) {
           </Detail>
           <Detail label="Name callers send">
             <code className={CODE}>{model.name}</code>
+          </Detail>
+          <Detail label="Display name">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="min-w-48 flex-1">
+                <Input
+                  label="Display name"
+                  value={displayName}
+                  placeholder={model.name}
+                  onChange={(event) => setDisplayName(event.target.value)}
+                  hint="What a client shows in a model picker, from /v1/models. Empty means the name above. It never changes what callers send."
+                />
+              </div>
+              <Button
+                busy={update.isPending}
+                disabled={displayNameSaved}
+                onClick={() => saveDisplayName(displayName.trim() || null)}
+              >
+                Save display name
+              </Button>
+              {model.display_name && (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setDisplayName("");
+                    saveDisplayName(null);
+                  }}
+                >
+                  Clear display name
+                </Button>
+              )}
+            </div>
           </Detail>
           <Detail label="Upstream model">
             <code className={CODE}>{model.upstream_model}</code>
