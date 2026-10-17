@@ -72,5 +72,10 @@
   "subject_picker.noun.model": "Model",
   "subject_picker.noun.group": "Group",
   "subject_picker.noun.user": "User",
-  "subject_picker.noun.api_key": "API key"
+  "subject_picker.noun.api_key": "API key",
+  "capabilities.not_stated": "not stated",
+  "capability_picker.other_placeholder": "comma separated",
+  "capability_picker.gloss.image": "vision",
+  "capability_picker.gloss.tools": "function calling",
+  "capability_picker.gloss.json_mode": "structured output"
 }

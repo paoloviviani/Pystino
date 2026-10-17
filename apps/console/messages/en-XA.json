@@ -72,5 +72,10 @@
   "subject_picker.noun.model": "[Ḿóďéľ]",
   "subject_picker.noun.group": "[Ǧŕóúþ]",
   "subject_picker.noun.user": "[Úśéŕ]",
-  "subject_picker.noun.api_key": "[ÁÞÍ ķéý]"
+  "subject_picker.noun.api_key": "[ÁÞÍ ķéý]",
+  "capabilities.not_stated": "[ńóť śťáťéď]",
+  "capability_picker.other_placeholder": "[ćóḿḿá śéþáŕáťéď]",
+  "capability_picker.gloss.image": "[ǚíśíóń]",
+  "capability_picker.gloss.tools": "[ƒúńćťíóń ćáľľíńǧ]",
+  "capability_picker.gloss.json_mode": "[śťŕúćťúŕéď óúťþúť]"
 }

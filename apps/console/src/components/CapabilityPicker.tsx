@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import type { AdminModel } from "../lib/types";
 import { CHIPS, CHECK_ITEM, CHECK_LIST, FIELD_LABEL, MUTED } from "../lib/layout";
+import { m } from "../paraglide/messages.js";
 
 /**
  * Everything about *describing* a model's capabilities, shared by the three
@@ -32,7 +33,7 @@ export function Capabilities({ model }: { model: AdminModel }) {
   const shown = [...inputs, ...model.supported_features];
 
   if (shown.length === 0) {
-    return <span className={MUTED}>not stated</span>;
+    return <span className={MUTED}>{m["capabilities.not_stated"]()}</span>;
   }
   return (
     <div className={CHIPS}>
@@ -50,9 +51,14 @@ export const asList = (value: string): string[] =>
     .filter(Boolean);
 
 export interface Vocabulary {
+  /** An enum value the API sends and receives. Never translated. */
   value: string;
-  /** A plain-English name for a value whose own name does not give it away. */
-  gloss?: string;
+  /**
+   * A plain-English name for a value whose own name does not give it away, as
+   * a message function: these are read inside a label, and a string in a
+   * module-level constant is frozen against the language the page loaded in.
+   */
+  gloss?: () => string;
 }
 
 /**
@@ -77,7 +83,7 @@ export interface Vocabulary {
  */
 export const KNOWN_INPUTS: readonly Vocabulary[] = [
   { value: "text" },
-  { value: "image", gloss: "vision" },
+  { value: "image", gloss: m["capability_picker.gloss.image"] },
   { value: "audio" },
 ];
 
@@ -88,8 +94,8 @@ export const KNOWN_OUTPUTS: readonly Vocabulary[] = [
 ];
 
 export const KNOWN_FEATURES: readonly Vocabulary[] = [
-  { value: "tools", gloss: "function calling" },
-  { value: "json_mode", gloss: "structured output" },
+  { value: "tools", gloss: m["capability_picker.gloss.tools"] },
+  { value: "json_mode", gloss: m["capability_picker.gloss.json_mode"] },
   { value: "reasoning" },
 ];
 
@@ -171,7 +177,7 @@ export function CapabilityPicker({
             />
             <span>
               {entry.value}
-              {entry.gloss && <span className={MUTED}> ({entry.gloss})</span>}
+              {entry.gloss && <span className={MUTED}> ({entry.gloss()})</span>}
             </span>
           </label>
         ))}
@@ -186,7 +192,7 @@ export function CapabilityPicker({
             event.target.value,
           );
         }}
-        placeholder="comma separated"
+        placeholder={m["capability_picker.other_placeholder"]()}
         hint={hint}
       />
     </fieldset>
