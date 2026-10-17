@@ -345,5 +345,69 @@
   "identity_directory.save_failed": "Could not save",
   "identity_directory.pending.detail": "Not signed in yet",
   "identity_directory.pending.all_accounted": "Everyone the directory lists has an account.",
-  "identity_directory.pending.groups_label": "Groups at first sign-in"
+  "identity_directory.pending.groups_label": "Groups at first sign-in",
+  "admin_identity.join_mode.open.label": "Open",
+  "admin_identity.join_mode.open.hint": "Anyone who signs in through the identity provider gets an active account at once.",
+  "admin_identity.join_mode.approval.label": "Approval",
+  "admin_identity.join_mode.approval.hint": "A first-time sign-in creates a disabled account in the Users page's Awaiting-approval queue; you enable the people you want.",
+  "admin_identity.join_mode.invite.label": "Invite",
+  "admin_identity.join_mode.invite.hint": "Only people you invited (or a directory pushed) can sign in. Everyone else is refused.",
+  "admin_identity.join_mode.group.label": "Group",
+  "admin_identity.join_mode.group.hint": "Only members of the required groups may sign in — checked at every sign-in and every API call.",
+  "admin_identity.toast.join_mode_updated": "Join mode updated",
+  "admin_identity.toast.save_failed": "Could not save",
+  "admin_identity.toast.preview_failed": "Could not preview the change",
+  "admin_identity.loading": "Loading the identity policy",
+  "admin_identity.load_error.title": "Could not load the identity policy",
+  "admin_identity.load_error.unknown": "Unknown error.",
+  "admin_identity.source.here": "set here",
+  "admin_identity.source.env": "set in .env",
+  "admin_identity.who_may_join": "Who may join",
+  "admin_identity.join_mode_note": "Join mode {source}. Administrators are never refused by this gate, so a wrong group cannot lock you out.",
+  "admin_identity.needs_groups.title": "Pick at least one required group first",
+  "admin_identity.needs_groups.body": "A group gate with no groups refuses everyone who is not an administrator — including the account that would fix it.",
+  "admin_identity.required_groups": "Required groups",
+  "admin_identity.group.unmapped": "No IdP group maps to this: only members added here or by SCIM count.",
+  "admin_identity.group.none": "No groups yet. An identity provider's name must first be mapped on the Groups page.",
+  "admin_identity.group.local_note": "Local group names. Required groups {source}.",
+  "admin_identity.save_groups": "Save access groups",
+  "admin_identity.fallback.label": "Someone without a required group",
+  "admin_identity.fallback.hint.refuse": "They are refused and told to ask an administrator.",
+  "admin_identity.fallback.hint.approval": "Their account is created disabled, waiting in the approval queue.",
+  "admin_identity.fallback.refuse": "Refuse them",
+  "admin_identity.fallback.approval": "Hold them for approval",
+  "admin_identity.preview.title": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} person will lose access at their next request",
+        "countPlural=other": "{n} people will lose access at their next request"
+      }
+    }
+  ],
+  "admin_identity.preview.exempt": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} administrator is exempt.",
+        "countPlural=other": "{n} administrators are exempt."
+      }
+    }
+  ],
+  "admin_identity.preview.save_anyway": "Save anyway",
+  "admin_identity.preview.go_back": "Go back"
 }

@@ -345,5 +345,69 @@
   "identity_directory.save_failed": "[Ćóúľď ńóť śáǚé]",
   "identity_directory.pending.detail": "[Ńóť śíǧńéď íń ýéť]",
   "identity_directory.pending.all_accounted": "[Éǚéŕýóńé ťȟé ďíŕéćťóŕý ľíśťś ȟáś áń áććóúńť.]",
-  "identity_directory.pending.groups_label": "[Ǧŕóúþś áť ƒíŕśť śíǧń-íń]"
+  "identity_directory.pending.groups_label": "[Ǧŕóúþś áť ƒíŕśť śíǧń-íń]",
+  "admin_identity.join_mode.open.label": "[Óþéń]",
+  "admin_identity.join_mode.open.hint": "[Áńýóńé ŵȟó śíǧńś íń ťȟŕóúǧȟ ťȟé íďéńťíťý þŕóǚíďéŕ ǧéťś áń áćťíǚé áććóúńť áť óńćé.]",
+  "admin_identity.join_mode.approval.label": "[Áþþŕóǚáľ]",
+  "admin_identity.join_mode.approval.hint": "[Á ƒíŕśť-ťíḿé śíǧń-íń ćŕéáťéś á ďíśáƀľéď áććóúńť íń ťȟé Úśéŕś þáǧé'ś Áŵáíťíńǧ-áþþŕóǚáľ ǫúéúé; ýóú éńáƀľé ťȟé þéóþľé ýóú ŵáńť.]",
+  "admin_identity.join_mode.invite.label": "[Íńǚíťé]",
+  "admin_identity.join_mode.invite.hint": "[Óńľý þéóþľé ýóú íńǚíťéď (óŕ á ďíŕéćťóŕý þúśȟéď) ćáń śíǧń íń. Éǚéŕýóńé éľśé íś ŕéƒúśéď.]",
+  "admin_identity.join_mode.group.label": "[Ǧŕóúþ]",
+  "admin_identity.join_mode.group.hint": "[Óńľý ḿéḿƀéŕś óƒ ťȟé ŕéǫúíŕéď ǧŕóúþś ḿáý śíǧń íń — ćȟéćķéď áť éǚéŕý śíǧń-íń áńď éǚéŕý ÁÞÍ ćáľľ.]",
+  "admin_identity.toast.join_mode_updated": "[Ĵóíń ḿóďé úþďáťéď]",
+  "admin_identity.toast.save_failed": "[Ćóúľď ńóť śáǚé]",
+  "admin_identity.toast.preview_failed": "[Ćóúľď ńóť þŕéǚíéŵ ťȟé ćȟáńǧé]",
+  "admin_identity.loading": "[Ĺóáďíńǧ ťȟé íďéńťíťý þóľíćý]",
+  "admin_identity.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé íďéńťíťý þóľíćý]",
+  "admin_identity.load_error.unknown": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_identity.source.here": "[śéť ȟéŕé]",
+  "admin_identity.source.env": "[śéť íń .éńǚ]",
+  "admin_identity.who_may_join": "[Ŵȟó ḿáý ĵóíń]",
+  "admin_identity.join_mode_note": "[Ĵóíń ḿóďé {source}. Áďḿíńíśťŕáťóŕś áŕé ńéǚéŕ ŕéƒúśéď ƀý ťȟíś ǧáťé, śó á ŵŕóńǧ ǧŕóúþ ćáńńóť ľóćķ ýóú óúť.]",
+  "admin_identity.needs_groups.title": "[Þíćķ áť ľéáśť óńé ŕéǫúíŕéď ǧŕóúþ ƒíŕśť]",
+  "admin_identity.needs_groups.body": "[Á ǧŕóúþ ǧáťé ŵíťȟ ńó ǧŕóúþś ŕéƒúśéś éǚéŕýóńé ŵȟó íś ńóť áń áďḿíńíśťŕáťóŕ — íńćľúďíńǧ ťȟé áććóúńť ťȟáť ŵóúľď ƒíẋ íť.]",
+  "admin_identity.required_groups": "[Ŕéǫúíŕéď ǧŕóúþś]",
+  "admin_identity.group.unmapped": "[Ńó ÍďÞ ǧŕóúþ ḿáþś ťó ťȟíś: óńľý ḿéḿƀéŕś áďďéď ȟéŕé óŕ ƀý ŚĆÍḾ ćóúńť.]",
+  "admin_identity.group.none": "[Ńó ǧŕóúþś ýéť. Áń íďéńťíťý þŕóǚíďéŕ'ś ńáḿé ḿúśť ƒíŕśť ƀé ḿáþþéď óń ťȟé Ǧŕóúþś þáǧé.]",
+  "admin_identity.group.local_note": "[Ĺóćáľ ǧŕóúþ ńáḿéś. Ŕéǫúíŕéď ǧŕóúþś {source}.]",
+  "admin_identity.save_groups": "[Śáǚé áććéśś ǧŕóúþś]",
+  "admin_identity.fallback.label": "[Śóḿéóńé ŵíťȟóúť á ŕéǫúíŕéď ǧŕóúþ]",
+  "admin_identity.fallback.hint.refuse": "[Ťȟéý áŕé ŕéƒúśéď áńď ťóľď ťó áśķ áń áďḿíńíśťŕáťóŕ.]",
+  "admin_identity.fallback.hint.approval": "[Ťȟéíŕ áććóúńť íś ćŕéáťéď ďíśáƀľéď, ŵáíťíńǧ íń ťȟé áþþŕóǚáľ ǫúéúé.]",
+  "admin_identity.fallback.refuse": "[Ŕéƒúśé ťȟéḿ]",
+  "admin_identity.fallback.approval": "[Ȟóľď ťȟéḿ ƒóŕ áþþŕóǚáľ]",
+  "admin_identity.preview.title": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} þéŕśóń ŵíľľ ľóśé áććéśś áť ťȟéíŕ ńéẋť ŕéǫúéśť]",
+        "countPlural=other": "[{n} þéóþľé ŵíľľ ľóśé áććéśś áť ťȟéíŕ ńéẋť ŕéǫúéśť]"
+      }
+    }
+  ],
+  "admin_identity.preview.exempt": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} áďḿíńíśťŕáťóŕ íś éẋéḿþť.]",
+        "countPlural=other": "[{n} áďḿíńíśťŕáťóŕś áŕé éẋéḿþť.]"
+      }
+    }
+  ],
+  "admin_identity.preview.save_anyway": "[Śáǚé áńýŵáý]",
+  "admin_identity.preview.go_back": "[Ǧó ƀáćķ]"
 }

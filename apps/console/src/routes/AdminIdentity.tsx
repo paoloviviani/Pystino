@@ -25,28 +25,30 @@ import {
 } from "../lib/admin";
 import type { JoinMode, OidcPolicyInput } from "../lib/types";
 import { FORM } from "../lib/layout";
+import { m } from "../paraglide/messages.js";
 import { useOptionalToast } from "../lib/toast";
 
-const JOIN_MODES: { value: JoinMode; label: string; hint: string }[] = [
+/** Message functions, not strings: this list is built once, at import. */
+const JOIN_MODES: { value: JoinMode; label: () => string; hint: () => string }[] = [
   {
     value: "open",
-    label: "Open",
-    hint: "Anyone who signs in through the identity provider gets an active account at once.",
+    label: m["admin_identity.join_mode.open.label"],
+    hint: m["admin_identity.join_mode.open.hint"],
   },
   {
     value: "approval",
-    label: "Approval",
-    hint: "A first-time sign-in creates a disabled account in the Users page's Awaiting-approval queue; you enable the people you want.",
+    label: m["admin_identity.join_mode.approval.label"],
+    hint: m["admin_identity.join_mode.approval.hint"],
   },
   {
     value: "invite",
-    label: "Invite",
-    hint: "Only people you invited (or a directory pushed) can sign in. Everyone else is refused.",
+    label: m["admin_identity.join_mode.invite.label"],
+    hint: m["admin_identity.join_mode.invite.hint"],
   },
   {
     value: "group",
-    label: "Group",
-    hint: "Only members of the required groups may sign in — checked at every sign-in and every API call.",
+    label: m["admin_identity.join_mode.group.label"],
+    hint: m["admin_identity.join_mode.group.hint"],
   },
 ];
 
@@ -94,7 +96,8 @@ export function ProvisioningPolicySection() {
       },
       onError: (caught: unknown) => {
         toast?.add({
-          title: caught instanceof Error ? caught.message : "Could not save",
+          // i18n: server text — the gateway's own error message.
+          title: caught instanceof Error ? caught.message : m["admin_identity.toast.save_failed"](),
           type: "error",
         });
         resetToPolicy();
@@ -120,16 +123,17 @@ export function ProvisioningPolicySection() {
                 required_groups: groups,
                 group_fallback: fallback,
               },
-              "Join mode updated",
+              m["admin_identity.toast.join_mode_updated"](),
             );
           }
         },
         onError: (caught: unknown) =>
           toast?.add({
+            // i18n: server text — the gateway's own error message.
             title:
               caught instanceof Error
                 ? caught.message
-                : "Could not preview the change",
+                : m["admin_identity.toast.preview_failed"](),
             type: "error",
           }),
       },
@@ -153,7 +157,7 @@ export function ProvisioningPolicySection() {
         : mode === "approval"
           ? { join_mode: "approval" }
           : { join_mode: "invite" },
-      "Join mode updated",
+      m["admin_identity.toast.join_mode_updated"](),
     );
   };
 
@@ -182,7 +186,7 @@ export function ProvisioningPolicySection() {
           required_groups: requiredGroups,
           group_fallback: fallback,
         },
-        "Join mode updated",
+        m["admin_identity.toast.join_mode_updated"](),
       );
     }
   };
@@ -191,12 +195,13 @@ export function ProvisioningPolicySection() {
     return (
       <Card>
         {policy.isPending ? (
-          <Spinner label="Loading the identity policy" />
+          <Spinner label={m["admin_identity.loading"]()} />
         ) : (
-          <Notice tone="danger" title="Could not load the identity policy">
+          <Notice tone="danger" title={m["admin_identity.load_error.title"]()}>
+            {/* i18n: server text — the API's own error message. */}
             {policy.error instanceof Error
               ? policy.error.message
-              : "Unknown error."}
+              : m["admin_identity.load_error.unknown"]()}
           </Notice>
         )}
       </Card>
@@ -204,18 +209,21 @@ export function ProvisioningPolicySection() {
   }
 
   const sourceOf = (field: string) =>
-    policy.data?.sources[field] === "console" ? "set here" : "set in .env";
+    policy.data?.sources[field] === "console"
+      ? m["admin_identity.source.here"]()
+      : m["admin_identity.source.env"]();
 
   return (
     <div className={FORM}>
       {save.error ? (
-        <Notice tone="danger" title="Could not save">
-          {save.error instanceof Error ? save.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_identity.toast.save_failed"]()}>
+          {/* i18n: server text — the gateway's own error message. */}
+          {save.error instanceof Error ? save.error.message : m["admin_identity.load_error.unknown"]()}
         </Notice>
       ) : null}
 
       <fieldset>
-        <legend className="p-0 text-sm">Who may join</legend>
+        <legend className="p-0 text-sm">{m["admin_identity.who_may_join"]()}</legend>
         <div className="flex flex-col gap-2">
           {JOIN_MODES.map((mode) => (
             <label
@@ -231,30 +239,28 @@ export function ProvisioningPolicySection() {
                 className="mt-[0.2em] accent-accent"
               />
               <span>
-                {mode.label}
+                {mode.label()}
                 <span className="mt-0.5 block text-xs text-ink-faint">
-                  {mode.hint}
+                  {mode.hint()}
                 </span>
               </span>
             </label>
           ))}
         </div>
         <p className="mt-1 text-xs text-ink-faint">
-          Join mode {sourceOf("join_mode")}. Administrators are never refused by
-          this gate, so a wrong group cannot lock you out.
+          {m["admin_identity.join_mode_note"]({ source: sourceOf("join_mode") })}
         </p>
       </fieldset>
 
       {joinMode === "group" ? (
         <>
           {needsGroups ? (
-            <Notice tone="warn" title="Pick at least one required group first">
-              A group gate with no groups refuses everyone who is not an
-              administrator — including the account that would fix it.
+            <Notice tone="warn" title={m["admin_identity.needs_groups.title"]()}>
+              {m["admin_identity.needs_groups.body"]()}
             </Notice>
           ) : null}
           <fieldset>
-            <legend className="p-0 text-sm">Required groups</legend>
+            <legend className="p-0 text-sm">{m["admin_identity.required_groups"]()}</legend>
             <div className="flex flex-col gap-1.5">
               {(groups.data?.items ?? []).map((group) => {
                 // The mapping-only rule: a claimed name reaches the group only
@@ -285,8 +291,7 @@ export function ProvisioningPolicySection() {
                     </label>
                     {chosen && !mapped ? (
                       <p className="text-xs text-ink-faint">
-                        No IdP group maps to this: only members added here or by
-                        SCIM count.
+                        {m["admin_identity.group.unmapped"]()}
                       </p>
                     ) : null}
                   </div>
@@ -294,14 +299,10 @@ export function ProvisioningPolicySection() {
               })}
             </div>
             {(groups.data?.items ?? []).length === 0 ? (
-              <p className="text-xs text-ink-faint">
-                No groups yet. An identity provider's name must first be mapped
-                on the Groups page.
-              </p>
+              <p className="text-xs text-ink-faint">{m["admin_identity.group.none"]()}</p>
             ) : (
               <p className="text-xs text-ink-faint">
-                Local group names. Required groups {sourceOf("required_groups")}
-                .
+                {m["admin_identity.group.local_note"]({ source: sourceOf("required_groups") })}
               </p>
             )}
             {/* Saving is explicit for the set: no intermediate gate is ever
@@ -315,25 +316,25 @@ export function ProvisioningPolicySection() {
                   saveGroupMode("group", requiredGroups, groupFallback)
                 }
               >
-                Save access groups
+                {m["admin_identity.save_groups"]()}
               </Button>
             </div>
           </fieldset>
 
           <Select
-            label="Someone without a required group"
+            label={m["admin_identity.fallback.label"]()}
             value={groupFallback}
             onChange={(event) =>
               changeFallback(event.target.value as "refuse" | "approval")
             }
             hint={
               groupFallback === "refuse"
-                ? "They are refused and told to ask an administrator."
-                : "Their account is created disabled, waiting in the approval queue."
+                ? m["admin_identity.fallback.hint.refuse"]()
+                : m["admin_identity.fallback.hint.approval"]()
             }
           >
-            <option value="refuse">Refuse them</option>
-            <option value="approval">Hold them for approval</option>
+            <option value="refuse">{m["admin_identity.fallback.refuse"]()}</option>
+            <option value="approval">{m["admin_identity.fallback.approval"]()}</option>
           </Select>
         </>
       ) : null}
@@ -341,15 +342,9 @@ export function ProvisioningPolicySection() {
       {preview.data && preview.data.would_be_refused > 0 ? (
         <Notice
           tone="warn"
-          title={`${preview.data.would_be_refused} ${
-            preview.data.would_be_refused === 1 ? "person" : "people"
-          } will lose access at their next request`}
+          title={m["admin_identity.preview.title"]({ count: preview.data.would_be_refused })}
         >
-          {preview.data.admins_exempt}{" "}
-          {preview.data.admins_exempt === 1
-            ? "administrator is"
-            : "administrators are"}{" "}
-          exempt.
+          {m["admin_identity.preview.exempt"]({ count: preview.data.admins_exempt })}
           <div className="mt-2 flex gap-2">
             <Button
               variant="primary"
@@ -361,13 +356,13 @@ export function ProvisioningPolicySection() {
                     required_groups: requiredGroups,
                     group_fallback: groupFallback,
                   },
-                  "Join mode updated",
+                  m["admin_identity.toast.join_mode_updated"](),
                 )
               }
             >
-              Save anyway
+              {m["admin_identity.preview.save_anyway"]()}
             </Button>
-            <Button onClick={() => preview.reset()}>Go back</Button>
+            <Button onClick={() => preview.reset()}>{m["admin_identity.preview.go_back"]()}</Button>
           </div>
         </Notice>
       ) : null}
