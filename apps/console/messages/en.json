@@ -78,5 +78,81 @@
   "capability_picker.other_placeholder": "comma separated",
   "capability_picker.gloss.image": "vision",
   "capability_picker.gloss.tools": "function calling",
-  "capability_picker.gloss.json_mode": "structured output"
+  "capability_picker.gloss.json_mode": "structured output",
+  "admin_reports.title": "Reports",
+  "admin_reports.subtitle": "Spend over a calendar period, for chargeback.",
+  "admin_reports.filters": "Filters",
+  "admin_reports.filter.period": "Period",
+  "admin_reports.filter.breakdown": "Breakdown",
+  "admin_reports.filter.group": "Group",
+  "admin_reports.filter.model": "Model",
+  "admin_reports.filter.all_groups": "All groups",
+  "admin_reports.filter.all_models": "All models",
+  "admin_reports.breakdown.group": "By group",
+  "admin_reports.breakdown.user": "By user",
+  "admin_reports.breakdown.model": "By model",
+  "admin_reports.breakdown.api_key": "By API key",
+  "admin_reports.breakdown.day": "By day",
+  "admin_reports.breakdown.total": "Total only",
+  "admin_reports.column.requests": "Requests",
+  "admin_reports.column.tokens": "Tokens",
+  "admin_reports.column.images": "Images",
+  "admin_reports.column.cost": "Spend",
+  "admin_reports.running": "Running the report",
+  "admin_reports.error.title": "Could not run the report",
+  "admin_reports.error.unknown": "Unknown error.",
+  "admin_reports.stat.spend": "Spend · {period}",
+  "admin_reports.stat.period_detail": "{timezone} calendar period",
+  "admin_reports.stat.requests": "Requests",
+  "admin_reports.stat.tokens_detail": "{tokens: number} tokens",
+  "admin_reports.stat.tokens_and_images_detail": "{tokens: number} tokens, {images: number} images",
+  "admin_reports.stat.measured": "Measured",
+  "admin_reports.stat.measured_detail.complete": "exact usage from the provider",
+  "admin_reports.stat.measured_detail.incomplete": "the rest is estimated or missing",
+  "admin_reports.breakdown_card": "Breakdown",
+  "admin_reports.row_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} row",
+        "countPlural=other": "{n} rows"
+      }
+    }
+  ],
+  "admin_reports.summary_detail": "{period} · {breakdown}",
+  "admin_reports.export_csv": "Export CSV",
+  "admin_reports.empty": "No usage in this period.",
+  "admin_reports.caption": "Spend for {period}, {breakdown}.",
+  "admin_reports.caption_period_fallback": "the period",
+  "admin_reports.heading.group": "Group",
+  "admin_reports.heading.user": "User",
+  "admin_reports.heading.model": "Model",
+  "admin_reports.heading.api_key": "API key",
+  "admin_reports.heading.day": "Day",
+  "admin_reports.heading.total": "All",
+  "admin_reports.heading.other": "Item",
+  "admin_reports.heading_lower.group": "group",
+  "admin_reports.heading_lower.user": "user",
+  "admin_reports.heading_lower.model": "model",
+  "admin_reports.heading_lower.api_key": "API key",
+  "admin_reports.heading_lower.day": "day",
+  "admin_reports.heading_lower.total": "all",
+  "admin_reports.heading_lower.other": "item",
+  "admin_reports.stat.measured_value": [
+    {
+      "declarations": [
+        "input percent"
+      ],
+      "match": {
+        "*": "{percent}%"
+      }
+    }
+  ]
 }

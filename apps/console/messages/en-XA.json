@@ -78,5 +78,81 @@
   "capability_picker.other_placeholder": "[ćóḿḿá śéþáŕáťéď]",
   "capability_picker.gloss.image": "[ǚíśíóń]",
   "capability_picker.gloss.tools": "[ƒúńćťíóń ćáľľíńǧ]",
-  "capability_picker.gloss.json_mode": "[śťŕúćťúŕéď óúťþúť]"
+  "capability_picker.gloss.json_mode": "[śťŕúćťúŕéď óúťþúť]",
+  "admin_reports.title": "[Ŕéþóŕťś]",
+  "admin_reports.subtitle": "[Śþéńď óǚéŕ á ćáľéńďáŕ þéŕíóď, ƒóŕ ćȟáŕǧéƀáćķ.]",
+  "admin_reports.filters": "[Ƒíľťéŕś]",
+  "admin_reports.filter.period": "[Þéŕíóď]",
+  "admin_reports.filter.breakdown": "[Ɓŕéáķďóŵń]",
+  "admin_reports.filter.group": "[Ǧŕóúþ]",
+  "admin_reports.filter.model": "[Ḿóďéľ]",
+  "admin_reports.filter.all_groups": "[Áľľ ǧŕóúþś]",
+  "admin_reports.filter.all_models": "[Áľľ ḿóďéľś]",
+  "admin_reports.breakdown.group": "[Ɓý ǧŕóúþ]",
+  "admin_reports.breakdown.user": "[Ɓý úśéŕ]",
+  "admin_reports.breakdown.model": "[Ɓý ḿóďéľ]",
+  "admin_reports.breakdown.api_key": "[Ɓý ÁÞÍ ķéý]",
+  "admin_reports.breakdown.day": "[Ɓý ďáý]",
+  "admin_reports.breakdown.total": "[Ťóťáľ óńľý]",
+  "admin_reports.column.requests": "[Ŕéǫúéśťś]",
+  "admin_reports.column.tokens": "[Ťóķéńś]",
+  "admin_reports.column.images": "[Íḿáǧéś]",
+  "admin_reports.column.cost": "[Śþéńď]",
+  "admin_reports.running": "[Ŕúńńíńǧ ťȟé ŕéþóŕť]",
+  "admin_reports.error.title": "[Ćóúľď ńóť ŕúń ťȟé ŕéþóŕť]",
+  "admin_reports.error.unknown": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_reports.stat.spend": "[Śþéńď · {period}]",
+  "admin_reports.stat.period_detail": "[{timezone} ćáľéńďáŕ þéŕíóď]",
+  "admin_reports.stat.requests": "[Ŕéǫúéśťś]",
+  "admin_reports.stat.tokens_detail": "[{tokens: number} ťóķéńś]",
+  "admin_reports.stat.tokens_and_images_detail": "[{tokens: number} ťóķéńś, {images: number} íḿáǧéś]",
+  "admin_reports.stat.measured": "[Ḿéáśúŕéď]",
+  "admin_reports.stat.measured_detail.complete": "[éẋáćť úśáǧé ƒŕóḿ ťȟé þŕóǚíďéŕ]",
+  "admin_reports.stat.measured_detail.incomplete": "[ťȟé ŕéśť íś éśťíḿáťéď óŕ ḿíśśíńǧ]",
+  "admin_reports.breakdown_card": "[Ɓŕéáķďóŵń]",
+  "admin_reports.row_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ŕóŵ]",
+        "countPlural=other": "[{n} ŕóŵś]"
+      }
+    }
+  ],
+  "admin_reports.summary_detail": "[{period} · {breakdown}]",
+  "admin_reports.export_csv": "[Éẋþóŕť ĆŚǙ]",
+  "admin_reports.empty": "[Ńó úśáǧé íń ťȟíś þéŕíóď.]",
+  "admin_reports.caption": "[Śþéńď ƒóŕ {period}, {breakdown}.]",
+  "admin_reports.caption_period_fallback": "[ťȟé þéŕíóď]",
+  "admin_reports.heading.group": "[Ǧŕóúþ]",
+  "admin_reports.heading.user": "[Úśéŕ]",
+  "admin_reports.heading.model": "[Ḿóďéľ]",
+  "admin_reports.heading.api_key": "[ÁÞÍ ķéý]",
+  "admin_reports.heading.day": "[Ďáý]",
+  "admin_reports.heading.total": "[Áľľ]",
+  "admin_reports.heading.other": "[Íťéḿ]",
+  "admin_reports.heading_lower.group": "[ǧŕóúþ]",
+  "admin_reports.heading_lower.user": "[úśéŕ]",
+  "admin_reports.heading_lower.model": "[ḿóďéľ]",
+  "admin_reports.heading_lower.api_key": "[ÁÞÍ ķéý]",
+  "admin_reports.heading_lower.day": "[ďáý]",
+  "admin_reports.heading_lower.total": "[áľľ]",
+  "admin_reports.heading_lower.other": "[íťéḿ]",
+  "admin_reports.stat.measured_value": [
+    {
+      "declarations": [
+        "input percent"
+      ],
+      "match": {
+        "*": "[{percent}%]"
+      }
+    }
+  ]
 }
