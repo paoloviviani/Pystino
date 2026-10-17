@@ -113,3 +113,7 @@ jobs:
       - run: pnpm --filter @llmp/ui test
       - run: pnpm --filter @llmp/console typecheck
       - run: pnpm --filter @llmp/console test
+      # The console's message catalogue: a key used in code that en.json does
+      # not have, a pseudo-locale out of date with it, or a screen declared
+      # converted that has English left in its JSX. None of those fail a test.
+      - run: pnpm --filter @llmp/console i18n:check
