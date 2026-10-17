@@ -1818,5 +1818,224 @@
       }
     }
   ],
-  "model_detail.access.revoke_note": "Revoking takes effect on the next request."
+  "model_detail.access.revoke_note": "Revoking takes effect on the next request.",
+  "admin_models.section.chat": "Chat",
+  "admin_models.section.chat_description": "/v1/chat/completions, /v1/responses and /v1/messages.",
+  "admin_models.section.embedding": "Embedding",
+  "admin_models.section.embedding_description": "/v1/embeddings. Priced per token, and they generate none.",
+  "admin_models.section.ocr": "Document extraction",
+  "admin_models.section.ocr_description": "/v1/ocr. Priced per page rather than per token.",
+  "admin_models.section.image": "Image",
+  "admin_models.section.image_description": "/v1/images/generations. Often priced per image.",
+  "admin_models.section.other": "Other",
+  "admin_models.section.caption": "{section} models, their current price and who may use them.",
+  "admin_models.column.model": "Model",
+  "admin_models.column.capabilities": "Capabilities",
+  "admin_models.column.provider": "Provider",
+  "admin_models.badge.provider_off": "Provider off",
+  "admin_models.column.price": "Price / Mtok",
+  "admin_models.price.in": [
+    {
+      "declarations": [
+        "input rate"
+      ],
+      "match": {
+        "*": "{rate} in"
+      }
+    }
+  ],
+  "admin_models.price.out": [
+    {
+      "declarations": [
+        "input rate"
+      ],
+      "match": {
+        "*": "{rate} out"
+      }
+    }
+  ],
+  "admin_models.badge.no_price": "No price",
+  "admin_models.column.access": "Access",
+  "admin_models.access.nobody": "nobody",
+  "admin_models.column.status": "Status",
+  "admin_models.badge.active": "Active",
+  "admin_models.badge.inactive": "Inactive",
+  "admin_models.badge.public": "Public",
+  "admin_models.action.edit": "Edit",
+  "admin_models.action.deactivate": "Deactivate",
+  "admin_models.action.activate": "Activate",
+  "admin_models.action.delete": "Delete",
+  "admin_models.toast.updated": "Model updated",
+  "admin_models.toast.update_failed": "Could not update the model",
+  "admin_models.title": "Models",
+  "admin_models.subtitle": "An allowlist: a model is invisible to callers until a group is granted it.",
+  "admin_models.discover": "Discover",
+  "admin_models.add_model": "Add model",
+  "admin_models.load_error.update": "Could not update the model",
+  "admin_models.load_error.delete": "Could not delete the model",
+  "admin_models.unknown_error": "Unknown error.",
+  "admin_models.search": "Search",
+  "admin_models.search_placeholder": "model name or upstream id",
+  "admin_models.search_hint_matching": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} matching"
+      }
+    }
+  ],
+  "admin_models.search_hint_default": "Matches name and upstream id.",
+  "admin_models.loading": "Loading the catalogue",
+  "admin_models.load_error.title": "Could not load the catalogue",
+  "admin_models.empty_query": "No model matches that.",
+  "admin_models.empty": "No models catalogued. Use Discover to see what the provider offers.",
+  "admin_models.caption": "Catalogued models.",
+  "admin_models.noun": "models",
+  "admin_models.delete.title": "Delete {name}",
+  "admin_models.delete.title_fallback": "this model",
+  "admin_models.delete.cancel": "Cancel",
+  "admin_models.delete.confirm": "Delete permanently",
+  "admin_models.delete.toast_done": "Model deleted",
+  "admin_models.delete.toast_failed": "Could not delete the model",
+  "admin_models.delete.body": "Removed from the catalogue and from {#code}/v1/models{/code}; its prices and access grants go with it. Callers asking for {#code}{name}{/code} get \"model not found\" from the next request on. This cannot be undone.",
+  "admin_models.delete.spend_note": "Recorded spend is unaffected: past usage keeps the model's name and stays attributed to the people and groups that ran it.",
+  "admin_models.create.title": "New model",
+  "admin_models.create.cancel": "Cancel",
+  "admin_models.create.submit": "Add",
+  "admin_models.create.toast_done": "Model created",
+  "admin_models.create.toast_failed": "Could not create the model",
+  "admin_models.create.provider": "Provider",
+  "admin_models.create.choose_provider": "Choose an endpoint…",
+  "admin_models.create.no_provider": "No active provider. Add one on the Providers page first.",
+  "admin_models.create.name": "Name",
+  "admin_models.create.name_placeholder": "fast-summariser",
+  "admin_models.create.name_hint": "What callers send as `model`. Cannot be changed later.",
+  "admin_models.create.upstream": "Upstream model",
+  "admin_models.create.upstream_placeholder": "provider/model-id",
+  "admin_models.create.upstream_hint": "What the gateway asks the provider for.",
+  "admin_models.create.kind": "Kind",
+  "admin_models.create.kind_hint": "Which routes will serve it.",
+  "admin_models.kind.chat": "Chat — /v1/chat/completions, /v1/responses, /v1/messages",
+  "admin_models.kind.embedding": "Embedding — /v1/embeddings",
+  "admin_models.kind.image": "Image — /v1/images/generations",
+  "admin_models.create.accepts": "Accepts",
+  "admin_models.create.accepts_other": "Other input modalities",
+  "admin_models.create.accepts_hint": "What can be sent to it.",
+  "admin_models.create.produces": "Produces",
+  "admin_models.create.produces_other": "Other output modalities",
+  "admin_models.create.produces_hint": "What comes back.",
+  "admin_models.create.features": "Features",
+  "admin_models.create.features_other": "Other features",
+  "admin_models.create.features_hint": "Not limited to the boxes above.",
+  "admin_models.create.starting_note": "No group is granted access, and no price is set.",
+  "admin_models.discover.title": "Provider catalogue",
+  "admin_models.discover.close": "Close",
+  "admin_models.discover.toast_done": "Models imported",
+  "admin_models.discover.toast_failed": "Could not import models",
+  "admin_models.discover.import": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "Import {count}"
+      }
+    }
+  ],
+  "admin_models.discover.import_aria": "Import {name}",
+  "admin_models.discover.column.offered": "Offered upstream",
+  "admin_models.discover.badge.blocked": "Cannot import",
+  "admin_models.discover.column.context": "Context",
+  "admin_models.discover.column.price": "Price",
+  "admin_models.discover.per_request": "per request",
+  "admin_models.discover.price_pair": [
+    {
+      "declarations": [
+        "input rin"
+      ],
+      "match": {
+        "*": "{rin} / {rout}"
+      }
+    }
+  ],
+  "admin_models.discover.provider": "Provider",
+  "admin_models.discover.choose_provider": "Choose an endpoint…",
+  "admin_models.discover.tag": "Catalogue tag",
+  "admin_models.discover.tag_hint_live": "Cortecs filters its catalogue by tag and defaults to Instruct — the words above are read live from its catalogue, so a tag added there appears here.",
+  "admin_models.discover.tag_hint_free": "Cortecs filters its catalogue by tag and defaults to Instruct — ask for Embedding or OCR to see those.",
+  "admin_models.discover.tag_default": "Provider default",
+  "admin_models.discover.tag_placeholder": "Instruct",
+  "admin_models.discover.fill_missing": "Fill missing prices from LiteLLM",
+  "admin_models.discover.community_gloss": "(community)",
+  "admin_models.discover.asking": "Asking the provider",
+  "admin_models.discover.load_error.title": "Could not read the provider catalogue",
+  "admin_models.discover.import_finished": "Import finished",
+  "admin_models.discover.result_imported_community": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "{name} imported with a community price"
+      }
+    }
+  ],
+  "admin_models.discover.result_imported_priced": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "{name} imported with its price"
+      }
+    }
+  ],
+  "admin_models.discover.result_imported_unpriced": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "{name} imported — metered per request, no token price"
+      }
+    }
+  ],
+  "admin_models.discover.result_skipped": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "{name} skipped — {reason}"
+      }
+    }
+  ],
+  "admin_models.discover.missing_title": "Served here, no longer offered upstream",
+  "admin_models.discover.badge.inactive": "inactive",
+  "admin_models.discover.missing_sr": "is no longer offered by this provider",
+  "admin_models.discover.empty": "The provider offers nothing that is not already catalogued.",
+  "admin_models.discover.caption_models": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} models offered by the provider."
+      }
+    }
+  ],
+  "admin_models.discover.search_tiers": "Search tiers",
+  "admin_models.discover.search_tiers_body": "A search backend exposes no model list and no token price — what this provider calls a model is a depth (Linkup’s {#code}depth{/code}, Exa’s {#code}type{/code}). Metered per request; bound by the request ceiling you grant per group.",
+  "admin_models.discover.caption_tiers": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} search tiers offered by the provider."
+      }
+    }
+  ]
 }

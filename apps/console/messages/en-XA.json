@@ -1818,5 +1818,224 @@
       }
     }
   ],
-  "model_detail.access.revoke_note": "[Ŕéǚóķíńǧ ťáķéś éƒƒéćť óń ťȟé ńéẋť ŕéǫúéśť.]"
+  "model_detail.access.revoke_note": "[Ŕéǚóķíńǧ ťáķéś éƒƒéćť óń ťȟé ńéẋť ŕéǫúéśť.]",
+  "admin_models.section.chat": "[Ćȟáť]",
+  "admin_models.section.chat_description": "[/ǚ1/ćȟáť/ćóḿþľéťíóńś, /ǚ1/ŕéśþóńśéś áńď /ǚ1/ḿéśśáǧéś.]",
+  "admin_models.section.embedding": "[Éḿƀéďďíńǧ]",
+  "admin_models.section.embedding_description": "[/ǚ1/éḿƀéďďíńǧś. Þŕíćéď þéŕ ťóķéń, áńď ťȟéý ǧéńéŕáťé ńóńé.]",
+  "admin_models.section.ocr": "[Ďóćúḿéńť éẋťŕáćťíóń]",
+  "admin_models.section.ocr_description": "[/ǚ1/óćŕ. Þŕíćéď þéŕ þáǧé ŕáťȟéŕ ťȟáń þéŕ ťóķéń.]",
+  "admin_models.section.image": "[Íḿáǧé]",
+  "admin_models.section.image_description": "[/ǚ1/íḿáǧéś/ǧéńéŕáťíóńś. Óƒťéń þŕíćéď þéŕ íḿáǧé.]",
+  "admin_models.section.other": "[Óťȟéŕ]",
+  "admin_models.section.caption": "[{section} ḿóďéľś, ťȟéíŕ ćúŕŕéńť þŕíćé áńď ŵȟó ḿáý úśé ťȟéḿ.]",
+  "admin_models.column.model": "[Ḿóďéľ]",
+  "admin_models.column.capabilities": "[Ćáþáƀíľíťíéś]",
+  "admin_models.column.provider": "[Þŕóǚíďéŕ]",
+  "admin_models.badge.provider_off": "[Þŕóǚíďéŕ óƒƒ]",
+  "admin_models.column.price": "[Þŕíćé / Ḿťóķ]",
+  "admin_models.price.in": [
+    {
+      "declarations": [
+        "input rate"
+      ],
+      "match": {
+        "*": "[{rate} íń]"
+      }
+    }
+  ],
+  "admin_models.price.out": [
+    {
+      "declarations": [
+        "input rate"
+      ],
+      "match": {
+        "*": "[{rate} óúť]"
+      }
+    }
+  ],
+  "admin_models.badge.no_price": "[Ńó þŕíćé]",
+  "admin_models.column.access": "[Áććéśś]",
+  "admin_models.access.nobody": "[ńóƀóďý]",
+  "admin_models.column.status": "[Śťáťúś]",
+  "admin_models.badge.active": "[Áćťíǚé]",
+  "admin_models.badge.inactive": "[Íńáćťíǚé]",
+  "admin_models.badge.public": "[Þúƀľíć]",
+  "admin_models.action.edit": "[Éďíť]",
+  "admin_models.action.deactivate": "[Ďéáćťíǚáťé]",
+  "admin_models.action.activate": "[Áćťíǚáťé]",
+  "admin_models.action.delete": "[Ďéľéťé]",
+  "admin_models.toast.updated": "[Ḿóďéľ úþďáťéď]",
+  "admin_models.toast.update_failed": "[Ćóúľď ńóť úþďáťé ťȟé ḿóďéľ]",
+  "admin_models.title": "[Ḿóďéľś]",
+  "admin_models.subtitle": "[Áń áľľóŵľíśť: á ḿóďéľ íś íńǚíśíƀľé ťó ćáľľéŕś úńťíľ á ǧŕóúþ íś ǧŕáńťéď íť.]",
+  "admin_models.discover": "[Ďíśćóǚéŕ]",
+  "admin_models.add_model": "[Áďď ḿóďéľ]",
+  "admin_models.load_error.update": "[Ćóúľď ńóť úþďáťé ťȟé ḿóďéľ]",
+  "admin_models.load_error.delete": "[Ćóúľď ńóť ďéľéťé ťȟé ḿóďéľ]",
+  "admin_models.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_models.search": "[Śéáŕćȟ]",
+  "admin_models.search_placeholder": "[ḿóďéľ ńáḿé óŕ úþśťŕéáḿ íď]",
+  "admin_models.search_hint_matching": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ḿáťćȟíńǧ]"
+      }
+    }
+  ],
+  "admin_models.search_hint_default": "[Ḿáťćȟéś ńáḿé áńď úþśťŕéáḿ íď.]",
+  "admin_models.loading": "[Ĺóáďíńǧ ťȟé ćáťáľóǧúé]",
+  "admin_models.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé ćáťáľóǧúé]",
+  "admin_models.empty_query": "[Ńó ḿóďéľ ḿáťćȟéś ťȟáť.]",
+  "admin_models.empty": "[Ńó ḿóďéľś ćáťáľóǧúéď. Úśé Ďíśćóǚéŕ ťó śéé ŵȟáť ťȟé þŕóǚíďéŕ óƒƒéŕś.]",
+  "admin_models.caption": "[Ćáťáľóǧúéď ḿóďéľś.]",
+  "admin_models.noun": "[ḿóďéľś]",
+  "admin_models.delete.title": "[Ďéľéťé {name}]",
+  "admin_models.delete.title_fallback": "[ťȟíś ḿóďéľ]",
+  "admin_models.delete.cancel": "[Ćáńćéľ]",
+  "admin_models.delete.confirm": "[Ďéľéťé þéŕḿáńéńťľý]",
+  "admin_models.delete.toast_done": "[Ḿóďéľ ďéľéťéď]",
+  "admin_models.delete.toast_failed": "[Ćóúľď ńóť ďéľéťé ťȟé ḿóďéľ]",
+  "admin_models.delete.body": "[Ŕéḿóǚéď ƒŕóḿ ťȟé ćáťáľóǧúé áńď ƒŕóḿ {#code}/ǚ1/ḿóďéľś{/code}; íťś þŕíćéś áńď áććéśś ǧŕáńťś ǧó ŵíťȟ íť. Ćáľľéŕś áśķíńǧ ƒóŕ {#code}{name}{/code} ǧéť \"ḿóďéľ ńóť ƒóúńď\" ƒŕóḿ ťȟé ńéẋť ŕéǫúéśť óń. Ťȟíś ćáńńóť ƀé úńďóńé.]",
+  "admin_models.delete.spend_note": "[Ŕéćóŕďéď śþéńď íś úńáƒƒéćťéď: þáśť úśáǧé ķééþś ťȟé ḿóďéľ'ś ńáḿé áńď śťáýś áťťŕíƀúťéď ťó ťȟé þéóþľé áńď ǧŕóúþś ťȟáť ŕáń íť.]",
+  "admin_models.create.title": "[Ńéŵ ḿóďéľ]",
+  "admin_models.create.cancel": "[Ćáńćéľ]",
+  "admin_models.create.submit": "[Áďď]",
+  "admin_models.create.toast_done": "[Ḿóďéľ ćŕéáťéď]",
+  "admin_models.create.toast_failed": "[Ćóúľď ńóť ćŕéáťé ťȟé ḿóďéľ]",
+  "admin_models.create.provider": "[Þŕóǚíďéŕ]",
+  "admin_models.create.choose_provider": "[Ćȟóóśé áń éńďþóíńť…]",
+  "admin_models.create.no_provider": "[Ńó áćťíǚé þŕóǚíďéŕ. Áďď óńé óń ťȟé Þŕóǚíďéŕś þáǧé ƒíŕśť.]",
+  "admin_models.create.name": "[Ńáḿé]",
+  "admin_models.create.name_placeholder": "[ƒáśť-śúḿḿáŕíśéŕ]",
+  "admin_models.create.name_hint": "[Ŵȟáť ćáľľéŕś śéńď áś `ḿóďéľ`. Ćáńńóť ƀé ćȟáńǧéď ľáťéŕ.]",
+  "admin_models.create.upstream": "[Úþśťŕéáḿ ḿóďéľ]",
+  "admin_models.create.upstream_placeholder": "[þŕóǚíďéŕ/ḿóďéľ-íď]",
+  "admin_models.create.upstream_hint": "[Ŵȟáť ťȟé ǧáťéŵáý áśķś ťȟé þŕóǚíďéŕ ƒóŕ.]",
+  "admin_models.create.kind": "[Ķíńď]",
+  "admin_models.create.kind_hint": "[Ŵȟíćȟ ŕóúťéś ŵíľľ śéŕǚé íť.]",
+  "admin_models.kind.chat": "[Ćȟáť — /ǚ1/ćȟáť/ćóḿþľéťíóńś, /ǚ1/ŕéśþóńśéś, /ǚ1/ḿéśśáǧéś]",
+  "admin_models.kind.embedding": "[Éḿƀéďďíńǧ — /ǚ1/éḿƀéďďíńǧś]",
+  "admin_models.kind.image": "[Íḿáǧé — /ǚ1/íḿáǧéś/ǧéńéŕáťíóńś]",
+  "admin_models.create.accepts": "[Áććéþťś]",
+  "admin_models.create.accepts_other": "[Óťȟéŕ íńþúť ḿóďáľíťíéś]",
+  "admin_models.create.accepts_hint": "[Ŵȟáť ćáń ƀé śéńť ťó íť.]",
+  "admin_models.create.produces": "[Þŕóďúćéś]",
+  "admin_models.create.produces_other": "[Óťȟéŕ óúťþúť ḿóďáľíťíéś]",
+  "admin_models.create.produces_hint": "[Ŵȟáť ćóḿéś ƀáćķ.]",
+  "admin_models.create.features": "[Ƒéáťúŕéś]",
+  "admin_models.create.features_other": "[Óťȟéŕ ƒéáťúŕéś]",
+  "admin_models.create.features_hint": "[Ńóť ľíḿíťéď ťó ťȟé ƀóẋéś áƀóǚé.]",
+  "admin_models.create.starting_note": "[Ńó ǧŕóúþ íś ǧŕáńťéď áććéśś, áńď ńó þŕíćé íś śéť.]",
+  "admin_models.discover.title": "[Þŕóǚíďéŕ ćáťáľóǧúé]",
+  "admin_models.discover.close": "[Ćľóśé]",
+  "admin_models.discover.toast_done": "[Ḿóďéľś íḿþóŕťéď]",
+  "admin_models.discover.toast_failed": "[Ćóúľď ńóť íḿþóŕť ḿóďéľś]",
+  "admin_models.discover.import": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[Íḿþóŕť {count}]"
+      }
+    }
+  ],
+  "admin_models.discover.import_aria": "[Íḿþóŕť {name}]",
+  "admin_models.discover.column.offered": "[Óƒƒéŕéď úþśťŕéáḿ]",
+  "admin_models.discover.badge.blocked": "[Ćáńńóť íḿþóŕť]",
+  "admin_models.discover.column.context": "[Ćóńťéẋť]",
+  "admin_models.discover.column.price": "[Þŕíćé]",
+  "admin_models.discover.per_request": "[þéŕ ŕéǫúéśť]",
+  "admin_models.discover.price_pair": [
+    {
+      "declarations": [
+        "input rin"
+      ],
+      "match": {
+        "*": "[{rin} / {rout}]"
+      }
+    }
+  ],
+  "admin_models.discover.provider": "[Þŕóǚíďéŕ]",
+  "admin_models.discover.choose_provider": "[Ćȟóóśé áń éńďþóíńť…]",
+  "admin_models.discover.tag": "[Ćáťáľóǧúé ťáǧ]",
+  "admin_models.discover.tag_hint_live": "[Ćóŕťéćś ƒíľťéŕś íťś ćáťáľóǧúé ƀý ťáǧ áńď ďéƒáúľťś ťó Íńśťŕúćť — ťȟé ŵóŕďś áƀóǚé áŕé ŕéáď ľíǚé ƒŕóḿ íťś ćáťáľóǧúé, śó á ťáǧ áďďéď ťȟéŕé áþþéáŕś ȟéŕé.]",
+  "admin_models.discover.tag_hint_free": "[Ćóŕťéćś ƒíľťéŕś íťś ćáťáľóǧúé ƀý ťáǧ áńď ďéƒáúľťś ťó Íńśťŕúćť — áśķ ƒóŕ Éḿƀéďďíńǧ óŕ ÓĆŔ ťó śéé ťȟóśé.]",
+  "admin_models.discover.tag_default": "[Þŕóǚíďéŕ ďéƒáúľť]",
+  "admin_models.discover.tag_placeholder": "[Íńśťŕúćť]",
+  "admin_models.discover.fill_missing": "[Ƒíľľ ḿíśśíńǧ þŕíćéś ƒŕóḿ ĹíťéĹĹḾ]",
+  "admin_models.discover.community_gloss": "[(ćóḿḿúńíťý)]",
+  "admin_models.discover.asking": "[Áśķíńǧ ťȟé þŕóǚíďéŕ]",
+  "admin_models.discover.load_error.title": "[Ćóúľď ńóť ŕéáď ťȟé þŕóǚíďéŕ ćáťáľóǧúé]",
+  "admin_models.discover.import_finished": "[Íḿþóŕť ƒíńíśȟéď]",
+  "admin_models.discover.result_imported_community": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "[{name} íḿþóŕťéď ŵíťȟ á ćóḿḿúńíťý þŕíćé]"
+      }
+    }
+  ],
+  "admin_models.discover.result_imported_priced": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "[{name} íḿþóŕťéď ŵíťȟ íťś þŕíćé]"
+      }
+    }
+  ],
+  "admin_models.discover.result_imported_unpriced": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "[{name} íḿþóŕťéď — ḿéťéŕéď þéŕ ŕéǫúéśť, ńó ťóķéń þŕíćé]"
+      }
+    }
+  ],
+  "admin_models.discover.result_skipped": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "[{name} śķíþþéď — {reason}]"
+      }
+    }
+  ],
+  "admin_models.discover.missing_title": "[Śéŕǚéď ȟéŕé, ńó ľóńǧéŕ óƒƒéŕéď úþśťŕéáḿ]",
+  "admin_models.discover.badge.inactive": "[íńáćťíǚé]",
+  "admin_models.discover.missing_sr": "[íś ńó ľóńǧéŕ óƒƒéŕéď ƀý ťȟíś þŕóǚíďéŕ]",
+  "admin_models.discover.empty": "[Ťȟé þŕóǚíďéŕ óƒƒéŕś ńóťȟíńǧ ťȟáť íś ńóť áľŕéáďý ćáťáľóǧúéď.]",
+  "admin_models.discover.caption_models": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ḿóďéľś óƒƒéŕéď ƀý ťȟé þŕóǚíďéŕ.]"
+      }
+    }
+  ],
+  "admin_models.discover.search_tiers": "[Śéáŕćȟ ťíéŕś]",
+  "admin_models.discover.search_tiers_body": "[Á śéáŕćȟ ƀáćķéńď éẋþóśéś ńó ḿóďéľ ľíśť áńď ńó ťóķéń þŕíćé — ŵȟáť ťȟíś þŕóǚíďéŕ ćáľľś á ḿóďéľ íś á ďéþťȟ (Ĺíńķúþ’ś {#code}ďéþťȟ{/code}, Éẋá’ś {#code}ťýþé{/code}). Ḿéťéŕéď þéŕ ŕéǫúéśť; ƀóúńď ƀý ťȟé ŕéǫúéśť ćéíľíńǧ ýóú ǧŕáńť þéŕ ǧŕóúþ.]",
+  "admin_models.discover.caption_tiers": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} śéáŕćȟ ťíéŕś óƒƒéŕéď ƀý ťȟé þŕóǚíďéŕ.]"
+      }
+    }
+  ]
 }

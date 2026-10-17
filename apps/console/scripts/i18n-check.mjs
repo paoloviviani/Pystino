@@ -41,7 +41,7 @@ const MESSAGES = join(APP, "messages");
  * the same commit that converts it — and the heuristic below is there to catch
  * the text that slips back in afterwards.
  */
-const CONVERTED_FILES = ["src/routes/NotFound.tsx", "src/routes/Login.tsx", "src/components/RequireAdmin.tsx", "src/components/OpencodeSetup.tsx", "src/routes/Admin.tsx", "src/components/Disclosures.tsx", "src/components/SubjectPicker.tsx", "src/components/CapabilityPicker.tsx", "src/routes/AdminReports.tsx", "src/routes/Reports.tsx", "src/routes/AdminRedactionRule.tsx", "src/routes/IdentityDirectory.tsx", "src/routes/AdminIdentity.tsx", "src/components/Shell.tsx", "src/components/PolicyFields.tsx", "src/routes/AdminProviders.tsx", "src/routes/AdminSearch.tsx", "src/routes/AdminQuotas.tsx", "src/routes/AdminSettings.tsx", "src/routes/Overview.tsx", "src/routes/AdminGroups.tsx", "src/routes/AdminModelDetail.tsx"];
+const CONVERTED_FILES = ["src/routes/NotFound.tsx", "src/routes/Login.tsx", "src/components/RequireAdmin.tsx", "src/components/OpencodeSetup.tsx", "src/routes/Admin.tsx", "src/components/Disclosures.tsx", "src/components/SubjectPicker.tsx", "src/components/CapabilityPicker.tsx", "src/routes/AdminReports.tsx", "src/routes/Reports.tsx", "src/routes/AdminRedactionRule.tsx", "src/routes/IdentityDirectory.tsx", "src/routes/AdminIdentity.tsx", "src/components/Shell.tsx", "src/components/PolicyFields.tsx", "src/routes/AdminProviders.tsx", "src/routes/AdminSearch.tsx", "src/routes/AdminQuotas.tsx", "src/routes/AdminSettings.tsx", "src/routes/Overview.tsx", "src/routes/AdminGroups.tsx", "src/routes/AdminModelDetail.tsx", "src/routes/AdminModels.tsx"];
 
 /** Props whose string value is read by a person, one way or another. */
 const TEXT_PROPS = ["title", "placeholder", "aria-label", "alt", "label"];
@@ -53,12 +53,13 @@ const HAS_LETTERS = /[A-Za-z]/;
  * A line that says it means to keep its text.
  *
  * Some words are not words: the product's own name, a file path somebody has
- * to type. Forcing those into the catalogue would be a translator's decision
- * made on their behalf, and leaving them inline would be this check failing a
- * build every time somebody moved the line — so a line can say so, and has to
- * say so out loud where the next reader sees it.
+ * to type, a value the API sent. Forcing those into the catalogue would be a
+ * translator's decision made on their behalf, and leaving them inline would be
+ * this check failing a build every time somebody moved the line — so a line
+ * can say so (`i18n: literal`, or `i18n: server text` where the words came off
+ * the wire), and has to say so out loud where the next reader sees it.
  */
-const LITERAL = /i18n: literal/;
+const LITERAL = /i18n: (literal|server text)/;
 
 async function walk(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -159,8 +160,12 @@ function hardCoded(source, file) {
     .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "))
     .replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1");
 
+  // The marker is a comment, so it has to be read in the file the reader sees,
+  // not in the one the scan sees — stripping comments first would delete the
+  // very line that says the next one is deliberate.
+  const originals = source.split("\n");
   code.split("\n").forEach((line, index) => {
-    if (LITERAL.test(line)) return;
+    if (LITERAL.test(originals[index] ?? "")) return;
     const lineNumber = index + 1;
     // JSX text nodes: what sits between a tag's `>` and the next `<`, when it
     // carries a letter. Punctuation and an entity are not a missing message.
