@@ -82,7 +82,7 @@ function pseudo(message) {
  */
 function pseudoValue(value) {
   if (typeof value === "string") return pseudo(value);
-  if (Array.isArray(value)) return value.map(pseudoValue);
+  if (Array.isArray(value)) return value.map(pseudoVariant);
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value)
@@ -91,6 +91,31 @@ function pseudoValue(value) {
     );
   }
   return value;
+}
+
+/**
+ * One variant of a message that has variants: `{ declarations, selectors,
+ * match }`.
+ *
+ * Only `match` holds text. `declarations` and `selectors` are the *syntax* of a
+ * plural or a formatted placeholder — `"local countPlural = count: plural"` is
+ * read by the compiler, not by a reader — and accenting them does not produce a
+ * word with accents, it produces a catalogue that will not compile at all. That
+ * is a loud failure, which is the good kind, but it is still a failure this
+ * script caused.
+ */
+function pseudoVariant(variant) {
+  if (Array.isArray(variant) || typeof variant !== "object" || variant === null) {
+    return pseudoValue(variant);
+  }
+  return Object.fromEntries(
+    Object.entries(variant).map(([key, value]) => [
+      key,
+      key === "match" && value && typeof value === "object"
+        ? Object.fromEntries(Object.entries(value).map(([match, pattern]) => [match, pseudo(pattern)]))
+        : value,
+    ]),
+  );
 }
 
 export const BASE_LOCALE = "en";

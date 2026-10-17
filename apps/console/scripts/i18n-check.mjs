@@ -41,7 +41,7 @@ const MESSAGES = join(APP, "messages");
  * the same commit that converts it — and the heuristic below is there to catch
  * the text that slips back in afterwards.
  */
-const CONVERTED_FILES = ["src/routes/NotFound.tsx", "src/routes/Login.tsx", "src/components/RequireAdmin.tsx", "src/components/OpencodeSetup.tsx", "src/routes/Admin.tsx"];
+const CONVERTED_FILES = ["src/routes/NotFound.tsx", "src/routes/Login.tsx", "src/components/RequireAdmin.tsx", "src/components/OpencodeSetup.tsx", "src/routes/Admin.tsx", "src/components/Disclosures.tsx"];
 
 /** Props whose string value is read by a person, one way or another. */
 const TEXT_PROPS = ["title", "placeholder", "aria-label", "alt", "label"];
@@ -75,6 +75,34 @@ function flatten(catalogue, prefix = "", out = {}) {
     else if (value && typeof value === "object") flatten(value, name, out);
   }
   return out;
+}
+
+/**
+ * A message's shape with the text taken out: its keys, its variant keys, how
+ * many of them it has, and every `{placeholder}` and `{#tag}` in order.
+ *
+ * This is what "the pseudo-locale kept every placeholder" means, made into
+ * something checkable. Comparing the generated file against the generator only
+ * says the two agree — they agreed once while both wrapped a plural message's
+ * declarations in accented brackets, and the compiler was the thing that
+ * noticed. Comparing shape says the *wording* changed and nothing else did.
+ */
+function shape(value) {
+  if (typeof value === "string") return tokens(value);
+  if (Array.isArray(value)) return value.map(shape);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== "$schema")
+        .map(([key, entry]) => [key, shape(entry)]),
+    );
+  }
+  return value;
+}
+
+/** Every placeholder and markup tag in a piece of text, in order. */
+function tokens(text) {
+  return text.match(/\{[^{}]*\}/g) ?? [];
 }
 
 /** Every message the console's own code asks for, and where it asks. */
@@ -168,6 +196,22 @@ async function main() {
       failures.push(
         "messages/en-XA.json is out of date with messages/en.json — run `pnpm i18n:pseudo`",
       );
+    }
+    // Generated and in step is not the same as correct: the generator must
+    // change the wording and nothing else.
+    const pseudo = JSON.parse(current);
+    const before = shape(base);
+    const after = shape(pseudo);
+    for (const key of keys) {
+      if (!(key in after)) {
+        failures.push(`messages/en-XA.json has no message for ${key}`);
+        continue;
+      }
+      if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+        failures.push(
+          `messages/en-XA.json changed more than the wording of ${key} — a placeholder, a tag or a variant key differs`,
+        );
+      }
     }
   }
 
