@@ -44,6 +44,9 @@ import {
 import { usePaginated } from "../lib/paging";
 import type { AdminUser, IdentityProvider, UserStatus } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
+import { formatNumber, formatDate } from "../lib/format";
+import { Message } from "../components/Message";
+import { m } from "../paraglide/messages.js";
 import { PageHeader } from "../components/PageHeader";
 
 /** How long an invitation stays claimable (ADR 0095) — the marker's clock.
@@ -103,7 +106,7 @@ function deriveLogin(email: string): string {
 }
 
 /** The sign-in page's own shape, as the field's standing help text. */
-const LOGIN_HINT = "The name they'll type on the sign-in page. Lowercase letters, digits, '.', '_' or '-'.";
+const LOGIN_HINT = () => m["admin_users.login_hint"]();
 
 /** The gateway refuses a login another person already holds — from the users
  * file ("{login} already exists") or the directory mirror ("'{login}' already
@@ -111,7 +114,7 @@ const LOGIN_HINT = "The name they'll type on the sign-in page. Lowercase letters
 function takenName(error: unknown, login: string): string | null {
   const message = error instanceof Error ? error.message : "";
   if (!login.trim() || !message.includes("already exists")) return null;
-  return `'${login.trim()}' is already another person's sign-in name — pick a different one.`;
+  return m["admin_users.taken_login"]({ login: login.trim() });
 }
 
 
@@ -158,10 +161,14 @@ export function AdminUsers() {
     update.mutate(
       { id: user.id, is_active: true },
       {
-        onSuccess: () => toast?.add({ title: "Approved — they can sign in now", type: "success" }),
+        onSuccess: () =>
+          toast?.add({ title: m["admin_users.toast.approved"](), type: "success" }),
         onError: (caught: unknown) =>
           toast?.add({
-            title: caught instanceof Error ? caught.message : "Could not approve",
+            // i18n: server text — the API's own error message.
+            title: caught instanceof Error
+              ? caught.message
+              : m["admin_users.toast.approve_failed"](),
             type: "error",
           }),
       },
@@ -173,7 +180,7 @@ export function AdminUsers() {
   const columns: Column<AdminUser>[] = [
     {
       key: "who",
-      header: "User",
+      header: m["admin_users.column.user"](),
       render: (user) => (
         <>
           <div>{user.display_name || user.username || user.email || user.subject}</div>
@@ -184,7 +191,9 @@ export function AdminUsers() {
               inside the username line, which the person's directory entry may
               or may not share. */}
           {user.bundled_login ? (
-            <div className={`${MUTED} ${CODE}`}>sign-in: {user.bundled_login}</div>
+            <div className={`${MUTED} ${CODE}`}>
+              {m["admin_users.bundled_login_line"]({ login: user.bundled_login })}
+            </div>
           ) : null}
           {/* The directory's own name for this person, shown when it is not
               already the line above. An account created in Keycloak as
@@ -219,10 +228,10 @@ export function AdminUsers() {
     },
     {
       key: "groups",
-      header: "Groups",
+      header: m["admin_users.column.groups"](),
       render: (user) =>
         user.groups.length === 0 ? (
-          <span className={MUTED}>none</span>
+          <span className={MUTED}>{m["admin_users.groups_none"]()}</span>
         ) : (
           <div className={CHIPS}>
             {user.groups.map((group) => (
@@ -233,45 +242,52 @@ export function AdminUsers() {
     },
     {
       key: "billing",
-      header: "Billing group",
-      render: (user) => user.default_billing_group ?? <span className={MUTED}>unset</span>,
+      header: m["admin_users.column.billing_group"](),
+      render: (user) =>
+        user.default_billing_group ?? <span className={MUTED}>{m["admin_users.billing_unset"]()}</span>,
     },
     {
       key: "keys",
-      header: "Keys",
+      header: m["admin_users.column.keys"](),
       numeric: true,
-      render: (user) => user.active_key_count.toLocaleString(),
+      render: (user) => formatNumber(user.active_key_count),
     },
     {
       key: "status",
-      header: "Status",
+      header: m["admin_users.column.status"](),
       render: (user) => (
         <div className={CHIPS}>
-          {user.is_admin && <Badge tone="accent">Admin</Badge>}
-          {isInvited(user) && <Badge tone="warn">Invited</Badge>}
+          {user.is_admin && <Badge tone="accent">{m["admin_users.badge.admin"]()}</Badge>}
+          {isInvited(user) && <Badge tone="warn">{m["admin_users.badge.invited"]()}</Badge>}
           {!user.is_active && user.deactivated_by === "approval" && (
-            <Badge tone="warn">Awaiting approval</Badge>
+            <Badge tone="warn">{m["admin_users.badge.awaiting"]()}</Badge>
           )}
           {user.is_active && !isInvited(user) ? (
-            <Badge tone="ok">Active</Badge>
+            <Badge tone="ok">{m["admin_users.badge.active"]()}</Badge>
           ) : null}
           {!user.is_active && user.deactivated_by !== "approval" && (
-            <Badge tone="danger">Disabled</Badge>
+            <Badge tone="danger">{m["admin_users.badge.disabled"]()}</Badge>
           )}
-          {isInvited(user) && inviteExpired(user) && <Badge tone="danger">Expired</Badge>}
+          {isInvited(user) && inviteExpired(user) && (
+            <Badge tone="danger">{m["admin_users.badge.expired"]()}</Badge>
+          )}
           {/* ADR 0096: neither capability — a chat-only person. Null means
               the listing did not answer, which is never the badge. */}
           {user.code_agents_allowed === false && user.api_keys_allowed === false && (
-            <Badge tone="neutral">Chat only</Badge>
+            <Badge tone="neutral">{m["admin_users.badge.chat_only"]()}</Badge>
           )}
         </div>
       ),
     },
     {
       key: "seen",
-      header: "Last login",
+      header: m["admin_users.column.last_login"](),
       render: (user) =>
-        user.last_login_at ? formatDate(user.last_login_at) : <span className={MUTED}>never</span>,
+        user.last_login_at ? (
+          formatDate(user.last_login_at)
+        ) : (
+          <span className={MUTED}>{m["admin_users.never"]()}</span>
+        ),
     },
     {
       key: "actions",
@@ -282,24 +298,24 @@ export function AdminUsers() {
               inside the panel this opens, so the row carries only the
               decisions, not every tool. */}
           <Button variant="secondary" onClick={() => setEditing(user)}>
-            Edit
+            {m["admin_users.action.edit"]()}
           </Button>
           {/* The approval queue's one click (ADR 0095): enable is the whole
               approval; Reject is the Delete below it. */}
           {!user.is_active && user.deactivated_by === "approval" && (
             <Button variant="secondary" onClick={() => approve(user)}>
-              Approve
+              {m["admin_users.action.approve"]()}
             </Button>
           )}
           {isInvited(user) && inviteExpired(user) && <ReIssueButton user={user} />}
           {!user.is_active && user.deactivated_by !== "approval" && (
             <Button variant="ghost" onClick={() => setTogglingActive(user)}>
-              Enable
+              {m["admin_users.action.enable"]()}
             </Button>
           )}
           {user.is_active && (
             <Button variant="ghost" onClick={() => setTogglingActive(user)}>
-              Disable
+              {m["admin_users.action.disable"]()}
             </Button>
           )}
           {/* Thin red text, never filled: the same row-level delete as every
@@ -312,7 +328,7 @@ export function AdminUsers() {
             className="text-danger"
             onClick={() => setDeleting(user)}
           >
-            Delete
+            {m["admin_users.action.delete"]()}
           </Button>
         </div>
       ),
@@ -322,34 +338,33 @@ export function AdminUsers() {
   return (
     <div className={PAGE}>
       <PageHeader
-        title="Users"
+        title={m["admin_users.title"]()}
         subtitle={
           !knowsProviders
-            ? "Accounts live at the identity provider — this deployment cannot add a login or reset its password here. Disable and Enable still apply on the gateway side."
+            ? m["admin_users.subtitle.unknown"]()
             : createsLogins
-              ? "People arrive at their first sign-in, or you can add one directly below."
-              : "People arrive when you invite them, at their first sign-in, or when the directory pushes them."
+              ? m["admin_users.subtitle.logins"]()
+              : m["admin_users.subtitle.invites"]()
         }
         actions={
           knowsProviders && enabledProvider ? (
             <Button onClick={() => setAdding(true)}>
-              {createsLogins ? "Add user" : "Invite"}
+              {createsLogins ? m["admin_users.add_user"]() : m["admin_users.invite"]()}
             </Button>
           ) : null
         }
       />
 
       {pendingErasures.data && pendingErasures.data.pending > 0 && (
-        <Notice tone="info" title="Erasures waiting for the chat">
-          {pendingErasures.data.pending} erasure
-          {pendingErasures.data.pending === 1 ? "" : "s"} waiting for the chat to confirm. They
-          retry automatically; nothing to do here.
+        <Notice tone="info" title={m["admin_users.erasures.title"]()}>
+          {m["admin_users.erasures.body"]({ count: pendingErasures.data.pending })}
         </Notice>
       )}
 
       {update.error ? (
-        <Notice tone="danger" title="Could not update the user">
-          {update.error instanceof Error ? update.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_users.toast.update_failed"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {update.error instanceof Error ? update.error.message : m["admin_users.unknown_error"]()}
         </Notice>
       ) : null}
 
@@ -360,14 +375,14 @@ export function AdminUsers() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-56 flex-1">
             <Input
-              label="Search"
+              label={m["admin_users.search"]()}
               value={paged.search}
               onChange={(event) => paged.setSearch(event.target.value)}
-              placeholder="email, name, username or identity provider subject"
+              placeholder={m["admin_users.search_placeholder"]()}
               hint={
                 page
-                  ? `${page.total.toLocaleString()} matching`
-                  : "Searches every account, not just this page."
+                  ? m["admin_users.search_hint_matching"]({ count: page.total })
+                  : m["admin_users.search_hint_global"]()
               }
             />
           </div>
@@ -375,29 +390,33 @@ export function AdminUsers() {
         {/* The filter chips (ADR 0095): the queues an administrator works,
             with their counts from one round trip. "All" is no filter at all. */}
         <div className="mt-3 flex flex-wrap gap-2">
-          <Chip active={status === null} onClick={() => pickStatus(null)} label="All" />
+          <Chip
+            active={status === null}
+            onClick={() => pickStatus(null)}
+            label={m["admin_users.chip.all"]()}
+          />
           <Chip
             active={status === "awaiting_approval"}
             onClick={() => pickStatus("awaiting_approval")}
-            label="Awaiting approval"
+            label={m["admin_users.chip.awaiting"]()}
             count={statusCounts.data?.awaiting_approval}
           />
           <Chip
             active={status === "invited"}
             onClick={() => pickStatus("invited")}
-            label="Invited"
+            label={m["admin_users.chip.invited"]()}
             count={statusCounts.data?.invited}
           />
           <Chip
             active={status === "active"}
             onClick={() => pickStatus("active")}
-            label="Active"
+            label={m["admin_users.chip.active"]()}
             count={statusCounts.data?.active}
           />
           <Chip
             active={status === "disabled"}
             onClick={() => pickStatus("disabled")}
-            label="Disabled"
+            label={m["admin_users.chip.disabled"]()}
             count={statusCounts.data?.disabled}
           />
         </div>
@@ -405,10 +424,11 @@ export function AdminUsers() {
 
       <Card flush>
         {users.isPending ? (
-          <Spinner label="Loading users" />
+          <Spinner label={m["admin_users.loading"]()} />
         ) : users.error ? (
-          <Notice tone="danger" title="Could not load users">
-            {users.error instanceof Error ? users.error.message : "Unknown error."}
+          <Notice tone="danger" title={m["admin_users.load_error.title"]()}>
+            {/* i18n: server text — the API's own error message. */}
+            {users.error instanceof Error ? users.error.message : m["admin_users.unknown_error"]()}
           </Notice>
         ) : (
           <>
@@ -416,15 +436,15 @@ export function AdminUsers() {
               columns={columns}
               rows={rows}
               rowKey={(user) => user.id}
-              empty={paged.query ? "No user matches that." : "No users yet."}
-              caption="Users, their groups and their keys."
+              empty={paged.query ? m["admin_users.empty_query"]() : m["admin_users.empty"]()}
+              caption={m["admin_users.caption"]()}
             />
             <Pagination
               total={page?.total ?? 0}
               limit={paged.limit}
               offset={paged.offset}
               onOffsetChange={paged.setOffset}
-              noun="users"
+              noun={m["admin_users.noun"]()}
               busy={users.isFetching}
             />
           </>
@@ -488,11 +508,13 @@ function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: 
   return (
     <Dialog
       open={user !== null}
-      title={`Delete ${user?.display_name || user?.email || user?.subject || "this account"}?`}
+      title={m["admin_users.delete.title"]({
+        name: user?.display_name || user?.email || user?.subject || m["admin_users.delete.title_fallback"](),
+      })}
       onClose={close}
       footer={
         <>
-          <Button onClick={close}>Cancel</Button>
+          <Button onClick={close}>{m["admin_users.delete.cancel"]()}</Button>
           <Button
             variant="danger"
             disabled={Boolean(preview.data?.shared_with_others) && !confirmSharedLoss}
@@ -504,30 +526,35 @@ function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: 
                 {
                   onSuccess: (result) => {
                     toast?.add({
-                      title: "Account deleted",
+                      title: m["admin_users.delete.toast_done"](),
+                      // i18n: server text — the erasure result is the API's.
                       description: result.chat_erasure_done
-                        ? "The chat confirmed erasure immediately."
-                        : "The chat could not be reached; erasure is queued and will retry.",
+                        ? m["admin_users.delete.toast_chat_done"]()
+                        : m["admin_users.delete.toast_chat_queued"](),
                       type: "success",
                     });
                     close();
                   },
                   onError: () =>
-                    toast?.add({ title: "Could not delete the account", type: "error" }),
+                    toast?.add({
+                      title: m["admin_users.delete.toast_failed"](),
+                      type: "error",
+                    }),
                 }
               )
             }
           >
-            Delete permanently
+            {m["admin_users.delete.confirm"]()}
           </Button>
         </>
       }
     >
       {preview.isPending ? (
-        <Spinner label="Loading preview" />
+        <Spinner label={m["admin_users.delete.loading"]()} />
       ) : preview.error ? (
-        <Notice tone="danger" title="Could not load the preview">
-          {preview.error instanceof Error ? preview.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_users.delete.load_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {preview.error instanceof Error ? preview.error.message : m["admin_users.unknown_error"]()}
         </Notice>
       ) : preview.data ? (
         <div className={FORM}>
@@ -535,45 +562,42 @@ function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: 
             {Object.entries(preview.data.gateway_counts)
               .filter(([, count]) => count > 0)
               .map(([table, count]) => (
+                // i18n: server text — the table's own name, which is what the
+                // API calls it and what an operator greps the schema for.
                 <li key={table}>
-                  {count} {table.replace(/_/g, " ")}
+                  {formatNumber(count)} {table.replace(/_/g, " ")}
                 </li>
               ))}
           </ul>
           {preview.data.bundled_login && (
             <p className="text-sm text-ink-muted">
-              Bundled login removed: {preview.data.bundled_login}
+              {m["admin_users.delete.bundled_login_line"]({ login: preview.data.bundled_login })}
             </p>
           )}
           {!preview.data.chat_reachable ? (
-            <Notice tone="warn" title="Chat counts unavailable">
-              The erasure will be queued and retried.
+            <Notice tone="warn" title={m["admin_users.delete.chat_unavailable_title"]()}>
+              {m["admin_users.delete.chat_unavailable_body"]()}
             </Notice>
           ) : (
             <ul className={CHECK_ITEM}>
               {Object.entries(preview.data.chat_counts ?? {})
                 .filter(([, count]) => count > 0)
                 .map(([collection, count]) => (
+                  // i18n: server text — the chat's own collection names.
                   <li key={collection}>
-                    {count} {collection.replace(/([A-Z])/g, " $1").toLowerCase()}
+                    {formatNumber(count)} {collection.replace(/([A-Z])/g, " $1").toLowerCase()}
                   </li>
                 ))}
             </ul>
           )}
-          <p>
-            The account's keys stop working immediately and cannot be restored. Their
-            quota and redaction rules keep their scope but stop matching anyone until
-            you delete or re-point them.
-          </p>
-          <p className="text-sm text-ink-muted">
-            Past usage stays in the ledger, attributed to their groups as it was
-            billed — only the name on the per-user breakdown goes.
-          </p>
+          <p>{m["admin_users.delete.body"]()}</p>
+          <p className="text-sm text-ink-muted">{m["admin_users.delete.ledger_note"]()}</p>
           {preview.data.shared_with_others && (
             <>
               {preview.data.shared.length > 0 && (
                 <ul className={CHECK_ITEM}>
                   {preview.data.shared.map((resource) => (
+                    // i18n: server text — the shared resource's own title and audience.
                     <li key={`${resource.kind}:${resource.id}`}>
                       {resource.title} — {resource.audience}
                     </li>
@@ -587,11 +611,9 @@ function DeleteUserDialog({ user, onClose }: { user: AdminUser | null; onClose: 
                   onChange={(event) => setConfirmSharedLoss(event.target.checked)}
                 />
                 <span>
-                  This account has content shared with others (
                   {preview.data.chat_unattributed_legacy_shares > 0
-                    ? "including some that can no longer be attributed to anyone"
-                    : "shared with other people, named above"}
-                  ). I understand it will disappear for them too.
+                    ? m["admin_users.delete.shared_confirm_attributed"]()
+                    : m["admin_users.delete.shared_confirm_named"]()}
                 </span>
               </label>
             </>
@@ -632,7 +654,9 @@ function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: (
   return (
     <Dialog
       open={user !== null}
-      title={`Merge ${user?.display_name || user?.email || "this account"} into…`}
+      title={m["admin_users.merge.title"]({
+        name: user?.display_name || user?.email || m["admin_users.merge.title_fallback"](),
+      })}
       onClose={() => {
         reset();
         onClose();
@@ -658,39 +682,45 @@ function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: (
                 { sourceId: user.id, into: targetId, confirm, reason },
                 {
                   onSuccess: () => {
-                    toast?.add({ title: "Accounts merged", type: "success" });
+                    toast?.add({ title: m["admin_users.merge.toast_done"](), type: "success" });
                     reset();
                     onClose();
                   },
                   onError: (error) =>
                     toast?.add({
-                      title: "Could not merge",
-                      description: error instanceof Error ? error.message : "Unknown error.",
+                      title: m["admin_users.merge.toast_failed"](),
+                      // i18n: server text — the API's own error message.
+                      description: error instanceof Error
+                        ? error.message
+                        : m["admin_users.unknown_error"](),
                       type: "error",
                     }),
                 }
               )
             }
           >
-            Merge, irreversibly
+            {m["admin_users.merge.confirm"]()}
           </Button>
         </>
       }
     >
       <p>
-        Moves every membership, key, ledger row and identity of{" "}
-        <strong>{user?.email || user?.display_name || "this account"}</strong> onto the target,
-        then deletes it. There is no undo but restoring a backup taken beforehand (the
-        README's volume tar) — take one now if you have not today.
+        <Message
+          message={m["admin_users.merge.body"]}
+          markup={{ strong: (children) => <strong>{children}</strong> }}
+          inputs={{
+            name: user?.email || user?.display_name || m["admin_users.merge.title_fallback"](),
+          }}
+        />
       </p>
 
       {!targetId ? (
         <div className={FORM}>
           <Input
-            label="Merge into…"
+            label={m["admin_users.merge.target_label"]()}
             value={targetQuery}
             onChange={(event) => setTargetQuery(event.target.value)}
-            placeholder="Search by email, name or username"
+            placeholder={m["admin_users.merge.target_placeholder"]()}
             autoFocus
           />
           {candidates.data && targetQuery.trim().length > 1 ? (
@@ -708,63 +738,75 @@ function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: (
                   </Button>
                 ))}
               {candidates.data.items.length === 0 && (
-                <p className="text-sm text-ink-muted">No match.</p>
+                <p className="text-sm text-ink-muted">{m["admin_users.merge.no_match"]()}</p>
               )}
             </div>
           ) : null}
         </div>
       ) : preview.isPending ? (
-        <Spinner label="Loading preview" />
+        <Spinner label={m["admin_users.merge.loading"]()} />
       ) : preview.error ? (
-        <Notice tone="danger" title="Could not preview this merge">
-          {preview.error instanceof Error ? preview.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_users.merge.load_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {preview.error instanceof Error ? preview.error.message : m["admin_users.unknown_error"]()}
         </Notice>
       ) : preview.data ? (
         <div className={FORM}>
           <p className="text-sm text-ink-muted">
-            Into {target?.display_name || target?.email || preview.data.target_id}
+            {/* i18n: server text — the target account's own names. */}
+            {m["admin_users.merge.into"]({
+              name: target?.display_name || target?.email || preview.data.target_id,
+            })}
           </p>
           <ul className={CHECK_ITEM}>
             {Object.entries(preview.data.counts)
               .filter(([, count]) => count > 0)
               .map(([table, count]) => (
+                // i18n: server text — the table's own name.
                 <li key={table}>
-                  {count} {table.replace(/_/g, " ")}
+                  {formatNumber(count)} {table.replace(/_/g, " ")}
                 </li>
               ))}
           </ul>
           {preview.data.identities_dropped.length > 0 && (
-            <Notice tone="warn" title="These identities are dropped, not moved">
-              The target already has an identity at the same issuer:{" "}
-              {preview.data.identities_dropped.map((i) => i.issuer).join(", ")}.
+            <Notice tone="warn" title={m["admin_users.merge.identities_title"]()}>
+              {m["admin_users.merge.identities_body"]({
+                issuers: preview.data.identities_dropped.map((i) => i.issuer).join(", "),
+              })}
             </Notice>
           )}
           {preview.data.duplicate_rules_dropped > 0 && (
             <p className="text-sm text-ink-muted">
-              {preview.data.duplicate_rules_dropped} duplicate rule
-              {preview.data.duplicate_rules_dropped > 1 ? "s" : ""} dropped: the target already has
-              an equivalent one, so the source's is kept off rather than moved.
+              {m["admin_users.merge.duplicate_rules"]({
+                count: preview.data.duplicate_rules_dropped,
+              })}
             </p>
           )}
           {preview.data.bundled_logins_disabled.length > 0 && (
             <p className="text-sm text-ink-muted">
-              Bundled login{preview.data.bundled_logins_disabled.length > 1 ? "s" : ""} disabled:{" "}
-              {preview.data.bundled_logins_disabled.join(", ")}
+              {m["admin_users.merge.bundled_disabled"]({
+                count: preview.data.bundled_logins_disabled.length,
+                logins: preview.data.bundled_logins_disabled.join(", "),
+              })}
             </p>
           )}
           <p className="text-sm text-ink-muted">
-            Resulting administrator flag: {preview.data.resulting_is_admin ? "yes" : "no"}. {preview.data.chat_note}.
+            {preview.data.resulting_is_admin
+              ? m["admin_users.merge.admin_yes"]()
+              : m["admin_users.merge.admin_no"]()}{" "}
+            {/* i18n: server text — the chat's own note. */}
+            {preview.data.chat_note}.
           </p>
           <Input
-            label={`Type "${expectedConfirm}" to confirm`}
+            label={m["admin_users.merge.type_confirm"]({ text: expectedConfirm })}
             value={confirm}
             onChange={(event) => setConfirm(event.target.value)}
           />
           <Input
-            label="Reason (optional)"
+            label={m["admin_users.merge.reason"]()}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="Why these are the same person"
+            placeholder={m["admin_users.merge.reason_placeholder"]()}
           />
         </div>
       ) : null}
@@ -772,13 +814,6 @@ function MergeUserDialog({ user, onClose }: { user: AdminUser | null; onClose: (
   );
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
 
 /**
  * The one-time password, shown once, with the note §8.1 requires: Authelia
@@ -802,20 +837,22 @@ function MintedPasswordNotice({ login, password }: { login: string; password: st
   return (
     <>
       <p>
-        Sign in as <strong>{login}</strong> with this password:
+        <Message
+          message={m["admin_users.password.sign_in_as"]}
+          markup={{ strong: (children) => <strong>{children}</strong> }}
+          inputs={{ login }}
+        />
       </p>
       <div className={SECRET_ROW}>
         <code className={SECRET}>{password}</code>
-        <Button onClick={copy}>{copied ? "Copied" : "Copy"}</Button>
+        <Button onClick={copy}>
+          {copied ? m["admin_users.password.copied"]() : m["admin_users.password.copy"]()}
+        </Button>
       </div>
       {copied === false && (
-        <p className="text-sm text-warn">Could not reach the clipboard; copy it by hand.</p>
+        <p className="text-sm text-warn">{m["admin_users.password.clipboard"]()}</p>
       )}
-      <p className={SECRET_DETAIL}>
-        Share it over a one-time channel (a password manager share, or in person). Authelia
-        can't force a change at first sign-in; ask them to change it from the sign-in page's
-        reset link (needs SMTP) or keep it.
-      </p>
+      <p className={SECRET_DETAIL}>{m["admin_users.password.detail"]()}</p>
     </>
   );
 }
@@ -869,7 +906,7 @@ function Chip({
       }
     >
       {label}
-      {count === undefined ? "" : ` (${count.toLocaleString()})`}
+      {count === undefined ? "" : ` (${formatNumber(count)})`}
     </button>
   );
 }
@@ -888,20 +925,23 @@ function ReIssueButton({ user }: { user: AdminUser }) {
           onSuccess: async (result) => {
             try {
               await navigator.clipboard.writeText(result.invite_text);
-              toast?.add({ title: "Fresh invite text copied", type: "success" });
+              toast?.add({ title: m["admin_users.invite.toast_copied"](), type: "success" });
             } catch {
               toast?.add({ title: result.invite_text, type: "info" });
             }
           },
           onError: (caught: unknown) =>
             toast?.add({
-              title: caught instanceof Error ? caught.message : "Could not re-issue",
+              // i18n: server text — the API's own error message.
+              title: caught instanceof Error
+                ? caught.message
+                : m["admin_users.toast.reissue_failed"](),
               type: "error",
             }),
         })
       }
     >
-      Re-invite
+      {m["admin_users.action.reinvite"]()}
     </Button>
   );
 }
@@ -938,16 +978,16 @@ function InviteUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
   return (
     <Dialog
       open={open}
-      title="Invite"
+      title={m["admin_users.invite.title"]()}
       onClose={close}
       footer={
         created ? (
           <Button variant="primary" onClick={close}>
-            Done
+            {m["admin_users.invite.done"]()}
           </Button>
         ) : (
           <>
-            <Button onClick={close}>Cancel</Button>
+            <Button onClick={close}>{m["admin_users.invite.cancel"]()}</Button>
             <Button
               variant="primary"
               disabled={!email.trim()}
@@ -964,31 +1004,36 @@ function InviteUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
                 })
               }
             >
-              {sendEmail && smtpUsable ? "Invite and send" : "Invite"}
+              {sendEmail && smtpUsable
+                ? m["admin_users.invite.submit_and_send"]()
+                : m["admin_users.invite.submit"]()}
             </Button>
           </>
         )
       }
     >
       {invite.error ? (
-        <Notice tone="danger" title="Could not invite">
-          {invite.error instanceof Error ? invite.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_users.invite.load_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {invite.error instanceof Error ? invite.error.message : m["admin_users.unknown_error"]()}
         </Notice>
       ) : null}
 
       {created ? (
         <div className={FORM}>
           {created.email_sent ? (
-            <Notice tone="info" title="Invitation sent">
-              Emailed to {created.user.email}.
+            <Notice tone="info" title={m["admin_users.invite.sent_title"]()}>
+              {/* i18n: server text — the invited account's own address. */}
+              {m["admin_users.invite.sent_body"]({ email: String(created.user.email) })}
             </Notice>
           ) : created.email_error ? (
-            <Notice tone="warn" title="Could not send the email">
-              {created.email_error} — copy the text below instead.
+            <Notice tone="warn" title={m["admin_users.invite.email_failed_title"]()}>
+              {/* i18n: server text — the mailer's own error. */}
+              {m["admin_users.invite.email_failed_body"]({ error: created.email_error })}
             </Notice>
           ) : sendEmail ? null : null}
           <div>
-            <p className="mb-1 text-sm font-medium">Invite text</p>
+            <p className="mb-1 text-sm font-medium">{m["admin_users.invite.text_heading"]()}</p>
             <p className="rounded border border-line bg-surface-muted p-2 text-sm">
               {created.invite_text}
             </p>
@@ -1000,30 +1045,43 @@ function InviteUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
                 try {
                   await navigator.clipboard.writeText(created.invite_text);
                   setCopied(true);
-                  toast?.add({ title: "Invite text copied", type: "success" });
+                  toast?.add({
+                    title: m["admin_users.invite.toast_copied"](),
+                    type: "success",
+                  });
                 } catch {
-                  toast?.add({ title: "Copy failed — select the text above", type: "error" });
+                  toast?.add({
+                    title: m["admin_users.invite.toast_copy_failed"](),
+                    type: "error",
+                  });
                 }
               }}
             >
-              {copied ? "Copied" : "Copy invite text"}
+              {copied
+                ? m["admin_users.invite.copied"]()
+                : m["admin_users.invite.copy"]()}
             </Button>
           </div>
         </div>
       ) : (
         <div className={FORM}>
-          <Input label="Email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
           <Input
-            label="Display name"
+            label={m["admin_users.invite.email"]()}
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+          <Input
+            label={m["admin_users.invite.display_name"]()}
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}
           />
           <Input
-            label="Groups"
+            label={m["admin_users.invite.groups"]()}
             value={groups}
             onChange={(event) => setGroups(event.target.value)}
-            placeholder="comma separated"
-            hint="Console groups — the same manual membership an administrator grants anywhere else."
+            placeholder={m["admin_users.invite.groups_placeholder"]()}
+            hint={m["admin_users.invite.groups_hint"]()}
           />
           {smtpUsable ? (
             <label className={CHECK_ITEM}>
@@ -1032,11 +1090,11 @@ function InviteUserDialog({ open, onClose }: { open: boolean; onClose: () => voi
                 checked={sendEmail}
                 onChange={(event) => setSendEmail(event.target.checked)}
               />
-              <span>Email them the invitation</span>
+              <span>{m["admin_users.invite.email_them"]()}</span>
             </label>
           ) : (
             <p className="text-xs text-ink-faint">
-              Email is not configured, so copy the invite text to send it yourself.
+              {m["admin_users.invite.email_unconfigured"]()}
             </p>
           )}
         </div>
@@ -1072,16 +1130,16 @@ function BundledAddUserDialog({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <Dialog
       open={open}
-      title="Add user"
+      title={m["admin_users.add.title"]()}
       onClose={close}
       footer={
         created ? (
           <Button variant="primary" onClick={close}>
-            Done
+            {m["admin_users.add.done"]()}
           </Button>
         ) : (
           <>
-            <Button onClick={close}>Cancel</Button>
+            <Button onClick={close}>{m["admin_users.add.cancel"]()}</Button>
             <Button
               variant="primary"
               disabled={!login.trim() || !email.trim()}
@@ -1098,14 +1156,14 @@ function BundledAddUserDialog({ open, onClose }: { open: boolean; onClose: () =>
                 })
               }
             >
-              Add user
+              {m["admin_users.add.submit"]()}
             </Button>
           </>
         )
       }
     >
       {create.error ? (
-        <Notice tone="danger" title="Could not add the user">
+        <Notice tone="danger" title={m["admin_users.add.load_error.title"]()}>
           {taken ?? (create.error instanceof Error ? create.error.message : "Unknown error.")}
         </Notice>
       ) : null}
@@ -1118,7 +1176,7 @@ function BundledAddUserDialog({ open, onClose }: { open: boolean; onClose: () =>
               prefill has to be visible happening, in the direction forms are
               read, not appear retroactively in a field above the one typed. */}
           <Input
-            label="Email"
+            label={m["admin_users.add.email"]()}
             type="email"
             value={email}
             onChange={(event) => {
@@ -1127,25 +1185,25 @@ function BundledAddUserDialog({ open, onClose }: { open: boolean; onClose: () =>
             }}
           />
           <Input
-            label="Login"
+            label={m["admin_users.add.login"]()}
             value={login}
             onChange={(event) => {
               setLogin(event.target.value);
               setLoginByHand(true);
             }}
-            hint={LOGIN_HINT}
+            hint={LOGIN_HINT()}
           />
           <Input
-            label="Display name"
+            label={m["admin_users.add.display_name"]()}
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}
           />
           <Input
-            label="Groups"
+            label={m["admin_users.add.groups"]()}
             value={groups}
             onChange={(event) => setGroups(event.target.value)}
-            placeholder="comma separated"
-            hint="Console groups — the same manual membership an administrator grants anywhere else."
+            placeholder={m["admin_users.add.groups_placeholder"]()}
+            hint={m["admin_users.add.groups_hint"]()}
           />
         </div>
       )}
@@ -1182,30 +1240,32 @@ function CreateSignInDialog({ user, onClose }: { user: AdminUser | null; onClose
   return (
     <Dialog
       open={user !== null}
-      title={`Create sign-in — ${user?.display_name || user?.email || user?.subject}`}
+      title={m["admin_users.signin.title"]({
+        name: user?.display_name || user?.email || user?.subject || "",
+      })}
       onClose={close}
       footer={
         created ? (
           <Button variant="primary" onClick={close}>
-            Done
+            {m["admin_users.signin.done"]()}
           </Button>
         ) : (
           <>
-            <Button onClick={close}>Cancel</Button>
+            <Button onClick={close}>{m["admin_users.signin.cancel"]()}</Button>
             <Button
               variant="primary"
               disabled={!login.trim()}
               busy={create.isPending}
               onClick={() => user && create.mutate({ userId: user.id, login: login.trim() })}
             >
-              Create sign-in
+              {m["admin_users.signin.submit"]()}
             </Button>
           </>
         )
       }
     >
       {create.error ? (
-        <Notice tone="danger" title="Could not create the sign-in">
+        <Notice tone="danger" title={m["admin_users.signin.load_error.title"]()}>
           {taken ?? (create.error instanceof Error ? create.error.message : "Unknown error.")}
         </Notice>
       ) : null}
@@ -1214,10 +1274,10 @@ function CreateSignInDialog({ user, onClose }: { user: AdminUser | null; onClose
         <MintedPasswordNotice login={created.bundled_login ?? login.trim()} password={created.password} />
       ) : (
         <Input
-          label="Login"
+          label={m["admin_users.signin.login"]()}
           value={login}
           onChange={(event) => setLogin(event.target.value)}
-          hint={LOGIN_HINT}
+          hint={LOGIN_HINT()}
         />
       )}
     </Dialog>
@@ -1238,29 +1298,31 @@ function ResetPasswordDialog({ user, onClose }: { user: AdminUser | null; onClos
   return (
     <Dialog
       open={user !== null}
-      title={`Reset password — ${user?.display_name || user?.email || user?.subject}`}
+      title={m["admin_users.reset.title"]({
+        name: user?.display_name || user?.email || user?.subject || "",
+      })}
       onClose={close}
       footer={
         result ? (
           <Button variant="primary" onClick={close}>
-            Done
+            {m["admin_users.reset.done"]()}
           </Button>
         ) : (
           <>
-            <Button onClick={close}>Cancel</Button>
+            <Button onClick={close}>{m["admin_users.reset.cancel"]()}</Button>
             <Button
               variant="primary"
               busy={reset.isPending}
               onClick={() => user && reset.mutate(user.id)}
             >
-              Reset password
+              {m["admin_users.reset.submit"]()}
             </Button>
           </>
         )
       }
     >
       {reset.error ? (
-        <Notice tone="danger" title="Could not reset the password">
+        <Notice tone="danger" title={m["admin_users.reset.load_error.title"]()}>
           {reset.error instanceof Error ? reset.error.message : "Unknown error."}
         </Notice>
       ) : null}
@@ -1268,10 +1330,7 @@ function ResetPasswordDialog({ user, onClose }: { user: AdminUser | null; onClos
       {result ? (
         <MintedPasswordNotice login={user?.bundled_login ?? user?.username ?? ""} password={result.password} />
       ) : (
-        <p>
-          This mints a new one-time password for their bundled login. The old one stops
-          working immediately.
-        </p>
+        <p>{m["admin_users.reset.body"]()}</p>
       )}
     </Dialog>
   );
@@ -1302,7 +1361,10 @@ function DisableEnableDialog({
   // and everything inside reads it through `?.` rather than returning early,
   // so the hooks above run on every render regardless.
   const disabling = user?.is_active ?? true;
-  const verb = disabling ? "Disable" : "Enable";
+  // The verb is a word on a button and half a title; the two directions are
+  // separate messages rather than one word swapped into two sentences, because
+  // the sentences around it differ too.
+  const verb = disabling ? m["admin_users.toggle.disable"]() : m["admin_users.toggle.enable"]();
 
   const save = () =>
     user &&
@@ -1312,26 +1374,46 @@ function DisableEnableDialog({
         onSuccess: (updated) => {
           if (updated.authelia_sync === "failed") {
             toast?.add({
-              title: updated.authelia_sync_message ?? "The bundled login could not be updated",
+              // i18n: server text — the sync failure is the API's own sentence.
+              title: updated.authelia_sync_message ?? m["admin_users.toggle.authelia_failed"](),
               type: "error",
             });
           } else {
-            toast?.add({ title: `Account ${disabling ? "disabled" : "enabled"}`, type: "success" });
+            toast?.add({
+              title: disabling
+                ? m["admin_users.toggle.toast_disabled"]()
+                : m["admin_users.toggle.toast_enabled"](),
+              type: "success",
+            });
           }
           close();
         },
-        onError: () => toast?.add({ title: `Could not ${verb.toLowerCase()} the account`, type: "error" }),
+        onError: () =>
+          toast?.add({
+            title: disabling
+              ? m["admin_users.toggle.toast_disable_failed"]()
+              : m["admin_users.toggle.toast_enable_failed"](),
+            type: "error",
+          }),
       },
     );
 
   return (
     <Dialog
       open={user !== null}
-      title={`${verb} ${user?.display_name || user?.email || user?.subject || "this account"}?`}
+      title={
+        disabling
+          ? m["admin_users.toggle.disable_title"]({
+              name: user?.display_name || user?.email || user?.subject || m["admin_users.toggle.title_fallback"](),
+            })
+          : m["admin_users.toggle.enable_title"]({
+              name: user?.display_name || user?.email || user?.subject || m["admin_users.toggle.title_fallback"](),
+            })
+      }
       onClose={close}
       footer={
         <>
-          <Button onClick={close}>Cancel</Button>
+          <Button onClick={close}>{m["admin_users.toggle.cancel"]()}</Button>
           <Button variant={disabling ? "danger" : "primary"} busy={update.isPending} onClick={save}>
             {verb}
           </Button>
@@ -1339,39 +1421,34 @@ function DisableEnableDialog({
       }
     >
       {update.error ? (
-        <Notice tone="danger" title={`Could not ${verb.toLowerCase()} the account`}>
-          {update.error instanceof Error ? update.error.message : "Unknown error."}
+        <Notice
+          tone="danger"
+          title={
+            disabling
+              ? m["admin_users.toggle.toast_disable_failed"]()
+              : m["admin_users.toggle.toast_enable_failed"]()
+          }
+        >
+          {/* i18n: server text — the API's own error message. */}
+          {update.error instanceof Error ? update.error.message : m["admin_users.unknown_error"]()}
         </Notice>
       ) : null}
 
       {disabling ? (
         <div className={FORM}>
-          <p>
-            Their console session, chat sessions and machine links are refused within about
-            a minute. Refresh credentials and minted API keys are revoked at once.
-          </p>
-          <p>
-            Personal API keys are kept but stop admitting requests while the account is
-            disabled — they return automatically if you re-enable it.
-          </p>
+          <p>{m["admin_users.toggle.disable_sessions"]()}</p>
+          <p>{m["admin_users.toggle.disable_keys"]()}</p>
           {user && hasBundledLogin(user, bundled) ? (
-            <p>Their bundled Authelia login is disabled too, under the same action.</p>
+            <p>{m["admin_users.toggle.disable_bundled"]()}</p>
           ) : (
-            <p>
-              This does not disable the person at the identity provider — do that there too,
-              or they can still authenticate even though the gateway refuses them.
-            </p>
+            <p>{m["admin_users.toggle.disable_idp"]()}</p>
           )}
         </div>
       ) : (
         <div className={FORM}>
-          <p>
-            They can sign in again immediately, and personal API keys admit requests again.
-            Sessions, minted keys and devices stay revoked — they sign in again and re-enroll
-            rather than resuming automatically.
-          </p>
+          <p>{m["admin_users.toggle.enable_body"]()}</p>
           {user && hasBundledLogin(user, bundled) ? (
-            <p>Their bundled Authelia login is re-enabled too, under the same action.</p>
+            <p>{m["admin_users.toggle.enable_bundled"]()}</p>
           ) : null}
         </div>
       )}
@@ -1387,14 +1464,16 @@ function ActivityDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
   return (
     <Dialog
       open={user !== null}
-      title={`Activity — ${user?.display_name || user?.email || user?.subject}`}
+      title={m["admin_users.activity.title"]({
+        name: user?.display_name || user?.email || user?.subject || "",
+      })}
       onClose={onClose}
-      footer={<Button onClick={onClose}>Close</Button>}
+      footer={<Button onClick={onClose}>{m["admin_users.activity.close"]()}</Button>}
     >
       {events.isPending ? (
-        <Spinner label="Loading activity" />
+        <Spinner label={m["admin_users.activity.loading"]()} />
       ) : events.error ? (
-        <Notice tone="danger" title="Could not load activity">
+        <Notice tone="danger" title={m["admin_users.activity.load_error.title"]()}>
           {events.error instanceof Error ? events.error.message : "Unknown error."}
         </Notice>
       ) : events.data && events.data.items.length > 0 ? (
@@ -1405,6 +1484,8 @@ function ActivityDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
                 <span className={CODE}>{event.action}</span>
                 <span className={`${MUTED} text-sm`}>{formatDate(event.at)}</span>
               </div>
+              {/* i18n: server text — the action, the actor and the reason are
+                  the audit log's own values. */}
               <div className={`${MUTED} text-sm`}>
                 {event.actor_label || event.actor_type}
                 {event.reason ? ` — ${event.reason}` : ""}
@@ -1413,7 +1494,7 @@ function ActivityDialog({ user, onClose }: { user: AdminUser | null; onClose: ()
           ))}
         </ul>
       ) : (
-        <p className={MUTED}>No activity recorded yet.</p>
+        <p className={MUTED}>{m["admin_users.activity.none"]()}</p>
       )}
     </Dialog>
   );
@@ -1532,34 +1613,48 @@ function EditUserDialog({
   return (
     <Dialog
       open={user !== null}
-      title={user ? `Edit — ${user.display_name || user.email || user.subject}` : "Edit"}
+      title={
+        user
+          ? m["admin_users.edit.title"]({
+              name: user.display_name || user.email || user.subject,
+            })
+          : m["admin_users.edit.title_plain"]()
+      }
       onClose={close}
       footer={
         <>
-          <Button onClick={close}>Close</Button>
+          <Button onClick={close}>{m["admin_users.edit.close"]()}</Button>
           <Button variant="primary" disabled={!dirty} busy={update.isPending} onClick={save}>
-            Save changes
+            {m["admin_users.edit.save"]()}
           </Button>
         </>
       }
     >
       {update.error ? (
-        <Notice tone="danger" title="Could not update the user">
-          {update.error instanceof Error ? update.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_users.toast.update_failed"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {update.error instanceof Error ? update.error.message : m["admin_users.unknown_error"]()}
         </Notice>
       ) : null}
 
       <div className={FORM}>
         <div>
-          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">Identity</div>
+          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">
+            {m["admin_users.edit.identity"]()}
+          </div>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            {user?.is_admin && <Badge tone="accent">Administrator</Badge>}
-            {user?.is_active ? (
-              <Badge tone="ok">Active</Badge>
-            ) : (
-              <Badge tone="danger">Disabled</Badge>
+            {user?.is_admin && (
+              <Badge tone="accent">{m["admin_users.edit.badge_administrator"]()}</Badge>
             )}
-            <Badge tone={isLocal ? "neutral" : "warn"}>{isLocal ? "local" : "IdP"}</Badge>
+            {user?.is_active ? (
+              <Badge tone="ok">{m["admin_users.edit.badge_active"]()}</Badge>
+            ) : (
+              <Badge tone="danger">{m["admin_users.edit.badge_disabled"]()}</Badge>
+            )}
+            <Badge tone={isLocal ? "neutral" : "warn"}>
+              {/* i18n: server text — "local" is the API's own issuer value. */}
+              {isLocal ? m["admin_users.edit.kind_local"]() : m["admin_users.edit.kind_idp"]()}
+            </Badge>
           </div>
           {/* Read-only, and named as what it is: (issuer, subject) is the
               login identity — the pair every key, session and ledger row keys
@@ -1572,46 +1667,40 @@ function EditUserDialog({
                 {user.issuer} / {user.subject}
               </span>
             )}{" "}
-            — the login identity. Not editable here.
+            {m["admin_users.edit.identity_note"]()}
           </p>
         </div>
 
         <div>
-          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">Profile</div>
+          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">
+            {m["admin_users.edit.profile"]()}
+          </div>
           <div className="mt-1 space-y-3">
             <Input
-              label="Email"
+              label={m["admin_users.edit.email"]()}
               type="email"
               value={email}
               disabled={!user}
               onChange={(event) => setEmail(event.target.value)}
               hint={
                 isLocal
-                  ? "Where mail about the account goes. A local account signs in with its identity, not this address."
-                  : "The identity provider refreshes this at sign-in. Editing it records your value, and sign-in stops changing it."
+                  ? m["admin_users.edit.email_hint_local"]()
+                  : m["admin_users.edit.email_hint_idp"]()
               }
             />
             <Input
-              label="Display name"
+              label={m["admin_users.edit.display_name"]()}
               value={displayName}
               disabled={!user}
               onChange={(event) => setDisplayName(event.target.value)}
-              hint={
-                isLocal
-                  ? undefined
-                  : "Refreshed at sign-in from the identity provider, unless edited here."
-              }
+              hint={isLocal ? undefined : m["admin_users.edit.display_name_hint"]()}
             />
             <Input
-              label="Username"
+              label={m["admin_users.edit.username"]()}
               value={username}
               disabled={!user}
               onChange={(event) => setUsername(event.target.value)}
-              hint={
-                isLocal
-                  ? undefined
-                  : "The directory's own name for the person (`preferred_username`). Follows the directory unless edited here."
-              }
+              hint={isLocal ? undefined : m["admin_users.edit.username_hint"]()}
             />
           </div>
         </div>
@@ -1624,7 +1713,7 @@ function EditUserDialog({
             onChange={(event) => setIsAdmin(event.target.checked)}
           />
           <span>
-            Administrator
+            {m["admin_users.edit.admin_label"]()}
             {!isLocal && (
               /* Says what actually happens now, which is the opposite of what
                  this used to say. Granting adds a *manual* membership of the
@@ -1633,10 +1722,7 @@ function EditUserDialog({
                  it. Revoking is the narrower half: a membership the directory
                  granted has to be withdrawn there, and the API says so. */
               <span className="mt-0.5 block text-xs text-ink-faint">
-                Granting this adds them to the admin group here, and it survives
-                their next sign-in. Removing it works only if this console
-                granted it — admin the identity provider granted has to be
-                withdrawn there.
+                {m["admin_users.edit.admin_note"]()}
               </span>
             )}
           </span>
@@ -1648,7 +1734,9 @@ function EditUserDialog({
             keeps its dialog, its copy and its confirmations; only its
             address changed. */}
         <div>
-          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">Actions</div>
+          <div className="text-xs font-medium tracking-[0.01em] text-ink-muted">
+            {m["admin_users.edit.actions"]()}
+          </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {/* Bundled-only (§8.1): a login belongs to the bundled Authelia,
                 so neither action means anything against an external IdP,
@@ -1658,11 +1746,11 @@ function EditUserDialog({
             {user && knowsProviders && bundled ? (
               hasBundledLogin(user, bundled) ? (
                 <Button variant="ghost" onClick={() => onResetPassword(user)}>
-                  Reset password
+                  {m["admin_users.edit.reset_password"]()}
                 </Button>
               ) : (
                 <Button variant="ghost" onClick={() => onCreateSignIn(user)}>
-                  Create sign-in
+                  {m["admin_users.edit.create_signin"]()}
                 </Button>
               )
             ) : null}
@@ -1671,19 +1759,18 @@ function EditUserDialog({
               disabled={!user}
               onClick={() => user && onViewActivity(user)}
             >
-              Activity
+              {m["admin_users.edit.activity"]()}
             </Button>
             <Button variant="ghost" disabled={!user} onClick={() => user && onMerge(user)}>
-              Merge into…
+              {m["admin_users.edit.merge_into"]()}
             </Button>
           </div>
         </div>
 
         <p className="m-0 text-sm text-ink-muted">
-          Passwords belong to the identity provider.
           {knowsProviders && bundled
-            ? " For the bundled Authelia, the actions above mint one and reset it."
-            : ""}
+            ? m["admin_users.edit.passwords_note_bundled"]()
+            : m["admin_users.edit.passwords_note"]()}
         </p>
       </div>
     </Dialog>
