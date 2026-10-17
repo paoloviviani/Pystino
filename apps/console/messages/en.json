@@ -667,5 +667,168 @@
   "policy_fields.templates.add": "Add",
   "policy_fields.allowlist.label": "Allowlist",
   "policy_fields.allowlist.placeholder": "ilpost.it, example.org",
-  "policy_fields.allowlist.hint": "Comma separated. Matched exactly, case-insensitively."
+  "policy_fields.allowlist.hint": "Comma separated. Matched exactly, case-insensitively.",
+  "admin_providers.toast.reachable": "Provider reachable",
+  "admin_providers.toast.unreachable": "Provider is not reachable",
+  "admin_providers.toast.test_failed": "Could not test the provider",
+  "admin_providers.toast.updated": "Provider updated",
+  "admin_providers.toast.update_failed": "Could not update the provider",
+  "admin_providers.toast.deleted": "Provider deleted",
+  "admin_providers.toast.delete_failed": "Could not delete the provider",
+  "admin_providers.toast.created": "Provider created",
+  "admin_providers.toast.create_failed": "Could not create the provider",
+  "admin_providers.column.provider": "Provider",
+  "admin_providers.column.type": "Type",
+  "admin_providers.column.api_key": "API key",
+  "admin_providers.column.models": "Models",
+  "admin_providers.column.status": "Status",
+  "admin_providers.badge.router": "router",
+  "admin_providers.badge.bills_from_provider": "bills from provider",
+  "admin_providers.badge.kind_mismatch": "kind mismatch",
+  "admin_providers.badge.unpriced": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} unpriced"
+      }
+    }
+  ],
+  "admin_providers.badge.active": "Active",
+  "admin_providers.badge.inactive": "Inactive",
+  "admin_providers.test.tooltip": "Calls /models with the stored credential — no model request is made.",
+  "admin_providers.test.failed": "Test failed",
+  "admin_providers.test.models": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} models",
+        "countPlural=other": "{n} models"
+      }
+    }
+  ],
+  "admin_providers.test.latency": [
+    {
+      "declarations": [
+        "input latency"
+      ],
+      "match": {
+        "*": "{latency}ms"
+      }
+    }
+  ],
+  "admin_providers.action.test": "Test",
+  "admin_providers.action.edit": "Edit",
+  "admin_providers.action.deactivate": "Deactivate",
+  "admin_providers.action.activate": "Activate",
+  "admin_providers.action.delete": "Delete",
+  "admin_providers.internal.tooltip": "This deployment's own infrastructure — deactivate it instead of deleting it.",
+  "admin_providers.title": "Providers",
+  "admin_providers.subtitle": "The endpoints models are served from. API keys are encrypted and never shown again.",
+  "admin_providers.add": "Add provider",
+  "admin_providers.delete_error.title": "Could not delete the provider",
+  "admin_providers.unreachable_title": "{provider} is not reachable",
+  "admin_providers.provider_fallback": "Provider",
+  "admin_providers.loading": "Loading providers",
+  "admin_providers.load_error.title": "Could not load providers",
+  "admin_providers.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} provider",
+        "countPlural=other": "{n} providers"
+      }
+    }
+  ],
+  "admin_providers.state.empty": "nothing can be served until one exists",
+  "admin_providers.state.all_active": "all active",
+  "admin_providers.state.deactivated": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} deactivated"
+      }
+    }
+  ],
+  "admin_providers.state.unpriced": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} unpriced"
+      }
+    }
+  ],
+  "admin_providers.empty": "No providers configured. Nothing can be served until one exists.",
+  "admin_providers.caption": "Inference endpoints, their credentials and how many models they serve.",
+  "admin_providers.plugin.default_label": "OpenAI-compatible",
+  "admin_providers.dialog.edit_title": "Edit {provider}",
+  "admin_providers.dialog.new_title": "New provider",
+  "admin_providers.dialog.cancel": "Cancel",
+  "admin_providers.dialog.save": "Save",
+  "admin_providers.dialog.add": "Add",
+  "admin_providers.field.name": "Name",
+  "admin_providers.field.name_placeholder": "cortecs",
+  "admin_providers.field.name_hint.new": "Letters, digits, dot, dash and underscore.",
+  "admin_providers.field.name_hint.edit": "Letters, digits, dot, dash and underscore. Renaming is safe; it changes owned_by on this provider's /v1/models cards.",
+  "admin_providers.field.prefix": "Model name prefix",
+  "admin_providers.field.prefix_placeholder": "none",
+  "admin_providers.field.prefix_hint": [
+    {
+      "declarations": [
+        "input example"
+      ],
+      "match": {
+        "*": "Prepended to every model this provider contributes — two vendors both selling a \"deep\" become \"{example}deep\" and a second vendor's. Saving also renames the models already here."
+      }
+    }
+  ],
+  "admin_providers.field.type": "Type",
+  "admin_providers.field.type_hint": "How it is talked to, and whether its reported cost can be believed.",
+  "admin_providers.field.type_router_suffix": " — chooses an endpoint per request",
+  "admin_providers.field.billing": "Billing",
+  "admin_providers.field.billing_hint": "Which figure is charged. Both are recorded either way.",
+  "admin_providers.field.billing_own_prices": "Our prices — tokens counted here",
+  "admin_providers.field.billing_provider_reported": "The provider's reported cost — pass-through",
+  "admin_providers.field.billing_warning": "Prices are still needed: an unpriced model reserves nothing, so no cost ceiling trips.",
+  "admin_providers.field.base_url": "Base URL",
+  "admin_providers.field.base_url_placeholder": "https://api.example.com/v1",
+  "admin_providers.field.base_url_hint": "Include the version path. Most OpenAI-compatible endpoints end in /v1.",
+  "admin_providers.field.description": "Description",
+  "admin_providers.field.description_placeholder": "Commercial API, EU region",
+  "admin_providers.field.api_key": "API key",
+  "admin_providers.field.api_key_placeholder_none": "leave empty if none needed",
+  "admin_providers.field.api_key_placeholder_unchanged": "unchanged",
+  "admin_providers.field.api_key_hint_new": "Encrypted before storage. A local vLLM or Ollama usually needs none.",
+  "admin_providers.field.api_key_hint_edit": [
+    {
+      "declarations": [
+        "input hint"
+      ],
+      "match": {
+        "*": "Currently {hint}. Type a new key to replace it; empty keeps it."
+      }
+    }
+  ],
+  "admin_providers.field.remove_key": "Remove the stored key",
+  "admin_providers.unknown_error": "Unknown error.",
+  "admin_providers.no_key": "none"
 }

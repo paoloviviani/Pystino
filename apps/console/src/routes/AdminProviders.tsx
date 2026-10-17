@@ -26,6 +26,8 @@ import type { AdminProvider, ProviderPlugin, ProviderTestResult } from "../lib/t
 import { PageHeader } from "../components/PageHeader";
 import { CHIPS, CHECK_ITEM, CODE, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
 import { useOptionalToast } from "../lib/toast";
+import { formatNumber } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 
 
 export function AdminProviders() {
@@ -53,18 +55,21 @@ export function AdminProviders() {
         // The row's badge keeps the result on the record; the toast only marks
         // the round trip itself, the same acknowledgment the other writes give.
         toast?.add({
-          title: result.ok ? "Provider reachable" : "Provider is not reachable",
+          title: result.ok
+            ? m["admin_providers.toast.reachable"]()
+            : m["admin_providers.toast.unreachable"](),
           type: result.ok ? "success" : "error",
         });
       },
-      onError: () => toast?.add({ title: "Could not test the provider", type: "error" }),
+      onError: () =>
+        toast?.add({ title: m["admin_providers.toast.test_failed"](), type: "error" }),
     });
   };
 
   const columns: Column<AdminProvider>[] = [
     {
       key: "name",
-      header: "Provider",
+      header: m["admin_providers.column.provider"](),
       render: (provider) => (
         <>
           <div>{provider.name}</div>
@@ -75,25 +80,29 @@ export function AdminProviders() {
     },
     {
       key: "type",
-      header: "Type",
+      header: m["admin_providers.column.type"](),
       render: (provider) => (
         <>
           {/* The label, not the internal name: the operator chose "Cortecs
               (router)" and should see that back. */}
           <div>{pluginLabel(plugins.data, provider.plugin)}</div>
           <div className={CHIPS}>
-            {provider.kind === "router" && <Badge tone="accent">router</Badge>}
+            {provider.kind === "router" && (
+              <Badge tone="accent">{m["admin_providers.badge.router"]()}</Badge>
+            )}
             {provider.billing_mode === "provider_reported" && (
-              <Badge tone="warn">bills from provider</Badge>
+              <Badge tone="warn">{m["admin_providers.badge.bills_from_provider"]()}</Badge>
             )}
             {/* A named plugin that disagrees with the stored kind is a
                 configuration to point at, not a silent inconsistency. */}
             {provider.plugin_kind !== null && provider.plugin_kind !== provider.kind && (
-              <Badge tone="danger">kind mismatch</Badge>
+              <Badge tone="danger">{m["admin_providers.badge.kind_mismatch"]()}</Badge>
             )}
             {/* Unpriced models reserve nothing, so no cost ceiling trips. */}
             {provider.unpriced_model_count > 0 && (
-              <Badge tone="warn">{provider.unpriced_model_count} unpriced</Badge>
+              <Badge tone="warn">
+                {m["admin_providers.badge.unpriced"]({ count: provider.unpriced_model_count })}
+              </Badge>
             )}
           </div>
         </>
@@ -101,28 +110,32 @@ export function AdminProviders() {
     },
     {
       key: "credential",
-      header: "API key",
+      header: m["admin_providers.column.api_key"](),
       render: (provider) =>
         provider.has_api_key ? (
           // Only ever a hint: the key itself is write-only and never leaves the
           // gateway (ADR 0027).
           <span className={CODE}>{provider.api_key_hint}</span>
         ) : (
-          <span className={MUTED}>none</span>
+          <span className={MUTED}>{m["admin_providers.no_key"]()}</span>
         ),
     },
     {
       key: "models",
-      header: "Models",
+      header: m["admin_providers.column.models"](),
       numeric: true,
-      render: (provider) => provider.model_count.toLocaleString(),
+      render: (provider) => formatNumber(provider.model_count),
     },
     {
       key: "status",
-      header: "Status",
+      header: m["admin_providers.column.status"](),
       render: (provider) => (
         <div className={CHIPS}>
-          {provider.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
+          {provider.is_active ? (
+            <Badge tone="ok">{m["admin_providers.badge.active"]()}</Badge>
+          ) : (
+            <Badge>{m["admin_providers.badge.inactive"]()}</Badge>
+          )}
           <TestBadge result={results[provider.id]} />
         </div>
       ),
@@ -136,34 +149,40 @@ export function AdminProviders() {
               request to a model. Said here, where the button is — it spent a
               while as a notice inside the create dialog, explaining an action
               that did not exist yet. */}
-          <Tooltip label="Calls /models with the stored credential — no model request is made.">
+          <Tooltip label={m["admin_providers.test.tooltip"]()}>
             <Button
               busy={test.isPending && test.variables === provider.id}
               onClick={() => runTest(provider)}
             >
-              Test
+              {m["admin_providers.action.test"]()}
             </Button>
           </Tooltip>
-          <Button onClick={() => setEditing(provider)}>Edit</Button>
+          <Button onClick={() => setEditing(provider)}>{m["admin_providers.action.edit"]()}</Button>
           <Button
             busy={update.isPending && update.variables?.id === provider.id}
             onClick={() =>
               update.mutate(
                 { id: provider.id, is_active: !provider.is_active },
                 {
-                  onSuccess: () => toast?.add({ title: "Provider updated", type: "success" }),
+                  onSuccess: () =>
+                    toast?.add({ title: m["admin_providers.toast.updated"](), type: "success" }),
                   onError: () =>
-                    toast?.add({ title: "Could not update the provider", type: "error" }),
+                    toast?.add({
+                      title: m["admin_providers.toast.update_failed"](),
+                      type: "error",
+                    }),
                 },
               )
             }
           >
-            {provider.is_active ? "Deactivate" : "Activate"}
+            {provider.is_active
+              ? m["admin_providers.action.deactivate"]()
+              : m["admin_providers.action.activate"]()}
           </Button>
           {provider.kind === "internal" ? (
-            <Tooltip label="This deployment's own infrastructure — deactivate it instead of deleting it.">
+            <Tooltip label={m["admin_providers.internal.tooltip"]()}>
               <Button variant="ghost" className="text-danger" disabled>
-                Delete
+                {m["admin_providers.action.delete"]()}
               </Button>
             </Tooltip>
           ) : (
@@ -173,13 +192,17 @@ export function AdminProviders() {
               busy={remove.isPending && remove.variables === provider.id}
               onClick={() =>
                 remove.mutate(provider.id, {
-                  onSuccess: () => toast?.add({ title: "Provider deleted", type: "success" }),
+                  onSuccess: () =>
+                    toast?.add({ title: m["admin_providers.toast.deleted"](), type: "success" }),
                   onError: () =>
-                    toast?.add({ title: "Could not delete the provider", type: "error" }),
+                    toast?.add({
+                      title: m["admin_providers.toast.delete_failed"](),
+                      type: "error",
+                    }),
                 })
               }
             >
-              Delete
+              {m["admin_providers.action.delete"]()}
             </Button>
           )}
         </div>
@@ -192,26 +215,34 @@ export function AdminProviders() {
   return (
     <div className={PAGE}>
       <PageHeader
-        title="Providers"
-        subtitle="The endpoints models are served from. API keys are encrypted and never
-          shown again."
+        title={m["admin_providers.title"]()}
+        subtitle={m["admin_providers.subtitle"]()}
         actions={
           <Button variant="primary" onClick={() => setCreating(true)}>
-            Add provider
+            {m["admin_providers.add"]()}
           </Button>
         }
       />
 
       {remove.error ? (
-        <Notice tone="danger" title="Could not delete the provider">
-          {remove.error instanceof Error ? remove.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_providers.delete_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {remove.error instanceof Error ? remove.error.message : m["admin_providers.unknown_error"]()}
         </Notice>
       ) : null}
 
       {failures.map(([id, result]) => {
         const provider = providers.data?.items.find((entry) => entry.id === id);
         return (
-          <Notice key={id} tone="warn" title={`${provider?.name ?? "Provider"} is not reachable`}>
+          <Notice
+            key={id}
+            tone="warn"
+            title={m["admin_providers.unreachable_title"]({
+              // i18n: server text — the provider's own name.
+              provider: provider?.name ?? m["admin_providers.provider_fallback"](),
+            })}
+          >
+            {/* i18n: server text — the test result's own detail. */}
             {result.detail}
           </Notice>
         );
@@ -219,16 +250,19 @@ export function AdminProviders() {
 
       <Card flush>
         {providers.isPending ? (
-          <Spinner label="Loading providers" />
+          <Spinner label={m["admin_providers.loading"]()} />
         ) : providers.error ? (
-          <Notice tone="danger" title="Could not load providers">
-            {providers.error instanceof Error ? providers.error.message : "Unknown error."}
+          <Notice tone="danger" title={m["admin_providers.load_error.title"]()}>
+            {/* i18n: server text — the API's own error message. */}
+            {providers.error instanceof Error
+              ? providers.error.message
+              : m["admin_providers.unknown_error"]()}
           </Notice>
         ) : (
           <>
             <div className="p-5">
               <SummaryStrip
-                headline={`${items.length} ${items.length === 1 ? "provider" : "providers"}`}
+                headline={m["admin_providers.count"]({ count: items.length })}
                 detail={providerState(items)}
                 active={items.length > 0}
               />
@@ -237,8 +271,8 @@ export function AdminProviders() {
               columns={columns}
               rows={items}
               rowKey={(provider) => provider.id}
-              empty="No providers configured. Nothing can be served until one exists."
-              caption="Inference endpoints, their credentials and how many models they serve."
+              empty={m["admin_providers.empty"]()}
+              caption={m["admin_providers.caption"]()}
             />
           </>
         )}
@@ -262,12 +296,12 @@ export function AdminProviders() {
 
 function TestBadge({ result }: { result: ProviderTestResult | undefined }) {
   if (!result) return null;
-  if (!result.ok) return <Badge tone="danger">Test failed</Badge>;
-  return (
-    <Badge tone="ok">
-      {result.model_count ?? 0} models{result.latency_ms ? ` · ${result.latency_ms}ms` : ""}
-    </Badge>
-  );
+  if (!result.ok) return <Badge tone="danger">{m["admin_providers.test.failed"]()}</Badge>;
+  const parts = [m["admin_providers.test.models"]({ count: result.model_count ?? 0 })];
+  if (result.latency_ms) {
+    parts.push(m["admin_providers.test.latency"]({ latency: result.latency_ms }));
+  }
+  return <Badge tone="ok">{parts.join(" · ")}</Badge>;
 }
 
 /**
@@ -276,12 +310,17 @@ function TestBadge({ result }: { result: ProviderTestResult | undefined }) {
  * what "reserves nothing" looks like from this screen).
  */
 function providerState(items: AdminProvider[]): string {
-  if (items.length === 0) return "nothing can be served until one exists";
+  if (items.length === 0) return m["admin_providers.state.empty"]();
   const off = items.filter((provider) => !provider.is_active).length;
   const unpriced = items.reduce((sum, provider) => sum + provider.unpriced_model_count, 0);
-  const parts: string[] = [];
-  parts.push(off === 0 ? "all active" : `${off} deactivated`);
-  if (unpriced > 0) parts.push(`${unpriced} unpriced`);
+  // Figures separated by a middot: a list, not a sentence, so the separator
+  // stays here rather than inside any one message.
+  const parts: string[] = [
+    off === 0
+      ? m["admin_providers.state.all_active"]()
+      : m["admin_providers.state.deactivated"]({ count: off }),
+  ];
+  if (unpriced > 0) parts.push(m["admin_providers.state.unpriced"]({ count: unpriced }));
   return parts.join(" · ");
 }
 
@@ -290,7 +329,8 @@ function pluginLabel(plugins: ProviderPlugin[] | undefined, name: string | null)
   const match = (plugins ?? []).find((entry) =>
     name === null ? entry.is_default : entry.name === name,
   );
-  return match?.label ?? name ?? "OpenAI-compatible";
+  // i18n: server text — a plugin's own label, or the plugin's name.
+  return match?.label ?? name ?? m["admin_providers.plugin.default_label"]();
 }
 
 /** The default type's name, whose value in the selector is the empty string. */
@@ -417,7 +457,7 @@ export function ProviderDialog({
             onClose();
           },
           onError: () =>
-            toast?.add({ title: "Could not update the provider", type: "error" }),
+            toast?.add({ title: m["admin_providers.toast.update_failed"](), type: "error" }),
         },
       );
     } else {
@@ -434,11 +474,11 @@ export function ProviderDialog({
         },
         {
           onSuccess: () => {
-            toast?.add({ title: "Provider created", type: "success" });
+            toast?.add({ title: m["admin_providers.toast.created"](), type: "success" });
             onClose();
           },
           onError: () =>
-            toast?.add({ title: "Could not create the provider", type: "error" }),
+            toast?.add({ title: m["admin_providers.toast.create_failed"](), type: "error" }),
         },
       );
     }
@@ -447,11 +487,15 @@ export function ProviderDialog({
   return (
     <Dialog
       open={open}
-      title={editing ? `Edit ${provider?.name}` : "New provider"}
+      title={
+        editing
+          ? m["admin_providers.dialog.edit_title"]({ provider: provider?.name ?? "" })
+          : m["admin_providers.dialog.new_title"]()
+      }
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{m["admin_providers.dialog.cancel"]()}</Button>
           <Button
             variant="primary"
             busy={pending}
@@ -460,44 +504,42 @@ export function ProviderDialog({
             disabled={!name.trim() || (!baseUrl.trim() && !chosen?.default_base_url)}
             onClick={submit}
           >
-            {editing ? "Save" : "Add"}
+            {editing ? m["admin_providers.dialog.save"]() : m["admin_providers.dialog.add"]()}
           </Button>
         </>
       }
     >
       {error ? (
         <Notice tone="danger">
-          {error instanceof Error ? error.message : "Unknown error."}
+          {/* i18n: server text — the API's own error message. */}
+          {error instanceof Error ? error.message : m["admin_providers.unknown_error"]()}
         </Notice>
       ) : null}
 
       <Input
-        label="Name"
+        label={m["admin_providers.field.name"]()}
         value={name}
         onChange={(event) => setName(event.target.value)}
-        placeholder="cortecs"
+        placeholder={m["admin_providers.field.name_placeholder"]()}
         hint={
           editing
-            ? "Letters, digits, dot, dash and underscore. Renaming is safe; it changes" +
-              " owned_by on this provider's /v1/models cards."
-            : "Letters, digits, dot, dash and underscore."
+            ? m["admin_providers.field.name_hint.edit"]()
+            : m["admin_providers.field.name_hint.new"]()
         }
       />
 
       <Input
-        label="Model name prefix"
+        label={m["admin_providers.field.prefix"]()}
         value={prefix}
         onChange={(event) => setPrefix(event.target.value)}
-        placeholder="none"
-        hint={
-          `Prepended to every model this provider contributes — two vendors both selling a "deep"` +
-          ` become ${prefix ? `"${prefix}deep"` : `"deep"`} and a second vendor's. Saving also renames` +
-          " the models already here."
-        }
+        placeholder={m["admin_providers.field.prefix_placeholder"]()}
+        hint={m["admin_providers.field.prefix_hint"]({
+          example: prefix ? `${prefix}deep` : "deep",
+        })}
       />
 
       <Select
-        label="Type"
+        label={m["admin_providers.field.type"]()}
         value={plugin}
         onChange={(event) => {
           const next = event.target.value;
@@ -520,15 +562,14 @@ export function ProviderDialog({
           setPlugin(next);
         }}
         hint={
-          chosen
-            ? chosen.description
-            : "How it is talked to, and whether its reported cost can be believed."
+          // i18n: server text — the plugin's own description.
+          chosen ? chosen.description : m["admin_providers.field.type_hint"]()
         }
       >
         {(plugins.data ?? []).map((entry) => (
           <option key={entry.name} value={entry.is_default ? "" : entry.name}>
             {entry.label}
-            {entry.kind === "router" ? " — chooses an endpoint per request" : ""}
+            {entry.kind === "router" ? m["admin_providers.field.type_router_suffix"]() : ""}
           </option>
         ))}
       </Select>
@@ -537,16 +578,16 @@ export function ProviderDialog({
           that asserts its reported figure is the real charge can. */}
       {modes.length > 1 && (
         <Select
-          label="Billing"
+          label={m["admin_providers.field.billing"]()}
           value={effectiveMode}
           onChange={(event) =>
             setBillingMode(event.target.value as "own_prices" | "provider_reported")
           }
-          hint="Which figure is charged. Both are recorded either way."
+          hint={m["admin_providers.field.billing_hint"]()}
         >
-          <option value="own_prices">Our prices — tokens counted here</option>
+          <option value="own_prices">{m["admin_providers.field.billing_own_prices"]()}</option>
           <option value="provider_reported">
-            The provider's reported cost — pass-through
+            {m["admin_providers.field.billing_provider_reported"]()}
           </option>
         </Select>
       )}
@@ -554,38 +595,42 @@ export function ProviderDialog({
       {/* Admission happens before the request and the provider's figure arrives
           after it, which is why prices are still needed in this mode. */}
       {effectiveMode === "provider_reported" && (
-        <Notice tone="warn">
-          Prices are still needed: an unpriced model reserves nothing, so no cost ceiling
-          trips.
-        </Notice>
+        <Notice tone="warn">{m["admin_providers.field.billing_warning"]()}</Notice>
       )}
 
       <Input
-        label="Base URL"
+        label={m["admin_providers.field.base_url"]()}
         value={baseUrl}
         onChange={(event) => setBaseUrl(event.target.value)}
-        placeholder="https://api.example.com/v1"
-        hint="Include the version path. Most OpenAI-compatible endpoints end in /v1."
+        placeholder={m["admin_providers.field.base_url_placeholder"]()}
+        hint={m["admin_providers.field.base_url_hint"]()}
       />
 
       <Input
-        label="Description"
+        label={m["admin_providers.field.description"]()}
         value={description}
         onChange={(event) => setDescription(event.target.value)}
-        placeholder="Commercial API, EU region"
+        placeholder={m["admin_providers.field.description_placeholder"]()}
       />
 
       <Input
-        label="API key"
+        label={m["admin_providers.field.api_key"]()}
         type="password"
         value={apiKey}
         onChange={(event) => setApiKey(event.target.value)}
         autoComplete="new-password"
-        placeholder={editing && provider?.has_api_key ? "unchanged" : "leave empty if none needed"}
+        placeholder={
+          editing && provider?.has_api_key
+            ? m["admin_providers.field.api_key_placeholder_unchanged"]()
+            : m["admin_providers.field.api_key_placeholder_none"]()
+        }
         hint={
           editing && provider?.has_api_key
-            ? `Currently ${provider.api_key_hint}. Type a new key to replace it; empty keeps it.`
-            : "Encrypted before storage. A local vLLM or Ollama usually needs none."
+            ? m["admin_providers.field.api_key_hint_edit"]({
+                // i18n: server text — the API's own hint for the stored key.
+                hint: provider.api_key_hint,
+              })
+            : m["admin_providers.field.api_key_hint_new"]()
         }
       />
 
@@ -597,7 +642,7 @@ export function ProviderDialog({
             disabled={apiKey.length > 0}
             onChange={(event) => setClearKey(event.target.checked)}
           />
-          <span>Remove the stored key</span>
+          <span>{m["admin_providers.field.remove_key"]()}</span>
         </label>
       )}
 
