@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  formatCurrency,
   formatDate,
   formatDateTime,
   formatDuration,
@@ -47,10 +46,6 @@ describe("dates", () => {
 describe("numbers", () => {
   it("groups digits the way the active locale does", () => {
     expect(formatNumber(1_234_567)).toBe("1,234,567");
-  });
-
-  it("writes an amount in the console's currency", () => {
-    expect(formatCurrency(12.5)).toBe("€12.50");
   });
 });
 

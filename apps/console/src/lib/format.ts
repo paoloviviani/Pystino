@@ -1,7 +1,7 @@
 import { activeLocale } from "./locale";
 
 /**
- * Every date, number and amount the console shows, in one place.
+ * Every date, number and duration the console shows, in one place.
  *
  * Screens used to call `toLocaleString()` with `undefined` as the locale, which
  * is the *browser's* language — so a reader whose browser is set to German saw
@@ -105,21 +105,6 @@ export function formatDateTime(value: Primitive): string {
  */
 export function formatNumber(value: number): string {
   return numberFormatter().format(value);
-}
-
-/**
- * An amount, in the console's currency.
- *
- * **Not for ledger money.** The API sends an amount as a decimal *string* and
- * it must stay one: `formatMoney` in `@llmp/ui` formats the digits with string
- * arithmetic for exactly that reason, rounds to milli-units, and never rounds a
- * real amount to zero. This helper takes a `number`, so anything that came off
- * the wire must not come here — it belongs to figures the console has already
- * turned into numbers (a percentage, a per-request average), and to screens
- * that are showing a currency for orientation rather than for an invoice.
- */
-export function formatCurrency(value: number, currency = "EUR"): string {
-  return numberFormatter({ style: "currency", currency }).format(value);
 }
 
 /** The spans `formatRelative` measures in, coarsest last. */
