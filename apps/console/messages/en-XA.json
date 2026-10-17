@@ -1504,5 +1504,163 @@
         "*": "[{name}, {window}]"
       }
     }
+  ],
+  "admin_groups.toast.update_failed": "[Ćóúľď ńóť úþďáťé ťȟé ǧŕóúþ]",
+  "admin_groups.column.group": "[Ǧŕóúþ]",
+  "admin_groups.column.source": "[Śóúŕćé]",
+  "admin_groups.column.members": "[Ḿéḿƀéŕś]",
+  "admin_groups.column.capabilities": "[Ćáþáƀíľíťíéś]",
+  "admin_groups.column.models": "[Ḿóďéľś]",
+  "admin_groups.capability.agents_aria": "[{name}: ćóďíńǧ áǧéńťś]",
+  "admin_groups.capability.api_keys_aria": "[{name}: ÁÞÍ ķéýś]",
+  "admin_groups.capability.agents": "[Áǧéńťś]",
+  "admin_groups.capability.api_keys": "[ÁÞÍ ķéýś]",
+  "admin_groups.models_none": "[ńóńé ǧŕáńťéď]",
+  "admin_groups.action.members": "[Ḿéḿƀéŕś]",
+  "admin_groups.action.delete": "[Ďéľéťé]",
+  "admin_groups.title": "[Ǧŕóúþś]",
+  "admin_groups.subtitle": "[Ŵȟó ƀéľóńǧś ťóǧéťȟéŕ, áńď ŵȟáť ťȟé ǧŕóúþ ḿáý úśé. Ḿóďéľ áććéśś íś ǧŕáńťéď þéŕ ǧŕóúþ, óń ťȟé Ḿóďéľś śćŕééń.]",
+  "admin_groups.new_group": "[Ńéŵ ǧŕóúþ]",
+  "admin_groups.load_error.title": "[Ćóúľď ńóť ľóáď ǧŕóúþś]",
+  "admin_groups.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_groups.search": "[Śéáŕćȟ]",
+  "admin_groups.search_placeholder": "[ǧŕóúþ ńáḿé óŕ ďéśćŕíþťíóń]",
+  "admin_groups.search_hint_matching": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ḿáťćȟíńǧ]"
+      }
+    }
+  ],
+  "admin_groups.search_hint_global": "[Śéáŕćȟéś éǚéŕý ǧŕóúþ, ńóť ĵúśť ťȟíś þáǧé.]",
+  "admin_groups.loading": "[Ĺóáďíńǧ ǧŕóúþś]",
+  "admin_groups.empty_query": "[Ńó ǧŕóúþ ḿáťćȟéś ťȟáť.]",
+  "admin_groups.empty": "[Ńó ǧŕóúþś ýéť.]",
+  "admin_groups.caption": "[Ǧŕóúþś, ťȟéíŕ ḿéḿƀéŕś áńď ťȟéíŕ ḿóďéľ áććéśś.]",
+  "admin_groups.noun": "[ǧŕóúþś]",
+  "admin_groups.create.title": "[Ńéŵ ǧŕóúþ]",
+  "admin_groups.create.cancel": "[Ćáńćéľ]",
+  "admin_groups.create.submit": "[Ćŕéáťé ǧŕóúþ]",
+  "admin_groups.create.toast_done": "[Ǧŕóúþ {name} ćŕéáťéď]",
+  "admin_groups.create.toast_failed": "[Ćóúľď ńóť ćŕéáťé ťȟé ǧŕóúþ]",
+  "admin_groups.create.name": "[Ńáḿé]",
+  "admin_groups.create.name_hint": "[Śȟóŵń ŵȟéŕéǚéŕ á ǧŕóúþ íś ńáḿéď: þíćķéŕś, ľíśťíńǧś, ŕéþóŕťś.]",
+  "admin_groups.create.description": "[Ďéśćŕíþťíóń]",
+  "admin_groups.create.description_hint": "[Óþťíóńáľ. Á śéńťéńćé śáýíńǧ ŵȟáť ťȟé ǧŕóúþ íś ƒóŕ.]",
+  "admin_groups.members.title": "[Ḿéḿƀéŕś — {name}]",
+  "admin_groups.members.title_plain": "[Ḿéḿƀéŕś]",
+  "admin_groups.members.done": "[Ďóńé]",
+  "admin_groups.members.add_search": "[Áďď á ḿéḿƀéŕ]",
+  "admin_groups.members.add_placeholder": "[éḿáíľ, ńáḿé óŕ íďéńťíťý þŕóǚíďéŕ śúƀĵéćť]",
+  "admin_groups.members.cancel": "[Ćáńćéľ]",
+  "admin_groups.members.add_member": "[Áďď ḿéḿƀéŕ]",
+  "admin_groups.members.searching": "[Śéáŕćȟíńǧ]",
+  "admin_groups.members.add": "[Áďď]",
+  "admin_groups.members.toast_added": "[Ḿéḿƀéŕ áďďéď]",
+  "admin_groups.members.toast_add_failed": "[Ćóúľď ńóť áďď ťȟé ḿéḿƀéŕ]",
+  "admin_groups.members.no_match": "[Ńó áććóúńť ḿáťćȟéś ťȟáť.]",
+  "admin_groups.members.loading": "[Ĺóáďíńǧ ḿéḿƀéŕś]",
+  "admin_groups.members.from_directory": "[ƒŕóḿ ťȟé ďíŕéćťóŕý]",
+  "admin_groups.members.remove": "[Ŕéḿóǚé]",
+  "admin_groups.members.toast_removed": "[Ḿéḿƀéŕ ŕéḿóǚéď]",
+  "admin_groups.members.toast_remove_failed": "[Ćóúľď ńóť ŕéḿóǚé ťȟé ḿéḿƀéŕ]",
+  "admin_groups.members.none_yet": "[Ńó ḿéḿƀéŕś ýéť.]",
+  "admin_groups.delete.title": "[Ďéľéťé {name}?]",
+  "admin_groups.delete.title_fallback": "[ťȟíś ǧŕóúþ]",
+  "admin_groups.delete.cancel": "[Ćáńćéľ]",
+  "admin_groups.delete.confirm": "[Ďéľéťé þéŕḿáńéńťľý]",
+  "admin_groups.delete.toast_done": "[Ǧŕóúþ ďéľéťéď]",
+  "admin_groups.delete.toast_failed": "[Ćóúľď ńóť ďéľéťé ťȟé ǧŕóúþ]",
+  "admin_groups.delete.body": "[Ḿóďéľ áććéśś ǧŕáńťéď ťó ťȟíś ǧŕóúþ íś ŕéḿóǚéď, áńď áńýóńé ƀíľľíńǧ ťó íť áś ťȟéíŕ ďéƒáúľť ǧóéś ƀáćķ ťó ćȟóóśíńǧ áť ŕéǫúéśť ťíḿé. Ťȟéíŕ ǫúóťá áńď ŕéďáćťíóń ŕúľéś śćóþéď ťó ťȟé ǧŕóúþ ķééþ ťȟéíŕ śćóþé ƀúť śťóþ ḿáťćȟíńǧ áńýóńé.]",
+  "admin_groups.delete.idp_title": "[Ťȟíś ǧŕóúþ ćóḿéś ƒŕóḿ ťȟé íďéńťíťý þŕóǚíďéŕ]",
+  "admin_groups.delete.idp_auto_body": "[Íť ŵíľľ ƀé ŕéćŕéáťéď ťȟé ńéẋť ťíḿé óńé óƒ íťś ḿéḿƀéŕś śíǧńś íń, úńľéśś ťȟé ḿáþþíńǧś óŕ ťȟé ďíŕéćťóŕý ȟáǚé ćȟáńǧéď.]",
+  "admin_groups.delete.idp_manual_body": "[Íťś ḿéḿƀéŕś ľóśé íť ńóŵ. Ŵȟéń óńé óƒ ťȟéḿ ńéẋť śíǧńś íń, íťś ńáḿé íś ľíśťéď úńďéŕ “Ǧŕóúþś ƒŕóḿ ýóúŕ íďéńťíťý þŕóǚíďéŕ” áǧáíń, áńď ńóťȟíńǧ íś ŕéćŕéáťéď úńľéśś ýóú ḿáþ íť.]",
+  "admin_groups.seen.card": "[Ǧŕóúþś ƒŕóḿ ýóúŕ íďéńťíťý þŕóǚíďéŕ]",
+  "admin_groups.seen.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé ǧŕóúþś ýóúŕ íďéńťíťý þŕóǚíďéŕ ŕéþóŕťéď]",
+  "admin_groups.seen.toast_ignored": "[{name} íǧńóŕéď]",
+  "admin_groups.seen.toast_relisted": "[{name} ľíśťéď áǧáíń]",
+  "admin_groups.seen.toast_dismiss_failed": "[Ćóúľď ńóť ďíśḿíśś {name}]",
+  "admin_groups.seen.toast_restore_failed": "[Ćóúľď ńóť ŕéśťóŕé {name}]",
+  "admin_groups.seen.map": "[Ḿáþ…]",
+  "admin_groups.seen.restore": "[Ŕéśťóŕé]",
+  "admin_groups.seen.ignore": "[Íǧńóŕé]",
+  "admin_groups.seen.column.name": "[Ńáḿé]",
+  "admin_groups.seen.column.people": "[Þéóþľé]",
+  "admin_groups.seen.column.last_seen": "[Ĺáśť śééń]",
+  "admin_groups.seen.mappings_heading": "[Ćúŕŕéńť ḿáþþíńǧś]",
+  "admin_groups.seen.unmap_aria": "[Úńḿáþ {idp}]",
+  "admin_groups.seen.unmap": "[Úńḿáþ]",
+  "admin_groups.seen.toast_unmapped": "[{idp} úńḿáþþéď]",
+  "admin_groups.seen.unmap_note": "[Ḿéḿƀéŕśȟíþś ǧŕáńťéď ťȟŕóúǧȟ ťȟé ḿáþþíńǧ ǧó áť éáćȟ þéŕśóń'ś ńéẋť śíǧń-íń.]",
+  "admin_groups.seen.toast_unmap_failed": "[Ćóúľď ńóť úńḿáþ]",
+  "admin_groups.seen.search_placeholder": "[ǧŕóúþ ńáḿé]",
+  "admin_groups.seen.hint_dismissed": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ďíśḿíśśéď]"
+      }
+    }
+  ],
+  "admin_groups.seen.hint_waiting": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ŵáíťíńǧ]"
+      }
+    }
+  ],
+  "admin_groups.seen.show_waiting": "[Śȟóŵ ŵáíťíńǧ]",
+  "admin_groups.seen.show_dismissed": "[Śȟóŵ ďíśḿíśśéď]",
+  "admin_groups.seen.loading": "[Ĺóáďíńǧ ťȟé ǧŕóúþś ýóúŕ íďéńťíťý þŕóǚíďéŕ ŕéþóŕťéď]",
+  "admin_groups.seen.empty_dismissed_title": "[Ńóťȟíńǧ ďíśḿíśśéď.]",
+  "admin_groups.seen.empty_waiting_title": "[Ńóťȟíńǧ ŵáíťíńǧ ťó ƀé ḿáþþéď.]",
+  "admin_groups.seen.empty_dismissed_detail": "[Ńáḿéś ýóú ďíśḿíśś áŕé ķéþť ȟéŕé, ťó ḿáþ óŕ ľíśť áǧáíń ľáťéŕ.]",
+  "admin_groups.seen.empty_waiting_detail": "[Ǧŕóúþ ńáḿéś ýóúŕ íďéńťíťý þŕóǚíďéŕ ŕéþóŕťś áþþéáŕ ȟéŕé áƒťéŕ śóḿéóńé śíǧńś íń ŵíťȟ ťȟéḿ.]",
+  "admin_groups.seen.empty_query": "[Ńó ǧŕóúþ ńáḿé ḿáťćȟéś ťȟáť.]",
+  "admin_groups.seen.caption": "[Ǧŕóúþ ńáḿéś ýóúŕ íďéńťíťý þŕóǚíďéŕ ŕéþóŕťéď, áńď ȟóŵ ḿáńý þéóþľé ćáŕŕý éáćȟ.]",
+  "admin_groups.seen.noun": "[ńáḿéś]",
+  "admin_groups.map.title": "[Ḿáþ {name}]",
+  "admin_groups.map.cancel": "[Ćáńćéľ]",
+  "admin_groups.map.confirm": "[Ḿáþ]",
+  "admin_groups.map.toast_done": "[{name} ḿáþþéď ťó {group}]",
+  "admin_groups.map.toast_failed": "[Ćóúľď ńóť ḿáþ]",
+  "admin_groups.map.legend": "[Ŵȟáť ťȟíś ńáḿé ǧŕáńťś]",
+  "admin_groups.map.option.new_same_name": "[Ńéŵ ǧŕóúþ ŵíťȟ ťȟé śáḿé ńáḿé]",
+  "admin_groups.map.option.new_named": "[Ńéŵ ǧŕóúþ ńáḿéď…]",
+  "admin_groups.map.option.existing": "[Éẋíśťíńǧ ǧŕóúþ…]",
+  "admin_groups.map.new_name": "[Ńáḿé ťȟé ńéŵ ǧŕóúþ]",
+  "admin_groups.map.new_name_placeholder": "[éńǧíńééŕíńǧ]",
+  "admin_groups.map.local_group": "[Ĺóćáľ ǧŕóúþ]",
+  "admin_groups.map.local_group_hint": "[Ťȟé ÍďÞ ńáḿé ńóŵ ǧŕáńťś ťȟíś ǧŕóúþ, ŵȟéŕéǚéŕ íť íś ćľáíḿéď.]",
+  "admin_groups.map.pick_group": "[Þíćķ á ǧŕóúþ…]",
+  "admin_groups.map.reason": "[Ŕéáśóń (óþťíóńáľ)]",
+  "admin_groups.map.reason_placeholder": "[ŕéćóŕďéď óń ťȟé þóľíćý ȟíśťóŕý]",
+  "admin_groups.mode.auto": "[Éǚéŕý ńáḿé íś ḿáþþéď áúťóḿáťíćáľľý áť śíǧń-íń. Ńáḿéś ľíśťéď ȟéŕé ŵéŕé śééń ƀéƒóŕé ťȟáť ŵáś ťúŕńéď óń.]",
+  "admin_groups.mode.manual": "[Ńóťȟíńǧ íś ćŕéáťéď úńťíľ ýóú ḿáþ íť. Ḿáþþíńǧ ćŕéáťéś ťȟé ǧŕóúþ (óŕ ńáḿéś óńé ťȟáť éẋíśťś) áńď ǧíǚéś íť ťó ťȟé þéóþľé ŵȟó ćáŕŕý íť ńóŵ — óŕ áť ťȟéíŕ ńéẋť śíǧń-íń ŵȟéŕé ťȟé þŕóǚíďéŕ'ś ǧŕóúþś óńľý áþþľý ťȟéń.]",
+  "admin_groups.mode.everyone": "[Éǚéŕýóńé ĵóíńś {#strong}{group}{/strong} áť ťȟéíŕ ƒíŕśť śíǧń-íń, śó ńéŵ þéóþľé ćáń úśé þúƀľíć ḿóďéľś ƀéƒóŕé áńýťȟíńǧ íś ḿáþþéď.]",
+  "admin_groups.import.next_login": "[Íťś ḿéḿƀéŕś ǧéť íť áť ťȟéíŕ ńéẋť śíǧń-íń. Ǧŕáńť íť ḿóďéľś óń ťȟé Ḿóďéľś śćŕééń.]",
+  "admin_groups.import.added_now": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[1 þéŕśóń áďďéď ńóŵ. Ǧŕáńť íť ḿóďéľś óń ťȟé Ḿóďéľś śćŕééń.]",
+        "countPlural=other": "[{n} þéóþľé áďďéď ńóŵ. Ǧŕáńť íť ḿóďéľś óń ťȟé Ḿóďéľś śćŕééń.]"
+      }
+    }
   ]
 }

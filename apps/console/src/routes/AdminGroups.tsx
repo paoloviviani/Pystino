@@ -43,6 +43,9 @@ import { Dialog } from "@llmp/ui";
 import { useAddGroupMember, useGroupMembers, useRemoveGroupMember, useUsers } from "../lib/admin";
 import { FORM } from "../lib/layout";
 import { useOptionalToast } from "../lib/toast";
+import { formatNumber, formatDate } from "../lib/format";
+import { Message } from "../components/Message";
+import { m } from "../paraglide/messages.js";
 
 export function AdminGroups() {
   const paged = usePaginated();
@@ -67,7 +70,10 @@ export function AdminGroups() {
       {
         onError: (caught: unknown) =>
           toast?.add({
-            title: caught instanceof Error ? caught.message : "Could not update the group",
+            // i18n: server text — the API's own error message.
+            title: caught instanceof Error
+              ? caught.message
+              : m["admin_groups.toast.update_failed"](),
             type: "error",
           }),
       },
@@ -76,7 +82,7 @@ export function AdminGroups() {
   const columns: Column<AdminGroup>[] = [
     {
       key: "who",
-      header: "Group",
+      header: m["admin_groups.column.group"](),
       render: (group) => (
         <>
           <div>{group.name}</div>
@@ -86,21 +92,22 @@ export function AdminGroups() {
     },
     {
       key: "source",
-      header: "Source",
+      header: m["admin_groups.column.source"](),
       // The source is the editability: a manual group's membership is this
       // screen's to change, an OIDC group's belongs to the directory. Showing
       // it as a badge on every row is cheaper than a refusal nobody expected.
+      // `source` is the API's enum value, shown as it arrives.
       render: (group) => <Badge tone={group.source === "manual" ? "accent" : "neutral"}>{group.source}</Badge>,
     },
     {
       key: "members",
-      header: "Members",
+      header: m["admin_groups.column.members"](),
       numeric: true,
-      render: (group) => group.member_count.toLocaleString(),
+      render: (group) => formatNumber(group.member_count),
     },
     {
       key: "capabilities",
-      header: "Capabilities",
+      header: m["admin_groups.column.capabilities"](),
       // ADR 0096: the two toggles. A flag grants a capability to the group's
       // active members and never withholds one, so the toggle is the whole
       // editor — no dialog, no confirm. The mutation invalidates the users
@@ -110,7 +117,7 @@ export function AdminGroups() {
           <label className="inline-flex items-center gap-1.5 text-sm">
             <input
               type="checkbox"
-              aria-label={`${group.name}: coding agents`}
+              aria-label={m["admin_groups.capability.agents_aria"]({ name: group.name })}
               checked={group.code_agents_allowed}
               onChange={(event) =>
                 flipCapability(group, "code_agents_allowed", event.target.checked)
@@ -118,12 +125,12 @@ export function AdminGroups() {
               disabled={updateGroup.isPending}
               className="accent-accent"
             />
-            Agents
+            {m["admin_groups.capability.agents"]()}
           </label>
           <label className="inline-flex items-center gap-1.5 text-sm">
             <input
               type="checkbox"
-              aria-label={`${group.name}: API keys`}
+              aria-label={m["admin_groups.capability.api_keys_aria"]({ name: group.name })}
               checked={group.api_keys_allowed}
               onChange={(event) =>
                 flipCapability(group, "api_keys_allowed", event.target.checked)
@@ -131,17 +138,17 @@ export function AdminGroups() {
               disabled={updateGroup.isPending}
               className="accent-accent"
             />
-            API keys
+            {m["admin_groups.capability.api_keys"]()}
           </label>
         </div>
       ),
     },
     {
       key: "models",
-      header: "Models",
+      header: m["admin_groups.column.models"](),
       render: (group) =>
         group.models.length === 0 ? (
-          <span className={MUTED}>none granted</span>
+          <span className={MUTED}>{m["admin_groups.models_none"]()}</span>
         ) : (
           <div className={CHIPS}>
             {group.models.map((model) => (
@@ -156,10 +163,10 @@ export function AdminGroups() {
       render: (group) => (
         <div className={ROW_ACTIONS}>
           <Button variant="ghost" onClick={() => setManaging(group)}>
-            Members
+            {m["admin_groups.action.members"]()}
           </Button>
           <Button variant="ghost" className="text-danger" onClick={() => setDeleting(group)}>
-            Delete
+            {m["admin_groups.action.delete"]()}
           </Button>
         </div>
       ),
@@ -169,19 +176,19 @@ export function AdminGroups() {
   return (
     <div className={PAGE}>
       <PageHeader
-        title="Groups"
-        subtitle="Who belongs together, and what the group may use. Model access is
-          granted per group, on the Models screen."
+        title={m["admin_groups.title"]()}
+        subtitle={m["admin_groups.subtitle"]()}
         actions={
           <Button variant="primary" onClick={() => setCreating(true)}>
-            New group
+            {m["admin_groups.new_group"]()}
           </Button>
         }
       />
 
       {groups.error ? (
-        <Notice tone="danger" title="Could not load groups">
-          {groups.error instanceof Error ? groups.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_groups.load_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {groups.error instanceof Error ? groups.error.message : m["admin_groups.unknown_error"]()}
         </Notice>
       ) : null}
 
@@ -189,14 +196,14 @@ export function AdminGroups() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-56 flex-1">
             <Input
-              label="Search"
+              label={m["admin_groups.search"]()}
               value={paged.search}
               onChange={(event) => paged.setSearch(event.target.value)}
-              placeholder="group name or description"
+              placeholder={m["admin_groups.search_placeholder"]()}
               hint={
                 page
-                  ? `${page.total.toLocaleString()} matching`
-                  : "Searches every group, not just this page."
+                  ? m["admin_groups.search_hint_matching"]({ count: page.total })
+                  : m["admin_groups.search_hint_global"]()
               }
             />
           </div>
@@ -205,22 +212,22 @@ export function AdminGroups() {
 
       <Card flush>
         {groups.isPending ? (
-          <Spinner label="Loading groups" />
+          <Spinner label={m["admin_groups.loading"]()} />
         ) : (
           <>
             <Table
               columns={columns}
               rows={rows}
               rowKey={(group) => group.id}
-              empty={paged.query ? "No group matches that." : "No groups yet."}
-              caption="Groups, their members and their model access."
+              empty={paged.query ? m["admin_groups.empty_query"]() : m["admin_groups.empty"]()}
+              caption={m["admin_groups.caption"]()}
             />
             <Pagination
               total={page?.total ?? 0}
               limit={paged.limit}
               offset={paged.offset}
               onOffsetChange={paged.setOffset}
-              noun="groups"
+              noun={m["admin_groups.noun"]()}
               busy={groups.isFetching}
             />
           </>
@@ -256,11 +263,11 @@ function CreateGroupDialog({ open, onClose }: { open: boolean; onClose: () => vo
   return (
     <Dialog
       open={open}
-      title="New group"
+      title={m["admin_groups.create.title"]()}
       onClose={close}
       footer={
         <>
-          <Button onClick={close}>Cancel</Button>
+          <Button onClick={close}>{m["admin_groups.create.cancel"]()}</Button>
           <Button
             variant="primary"
             busy={create.isPending}
@@ -270,37 +277,44 @@ function CreateGroupDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 { name: name.trim(), description: description.trim() || undefined },
                 {
                   onSuccess: (group) => {
-                    toast?.add({ title: `Group ${group.name} created`, type: "success" });
+                    toast?.add({
+                      title: m["admin_groups.create.toast_done"]({ name: group.name }),
+                      type: "success",
+                    });
                     close();
                   },
                   onError: () =>
-                    toast?.add({ title: "Could not create the group", type: "error" }),
+                    toast?.add({
+                      title: m["admin_groups.create.toast_failed"](),
+                      type: "error",
+                    }),
                 },
               )
             }
           >
-            Create group
+            {m["admin_groups.create.submit"]()}
           </Button>
         </>
       }
     >
       {create.error ? (
         <Notice tone="danger">
-          {create.error instanceof Error ? create.error.message : "Unknown error."}
+          {/* i18n: server text — the API's own error message. */}
+          {create.error instanceof Error ? create.error.message : m["admin_groups.unknown_error"]()}
         </Notice>
       ) : null}
       <div className={FORM}>
         <Input
-          label="Name"
+          label={m["admin_groups.create.name"]()}
           value={name}
           onChange={(event) => setName(event.target.value)}
-          hint="Shown wherever a group is named: pickers, listings, reports."
+          hint={m["admin_groups.create.name_hint"]()}
         />
         <Input
-          label="Description"
+          label={m["admin_groups.create.description"]()}
           value={description}
           onChange={(event) => setDescription(event.target.value)}
-          hint="Optional. A sentence saying what the group is for."
+          hint={m["admin_groups.create.description_hint"]()}
         />
       </div>
     </Dialog>
@@ -328,35 +342,37 @@ function GroupMembersDialog({ group, onClose }: { group: AdminGroup | null; onCl
   return (
     <Dialog
       open={group !== null}
-      title={group ? `Members — ${group.name}` : "Members"}
+      title={
+        group ? m["admin_groups.members.title"]({ name: group.name }) : m["admin_groups.members.title_plain"]()
+      }
       onClose={onClose}
-      footer={<Button onClick={onClose}>Done</Button>}
+      footer={<Button onClick={onClose}>{m["admin_groups.members.done"]()}</Button>}
     >
       <div className={FORM}>
         {adding ? (
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-56 flex-1">
               <Input
-                label="Add a member"
+                label={m["admin_groups.members.add_search"]()}
                 value={pickerPaging.search}
                 onChange={(event) => pickerPaging.setSearch(event.target.value)}
-                placeholder="email, name or identity provider subject"
+                placeholder={m["admin_groups.members.add_placeholder"]()}
                 autoFocus
               />
             </div>
             <Button variant="ghost" onClick={() => setAdding(false)}>
-              Cancel
+              {m["admin_groups.members.cancel"]()}
             </Button>
           </div>
         ) : (
           <Button variant="primary" onClick={() => setAdding(true)}>
-            Add member
+            {m["admin_groups.members.add_member"]()}
           </Button>
         )}
 
         {adding && pickerPaging.query !== "" ? (
           picker.isPending ? (
-            <Spinner label="Searching" />
+            <Spinner label={m["admin_groups.members.searching"]()} />
           ) : (
             <div className="flex flex-col gap-1">
               {(picker.data?.items ?? []).map((user) => (
@@ -378,28 +394,36 @@ function GroupMembersDialog({ group, onClose }: { group: AdminGroup | null; onCl
                     onClick={() =>
                       add.mutate(user.id, {
                         onSuccess: () => {
-                          toast?.add({ title: "Member added", type: "success" });
+                          toast?.add({
+                            title: m["admin_groups.members.toast_added"](),
+                            type: "success",
+                          });
                           setAdding(false);
                           pickerPaging.setSearch("");
                         },
                         onError: () =>
-                          toast?.add({ title: "Could not add the member", type: "error" }),
+                          toast?.add({
+                            title: m["admin_groups.members.toast_add_failed"](),
+                            type: "error",
+                          }),
                       })
                     }
                   >
-                    Add
+                    {m["admin_groups.members.add"]()}
                   </Button>
                 </div>
               ))}
               {(picker.data?.items ?? []).length === 0 && (
-                <p className="m-0 text-sm text-ink-muted">No account matches that.</p>
+                <p className="m-0 text-sm text-ink-muted">
+                  {m["admin_groups.members.no_match"]()}
+                </p>
               )}
             </div>
           )
         ) : null}
 
         {members.isPending ? (
-          <Spinner label="Loading members" />
+          <Spinner label={m["admin_groups.members.loading"]()} />
         ) : (
           <div className="flex flex-col gap-1">
             {(members.data?.items ?? []).map((user) => (
@@ -416,7 +440,7 @@ function GroupMembersDialog({ group, onClose }: { group: AdminGroup | null; onCl
                         the next sign-in (ADR 0057). "Why is this person
                         still in this group" is asked on exactly this screen. */}
                     {user.membership_source === "oidc" && (
-                      <Badge tone="neutral">from the directory</Badge>
+                      <Badge tone="neutral">{m["admin_groups.members.from_directory"]()}</Badge>
                     )}
                   </div>
                   <div className="truncate text-xs text-ink-faint">
@@ -429,18 +453,25 @@ function GroupMembersDialog({ group, onClose }: { group: AdminGroup | null; onCl
                   busy={remove.isPending && remove.variables === user.id}
                   onClick={() =>
                     remove.mutate(user.id, {
-                      onSuccess: () => toast?.add({ title: "Member removed", type: "success" }),
+                      onSuccess: () =>
+                        toast?.add({
+                          title: m["admin_groups.members.toast_removed"](),
+                          type: "success",
+                        }),
                       onError: () =>
-                        toast?.add({ title: "Could not remove the member", type: "error" }),
+                        toast?.add({
+                          title: m["admin_groups.members.toast_remove_failed"](),
+                          type: "error",
+                        }),
                     })
                   }
                 >
-                  Remove
+                  {m["admin_groups.members.remove"]()}
                 </Button>
               </div>
             ))}
             {(members.data?.items ?? []).length === 0 && (
-              <p className="m-0 text-sm text-ink-muted">No members yet.</p>
+              <p className="m-0 text-sm text-ink-muted">{m["admin_groups.members.none_yet"]()}</p>
             )}
           </div>
         )}
@@ -460,11 +491,13 @@ function DeleteGroupDialog({ group, onClose }: { group: AdminGroup | null; onClo
   return (
     <Dialog
       open={group !== null}
-      title={`Delete ${group?.name ?? "this group"}?`}
+      title={m["admin_groups.delete.title"]({
+        name: group?.name ?? m["admin_groups.delete.title_fallback"](),
+      })}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{m["admin_groups.delete.cancel"]()}</Button>
           <Button
             variant="danger"
             busy={remove.isPending}
@@ -472,25 +505,23 @@ function DeleteGroupDialog({ group, onClose }: { group: AdminGroup | null; onClo
               group &&
               remove.mutate(group.id, {
                 onSuccess: () => {
-                  toast?.add({ title: "Group deleted", type: "success" });
+                  toast?.add({ title: m["admin_groups.delete.toast_done"](), type: "success" });
                   onClose();
                 },
                 onError: () =>
-                  toast?.add({ title: "Could not delete the group", type: "error" }),
+                  toast?.add({
+                    title: m["admin_groups.delete.toast_failed"](),
+                    type: "error",
+                  }),
               })
             }
           >
-            Delete permanently
+            {m["admin_groups.delete.confirm"]()}
           </Button>
         </>
       }
     >
-      <p>
-        Model access granted to this group is removed, and anyone billing to it
-        as their default goes back to choosing at request time. Their quota and
-        redaction rules scoped to the group keep their scope but stop matching
-        anyone.
-      </p>
+      <p>{m["admin_groups.delete.body"]()}</p>
       {group?.source === "oidc" && <IdpGroupDeleteNotice />}
     </Dialog>
   );
@@ -503,15 +534,12 @@ function DeleteGroupDialog({ group, onClose }: { group: AdminGroup | null; onClo
  function IdpGroupDeleteNotice() {
   const seen = useSeenGroups({ limit: 1 });
   return seen.data?.group_import === "auto" ? (
-    <Notice tone="warn" title="This group comes from the identity provider">
-      It will be recreated the next time one of its members signs in, unless
-      the mappings or the directory have changed.
+    <Notice tone="warn" title={m["admin_groups.delete.idp_title"]()}>
+      {m["admin_groups.delete.idp_auto_body"]()}
     </Notice>
   ) : (
-    <Notice tone="info" title="This group comes from the identity provider">
-      Its members lose it now. When one of them next signs in, its name is
-      listed under “Groups from your identity provider” again, and nothing is
-      recreated unless you map it.
+    <Notice tone="info" title={m["admin_groups.delete.idp_title"]()}>
+      {m["admin_groups.delete.idp_manual_body"]()}
     </Notice>
   );
 }
@@ -541,13 +569,20 @@ function SeenGroups() {
       {
         onSuccess: () => {
           toast?.add({
-            title: action === "dismiss" ? `${row.name} ignored` : `${row.name} listed again`,
+            title:
+              action === "dismiss"
+                ? m["admin_groups.seen.toast_ignored"]({ name: row.name })
+                : m["admin_groups.seen.toast_relisted"]({ name: row.name }),
             type: "success",
           });
         },
         onError: (error) =>
           toast?.add({
-            title: `Could not ${action} ${row.name}`,
+            title:
+              action === "dismiss"
+                ? m["admin_groups.seen.toast_dismiss_failed"]({ name: row.name })
+                : m["admin_groups.seen.toast_restore_failed"]({ name: row.name }),
+            // i18n: server text — the API's own error message.
             description: error instanceof Error ? error.message : undefined,
             type: "error",
           }),
@@ -560,15 +595,15 @@ function SeenGroups() {
   const actions = (row: SeenGroup) => (
     <>
       <Button variant="ghost" onClick={() => setMapping(row)}>
-        Map…
+        {m["admin_groups.seen.map"]()}
       </Button>
       {row.dismissed ? (
         <Button variant="ghost" busy={busy(row, "restore")} onClick={() => run(row, "restore")}>
-          Restore
+          {m["admin_groups.seen.restore"]()}
         </Button>
       ) : (
         <Button variant="ghost" busy={busy(row, "dismiss")} onClick={() => run(row, "dismiss")}>
-          Ignore
+          {m["admin_groups.seen.ignore"]()}
         </Button>
       )}
     </>
@@ -577,7 +612,7 @@ function SeenGroups() {
   const columns: Column<SeenGroup>[] = [
     {
       key: "name",
-      header: "Name",
+      header: m["admin_groups.seen.column.name"](),
       render: (row) => (
         <>
           {/* Directory paths (gitlab/acme/ml-research) wrap at any point only
@@ -592,13 +627,13 @@ function SeenGroups() {
     },
     {
       key: "people",
-      header: "People",
+      header: m["admin_groups.seen.column.people"](),
       numeric: true,
-      render: (row) => row.people.toLocaleString(),
+      render: (row) => formatNumber(row.people),
     },
     {
       key: "seen",
-      header: "Last seen",
+      header: m["admin_groups.seen.column.last_seen"](),
       hideBelow: "sm",
       render: (row) => formatDate(row.last_seen_at),
     },
@@ -612,12 +647,13 @@ function SeenGroups() {
 
   return (
     <Card
-      title="Groups from your identity provider"
+      title={m["admin_groups.seen.card"]()}
       description={page ? <ModeLine page={page} /> : null}
     >
       {seen.error ? (
-        <Notice tone="danger" title="Could not load the groups your identity provider reported">
-          {seen.error instanceof Error ? seen.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_groups.seen.load_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {seen.error instanceof Error ? seen.error.message : m["admin_groups.unknown_error"]()}
         </Notice>
       ) : null}
       {/* ADR 0095 §4: the mappings this panel decides, with their Unmap.
@@ -625,7 +661,7 @@ function SeenGroups() {
           reconcile, so they go at the next sign-in — the confirm says so. */}
       {policy.data && policy.data.group_mappings.length > 0 ? (
         <div className="mb-4">
-          <p className="mb-2 text-sm font-medium">Current mappings</p>
+          <p className="mb-2 text-sm font-medium">{m["admin_groups.seen.mappings_heading"]()}</p>
           <div className={CHIPS}>
             {policy.data.group_mappings.map((rule) => (
               <span
@@ -637,7 +673,7 @@ function SeenGroups() {
                 <span className="font-medium [overflow-wrap:anywhere]">{rule.local}</span>
                 <button
                   type="button"
-                  aria-label={`Unmap ${rule.idp}`}
+                  aria-label={m["admin_groups.seen.unmap_aria"]({ idp: rule.idp })}
                   className="text-danger"
                   onClick={() => {
                     const reason = `Unmapped ${rule.idp}`;
@@ -651,14 +687,14 @@ function SeenGroups() {
                       {
                         onSuccess: () =>
                           toast?.add({
-                            title: `${rule.idp} unmapped`,
-                            description:
-                              "Memberships granted through the mapping go at each person's next sign-in.",
+                            title: m["admin_groups.seen.toast_unmapped"]({ idp: rule.idp }),
+                            description: m["admin_groups.seen.unmap_note"](),
                             type: "success",
                           }),
                         onError: (error) =>
                           toast?.add({
-                            title: "Could not unmap",
+                            title: m["admin_groups.seen.toast_unmap_failed"](),
+                            // i18n: server text — the API's own error message.
                             description: error instanceof Error ? error.message : undefined,
                             type: "error",
                           }),
@@ -666,7 +702,7 @@ function SeenGroups() {
                     );
                   }}
                 >
-                  Unmap
+                  {m["admin_groups.seen.unmap"]()}
                 </button>
               </span>
             ))}
@@ -677,27 +713,39 @@ function SeenGroups() {
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-56 flex-1">
             <Input
-              label="Search"
+              label={m["admin_groups.search"]()}
               value={paged.search}
               onChange={(event) => paged.setSearch(event.target.value)}
-              placeholder="group name"
-              hint={page ? `${page.total.toLocaleString()} ${showDismissed ? "dismissed" : "waiting"}` : undefined}
+              placeholder={m["admin_groups.seen.search_placeholder"]()}
+              hint={
+                page
+                  ? showDismissed
+                    ? m["admin_groups.seen.hint_dismissed"]({ count: page.total })
+                    : m["admin_groups.seen.hint_waiting"]({ count: page.total })
+                  : undefined
+              }
             />
           </div>
           {/* Aligned with the input, not its label. */}
           <Button className="mt-6" onClick={() => setShowDismissed((value) => !value)}>
-            {showDismissed ? "Show waiting" : "Show dismissed"}
+            {showDismissed
+              ? m["admin_groups.seen.show_waiting"]()
+              : m["admin_groups.seen.show_dismissed"]()}
           </Button>
         </div>
         {seen.isPending ? (
-          <Spinner label="Loading the groups your identity provider reported" />
+          <Spinner label={m["admin_groups.seen.loading"]()} />
         ) : rows.length === 0 && !paged.query ? (
           <EmptyState
-            title={showDismissed ? "Nothing dismissed." : "Nothing waiting to be mapped."}
+            title={
+              showDismissed
+                ? m["admin_groups.seen.empty_dismissed_title"]()
+                : m["admin_groups.seen.empty_waiting_title"]()
+            }
             detail={
               showDismissed
-                ? "Names you dismiss are kept here, to map or list again later."
-                : "Group names your identity provider reports appear here after someone signs in with them."
+                ? m["admin_groups.seen.empty_dismissed_detail"]()
+                : m["admin_groups.seen.empty_waiting_detail"]()
             }
           />
         ) : (
@@ -706,15 +754,15 @@ function SeenGroups() {
               columns={columns}
               rows={rows}
               rowKey={(row) => row.id}
-              empty="No group name matches that."
-              caption="Group names your identity provider reported, and how many people carry each."
+              empty={m["admin_groups.seen.empty_query"]()}
+              caption={m["admin_groups.seen.caption"]()}
             />
             <Pagination
               total={page?.total ?? 0}
               limit={paged.limit}
               offset={paged.offset}
               onOffsetChange={paged.setOffset}
-              noun="names"
+              noun={m["admin_groups.seen.noun"]()}
               busy={seen.isFetching}
             />
           </>
@@ -756,11 +804,11 @@ function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () 
   return (
     <Dialog
       open={seen !== null}
-      title={`Map ${seen?.name ?? ""}`}
+      title={m["admin_groups.map.title"]({ name: seen?.name ?? "" })}
       onClose={close}
       footer={
         <>
-          <Button onClick={close}>Cancel</Button>
+          <Button onClick={close}>{m["admin_groups.map.cancel"]()}</Button>
           <Button
             variant="primary"
             disabled={!ready}
@@ -778,7 +826,10 @@ function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () 
                 {
                   onSuccess: (result) => {
                     toast?.add({
-                      title: `${seen.name} mapped to ${result.group.name}`,
+                      title: m["admin_groups.map.toast_done"]({
+                        name: seen.name,
+                        group: result.group.name,
+                      }),
                       description: importedDescription(result),
                       type: "success",
                     });
@@ -786,7 +837,8 @@ function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () 
                   },
                   onError: (error) =>
                     toast?.add({
-                      title: "Could not map",
+                      title: m["admin_groups.map.toast_failed"](),
+                      // i18n: server text — the API's own error message.
                       description: error instanceof Error ? error.message : undefined,
                       type: "error",
                     }),
@@ -794,25 +846,26 @@ function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () 
               );
             }}
           >
-            Map
+            {m["admin_groups.map.confirm"]()}
           </Button>
         </>
       }
     >
       <div className={FORM}>
         {map.error ? (
-          <Notice tone="danger" title="Could not map">
-            {map.error instanceof Error ? map.error.message : "Unknown error."}
+          <Notice tone="danger" title={m["admin_groups.map.toast_failed"]()}>
+            {/* i18n: server text — the API's own error message. */}
+            {map.error instanceof Error ? map.error.message : m["admin_groups.unknown_error"]()}
           </Notice>
         ) : null}
         <fieldset>
-          <legend className="p-0 text-sm">What this name grants</legend>
+          <legend className="p-0 text-sm">{m["admin_groups.map.legend"]()}</legend>
           <div className="flex flex-col gap-1.5">
             {(
               [
-                ["new_same_name", "New group with the same name"],
-                ["new_named", "New group named…"],
-                ["existing", "Existing group…"],
+                ["new_same_name", m["admin_groups.map.option.new_same_name"]],
+                ["new_named", m["admin_groups.map.option.new_named"]],
+                ["existing", m["admin_groups.map.option.existing"]],
               ] as const
             ).map(([value, label]) => (
               <label key={value} className="flex cursor-pointer items-center gap-2 text-sm">
@@ -823,27 +876,27 @@ function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () 
                   onChange={() => setTarget(value)}
                   className="mt-[0.2em] accent-accent"
                 />
-                {label}
+                {label()}
               </label>
             ))}
           </div>
         </fieldset>
         {target === "new_named" ? (
           <Input
-            label="Name the new group"
+            label={m["admin_groups.map.new_name"]()}
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="engineering"
+            placeholder={m["admin_groups.map.new_name_placeholder"]()}
           />
         ) : null}
         {target === "existing" ? (
           <Select
-            label="Local group"
+            label={m["admin_groups.map.local_group"]()}
             value={groupId}
             onChange={(event) => setGroupId(event.target.value)}
-            hint="The IdP name now grants this group, wherever it is claimed."
+            hint={m["admin_groups.map.local_group_hint"]()}
           >
-            <option value="">Pick a group…</option>
+            <option value="">{m["admin_groups.map.pick_group"]()}</option>
             {options.map((group) => (
               <option key={group.id} value={group.id}>
                 {group.name}
@@ -852,10 +905,10 @@ function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () 
           </Select>
         ) : null}
         <Input
-          label="Reason (optional)"
+          label={m["admin_groups.map.reason"]()}
           value={reason}
           onChange={(event) => setReason(event.target.value)}
-          placeholder="recorded on the policy history"
+          placeholder={m["admin_groups.map.reason_placeholder"]()}
         />
       </div>
     </Dialog>
@@ -866,35 +919,29 @@ function MapSeenDialog({ seen, onClose }: { seen: SeenGroup | null; onClose: () 
 function ModeLine({ page }: { page: SeenGroupPage }) {
   const everyone = page.default_group ? (
     <>
-      {" "}Everyone joins <strong>{page.default_group}</strong> at their first sign-in, so
-      new people can use public models before anything is mapped.
+      {" "}
+      <Message
+        message={m["admin_groups.mode.everyone"]}
+        markup={{ strong: (children) => <strong>{children}</strong> }}
+        inputs={{ group: page.default_group }}
+      />
     </>
   ) : null;
   return page.group_import === "auto" ? (
     <>
-      Every name is mapped automatically at sign-in. Names listed here were seen
-      before that was turned on.{everyone}
+      {m["admin_groups.mode.auto"]()}
+      {everyone}
     </>
   ) : (
     <>
-      Nothing is created until you map it. Mapping creates the group (or names
-      one that exists) and gives it to the people who carry it now — or at
-      their next sign-in where the provider's groups only apply then.{everyone}
+      {m["admin_groups.mode.manual"]()}
+      {everyone}
     </>
   );
 }
 
 function importedDescription(result: SeenGroupImport): string {
-  if (result.applied === "next_login")
-    return "Its members get it at their next sign-in. Grant it models on the Models screen.";
-  const people = result.members_added === 1 ? "1 person" : `${result.members_added} people`;
-  return `${people} added now. Grant it models on the Models screen.`;
+  if (result.applied === "next_login") return m["admin_groups.import.next_login"]();
+  return m["admin_groups.import.added_now"]({ count: result.members_added });
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}

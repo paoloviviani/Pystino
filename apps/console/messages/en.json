@@ -1504,5 +1504,163 @@
         "*": "{name}, {window}"
       }
     }
+  ],
+  "admin_groups.toast.update_failed": "Could not update the group",
+  "admin_groups.column.group": "Group",
+  "admin_groups.column.source": "Source",
+  "admin_groups.column.members": "Members",
+  "admin_groups.column.capabilities": "Capabilities",
+  "admin_groups.column.models": "Models",
+  "admin_groups.capability.agents_aria": "{name}: coding agents",
+  "admin_groups.capability.api_keys_aria": "{name}: API keys",
+  "admin_groups.capability.agents": "Agents",
+  "admin_groups.capability.api_keys": "API keys",
+  "admin_groups.models_none": "none granted",
+  "admin_groups.action.members": "Members",
+  "admin_groups.action.delete": "Delete",
+  "admin_groups.title": "Groups",
+  "admin_groups.subtitle": "Who belongs together, and what the group may use. Model access is granted per group, on the Models screen.",
+  "admin_groups.new_group": "New group",
+  "admin_groups.load_error.title": "Could not load groups",
+  "admin_groups.unknown_error": "Unknown error.",
+  "admin_groups.search": "Search",
+  "admin_groups.search_placeholder": "group name or description",
+  "admin_groups.search_hint_matching": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} matching"
+      }
+    }
+  ],
+  "admin_groups.search_hint_global": "Searches every group, not just this page.",
+  "admin_groups.loading": "Loading groups",
+  "admin_groups.empty_query": "No group matches that.",
+  "admin_groups.empty": "No groups yet.",
+  "admin_groups.caption": "Groups, their members and their model access.",
+  "admin_groups.noun": "groups",
+  "admin_groups.create.title": "New group",
+  "admin_groups.create.cancel": "Cancel",
+  "admin_groups.create.submit": "Create group",
+  "admin_groups.create.toast_done": "Group {name} created",
+  "admin_groups.create.toast_failed": "Could not create the group",
+  "admin_groups.create.name": "Name",
+  "admin_groups.create.name_hint": "Shown wherever a group is named: pickers, listings, reports.",
+  "admin_groups.create.description": "Description",
+  "admin_groups.create.description_hint": "Optional. A sentence saying what the group is for.",
+  "admin_groups.members.title": "Members — {name}",
+  "admin_groups.members.title_plain": "Members",
+  "admin_groups.members.done": "Done",
+  "admin_groups.members.add_search": "Add a member",
+  "admin_groups.members.add_placeholder": "email, name or identity provider subject",
+  "admin_groups.members.cancel": "Cancel",
+  "admin_groups.members.add_member": "Add member",
+  "admin_groups.members.searching": "Searching",
+  "admin_groups.members.add": "Add",
+  "admin_groups.members.toast_added": "Member added",
+  "admin_groups.members.toast_add_failed": "Could not add the member",
+  "admin_groups.members.no_match": "No account matches that.",
+  "admin_groups.members.loading": "Loading members",
+  "admin_groups.members.from_directory": "from the directory",
+  "admin_groups.members.remove": "Remove",
+  "admin_groups.members.toast_removed": "Member removed",
+  "admin_groups.members.toast_remove_failed": "Could not remove the member",
+  "admin_groups.members.none_yet": "No members yet.",
+  "admin_groups.delete.title": "Delete {name}?",
+  "admin_groups.delete.title_fallback": "this group",
+  "admin_groups.delete.cancel": "Cancel",
+  "admin_groups.delete.confirm": "Delete permanently",
+  "admin_groups.delete.toast_done": "Group deleted",
+  "admin_groups.delete.toast_failed": "Could not delete the group",
+  "admin_groups.delete.body": "Model access granted to this group is removed, and anyone billing to it as their default goes back to choosing at request time. Their quota and redaction rules scoped to the group keep their scope but stop matching anyone.",
+  "admin_groups.delete.idp_title": "This group comes from the identity provider",
+  "admin_groups.delete.idp_auto_body": "It will be recreated the next time one of its members signs in, unless the mappings or the directory have changed.",
+  "admin_groups.delete.idp_manual_body": "Its members lose it now. When one of them next signs in, its name is listed under “Groups from your identity provider” again, and nothing is recreated unless you map it.",
+  "admin_groups.seen.card": "Groups from your identity provider",
+  "admin_groups.seen.load_error.title": "Could not load the groups your identity provider reported",
+  "admin_groups.seen.toast_ignored": "{name} ignored",
+  "admin_groups.seen.toast_relisted": "{name} listed again",
+  "admin_groups.seen.toast_dismiss_failed": "Could not dismiss {name}",
+  "admin_groups.seen.toast_restore_failed": "Could not restore {name}",
+  "admin_groups.seen.map": "Map…",
+  "admin_groups.seen.restore": "Restore",
+  "admin_groups.seen.ignore": "Ignore",
+  "admin_groups.seen.column.name": "Name",
+  "admin_groups.seen.column.people": "People",
+  "admin_groups.seen.column.last_seen": "Last seen",
+  "admin_groups.seen.mappings_heading": "Current mappings",
+  "admin_groups.seen.unmap_aria": "Unmap {idp}",
+  "admin_groups.seen.unmap": "Unmap",
+  "admin_groups.seen.toast_unmapped": "{idp} unmapped",
+  "admin_groups.seen.unmap_note": "Memberships granted through the mapping go at each person's next sign-in.",
+  "admin_groups.seen.toast_unmap_failed": "Could not unmap",
+  "admin_groups.seen.search_placeholder": "group name",
+  "admin_groups.seen.hint_dismissed": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} dismissed"
+      }
+    }
+  ],
+  "admin_groups.seen.hint_waiting": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} waiting"
+      }
+    }
+  ],
+  "admin_groups.seen.show_waiting": "Show waiting",
+  "admin_groups.seen.show_dismissed": "Show dismissed",
+  "admin_groups.seen.loading": "Loading the groups your identity provider reported",
+  "admin_groups.seen.empty_dismissed_title": "Nothing dismissed.",
+  "admin_groups.seen.empty_waiting_title": "Nothing waiting to be mapped.",
+  "admin_groups.seen.empty_dismissed_detail": "Names you dismiss are kept here, to map or list again later.",
+  "admin_groups.seen.empty_waiting_detail": "Group names your identity provider reports appear here after someone signs in with them.",
+  "admin_groups.seen.empty_query": "No group name matches that.",
+  "admin_groups.seen.caption": "Group names your identity provider reported, and how many people carry each.",
+  "admin_groups.seen.noun": "names",
+  "admin_groups.map.title": "Map {name}",
+  "admin_groups.map.cancel": "Cancel",
+  "admin_groups.map.confirm": "Map",
+  "admin_groups.map.toast_done": "{name} mapped to {group}",
+  "admin_groups.map.toast_failed": "Could not map",
+  "admin_groups.map.legend": "What this name grants",
+  "admin_groups.map.option.new_same_name": "New group with the same name",
+  "admin_groups.map.option.new_named": "New group named…",
+  "admin_groups.map.option.existing": "Existing group…",
+  "admin_groups.map.new_name": "Name the new group",
+  "admin_groups.map.new_name_placeholder": "engineering",
+  "admin_groups.map.local_group": "Local group",
+  "admin_groups.map.local_group_hint": "The IdP name now grants this group, wherever it is claimed.",
+  "admin_groups.map.pick_group": "Pick a group…",
+  "admin_groups.map.reason": "Reason (optional)",
+  "admin_groups.map.reason_placeholder": "recorded on the policy history",
+  "admin_groups.mode.auto": "Every name is mapped automatically at sign-in. Names listed here were seen before that was turned on.",
+  "admin_groups.mode.manual": "Nothing is created until you map it. Mapping creates the group (or names one that exists) and gives it to the people who carry it now — or at their next sign-in where the provider's groups only apply then.",
+  "admin_groups.mode.everyone": "Everyone joins {#strong}{group}{/strong} at their first sign-in, so new people can use public models before anything is mapped.",
+  "admin_groups.import.next_login": "Its members get it at their next sign-in. Grant it models on the Models screen.",
+  "admin_groups.import.added_now": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "1 person added now. Grant it models on the Models screen.",
+        "countPlural=other": "{n} people added now. Grant it models on the Models screen."
+      }
+    }
   ]
 }
