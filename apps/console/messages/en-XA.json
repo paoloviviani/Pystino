@@ -154,5 +154,89 @@
         "*": "[{percent}%]"
       }
     }
-  ]
+  ],
+  "reports.title": "[Ýóúŕ úśáǧé]",
+  "reports.subtitle": "[Ŵȟáť ýóú śþéńť, áńď ŵȟáť ťȟé ƒíǧúŕéś ŕéśť óń.]",
+  "reports.filter.period": "[Þéŕíóď]",
+  "reports.filter.breakdown": "[Ɓŕéáķďóŵń]",
+  "reports.breakdown.model": "[Ɓý ḿóďéľ]",
+  "reports.breakdown.api_key": "[Ɓý ÁÞÍ ķéý]",
+  "reports.breakdown.day": "[Ɓý ďáý]",
+  "reports.breakdown.total": "[Ťóťáľ óńľý]",
+  "reports.column.requests": "[Ŕéǫúéśťś]",
+  "reports.column.tokens": "[Ťóķéńś]",
+  "reports.column.images": "[Íḿáǧéś]",
+  "reports.column.searches": "[Śéáŕćȟéś]",
+  "reports.column.own_searches": "[Óŵń śéáŕćȟéś]",
+  "reports.column.cost": "[Śþéńď]",
+  "reports.running": "[Ŕúńńíńǧ ťȟé ŕéþóŕť]",
+  "reports.error.title": "[Ćóúľď ńóť ŕúń ťȟé ŕéþóŕť]",
+  "reports.error.unknown": "[Úńķńóŵń éŕŕóŕ.]",
+  "reports.stat.spend": "[Śþéńď · {period}]",
+  "reports.stat.period_detail": "[{timezone} ćáľéńďáŕ þéŕíóď]",
+  "reports.stat.requests": "[Ŕéǫúéśťś]",
+  "reports.stat.tokens_detail": [
+    {
+      "declarations": [
+        "input tokens"
+      ],
+      "match": {
+        "*": "[{tokens: number} ťóķéńś]"
+      }
+    }
+  ],
+  "reports.stat.measured": "[Ḿéáśúŕéď]",
+  "reports.stat.measured_value": [
+    {
+      "declarations": [
+        "input percent"
+      ],
+      "match": {
+        "*": "[{percent}%]"
+      }
+    }
+  ],
+  "reports.stat.measured_detail.complete": "[éẋáćť úśáǧé ƒŕóḿ ťȟé þŕóǚíďéŕ]",
+  "reports.stat.measured_detail.incomplete": "[ťȟé ŕéśť íś éśťíḿáťéď óŕ ḿíśśíńǧ]",
+  "reports.breakdown_card": "[Ɓŕéáķďóŵń]",
+  "reports.row_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ŕóŵ]",
+        "countPlural=other": "[{n} ŕóŵś]"
+      }
+    }
+  ],
+  "reports.summary_detail": [
+    {
+      "declarations": [
+        "input period"
+      ],
+      "match": {
+        "*": "[{period} · {breakdown}]"
+      }
+    }
+  ],
+  "reports.export_csv": "[Éẋþóŕť ĆŚǙ]",
+  "reports.empty": "[Ńó úśáǧé íń ťȟíś þéŕíóď.]",
+  "reports.caption": "[Ýóúŕ śþéńď ƒóŕ {period}, {breakdown}.]",
+  "reports.caption_period_fallback": "[ťȟé þéŕíóď]",
+  "reports.heading.model": "[Ḿóďéľ]",
+  "reports.heading.api_key": "[ÁÞÍ ķéý]",
+  "reports.heading.day": "[Ďáý]",
+  "reports.heading.total": "[Áľľ]",
+  "reports.heading.other": "[Ĺáƀéľ]",
+  "reports.heading_lower.model": "[ḿóďéľ]",
+  "reports.heading_lower.api_key": "[ÁÞÍ ķéý]",
+  "reports.heading_lower.day": "[ďáý]",
+  "reports.heading_lower.total": "[áľľ]",
+  "reports.heading_lower.other": "[ľáƀéľ]"
 }

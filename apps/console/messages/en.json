@@ -154,5 +154,89 @@
         "*": "{percent}%"
       }
     }
-  ]
+  ],
+  "reports.title": "Your usage",
+  "reports.subtitle": "What you spent, and what the figures rest on.",
+  "reports.filter.period": "Period",
+  "reports.filter.breakdown": "Breakdown",
+  "reports.breakdown.model": "By model",
+  "reports.breakdown.api_key": "By API key",
+  "reports.breakdown.day": "By day",
+  "reports.breakdown.total": "Total only",
+  "reports.column.requests": "Requests",
+  "reports.column.tokens": "Tokens",
+  "reports.column.images": "Images",
+  "reports.column.searches": "Searches",
+  "reports.column.own_searches": "Own searches",
+  "reports.column.cost": "Spend",
+  "reports.running": "Running the report",
+  "reports.error.title": "Could not run the report",
+  "reports.error.unknown": "Unknown error.",
+  "reports.stat.spend": "Spend · {period}",
+  "reports.stat.period_detail": "{timezone} calendar period",
+  "reports.stat.requests": "Requests",
+  "reports.stat.tokens_detail": [
+    {
+      "declarations": [
+        "input tokens"
+      ],
+      "match": {
+        "*": "{tokens: number} tokens"
+      }
+    }
+  ],
+  "reports.stat.measured": "Measured",
+  "reports.stat.measured_value": [
+    {
+      "declarations": [
+        "input percent"
+      ],
+      "match": {
+        "*": "{percent}%"
+      }
+    }
+  ],
+  "reports.stat.measured_detail.complete": "exact usage from the provider",
+  "reports.stat.measured_detail.incomplete": "the rest is estimated or missing",
+  "reports.breakdown_card": "Breakdown",
+  "reports.row_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} row",
+        "countPlural=other": "{n} rows"
+      }
+    }
+  ],
+  "reports.summary_detail": [
+    {
+      "declarations": [
+        "input period"
+      ],
+      "match": {
+        "*": "{period} · {breakdown}"
+      }
+    }
+  ],
+  "reports.export_csv": "Export CSV",
+  "reports.empty": "No usage in this period.",
+  "reports.caption": "Your spend for {period}, {breakdown}.",
+  "reports.caption_period_fallback": "the period",
+  "reports.heading.model": "Model",
+  "reports.heading.api_key": "API key",
+  "reports.heading.day": "Day",
+  "reports.heading.total": "All",
+  "reports.heading.other": "Label",
+  "reports.heading_lower.model": "model",
+  "reports.heading_lower.api_key": "API key",
+  "reports.heading_lower.day": "day",
+  "reports.heading_lower.total": "all",
+  "reports.heading_lower.other": "label"
 }
