@@ -641,7 +641,7 @@ function PreviewBox() {
             <option value="">Nobody in particular</option>
             {SCOPES.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                {option.label()}
               </option>
             ))}
           </Select>

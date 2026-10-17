@@ -52,5 +52,25 @@
         "countPlural=other": "{count} notes about these figures"
       }
     }
-  ]
+  ],
+  "subject_picker.all_scope": "Applies to every request.",
+  "subject_picker.choose": "Choose…",
+  "subject_picker.api_key.label": "API key",
+  "subject_picker.api_key.placeholder": "key id",
+  "subject_picker.api_key.hint": "The key's id. Keys are not listed here.",
+  "subject_picker.provider.label": "Provider",
+  "subject_picker.model.label": "Model",
+  "subject_picker.group.label": "Group",
+  "subject_picker.user.label": "User",
+  "subject_picker.scope.provider": "A provider",
+  "subject_picker.scope.model": "A model",
+  "subject_picker.scope.group": "A group",
+  "subject_picker.scope.user": "A user",
+  "subject_picker.scope.api_key": "An API key",
+  "subject_picker.noun.all": "Every request",
+  "subject_picker.noun.provider": "Provider",
+  "subject_picker.noun.model": "Model",
+  "subject_picker.noun.group": "Group",
+  "subject_picker.noun.user": "User",
+  "subject_picker.noun.api_key": "API key"
 }

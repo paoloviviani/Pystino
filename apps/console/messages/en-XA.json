@@ -52,5 +52,25 @@
         "countPlural=other": "[{count} ńóťéś áƀóúť ťȟéśé ƒíǧúŕéś]"
       }
     }
-  ]
+  ],
+  "subject_picker.all_scope": "[Áþþľíéś ťó éǚéŕý ŕéǫúéśť.]",
+  "subject_picker.choose": "[Ćȟóóśé…]",
+  "subject_picker.api_key.label": "[ÁÞÍ ķéý]",
+  "subject_picker.api_key.placeholder": "[ķéý íď]",
+  "subject_picker.api_key.hint": "[Ťȟé ķéý'ś íď. Ķéýś áŕé ńóť ľíśťéď ȟéŕé.]",
+  "subject_picker.provider.label": "[Þŕóǚíďéŕ]",
+  "subject_picker.model.label": "[Ḿóďéľ]",
+  "subject_picker.group.label": "[Ǧŕóúþ]",
+  "subject_picker.user.label": "[Úśéŕ]",
+  "subject_picker.scope.provider": "[Á þŕóǚíďéŕ]",
+  "subject_picker.scope.model": "[Á ḿóďéľ]",
+  "subject_picker.scope.group": "[Á ǧŕóúþ]",
+  "subject_picker.scope.user": "[Á úśéŕ]",
+  "subject_picker.scope.api_key": "[Áń ÁÞÍ ķéý]",
+  "subject_picker.noun.all": "[Éǚéŕý ŕéǫúéśť]",
+  "subject_picker.noun.provider": "[Þŕóǚíďéŕ]",
+  "subject_picker.noun.model": "[Ḿóďéľ]",
+  "subject_picker.noun.group": "[Ǧŕóúþ]",
+  "subject_picker.noun.user": "[Úśéŕ]",
+  "subject_picker.noun.api_key": "[ÁÞÍ ķéý]"
 }
