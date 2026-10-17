@@ -74,3 +74,10 @@ directory.
 # (there is no node on the deployment host). Not a build output — a cache.
 .pnpm-store/
 
+# Paraglide's compiled messages: generated from apps/console/messages/*.json
+# into typed functions. The compiler writes a .gitignore into its own output
+# directory, and inlang's does the same for project.inlang/ (its README, its
+# cache, its own bookkeeping); this one is here because the output directory is
+# the thing a reader of this file will want to know is not theirs to edit.
+apps/console/src/paraglide/
+
