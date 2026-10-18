@@ -1598,9 +1598,14 @@ async def import_models(
     provider, catalogue_url, api_key = await _catalogue_source(
         session, secrets, provider_id, url, tag
     )
-    by_upstream, _unpriced, filled, kinds = await _catalogue_with_prices(
+    by_upstream, unpriced, filled, kinds = await _catalogue_with_prices(
         http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
     )
+    # The ids a manual price may name: what the provider listed and nobody
+    # priced, minus the anonymous placeholders discovery never lists. The same
+    # terms on both sides of the dialog, so an id nobody was shown cannot be
+    # imported by naming it.
+    listed_unpriced = set(unpriced) - ANONYMOUS_UNPARSABLE
 
     existing = (await session.execute(select(ModelDef))).scalars().all()
     taken_names = {model.name for model in existing}
@@ -1663,6 +1668,22 @@ async def import_models(
             )
 
         if price is None or price.currency == "":
+            # "Unpriced" is a statement about a model the provider *lists*. An
+            # id the catalogue does not name at all is refused at any price: a
+            # manual price is a figure for one of the listed-unpriced models,
+            # not a licence to invent an upstream id, which would otherwise
+            # come in with the chat default for a kind nobody declared.
+            if price is None and item.upstream_model not in listed_unpriced:
+                results.append(
+                    ModelImportResult(
+                        upstream_model=item.upstream_model,
+                        name=name,
+                        imported=False,
+                        priced=False,
+                        reason="not offered by the provider",
+                    )
+                )
+                continue
             if item.manual_price is None:
                 if price is None:
                     # Search backends no longer import tiers: the anchor row is

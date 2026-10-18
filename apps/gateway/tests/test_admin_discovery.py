@@ -613,6 +613,46 @@ class TestManualPriceImport:
         assert result["imported"] is False
         assert "bills in EUR" in result["reason"]
 
+    async def test_a_manual_price_cannot_import_a_model_the_provider_does_not_list(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        session: AsyncSession,
+    ) -> None:
+        """ "Unpriced" is a statement about a model the provider *lists*. A
+        manual price is a figure for one of those, not a licence to invent an
+        upstream id: an id the catalogue does not name at all is refused
+        exactly as before, price or no price — it would otherwise come in with
+        the chat default for a kind nobody declared."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/imaginary",
+                        "manual_price": {"input_per_mtok": "1", "output_per_mtok": "2"},
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        result = response.json()["results"][0]
+        assert result["imported"] is False
+        assert result["priced"] is False
+        assert result["reason"] == "not offered by the provider"
+
+        # And nothing was created: no model row, no price row.
+        found = (
+            await session.execute(
+                select(ModelDef).where(ModelDef.upstream_model == "vendor/imaginary")
+            )
+        ).scalar_one_or_none()
+        assert found is None
+
     async def test_the_block_reason_offers_entering_a_price(
         self,
         app: object,
