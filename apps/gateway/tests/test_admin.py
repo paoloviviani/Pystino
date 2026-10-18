@@ -13,10 +13,13 @@ from datetime import timedelta
 from decimal import Decimal
 
 import httpx
+import pytest
 from conftest import Seeded
 from fastapi import FastAPI
 from gateway.deps import get_management_user
+from gateway.fx import FXService
 from gateway.models import (
+    FXRate,
     Group,
     GroupModelAccess,
     IdentityEvent,
@@ -327,20 +330,43 @@ class TestPrices:
         model = next(m for m in current if m["name"] == "test-model")
         assert Decimal(model["current_price"]["input_per_mtok"]) == Decimal(1)
 
-    async def test_wrong_currency_is_refused_with_a_reason(
+    async def test_a_foreign_currency_is_kept_for_conversion_at_billing(
         self,
         app: object,
         client: httpx.AsyncClient,
         seeded: Seeded,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
+        async with session_factory() as session:
+            session.add(FXRate(base="USD", quote="EUR", rate=Decimal("0.9"), fetched_at=utcnow()))
+            await session.commit()
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
             f"/api/admin/models/{seeded.model.id}/prices",
             json={"input_per_mtok": "1", "output_per_mtok": "2", "currency": "USD"},
         )
+        assert response.status_code == 201, response.text
+        assert response.json()["currency"] == "USD"
+
+    async def test_a_currency_with_no_exchange_rate_is_refused(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def no_rate(*_args: object) -> None:
+            return None
+
+        monkeypatch.setattr(FXService, "_fetch", no_rate)
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            f"/api/admin/models/{seeded.model.id}/prices",
+            json={"input_per_mtok": "1", "output_per_mtok": "2", "currency": "XYZ"},
+        )
         assert response.status_code == 400
-        assert response.json()["error"]["code"] == "price_currency_mismatch"
+        assert response.json()["error"]["code"] == "price_currency_unconvertible"
 
     async def test_negative_prices_are_rejected(
         self,

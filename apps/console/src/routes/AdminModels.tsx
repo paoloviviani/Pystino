@@ -1306,8 +1306,9 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
                           reason: String(result.reason),
                         })}
                     {/* i18n: server text — a manual price the catalogue or the
-                        community file outranked is the API's own sentence. */}
-                    {result.reason ? ` — ${result.reason}` : ""}
+                        community file outranked is the API's own sentence. A
+                        skipped row's reason is already in the message above. */}
+                    {result.imported && result.reason ? ` — ${result.reason}` : ""}
                   </div>
                 ))}
               </Notice>

@@ -79,6 +79,7 @@ from gateway.errors import (
     ServiceUnavailableError,
     UpstreamUnavailableError,
 )
+from gateway.fx import FXService
 from gateway.group_import import grant_default_group, map_seen_group
 from gateway.identity_events import record_event
 from gateway.identity_registry import (
@@ -1476,22 +1477,28 @@ async def list_catalogue_tags(
     )
 
 
-def _billing_currency(currency: str | None, settings: Settings) -> str:
-    """The currency a price row is recorded in: the payload's, when it names
-    the one this gateway bills in; the billing currency itself otherwise.
+async def _price_currency(currency: str | None, settings: Settings, fx: FXService | None) -> str:
+    """The currency a price row is recorded in: the payload's, or the billing
+    currency when the payload names none.
 
     Shared by the model page's price form and by a hand-typed price at import,
-    so there is one rule and one refusal. Refused rather than converted: an
-    exchange rate applied silently produces invoices that look right and are
-    wrong.
+    so there is one rule and one refusal. A price in another currency is kept
+    as typed and converted at the decision and aggregation points with the
+    day's ECB rate (ADR 0054), the same as every catalogue price in USD. What
+    is refused is a currency no rate exists for: stored anyway, the model
+    would be refused at admission for every request with no hint why.
     """
     resolved = (currency or settings.billing_currency).upper()
-    if resolved != settings.billing_currency.upper():
+    billing = settings.billing_currency.upper()
+    if resolved == billing:
+        return resolved
+    quote = await fx.rate(resolved, billing) if fx is not None else None
+    if quote is None:
         raise BadRequestError(
-            f"This gateway bills in {settings.billing_currency}, so a price in "
-            f"{resolved} would have to be converted. Convert it yourself, or change "
-            "GATEWAY_BILLING_CURRENCY.",
-            code="price_currency_mismatch",
+            f"No exchange rate from {resolved} to {billing} is available, so this "
+            f"price could not be converted when billing. Use a currency the ECB "
+            f"publishes reference rates for, or enter the price in {billing}.",
+            code="price_currency_unconvertible",
         )
     return resolved
 
@@ -1516,8 +1523,8 @@ _RATE_PHRASES: dict[str, str] = {
 }
 
 
-def _manual_catalogue_price(
-    manual: ManualImportPrice, kind: ModelKind, settings: Settings
+async def _manual_catalogue_price(
+    manual: ManualImportPrice, kind: ModelKind, settings: Settings, fx: FXService | None
 ) -> tuple[CataloguePrice | None, str | None]:
     """A hand-typed price as a catalogue-shaped one, or the reason it cannot be.
 
@@ -1533,7 +1540,7 @@ def _manual_catalogue_price(
     if kind is ModelKind.SEARCH:
         return None, "a search tier is metered per request and takes no token price"
     try:
-        currency = _billing_currency(manual.currency, settings)
+        currency = await _price_currency(manual.currency, settings, fx)
     except BadRequestError as exc:
         return None, exc.message
     # A kind this gateway does not know yet is treated as chat-shaped — the
@@ -1572,6 +1579,7 @@ def _manual_catalogue_price(
     status_code=status.HTTP_201_CREATED,
 )
 async def import_models(
+    request: Request,
     payload: ModelImportRequest,
     admin: AdminUserDep,
     session: SessionDep,
@@ -1739,7 +1747,9 @@ async def import_models(
             # quietly become a chat model's token rate (or vice versa).
             manual_used = True
             kind = kinds.get(item.upstream_model, ModelKind.CHAT)
-            candidate, refusal = _manual_catalogue_price(item.manual_price, kind, settings)
+            candidate, refusal = await _manual_catalogue_price(
+                item.manual_price, kind, settings, request.app.state.fx
+            )
             if candidate is None:
                 results.append(
                     ModelImportResult(
@@ -1866,6 +1876,7 @@ async def list_prices(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_price(
+    request: Request,
     model_id: uuid.UUID,
     payload: PriceCreateRequest,
     admin: AdminUserDep,
@@ -1879,7 +1890,7 @@ async def create_price(
     """
     model = await _load_model(session, model_id)
 
-    currency = _billing_currency(payload.currency, settings)
+    currency = await _price_currency(payload.currency, settings, request.app.state.fx)
 
     price = ModelPrice(
         model_id=model.id,
