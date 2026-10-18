@@ -1946,7 +1946,6 @@
   ],
   "admin_models.discover.import_aria": "Import {name}",
   "admin_models.discover.column.offered": "Offered upstream",
-  "admin_models.discover.badge.blocked": "Cannot import",
   "admin_models.discover.column.context": "Context",
   "admin_models.discover.column.price": "Price",
   "admin_models.discover.per_request": "per request",
@@ -2486,5 +2485,47 @@
   "admin_users.edit.merge_into": "Merge into…",
   "admin_users.edit.passwords_note": "Passwords belong to the identity provider.",
   "admin_users.edit.passwords_note_bundled": "Passwords belong to the identity provider. For the bundled Authelia, the actions above mint one and reset it.",
-  "admin_users.toast.reissue_failed": "Could not re-issue"
+  "admin_users.toast.reissue_failed": "Could not re-issue",
+  "admin_models.discover.badge.no_price_yet": "No price yet",
+  "admin_models.discover.manual_rate.input": "Input per Mtok",
+  "admin_models.discover.manual_rate.output": "Output per Mtok",
+  "admin_models.discover.manual_rate.per_page": "Per page",
+  "admin_models.discover.manual_rate.currency": "Currency",
+  "admin_models.discover.manual_rate.rate_hint": "per million tokens",
+  "admin_models.discover.manual_rate.currency_hint": "Leave empty for the gateway's billing currency.",
+  "admin_models.discover.manual_rate.required": "Required — the import refuses an unpriced model.",
+  "admin_models.discover.manual_rate.amount_invalid": "Digits and an optional decimal point.",
+  "admin_models.discover.manual_rate.currency_invalid": "Three letters, e.g. EUR.",
+  "admin_models.discover.manual_rate.enter_price": "Enter a price to import this model.",
+  "admin_models.discover.manual_rate.field_problem": [
+    {
+      "declarations": [
+        "input label"
+      ],
+      "match": {
+        "*": "{label}: {error}"
+      }
+    }
+  ],
+  "admin_models.discover.manual_rate.currency_problem": [
+    {
+      "declarations": [
+        "input error"
+      ],
+      "match": {
+        "*": "Currency: {error}"
+      }
+    }
+  ],
+  "admin_models.discover.apply_to_all": "Apply this price to all ticked",
+  "admin_models.discover.result_imported_manual": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "{name} imported with the price entered by hand"
+      }
+    }
+  ]
 }

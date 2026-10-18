@@ -1946,7 +1946,6 @@
   ],
   "admin_models.discover.import_aria": "[Íḿþóŕť {name}]",
   "admin_models.discover.column.offered": "[Óƒƒéŕéď úþśťŕéáḿ]",
-  "admin_models.discover.badge.blocked": "[Ćáńńóť íḿþóŕť]",
   "admin_models.discover.column.context": "[Ćóńťéẋť]",
   "admin_models.discover.column.price": "[Þŕíćé]",
   "admin_models.discover.per_request": "[þéŕ ŕéǫúéśť]",
@@ -2486,5 +2485,47 @@
   "admin_users.edit.merge_into": "[Ḿéŕǧé íńťó…]",
   "admin_users.edit.passwords_note": "[Þáśśŵóŕďś ƀéľóńǧ ťó ťȟé íďéńťíťý þŕóǚíďéŕ.]",
   "admin_users.edit.passwords_note_bundled": "[Þáśśŵóŕďś ƀéľóńǧ ťó ťȟé íďéńťíťý þŕóǚíďéŕ. Ƒóŕ ťȟé ƀúńďľéď Áúťȟéľíá, ťȟé áćťíóńś áƀóǚé ḿíńť óńé áńď ŕéśéť íť.]",
-  "admin_users.toast.reissue_failed": "[Ćóúľď ńóť ŕé-íśśúé]"
+  "admin_users.toast.reissue_failed": "[Ćóúľď ńóť ŕé-íśśúé]",
+  "admin_models.discover.badge.no_price_yet": "[Ńó þŕíćé ýéť]",
+  "admin_models.discover.manual_rate.input": "[Íńþúť þéŕ Ḿťóķ]",
+  "admin_models.discover.manual_rate.output": "[Óúťþúť þéŕ Ḿťóķ]",
+  "admin_models.discover.manual_rate.per_page": "[Þéŕ þáǧé]",
+  "admin_models.discover.manual_rate.currency": "[Ćúŕŕéńćý]",
+  "admin_models.discover.manual_rate.rate_hint": "[þéŕ ḿíľľíóń ťóķéńś]",
+  "admin_models.discover.manual_rate.currency_hint": "[Ĺéáǚé éḿþťý ƒóŕ ťȟé ǧáťéŵáý'ś ƀíľľíńǧ ćúŕŕéńćý.]",
+  "admin_models.discover.manual_rate.required": "[Ŕéǫúíŕéď — ťȟé íḿþóŕť ŕéƒúśéś áń úńþŕíćéď ḿóďéľ.]",
+  "admin_models.discover.manual_rate.amount_invalid": "[Ďíǧíťś áńď áń óþťíóńáľ ďéćíḿáľ þóíńť.]",
+  "admin_models.discover.manual_rate.currency_invalid": "[Ťȟŕéé ľéťťéŕś, é.ǧ. ÉÚŔ.]",
+  "admin_models.discover.manual_rate.enter_price": "[Éńťéŕ á þŕíćé ťó íḿþóŕť ťȟíś ḿóďéľ.]",
+  "admin_models.discover.manual_rate.field_problem": [
+    {
+      "declarations": [
+        "input label"
+      ],
+      "match": {
+        "*": "[{label}: {error}]"
+      }
+    }
+  ],
+  "admin_models.discover.manual_rate.currency_problem": [
+    {
+      "declarations": [
+        "input error"
+      ],
+      "match": {
+        "*": "[Ćúŕŕéńćý: {error}]"
+      }
+    }
+  ],
+  "admin_models.discover.apply_to_all": "[Áþþľý ťȟíś þŕíćé ťó áľľ ťíćķéď]",
+  "admin_models.discover.result_imported_manual": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "[{name} íḿþóŕťéď ŵíťȟ ťȟé þŕíćé éńťéŕéď ƀý ȟáńď]"
+      }
+    }
+  ]
 }
