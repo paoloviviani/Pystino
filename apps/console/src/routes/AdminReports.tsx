@@ -6,16 +6,19 @@ import { reportQueryString, useAdminReport, useGroups, useModels } from "../lib/
 import { FILTERS, MUTED, PAGE, STATS } from "../lib/layout";
 import { recentPeriods } from "../lib/periods";
 import type { UsageReportRow } from "../lib/types";
+import { formatNumber } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 import { PageHeader } from "../components/PageHeader";
 import { Disclosures } from "../components/Disclosures";
 
+/** Message functions, not strings: this list is built once, at import. */
 const BREAKDOWNS = [
-  { value: "group", label: "By group" },
-  { value: "user", label: "By user" },
-  { value: "model", label: "By model" },
-  { value: "api_key", label: "By API key" },
-  { value: "day", label: "By day" },
-  { value: "total", label: "Total only" },
+  { value: "group", label: m["admin_reports.breakdown.group"] },
+  { value: "user", label: m["admin_reports.breakdown.user"] },
+  { value: "model", label: m["admin_reports.breakdown.model"] },
+  { value: "api_key", label: m["admin_reports.breakdown.api_key"] },
+  { value: "day", label: m["admin_reports.breakdown.day"] },
+  { value: "total", label: m["admin_reports.breakdown.total"] },
 ];
 
 export function AdminReports() {
@@ -35,28 +38,28 @@ export function AdminReports() {
     { key: "label", header: headingFor(groupBy), render: (row) => row.label },
     {
       key: "requests",
-      header: "Requests",
+      header: m["admin_reports.column.requests"](),
       numeric: true,
-      render: (row) => row.requests.toLocaleString(),
+      render: (row) => formatNumber(row.requests),
     },
     {
       key: "tokens",
-      header: "Tokens",
+      header: m["admin_reports.column.tokens"](),
       numeric: true,
-      render: (row) => row.total_tokens.toLocaleString(),
+      render: (row) => formatNumber(row.total_tokens),
     },
     {
       key: "images",
-      header: "Images",
+      header: m["admin_reports.column.images"](),
       numeric: true,
       // A dash, not a zero: most rows are not image rows, and a column of
       // zeroes reads as "we generated no images" rather than "not applicable".
       render: (row) =>
-        row.images ? row.images.toLocaleString() : <span className={MUTED}>—</span>,
+        row.images ? formatNumber(row.images) : <span className={MUTED}>—</span>,
     },
     {
       key: "cost",
-      header: "Spend",
+      header: m["admin_reports.column.cost"](),
       numeric: true,
       // A model row with a native figure reports it in the price's currency
       // (ADR 0054) — that is what the counterparty charges — while the total
@@ -72,14 +75,17 @@ export function AdminReports() {
 
   return (
     <div className={PAGE}>
-      <PageHeader
-        title="Reports"
-        subtitle="Spend over a calendar period, for chargeback."
-      />
+      <PageHeader title={m["admin_reports.title"]()} subtitle={m["admin_reports.subtitle"]()} />
 
-      <Card title="Filters">
+      <Card title={m["admin_reports.filters"]()}>
         <div className={FILTERS}>
-          <Select label="Period" value={period} onChange={(e) => setPeriod(e.target.value)}>
+          <Select
+            label={m["admin_reports.filter.period"]()}
+            value={period}
+            onChange={(e) => setPeriod(e.target.value)}
+          >
+            {/* i18n: server text — the period labels are built by lib/periods.ts,
+                which is outside the conversion; they are names and dates, not prose. */}
             {periods.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -87,16 +93,24 @@ export function AdminReports() {
             ))}
           </Select>
 
-          <Select label="Breakdown" value={groupBy} onChange={(e) => setGroupBy(e.target.value)}>
+          <Select
+            label={m["admin_reports.filter.breakdown"]()}
+            value={groupBy}
+            onChange={(e) => setGroupBy(e.target.value)}
+          >
             {BREAKDOWNS.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                {option.label()}
               </option>
             ))}
           </Select>
 
-          <Select label="Group" value={groupId} onChange={(e) => setGroupId(e.target.value)}>
-            <option value="">All groups</option>
+          <Select
+            label={m["admin_reports.filter.group"]()}
+            value={groupId}
+            onChange={(e) => setGroupId(e.target.value)}
+          >
+            <option value="">{m["admin_reports.filter.all_groups"]()}</option>
             {(groups.data?.items ?? []).map((group) => (
               <option key={group.id} value={group.id}>
                 {group.name}
@@ -104,8 +118,12 @@ export function AdminReports() {
             ))}
           </Select>
 
-          <Select label="Model" value={model} onChange={(e) => setModel(e.target.value)}>
-            <option value="">All models</option>
+          <Select
+            label={m["admin_reports.filter.model"]()}
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+          >
+            <option value="">{m["admin_reports.filter.all_models"]()}</option>
             {(models.data?.items ?? []).map((entry) => (
               <option key={entry.id} value={entry.name}>
                 {entry.name}
@@ -116,38 +134,43 @@ export function AdminReports() {
       </Card>
 
       <Card>
-        {report.isPending && <Spinner label="Running the report" />}
+        {report.isPending && <Spinner label={m["admin_reports.running"]()} />}
         {report.error ? (
-          <Notice tone="danger" title="Could not run the report">
-            {report.error instanceof Error ? report.error.message : "Unknown error."}
+          <Notice tone="danger" title={m["admin_reports.error.title"]()}>
+            {/* i18n: server text — the API's own error message. */}
+            {report.error instanceof Error ? report.error.message : m["admin_reports.error.unknown"]()}
           </Notice>
         ) : null}
         {report.data && (
           <>
             <div className={STATS}>
               <Stat
-                label={`Spend · ${report.data.period.label}`}
+                label={m["admin_reports.stat.spend"]({ period: report.data.period.label })}
                 value={<Money amount={report.data.totals.cost} currency={currency} />}
-                detail={`${report.data.period.timezone} calendar period`}
+                detail={m["admin_reports.stat.period_detail"]({ timezone: report.data.period.timezone })}
               />
               <Stat
-                label="Requests"
-                value={report.data.totals.requests.toLocaleString()}
+                label={m["admin_reports.stat.requests"]()}
+                value={formatNumber(report.data.totals.requests)}
                 detail={
                   report.data.totals.images
-                    ? `${report.data.totals.total_tokens.toLocaleString()} tokens, ` +
-                      `${report.data.totals.images.toLocaleString()} images`
-                    : `${report.data.totals.total_tokens.toLocaleString()} tokens`
+                    ? m["admin_reports.stat.tokens_and_images_detail"]({
+                        tokens: report.data.totals.total_tokens,
+                        images: report.data.totals.images,
+                      })
+                    : m["admin_reports.stat.tokens_detail"]({ tokens: report.data.totals.total_tokens })
                 }
               />
               <Stat
-                label="Measured"
-                value={`${measuredPercent(report.data.totals)}%`}
+                label={m["admin_reports.stat.measured"]()}
+                value={m["admin_reports.stat.measured_value"]({
+                  percent: measuredPercent(report.data.totals),
+                })}
                 detail={
                   report.data.totals.estimated_requests + report.data.totals.unavailable_requests >
                   0
-                    ? "the rest is estimated or missing"
-                    : "exact usage from the provider"
+                    ? m["admin_reports.stat.measured_detail.incomplete"]()
+                    : m["admin_reports.stat.measured_detail.complete"]()
                 }
                 tone={measuredPercent(report.data.totals) < 100 ? "warn" : "ok"}
               />
@@ -163,10 +186,7 @@ export function AdminReports() {
         )}
       </Card>
 
-      <Card
-        title="Breakdown"
-        flush
-      >
+      <Card title={m["admin_reports.breakdown_card"]()} flush>
         {report.isPending ? (
           <Spinner />
         ) : (
@@ -174,14 +194,17 @@ export function AdminReports() {
             {report.data && (
               <div className="p-5">
                 <SummaryStrip
-                  headline={`${report.data.rows.length} ${report.data.rows.length === 1 ? "row" : "rows"}`}
-                  detail={`${report.data.period.label} · ${headingFor(groupBy).toLowerCase()}`}
+                  headline={m["admin_reports.row_count"]({ count: report.data.rows.length })}
+                  detail={m["admin_reports.summary_detail"]({
+                    period: report.data.period.label,
+                    breakdown: headingLowerFor(groupBy),
+                  })}
                   active={report.data.rows.length > 0}
                   actions={
                     <Button
                       onClick={() => downloadCsv(`/api/admin/reports/usage.csv?${reportQueryString(query)}`)}
                     >
-                      Export CSV
+                      {m["admin_reports.export_csv"]()}
                     </Button>
                   }
                 />
@@ -192,10 +215,11 @@ export function AdminReports() {
               rows={report.data?.rows ?? []}
               rowKey={(row, index) => row.key ?? `row-${index}`}
               footer={report.data?.totals}
-              empty="No usage in this period."
-              caption={`Spend for ${report.data?.period.label ?? "the period"}, ${headingFor(
-                groupBy,
-              ).toLowerCase()}.`}
+              empty={m["admin_reports.empty"]()}
+              caption={m["admin_reports.caption"]({
+                period: report.data?.period.label ?? m["admin_reports.caption_period_fallback"](),
+                breakdown: headingLowerFor(groupBy),
+              })}
             />
           </>
         )}
@@ -206,9 +230,35 @@ export function AdminReports() {
 
 function headingFor(groupBy: string): string {
   return (
-    { group: "Group", user: "User", model: "Model", api_key: "API key", day: "Day", total: "All" }[
-      groupBy
-    ] ?? "Item"
+    {
+      group: m["admin_reports.heading.group"](),
+      user: m["admin_reports.heading.user"](),
+      model: m["admin_reports.heading.model"](),
+      api_key: m["admin_reports.heading.api_key"](),
+      day: m["admin_reports.heading.day"](),
+      total: m["admin_reports.heading.total"](),
+    }[groupBy] ?? m["admin_reports.heading.other"]()
+  );
+}
+
+/**
+ * The same nouns, in the case the sentences need them in.
+ *
+ * Two sets of messages rather than `.toLowerCase()` on one: lower-casing a
+ * translated word is a rule about English, and in a language with more than two
+ * cases the sentence wants the form that reads correctly in it rather than the
+ * one that came out of a table header.
+ */
+function headingLowerFor(groupBy: string): string {
+  return (
+    {
+      group: m["admin_reports.heading_lower.group"](),
+      user: m["admin_reports.heading_lower.user"](),
+      model: m["admin_reports.heading_lower.model"](),
+      api_key: m["admin_reports.heading_lower.api_key"](),
+      day: m["admin_reports.heading_lower.day"](),
+      total: m["admin_reports.heading_lower.total"](),
+    }[groupBy] ?? m["admin_reports.heading_lower.other"]()
   );
 }
 

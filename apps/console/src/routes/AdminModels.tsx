@@ -23,6 +23,9 @@ import {
   KNOWN_OUTPUTS,
 } from "../components/CapabilityPicker";
 import { PageHeader } from "../components/PageHeader";
+import { formatNumber } from "../lib/format";
+import { Message } from "../components/Message";
+import { m } from "../paraglide/messages.js";
 import {
   useCatalogueTags,
   useCreateModel,
@@ -62,26 +65,31 @@ import { useOptionalToast } from "../lib/toast";
  * would mean four independent offsets in one URL, and the catalogue is not
  * large enough to earn that.
  */
-const KIND_SECTIONS: { kind: ModelKind; title: string; description: string }[] = [
+/** Message functions, not strings: the list is built once, at import. */
+const KIND_SECTIONS: {
+  kind: ModelKind;
+  title: () => string;
+  description: () => string;
+}[] = [
   {
     kind: "chat",
-    title: "Chat",
-    description: "/v1/chat/completions, /v1/responses and /v1/messages.",
+    title: m["admin_models.section.chat"],
+    description: m["admin_models.section.chat_description"],
   },
   {
     kind: "embedding",
-    title: "Embedding",
-    description: "/v1/embeddings. Priced per token, and they generate none.",
+    title: m["admin_models.section.embedding"],
+    description: m["admin_models.section.embedding_description"],
   },
   {
     kind: "ocr",
-    title: "Document extraction",
-    description: "/v1/ocr. Priced per page rather than per token.",
+    title: m["admin_models.section.ocr"],
+    description: m["admin_models.section.ocr_description"],
   },
   {
     kind: "image",
-    title: "Image",
-    description: "/v1/images/generations. Often priced per image.",
+    title: m["admin_models.section.image"],
+    description: m["admin_models.section.image_description"],
   },
 ];
 
@@ -131,7 +139,7 @@ export function AdminModels() {
   const columns: Column<AdminModel>[] = [
     {
       key: "name",
-      header: "Model",
+      header: m["admin_models.column.model"](),
       render: (model) => (
         <>
           <div>
@@ -156,14 +164,14 @@ export function AdminModels() {
     },
     {
       key: "capabilities",
-      header: "Capabilities",
+      header: m["admin_models.column.capabilities"](),
       // Worth a column on a laptop, not worth the price column on a phone.
       hideBelow: "lg",
       render: (model) => <Capabilities model={model} />,
     },
     {
       key: "provider",
-      header: "Provider",
+      header: m["admin_models.column.provider"](),
       // The "Provider off" badge is the reason this is `md` and not `lg`: a
       // model behind a deactivated provider is unreachable, and that has to be
       // visible before someone spends time wondering why.
@@ -173,43 +181,49 @@ export function AdminModels() {
           <div>{model.provider_name}</div>
           {/* Deactivating a provider silently takes every model behind it out
               of service. The catalogue is where that has to be visible. */}
-          {!model.provider_is_active && <Badge tone="danger">Provider off</Badge>}
+          {!model.provider_is_active && (
+            <Badge tone="danger">{m["admin_models.badge.provider_off"]()}</Badge>
+          )}
         </>
       ),
     },
     {
       key: "price",
-      header: "Price / Mtok",
+      header: m["admin_models.column.price"](),
       numeric: true,
       render: (model) =>
         model.current_price ? (
           <>
             <div>
-              {formatMoney(model.current_price.input_per_mtok, model.current_price.currency, {
-                exact,
-              })}{" "}
-              in
+              {m["admin_models.price.in"]({
+                rate: formatMoney(model.current_price.input_per_mtok, model.current_price.currency, {
+                  exact,
+                }),
+              })}
             </div>
             <div className={MUTED}>
-              {formatMoney(model.current_price.output_per_mtok, model.current_price.currency, {
-                exact,
-              })}{" "}
-              out
+              {m["admin_models.price.out"]({
+                rate: formatMoney(
+                  model.current_price.output_per_mtok,
+                  model.current_price.currency,
+                  { exact },
+                ),
+              })}
             </div>
           </>
         ) : (
           // An unpriced model serves happily and records a cost of zero, which
           // is a quiet way to give away money. Worth flagging in the list.
-          <Badge tone="warn">No price</Badge>
+          <Badge tone="warn">{m["admin_models.badge.no_price"]()}</Badge>
         ),
     },
     {
       key: "access",
-      header: "Access",
+      header: m["admin_models.column.access"](),
       hideBelow: "lg",
       render: (model) =>
         model.granted_to.length === 0 && model.granted_to_users.length === 0 ? (
-          <span className={MUTED}>nobody</span>
+          <span className={MUTED}>{m["admin_models.access.nobody"]()}</span>
         ) : (
           <div className={CHIPS}>
             {model.granted_to.map((group) => (
@@ -227,12 +241,16 @@ export function AdminModels() {
     },
     {
       key: "status",
-      header: "Status",
+      header: m["admin_models.column.status"](),
       hideBelow: "sm",
       render: (model) => (
         <div className={CHIPS}>
-          {model.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
-          {model.is_public && <Badge tone="accent">Public</Badge>}
+          {model.is_active ? (
+            <Badge tone="ok">{m["admin_models.badge.active"]()}</Badge>
+          ) : (
+            <Badge>{m["admin_models.badge.inactive"]()}</Badge>
+          )}
+          {model.is_public && <Badge tone="accent">{m["admin_models.badge.public"]()}</Badge>}
         </div>
       ),
     },
@@ -245,24 +263,32 @@ export function AdminModels() {
               reach it — is on its page now. Access used to be a dialog here and
               pricing a whole separate screen, which meant three places to change
               one model and a price you had to go and look for. */}
-          <Button onClick={() => navigate(`/admin/models/${model.id}`)}>Edit</Button>
+          <Button onClick={() => navigate(`/admin/models/${model.id}`)}>
+            {m["admin_models.action.edit"]()}
+          </Button>
           <Button
             busy={update.isPending && update.variables?.id === model.id}
             onClick={() =>
               update.mutate(
                 { id: model.id, is_active: !model.is_active },
                 {
-                  onSuccess: () => toast?.add({ title: "Model updated", type: "success" }),
+                  onSuccess: () =>
+                    toast?.add({ title: m["admin_models.toast.updated"](), type: "success" }),
                   onError: () =>
-                    toast?.add({ title: "Could not update the model", type: "error" }),
+                    toast?.add({
+                      title: m["admin_models.toast.update_failed"](),
+                      type: "error",
+                    }),
                 },
               )
             }
           >
-            {model.is_active ? "Deactivate" : "Activate"}
+            {model.is_active
+              ? m["admin_models.action.deactivate"]()
+              : m["admin_models.action.activate"]()}
           </Button>
           <Button variant="ghost" className="text-danger" onClick={() => setDeleting(model)}>
-            Delete
+            {m["admin_models.action.delete"]()}
           </Button>
         </div>
       ),
@@ -272,27 +298,31 @@ export function AdminModels() {
   return (
     <div className={PAGE}>
       <PageHeader
-        title="Models"
-        subtitle="An allowlist: a model is invisible to callers until a group is granted it."
+        title={m["admin_models.title"]()}
+        subtitle={m["admin_models.subtitle"]()}
         actions={
           <>
-            <Button onClick={() => setDiscovering(true)}>Discover</Button>
+            <Button onClick={() => setDiscovering(true)}>{m["admin_models.discover"]()}</Button>
             <Button variant="primary" onClick={() => setCreating(true)}>
-              Add model
+              {m["admin_models.add_model"]()}
             </Button>
           </>
         }
       />
 
       {update.error ? (
-        <Notice tone="danger" title="Could not update the model">
-          {update.error instanceof Error ? update.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_models.load_error.update"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {update.error instanceof Error ? update.error.message : m["admin_models.unknown_error"]()}
         </Notice>
       ) : null}
 
       {deleteModel.error ? (
-        <Notice tone="danger" title="Could not delete the model">
-          {deleteModel.error instanceof Error ? deleteModel.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_models.load_error.delete"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {deleteModel.error instanceof Error
+            ? deleteModel.error.message
+            : m["admin_models.unknown_error"]()}
         </Notice>
       ) : null}
 
@@ -303,14 +333,14 @@ export function AdminModels() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-56 flex-1">
             <Input
-              label="Search"
+              label={m["admin_models.search"]()}
               value={paged.search}
               onChange={(event) => paged.setSearch(event.target.value)}
-              placeholder="model name or upstream id"
+              placeholder={m["admin_models.search_placeholder"]()}
               hint={
                 models.data
-                  ? `${models.data.total.toLocaleString()} matching`
-                  : "Matches name and upstream id."
+                  ? m["admin_models.search_hint_matching"]({ count: models.data.total })
+                  : m["admin_models.search_hint_default"]()
               }
             />
           </div>
@@ -319,10 +349,11 @@ export function AdminModels() {
 
       <Card flush>
         {models.isPending ? (
-          <Spinner label="Loading the catalogue" />
+          <Spinner label={m["admin_models.loading"]()} />
         ) : models.error ? (
-          <Notice tone="danger" title="Could not load the catalogue">
-            {models.error instanceof Error ? models.error.message : "Unknown error."}
+          <Notice tone="danger" title={m["admin_models.load_error.title"]()}>
+            {/* i18n: server text — the API's own error message. */}
+            {models.error instanceof Error ? models.error.message : m["admin_models.unknown_error"]()}
           </Notice>
         ) : (
           <>
@@ -336,10 +367,10 @@ export function AdminModels() {
                     rowKey={(model) => model.id}
                     empty={
                       paged.query
-                        ? "No model matches that."
-                        : "No models catalogued. Use Discover to see what the provider offers."
+                        ? m["admin_models.empty_query"]()
+                        : m["admin_models.empty"]()
                     }
-                    caption="Catalogued models."
+                    caption={m["admin_models.caption"]()}
                   />
                 );
               }
@@ -358,7 +389,14 @@ export function AdminModels() {
                   rows: rows.filter((model) => model.kind === section.kind),
                 })),
                 ...(unknown.length
-                  ? [{ kind: "other" as ModelKind, title: "Other", description: "", rows: unknown }]
+                  ? [
+                      {
+                        kind: "other" as ModelKind,
+                        title: () => m["admin_models.section.other"](),
+                        description: () => "",
+                        rows: unknown,
+                      },
+                    ]
                   : []),
               ].filter((section) => section.rows.length > 0);
 
@@ -376,20 +414,20 @@ export function AdminModels() {
                       short of the "Model" column it heads. */}
                   <div className="px-5 pt-5 pb-3">
                     <h2 className="text-md font-semibold leading-tight">
-                      {section.title}{" "}
+                      {section.title()}{" "}
                       <span className={`${MUTED} text-base font-normal`}>
-                        ({section.rows.length})
+                        ({formatNumber(section.rows.length)})
                       </span>
                     </h2>
-                    {section.description && (
-                      <p className={`${MUTED} mt-1 text-sm`}>{section.description}</p>
+                    {section.description() && (
+                      <p className={`${MUTED} mt-1 text-sm`}>{section.description()}</p>
                     )}
                   </div>
                   <Table
                     columns={columns}
                     rows={section.rows}
                     rowKey={(model) => model.id}
-                    caption={`${section.title} models, their current price and who may use them.`}
+                    caption={m["admin_models.section.caption"]({ section: section.title() })}
                   />
                 </div>
               ));
@@ -399,7 +437,7 @@ export function AdminModels() {
               limit={paged.limit}
               offset={paged.offset}
               onOffsetChange={paged.setOffset}
-              noun="models"
+              noun={m["admin_models.noun"]()}
               busy={models.isFetching}
             />
           </>
@@ -429,11 +467,13 @@ function DeleteModelDialog({ model, onClose }: { model: AdminModel | null; onClo
   return (
     <Dialog
       open={model !== null}
-      title={`Delete ${model?.name ?? "this model"}`}
+      title={m["admin_models.delete.title"]({
+        name: model?.name ?? m["admin_models.delete.title_fallback"](),
+      })}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{m["admin_models.delete.cancel"]()}</Button>
           <Button
             variant="danger"
             busy={del.isPending}
@@ -441,15 +481,18 @@ function DeleteModelDialog({ model, onClose }: { model: AdminModel | null; onClo
               model &&
               del.mutate(model.id, {
                 onSuccess: () => {
-                  toast?.add({ title: "Model deleted", type: "success" });
+                  toast?.add({ title: m["admin_models.delete.toast_done"](), type: "success" });
                   onClose();
                 },
                 onError: () =>
-                  toast?.add({ title: "Could not delete the model", type: "error" }),
+                  toast?.add({
+                    title: m["admin_models.delete.toast_failed"](),
+                    type: "error",
+                  }),
               })
             }
           >
-            Delete permanently
+            {m["admin_models.delete.confirm"]()}
           </Button>
         </>
       }
@@ -461,19 +504,18 @@ function DeleteModelDialog({ model, onClose }: { model: AdminModel | null; onClo
       <div className={FORM}>
         {del.error ? (
           <Notice tone="danger">
-            {del.error instanceof Error ? del.error.message : "Unknown error."}
+            {/* i18n: server text — the API's own error message. */}
+            {del.error instanceof Error ? del.error.message : m["admin_models.unknown_error"]()}
           </Notice>
         ) : null}
         <p>
-          Removed from the catalogue and from <code className={CODE}>/v1/models</code>; its
-          prices and access grants go with it. Callers asking for{" "}
-          <code className={CODE}>{model?.name}</code> get "model not found" from the next
-          request on. This cannot be undone.
+          <Message
+            message={m["admin_models.delete.body"]}
+            markup={{ code: (children) => <code className={CODE}>{children}</code> }}
+            inputs={{ name: model?.name ?? "" }}
+          />
         </p>
-        <p className={MUTED}>
-          Recorded spend is unaffected: past usage keeps the model's name and stays attributed to
-          the people and groups that ran it.
-        </p>
+        <p className={MUTED}>{m["admin_models.delete.spend_note"]()}</p>
       </div>
     </Dialog>
   );
@@ -511,11 +553,11 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
   return (
     <Dialog
       open={open}
-      title="New model"
+      title={m["admin_models.create.title"]()}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{m["admin_models.create.cancel"]()}</Button>
           <Button
             variant="primary"
             busy={create.isPending}
@@ -533,7 +575,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
                 },
                 {
                   onSuccess: () => {
-                    toast?.add({ title: "Model created", type: "success" });
+                    toast?.add({ title: m["admin_models.create.toast_done"](), type: "success" });
                     setName("");
                     setUpstream("");
                     setInputs([]);
@@ -543,12 +585,15 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
                     onClose();
                   },
                   onError: () =>
-                    toast?.add({ title: "Could not create the model", type: "error" }),
+                    toast?.add({
+                      title: m["admin_models.create.toast_failed"](),
+                      type: "error",
+                    }),
                 },
               )
             }
           >
-            Add
+            {m["admin_models.create.submit"]()}
           </Button>
         </>
       }
@@ -556,7 +601,8 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
       <div className={FORM}>
         {create.error ? (
           <Notice tone="danger">
-            {create.error instanceof Error ? create.error.message : "Unknown error."}
+            {/* i18n: server text — the API's own error message. */}
+            {create.error instanceof Error ? create.error.message : m["admin_models.unknown_error"]()}
           </Notice>
         ) : null}
 
@@ -567,11 +613,11 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
             answer constrains, it read as an afterthought rather than the
             decision the rest hangs on. */}
         <Select
-          label="Provider"
+          label={m["admin_models.create.provider"]()}
           value={providerId}
           onChange={(e) => setProviderId(e.target.value)}
         >
-          <option value="">Choose an endpoint…</option>
+          <option value="">{m["admin_models.create.choose_provider"]()}</option>
           {choices.map((provider) => (
             <option key={provider.id} value={provider.id}>
               {provider.name} — {provider.base_url}
@@ -579,62 +625,60 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
           ))}
         </Select>
         {choices.length === 0 && !providers.isPending && (
-          <Notice tone="warn">
-            No active provider. Add one on the Providers page first.
-          </Notice>
+          <Notice tone="warn">{m["admin_models.create.no_provider"]()}</Notice>
         )}
 
         <Input
-          label="Name"
+          label={m["admin_models.create.name"]()}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="fast-summariser"
-          hint="What callers send as `model`. Cannot be changed later."
+          placeholder={m["admin_models.create.name_placeholder"]()}
+          hint={m["admin_models.create.name_hint"]()}
         />
         <Input
-          label="Upstream model"
+          label={m["admin_models.create.upstream"]()}
           value={upstream}
           onChange={(e) => setUpstream(e.target.value)}
-          placeholder="provider/model-id"
-          hint="What the gateway asks the provider for."
+          placeholder={m["admin_models.create.upstream_placeholder"]()}
+          hint={m["admin_models.create.upstream_hint"]()}
         />
 
         <Select
-          label="Kind"
+          label={m["admin_models.create.kind"]()}
           value={kind}
           onChange={(e) => setKind(e.target.value as ModelKind)}
-          hint="Which routes will serve it."
+          hint={m["admin_models.create.kind_hint"]()}
         >
-          <option value="chat">Chat — /v1/chat/completions, /v1/responses, /v1/messages</option>
-          <option value="embedding">Embedding — /v1/embeddings</option>
-          <option value="image">Image — /v1/images/generations</option>
+          <option value="chat">{m["admin_models.kind.chat"]()}</option>
+          <option value="embedding">{m["admin_models.kind.embedding"]()}</option>
+          <option value="image">{m["admin_models.kind.image"]()}</option>
         </Select>
 
         {/* Describing it now rather than importing-then-editing. Left empty this
             reads "not stated", which is honest for a model nobody has described. */}
         <CapabilityPicker
           key={`inputs-${generation}`}
-          label="Accepts"
-          otherLabel="Other input modalities"
-          hint="What can be sent to it."
+          label={m["admin_models.create.accepts"]()}
+          otherLabel={m["admin_models.create.accepts_other"]()}
+          hint={m["admin_models.create.accepts_hint"]()}
           known={KNOWN_INPUTS}
           value={inputs}
           onChange={setInputs}
         />
         <CapabilityPicker
           key={`outputs-${generation}`}
-          label="Produces"
-          otherLabel="Other output modalities"
-          hint="What comes back."
+          label={m["admin_models.create.produces"]()}
+          otherLabel={m["admin_models.create.produces_other"]()}
+          hint={m["admin_models.create.produces_hint"]()}
           known={KNOWN_OUTPUTS}
           value={outputs}
           onChange={setOutputs}
         />
         <CapabilityPicker
           key={`features-${generation}`}
-          label="Features"
-          otherLabel="Other features"
-          hint="Not limited to the boxes above."
+          label={m["admin_models.create.features"]()}
+          otherLabel={m["admin_models.create.features_other"]()}
+          hint={m["admin_models.create.features_hint"]()}
           known={KNOWN_FEATURES}
           value={features}
           onChange={setFeatures}
@@ -642,7 +686,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
 
         {/* Both are deliberate: a new model is invisible until someone chooses to
             expose it, and an unpriced model would record a cost of zero. */}
-        <Notice tone="info">No group is granted access, and no price is set.</Notice>
+        <Notice tone="info">{m["admin_models.create.starting_note"]()}</Notice>
       </div>
     </Dialog>
   );
@@ -688,10 +732,10 @@ const RATE_FIELDS: Record<string, ("input" | "output" | "perPage")[]> = {
   ocr: ["perPage"],
 };
 
-const RATE_LABELS: Record<string, string> = {
-  input: "Input per Mtok",
-  output: "Output per Mtok",
-  perPage: "Per page",
+const RATE_LABELS: Record<string, () => string> = {
+  input: m["admin_models.discover.manual_rate.input"],
+  output: m["admin_models.discover.manual_rate.output"],
+  perPage: m["admin_models.discover.manual_rate.per_page"],
 };
 
 /** Money is a string end to end, so a draft is judged by shape and never by
@@ -700,13 +744,15 @@ const AMOUNT_PATTERN = /^\d+(\.\d+)?$/;
 const CURRENCY_PATTERN = /^[A-Za-z]{3}$/;
 
 function rateError(value: string): string | null {
-  if (value === "") return "Required — the import refuses an unpriced model.";
-  return AMOUNT_PATTERN.test(value) ? null : "Digits and an optional decimal point.";
+  if (value === "") return m["admin_models.discover.manual_rate.required"]();
+  return AMOUNT_PATTERN.test(value) ? null : m["admin_models.discover.manual_rate.amount_invalid"]();
 }
 
 function currencyError(value: string): string | null {
   if (value === "") return null;
-  return CURRENCY_PATTERN.test(value) ? null : "Three letters, e.g. EUR.";
+  return CURRENCY_PATTERN.test(value)
+    ? null
+    : m["admin_models.discover.manual_rate.currency_invalid"]();
 }
 
 /** The payload for a hand-typed price, or null while it is incomplete — the
@@ -735,14 +781,21 @@ function manualPriceProblem(
   row: DiscoveredModel,
   draft: ManualPriceDraft | undefined,
 ): string | null {
-  if (!draft) return "Enter a price to import this model.";
+  if (!draft) return m["admin_models.discover.manual_rate.enter_price"]();
   const fields = RATE_FIELDS[row.kind] ?? ["input"];
   for (const field of fields) {
     const error = rateError(draft[field]);
-    if (error) return `${RATE_LABELS[field]}: ${error}`;
+    if (error) {
+      return m["admin_models.discover.manual_rate.field_problem"]({
+        label: RATE_LABELS[field] ?? field,
+        error,
+      });
+    }
   }
   const currency = currencyError(draft.currency);
-  return currency ? `Currency: ${currency}` : null;
+  return currency
+    ? m["admin_models.discover.manual_rate.currency_problem"]({ error: currency })
+    : null;
 }
 
 /**
@@ -767,24 +820,24 @@ function ManualPriceFields({
       {fields.map((field) => (
         <Input
           key={field}
-          label={RATE_LABELS[field]}
+          label={RATE_LABELS[field]?.() ?? field}
           type="text"
           inputMode="decimal"
           autoComplete="off"
           value={draft[field]}
           onChange={(event) => onChange({ ...draft, [field]: event.target.value })}
           error={rateError(draft[field]) ?? undefined}
-          hint="per million tokens"
+          hint={m["admin_models.discover.manual_rate.rate_hint"]()}
         />
       ))}
       <Input
-        label="Currency"
+        label={m["admin_models.discover.manual_rate.currency"]()}
         type="text"
         autoComplete="off"
         value={draft.currency}
         onChange={(event) => onChange({ ...draft, currency: event.target.value })}
         error={currencyError(draft.currency) ?? undefined}
-        hint="Leave empty for the gateway's billing currency."
+        hint={m["admin_models.discover.manual_rate.currency_hint"]()}
       />
     </div>
   );
@@ -906,14 +959,14 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           type="checkbox"
           checked={selected.includes(row.upstream_model)}
           disabled={row.blocked_reason !== null && !needsManualPrice(row)}
-          aria-label={`Import ${row.suggested_name}`}
+          aria-label={m["admin_models.discover.import_aria"]({ name: row.suggested_name })}
           onChange={() => toggle(row.upstream_model)}
         />
       ),
     },
     {
       key: "model",
-      header: "Offered upstream",
+      header: m["admin_models.discover.column.offered"](),
       render: (row) => (
         <>
           <div>{row.suggested_name}</div>
@@ -922,7 +975,11 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             <div className={MUTED}>
               {/* Not "cannot import": a price typed below the name is what
                   makes the row importable, and the reason beside it says so. */}
-              <Badge tone="warn">No price yet</Badge> {row.blocked_reason}
+              <Badge tone="warn">
+                {m["admin_models.discover.badge.no_price_yet"]()}
+              </Badge>{" "}
+              {/* i18n: server text — the provider's own reason. */}
+              {row.blocked_reason}
             </div>
           )}
           {selected.includes(row.upstream_model) && needsManualPrice(row) && (
@@ -939,7 +996,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
     },
     {
       key: "capabilities",
-      header: "Capabilities",
+      header: m["admin_models.column.capabilities"](),
       // Shown before importing, because "does this one do tool calling" and
       // "can it read an image" are the questions asked at exactly this moment.
       // Dropped on a handset all the same: this dialog is about adopting a
@@ -953,7 +1010,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           ...row.supported_features,
         ];
         return shown.length === 0 ? (
-          <span className={MUTED}>not stated</span>
+          <span className={MUTED}>{m["capabilities.not_stated"]()}</span>
         ) : (
           <div className={CHIPS}>
             {shown.map((item) => (
@@ -965,38 +1022,38 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
     },
     {
       key: "context",
-      header: "Context",
+      header: m["admin_models.discover.column.context"](),
       numeric: true,
       hideBelow: "sm",
       render: (row) =>
         row.context_window ? (
-          row.context_window.toLocaleString()
+          formatNumber(row.context_window)
         ) : (
           <span className={MUTED}>—</span>
         ),
     },
     {
       key: "price",
-      header: "Price",
+      header: m["admin_models.discover.column.price"](),
       numeric: true,
       render: (row) =>
         row.kind === "search" ? (
           // A search tier is metered per request, never per token — there is
           // no rate to show, and a dash would read as "unknown".
-          <span className={MUTED}>per request</span>
+          <span className={MUTED}>{m["admin_models.discover.per_request"]()}</span>
         ) : row.input_per_mtok && row.currency ? (
           <>
-            {`${formatMoney(row.input_per_mtok, row.currency, { exact })} / ${formatMoney(
-              row.output_per_mtok ?? "0",
-              row.currency,
-              { exact },
-            )}`}
+            {m["admin_models.discover.price_pair"]({
+              rin: formatMoney(row.input_per_mtok, row.currency, { exact }),
+              rout: formatMoney(row.output_per_mtok ?? "0", row.currency, { exact }),
+            })}
             {/* Only the community figures are marked. A badge on every row
                 would be noise; the question is which of these prices a third
                 party supplied, and that is the answer to it. */}
+            {/* i18n: server text — the price source is the API's enum value. */}
             {row.price_source === "community" && (
               <span className="ml-2 align-middle">
-                <Badge>community</Badge>
+                <Badge>community</Badge> {/* i18n: server text — the API's enum value. */}
               </span>
             )}
           </>
@@ -1013,11 +1070,11 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   return (
     <Dialog
       open={open}
-      title="Provider catalogue"
+      title={m["admin_models.discover.title"]()}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Close</Button>
+          <Button onClick={onClose}>{m["admin_models.discover.close"]()}</Button>
           <Button
             variant="primary"
             busy={importModels.isPending}
@@ -1039,24 +1096,30 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
                 },
                 {
                   onSuccess: () => {
-                    toast?.add({ title: "Models imported", type: "success" });
+                    toast?.add({
+                      title: m["admin_models.discover.toast_done"](),
+                      type: "success",
+                    });
                     setSelected([]);
                     forgetManualPrices();
                   },
                   onError: () =>
-                    toast?.add({ title: "Could not import models", type: "error" }),
+                    toast?.add({
+                      title: m["admin_models.discover.toast_failed"](),
+                      type: "error",
+                    }),
                 },
               )
             }
           >
-            Import {selected.length || ""}
+            {m["admin_models.discover.import"]({ count: selected.length || "" })}
           </Button>
         </>
       }
     >
       <div className={FORM}>
         <Select
-          label="Provider"
+          label={m["admin_models.discover.provider"]()}
           value={providerId}
           onChange={(event) => {
             setProviderId(event.target.value);
@@ -1069,7 +1132,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             forgetManualPrices();
           }}
         >
-          <option value="">Choose an endpoint…</option>
+          <option value="">{m["admin_models.discover.choose_provider"]()}</option>
           {choices.map((provider) => (
             <option key={provider.id} value={provider.id}>
               {provider.name}
@@ -1079,20 +1142,20 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
 
         {tags.data?.supported ? (
           <Select
-            label="Catalogue tag"
+            label={m["admin_models.discover.tag"]()}
             value={tag}
             onChange={(event) => {
               setTag(event.target.value);
               setSelected([]);
               forgetManualPrices();
             }}
-            hint="Cortecs filters its catalogue by tag and defaults to Instruct — the words above are read live from its catalogue, so a tag added there appears here."
+            hint={m["admin_models.discover.tag_hint_live"]()}
           >
             {/* The empty choice is not "no tag": it is the provider's own
                 default slice, which for Cortecs is Instruct without saying
                 so. Naming it "default" rather than "none" kept the dropdown
                 honest about what an untagged fetch actually returns. */}
-            <option value="">Provider default</option>
+            <option value="">{m["admin_models.discover.tag_default"]()}</option>
             {tags.data.tags.map((choice) => (
               <option key={choice} value={choice}>
                 {choice}
@@ -1101,15 +1164,15 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           </Select>
         ) : (
           <Input
-            label="Catalogue tag"
+            label={m["admin_models.discover.tag"]()}
             value={tag}
             onChange={(event) => {
               setTag(event.target.value);
               setSelected([]);
               forgetManualPrices();
             }}
-            placeholder="Instruct"
-            hint="Cortecs filters its catalogue by tag and defaults to Instruct — ask for Embedding or OCR to see those."
+            placeholder={m["admin_models.discover.tag_placeholder"]()}
+            hint={m["admin_models.discover.tag_hint_free"]()}
           />
         )}
 
@@ -1131,33 +1194,56 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             }}
           />
           <span>
-            Fill missing prices from LiteLLM
-            <span className={`${MUTED} ml-1 text-sm`}>(community)</span>
+            {m["admin_models.discover.fill_missing"]()}
+            <span className={`${MUTED} ml-1 text-sm`}>
+              {m["admin_models.discover.community_gloss"]()}
+            </span>
           </span>
         </label>
 
-        {providerId && discovery.isPending && <Spinner label="Asking the provider" />}
+        {providerId && discovery.isPending && (
+          <Spinner label={m["admin_models.discover.asking"]()} />
+        )}
         {discovery.error ? (
-          <Notice tone="danger" title="Could not read the provider catalogue">
-            {discovery.error instanceof Error ? discovery.error.message : "Unknown error."}
+          <Notice tone="danger" title={m["admin_models.discover.load_error.title"]()}>
+            {/* i18n: server text — the API's own error message. */}
+            {discovery.error instanceof Error
+              ? discovery.error.message
+              : m["admin_models.unknown_error"]()}
           </Notice>
         ) : null}
 
             {importModels.data && (
-              <Notice tone="info" title="Import finished">
+              <Notice tone="info" title={m["admin_models.discover.import_finished"]()}>
                 {importModels.data.results.map((result) => (
                   <div key={result.upstream_model}>
                     {result.imported
-                      ? `${result.name} imported${
-                          result.priced
-                            ? result.price_source === "community"
-                              ? " with a community price"
-                              : result.price_source === "manual"
-                                ? " with the price entered by hand"
-                                : " with its price"
-                            : " — metered per request, no token price"
-                        }${result.reason ? ` — ${result.reason}` : ""}`
-                      : `${result.upstream_model} skipped — ${result.reason}`}
+                      ? result.priced
+                        ? result.price_source === "community"
+                          ? m["admin_models.discover.result_imported_community"]({
+                              // `name` can be null when the provider offered a
+                              // model with no name to suggest; the string it
+                              // would have interpolated is what the message gets.
+                              name: String(result.name),
+                            })
+                          : result.price_source === "manual"
+                            ? m["admin_models.discover.result_imported_manual"]({
+                                name: String(result.name),
+                              })
+                            : m["admin_models.discover.result_imported_priced"]({
+                                name: String(result.name),
+                              })
+                        : m["admin_models.discover.result_imported_unpriced"]({
+                            name: String(result.name),
+                          })
+                      : // i18n: server text — the skip reason is the provider's.
+                        m["admin_models.discover.result_skipped"]({
+                          name: result.upstream_model,
+                          reason: String(result.reason),
+                        })}
+                    {/* i18n: server text — a manual price the catalogue or the
+                        community file outranked is the API's own sentence. */}
+                    {result.reason ? ` — ${result.reason}` : ""}
                   </div>
                 ))}
               </Notice>
@@ -1168,7 +1254,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             {/* The dangerous direction of drift: still served, no longer offered.
                 These fail only when someone calls them. */}
             {discovery.data.missing_upstream.length > 0 && (
-              <Notice tone="warn" title="Served here, no longer offered upstream">
+              <Notice tone="warn" title={m["admin_models.discover.missing_title"]()}>
                 {/* Ours on the left, the id it asks for on the right. It read
                     "demo-model (gpt-4o-mini)", which looks like one model with
                     two names rather than one of ours aimed at an id the provider
@@ -1183,8 +1269,8 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
                     <code className={CODE}>{row.upstream_model}</code>
                     {/* A deactivated model cannot be called, so this row is a
                         tidy-up rather than a request waiting to fail. */}
-                    {!row.is_active && <Badge>inactive</Badge>}
-                    <span className="sr-only">is no longer offered by this provider</span>
+                    {!row.is_active && <Badge>{m["admin_models.discover.badge.inactive"]()}</Badge>}
+                    <span className="sr-only">{m["admin_models.discover.missing_sr"]()}</span>
                   </div>
                 ))}
               </Notice>
@@ -1208,31 +1294,36 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
                           copy overwrites the other ticked rows' drafts, which
                           is what "apply" says; each row's own validation still
                           holds before the import can go. */}
-                      <Button onClick={applyPriceToAll}>Apply this price to all ticked</Button>
+                      <Button onClick={applyPriceToAll}>
+                        {m["admin_models.discover.apply_to_all"]()}
+                      </Button>
                     </div>
                   )}
                   <Table
                     columns={columns}
                     rows={chatRows}
                     rowKey={(row) => row.upstream_model}
-                    empty="The provider offers nothing that is not already catalogued."
-                    caption={`${chatRows.length} models offered by the provider.`}
+                    empty={m["admin_models.discover.empty"]()}
+                    caption={m["admin_models.discover.caption_models"]({ count: chatRows.length })}
                   />
                   {searchRows.length > 0 && (
                     <div className="mt-4">
-                      <h4 className="mb-1 text-sm font-semibold">Search tiers</h4>
+                      <h4 className="mb-1 text-sm font-semibold">
+                        {m["admin_models.discover.search_tiers"]()}
+                      </h4>
                       <p className={`${MUTED} mb-2 text-sm`}>
-                        A search backend exposes no model list and no token price — what
-                        this provider calls a model is a depth (Linkup&rsquo;s{" "}
-                        <code className={CODE}>depth</code>, Exa&rsquo;s{" "}
-                        <code className={CODE}>type</code>). Metered per request; bound by
-                        the request ceiling you grant per group.
+                        <Message
+                          message={m["admin_models.discover.search_tiers_body"]}
+                          markup={{ code: (children) => <code className={CODE}>{children}</code> }}
+                        />
                       </p>
                       <Table
                         columns={searchColumns}
                         rows={searchRows}
                         rowKey={(row) => row.upstream_model}
-                        caption={`${searchRows.length} search tiers offered by the provider.`}
+                        caption={m["admin_models.discover.caption_tiers"]({
+                          count: searchRows.length,
+                        })}
                       />
                     </div>
                   )}

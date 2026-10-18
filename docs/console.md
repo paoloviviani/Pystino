@@ -62,3 +62,42 @@ users, a redaction rule, the sign-in policy) labels the field *Reason
 
 A non-administrator who follows a bookmarked admin link is told they are not
 one, rather than shown a blank page; the API refuses them regardless.
+
+## Translations
+
+The console's words live in one catalogue, `apps/console/messages/en.json`:
+every button, heading, notice and placeholder on every screen is read from
+there, and none is written in the screen's own file. English is the only
+language that ships; the machinery exists so that adding one is a file, not a
+change to twenty screens.
+
+**Adding a language** is three steps:
+
+1. Copy `messages/en.json` to `messages/<locale>.json` (say, `messages/de.json`)
+   and translate the values. The keys and the file's shape stay exactly as they
+   are; a `{placeholder}` or a `{#tag}…{/tag}` inside a value is syntax, not
+   text, and must survive the translation where it is.
+2. Add the locale to `locales` in `apps/console/project.inlang/settings.json`.
+3. Run `pnpm --filter @llmp/console i18n:check`. It fails on a key the code uses
+   that the new file is missing, and on a message whose placeholders do not
+   match the English one, before anything ships.
+
+The language a reader gets is picked in order: an explicit choice stored in the
+browser (`localStorage["console.locale"]`), then the browser's own preferred
+language if the catalogue has it, then English. Setting the key by hand — say,
+`localStorage.setItem("console.locale", "de")` in the console's devtools — is
+how you try a translation that has no menu yet.
+
+**Finding what is not yet translated** is what `en-XA` is for. It is a
+pseudo-locale generated from the English catalogue
+(`pnpm --filter @llmp/console i18n:pseudo`): every message comes back accented
+and wrapped in brackets, with the placeholders untouched. Set
+`localStorage["console.locale"]` to `en-XA`, reload, and walk the screens: a
+string still reading as plain English is one the catalogue does not carry yet.
+It is a developer tool — no reader can arrive at it by accident, and no menu
+offers it.
+
+`pnpm --filter @llmp/console i18n:check` is the guard, in CI with the console's
+own checks: it fails on a key used in code that `en.json` does not have, on
+`en-XA.json` being out of date with `en.json`, and on a screen that has been
+converted carrying English text in its JSX again.

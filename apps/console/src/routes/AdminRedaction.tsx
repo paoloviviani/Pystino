@@ -32,6 +32,8 @@ import type {
   RedactionRule,
 } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
+import { formatNumber, formatDateTime } from "../lib/format";
+import { m } from "../paraglide/messages.js";
 import { SCOPES, SubjectPicker, scopeNoun } from "../components/SubjectPicker";
 import {
   CHIPS,
@@ -87,14 +89,17 @@ export function AdminRedaction() {
   return (
     <div className={PAGE}>
       <PageHeader
-        title="Redaction"
-        subtitle="What is stripped from prompts before they reach a provider."
+        title={m["admin_redaction.title"]()}
+        subtitle={m["admin_redaction.subtitle"]()}
       />
 
-      {status.isPending && <Spinner label="Loading redaction" />}
+      {status.isPending && <Spinner label={m["admin_redaction.loading"]()} />}
       {status.error ? (
-        <Notice tone="danger" title="Could not load redaction settings">
-          {status.error instanceof Error ? status.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_redaction.load_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {status.error instanceof Error
+            ? status.error.message
+            : m["admin_redaction.unknown_error"]()}
         </Notice>
       ) : null}
 
@@ -108,8 +113,9 @@ function Detail({ status }: { status: RedactionStatus }) {
 
   return (
     <>
-      {/* The API's own wording, rendered verbatim. Restating a caveat in the UI
-          is how the two end up disagreeing about what is wrong. */}
+      {/* i18n: server text — the API's own wording, rendered verbatim.
+          Restating a caveat in the UI is how the two end up disagreeing about
+          what is wrong. */}
       {status.warnings.map((note) => (
         <Notice key={note} tone={status.enabled ? "warn" : "danger"}>
           {note}
@@ -133,31 +139,51 @@ function Detail({ status }: { status: RedactionStatus }) {
       <Card>
         <div className={STATS}>
           <Stat
-            label="Redaction"
-            value={status.enabled ? "On" : "Off"}
+            label={m["admin_redaction.stat.redaction"]()}
+            value={
+              status.enabled
+                ? m["admin_redaction.stat.on"]()
+                : m["admin_redaction.stat.off"]()
+            }
             detail={
               status.enabled
-                ? `${status.engine} engine`
-                : "prompts reach the provider unchanged"
+                ? m["admin_redaction.stat.engine_detail"]({ engine: status.engine })
+                : m["admin_redaction.stat.off_detail"]()
             }
           />
           <Stat
-            label="Detection service"
+            label={m["admin_redaction.stat.service"]()}
             value={
-              service === null ? "—" : service.reachable ? "Answering" : "Not answering"
+              service === null
+                ? m["admin_redaction.stat.service_unknown"]()
+                : service.reachable
+                  ? m["admin_redaction.stat.service_ok"]()
+                  : m["admin_redaction.stat.service_down"]()
             }
             detail={
               service === null
-                ? "no service to call"
+                ? m["admin_redaction.stat.service_none"]()
                 : service.reachable
-                  ? `${service.engine ?? "unknown"} ${service.engine_version ?? ""} · ${service.latency_ms}ms`
+                  ? // i18n: server text — the engine's own name, version and latency.
+                    `${service.engine ?? "unknown"} ${service.engine_version ?? ""} · ${service.latency_ms}ms`
                   : service.detail
             }
           />
           <Stat
-            label="Entities removed"
-            value={activity.entities_redacted.toLocaleString()}
-            detail={`from ${activity.requests_redacted.toLocaleString()} of ${activity.requests.toLocaleString()} requests, last ${hours(activity.window_seconds)}`}
+            label={m["admin_redaction.stat.entities"]()}
+            value={formatNumber(activity.entities_redacted)}
+            detail={m["admin_redaction.stat.entities_detail"]({
+              redacted: activity.requests_redacted,
+              requests: activity.requests,
+              window:
+                activity.window_seconds % 86_400 === 0
+                  ? m["admin_redaction.activity.window_days"]({
+                      count: activity.window_seconds / 86_400,
+                    })
+                  : m["admin_redaction.activity.window_hours"]({
+                      count: Math.round(activity.window_seconds / 3600),
+                    })}
+            )}
           />
         </div>
       </Card>
@@ -168,76 +194,84 @@ function Detail({ status }: { status: RedactionStatus }) {
           type, and a threshold is a column on each type in each rule. Reporting
           one number here read as *the* threshold, which it is not. */}
       <Card
-        title="Configuration"
+        title={m["admin_redaction.config.card"]()}
         description={
           status.source === "console"
-            ? "From the gateway's environment, except the engine, which was set here."
-            : "From the gateway's environment."
+            ? m["admin_redaction.config.description_console"]()
+            : m["admin_redaction.config.description_env"]()
         }
       >
         <dl className={DETAILS}>
-          <Row label="Engine">
+          <Row label={m["admin_redaction.config.engine"]()}>
             <code className={CODE}>{status.engine}</code>{" "}
             {/* Worth showing even with one entry: it is how an operator sees
                 that installing a plugin worked (ADR 0026). */}
             <span className={MUTED}>
-              · installed: {status.installed_engines.join(", ") || "none"}
+              {m["admin_redaction.config.installed"]({
+                engines: status.installed_engines.join(", ") || m["admin_redaction.config.none_engines"](),
+              })}
             </span>
           </Row>
           {/* Which of the two decided. Invisible otherwise, and it is exactly
               the confusion a database override introduces: an environment
               variable that no longer takes effect looks like a broken one. */}
-          <Row label="Source">
+          <Row label={m["admin_redaction.config.source"]()}>
             {status.source === "console" && status.configured ? (
               <>
-                This console
+                {m["admin_redaction.config.source_console"]()}
+                {/* i18n: server text — who changed it, and the reason they gave. */}
                 {status.configured.changed_by ? ` · ${status.configured.changed_by}` : ""}
                 {" · "}
-                {new Date(status.configured.changed_at).toLocaleString()}
+                {formatDateTime(status.configured.changed_at)}
                 {status.configured.reason && (
                   <div className={MUTED}>{status.configured.reason}</div>
                 )}
               </>
             ) : (
               <>
-                The deployment&apos;s environment
-                <span className={MUTED}> · GATEWAY_REDACTION__ENGINE</span>
+                {m["admin_redaction.config.source_env"]()}
+                <span className={MUTED}>
+                  {/* i18n: literal — the setting's own name, which an operator
+                      greps for. */} · GATEWAY_REDACTION__ENGINE
+                </span>
               </>
             )}
           </Row>
-          <Row label="Detection endpoint">
+          <Row label={m["admin_redaction.config.endpoint"]()}>
             {status.endpoint ? (
               <code className={CODE}>{status.endpoint}</code>
             ) : (
-              <span className={MUTED}>none — in-process engine</span>
+              <span className={MUTED}>{m["admin_redaction.config.endpoint_none"]()}</span>
             )}
           </Row>
-          <Row label="Failure mode">
+          <Row label={m["admin_redaction.config.failure_mode"]()}>
             {status.fail_open ? (
-              <Badge tone="danger">Forward unredacted</Badge>
+              <Badge tone="danger">{m["admin_redaction.config.fail_open"]()}</Badge>
             ) : (
-              <Badge tone="ok">Refuse the request</Badge>
+              <Badge tone="ok">{m["admin_redaction.config.fail_closed"]()}</Badge>
             )}
           </Row>
-          <Row label="Language">
+          <Row label={m["admin_redaction.config.language"]()}>
             {status.language}
             {service?.models?.[status.language] && (
               <span className={MUTED}> · {service.models[status.language]}</span>
             )}
           </Row>
-          <Row label="Timeout">{status.timeout_seconds}s</Row>
-          <Row label="Detection cache">
-            {status.cache_size === 0 ? "disabled" : `${status.cache_size.toLocaleString()} texts`}
+          <Row label={m["admin_redaction.config.timeout"]()}>
+            {m["admin_redaction.config.timeout_value"]({ seconds: status.timeout_seconds })}
           </Row>
-          <Row label="Placeholder key">
+          <Row label={m["admin_redaction.config.cache"]()}>
+            {status.cache_size === 0
+              ? m["admin_redaction.config.cache_disabled"]()
+              : m["admin_redaction.config.cache_texts"]({ count: status.cache_size })}
+          </Row>
+          <Row label={m["admin_redaction.config.placeholder_key"]()}>
             {status.placeholder_key_set ? (
-              <Badge tone="ok">Set</Badge>
+              <Badge tone="ok">{m["admin_redaction.config.key_set"]()}</Badge>
             ) : (
-              <Badge tone="warn">Not set</Badge>
+              <Badge tone="warn">{m["admin_redaction.config.key_not_set"]()}</Badge>
             )}{" "}
-            <span className={MUTED}>
-              placeholders derive from it, so it must stay stable
-            </span>
+            <span className={MUTED}>{m["admin_redaction.config.key_note"]()}</span>
           </Row>
         </dl>
       </Card>
@@ -250,9 +284,8 @@ function Detail({ status }: { status: RedactionStatus }) {
           facts — null means every type — but the policy is where that shows now. */}
       {status.entity_types && (
         <Card
-          title="Entity types"
-          description="GATEWAY_REDACTION__ENTITY_TYPES limits the search to these. It sets
-            the policy below; the console overrides it."
+          title={m["admin_redaction.entity_types.card"]()}
+          description={m["admin_redaction.entity_types.description"]()}
         >
           <div className={CHIPS}>
             {status.entity_types.map((entity) => (
@@ -263,7 +296,10 @@ function Detail({ status }: { status: RedactionStatus }) {
       )}
 
       {service?.reachable && service.degraded_languages.length > 0 && (
-        <Card title="Degraded languages" description="Served without a named-entity model.">
+        <Card
+          title={m["admin_redaction.degraded.card"]()}
+          description={m["admin_redaction.degraded.description"]()}
+        >
           <div className={CHIPS}>
             {service.degraded_languages.map((language) => (
               <Badge key={language} tone="warn">
@@ -331,12 +367,15 @@ function RulesList({
   const columns: Column<RedactionRule>[] = [
     {
       key: "subject",
-      header: "Applies to",
+      header: m["admin_redaction.rules.column.applies_to"](),
       render: (rule) => (
         <>
           <div>
             <Link to={`/admin/redaction/rules/${rule.id}`}>
-              {rule.scope === "all" ? "Every request" : (rule.subject_label ?? "deleted subject")}
+              {rule.scope === "all"
+                ? m["admin_redaction.rules.every_request"]()
+                : // i18n: server text — the subject's own label.
+                  (rule.subject_label ?? m["admin_redaction.rules.deleted_subject"]())}
             </Link>
           </div>
           <div className={MUTED}>
@@ -348,7 +387,7 @@ function RulesList({
     },
     {
       key: "policy",
-      header: "Policy",
+      header: m["admin_redaction.rules.column.policy"](),
       render: (rule) => (
         <>
           <div>{summarisePolicy(rule.policy)}</div>
@@ -358,9 +397,13 @@ function RulesList({
     },
     {
       key: "state",
-      header: "State",
+      header: m["admin_redaction.rules.column.state"](),
       render: (rule) =>
-        rule.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>,
+        rule.is_active ? (
+          <Badge tone="ok">{m["admin_redaction.badge.active"]()}</Badge>
+        ) : (
+          <Badge>{m["admin_redaction.badge.inactive"]()}</Badge>
+        ),
     },
     {
       key: "actions",
@@ -372,7 +415,7 @@ function RulesList({
               a colour that could be mistaken for the primary action of the
               row. */}
           <Button variant="secondary" onClick={() => navigate(`/admin/redaction/rules/${rule.id}`)}>
-            Edit
+            {m["admin_redaction.action.edit"]()}
           </Button>
           <Button
             variant="secondary"
@@ -380,13 +423,15 @@ function RulesList({
               navigate("/admin/redaction/rules/new", { state: { cloneFrom: rule } })
             }
           >
-            Clone
+            {m["admin_redaction.action.clone"]()}
           </Button>
           <Button
             busy={update.isPending && update.variables?.id === rule.id}
             onClick={() => update.mutate({ id: rule.id, is_active: !rule.is_active })}
           >
-            {rule.is_active ? "Deactivate" : "Activate"}
+            {rule.is_active
+              ? m["admin_redaction.action.deactivate"]()
+              : m["admin_redaction.action.activate"]()}
           </Button>
           {/* Thin red text, never filled: at row level a filled red button
               outweighs every other element in the table, and deletion here is
@@ -398,7 +443,7 @@ function RulesList({
             busy={remove.isPending && remove.variables === rule.id}
             onClick={() => remove.mutate(rule.id)}
           >
-            Delete
+            {m["admin_redaction.action.delete"]()}
           </Button>
         </div>
       ),
@@ -411,21 +456,21 @@ function RulesList({
           one. It is stated because the alternative is a screen that looks
           configured and is not. */}
       {!rules.isPending && !hasCatchAll && (
-        <Notice tone="info" title="Nothing is redacted by default">
-          Prompts reach providers as callers wrote them unless a rule below says
-          otherwise. Add a rule for every request to change that.
+        <Notice tone="info" title={m["admin_redaction.rules.no_catchall_title"]()}>
+          {m["admin_redaction.rules.no_catchall_body"]()}
         </Notice>
       )}
       <Card
-        title="Rules"
-        description="The strictest applicable rule wins, so adding one can only protect more."
+        title={m["admin_redaction.rules.card"]()}
+        description={m["admin_redaction.rules.description"]()}
         flush
       >
         {rules.isPending ? (
-          <Spinner label="Loading rules" />
+          <Spinner label={m["admin_redaction.rules.loading"]()} />
         ) : rules.error ? (
-          <Notice tone="danger" title="Could not load rules">
-            {rules.error instanceof Error ? rules.error.message : "Unknown error."}
+          <Notice tone="danger" title={m["admin_redaction.rules.load_error.title"]()}>
+            {/* i18n: server text — the API's own error message. */}
+            {rules.error instanceof Error ? rules.error.message : m["admin_redaction.unknown_error"]()}
           </Notice>
         ) : (
           <>
@@ -436,11 +481,11 @@ function RulesList({
                 duplicating it. */}
             <div className="p-5">
               <SummaryStrip
-                headline={`${items.length} ${items.length === 1 ? "rule" : "rules"}`}
+                headline={m["admin_redaction.rules.count"]({ count: items.length })}
                 detail={
                   hasCatchAll
-                    ? "every request is covered"
-                    : "no catch-all — some requests pass unredacted"
+                    ? m["admin_redaction.rules.covered"]()
+                    : m["admin_redaction.rules.not_covered"]()
                 }
                 active={items.length > 0}
                 actions={
@@ -448,7 +493,7 @@ function RulesList({
                     variant="primary"
                     onClick={() => navigate("/admin/redaction/rules/new")}
                   >
-                    New rule
+                    {m["admin_redaction.rules.new_rule"]()}
                   </Button>
                 }
               />
@@ -457,8 +502,8 @@ function RulesList({
               columns={columns}
               rows={items}
               rowKey={(rule) => rule.id}
-              empty="No rules, so nothing is redacted."
-              caption="Redaction rules and the subject each one applies to."
+              empty={m["admin_redaction.rules.empty"]()}
+              caption={m["admin_redaction.rules.caption"]()}
             />
           </>
         )}
@@ -500,10 +545,10 @@ function RuleCoverageWarning({
   if (unserved.length > 0) {
     return (
       <div className="mt-1">
-        <span
-          title={`These types are protected by this rule but cannot be detected while their family is off, so matching values reach providers unprotected. The rule stays in force.`}
-        >
-          <Badge tone="warn">Detection off: {unserved.join(", ")}</Badge>
+        <span title={m["admin_redaction.coverage.unserved_title"]()}>
+          <Badge tone="warn">
+            {m["admin_redaction.coverage.unserved_badge"]({ types: unserved.join(", ") })}
+          </Badge>
         </span>
       </div>
     );
@@ -511,11 +556,9 @@ function RuleCoverageWarning({
   if (rule.policy.default_mode !== "off" && (patterns === false || ner === false)) {
     return (
       <div className="mt-1">
-        <span
-          title={`This rule protects unnamed types by default, and a detector family is switched off, so some of what it covers cannot be detected. The rule stays in force.`}
-        >
-          <Badge tone="warn">Default covers a disabled family</Badge>
-        </span>
+        <span title={m["admin_redaction.coverage.default_title"]()}>
+        <Badge tone="warn">{m["admin_redaction.coverage.default_badge"]()}</Badge>
+      </span>
       </div>
     );
   }
@@ -557,11 +600,12 @@ function PreviewBox() {
     preview.mutate(
       scope === "" ? { text } : { text, scope, scope_id: scopeId },
       {
-        onSuccess: () => toast?.add({ title: "Preview ran.", type: "success" }),
+        onSuccess: () => toast?.add({ title: m["admin_redaction.preview.toast_ran"](), type: "success" }),
         onError: (error) =>
           toast?.add({
-            title: "The preview did not run",
-            description: error instanceof Error ? error.message : "Unknown error.",
+            title: m["admin_redaction.preview.toast_failed"](),
+            // i18n: server text — the API's own error message.
+            description: error instanceof Error ? error.message : m["admin_redaction.unknown_error"](),
             type: "error",
           }),
       },
@@ -573,12 +617,12 @@ function PreviewBox() {
   const columns: Column<RedactionPreviewSpan>[] = [
     {
       key: "match",
-      header: "Match",
+      header: m["admin_redaction.preview.column.match"](),
       render: (span) => <code className={CODE}>{sample.slice(span.start, span.end)}</code>,
     },
     {
       key: "entity",
-      header: "Detected as",
+      header: m["admin_redaction.preview.column.detected"](),
       render: (span) => (
         <>
           <div>{entityLabel(span.entity_type)}</div>
@@ -588,35 +632,49 @@ function PreviewBox() {
     },
     {
       key: "score",
-      header: "Score",
+      header: m["admin_redaction.preview.column.score"](),
       numeric: true,
       render: (span) => (
         <>
+          {/* Two decimal places is what a detector score means here; a score
+              is not a count, so it is not `formatNumber`. */}
           <div>{span.score.toFixed(2)}</div>
-          <div className={`${MUTED} ${NOWRAP}`}>needs {span.threshold}</div>
+          <div className={`${MUTED} ${NOWRAP}`}>
+            {m["admin_redaction.preview.needs"]({ threshold: span.threshold })}
+          </div>
         </>
       ),
     },
     {
       key: "mode",
-      header: "Applied",
+      header: m["admin_redaction.preview.column.applied"](),
       render: (span) =>
-        span.allow_listed ? <Badge tone="warn">Allow-listed</Badge> : modeLabel(span.mode),
+        span.allow_listed ? (
+          <Badge tone="warn">{m["admin_redaction.preview.allow_listed"]()}</Badge>
+        ) : (
+          modeLabel(span.mode)
+        ),
     },
   ];
 
   return (
-    <Card title="Preview" description="Run a sample through the policy in force.">
+    <Card
+      title={m["admin_redaction.preview.card"]()}
+      description={m["admin_redaction.preview.description"]()}
+    >
       <div className={FORM}>
         {preview.error ? (
           <Notice tone="danger">
-            {preview.error instanceof Error ? preview.error.message : "Unknown error."}
+            {/* i18n: server text — the API's own error message. */}
+            {preview.error instanceof Error
+              ? preview.error.message
+              : m["admin_redaction.unknown_error"]()}
           </Notice>
         ) : null}
 
         <div className={FIELD}>
           <label className={FIELD_LABEL} htmlFor={sampleId}>
-            Sample
+            {m["admin_redaction.preview.sample"]()}
           </label>
           <textarea
             id={sampleId}
@@ -624,24 +682,24 @@ function PreviewBox() {
             rows={4}
             value={text}
             onChange={(event) => setText(event.target.value)}
-            placeholder="Riassumi le notizie del giorno da ilpost.it"
+            placeholder={m["admin_redaction.preview.sample_placeholder"]()}
           />
-          <p className={MUTED}>Not logged anywhere.</p>
+          <p className={MUTED}>{m["admin_redaction.preview.not_logged"]()}</p>
         </div>
 
         <div className={FORM_ROW}>
           <Select
-            label="Preview as"
+            label={m["admin_redaction.preview.preview_as"]()}
             value={scope}
             onChange={(event) => {
               setScope(event.target.value as RedactionScope | "");
               setScopeId("");
             }}
           >
-            <option value="">Nobody in particular</option>
+            <option value="">{m["admin_redaction.preview.nobody"]()}</option>
             {SCOPES.map((option) => (
               <option key={option.value} value={option.value}>
-                {option.label}
+                {option.label()}
               </option>
             ))}
           </Select>
@@ -657,39 +715,43 @@ function PreviewBox() {
             disabled={!ready}
             onClick={run}
           >
-            Run preview
+            {m["admin_redaction.preview.run"]()}
           </Button>
         </div>
 
         {result && (
           <>
-            {/* Server-computed, rendered verbatim: an engine that detects
-                nothing must say so, or an empty result reads as a clean
-                prompt. */}
+            {/* i18n: server text — rendered verbatim: an engine that detects
+                nothing must say so, or an empty result reads as a clean prompt. */}
             {result.note && <Notice tone="warn">{result.note}</Notice>}
 
             {result.blocked ? (
-              <Notice tone="danger" title="This request would be blocked">
-                {result.blocked_reason ?? "A blocked entity type was found."}
+              <Notice tone="danger" title={m["admin_redaction.preview.blocked_title"]()}>
+                {/* i18n: server text — the block reason is the API's. */}
+                {result.blocked_reason ?? m["admin_redaction.preview.blocked_fallback"]()}
               </Notice>
             ) : (
               <div className={FIELD}>
-                <span className={FIELD_LABEL}>What the provider receives</span>
+                <span className={FIELD_LABEL}>{m["admin_redaction.preview.receives"]()}</span>
+                {/* i18n: server text — the rewritten sample is the answer. */}
                 <p className={SAMPLE}>{result.redacted_text}</p>
               </div>
             )}
 
             <p className={MUTED}>
-              {result.entity_count} replaced · {result.engine} engine ·{" "}
-              {result.scope === null ? "the deployment policy" : `${scopeNoun(result.scope)} rule`}
+              {m["admin_redaction.preview.summary_replaced"]({ count: result.entity_count })} ·{" "}
+              {m["admin_redaction.preview.summary_engine"]({ engine: result.engine })} ·{" "}
+              {result.scope === null
+                ? m["admin_redaction.preview.summary_policy"]()
+                : m["admin_redaction.preview.summary_rule"]({ scope: scopeNoun(result.scope) })}
             </p>
 
             <Table
               columns={columns}
               rows={result.spans}
               rowKey={(span, index) => `${span.entity_type}-${span.start}-${index}`}
-              empty="Nothing was detected in this sample."
-              caption="What the detector found, and what the policy did with it."
+              empty={m["admin_redaction.preview.empty"]()}
+              caption={m["admin_redaction.preview.caption"]()}
             />
           </>
         )}
@@ -754,15 +816,16 @@ function DetectorFamilies({ status }: { status: RedactionStatus }) {
       },
       {
         onSuccess: () =>
-          toast?.add({ title: "Detection families saved.", type: "success" }),
+          toast?.add({ title: m["admin_redaction.families.toast_saved"](), type: "success" }),
         onError: (error) => {
           // Back to what the server still holds: an optimistic switch that
           // failed must not sit showing a state that is not in force.
           setPatterns(prevPatterns);
           setNer(prevNer);
           toast?.add({
-            title: "Detection families were not changed",
-            description: error instanceof Error ? error.message : "Unknown error.",
+            title: m["admin_redaction.families.toast_failed"](),
+            // i18n: server text — the API's own error message.
+            description: error instanceof Error ? error.message : m["admin_redaction.unknown_error"](),
             type: "error",
           });
         },
@@ -772,33 +835,36 @@ function DetectorFamilies({ status }: { status: RedactionStatus }) {
 
   return (
     <Card
-      title="Presidio detection families"
-      description="These switches control the detection service's recognizer families, not custom gateway patterns."
+      title={m["admin_redaction.families.card"]()}
+      description={m["admin_redaction.families.description"]()}
     >
       {setEngine.error ? (
-        <Notice tone="danger" title="Detection families were not changed">
-          {setEngine.error instanceof Error ? setEngine.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_redaction.families.toast_failed"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {setEngine.error instanceof Error
+            ? setEngine.error.message
+            : m["admin_redaction.unknown_error"]()}
         </Notice>
       ) : null}
 
       <div className="flex flex-col gap-4">
         <FamilySwitch
-          label="Pattern matching"
-          description="Structured identifiers: cards, accounts, emails, phones, national IDs."
+          label={m["admin_redaction.families.patterns"]()}
+          description={m["admin_redaction.families.patterns_description"]()}
           checked={patterns}
           pending={setEngine.isPending}
           onToggle={(next) => toggle("patterns", next)}
         />
         <FamilySwitch
-          label="Named-entity recognition"
-          description="Names and places read by the language model."
+          label={m["admin_redaction.families.ner"]()}
+          description={m["admin_redaction.families.ner_description"]()}
           checked={ner}
           pending={setEngine.isPending}
           onToggle={(next) => toggle("ner", next)}
         />
       </div>
 
-      {setEngine.isPending && <p className={MUTED}>Saving…</p>}
+      {setEngine.isPending && <p className={MUTED}>{m["admin_redaction.families.saving"]()}</p>}
     </Card>
   );
 }
@@ -831,7 +897,7 @@ function FamilySwitch({
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <span aria-hidden className={`text-sm ${MUTED}`}>
-          {checked ? "On" : "Off"}
+          {checked ? m["admin_redaction.families.on"]() : m["admin_redaction.families.off"]()}
         </span>
         <button
           type="button"
@@ -877,11 +943,17 @@ function EngineList({ status }: { status: RedactionStatus }) {
     setEngine.mutate(
       { engine: engine.name, reason: "" },
       {
-        onSuccess: () => toast?.add({ title: `${engine.label} is in force.`, type: "success" }),
+        onSuccess: () =>
+          toast?.add({
+            // i18n: server text — the engine's own label, from its plugin.
+            title: m["admin_redaction.engine.toast_in_force"]({ label: engine.label }),
+            type: "success",
+          }),
         onError: (error) =>
           toast?.add({
-            title: "The engine was not changed",
-            description: error instanceof Error ? error.message : "Unknown error.",
+            title: m["admin_redaction.engine.toast_failed"](),
+            // i18n: server text — the API's own error message.
+            description: error instanceof Error ? error.message : m["admin_redaction.unknown_error"](),
             type: "error",
           }),
       },
@@ -890,12 +962,15 @@ function EngineList({ status }: { status: RedactionStatus }) {
 
   return (
     <Card
-      title="Engine"
-      description="One is in force at a time; llmp.redactors plugins appear here."
+      title={m["admin_redaction.engine.card"]()}
+      description={m["admin_redaction.engine.description"]()}
     >
       {setEngine.error ? (
-        <Notice tone="danger" title="The engine was not changed">
-          {setEngine.error instanceof Error ? setEngine.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["admin_redaction.engine.toast_failed"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {setEngine.error instanceof Error
+            ? setEngine.error.message
+            : m["admin_redaction.unknown_error"]()}
         </Notice>
       ) : null}
 
@@ -903,7 +978,7 @@ function EngineList({ status }: { status: RedactionStatus }) {
           worse than one that says how long it takes. */}
       {setEngine.isSuccess && status.propagation_seconds > 0 && (
         <Notice tone="info">
-          Saved. Other workers apply it within {status.propagation_seconds}s.
+          {m["admin_redaction.engine.propagated"]({ seconds: status.propagation_seconds })}
         </Notice>
       )}
 
@@ -917,25 +992,29 @@ function EngineList({ status }: { status: RedactionStatus }) {
               <div className={ENGINE_NAME}>
                 {engine.label}
                 <code className={CODE}>{engine.name}</code>
-                {engine.is_active && <Badge tone="accent">In force</Badge>}
+                {engine.is_active && <Badge tone="accent">{m["admin_redaction.badge.in_force"]()}</Badge>}
                 {/* The one property that decides whether this screen means
                     anything, said on every row rather than only on the
                     active one. */}
-                {!engine.redacts && <Badge tone="danger">Redacts nothing</Badge>}
+                {!engine.redacts && (
+                  <Badge tone="danger">{m["admin_redaction.badge.redacts_nothing"]()}</Badge>
+                )}
               </div>
+              {/* i18n: server text — the engine's own description, from its plugin. */}
               <div className={MUTED}>{engine.description}</div>
-              {/* Server-computed, rendered verbatim: the wording lives with the
-                  rule, the same convention as the warnings above. */}
+              {/* i18n: server text — rendered verbatim: the wording lives with
+                  the rule, the same convention as the warnings above. */}
               {engine.blocked_reason && (
                 <div className={MUTED}>
-                  <strong>Cannot be enabled.</strong> {engine.blocked_reason}
+                  <strong>{m["admin_redaction.engine.cannot_enable"]()}</strong>{" "}
+                  {engine.blocked_reason}
                 </div>
               )}
             </div>
             <div className={ENGINE_ACTION}>
               {engine.is_active ? (
                 <Button variant="secondary" disabled>
-                  Enabled
+                  {m["admin_redaction.engine.enabled"]()}
                 </Button>
               ) : (
                 <Button
@@ -943,7 +1022,9 @@ function EngineList({ status }: { status: RedactionStatus }) {
                   disabled={engine.blocked_reason !== null || setEngine.isPending}
                   onClick={() => choose(engine)}
                 >
-                  {engine.redacts ? "Enable" : "Turn redaction off"}
+                  {engine.redacts
+                    ? m["admin_redaction.engine.enable"]()
+                    : m["admin_redaction.engine.turn_off"]()}
                 </Button>
               )}
             </div>
@@ -962,12 +1043,15 @@ function EngineList({ status }: { status: RedactionStatus }) {
             {
               onSuccess: () => {
                 setConfirming(null);
-                toast?.add({ title: "Redaction is off.", type: "success" });
+                toast?.add({ title: m["admin_redaction.engine.off_toast"](), type: "success" });
               },
               onError: (error) =>
                 toast?.add({
-                  title: "The engine was not changed",
-                  description: error instanceof Error ? error.message : "Unknown error.",
+                  title: m["admin_redaction.engine.toast_failed"](),
+                  // i18n: server text — the API's own error message.
+                  description: error instanceof Error
+                    ? error.message
+                    : m["admin_redaction.unknown_error"](),
                   type: "error",
                 }),
             },
@@ -999,25 +1083,23 @@ function ConfirmOff({
   return (
     <Dialog
       open={engine !== null}
-      title="Turn redaction off"
+      title={m["admin_redaction.confirm.title"]()}
       onClose={onCancel}
       footer={
         <>
           <Button variant="secondary" onClick={onCancel}>
-            Cancel
+            {m["admin_redaction.confirm.cancel"]()}
           </Button>
           <Button variant="danger" disabled={pending} onClick={onConfirm}>
-            {pending ? "Saving…" : "Turn it off"}
+            {pending
+              ? m["admin_redaction.confirm.saving"]()
+              : m["admin_redaction.confirm.turn_off"]()}
           </Button>
         </>
       }
     >
-      <Notice tone="danger">
-        Prompts will reach providers exactly as callers sent them.
-      </Notice>
-      <p className="m-0 text-sm text-ink-muted">
-        Recorded with who changed it and when.
-      </p>
+      <Notice tone="danger">{m["admin_redaction.confirm.warning"]()}</Notice>
+      <p className="m-0 text-sm text-ink-muted">{m["admin_redaction.confirm.recorded"]()}</p>
     </Dialog>
   );
 }
@@ -1031,12 +1113,3 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-/** The activity window, in the unit a person would say it in. */
-function hours(seconds: number): string {
-  if (seconds % 86_400 === 0) {
-    const days = seconds / 86_400;
-    return days === 1 ? "24 hours" : `${days} days`;
-  }
-  const value = Math.round(seconds / 3600);
-  return value === 1 ? "hour" : `${value} hours`;
-}

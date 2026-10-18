@@ -1,6 +1,8 @@
 import { Button } from "@llmp/ui";
 import { useState } from "react";
 import { SECRET, SECRET_DETAIL, SECRET_ROW } from "../lib/layout";
+import { Message } from "./Message";
+import { m } from "../paraglide/messages.js";
 
 /**
  * Where "how it works" points: the published documentation, not this deployment.
@@ -53,28 +55,32 @@ export function OpencodeSetup({ heading }: { heading?: string }) {
   return (
     <div className={heading ? "grid gap-3 border-t border-line pt-4" : "grid gap-3"}>
       {heading ? <h3 className="text-sm font-semibold">{heading}</h3> : null}
-      <p className={SECRET_DETAIL}>Use an API key with the opencode coding agent.</p>
+      <p className={SECRET_DETAIL}>{m["opencode_setup.intro"]()}</p>
       <div className={SECRET_ROW}>
-        <code className={SECRET} aria-label="Command to configure opencode">
+        <code className={SECRET} aria-label={m["opencode_setup.command_aria"]()}>
           {command}
         </code>
-        <Button onClick={copy}>{copied ? "Copied" : "Copy"}</Button>
+        <Button onClick={copy}>{copied ? m["opencode_setup.copied"]() : m["opencode_setup.copy"]()}</Button>
       </div>
       {copied === false && (
-        <p className="text-sm text-warn">
-          Could not reach the clipboard. Select the command and copy it by hand.
-        </p>
+        <p className="text-sm text-warn">{m["opencode_setup.clipboard_unavailable"]()}</p>
       )}
       <p className={SECRET_DETAIL}>
-        It asks for the key, shows what it will change and asks before writing.{" "}
-        <a
-          href={OPENCODE_DOCS_URL}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="text-ink underline underline-offset-2 hover:text-ink-muted"
-        >
-          How it works
-        </a>
+        <Message
+          message={m["opencode_setup.detail"]}
+          markup={{
+            link: (children) => (
+              <a
+                href={OPENCODE_DOCS_URL}
+                target="_blank"
+                rel="noreferrer noopener"
+                className="text-ink underline underline-offset-2 hover:text-ink-muted"
+              >
+                {children}
+              </a>
+            ),
+          }}
+        />
       </p>
     </div>
   );

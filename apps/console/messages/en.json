@@ -1,0 +1,2531 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "not_found.title": "No such page",
+  "not_found.body": "No such address in the console. {#link}Back to your usage{/link}.",
+  "login.heading": "Sign in",
+  "login.loading_page": "Loading the sign-in page",
+  "login.redirecting": "Redirecting to sign in",
+  "login.provider_button": "Sign in with {provider}",
+  "login.gateway_unreachable.title": "The console could not reach the gateway",
+  "login.gateway_unreachable.unknown_error": "Unknown error.",
+  "login.no_provider.title": "No identity provider is enabled",
+  "login.no_provider.body": "Everyone signs in through an OpenID Connect provider, and this deployment has none enabled. An operator can add one in the console after {#code}pystino admin grant <email>{/code}, or set GATEWAY_OIDC__* and restart.",
+  "require_admin.title": "Administrators only",
+  "require_admin.body": "This section needs the administrator role. Ask whoever manages it in the identity provider.",
+  "opencode_setup.intro": "Use an API key with the opencode coding agent.",
+  "opencode_setup.command_aria": "Command to configure opencode",
+  "opencode_setup.copy": "Copy",
+  "opencode_setup.copied": "Copied",
+  "opencode_setup.clipboard_unavailable": "Could not reach the clipboard. Select the command and copy it by hand.",
+  "opencode_setup.detail": "It asks for the key, shows what it will change and asks before writing. {#link}How it works{/link}",
+  "admin.heading": "Administration",
+  "admin.subtitle": "Everything that applies to other people. Your own account is under Overview.",
+  "admin.sections.usage.title": "Usage",
+  "admin.sections.usage.description": "What the whole deployment spent, by group, person, model or day.",
+  "admin.sections.quotas.title": "Quotas",
+  "admin.sections.quotas.description": "The ceilings, what they have consumed, and resetting one on the record.",
+  "admin.sections.redaction.title": "Redaction",
+  "admin.sections.redaction.description": "What is stripped from prompts before a provider sees them, and for whom.",
+  "admin.sections.providers.title": "Providers",
+  "admin.sections.providers.description": "Where requests go, the credentials to get there, and what each reports.",
+  "admin.sections.models.title": "Models",
+  "admin.sections.models.description": "What is on offer, who may use it, and what it costs per token.",
+  "admin.sections.users.title": "Users",
+  "admin.sections.users.description": "People, their accounts, and the keys they hold.",
+  "admin.sections.groups.title": "Groups",
+  "admin.sections.groups.description": "Who belongs together, and what each group may use.",
+  "admin.sections.web_search.title": "Web search",
+  "admin.sections.web_search.description": "The search backends, who may run them, and how many searches each group has spent.",
+  "admin.sections.settings.title": "Settings",
+  "admin.sections.settings.description": "The mail server, the identity providers, and who may become a user.",
+  "disclosures.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} note about these figures",
+        "countPlural=other": "{n} notes about these figures"
+      }
+    }
+  ],
+  "subject_picker.all_scope": "Applies to every request.",
+  "subject_picker.choose": "Choose…",
+  "subject_picker.api_key.label": "API key",
+  "subject_picker.api_key.placeholder": "key id",
+  "subject_picker.api_key.hint": "The key's id. Keys are not listed here.",
+  "subject_picker.provider.label": "Provider",
+  "subject_picker.model.label": "Model",
+  "subject_picker.group.label": "Group",
+  "subject_picker.user.label": "User",
+  "subject_picker.scope.provider": "A provider",
+  "subject_picker.scope.model": "A model",
+  "subject_picker.scope.group": "A group",
+  "subject_picker.scope.user": "A user",
+  "subject_picker.scope.api_key": "An API key",
+  "subject_picker.noun.all": "Every request",
+  "subject_picker.noun.provider": "Provider",
+  "subject_picker.noun.model": "Model",
+  "subject_picker.noun.group": "Group",
+  "subject_picker.noun.user": "User",
+  "subject_picker.noun.api_key": "API key",
+  "subject_picker.noun_lower.all": "every request",
+  "subject_picker.noun_lower.provider": "provider",
+  "subject_picker.noun_lower.model": "model",
+  "subject_picker.noun_lower.group": "group",
+  "subject_picker.noun_lower.user": "user",
+  "subject_picker.noun_lower.api_key": "API key",
+  "capabilities.not_stated": "not stated",
+  "capability_picker.other_placeholder": "comma separated",
+  "capability_picker.gloss.image": "vision",
+  "capability_picker.gloss.tools": "function calling",
+  "capability_picker.gloss.json_mode": "structured output",
+  "admin_reports.title": "Reports",
+  "admin_reports.subtitle": "Spend over a calendar period, for chargeback.",
+  "admin_reports.filters": "Filters",
+  "admin_reports.filter.period": "Period",
+  "admin_reports.filter.breakdown": "Breakdown",
+  "admin_reports.filter.group": "Group",
+  "admin_reports.filter.model": "Model",
+  "admin_reports.filter.all_groups": "All groups",
+  "admin_reports.filter.all_models": "All models",
+  "admin_reports.breakdown.group": "By group",
+  "admin_reports.breakdown.user": "By user",
+  "admin_reports.breakdown.model": "By model",
+  "admin_reports.breakdown.api_key": "By API key",
+  "admin_reports.breakdown.day": "By day",
+  "admin_reports.breakdown.total": "Total only",
+  "admin_reports.column.requests": "Requests",
+  "admin_reports.column.tokens": "Tokens",
+  "admin_reports.column.images": "Images",
+  "admin_reports.column.cost": "Spend",
+  "admin_reports.running": "Running the report",
+  "admin_reports.error.title": "Could not run the report",
+  "admin_reports.error.unknown": "Unknown error.",
+  "admin_reports.stat.spend": "Spend · {period}",
+  "admin_reports.stat.period_detail": "{timezone} calendar period",
+  "admin_reports.stat.requests": "Requests",
+  "admin_reports.stat.tokens_detail": "{tokens: number} tokens",
+  "admin_reports.stat.tokens_and_images_detail": "{tokens: number} tokens, {images: number} images",
+  "admin_reports.stat.measured": "Measured",
+  "admin_reports.stat.measured_detail.complete": "exact usage from the provider",
+  "admin_reports.stat.measured_detail.incomplete": "the rest is estimated or missing",
+  "admin_reports.breakdown_card": "Breakdown",
+  "admin_reports.row_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} row",
+        "countPlural=other": "{n} rows"
+      }
+    }
+  ],
+  "admin_reports.summary_detail": "{period} · {breakdown}",
+  "admin_reports.export_csv": "Export CSV",
+  "admin_reports.empty": "No usage in this period.",
+  "admin_reports.caption": "Spend for {period}, {breakdown}.",
+  "admin_reports.caption_period_fallback": "the period",
+  "admin_reports.heading.group": "Group",
+  "admin_reports.heading.user": "User",
+  "admin_reports.heading.model": "Model",
+  "admin_reports.heading.api_key": "API key",
+  "admin_reports.heading.day": "Day",
+  "admin_reports.heading.total": "All",
+  "admin_reports.heading.other": "Item",
+  "admin_reports.heading_lower.group": "group",
+  "admin_reports.heading_lower.user": "user",
+  "admin_reports.heading_lower.model": "model",
+  "admin_reports.heading_lower.api_key": "API key",
+  "admin_reports.heading_lower.day": "day",
+  "admin_reports.heading_lower.total": "all",
+  "admin_reports.heading_lower.other": "item",
+  "admin_reports.stat.measured_value": [
+    {
+      "declarations": [
+        "input percent"
+      ],
+      "match": {
+        "*": "{percent}%"
+      }
+    }
+  ],
+  "reports.title": "Your usage",
+  "reports.subtitle": "What you spent, and what the figures rest on.",
+  "reports.filter.period": "Period",
+  "reports.filter.breakdown": "Breakdown",
+  "reports.breakdown.model": "By model",
+  "reports.breakdown.api_key": "By API key",
+  "reports.breakdown.day": "By day",
+  "reports.breakdown.total": "Total only",
+  "reports.column.requests": "Requests",
+  "reports.column.tokens": "Tokens",
+  "reports.column.images": "Images",
+  "reports.column.searches": "Searches",
+  "reports.column.own_searches": "Own searches",
+  "reports.column.cost": "Spend",
+  "reports.running": "Running the report",
+  "reports.error.title": "Could not run the report",
+  "reports.error.unknown": "Unknown error.",
+  "reports.stat.spend": "Spend · {period}",
+  "reports.stat.period_detail": "{timezone} calendar period",
+  "reports.stat.requests": "Requests",
+  "reports.stat.tokens_detail": [
+    {
+      "declarations": [
+        "input tokens"
+      ],
+      "match": {
+        "*": "{tokens: number} tokens"
+      }
+    }
+  ],
+  "reports.stat.measured": "Measured",
+  "reports.stat.measured_value": [
+    {
+      "declarations": [
+        "input percent"
+      ],
+      "match": {
+        "*": "{percent}%"
+      }
+    }
+  ],
+  "reports.stat.measured_detail.complete": "exact usage from the provider",
+  "reports.stat.measured_detail.incomplete": "the rest is estimated or missing",
+  "reports.breakdown_card": "Breakdown",
+  "reports.row_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} row",
+        "countPlural=other": "{n} rows"
+      }
+    }
+  ],
+  "reports.summary_detail": [
+    {
+      "declarations": [
+        "input period"
+      ],
+      "match": {
+        "*": "{period} · {breakdown}"
+      }
+    }
+  ],
+  "reports.export_csv": "Export CSV",
+  "reports.empty": "No usage in this period.",
+  "reports.caption": "Your spend for {period}, {breakdown}.",
+  "reports.caption_period_fallback": "the period",
+  "reports.heading.model": "Model",
+  "reports.heading.api_key": "API key",
+  "reports.heading.day": "Day",
+  "reports.heading.total": "All",
+  "reports.heading.other": "Label",
+  "reports.heading_lower.model": "model",
+  "reports.heading_lower.api_key": "API key",
+  "reports.heading_lower.day": "day",
+  "reports.heading_lower.total": "all",
+  "reports.heading_lower.other": "label",
+  "redaction_rule.title.rule": "Rule · {subject}",
+  "redaction_rule.title.clone": "Clone rule",
+  "redaction_rule.title.new": "New rule",
+  "redaction_rule.subtitle": "The strictest applicable rule wins, so adding one can only protect more.",
+  "redaction_rule.back": "Back",
+  "redaction_rule.loading": "Loading the rule",
+  "redaction_rule.missing.title": "No such rule",
+  "redaction_rule.missing.body": "It may have been deleted. {#link}Back to redaction{/link}",
+  "redaction_rule.clone_notice.title": "Cloning “{name}”",
+  "redaction_rule.clone_notice.unnamed": "unnamed rule",
+  "redaction_rule.clone_notice.body": "The policy and reason are copied. A clone starts inactive — choose its subject, review it, and activate it from the rules list.",
+  "redaction_rule.error.save_title": "Could not save the rule",
+  "redaction_rule.error.unknown": "Unknown error.",
+  "redaction_rule.subject_card": "Subject",
+  "redaction_rule.subject_missing.title": "This rule's subject no longer exists",
+  "redaction_rule.subject_missing.body": "It matches no request. Choose another {scope} below, or scope it to every request.",
+  "redaction_rule.scope.label": "Scope",
+  "redaction_rule.scope.choose": "Choose a subject…",
+  "redaction_rule.name_card": "Name and reason",
+  "redaction_rule.name.label": "Rule name",
+  "redaction_rule.reason.label": "Reason (optional)",
+  "redaction_rule.submit.save": "Save rule",
+  "redaction_rule.submit.create": "Create rule",
+  "redaction_rule.toast.saved": "Rule saved.",
+  "redaction_rule.toast.created": "Rule created.",
+  "redaction_rule.toast.cloned": "Clone created — it starts inactive.",
+  "identity_directory.run.dry_run": "dry run",
+  "identity_directory.run.counts": [
+    {
+      "declarations": [
+        "input seen"
+      ],
+      "match": {
+        "*": "seen {seen: number} · created {created: number} · linked {linked: number} · groups changed {updated: number} · deactivated {deactivated: number} · reactivated {reactivated: number}"
+      }
+    }
+  ],
+  "identity_directory.run.change_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} change",
+        "countPlural=other": "{n} changes"
+      }
+    }
+  ],
+  "identity_directory.title": "User sync — {provider}",
+  "identity_directory.close": "Close",
+  "identity_directory.intro": "Optional. Keeps this console's user list in step with your identity provider: people exist, with their groups and pre-assigned access, before their first sign-in, and are deactivated when removed there. You don't need this to add users — people appear at their first sign-in.",
+  "identity_directory.just_in_time.title": "Just-in-time only",
+  "identity_directory.just_in_time.body": "A {kind} provider offers no way to list its users: OIDC itself has no listing API. People appear here when they first sign in.",
+  "identity_directory.adapter.label": "How this directory tells us about people",
+  "identity_directory.adapter.none": "Off (default) — people appear at their first sign-in",
+  "identity_directory.adapter.authelia_file": "Authelia users file (not needed: the Users page manages bundled accounts)",
+  "identity_directory.adapter.keycloak_admin": "Keycloak admin API — pulled on a schedule (service-account client)",
+  "identity_directory.adapter.scim": "SCIM 2.0 — your identity provider pushes changes here",
+  "identity_directory.pull_every.label": "Pull every (minutes)",
+  "identity_directory.pull_every.hint": "0 means only when run from here.",
+  "identity_directory.save": "Save",
+  "identity_directory.keycloak.detail": "Service-account client (view-users, query-groups)",
+  "identity_directory.keycloak.client_id": "Client ID",
+  "identity_directory.keycloak.client_secret": "Client secret",
+  "identity_directory.keycloak.client_secret_hint": "Stored encrypted, never shown again. Saving it makes the next run a dry run.",
+  "identity_directory.keycloak.save": "Save credentials",
+  "identity_directory.keycloak.saved": "Credentials saved",
+  "identity_directory.scim.detail": "SCIM endpoint and token",
+  "identity_directory.scim.body": "Give the identity provider's provisioning settings this endpoint and a token. Map the person's object id to {#code}externalId{/code} so accounts can exist before their first sign-in.",
+  "identity_directory.scim.once_title": "Shown once — copy it now",
+  "identity_directory.scim.generate": "Generate token (replaces the previous one)",
+  "identity_directory.runs.detail": "Runs",
+  "identity_directory.runs.first_run_title": "The first run is a dry run",
+  "identity_directory.runs.first_run_body": "Nothing changes until you have looked at what the adapter would do and confirmed it. A run that would deactivate more than max(5, 10%) of this directory's accounts always stops for confirmation.",
+  "identity_directory.runs.test": "Test connection",
+  "identity_directory.runs.test_failed": "Test failed",
+  "identity_directory.runs.sees": [
+    {
+      "declarations": [
+        "input people"
+      ],
+      "match": {
+        "*": "The adapter sees {people: number} people"
+      }
+    }
+  ],
+  "identity_directory.runs.dry_run": "Dry run",
+  "identity_directory.runs.confirm": "Confirm and enable",
+  "identity_directory.runs.run_now": "Run now",
+  "identity_directory.runs.apply_anyway": "Apply anyway ({deactivations: number} deactivations)",
+  "identity_directory.runs.loading": "Loading runs",
+  "identity_directory.settings_saved": "Sync settings saved",
+  "identity_directory.save_failed": "Could not save",
+  "identity_directory.pending.detail": "Not signed in yet",
+  "identity_directory.pending.all_accounted": "Everyone the directory lists has an account.",
+  "identity_directory.pending.groups_label": "Groups at first sign-in",
+  "admin_identity.join_mode.open.label": "Open",
+  "admin_identity.join_mode.open.hint": "Anyone who signs in through the identity provider gets an active account at once.",
+  "admin_identity.join_mode.approval.label": "Approval",
+  "admin_identity.join_mode.approval.hint": "A first-time sign-in creates a disabled account in the Users page's Awaiting-approval queue; you enable the people you want.",
+  "admin_identity.join_mode.invite.label": "Invite",
+  "admin_identity.join_mode.invite.hint": "Only people you invited (or a directory pushed) can sign in. Everyone else is refused.",
+  "admin_identity.join_mode.group.label": "Group",
+  "admin_identity.join_mode.group.hint": "Only members of the required groups may sign in — checked at every sign-in and every API call.",
+  "admin_identity.toast.join_mode_updated": "Join mode updated",
+  "admin_identity.toast.save_failed": "Could not save",
+  "admin_identity.toast.preview_failed": "Could not preview the change",
+  "admin_identity.loading": "Loading the identity policy",
+  "admin_identity.load_error.title": "Could not load the identity policy",
+  "admin_identity.load_error.unknown": "Unknown error.",
+  "admin_identity.source.here": "set here",
+  "admin_identity.source.env": "set in .env",
+  "admin_identity.who_may_join": "Who may join",
+  "admin_identity.join_mode_note": "Join mode {source}. Administrators are never refused by this gate, so a wrong group cannot lock you out.",
+  "admin_identity.needs_groups.title": "Pick at least one required group first",
+  "admin_identity.needs_groups.body": "A group gate with no groups refuses everyone who is not an administrator — including the account that would fix it.",
+  "admin_identity.required_groups": "Required groups",
+  "admin_identity.group.unmapped": "No IdP group maps to this: only members added here or by SCIM count.",
+  "admin_identity.group.none": "No groups yet. An identity provider's name must first be mapped on the Groups page.",
+  "admin_identity.group.local_note": "Local group names. Required groups {source}.",
+  "admin_identity.save_groups": "Save access groups",
+  "admin_identity.fallback.label": "Someone without a required group",
+  "admin_identity.fallback.hint.refuse": "They are refused and told to ask an administrator.",
+  "admin_identity.fallback.hint.approval": "Their account is created disabled, waiting in the approval queue.",
+  "admin_identity.fallback.refuse": "Refuse them",
+  "admin_identity.fallback.approval": "Hold them for approval",
+  "admin_identity.preview.title": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} person will lose access at their next request",
+        "countPlural=other": "{n} people will lose access at their next request"
+      }
+    }
+  ],
+  "admin_identity.preview.exempt": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} administrator is exempt.",
+        "countPlural=other": "{n} administrators are exempt."
+      }
+    }
+  ],
+  "admin_identity.preview.save_anyway": "Save anyway",
+  "admin_identity.preview.go_back": "Go back",
+  "shell.nav.overview": "Overview",
+  "shell.nav.your_usage": "Your usage",
+  "shell.nav.summary": "Summary",
+  "shell.nav.usage": "Usage",
+  "shell.nav.quotas": "Quotas",
+  "shell.nav.redaction": "Redaction",
+  "shell.nav.providers": "Providers",
+  "shell.nav.web_search": "Web search",
+  "shell.nav.models": "Models",
+  "shell.nav.users": "Users",
+  "shell.nav.groups": "Groups",
+  "shell.nav.settings": "Settings",
+  "shell.nav.administration": "Administration",
+  "shell.nav.sections": "Sections",
+  "shell.nav.user_view": "User view",
+  "shell.nav.admin_view": "Admin view",
+  "shell.menu": "Menu",
+  "shell.account_aria": "Account — {name}",
+  "shell.signed_in": "Signed in",
+  "shell.billing_to": "Billing to {group}",
+  "shell.no_billing_group": "No default billing group",
+  "shell.administrator": "Administrator",
+  "shell.change_billing_group": "Change default billing group…",
+  "shell.set_billing_group": "Set default billing group…",
+  "shell.preferences": "Preferences",
+  "shell.exact_figures": "Exact figures",
+  "shell.exact_figures_hint": "Every decimal the ledger holds. Otherwise rounded to milli-units.",
+  "shell.dark_theme": "Dark theme",
+  "shell.sign_out": "Sign out",
+  "shell.billing_group.title": "Default billing group",
+  "shell.billing_group.cancel": "Cancel",
+  "shell.billing_group.save": "Save",
+  "shell.billing_group.error_title": "Could not set the default billing group",
+  "shell.billing_group.set": "Default billing group set",
+  "shell.billing_group.unknown_error": "Unknown error.",
+  "shell.billing_group.group_label": "Group",
+  "entity_type.person": "Person name",
+  "entity_type.location": "Place",
+  "entity_type.organization": "Organisation",
+  "entity_type.nrp": "Nationality, religion or politics",
+  "entity_type.credit_card": "Payment card number",
+  "entity_type.crypto": "Crypto wallet address",
+  "entity_type.date_time": "Date or time",
+  "entity_type.email_address": "Email address",
+  "entity_type.iban_code": "Bank account (IBAN)",
+  "entity_type.ip_address": "IP address",
+  "entity_type.phone_number": "Phone number",
+  "entity_type.medical_license": "Medical licence number",
+  "entity_type.url": "Web address",
+  "entity_type.it_fiscal_code": "Italian tax code",
+  "entity_type.it_driver_license": "Italian driving licence",
+  "entity_type.it_vat_code": "Italian VAT number",
+  "entity_type.it_passport": "Italian passport number",
+  "entity_type.it_identity_card": "Italian identity card",
+  "entity_type.es_nif": "Spanish tax number",
+  "entity_type.es_nie": "Spanish foreigner number",
+  "entity_type.pl_pesel": "Polish national number",
+  "entity_type.fi_personal_identity_code": "Finnish personal identity code",
+  "entity_type.uk_nhs": "NHS number",
+  "entity_type.uk_nino": "UK national insurance number",
+  "entity_type.us_bank_number": "US bank account",
+  "entity_type.us_driver_license": "US driving licence",
+  "entity_type.us_itin": "US taxpayer number",
+  "entity_type.us_passport": "US passport number",
+  "entity_type.us_ssn": "US social security number",
+  "entity_type.sg_nric_fin": "Singapore NRIC or FIN",
+  "entity_type.sg_uen": "Singapore entity number",
+  "entity_type.au_abn": "Australian business number",
+  "entity_type.au_acn": "Australian company number",
+  "entity_type.au_tfn": "Australian tax file number",
+  "entity_type.au_medicare": "Australian Medicare number",
+  "entity_type.in_pan": "Indian PAN",
+  "entity_type.in_aadhaar": "Indian Aadhaar number",
+  "entity_type.in_passport": "Indian passport number",
+  "entity_type.in_voter": "Indian voter ID",
+  "entity_type.in_vehicle_registration": "Indian vehicle registration",
+  "redaction_mode.off.label": "Not redacted",
+  "redaction_mode.off.short": "Off",
+  "redaction_mode.off.hint": "left exactly as the caller wrote it",
+  "redaction_mode.anonymise_restore.label": "Anonymise, restore in the answer",
+  "redaction_mode.anonymise_restore.short": "Restore",
+  "redaction_mode.anonymise_restore.hint": "placeholder upstream, real value back to the reader",
+  "redaction_mode.anonymise.label": "Anonymise",
+  "redaction_mode.anonymise.short": "Anonymise",
+  "redaction_mode.anonymise.hint": "placeholder upstream and in the answer",
+  "redaction_mode.redact.label": "Redact",
+  "redaction_mode.redact.short": "Redact",
+  "redaction_mode.redact.hint": "<PERSON>, so two people look the same",
+  "redaction_mode.block.label": "Block",
+  "redaction_mode.block.short": "Block",
+  "redaction_mode.block.hint": "the request is refused before a provider sees it",
+  "policy_summary.default_mode": [
+    {
+      "declarations": [
+        "input mode"
+      ],
+      "match": {
+        "*": "{mode} by default"
+      }
+    }
+  ],
+  "policy_summary.types": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} type",
+        "countPlural=other": "{n} types"
+      }
+    }
+  ],
+  "policy_summary.patterns": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} pattern",
+        "countPlural=other": "{n} patterns"
+      }
+    }
+  ],
+  "policy_summary.allow_list": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} allowed"
+      }
+    }
+  ],
+  "redaction_mode.title": [
+    {
+      "declarations": [
+        "input label",
+        "input hint"
+      ],
+      "match": {
+        "*": "{label} — {hint}"
+      }
+    }
+  ],
+  "pattern_template.openai_key.description": "OpenAI-style secret key.",
+  "pattern_template.aws_access_key_id.description": "AWS access-key identifier.",
+  "pattern_template.github_token.description": "GitHub token with a published prefix.",
+  "pattern_template.github_fine_grained_token.description": "GitHub fine-grained personal access token.",
+  "pattern_template.gitlab_token.description": "GitLab personal access token.",
+  "pattern_template.slack_token.description": "Slack token with a published prefix.",
+  "pattern_template.google_api_key.description": "Google API key.",
+  "pattern_template.stripe_secret_key.description": "Stripe live or test secret key.",
+  "pattern_template.hugging_face_token.description": "Hugging Face access token.",
+  "pattern_template.telegram_bot_token.description": "Telegram bot token.",
+  "pattern_template.sendgrid_api_key.description": "SendGrid API key.",
+  "pattern_template.npm_token.description": "npm access token.",
+  "pattern_template.pypi_token.description": "PyPI API token.",
+  "pattern_template.private_key.description": "PEM private-key header.",
+  "pattern_template.bearer_token.description": "JWT by shape: three dot-separated base64url segments.",
+  "pattern_template.bearer_token_opaque.description": "Authorization header carrying a non-JWT bearer token.",
+  "pattern_template.basic_auth_header.description": "HTTP Basic credential.",
+  "pattern_template.url_with_password.description": "URL with an embedded password.",
+  "pattern_template.uuid.description": "Universally unique identifier, often a session or correlation ID.",
+  "pattern_template.internal_ticket.description": "Short prefixed ticket or issue reference.",
+  "pattern_template.date_of_birth.description": "Calendar date in day-month-year order.",
+  "period.month.january": "January",
+  "period.month.february": "February",
+  "period.month.march": "March",
+  "period.month.april": "April",
+  "period.month.may": "May",
+  "period.month.june": "June",
+  "period.month.july": "July",
+  "period.month.august": "August",
+  "period.month.september": "September",
+  "period.month.october": "October",
+  "period.month.november": "November",
+  "period.month.december": "December",
+  "period.month_with_year": [
+    {
+      "declarations": [
+        "input month"
+      ],
+      "match": {
+        "*": "{month} {year}"
+      }
+    }
+  ],
+  "period.month_with_year_current": [
+    {
+      "declarations": [
+        "input month"
+      ],
+      "match": {
+        "*": "{month} {year} (current)"
+      }
+    }
+  ],
+  "period.quarter": [
+    {
+      "declarations": [
+        "input quarter"
+      ],
+      "match": {
+        "*": "Q{quarter} {year}"
+      }
+    }
+  ],
+  "period.year": [
+    {
+      "declarations": [
+        "input year"
+      ],
+      "match": {
+        "*": "{year} (year)"
+      }
+    }
+  ],
+  "policy_fields.default_mode": "Default mode",
+  "policy_fields.default_mode_hint": "Applies to anything not listed below, including types added later.",
+  "policy_fields.no_entity_types": "No entity types to list. The default above still applies.",
+  "policy_fields.source.pattern": "Pattern",
+  "policy_fields.source.model": "Model",
+  "policy_fields.confidence_for": "Confidence for {name}",
+  "policy_fields.confidence_default": "default",
+  "policy_fields.confidence_default_value": "{value} (default)",
+  "policy_fields.detection_note": "Turning a type off changes what is replaced, not how long detection takes.",
+  "policy_fields.patterns_legend": "Custom patterns",
+  "policy_fields.pattern_name_label": "Pattern {number} name",
+  "policy_fields.pattern_name_placeholder": "TICKET_ID",
+  "policy_fields.pattern_regex_label": "Pattern {number} regex",
+  "policy_fields.pattern_regex_placeholder": "LINKS-[0-9]\\{4,\\}",
+  "policy_fields.pattern_mode_label": "Pattern {number} mode",
+  "policy_fields.pattern_remove": "Remove",
+  "policy_fields.pattern_add": "Add pattern",
+  "policy_fields.pattern_from_template": "Add pattern from template",
+  "policy_fields.pattern_note": "The name becomes the entity label. RE2 syntax: no backreferences, no lookaround.",
+  "policy_fields.templates_note": "The engine detects no credentials. The templates cover the published prefixes; a bespoke format needs its own pattern.",
+  "policy_fields.templates.done": "Done",
+  "policy_fields.templates.kind.credential": "Credential",
+  "policy_fields.templates.kind.identifier": "Identifier",
+  "policy_fields.templates.mode.block": "Block",
+  "policy_fields.templates.mode.redact": "Redact",
+  "policy_fields.templates.add_aria": "Add {name} pattern",
+  "policy_fields.templates.added": "Added",
+  "policy_fields.templates.add": "Add",
+  "policy_fields.allowlist.label": "Allowlist",
+  "policy_fields.allowlist.placeholder": "ilpost.it, example.org",
+  "policy_fields.allowlist.hint": "Comma separated. Matched exactly, case-insensitively.",
+  "admin_providers.toast.reachable": "Provider reachable",
+  "admin_providers.toast.unreachable": "Provider is not reachable",
+  "admin_providers.toast.test_failed": "Could not test the provider",
+  "admin_providers.toast.updated": "Provider updated",
+  "admin_providers.toast.update_failed": "Could not update the provider",
+  "admin_providers.toast.deleted": "Provider deleted",
+  "admin_providers.toast.delete_failed": "Could not delete the provider",
+  "admin_providers.toast.created": "Provider created",
+  "admin_providers.toast.create_failed": "Could not create the provider",
+  "admin_providers.column.provider": "Provider",
+  "admin_providers.column.type": "Type",
+  "admin_providers.column.api_key": "API key",
+  "admin_providers.column.models": "Models",
+  "admin_providers.column.status": "Status",
+  "admin_providers.badge.router": "router",
+  "admin_providers.badge.bills_from_provider": "bills from provider",
+  "admin_providers.badge.kind_mismatch": "kind mismatch",
+  "admin_providers.badge.unpriced": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} unpriced"
+      }
+    }
+  ],
+  "admin_providers.badge.active": "Active",
+  "admin_providers.badge.inactive": "Inactive",
+  "admin_providers.test.tooltip": "Calls /models with the stored credential — no model request is made.",
+  "admin_providers.test.failed": "Test failed",
+  "admin_providers.test.models": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} models",
+        "countPlural=other": "{n} models"
+      }
+    }
+  ],
+  "admin_providers.test.latency": [
+    {
+      "declarations": [
+        "input latency"
+      ],
+      "match": {
+        "*": "{latency}ms"
+      }
+    }
+  ],
+  "admin_providers.action.test": "Test",
+  "admin_providers.action.edit": "Edit",
+  "admin_providers.action.deactivate": "Deactivate",
+  "admin_providers.action.activate": "Activate",
+  "admin_providers.action.delete": "Delete",
+  "admin_providers.internal.tooltip": "This deployment's own infrastructure — deactivate it instead of deleting it.",
+  "admin_providers.title": "Providers",
+  "admin_providers.subtitle": "The endpoints models are served from. API keys are encrypted and never shown again.",
+  "admin_providers.add": "Add provider",
+  "admin_providers.delete_error.title": "Could not delete the provider",
+  "admin_providers.unreachable_title": "{provider} is not reachable",
+  "admin_providers.provider_fallback": "Provider",
+  "admin_providers.loading": "Loading providers",
+  "admin_providers.load_error.title": "Could not load providers",
+  "admin_providers.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} provider",
+        "countPlural=other": "{n} providers"
+      }
+    }
+  ],
+  "admin_providers.state.empty": "nothing can be served until one exists",
+  "admin_providers.state.all_active": "all active",
+  "admin_providers.state.deactivated": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} deactivated"
+      }
+    }
+  ],
+  "admin_providers.state.unpriced": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} unpriced"
+      }
+    }
+  ],
+  "admin_providers.empty": "No providers configured. Nothing can be served until one exists.",
+  "admin_providers.caption": "Inference endpoints, their credentials and how many models they serve.",
+  "admin_providers.plugin.default_label": "OpenAI-compatible",
+  "admin_providers.dialog.edit_title": "Edit {provider}",
+  "admin_providers.dialog.new_title": "New provider",
+  "admin_providers.dialog.cancel": "Cancel",
+  "admin_providers.dialog.save": "Save",
+  "admin_providers.dialog.add": "Add",
+  "admin_providers.field.name": "Name",
+  "admin_providers.field.name_placeholder": "cortecs",
+  "admin_providers.field.name_hint.new": "Letters, digits, dot, dash and underscore.",
+  "admin_providers.field.name_hint.edit": "Letters, digits, dot, dash and underscore. Renaming is safe; it changes owned_by on this provider's /v1/models cards.",
+  "admin_providers.field.prefix": "Model name prefix",
+  "admin_providers.field.prefix_placeholder": "none",
+  "admin_providers.field.prefix_hint": [
+    {
+      "declarations": [
+        "input example"
+      ],
+      "match": {
+        "*": "Prepended to every model this provider contributes — two vendors both selling a \"deep\" become \"{example}deep\" and a second vendor's. Saving also renames the models already here."
+      }
+    }
+  ],
+  "admin_providers.field.type": "Type",
+  "admin_providers.field.type_hint": "How it is talked to, and whether its reported cost can be believed.",
+  "admin_providers.field.type_router_suffix": " — chooses an endpoint per request",
+  "admin_providers.field.billing": "Billing",
+  "admin_providers.field.billing_hint": "Which figure is charged. Both are recorded either way.",
+  "admin_providers.field.billing_own_prices": "Our prices — tokens counted here",
+  "admin_providers.field.billing_provider_reported": "The provider's reported cost — pass-through",
+  "admin_providers.field.billing_warning": "Prices are still needed: an unpriced model reserves nothing, so no cost ceiling trips.",
+  "admin_providers.field.base_url": "Base URL",
+  "admin_providers.field.base_url_placeholder": "https://api.example.com/v1",
+  "admin_providers.field.base_url_hint": "Include the version path. Most OpenAI-compatible endpoints end in /v1.",
+  "admin_providers.field.description": "Description",
+  "admin_providers.field.description_placeholder": "Commercial API, EU region",
+  "admin_providers.field.api_key": "API key",
+  "admin_providers.field.api_key_placeholder_none": "leave empty if none needed",
+  "admin_providers.field.api_key_placeholder_unchanged": "unchanged",
+  "admin_providers.field.api_key_hint_new": "Encrypted before storage. A local vLLM or Ollama usually needs none.",
+  "admin_providers.field.api_key_hint_edit": [
+    {
+      "declarations": [
+        "input hint"
+      ],
+      "match": {
+        "*": "Currently {hint}. Type a new key to replace it; empty keeps it."
+      }
+    }
+  ],
+  "admin_providers.field.remove_key": "Remove the stored key",
+  "admin_providers.unknown_error": "Unknown error.",
+  "admin_providers.no_key": "none",
+  "admin_search.column.backend": "Backend",
+  "admin_search.column.api_key": "API key",
+  "admin_search.column.tiers": "Tiers",
+  "admin_search.column.status": "Status",
+  "admin_search.no_key": "none — set one before searching",
+  "admin_search.badge.active": "Active",
+  "admin_search.badge.inactive": "Inactive",
+  "admin_search.action.edit": "Edit",
+  "admin_search.action.delete": "Delete",
+  "admin_search.title": "Web search",
+  "admin_search.intro": "A search backend answers {#code}POST /v1/search/\\{backend\\}{/code} — an authenticated, metering passthrough: the gateway counts the request, attaches the backend's own credential, and forwards the caller's body to the vendor verbatim, returning the vendor's answer verbatim (ADR 0071). Backends are absent from {#code}/v1/models{/code} unless a client asks for them explicitly, so no other client will mistake one for a chat model. Who may search is the grant below; how much they may search is a request ceiling on Quotas.",
+  "admin_search.backends_card": "Backends",
+  "admin_search.loading_backends": "Loading backends",
+  "admin_search.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} backend",
+        "countPlural=other": "{n} backends"
+      }
+    }
+  ],
+  "admin_search.state.none": "none yet — add the first one",
+  "admin_search.state.active": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} active"
+      }
+    }
+  ],
+  "admin_search.add_backend": "Add backend",
+  "admin_search.backends_empty": "No backends yet.",
+  "admin_search.grants_heading": "Who may search",
+  "admin_search.grants_body": "One grant per backend — creating the backend made its row. What the caller sends inside the body (a depth, a result count) is the vendor's own pricing, not a decision this screen makes.",
+  "admin_search.loading_tiers": "Loading tiers",
+  "admin_search.tier_column.grants": "Groups that may run it",
+  "admin_search.no_groups_yet": "no groups yet",
+  "admin_search.tiers_empty": "No backends yet. Add one above.",
+  "admin_search.policy_heading": "Which backend each group searches through",
+  "admin_search.policy_body": "The policy behind {#code}POST /v1/search{/code} (no backend in the path): one request shape in, one answer shape out, through exactly this backend at its default depth. Only backends the group is granted above are offered — a group with none set cannot use the unified route at all.",
+  "admin_search.policy_error.title": "Could not set the search backend",
+  "admin_search.loading_groups": "Loading groups",
+  "admin_search.group_column.group": "Group",
+  "admin_search.group_column.backend": "Searches through",
+  "admin_search.backend_for_group": "Search backend for {group}",
+  "admin_search.backend_unset": "Unset — no unified search",
+  "admin_search.groups_empty": "No groups yet.",
+  "admin_search.toast.updated": "Backend updated",
+  "admin_search.toast.update_failed": "Could not update the backend",
+  "admin_search.toast.added": "Backend added",
+  "admin_search.toast.add_failed": "Could not add the backend",
+  "admin_search.dialog.edit_title": "Edit {provider}",
+  "admin_search.dialog.add_title": "Add a search backend",
+  "admin_search.dialog.cancel": "Cancel",
+  "admin_search.dialog.save": "Save",
+  "admin_search.dialog.add": "Add",
+  "admin_search.field.vendor": "Vendor",
+  "admin_search.field.vendor_hint": "The endpoint and the credential scheme are the vendor's own — configured here, not typed anywhere.",
+  "admin_search.field.vendor_choose": "Choose a vendor…",
+  "admin_search.field.endpoint": "Endpoint",
+  "admin_search.field.endpoint_hint": "Which of the vendor's documented hosts the searches go to.",
+  "admin_search.field.api_key": "API key",
+  "admin_search.field.api_key_placeholder_unset": "unset",
+  "admin_search.field.api_key_placeholder": "paste the vendor's key",
+  "admin_search.field.api_key_hint_edit": "Leave empty to keep the stored key; tick to remove it.",
+  "admin_search.field.api_key_hint_new": "Stored encrypted; shown back only as a hint.",
+  "admin_search.field.remove_key": "Remove the stored key",
+  "admin_search.delete.title": "Delete {backend}",
+  "admin_search.delete.title_fallback": "this backend",
+  "admin_search.delete.toast_plain": "Backend deleted",
+  "admin_search.delete.toast_with_groups": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "input groups"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Backend deleted — {groups} lost its unified-search policy",
+        "countPlural=other": "Backend deleted — {groups} lost their unified-search policy"
+      }
+    }
+  ],
+  "admin_search.delete.toast_failed": "Could not delete the backend",
+  "admin_search.delete.confirm": "Delete permanently",
+  "admin_search.delete.body": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Removes the backend and its {n} tier from the gateway outright. Callers of {#code}POST /v1/search/\\{backend\\}{/code} get \"unknown backend\" from the next request on, and groups searching through it lose their unified-search policy. This cannot be undone.",
+        "countPlural=other": "Removes the backend and its {n} tiers from the gateway outright. Callers of {#code}POST /v1/search/\\{backend\\}{/code} get \"unknown backend\" from the next request on, and groups searching through it lose their unified-search policy. This cannot be undone."
+      }
+    }
+  ],
+  "admin_search.delete.spend_note": "Recorded spend is unaffected: past searches keep their attribution in the ledger.",
+  "admin_search.unknown_error": "Unknown error.",
+  "quota_metric.unit.own_search_requests": "web searches",
+  "admin_quotas.title": "Quotas",
+  "admin_quotas.subtitle": "All matching rules must pass, so adding one can only tighten a budget.",
+  "admin_quotas.new_rule": "New rule",
+  "admin_quotas.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} rule",
+        "countPlural=other": "{n} rules"
+      }
+    }
+  ],
+  "admin_quotas.state.empty": "nothing is capped",
+  "admin_quotas.state.over": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} over budget"
+      }
+    }
+  ],
+  "admin_quotas.state.near": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} nearly spent"
+      }
+    }
+  ],
+  "admin_quotas.state.ok": "all within budget",
+  "admin_quotas.column.rule": "Rule",
+  "admin_quotas.column.limit": "Limit",
+  "admin_quotas.column.used": "Used",
+  "admin_quotas.column.status": "Status",
+  "admin_quotas.unnamed": "unnamed",
+  "admin_quotas.badge.inactive": "Inactive",
+  "admin_quotas.badge.over_budget": "Over budget",
+  "admin_quotas.badge.nearly_spent": "Nearly spent",
+  "admin_quotas.badge.active": "Active",
+  "admin_quotas.badge.reset_date": "Reset {date}",
+  "admin_quotas.action.history": "History",
+  "admin_quotas.action.reset": "Reset",
+  "admin_quotas.action.delete": "Delete",
+  "admin_quotas.toast.deleted": "Quota rule deleted",
+  "admin_quotas.toast.delete_failed": "Could not delete the rule",
+  "admin_quotas.toast.created": "Quota rule created",
+  "admin_quotas.toast.create_failed": "Could not create the rule",
+  "admin_quotas.loading": "Loading quota rules",
+  "admin_quotas.load_error.title": "Could not load quota rules",
+  "admin_quotas.unknown_error": "Unknown error.",
+  "admin_quotas.empty": "No quota rules. Nothing is capped.",
+  "admin_quotas.caption": "Quota rules and their live consumption.",
+  "admin_quotas.window.days": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "24 hours",
+        "countPlural=other": "{n} days"
+      }
+    }
+  ],
+  "admin_quotas.window.hours": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "hour",
+        "countPlural=other": "{n} hours"
+      }
+    }
+  ],
+  "admin_quotas.window.minutes": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "minute",
+        "countPlural=other": "{n} minutes"
+      }
+    }
+  ],
+  "admin_quotas.window.seconds": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number}s"
+      }
+    }
+  ],
+  "admin_quotas.window.per": "per {window}",
+  "admin_quotas.window.per_member": "per {window} per member",
+  "admin_quotas.consumption.per_member_note": "per member · see health",
+  "admin_quotas.consumption.counter_unavailable": "counter unavailable",
+  "admin_quotas.consumption.caption": "{used} of {limit}",
+  "admin_quotas.consumption.label": "{name} consumption",
+  "admin_quotas.health.title": "Quota health",
+  "admin_quotas.health.body": "What each counter holds against what the ledger says. A difference is drift; Reconcile recomputes every active rule from the ledger.",
+  "admin_quotas.health.reconcile": "Reconcile",
+  "admin_quotas.health.toast.match": "Counters already match the ledger",
+  "admin_quotas.health.toast.corrected": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Corrected {n} counter",
+        "countPlural=other": "Corrected {n} counters"
+      }
+    }
+  ],
+  "admin_quotas.health.toast.failed": "Could not reconcile the counters",
+  "admin_quotas.health.loading": "Loading quota health",
+  "admin_quotas.health.load_error.title": "Could not load quota health",
+  "admin_quotas.health.column.rule": "Rule",
+  "admin_quotas.health.column.counter": "Counter",
+  "admin_quotas.health.column.ledger": "Ledger",
+  "admin_quotas.health.column.difference": "Difference",
+  "admin_quotas.health.column.ttl": "Counter TTL",
+  "admin_quotas.health.column.stale": "Stuck in progress",
+  "admin_quotas.health.unavailable": "unavailable",
+  "admin_quotas.health.rule_line": "{scope} · {metric} · {window}{member}{inactive}",
+  "admin_quotas.health.inactive": "inactive",
+  "admin_quotas.health.counter_unavailable": "counter unavailable",
+  "admin_quotas.health.none": "none",
+  "admin_quotas.health.no_counter": "no counter",
+  "admin_quotas.health.ttl": [
+    {
+      "declarations": [
+        "input hours"
+      ],
+      "match": {
+        "*": "{hours: number} h"
+      }
+    }
+  ],
+  "admin_quotas.health.empty": "No quota rules to check.",
+  "admin_quotas.health.caption": "Counter and ledger totals for each rule's current window.",
+  "admin_quotas.create.title": "New quota rule",
+  "admin_quotas.create.cancel": "Cancel",
+  "admin_quotas.create.submit": "Create",
+  "admin_quotas.create.name": "Name",
+  "admin_quotas.create.name_placeholder": "research monthly budget",
+  "admin_quotas.create.scope": "Scope",
+  "admin_quotas.create.scope.global": "Everyone",
+  "admin_quotas.create.scope.group": "A group",
+  "admin_quotas.create.scope.user": "A user",
+  "admin_quotas.create.applies_to": "Applies to",
+  "admin_quotas.create.applies.aggregate": "The group's total",
+  "admin_quotas.create.applies.each_member": "Each member",
+  "admin_quotas.create.group": "Group",
+  "admin_quotas.create.user": "User",
+  "admin_quotas.create.choose": "Choose…",
+  "admin_quotas.create.metric": "Metric",
+  "admin_quotas.create.metric.cost": "Cost",
+  "admin_quotas.create.metric.tokens": "Tokens",
+  "admin_quotas.create.metric.requests": "Requests",
+  "admin_quotas.create.metric.own_search": "Web searches (ours)",
+  "admin_quotas.create.window": "Window",
+  "admin_quotas.create.window.period": "Calendar period",
+  "admin_quotas.create.window.rolling": "Rolling window",
+  "admin_quotas.create.period": "Period",
+  "admin_quotas.create.period.every": "Every {period}",
+  "admin_quotas.create.hours": "Hours",
+  "admin_quotas.create.hours_hint": "Rolling, from now backwards",
+  "admin_quotas.create.limit_eur": "Limit (EUR)",
+  "admin_quotas.create.limit_unit": "Limit ({unit})",
+  "admin_quotas.create.limit_hint.period": "Resets on the calendar boundary, in the billing timezone.",
+  "admin_quotas.create.limit_hint.rolling": "Counted over the rolling window.",
+  "admin_quotas.create.volume_title": "This limits volume, not spend",
+  "admin_quotas.create.volume_body": "Counts calls to our own web-search backends. Their per-request prices differ by more than ten times between tiers, so a search budget does not bound what searches cost. Use a cost rule for that.",
+  "admin_quotas.reset.title": "Reset {name}",
+  "admin_quotas.reset.title_fallback": "this rule",
+  "admin_quotas.reset.cancel": "Cancel",
+  "admin_quotas.reset.submit": "Reset consumption",
+  "admin_quotas.reset.notice_title": "This does not change anyone's bill",
+  "admin_quotas.reset.notice_body": "Only what the quota counts moves; usage records are untouched. The reset is immediate and cannot be scheduled.",
+  "admin_quotas.reset.reason": "Reason (optional)",
+  "admin_quotas.reset.reason_placeholder": "grant extension approved",
+  "admin_quotas.reset.reason_hint": "Kept permanently in the audit log when given.",
+  "admin_quotas.reset.toast.done": "Consumption reset",
+  "admin_quotas.reset.toast.failed": "Could not reset consumption",
+  "admin_quotas.history.title": "Resets · {name}",
+  "admin_quotas.history.title_fallback": "rule",
+  "admin_quotas.history.empty": "This rule has never been reset.",
+  "admin_quotas.history.column.when": "When",
+  "admin_quotas.history.column.who": "Who",
+  "admin_quotas.history.column.why": "Reason",
+  "admin_quotas.history.erased": "(erased user)",
+  "admin_quotas.history.noun": "resets",
+  "admin_settings.title": "Settings",
+  "admin_settings.subtitle": "The mail server, the identity providers, who may become a user, and what new groups start with. Each section saves on its own.",
+  "admin_settings.provisioning_policy_card": "Provisioning policy",
+  "admin_settings.email.card": "Email",
+  "admin_settings.email.description": "Configured in .env; change with ./configure. Used for quota notices and the bundled Authelia's self-service password reset.",
+  "admin_settings.email.loading": "Loading the email settings",
+  "admin_settings.email.load_error.title": "Could not load the email settings",
+  "admin_settings.email.enabled": "enabled",
+  "admin_settings.email.disabled": "disabled",
+  "admin_settings.email.host": "SMTP host",
+  "admin_settings.email.port": "Port",
+  "admin_settings.email.username": "Username",
+  "admin_settings.email.password": "Password",
+  "admin_settings.email.from_address": "From address",
+  "admin_settings.email.not_set": "(not set)",
+  "admin_settings.email.none": "(none)",
+  "admin_settings.email.set": "set",
+  "admin_settings.email.test_to": "Send a test email to",
+  "admin_settings.email.send_test": "Send test",
+  "admin_settings.email.toast_sent": "Test email sent",
+  "admin_settings.email.toast_failed": "Test email failed",
+  "admin_settings.redirect_uri.label": "Redirect URI",
+  "admin_settings.redirect_uri.copy": "Copy",
+  "admin_settings.redirect_uri.copied": "Copied",
+  "admin_settings.redirect_uri.note": "Register exactly this at the provider — never a wildcard.",
+  "admin_settings.redirect_uri.clipboard": "Could not reach the clipboard; copy it by hand.",
+  "admin_settings.providers.card": "Identity providers",
+  "admin_settings.providers.description": "Configured in .env; change with ./configure. Users from different providers are different accounts — identity is (issuer, subject).",
+  "admin_settings.providers.loading": "Loading providers",
+  "admin_settings.providers.load_error.title": "Could not load the identity providers",
+  "admin_settings.providers.empty_title": "No identity provider is configured",
+  "admin_settings.providers.empty_detail": "Nobody can sign in yet: set GATEWAY_OIDC__* in .env, or run ./configure.",
+  "admin_settings.providers.disabled_heading": "Disabled previous providers",
+  "admin_settings.badge.enabled": "enabled",
+  "admin_settings.badge.disabled": "disabled",
+  "admin_settings.badge.admin_from_idp": "admin from IdP",
+  "admin_settings.badge.email_link": "links new sign-ins to existing accounts by verified email",
+  "admin_settings.badge.sync": "sync: {adapter}",
+  "admin_settings.badge.sync_unreviewed": "sync: {adapter} (awaiting review)",
+  "admin_settings.provider_row.line": "client {client} · groups claim {#code}{claim}{/code} · group mappings are decided on the {#link}Groups{/link} page · groups from {source} · sync every {cadence} · {users}",
+  "admin_settings.provider_row.source.claim": "the token",
+  "admin_settings.provider_row.source.directory": "the directory",
+  "admin_settings.provider_row.source.console": "this console only",
+  "admin_settings.provider_row.sync.every_login": "sign-in",
+  "admin_settings.provider_row.sync.first_login": "first sign-in only",
+  "admin_settings.provider_row.sync.never": "never",
+  "admin_settings.provider_row.users": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} user",
+        "countPlural=other": "{n} users"
+      }
+    }
+  ],
+  "admin_settings.provider_row.user_sync": "User sync…",
+  "admin_settings.provider_row.remove": "Remove",
+  "admin_settings.remove.title": "Remove {provider}?",
+  "admin_settings.remove.title_fallback": "this provider",
+  "admin_settings.remove.cancel": "Cancel",
+  "admin_settings.remove.confirm": "Remove",
+  "admin_settings.remove.toast_done": "Identity provider removed",
+  "admin_settings.remove.toast_failed": "Could not remove the identity provider",
+  "admin_settings.remove.body": "Nobody ever signed in through {#code}{issuer}{/code}, so removing it unlinks no one. Its directory entries and sync history are deleted with it. Pointing the deployment at this issuer again in .env creates it afresh.",
+  "admin_settings.capabilities.card": "Capabilities",
+  "admin_settings.capabilities.description": "A person holds a capability as an administrator, or through an active membership in a group carrying its flag. This sets what new groups start with; the toggles on the Groups page decide the existing ones. Grant or remove the flags in bulk below.",
+  "admin_settings.capabilities.loading": "Loading the capability defaults",
+  "admin_settings.capabilities.load_error.title": "Could not load the capability defaults",
+  "admin_settings.capability.code_agents": "Coding agents",
+  "admin_settings.capability.code_agents_lower": "coding agents",
+  "admin_settings.capability.api_keys": "API keys",
+  "admin_settings.capability.api_keys_lower": "API keys",
+  "admin_settings.capability.code_agents_hint": "The /code panel and the machine links that serve it.",
+  "admin_settings.capability.api_keys_hint": "Minting and using API keys.",
+  "admin_settings.capability.badge_on": "new groups: on",
+  "admin_settings.capability.badge_off": "new groups: off",
+  "admin_settings.capability.turn_on_new": "Turn on for new groups",
+  "admin_settings.capability.turn_off_new": "Turn off for new groups",
+  "admin_settings.capability.turn_on_all": "Turn on for all groups",
+  "admin_settings.capability.turn_off_all": "Turn off for all groups",
+  "admin_settings.capability.toast_saved": "{capability} default saved",
+  "admin_settings.capability.toast_save_failed": "Could not save",
+  "admin_settings.capability.toast_preview_failed": "Could not preview",
+  "admin_settings.capability.toast_apply_failed": "Could not apply",
+  "admin_settings.capability.toast_updated": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Updated {n} group",
+        "countPlural=other": "Updated {n} groups"
+      }
+    }
+  ],
+  "admin_settings.bulk.title_on": "Turn {capability} on for all groups?",
+  "admin_settings.bulk.title_off": "Turn {capability} off for all groups?",
+  "admin_settings.bulk.cancel": "Cancel",
+  "admin_settings.bulk.turn_on": "Turn on",
+  "admin_settings.bulk.turn_off": "Turn off",
+  "admin_settings.bulk.gain": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local count = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} person would gain {capability} — everyone holding no flagged group today. Administrators hold it either way.",
+        "countPlural=other": "{count} people would gain {capability} — everyone holding no flagged group today. Administrators hold it either way."
+      }
+    }
+  ],
+  "admin_settings.bulk.lose": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local count = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{count} person would lose {capability} at their next request — everyone whose only flagged group is this one being cleared. Administrators are exempt.",
+        "countPlural=other": "{count} people would lose {capability} at their next request — everyone whose only flagged group is this one being cleared. Administrators are exempt."
+      }
+    }
+  ],
+  "admin_settings.unknown_error": "Unknown error.",
+  "overview.title": "Overview",
+  "overview.subtitle": "Where you stand this period, and the keys you spend with.",
+  "overview.filter.period": "Period",
+  "overview.build": "Console build {sha}",
+  "overview.loading": "Loading your usage",
+  "overview.load_error.title": "Could not load your usage",
+  "overview.stat.spend": "Spend · {period}",
+  "overview.stat.period_detail": "{timezone} calendar period",
+  "overview.stat.requests": "Requests",
+  "overview.stat.tokens_detail": [
+    {
+      "declarations": [
+        "input tokens"
+      ],
+      "match": {
+        "*": "{tokens: number} tokens"
+      }
+    }
+  ],
+  "overview.stat.groups": "Groups",
+  "overview.stat.billing_to": "Billing to {group}",
+  "overview.stat.no_billing_group": "No default billing group",
+  "overview.breakdown_card": "Breakdown",
+  "overview.filter.breakdown": "Breakdown",
+  "overview.breakdown.model": "By model",
+  "overview.breakdown.day": "By day",
+  "overview.breakdown.group": "By group",
+  "overview.breakdown.api_key": "By API key",
+  "overview.column.requests": "Requests",
+  "overview.column.tokens": "Tokens",
+  "overview.column.cost": "Spend",
+  "overview.row_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} row",
+        "countPlural=other": "{n} rows"
+      }
+    }
+  ],
+  "overview.summary_detail": "{period} · {breakdown}",
+  "overview.export_csv": "Export CSV",
+  "overview.empty": "No usage in this period.",
+  "overview.caption": "Your spend for {period}, {breakdown}.",
+  "overview.caption_period_fallback": "the period",
+  "overview.heading.model": "Model",
+  "overview.heading.day": "Day",
+  "overview.heading.group": "Group",
+  "overview.heading.api_key": "API key",
+  "overview.heading.other": "Item",
+  "overview.heading_lower.model": "model",
+  "overview.heading_lower.day": "day",
+  "overview.heading_lower.group": "group",
+  "overview.heading_lower.api_key": "API key",
+  "overview.heading_lower.other": "item",
+  "overview.keys_card": "API keys",
+  "overview.keys_description": "The secret is shown once, at creation.",
+  "overview.keys.denied_title": "Your account may not use API keys on this deployment",
+  "overview.keys.denied_body": "Ask an administrator to grant the capability. Your existing keys keep working the moment it is granted — nothing was deleted.",
+  "overview.keys.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} key",
+        "countPlural=other": "{n} keys"
+      }
+    }
+  ],
+  "overview.keys.none_yet": "none yet — mint the first one",
+  "overview.keys.working": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} working"
+      }
+    }
+  ],
+  "overview.keys.new_key": "New key",
+  "overview.keys.empty": "No API keys.",
+  "overview.opencode_card": "Configure opencode with Pystino",
+  "overview.quotas.title": "Quotas",
+  "overview.quotas.load_error.title": "Could not load your quotas",
+  "overview.quotas.loading": "Loading your quotas",
+  "overview.quotas.none": "No limit applies to you.",
+  "overview.quotas.description": "Every ceiling that applies to you. All of them must pass.",
+  "overview.quotas.scope.global": "Everyone",
+  "overview.quotas.scope.group": "Your group",
+  "overview.quotas.scope.user": "You",
+  "overview.quotas.unavailable": "Consumption is unavailable — the counter store could not be reached.",
+  "overview.quotas.cost_of": "of",
+  "overview.quotas.count_line": "{used: number} of {limit: number} {unit} · {window}",
+  "overview.quotas.notices_saved": "Notices saved",
+  "overview.quotas.notices_failed": "Could not save the notices",
+  "overview.quotas.thresholds_placeholder": "e.g. 50, 80, 95",
+  "overview.quotas.thresholds_aria": "Notice thresholds for {name}",
+  "overview.quotas.cancel": "Cancel",
+  "overview.quotas.save": "Save",
+  "overview.quotas.threshold_set": "Email me at {thresholds}% — change",
+  "overview.quotas.threshold_unset": "Email me when this reaches…",
+  "overview.mint.title": "New API key",
+  "overview.mint.title_minted": "Your new API key",
+  "overview.mint.done": "Done",
+  "overview.mint.cancel": "Cancel",
+  "overview.mint.create": "Create",
+  "overview.mint.toast_created": "API key created",
+  "overview.mint.toast_failed": "Could not create the key",
+  "overview.mint.name": "Name",
+  "overview.mint.name_placeholder": "laptop, CI, notebook",
+  "overview.mint.name_hint": "For your own reference. Usage is reported per key.",
+  "overview.mint.billing_group": "Billing group",
+  "overview.mint.billing_group_hint": "Which group's budget this key spends from.",
+  "overview.mint.default_group": "My default group",
+  "overview.mint.default_group_current": "My default group — currently {group}",
+  "overview.mint.no_default_warning": "You have no default billing group. Choose a group above.",
+  "overview.mint.expires": "Expires",
+  "overview.mint.expires_hint": "An expiring key fails closed on its own.",
+  "overview.mint.expires.never": "Never",
+  "overview.mint.expires.30": "In 30 days",
+  "overview.mint.expires.90": "In 90 days",
+  "overview.mint.expires.365": "In a year",
+  "overview.minted.copy_title": "Copy it now",
+  "overview.minted.copy_body": "The gateway keeps a hash, not the key, so it cannot be shown again. If you lose it, revoke this one and mint another.",
+  "overview.minted.copy": "Copy",
+  "overview.minted.copied": "Copied",
+  "overview.minted.clipboard": "Could not reach the clipboard. Select the key and copy it by hand.",
+  "overview.minted.detail_expires": "Send it as {#code}Authorization: Bearer …{/code}. Billed to {group}, expires {date}.",
+  "overview.minted.detail_never": "Send it as {#code}Authorization: Bearer …{/code}. Billed to {group}, never expires.",
+  "overview.minted.group_fallback": "your default group at request time",
+  "overview.minted.next_heading": "Next: configure opencode",
+  "overview.revoke.title": "Revoke {name}",
+  "overview.revoke.title_fallback": "this key",
+  "overview.revoke.cancel": "Cancel",
+  "overview.revoke.confirm": "Revoke key",
+  "overview.revoke.toast_done": "Key revoked",
+  "overview.revoke.toast_failed": "Could not revoke the key",
+  "overview.revoke.body": "{#code}{prefix}{/code} stops working immediately and cannot be restored. Anything still using it starts failing to authenticate.",
+  "overview.revoke.spend_note": "Usage history is unaffected: the key is revoked, never deleted.",
+  "overview.delete.title": "Delete {name}",
+  "overview.delete.title_fallback": "this key",
+  "overview.delete.cancel": "Cancel",
+  "overview.delete.confirm": "Delete permanently",
+  "overview.delete.toast_done": "Key deleted",
+  "overview.delete.toast_failed": "Could not delete the key",
+  "overview.delete.body": "{#code}{prefix}{/code} is removed from this list and stops working immediately. This cannot be undone — revoking is the reversible-looking cousin, and even it cannot be restored.",
+  "overview.delete.history_note": "Past usage stays in the ledger, still attributed to you and your billing group. Those rows simply stop carrying this key's name in the by-key breakdown.",
+  "overview.key_column.name": "Name",
+  "overview.key_column.prefix": "Prefix",
+  "overview.key_column.billing_group": "Billing group",
+  "overview.key_column.group_fallback": "default group at request time",
+  "overview.key_column.status": "Status",
+  "overview.key_column.last_used": "Last used",
+  "overview.key_column.never": "never",
+  "overview.key_badge.revoked": "Revoked",
+  "overview.key_badge.expired": "Expired",
+  "overview.key_badge.active": "Active",
+  "overview.key_action.revoke": "Revoke",
+  "overview.key_action.delete": "Delete",
+  "overview.unnamed": "unnamed",
+  "overview.unknown_error": "Unknown error.",
+  "overview.quotas.meter_label": [
+    {
+      "declarations": [
+        "input name",
+        "input window"
+      ],
+      "match": {
+        "*": "{name}, {window}"
+      }
+    }
+  ],
+  "admin_groups.toast.update_failed": "Could not update the group",
+  "admin_groups.column.group": "Group",
+  "admin_groups.column.source": "Source",
+  "admin_groups.column.members": "Members",
+  "admin_groups.column.capabilities": "Capabilities",
+  "admin_groups.column.models": "Models",
+  "admin_groups.capability.agents_aria": "{name}: coding agents",
+  "admin_groups.capability.api_keys_aria": "{name}: API keys",
+  "admin_groups.capability.agents": "Agents",
+  "admin_groups.capability.api_keys": "API keys",
+  "admin_groups.models_none": "none granted",
+  "admin_groups.action.members": "Members",
+  "admin_groups.action.delete": "Delete",
+  "admin_groups.title": "Groups",
+  "admin_groups.subtitle": "Who belongs together, and what the group may use. Model access is granted per group, on the Models screen.",
+  "admin_groups.new_group": "New group",
+  "admin_groups.load_error.title": "Could not load groups",
+  "admin_groups.unknown_error": "Unknown error.",
+  "admin_groups.search": "Search",
+  "admin_groups.search_placeholder": "group name or description",
+  "admin_groups.search_hint_matching": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} matching"
+      }
+    }
+  ],
+  "admin_groups.search_hint_global": "Searches every group, not just this page.",
+  "admin_groups.loading": "Loading groups",
+  "admin_groups.empty_query": "No group matches that.",
+  "admin_groups.empty": "No groups yet.",
+  "admin_groups.caption": "Groups, their members and their model access.",
+  "admin_groups.noun": "groups",
+  "admin_groups.create.title": "New group",
+  "admin_groups.create.cancel": "Cancel",
+  "admin_groups.create.submit": "Create group",
+  "admin_groups.create.toast_done": "Group {name} created",
+  "admin_groups.create.toast_failed": "Could not create the group",
+  "admin_groups.create.name": "Name",
+  "admin_groups.create.name_hint": "Shown wherever a group is named: pickers, listings, reports.",
+  "admin_groups.create.description": "Description",
+  "admin_groups.create.description_hint": "Optional. A sentence saying what the group is for.",
+  "admin_groups.members.title": "Members — {name}",
+  "admin_groups.members.title_plain": "Members",
+  "admin_groups.members.done": "Done",
+  "admin_groups.members.add_search": "Add a member",
+  "admin_groups.members.add_placeholder": "email, name or identity provider subject",
+  "admin_groups.members.cancel": "Cancel",
+  "admin_groups.members.add_member": "Add member",
+  "admin_groups.members.searching": "Searching",
+  "admin_groups.members.add": "Add",
+  "admin_groups.members.toast_added": "Member added",
+  "admin_groups.members.toast_add_failed": "Could not add the member",
+  "admin_groups.members.no_match": "No account matches that.",
+  "admin_groups.members.loading": "Loading members",
+  "admin_groups.members.from_directory": "from the directory",
+  "admin_groups.members.remove": "Remove",
+  "admin_groups.members.toast_removed": "Member removed",
+  "admin_groups.members.toast_remove_failed": "Could not remove the member",
+  "admin_groups.members.none_yet": "No members yet.",
+  "admin_groups.delete.title": "Delete {name}?",
+  "admin_groups.delete.title_fallback": "this group",
+  "admin_groups.delete.cancel": "Cancel",
+  "admin_groups.delete.confirm": "Delete permanently",
+  "admin_groups.delete.toast_done": "Group deleted",
+  "admin_groups.delete.toast_failed": "Could not delete the group",
+  "admin_groups.delete.body": "Model access granted to this group is removed, and anyone billing to it as their default goes back to choosing at request time. Their quota and redaction rules scoped to the group keep their scope but stop matching anyone.",
+  "admin_groups.delete.idp_title": "This group comes from the identity provider",
+  "admin_groups.delete.idp_auto_body": "It will be recreated the next time one of its members signs in, unless the mappings or the directory have changed.",
+  "admin_groups.delete.idp_manual_body": "Its members lose it now. When one of them next signs in, its name is listed under “Groups from your identity provider” again, and nothing is recreated unless you map it.",
+  "admin_groups.seen.card": "Groups from your identity provider",
+  "admin_groups.seen.load_error.title": "Could not load the groups your identity provider reported",
+  "admin_groups.seen.toast_ignored": "{name} ignored",
+  "admin_groups.seen.toast_relisted": "{name} listed again",
+  "admin_groups.seen.toast_dismiss_failed": "Could not dismiss {name}",
+  "admin_groups.seen.toast_restore_failed": "Could not restore {name}",
+  "admin_groups.seen.map": "Map…",
+  "admin_groups.seen.restore": "Restore",
+  "admin_groups.seen.ignore": "Ignore",
+  "admin_groups.seen.column.name": "Name",
+  "admin_groups.seen.column.people": "People",
+  "admin_groups.seen.column.last_seen": "Last seen",
+  "admin_groups.seen.mappings_heading": "Current mappings",
+  "admin_groups.seen.unmap_aria": "Unmap {idp}",
+  "admin_groups.seen.unmap": "Unmap",
+  "admin_groups.seen.toast_unmapped": "{idp} unmapped",
+  "admin_groups.seen.unmap_note": "Memberships granted through the mapping go at each person's next sign-in.",
+  "admin_groups.seen.toast_unmap_failed": "Could not unmap",
+  "admin_groups.seen.search_placeholder": "group name",
+  "admin_groups.seen.hint_dismissed": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} dismissed"
+      }
+    }
+  ],
+  "admin_groups.seen.hint_waiting": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} waiting"
+      }
+    }
+  ],
+  "admin_groups.seen.show_waiting": "Show waiting",
+  "admin_groups.seen.show_dismissed": "Show dismissed",
+  "admin_groups.seen.loading": "Loading the groups your identity provider reported",
+  "admin_groups.seen.empty_dismissed_title": "Nothing dismissed.",
+  "admin_groups.seen.empty_waiting_title": "Nothing waiting to be mapped.",
+  "admin_groups.seen.empty_dismissed_detail": "Names you dismiss are kept here, to map or list again later.",
+  "admin_groups.seen.empty_waiting_detail": "Group names your identity provider reports appear here after someone signs in with them.",
+  "admin_groups.seen.empty_query": "No group name matches that.",
+  "admin_groups.seen.caption": "Group names your identity provider reported, and how many people carry each.",
+  "admin_groups.seen.noun": "names",
+  "admin_groups.map.title": "Map {name}",
+  "admin_groups.map.cancel": "Cancel",
+  "admin_groups.map.confirm": "Map",
+  "admin_groups.map.toast_done": "{name} mapped to {group}",
+  "admin_groups.map.toast_failed": "Could not map",
+  "admin_groups.map.legend": "What this name grants",
+  "admin_groups.map.option.new_same_name": "New group with the same name",
+  "admin_groups.map.option.new_named": "New group named…",
+  "admin_groups.map.option.existing": "Existing group…",
+  "admin_groups.map.new_name": "Name the new group",
+  "admin_groups.map.new_name_placeholder": "engineering",
+  "admin_groups.map.local_group": "Local group",
+  "admin_groups.map.local_group_hint": "The IdP name now grants this group, wherever it is claimed.",
+  "admin_groups.map.pick_group": "Pick a group…",
+  "admin_groups.map.reason": "Reason (optional)",
+  "admin_groups.map.reason_placeholder": "recorded on the policy history",
+  "admin_groups.mode.auto": "Every name is mapped automatically at sign-in. Names listed here were seen before that was turned on.",
+  "admin_groups.mode.manual": "Nothing is created until you map it. Mapping creates the group (or names one that exists) and gives it to the people who carry it now — or at their next sign-in where the provider's groups only apply then.",
+  "admin_groups.mode.everyone": "Everyone joins {#strong}{group}{/strong} at their first sign-in, so new people can use public models before anything is mapped.",
+  "admin_groups.import.next_login": "Its members get it at their next sign-in. Grant it models on the Models screen.",
+  "admin_groups.import.added_now": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "1 person added now. Grant it models on the Models screen.",
+        "countPlural=other": "{n} people added now. Grant it models on the Models screen."
+      }
+    }
+  ],
+  "model_detail.loading": "Loading the model",
+  "model_detail.load_error.title": "Could not load this model",
+  "model_detail.back_link": "Back to the catalogue",
+  "model_detail.unknown_error": "Unknown error.",
+  "model_detail.subtitle": "{#link}Models{/link} · served as {#code}{upstream}{/code} by {provider}",
+  "model_detail.toast.name_saved": "Display name saved",
+  "model_detail.toast.name_failed": "Could not save the display name",
+  "model_detail.toast.updated": "Model updated",
+  "model_detail.toast.update_failed": "Could not update the model",
+  "model_detail.toast.deleted": "Model deleted",
+  "model_detail.toast.delete_failed": "Could not delete the model",
+  "model_detail.action.deactivate": "Deactivate",
+  "model_detail.action.activate": "Activate",
+  "model_detail.action.delete": "Delete",
+  "model_detail.delete.title": "Delete {name}",
+  "model_detail.delete.cancel": "Cancel",
+  "model_detail.delete.confirm": "Delete permanently",
+  "model_detail.delete.body": "Removed from the catalogue and from {#code}/v1/models{/code}; its prices and access grants go with it. This cannot be undone.",
+  "model_detail.delete.spend_note": "Recorded spend is unaffected: past usage keeps the model's name and stays attributed to the people and groups that ran it.",
+  "model_detail.no_price.title": "This model has no price",
+  "model_detail.no_price.body": "It will serve requests and record a cost of zero. Append a price below.",
+  "model_detail.provider_inactive.title": "{provider} is deactivated",
+  "model_detail.provider_inactive.body": "Every model behind it is out of service.",
+  "model_detail.details_card": "Details",
+  "model_detail.detail.status": "Status",
+  "model_detail.detail.visibility": "Visibility",
+  "model_detail.detail.callers_name": "Name callers send",
+  "model_detail.detail.display_name": "Display name",
+  "model_detail.detail.upstream": "Upstream model",
+  "model_detail.detail.provider": "Provider",
+  "model_detail.badge.active": "Active",
+  "model_detail.badge.inactive": "Inactive",
+  "model_detail.badge.public": "Public",
+  "model_detail.badge.private": "Private",
+  "model_detail.action.restrict": "Restrict to grants",
+  "model_detail.action.make_public": "Make public",
+  "model_detail.display_name_hint": "What a client shows in a model picker, from /v1/models. Empty means the name above. It never changes what callers send.",
+  "model_detail.action.save_display_name": "Save display name",
+  "model_detail.action.clear_display_name": "Clear display name",
+  "model_detail.describe.card": "Capabilities",
+  "model_detail.describe.description": "What callers are told on /v1/models. Discover never overwrites an edit.",
+  "model_detail.describe.saved": "Saved.",
+  "model_detail.describe.kind": "Kind",
+  "model_detail.describe.kind_hint": "Which routes will serve it. Discovery can infer it wrong.",
+  "model_detail.kind.chat": "Chat — /v1/chat/completions, /v1/responses, /v1/messages",
+  "model_detail.kind.embedding": "Embedding — /v1/embeddings",
+  "model_detail.kind.image": "Image — /v1/images/generations",
+  "model_detail.describe.accepts": "Accepts",
+  "model_detail.describe.accepts_other": "Other input modalities",
+  "model_detail.describe.accepts_hint": "What can be sent to it.",
+  "model_detail.describe.produces": "Produces",
+  "model_detail.describe.produces_other": "Other output modalities",
+  "model_detail.describe.produces_hint": "What comes back.",
+  "model_detail.describe.features": "Features",
+  "model_detail.describe.features_other": "Other features",
+  "model_detail.describe.features_hint": "Whatever the provider reports is kept.",
+  "model_detail.describe.context_window": "Context window",
+  "model_detail.describe.context_hint": "Total tokens, in and out. Leave empty if unknown.",
+  "model_detail.describe.max_input": "Max input tokens",
+  "model_detail.describe.max_input_hint": "Prompt cap the gateway enforces; set by hand, no catalogue reports it. Empty means no local limit.",
+  "model_detail.describe.max_output": "Max output tokens",
+  "model_detail.describe.max_output_hint": "Completion cap reported on /v1/models. Empty if unknown.",
+  "model_detail.describe.save": "Save capabilities",
+  "model_detail.describe.toast_saved": "Capabilities saved",
+  "model_detail.describe.toast_failed": "Could not save the capabilities",
+  "model_detail.price.column.effective": "Effective from",
+  "model_detail.price.column.input": "Input / Mtok",
+  "model_detail.price.column.output": "Output / Mtok",
+  "model_detail.price.column.cache": "Cache read / write",
+  "model_detail.price.column.image": "Per image",
+  "model_detail.price.column.page": "Per page",
+  "model_detail.price.column.search": "Per search",
+  "model_detail.price.column.source": "Source",
+  "model_detail.price.scheduled": "Scheduled",
+  "model_detail.price.card": "Price history",
+  "model_detail.price.description": "Newest first. A correction is a new row.",
+  "model_detail.price.load_error.title": "Could not load the price history",
+  "model_detail.price.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} price",
+        "countPlural=other": "{n} prices"
+      }
+    }
+  ],
+  "model_detail.price.current": [
+    {
+      "declarations": [
+        "input rates"
+      ],
+      "match": {
+        "*": "current: {rates}"
+      }
+    }
+  ],
+  "model_detail.price.current_rates": [
+    {
+      "declarations": [
+        "input rin"
+      ],
+      "match": {
+        "*": "{rin} in / {rout} out"
+      }
+    }
+  ],
+  "model_detail.price.no_current": "this model records a cost of zero",
+  "model_detail.price.empty": "No price set. This model records a cost of zero.",
+  "model_detail.price.caption": "Price history for {name}.",
+  "model_detail.append.card": "New price",
+  "model_detail.append.saved": "Price appended. It applies from its effective date.",
+  "model_detail.append.input": "Input per Mtok",
+  "model_detail.append.input_hint": "In the gateway's billing currency",
+  "model_detail.append.output": "Output per Mtok",
+  "model_detail.append.cache_read": "Cache read per Mtok",
+  "model_detail.append.cache_read_hint": "Empty bills cached input at the full input rate.",
+  "model_detail.append.cache_write": "Cache write per Mtok",
+  "model_detail.append.per_image": "Per image",
+  "model_detail.append.per_image_hint": "Image models only, on top of any token rates.",
+  "model_detail.append.per_page": "Per page",
+  "model_detail.append.per_page_hint": "OCR models, which charge by the page and usually nothing per token.",
+  "model_detail.append.per_search": "Per search",
+  "model_detail.append.per_search_hint": "Provider-side web search, charged per search on top of tokens. Providers publish it per thousand — $10 per 1,000 is 0.01 here.",
+  "model_detail.append.effective": "Effective from",
+  "model_detail.append.effective_hint": "Leave empty for now. A future date schedules the change.",
+  "model_detail.append.submit": "Append price",
+  "model_detail.append.toast_done": "Price appended",
+  "model_detail.append.toast_failed": "Could not append the price",
+  "model_detail.access.card": "Access",
+  "model_detail.access.description": "No grant means no access; there is no allow-all.",
+  "model_detail.access.groups": "Groups",
+  "model_detail.access.individuals": "Individuals, in addition to their groups.",
+  "model_detail.access.person_search": "Person search",
+  "model_detail.access.person_placeholder": "email, name or subject",
+  "model_detail.access.no_grants": "No individual grants.",
+  "model_detail.access.type_to_find": "Type to find someone else.",
+  "model_detail.access.searching": "Searching…",
+  "model_detail.access.no_match": "Nobody matches that.",
+  "model_detail.access.showing": [
+    {
+      "declarations": [
+        "input shown"
+      ],
+      "match": {
+        "*": "Showing {shown} of {total} matches. Narrow the search to see the rest."
+      }
+    }
+  ],
+  "model_detail.access.revoke_note": "Revoking takes effect on the next request.",
+  "admin_models.section.chat": "Chat",
+  "admin_models.section.chat_description": "/v1/chat/completions, /v1/responses and /v1/messages.",
+  "admin_models.section.embedding": "Embedding",
+  "admin_models.section.embedding_description": "/v1/embeddings. Priced per token, and they generate none.",
+  "admin_models.section.ocr": "Document extraction",
+  "admin_models.section.ocr_description": "/v1/ocr. Priced per page rather than per token.",
+  "admin_models.section.image": "Image",
+  "admin_models.section.image_description": "/v1/images/generations. Often priced per image.",
+  "admin_models.section.other": "Other",
+  "admin_models.section.caption": "{section} models, their current price and who may use them.",
+  "admin_models.column.model": "Model",
+  "admin_models.column.capabilities": "Capabilities",
+  "admin_models.column.provider": "Provider",
+  "admin_models.badge.provider_off": "Provider off",
+  "admin_models.column.price": "Price / Mtok",
+  "admin_models.price.in": [
+    {
+      "declarations": [
+        "input rate"
+      ],
+      "match": {
+        "*": "{rate} in"
+      }
+    }
+  ],
+  "admin_models.price.out": [
+    {
+      "declarations": [
+        "input rate"
+      ],
+      "match": {
+        "*": "{rate} out"
+      }
+    }
+  ],
+  "admin_models.badge.no_price": "No price",
+  "admin_models.column.access": "Access",
+  "admin_models.access.nobody": "nobody",
+  "admin_models.column.status": "Status",
+  "admin_models.badge.active": "Active",
+  "admin_models.badge.inactive": "Inactive",
+  "admin_models.badge.public": "Public",
+  "admin_models.action.edit": "Edit",
+  "admin_models.action.deactivate": "Deactivate",
+  "admin_models.action.activate": "Activate",
+  "admin_models.action.delete": "Delete",
+  "admin_models.toast.updated": "Model updated",
+  "admin_models.toast.update_failed": "Could not update the model",
+  "admin_models.title": "Models",
+  "admin_models.subtitle": "An allowlist: a model is invisible to callers until a group is granted it.",
+  "admin_models.discover": "Discover",
+  "admin_models.add_model": "Add model",
+  "admin_models.load_error.update": "Could not update the model",
+  "admin_models.load_error.delete": "Could not delete the model",
+  "admin_models.unknown_error": "Unknown error.",
+  "admin_models.search": "Search",
+  "admin_models.search_placeholder": "model name or upstream id",
+  "admin_models.search_hint_matching": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} matching"
+      }
+    }
+  ],
+  "admin_models.search_hint_default": "Matches name and upstream id.",
+  "admin_models.loading": "Loading the catalogue",
+  "admin_models.load_error.title": "Could not load the catalogue",
+  "admin_models.empty_query": "No model matches that.",
+  "admin_models.empty": "No models catalogued. Use Discover to see what the provider offers.",
+  "admin_models.caption": "Catalogued models.",
+  "admin_models.noun": "models",
+  "admin_models.delete.title": "Delete {name}",
+  "admin_models.delete.title_fallback": "this model",
+  "admin_models.delete.cancel": "Cancel",
+  "admin_models.delete.confirm": "Delete permanently",
+  "admin_models.delete.toast_done": "Model deleted",
+  "admin_models.delete.toast_failed": "Could not delete the model",
+  "admin_models.delete.body": "Removed from the catalogue and from {#code}/v1/models{/code}; its prices and access grants go with it. Callers asking for {#code}{name}{/code} get \"model not found\" from the next request on. This cannot be undone.",
+  "admin_models.delete.spend_note": "Recorded spend is unaffected: past usage keeps the model's name and stays attributed to the people and groups that ran it.",
+  "admin_models.create.title": "New model",
+  "admin_models.create.cancel": "Cancel",
+  "admin_models.create.submit": "Add",
+  "admin_models.create.toast_done": "Model created",
+  "admin_models.create.toast_failed": "Could not create the model",
+  "admin_models.create.provider": "Provider",
+  "admin_models.create.choose_provider": "Choose an endpoint…",
+  "admin_models.create.no_provider": "No active provider. Add one on the Providers page first.",
+  "admin_models.create.name": "Name",
+  "admin_models.create.name_placeholder": "fast-summariser",
+  "admin_models.create.name_hint": "What callers send as `model`. Cannot be changed later.",
+  "admin_models.create.upstream": "Upstream model",
+  "admin_models.create.upstream_placeholder": "provider/model-id",
+  "admin_models.create.upstream_hint": "What the gateway asks the provider for.",
+  "admin_models.create.kind": "Kind",
+  "admin_models.create.kind_hint": "Which routes will serve it.",
+  "admin_models.kind.chat": "Chat — /v1/chat/completions, /v1/responses, /v1/messages",
+  "admin_models.kind.embedding": "Embedding — /v1/embeddings",
+  "admin_models.kind.image": "Image — /v1/images/generations",
+  "admin_models.create.accepts": "Accepts",
+  "admin_models.create.accepts_other": "Other input modalities",
+  "admin_models.create.accepts_hint": "What can be sent to it.",
+  "admin_models.create.produces": "Produces",
+  "admin_models.create.produces_other": "Other output modalities",
+  "admin_models.create.produces_hint": "What comes back.",
+  "admin_models.create.features": "Features",
+  "admin_models.create.features_other": "Other features",
+  "admin_models.create.features_hint": "Not limited to the boxes above.",
+  "admin_models.create.starting_note": "No group is granted access, and no price is set.",
+  "admin_models.discover.title": "Provider catalogue",
+  "admin_models.discover.close": "Close",
+  "admin_models.discover.toast_done": "Models imported",
+  "admin_models.discover.toast_failed": "Could not import models",
+  "admin_models.discover.import": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "Import {count}"
+      }
+    }
+  ],
+  "admin_models.discover.import_aria": "Import {name}",
+  "admin_models.discover.column.offered": "Offered upstream",
+  "admin_models.discover.column.context": "Context",
+  "admin_models.discover.column.price": "Price",
+  "admin_models.discover.per_request": "per request",
+  "admin_models.discover.price_pair": [
+    {
+      "declarations": [
+        "input rin"
+      ],
+      "match": {
+        "*": "{rin} / {rout}"
+      }
+    }
+  ],
+  "admin_models.discover.provider": "Provider",
+  "admin_models.discover.choose_provider": "Choose an endpoint…",
+  "admin_models.discover.tag": "Catalogue tag",
+  "admin_models.discover.tag_hint_live": "Cortecs filters its catalogue by tag and defaults to Instruct — the words above are read live from its catalogue, so a tag added there appears here.",
+  "admin_models.discover.tag_hint_free": "Cortecs filters its catalogue by tag and defaults to Instruct — ask for Embedding or OCR to see those.",
+  "admin_models.discover.tag_default": "Provider default",
+  "admin_models.discover.tag_placeholder": "Instruct",
+  "admin_models.discover.fill_missing": "Fill missing prices from LiteLLM",
+  "admin_models.discover.community_gloss": "(community)",
+  "admin_models.discover.asking": "Asking the provider",
+  "admin_models.discover.load_error.title": "Could not read the provider catalogue",
+  "admin_models.discover.import_finished": "Import finished",
+  "admin_models.discover.result_imported_community": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "{name} imported with a community price"
+      }
+    }
+  ],
+  "admin_models.discover.result_imported_priced": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "{name} imported with its price"
+      }
+    }
+  ],
+  "admin_models.discover.result_imported_unpriced": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "{name} imported — metered per request, no token price"
+      }
+    }
+  ],
+  "admin_models.discover.result_skipped": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "{name} skipped — {reason}"
+      }
+    }
+  ],
+  "admin_models.discover.missing_title": "Served here, no longer offered upstream",
+  "admin_models.discover.badge.inactive": "inactive",
+  "admin_models.discover.missing_sr": "is no longer offered by this provider",
+  "admin_models.discover.empty": "The provider offers nothing that is not already catalogued.",
+  "admin_models.discover.caption_models": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} models offered by the provider."
+      }
+    }
+  ],
+  "admin_models.discover.search_tiers": "Search tiers",
+  "admin_models.discover.search_tiers_body": "A search backend exposes no model list and no token price — what this provider calls a model is a depth (Linkup’s {#code}depth{/code}, Exa’s {#code}type{/code}). Metered per request; bound by the request ceiling you grant per group.",
+  "admin_models.discover.caption_tiers": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} search tiers offered by the provider."
+      }
+    }
+  ],
+  "admin_redaction.title": "Redaction",
+  "admin_redaction.subtitle": "What is stripped from prompts before they reach a provider.",
+  "admin_redaction.loading": "Loading redaction",
+  "admin_redaction.load_error.title": "Could not load redaction settings",
+  "admin_redaction.unknown_error": "Unknown error.",
+  "admin_redaction.stat.redaction": "Redaction",
+  "admin_redaction.stat.on": "On",
+  "admin_redaction.stat.off": "Off",
+  "admin_redaction.stat.engine_detail": "{engine} engine",
+  "admin_redaction.stat.off_detail": "prompts reach the provider unchanged",
+  "admin_redaction.stat.service": "Detection service",
+  "admin_redaction.stat.service_unknown": "—",
+  "admin_redaction.stat.service_ok": "Answering",
+  "admin_redaction.stat.service_down": "Not answering",
+  "admin_redaction.stat.service_none": "no service to call",
+  "admin_redaction.stat.entities": "Entities removed",
+  "admin_redaction.stat.entities_detail": "from {redacted: number} of {requests: number} requests, last {window}",
+  "admin_redaction.config.card": "Configuration",
+  "admin_redaction.config.description_console": "From the gateway's environment, except the engine, which was set here.",
+  "admin_redaction.config.description_env": "From the gateway's environment.",
+  "admin_redaction.config.engine": "Engine",
+  "admin_redaction.config.installed": "· installed: {engines}",
+  "admin_redaction.config.none_engines": "none",
+  "admin_redaction.config.source": "Source",
+  "admin_redaction.config.source_console": "This console",
+  "admin_redaction.config.source_env": "The deployment's environment",
+  "admin_redaction.config.endpoint": "Detection endpoint",
+  "admin_redaction.config.endpoint_none": "none — in-process engine",
+  "admin_redaction.config.failure_mode": "Failure mode",
+  "admin_redaction.config.fail_open": "Forward unredacted",
+  "admin_redaction.config.fail_closed": "Refuse the request",
+  "admin_redaction.config.language": "Language",
+  "admin_redaction.config.timeout": "Timeout",
+  "admin_redaction.config.timeout_value": [
+    {
+      "declarations": [
+        "input seconds"
+      ],
+      "match": {
+        "*": "{seconds}s"
+      }
+    }
+  ],
+  "admin_redaction.config.cache": "Detection cache",
+  "admin_redaction.config.cache_disabled": "disabled",
+  "admin_redaction.config.cache_texts": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} texts"
+      }
+    }
+  ],
+  "admin_redaction.config.placeholder_key": "Placeholder key",
+  "admin_redaction.config.key_set": "Set",
+  "admin_redaction.config.key_not_set": "Not set",
+  "admin_redaction.config.key_note": "placeholders derive from it, so it must stay stable",
+  "admin_redaction.entity_types.card": "Entity types",
+  "admin_redaction.entity_types.description": "GATEWAY_REDACTION__ENTITY_TYPES limits the search to these. It sets the policy below; the console overrides it.",
+  "admin_redaction.degraded.card": "Degraded languages",
+  "admin_redaction.degraded.description": "Served without a named-entity model.",
+  "admin_redaction.rules.column.applies_to": "Applies to",
+  "admin_redaction.rules.every_request": "Every request",
+  "admin_redaction.rules.deleted_subject": "deleted subject",
+  "admin_redaction.rules.column.policy": "Policy",
+  "admin_redaction.rules.column.state": "State",
+  "admin_redaction.badge.active": "Active",
+  "admin_redaction.badge.inactive": "Inactive",
+  "admin_redaction.action.edit": "Edit",
+  "admin_redaction.action.clone": "Clone",
+  "admin_redaction.action.deactivate": "Deactivate",
+  "admin_redaction.action.activate": "Activate",
+  "admin_redaction.action.delete": "Delete",
+  "admin_redaction.rules.no_catchall_title": "Nothing is redacted by default",
+  "admin_redaction.rules.no_catchall_body": "Prompts reach providers as callers wrote them unless a rule below says otherwise. Add a rule for every request to change that.",
+  "admin_redaction.rules.card": "Rules",
+  "admin_redaction.rules.description": "The strictest applicable rule wins, so adding one can only protect more.",
+  "admin_redaction.rules.loading": "Loading rules",
+  "admin_redaction.rules.load_error.title": "Could not load rules",
+  "admin_redaction.rules.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} rule",
+        "countPlural=other": "{n} rules"
+      }
+    }
+  ],
+  "admin_redaction.rules.covered": "every request is covered",
+  "admin_redaction.rules.not_covered": "no catch-all — some requests pass unredacted",
+  "admin_redaction.rules.new_rule": "New rule",
+  "admin_redaction.rules.empty": "No rules, so nothing is redacted.",
+  "admin_redaction.rules.caption": "Redaction rules and the subject each one applies to.",
+  "admin_redaction.coverage.unserved_title": "These types are protected by this rule but cannot be detected while their family is off, so matching values reach providers unprotected. The rule stays in force.",
+  "admin_redaction.coverage.unserved_badge": "Detection off: {types}",
+  "admin_redaction.coverage.default_title": "This rule protects unnamed types by default, and a detector family is switched off, so some of what it covers cannot be detected. The rule stays in force.",
+  "admin_redaction.coverage.default_badge": "Default covers a disabled family",
+  "admin_redaction.preview.toast_ran": "Preview ran.",
+  "admin_redaction.preview.toast_failed": "The preview did not run",
+  "admin_redaction.preview.column.match": "Match",
+  "admin_redaction.preview.column.detected": "Detected as",
+  "admin_redaction.preview.column.score": "Score",
+  "admin_redaction.preview.needs": "needs {threshold}",
+  "admin_redaction.preview.column.applied": "Applied",
+  "admin_redaction.preview.allow_listed": "Allow-listed",
+  "admin_redaction.preview.card": "Preview",
+  "admin_redaction.preview.description": "Run a sample through the policy in force.",
+  "admin_redaction.preview.sample": "Sample",
+  "admin_redaction.preview.sample_placeholder": "Riassumi le notizie del giorno da ilpost.it",
+  "admin_redaction.preview.not_logged": "Not logged anywhere.",
+  "admin_redaction.preview.preview_as": "Preview as",
+  "admin_redaction.preview.nobody": "Nobody in particular",
+  "admin_redaction.preview.run": "Run preview",
+  "admin_redaction.preview.blocked_title": "This request would be blocked",
+  "admin_redaction.preview.blocked_fallback": "A blocked entity type was found.",
+  "admin_redaction.preview.receives": "What the provider receives",
+  "admin_redaction.preview.summary_replaced": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} replaced"
+      }
+    }
+  ],
+  "admin_redaction.preview.summary_engine": "{engine} engine",
+  "admin_redaction.preview.summary_policy": "the deployment policy",
+  "admin_redaction.preview.summary_rule": "{scope} rule",
+  "admin_redaction.preview.empty": "Nothing was detected in this sample.",
+  "admin_redaction.preview.caption": "What the detector found, and what the policy did with it.",
+  "admin_redaction.families.toast_saved": "Detection families saved.",
+  "admin_redaction.families.toast_failed": "Detection families were not changed",
+  "admin_redaction.families.card": "Presidio detection families",
+  "admin_redaction.families.description": "These switches control the detection service's recognizer families, not custom gateway patterns.",
+  "admin_redaction.families.patterns": "Pattern matching",
+  "admin_redaction.families.patterns_description": "Structured identifiers: cards, accounts, emails, phones, national IDs.",
+  "admin_redaction.families.ner": "Named-entity recognition",
+  "admin_redaction.families.ner_description": "Names and places read by the language model.",
+  "admin_redaction.families.saving": "Saving…",
+  "admin_redaction.families.on": "On",
+  "admin_redaction.families.off": "Off",
+  "admin_redaction.engine.toast_in_force": "{label} is in force.",
+  "admin_redaction.engine.toast_failed": "The engine was not changed",
+  "admin_redaction.engine.card": "Engine",
+  "admin_redaction.engine.description": "One is in force at a time; llmp.redactors plugins appear here.",
+  "admin_redaction.engine.propagated": "Saved. Other workers apply it within {seconds}s.",
+  "admin_redaction.badge.in_force": "In force",
+  "admin_redaction.badge.redacts_nothing": "Redacts nothing",
+  "admin_redaction.engine.cannot_enable": "Cannot be enabled.",
+  "admin_redaction.engine.enabled": "Enabled",
+  "admin_redaction.engine.enable": "Enable",
+  "admin_redaction.engine.turn_off": "Turn redaction off",
+  "admin_redaction.engine.off_toast": "Redaction is off.",
+  "admin_redaction.confirm.title": "Turn redaction off",
+  "admin_redaction.confirm.cancel": "Cancel",
+  "admin_redaction.confirm.saving": "Saving…",
+  "admin_redaction.confirm.turn_off": "Turn it off",
+  "admin_redaction.confirm.warning": "Prompts will reach providers exactly as callers sent them.",
+  "admin_redaction.confirm.recorded": "Recorded with who changed it and when.",
+  "admin_redaction.activity.window_days": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "24 hours",
+        "countPlural=other": "{n} days"
+      }
+    }
+  ],
+  "admin_redaction.activity.window_hours": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "hour",
+        "countPlural=other": "{n} hours"
+      }
+    }
+  ],
+  "admin_users.login_hint": "The name they'll type on the sign-in page. Lowercase letters, digits, '.', '_' or '-'.",
+  "admin_users.taken_login": "'{login}' is already another person's sign-in name — pick a different one.",
+  "admin_users.toast.approved": "Approved — they can sign in now",
+  "admin_users.toast.approve_failed": "Could not approve",
+  "admin_users.column.user": "User",
+  "admin_users.column.groups": "Groups",
+  "admin_users.column.billing_group": "Billing group",
+  "admin_users.column.keys": "Keys",
+  "admin_users.column.status": "Status",
+  "admin_users.column.last_login": "Last login",
+  "admin_users.groups_none": "none",
+  "admin_users.billing_unset": "unset",
+  "admin_users.bundled_login_line": "sign-in: {login}",
+  "admin_users.badge.admin": "Admin",
+  "admin_users.badge.invited": "Invited",
+  "admin_users.badge.awaiting": "Awaiting approval",
+  "admin_users.badge.active": "Active",
+  "admin_users.badge.disabled": "Disabled",
+  "admin_users.badge.expired": "Expired",
+  "admin_users.badge.chat_only": "Chat only",
+  "admin_users.never": "never",
+  "admin_users.action.edit": "Edit",
+  "admin_users.action.approve": "Approve",
+  "admin_users.action.reinvite": "Re-invite",
+  "admin_users.action.enable": "Enable",
+  "admin_users.action.disable": "Disable",
+  "admin_users.action.delete": "Delete",
+  "admin_users.title": "Users",
+  "admin_users.subtitle.unknown": "Accounts live at the identity provider — this deployment cannot add a login or reset its password here. Disable and Enable still apply on the gateway side.",
+  "admin_users.subtitle.logins": "People arrive at their first sign-in, or you can add one directly below.",
+  "admin_users.subtitle.invites": "People arrive when you invite them, at their first sign-in, or when the directory pushes them.",
+  "admin_users.add_user": "Add user",
+  "admin_users.invite": "Invite",
+  "admin_users.erasures.title": "Erasures waiting for the chat",
+  "admin_users.erasures.body": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} erasure waiting for the chat to confirm. They retry automatically; nothing to do here.",
+        "countPlural=other": "{n} erasures waiting for the chat to confirm. They retry automatically; nothing to do here."
+      }
+    }
+  ],
+  "admin_users.toast.update_failed": "Could not update the user",
+  "admin_users.unknown_error": "Unknown error.",
+  "admin_users.search": "Search",
+  "admin_users.search_placeholder": "email, name, username or identity provider subject",
+  "admin_users.search_hint_matching": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} matching"
+      }
+    }
+  ],
+  "admin_users.search_hint_global": "Searches every account, not just this page.",
+  "admin_users.chip.all": "All",
+  "admin_users.chip.awaiting": "Awaiting approval",
+  "admin_users.chip.invited": "Invited",
+  "admin_users.chip.active": "Active",
+  "admin_users.chip.disabled": "Disabled",
+  "admin_users.loading": "Loading users",
+  "admin_users.load_error.title": "Could not load users",
+  "admin_users.empty_query": "No user matches that.",
+  "admin_users.empty": "No users yet.",
+  "admin_users.caption": "Users, their groups and their keys.",
+  "admin_users.noun": "users",
+  "admin_users.delete.title": "Delete {name}?",
+  "admin_users.delete.title_fallback": "this account",
+  "admin_users.delete.cancel": "Cancel",
+  "admin_users.delete.confirm": "Delete permanently",
+  "admin_users.delete.toast_done": "Account deleted",
+  "admin_users.delete.toast_chat_done": "The chat confirmed erasure immediately.",
+  "admin_users.delete.toast_chat_queued": "The chat could not be reached; erasure is queued and will retry.",
+  "admin_users.delete.toast_failed": "Could not delete the account",
+  "admin_users.delete.loading": "Loading preview",
+  "admin_users.delete.load_error.title": "Could not load the preview",
+  "admin_users.delete.bundled_login_line": "Bundled login removed: {login}",
+  "admin_users.delete.chat_unavailable_title": "Chat counts unavailable",
+  "admin_users.delete.chat_unavailable_body": "The erasure will be queued and retried.",
+  "admin_users.delete.body": "The account's keys stop working immediately and cannot be restored. Their quota and redaction rules keep their scope but stop matching anyone until you delete or re-point them.",
+  "admin_users.delete.ledger_note": "Past usage stays in the ledger, attributed to their groups as it was billed — only the name on the per-user breakdown goes.",
+  "admin_users.delete.shared_confirm_attributed": "This account has content shared with others (including some that can no longer be attributed to anyone). I understand it will disappear for them too.",
+  "admin_users.delete.shared_confirm_named": "This account has content shared with others (shared with other people, named above). I understand it will disappear for them too.",
+  "admin_users.merge.title": "Merge {name} into…",
+  "admin_users.merge.title_fallback": "this account",
+  "admin_users.merge.cancel": "Cancel",
+  "admin_users.merge.confirm": "Merge, irreversibly",
+  "admin_users.merge.toast_done": "Accounts merged",
+  "admin_users.merge.toast_failed": "Could not merge",
+  "admin_users.merge.body": "Moves every membership, key, ledger row and identity of {#strong}{name}{/strong} onto the target, then deletes it. There is no undo but restoring a backup taken beforehand (the README's volume tar) — take one now if you have not today.",
+  "admin_users.merge.target_label": "Merge into…",
+  "admin_users.merge.target_placeholder": "Search by email, name or username",
+  "admin_users.merge.no_match": "No match.",
+  "admin_users.merge.loading": "Loading preview",
+  "admin_users.merge.load_error.title": "Could not preview this merge",
+  "admin_users.merge.into": "Into {name}",
+  "admin_users.merge.identities_title": "These identities are dropped, not moved",
+  "admin_users.merge.identities_body": "The target already has an identity at the same issuer: {issuers}.",
+  "admin_users.merge.duplicate_rules": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "{n} duplicate rule dropped: the target already has an equivalent one, so the source's is kept off rather than moved.",
+        "countPlural=other": "{n} duplicate rules dropped: the target already has an equivalent one, so the source's is kept off rather than moved."
+      }
+    }
+  ],
+  "admin_users.merge.bundled_disabled": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "Bundled login disabled: {logins}",
+        "countPlural=other": "Bundled logins disabled: {logins}"
+      }
+    }
+  ],
+  "admin_users.merge.admin_yes": "Resulting administrator flag: yes.",
+  "admin_users.merge.admin_no": "Resulting administrator flag: no.",
+  "admin_users.merge.type_confirm": "Type \"{text}\" to confirm",
+  "admin_users.merge.reason": "Reason (optional)",
+  "admin_users.merge.reason_placeholder": "Why these are the same person",
+  "admin_users.password.sign_in_as": "Sign in as {#strong}{login}{/strong} with this password:",
+  "admin_users.password.copy": "Copy",
+  "admin_users.password.copied": "Copied",
+  "admin_users.password.clipboard": "Could not reach the clipboard; copy it by hand.",
+  "admin_users.password.detail": "Share it over a one-time channel (a password manager share, or in person). Authelia can't force a change at first sign-in; ask them to change it from the sign-in page's reset link (needs SMTP) or keep it.",
+  "admin_users.invite.title": "Invite",
+  "admin_users.invite.done": "Done",
+  "admin_users.invite.cancel": "Cancel",
+  "admin_users.invite.submit": "Invite",
+  "admin_users.invite.submit_and_send": "Invite and send",
+  "admin_users.invite.load_error.title": "Could not invite",
+  "admin_users.invite.sent_title": "Invitation sent",
+  "admin_users.invite.sent_body": "Emailed to {email}.",
+  "admin_users.invite.email_failed_title": "Could not send the email",
+  "admin_users.invite.email_failed_body": "{error} — copy the text below instead.",
+  "admin_users.invite.text_heading": "Invite text",
+  "admin_users.invite.toast_copied": "Invite text copied",
+  "admin_users.invite.toast_copy_failed": "Copy failed — select the text above",
+  "admin_users.invite.copy": "Copy invite text",
+  "admin_users.invite.copied": "Copied",
+  "admin_users.invite.email": "Email",
+  "admin_users.invite.display_name": "Display name",
+  "admin_users.invite.groups": "Groups",
+  "admin_users.invite.groups_placeholder": "comma separated",
+  "admin_users.invite.groups_hint": "Console groups — the same manual membership an administrator grants anywhere else.",
+  "admin_users.invite.email_them": "Email them the invitation",
+  "admin_users.invite.email_unconfigured": "Email is not configured, so copy the invite text to send it yourself.",
+  "admin_users.add.title": "Add user",
+  "admin_users.add.done": "Done",
+  "admin_users.add.cancel": "Cancel",
+  "admin_users.add.submit": "Add user",
+  "admin_users.add.load_error.title": "Could not add the user",
+  "admin_users.add.email": "Email",
+  "admin_users.add.login": "Login",
+  "admin_users.add.display_name": "Display name",
+  "admin_users.add.groups": "Groups",
+  "admin_users.add.groups_placeholder": "comma separated",
+  "admin_users.add.groups_hint": "Console groups — the same manual membership an administrator grants anywhere else.",
+  "admin_users.signin.title": "Create sign-in — {name}",
+  "admin_users.signin.done": "Done",
+  "admin_users.signin.cancel": "Cancel",
+  "admin_users.signin.submit": "Create sign-in",
+  "admin_users.signin.load_error.title": "Could not create the sign-in",
+  "admin_users.signin.login": "Login",
+  "admin_users.reset.title": "Reset password — {name}",
+  "admin_users.reset.done": "Done",
+  "admin_users.reset.cancel": "Cancel",
+  "admin_users.reset.submit": "Reset password",
+  "admin_users.reset.load_error.title": "Could not reset the password",
+  "admin_users.reset.body": "This mints a new one-time password for their bundled login. The old one stops working immediately.",
+  "admin_users.toggle.disable_title": "Disable {name}?",
+  "admin_users.toggle.enable_title": "Enable {name}?",
+  "admin_users.toggle.title_fallback": "this account",
+  "admin_users.toggle.cancel": "Cancel",
+  "admin_users.toggle.disable": "Disable",
+  "admin_users.toggle.enable": "Enable",
+  "admin_users.toggle.toast_disabled": "Account disabled",
+  "admin_users.toggle.toast_enabled": "Account enabled",
+  "admin_users.toggle.toast_disable_failed": "Could not disable the account",
+  "admin_users.toggle.toast_enable_failed": "Could not enable the account",
+  "admin_users.toggle.authelia_failed": "The bundled login could not be updated",
+  "admin_users.toggle.disable_sessions": "Their console session, chat sessions and machine links are refused within about a minute. Refresh credentials and minted API keys are revoked at once.",
+  "admin_users.toggle.disable_keys": "Personal API keys are kept but stop admitting requests while the account is disabled — they return automatically if you re-enable it.",
+  "admin_users.toggle.disable_bundled": "Their bundled Authelia login is disabled too, under the same action.",
+  "admin_users.toggle.disable_idp": "This does not disable the person at the identity provider — do that there too, or they can still authenticate even though the gateway refuses them.",
+  "admin_users.toggle.enable_body": "They can sign in again immediately, and personal API keys admit requests again. Sessions, minted keys and devices stay revoked — they sign in again and re-enroll rather than resuming automatically.",
+  "admin_users.toggle.enable_bundled": "Their bundled Authelia login is re-enabled too, under the same action.",
+  "admin_users.activity.title": "Activity — {name}",
+  "admin_users.activity.close": "Close",
+  "admin_users.activity.loading": "Loading activity",
+  "admin_users.activity.load_error.title": "Could not load activity",
+  "admin_users.activity.none": "No activity recorded yet.",
+  "admin_users.edit.title": "Edit — {name}",
+  "admin_users.edit.title_plain": "Edit",
+  "admin_users.edit.close": "Close",
+  "admin_users.edit.save": "Save changes",
+  "admin_users.edit.toast_done": "User updated",
+  "admin_users.edit.toast_failed": "Could not update the user",
+  "admin_users.edit.identity": "Identity",
+  "admin_users.edit.badge_administrator": "Administrator",
+  "admin_users.edit.badge_active": "Active",
+  "admin_users.edit.badge_disabled": "Disabled",
+  "admin_users.edit.kind_local": "local",
+  "admin_users.edit.kind_idp": "IdP",
+  "admin_users.edit.identity_note": "— the login identity. Not editable here.",
+  "admin_users.edit.profile": "Profile",
+  "admin_users.edit.email": "Email",
+  "admin_users.edit.email_hint_local": "Where mail about the account goes. A local account signs in with its identity, not this address.",
+  "admin_users.edit.email_hint_idp": "The identity provider refreshes this at sign-in. Editing it records your value, and sign-in stops changing it.",
+  "admin_users.edit.display_name": "Display name",
+  "admin_users.edit.display_name_hint": "Refreshed at sign-in from the identity provider, unless edited here.",
+  "admin_users.edit.username": "Username",
+  "admin_users.edit.username_hint": "The directory's own name for the person (`preferred_username`). Follows the directory unless edited here.",
+  "admin_users.edit.admin_label": "Administrator",
+  "admin_users.edit.admin_note": "Granting this adds them to the admin group here, and it survives their next sign-in. Removing it works only if this console granted it — admin the identity provider granted has to be withdrawn there.",
+  "admin_users.edit.actions": "Actions",
+  "admin_users.edit.reset_password": "Reset password",
+  "admin_users.edit.create_signin": "Create sign-in",
+  "admin_users.edit.activity": "Activity",
+  "admin_users.edit.merge_into": "Merge into…",
+  "admin_users.edit.passwords_note": "Passwords belong to the identity provider.",
+  "admin_users.edit.passwords_note_bundled": "Passwords belong to the identity provider. For the bundled Authelia, the actions above mint one and reset it.",
+  "admin_users.toast.reissue_failed": "Could not re-issue",
+  "admin_models.discover.badge.no_price_yet": "No price yet",
+  "admin_models.discover.manual_rate.input": "Input per Mtok",
+  "admin_models.discover.manual_rate.output": "Output per Mtok",
+  "admin_models.discover.manual_rate.per_page": "Per page",
+  "admin_models.discover.manual_rate.currency": "Currency",
+  "admin_models.discover.manual_rate.rate_hint": "per million tokens",
+  "admin_models.discover.manual_rate.currency_hint": "Leave empty for the gateway's billing currency.",
+  "admin_models.discover.manual_rate.required": "Required — the import refuses an unpriced model.",
+  "admin_models.discover.manual_rate.amount_invalid": "Digits and an optional decimal point.",
+  "admin_models.discover.manual_rate.currency_invalid": "Three letters, e.g. EUR.",
+  "admin_models.discover.manual_rate.enter_price": "Enter a price to import this model.",
+  "admin_models.discover.manual_rate.field_problem": [
+    {
+      "declarations": [
+        "input label"
+      ],
+      "match": {
+        "*": "{label}: {error}"
+      }
+    }
+  ],
+  "admin_models.discover.manual_rate.currency_problem": [
+    {
+      "declarations": [
+        "input error"
+      ],
+      "match": {
+        "*": "Currency: {error}"
+      }
+    }
+  ],
+  "admin_models.discover.apply_to_all": "Apply this price to all ticked",
+  "admin_models.discover.result_imported_manual": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "{name} imported with the price entered by hand"
+      }
+    }
+  ]
+}

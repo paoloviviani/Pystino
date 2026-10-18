@@ -1,9 +1,17 @@
+import { paraglideVitePlugin } from "@inlang/paraglide-js";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    // Compiles messages/{locale}.json into typed message functions before
+    // anything imports them, in dev and in build. The options live in
+    // project.inlang/paraglide.config.ts, shared with the `i18n:*` scripts.
+    paraglideVitePlugin({ project: "./project.inlang" }),
+    react(),
+    tailwindcss(),
+  ],
 
   // Served from /console/ by the gateway, not from the domain root, so the
   // built asset URLs must carry that prefix. Getting this wrong produces a page

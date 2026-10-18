@@ -27,6 +27,9 @@ import type { AdminProvider, ProviderPlugin } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
 import { CHIPS, CODE, FORM, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
+import { formatNumber } from "../lib/format";
+import { Message } from "../components/Message";
+import { m } from "../paraglide/messages.js";
 
 /**
  * Web search, as its own screen (2026-09-13).
@@ -68,7 +71,7 @@ export function AdminSearch() {
   const backendColumns: Column<AdminProvider>[] = [
     {
       key: "name",
-      header: "Backend",
+      header: m["admin_search.column.backend"](),
       render: (backend) => (
         <>
           <div>{backend.name}</div>
@@ -78,27 +81,31 @@ export function AdminSearch() {
     },
     {
       key: "credential",
-      header: "API key",
+      header: m["admin_search.column.api_key"](),
       render: (backend) =>
         backend.has_api_key ? (
           <span className={CODE}>{backend.api_key_hint}</span>
         ) : (
-          <span className={MUTED}>none — set one before searching</span>
+          <span className={MUTED}>{m["admin_search.no_key"]()}</span>
         ),
     },
     {
       key: "tiers",
-      header: "Tiers",
+      header: m["admin_search.column.tiers"](),
       numeric: true,
       render: (backend) =>
-        tiers.filter((tier) => tier.provider_id === backend.id).length.toLocaleString(),
+        formatNumber(tiers.filter((tier) => tier.provider_id === backend.id).length),
     },
     {
       key: "status",
-      header: "Status",
+      header: m["admin_search.column.status"](),
       render: (backend) => (
         <div className={CHIPS}>
-          {backend.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
+          {backend.is_active ? (
+            <Badge tone="ok">{m["admin_search.badge.active"]()}</Badge>
+          ) : (
+            <Badge>{m["admin_search.badge.inactive"]()}</Badge>
+          )}
         </div>
       ),
     },
@@ -111,14 +118,14 @@ export function AdminSearch() {
               across the console — Edit is always the light outline, never a
               colour that could be mistaken for the primary action of the row. */}
           <Button variant="secondary" onClick={() => setEditing(backend)}>
-            Edit
+            {m["admin_search.action.edit"]()}
           </Button>
           {/* Thin red text, never filled: at row level a filled red button
               outweighs every other element in the table, and deletion here is
               confirmable, not accidental — the confirm dialog is where the
               filled danger belongs. */}
           <Button variant="ghost" className="text-danger" onClick={() => setDeleting(backend)}>
-            Delete
+            {m["admin_search.action.delete"]()}
           </Button>
         </div>
       ),
@@ -127,23 +134,20 @@ export function AdminSearch() {
 
   return (
     <div className={PAGE}>
-      <PageHeader title="Web search" />
+      <PageHeader title={m["admin_search.title"]()} />
 
       <Notice tone="info">
-        A search backend answers <code>POST /v1/search/&#123;backend&#125;</code> — an
-        authenticated, metering passthrough: the gateway counts the request, attaches the
-        backend's own credential, and forwards the caller's body to the vendor verbatim, returning
-        the vendor's answer verbatim (ADR 0071). Backends are absent from{" "}
-        <code>/v1/models</code> unless a client asks for them explicitly, so no other client will
-        mistake one for a chat model. Who may search is the grant below; how much they may search
-        is a request ceiling on Quotas.
+        <Message
+          message={m["admin_search.intro"]}
+          markup={{ code: (children) => <code>{children}</code> }}
+        />
       </Notice>
 
       {/* -- backends ------------------------------------------------ */}
-      <Card title="Backends" flush>
+      <Card title={m["admin_search.backends_card"]()} flush>
         {providers.isPending ? (
           <div className="p-6">
-            <Spinner label="Loading backends" />
+            <Spinner label={m["admin_search.loading_backends"]()} />
           </div>
         ) : (
           <>
@@ -152,21 +156,25 @@ export function AdminSearch() {
                 summary rather than its first row. */}
             <div className="p-5">
               <SummaryStrip
-                headline={`${backends.length} ${backends.length === 1 ? "backend" : "backends"}`}
+                headline={m["admin_search.count"]({ count: backends.length })}
                 detail={
                   backends.length === 0
-                    ? "none yet — add the first one"
-                    : `${backends.filter((backend) => backend.is_active).length} active`
+                    ? m["admin_search.state.none"]()
+                    : m["admin_search.state.active"]({
+                        count: backends.filter((backend) => backend.is_active).length,
+                      })
                 }
                 active={backends.length > 0}
-                actions={<Button onClick={() => setCreating(true)}>Add backend</Button>}
+                actions={
+                  <Button onClick={() => setCreating(true)}>{m["admin_search.add_backend"]()}</Button>
+                }
               />
             </div>
             <Table
               columns={backendColumns}
               rows={backends}
               rowKey={(row) => row.id}
-              empty="No backends yet."
+              empty={m["admin_search.backends_empty"]()}
             />
           </>
         )}
@@ -175,23 +183,19 @@ export function AdminSearch() {
       {/* -- grants ---------------------------------------------------- */}
       <Card flush>
         <div className="p-4">
-          <h2 className="text-sm font-semibold">Who may search</h2>
-          <p className={`${MUTED} mt-1 text-sm`}>
-            One grant per backend — creating the backend made its row. What the caller sends
-            inside the body (a depth, a result count) is the vendor's own pricing, not a decision
-            this screen makes.
-          </p>
+          <h2 className="text-sm font-semibold">{m["admin_search.grants_heading"]()}</h2>
+          <p className={`${MUTED} mt-1 text-sm`}>{m["admin_search.grants_body"]()}</p>
         </div>
         {models.isPending ? (
           <div className="p-6">
-            <Spinner label="Loading tiers" />
+            <Spinner label={m["admin_search.loading_tiers"]()} />
           </div>
         ) : (
           <Table
             columns={[
               {
                 key: "tier",
-                header: "Backend",
+                header: m["admin_search.column.backend"](),
                 render: (tier) => (
                   <>
                     <div>{tier.name}</div>
@@ -201,7 +205,7 @@ export function AdminSearch() {
               },
               {
                 key: "grants",
-                header: "Groups that may run it",
+                header: m["admin_search.tier_column.grants"](),
                 render: (tier) => (
                   <div className={CHIPS}>
                     {groupList.map((group) => {
@@ -233,14 +237,16 @@ export function AdminSearch() {
                         </label>
                       );
                     })}
-                    {groupList.length === 0 && <span className={MUTED}>no groups yet</span>}
+                    {groupList.length === 0 && (
+                      <span className={MUTED}>{m["admin_search.no_groups_yet"]()}</span>
+                    )}
                   </div>
                 ),
               },
             ]}
             rows={tiers}
             rowKey={(row) => row.id}
-            empty="No backends yet. Add one above."
+            empty={m["admin_search.tiers_empty"]()}
           />
         )}
       </Card>
@@ -248,42 +254,45 @@ export function AdminSearch() {
       {/* -- one backend per group ------------------------------------- */}
       <Card flush>
         <div className="p-4">
-          <h2 className="text-sm font-semibold">Which backend each group searches through</h2>
+          <h2 className="text-sm font-semibold">{m["admin_search.policy_heading"]()}</h2>
           <p className={`${MUTED} mt-1 text-sm`}>
-            The policy behind <code>POST /v1/search</code> (no backend in the path): one
-            request shape in, one answer shape out, through exactly this backend at its
-            default depth. Only backends the group is granted above are offered — a group
-            with none set cannot use the unified route at all.
+            <Message
+              message={m["admin_search.policy_body"]}
+              markup={{ code: (children) => <code>{children}</code> }}
+            />
           </p>
         </div>
         {setPolicy.error ? (
           <div className="px-4 pb-2">
-            <Notice tone="danger" title="Could not set the search backend">
-              {setPolicy.error instanceof Error ? setPolicy.error.message : "Unknown error."}
+            <Notice tone="danger" title={m["admin_search.policy_error.title"]()}>
+              {/* i18n: server text — the API's own error message. */}
+              {setPolicy.error instanceof Error
+                ? setPolicy.error.message
+                : m["admin_search.unknown_error"]()}
             </Notice>
           </div>
         ) : null}
         {groups.isPending || models.isPending ? (
           <div className="p-6">
-            <Spinner label="Loading groups" />
+            <Spinner label={m["admin_search.loading_groups"]()} />
           </div>
         ) : (
           <Table
             columns={[
               {
                 key: "group",
-                header: "Group",
+                header: m["admin_search.group_column.group"](),
                 render: (group) => <div>{group.name}</div>,
               },
               {
                 key: "backend",
-                header: "Searches through",
+                header: m["admin_search.group_column.backend"](),
                 render: (group) => {
                   const granted = tiers.filter((tier) => tier.granted_to.includes(group.name));
                   const current = granted.find((tier) => tier.name === group.search_backend);
                   return (
                     <Select
-                      label={`Search backend for ${group.name}`}
+                      label={m["admin_search.backend_for_group"]({ group: group.name })}
                       value={current?.id ?? ""}
                       onChange={(event) =>
                         setPolicy.mutate({
@@ -292,7 +301,7 @@ export function AdminSearch() {
                         })
                       }
                     >
-                      <option value="">Unset — no unified search</option>
+                      <option value="">{m["admin_search.backend_unset"]()}</option>
                       {granted.map((tier) => (
                         <option key={tier.id} value={tier.id}>
                           {tier.name}
@@ -305,7 +314,7 @@ export function AdminSearch() {
             ]}
             rows={groupList}
             rowKey={(row) => row.id}
-            empty="No groups yet."
+            empty={m["admin_search.groups_empty"]()}
           />
         )}
       </Card>
@@ -416,10 +425,11 @@ function BackendDialog({
         },
         {
           onSuccess: () => {
-            toast?.add({ title: "Backend updated", type: "success" });
+            toast?.add({ title: m["admin_search.toast.updated"](), type: "success" });
             onClose();
           },
-          onError: () => toast?.add({ title: "Could not update the backend", type: "error" }),
+          onError: () =>
+            toast?.add({ title: m["admin_search.toast.update_failed"](), type: "error" }),
         },
       );
     } else {
@@ -436,10 +446,10 @@ function BackendDialog({
         },
         {
           onSuccess: () => {
-            toast?.add({ title: "Backend added", type: "success" });
+            toast?.add({ title: m["admin_search.toast.added"](), type: "success" });
             onClose();
           },
-          onError: () => toast?.add({ title: "Could not add the backend", type: "error" }),
+          onError: () => toast?.add({ title: m["admin_search.toast.add_failed"](), type: "error" }),
         },
       );
     }
@@ -448,11 +458,15 @@ function BackendDialog({
   return (
     <Dialog
       open={open}
-      title={editing ? `Edit ${provider?.name}` : "Add a search backend"}
+      title={
+        editing
+          ? m["admin_search.dialog.edit_title"]({ provider: provider?.name ?? "" })
+          : m["admin_search.dialog.add_title"]()
+      }
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{m["admin_search.dialog.cancel"]()}</Button>
           <Button
             variant="primary"
             busy={pending}
@@ -463,19 +477,20 @@ function BackendDialog({
             }
             onClick={submit}
           >
-            {editing ? "Save" : "Add"}
+            {editing ? m["admin_search.dialog.save"]() : m["admin_search.dialog.add"]()}
           </Button>
         </>
       }
     >
       {error ? (
         <Notice tone="danger">
-          {error instanceof Error ? error.message : "Unknown error."}
+          {/* i18n: server text — the API's own error message. */}
+          {error instanceof Error ? error.message : m["admin_search.unknown_error"]()}
         </Notice>
       ) : null}
 
       <Select
-        label="Vendor"
+        label={m["admin_search.field.vendor"]()}
         value={plugin}
         disabled={editing}
         onChange={(event) => {
@@ -498,9 +513,9 @@ function BackendDialog({
           setClearKey(false);
           setPlugin(event.target.value);
         }}
-        hint="The endpoint and the credential scheme are the vendor's own — configured here, not typed anywhere."
+        hint={m["admin_search.field.vendor_hint"]()}
       >
-        <option value="">Choose a vendor…</option>
+        <option value="">{m["admin_search.field.vendor_choose"]()}</option>
         {plugins.map((entry) => (
           <option key={entry.name} value={entry.name}>
             {entry.label}
@@ -510,10 +525,10 @@ function BackendDialog({
 
       {endpointOptions && (
         <Select
-          label="Endpoint"
+          label={m["admin_search.field.endpoint"]()}
           value={baseUrl}
           onChange={(event) => setBaseUrl(event.target.value)}
-          hint="Which of the vendor's documented hosts the searches go to."
+          hint={m["admin_search.field.endpoint_hint"]()}
         >
           {endpointOptions.map((entry) => (
             <option key={entry.url} value={entry.url}>
@@ -529,15 +544,19 @@ function BackendDialog({
           theatre: the gateway sends nothing to a vendor that never asked. */}
       {needsKey && (
         <Input
-          label="API key"
+          label={m["admin_search.field.api_key"]()}
           type="password"
           value={apiKey}
           onChange={(event) => setApiKey(event.target.value)}
-          placeholder={editing ? provider?.api_key_hint || "unset" : "paste the vendor's key"}
+          placeholder={
+            editing
+              ? provider?.api_key_hint || m["admin_search.field.api_key_placeholder_unset"]()
+              : m["admin_search.field.api_key_placeholder"]()
+          }
           hint={
             editing
-              ? "Leave empty to keep the stored key; tick to remove it."
-              : "Stored encrypted; shown back only as a hint."
+              ? m["admin_search.field.api_key_hint_edit"]()
+              : m["admin_search.field.api_key_hint_new"]()
           }
         />
       )}
@@ -552,7 +571,7 @@ function BackendDialog({
               if (event.target.checked) setApiKey("");
             }}
           />
-          <span>Remove the stored key</span>
+          <span>{m["admin_search.field.remove_key"]()}</span>
         </label>
       )}
     </Dialog>
@@ -583,11 +602,13 @@ function DeleteBackendDialog({
   return (
     <Dialog
       open={backend !== null}
-      title={`Delete ${backend?.name ?? "this backend"}`}
+      title={m["admin_search.delete.title"]({
+        backend: backend?.name ?? m["admin_search.delete.title_fallback"](),
+      })}
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
+          <Button onClick={onClose}>{m["admin_search.dialog.cancel"]()}</Button>
           <Button
             variant="danger"
             busy={del.isPending}
@@ -603,20 +624,21 @@ function DeleteBackendDialog({
                   toast?.add({
                     title:
                       who.length > 0
-                        ? `Backend deleted — ${who} lost ${
-                            result.cleared_groups.length === 1 ? "its" : "their"
-                          } unified-search policy`
-                        : "Backend deleted",
+                        ? m["admin_search.delete.toast_with_groups"]({
+                            count: result.cleared_groups.length,
+                            groups: who,
+                          })
+                        : m["admin_search.delete.toast_plain"](),
                     type: "success",
                   });
                   onClose();
                 },
                 onError: () =>
-                  toast?.add({ title: "Could not delete the backend", type: "error" }),
+                  toast?.add({ title: m["admin_search.delete.toast_failed"](), type: "error" }),
               })
             }
           >
-            Delete permanently
+            {m["admin_search.delete.confirm"]()}
           </Button>
         </>
       }
@@ -624,18 +646,18 @@ function DeleteBackendDialog({
       <div className={FORM}>
         {del.error ? (
           <Notice tone="danger">
-            {del.error instanceof Error ? del.error.message : "Unknown error."}
+            {/* i18n: server text — the API's own error message. */}
+            {del.error instanceof Error ? del.error.message : m["admin_search.unknown_error"]()}
           </Notice>
         ) : null}
         <p>
-          Removes the backend and its {tierCount} {tierCount === 1 ? "tier" : "tiers"} from the
-          gateway outright. Callers of <code className={CODE}>POST /v1/search/&#123;backend&#125;</code>{" "}
-          get "unknown backend" from the next request on, and groups searching through it lose
-          their unified-search policy. This cannot be undone.
+          <Message
+            message={m["admin_search.delete.body"]}
+            inputs={{ count: tierCount }}
+            markup={{ code: (children) => <code className={CODE}>{children}</code> }}
+          />
         </p>
-        <p className={MUTED}>
-          Recorded spend is unaffected: past searches keep their attribution in the ledger.
-        </p>
+        <p className={MUTED}>{m["admin_search.delete.spend_note"]()}</p>
       </div>
     </Dialog>
   );

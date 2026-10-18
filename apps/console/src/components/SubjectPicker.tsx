@@ -1,6 +1,7 @@
 import { Input, Select } from "@llmp/ui";
 import { useGroups, useModels, useProviders, useUsers } from "../lib/admin";
 import type { RedactionScope } from "../lib/types";
+import { m } from "../paraglide/messages.js";
 
 export interface SubjectPickerProps {
   scope: RedactionScope;
@@ -25,7 +26,7 @@ export function SubjectPicker({ scope, value, onChange }: SubjectPickerProps) {
     case "all":
       // The catch-all has one subject and it is every request, so there is
       // nothing to pick. Stated rather than rendered as an empty control.
-      return <p>Applies to every request.</p>;
+      return <p>{m["subject_picker.all_scope"]()}</p>;
     case "provider":
       return <ProviderSubject value={value} onChange={onChange} />;
     case "model":
@@ -37,11 +38,11 @@ export function SubjectPicker({ scope, value, onChange }: SubjectPickerProps) {
     case "api_key":
       return (
         <Input
-          label="API key"
+          label={m["subject_picker.api_key.label"]()}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          placeholder="key id"
-          hint="The key's id. Keys are not listed here."
+          placeholder={m["subject_picker.api_key.placeholder"]()}
+          hint={m["subject_picker.api_key.hint"]()}
         />
       );
   }
@@ -55,8 +56,8 @@ interface ChoiceProps {
 function ProviderSubject({ value, onChange }: ChoiceProps) {
   const providers = useProviders();
   return (
-    <Select label="Provider" value={value} onChange={(event) => onChange(event.target.value)}>
-      <option value="">Choose…</option>
+    <Select label={m["subject_picker.provider.label"]()} value={value} onChange={(event) => onChange(event.target.value)}>
+      <option value="">{m["subject_picker.choose"]()}</option>
       {(providers.data?.items ?? []).map((provider) => (
         <option key={provider.id} value={provider.id}>
           {provider.name}
@@ -69,8 +70,8 @@ function ProviderSubject({ value, onChange }: ChoiceProps) {
 function ModelSubject({ value, onChange }: ChoiceProps) {
   const models = useModels();
   return (
-    <Select label="Model" value={value} onChange={(event) => onChange(event.target.value)}>
-      <option value="">Choose…</option>
+    <Select label={m["subject_picker.model.label"]()} value={value} onChange={(event) => onChange(event.target.value)}>
+      <option value="">{m["subject_picker.choose"]()}</option>
       {(models.data?.items ?? []).map((model) => (
         <option key={model.id} value={model.id}>
           {model.name}
@@ -83,8 +84,8 @@ function ModelSubject({ value, onChange }: ChoiceProps) {
 function GroupSubject({ value, onChange }: ChoiceProps) {
   const groups = useGroups();
   return (
-    <Select label="Group" value={value} onChange={(event) => onChange(event.target.value)}>
-      <option value="">Choose…</option>
+    <Select label={m["subject_picker.group.label"]()} value={value} onChange={(event) => onChange(event.target.value)}>
+      <option value="">{m["subject_picker.choose"]()}</option>
       {(groups.data?.items ?? []).map((group) => (
         <option key={group.id} value={group.id}>
           {group.name}
@@ -97,8 +98,8 @@ function GroupSubject({ value, onChange }: ChoiceProps) {
 function UserSubject({ value, onChange }: ChoiceProps) {
   const users = useUsers();
   return (
-    <Select label="User" value={value} onChange={(event) => onChange(event.target.value)}>
-      <option value="">Choose…</option>
+    <Select label={m["subject_picker.user.label"]()} value={value} onChange={(event) => onChange(event.target.value)}>
+      <option value="">{m["subject_picker.choose"]()}</option>
       {(users.data?.items ?? []).map((user) => (
         <option key={user.id} value={user.id}>
           {user.email ?? user.display_name ?? user.subject}
@@ -108,22 +109,47 @@ function UserSubject({ value, onChange }: ChoiceProps) {
   );
 }
 
-/** The five scopes, in the order the API lists them. */
-export const SCOPES: { value: RedactionScope; label: string }[] = [
-  { value: "provider", label: "A provider" },
-  { value: "model", label: "A model" },
-  { value: "group", label: "A group" },
-  { value: "user", label: "A user" },
-  { value: "api_key", label: "An API key" },
+/**
+ * The five scopes, in the order the API lists them.
+ *
+ * Message functions rather than strings: a label resolved at import is frozen
+ * against the language the page happened to load in, and these are rendered
+ * inside sentences further down the screen.
+ */
+export const SCOPES: { value: RedactionScope; label: () => string }[] = [
+  { value: "provider", label: m["subject_picker.scope.provider"] },
+  { value: "model", label: m["subject_picker.scope.model"] },
+  { value: "group", label: m["subject_picker.scope.group"] },
+  { value: "user", label: m["subject_picker.scope.user"] },
+  { value: "api_key", label: m["subject_picker.scope.api_key"] },
 ];
 
+/** The bare noun for a scope, for the places that name one mid-sentence. */
 export function scopeNoun(scope: RedactionScope): string {
   return {
-    all: "Every request",
-    provider: "Provider",
-    model: "Model",
-    group: "Group",
-    user: "User",
-    api_key: "API key",
+    all: m["subject_picker.noun.all"](),
+    provider: m["subject_picker.noun.provider"](),
+    model: m["subject_picker.noun.model"](),
+    group: m["subject_picker.noun.group"](),
+    user: m["subject_picker.noun.user"](),
+    api_key: m["subject_picker.noun.api_key"](),
+  }[scope];
+}
+
+/**
+ * The same nouns in the case a sentence needs them in.
+ *
+ * Separate messages rather than `.toLowerCase()` on the noun: lower-casing is a
+ * rule about English, and a language whose nouns inflect wants the form that
+ * reads in the sentence rather than a smaller letter.
+ */
+export function scopeNounLower(scope: RedactionScope): string {
+  return {
+    all: m["subject_picker.noun_lower.all"](),
+    provider: m["subject_picker.noun_lower.provider"](),
+    model: m["subject_picker.noun_lower.model"](),
+    group: m["subject_picker.noun_lower.group"](),
+    user: m["subject_picker.noun_lower.user"](),
+    api_key: m["subject_picker.noun_lower.api_key"](),
   }[scope];
 }

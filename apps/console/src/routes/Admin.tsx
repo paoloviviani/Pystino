@@ -16,11 +16,16 @@ import { Link } from "react-router";
 
 import { PageHeader } from "../components/PageHeader";
 import { PAGE, SECTION_LINK, SECTIONS } from "../lib/layout";
+import { m } from "../paraglide/messages.js";
+
+/** A message function rather than a string: a string here is resolved once, at
+ *  import, and frozen against whichever language the page happened to load in. */
+type Message = () => string;
 
 interface Section {
   to: string;
-  title: string;
-  description: string;
+  title: Message;
+  description: Message;
 }
 
 // Same order as the header's admin nav (components/Shell.tsx), and Settings is
@@ -30,66 +35,62 @@ interface Section {
 const ADMIN_SECTIONS: Section[] = [
   {
     to: "/admin/reports",
-    title: "Usage",
-    description: "What the whole deployment spent, by group, person, model or day.",
+    title: m["admin.sections.usage.title"],
+    description: m["admin.sections.usage.description"],
   },
   {
     to: "/admin/quotas",
-    title: "Quotas",
-    description: "The ceilings, what they have consumed, and resetting one on the record.",
+    title: m["admin.sections.quotas.title"],
+    description: m["admin.sections.quotas.description"],
   },
   {
     to: "/admin/redaction",
-    title: "Redaction",
-    description: "What is stripped from prompts before a provider sees them, and for whom.",
+    title: m["admin.sections.redaction.title"],
+    description: m["admin.sections.redaction.description"],
   },
   {
     to: "/admin/providers",
-    title: "Providers",
-    description: "Where requests go, the credentials to get there, and what each reports.",
+    title: m["admin.sections.providers.title"],
+    description: m["admin.sections.providers.description"],
   },
   {
     to: "/admin/models",
-    title: "Models",
-    description: "What is on offer, who may use it, and what it costs per token.",
+    title: m["admin.sections.models.title"],
+    description: m["admin.sections.models.description"],
   },
   {
     to: "/admin/users",
-    title: "Users",
-    description: "People, their accounts, and the keys they hold.",
+    title: m["admin.sections.users.title"],
+    description: m["admin.sections.users.description"],
   },
   {
     to: "/admin/groups",
-    title: "Groups",
-    description: "Who belongs together, and what each group may use.",
+    title: m["admin.sections.groups.title"],
+    description: m["admin.sections.groups.description"],
   },
   {
     to: "/admin/search",
-    title: "Web search",
-    description:
-      "The search backends, who may run them, and how many searches each group has spent.",
+    title: m["admin.sections.web_search.title"],
+    description: m["admin.sections.web_search.description"],
   },
   {
     to: "/admin/settings",
-    title: "Settings",
-    description: "The mail server, the identity providers, and who may become a user.",
+    title: m["admin.sections.settings.title"],
+    description: m["admin.sections.settings.description"],
   },
 ];
 
 export function Admin() {
   return (
     <div className={PAGE}>
-      <PageHeader
-        title="Administration"
-        subtitle="Everything that applies to other people. Your own account is under Overview."
-      />
+      <PageHeader title={m["admin.heading"]()} subtitle={m["admin.subtitle"]()} />
 
       <div className={SECTIONS}>
         {ADMIN_SECTIONS.map((section) => (
           // The whole card is the target. A title-only link in a card of text
           // gives a mouse a strip to hit and everything else to miss.
           <Link key={section.to} to={section.to} className={SECTION_LINK}>
-            <Card title={section.title} description={section.description} />
+            <Card title={section.title()} description={section.description()} />
           </Link>
         ))}
       </div>

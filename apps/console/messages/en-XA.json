@@ -1,0 +1,2531 @@
+{
+  "$schema": "https://inlang.com/schema/inlang-message-format",
+  "not_found.title": "[Ńó śúćȟ þáǧé]",
+  "not_found.body": "[Ńó śúćȟ áďďŕéśś íń ťȟé ćóńśóľé. {#link}Ɓáćķ ťó ýóúŕ úśáǧé{/link}.]",
+  "login.heading": "[Śíǧń íń]",
+  "login.loading_page": "[Ĺóáďíńǧ ťȟé śíǧń-íń þáǧé]",
+  "login.redirecting": "[Ŕéďíŕéćťíńǧ ťó śíǧń íń]",
+  "login.provider_button": "[Śíǧń íń ŵíťȟ {provider}]",
+  "login.gateway_unreachable.title": "[Ťȟé ćóńśóľé ćóúľď ńóť ŕéáćȟ ťȟé ǧáťéŵáý]",
+  "login.gateway_unreachable.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "login.no_provider.title": "[Ńó íďéńťíťý þŕóǚíďéŕ íś éńáƀľéď]",
+  "login.no_provider.body": "[Éǚéŕýóńé śíǧńś íń ťȟŕóúǧȟ áń ÓþéńÍĎ Ćóńńéćť þŕóǚíďéŕ, áńď ťȟíś ďéþľóýḿéńť ȟáś ńóńé éńáƀľéď. Áń óþéŕáťóŕ ćáń áďď óńé íń ťȟé ćóńśóľé áƒťéŕ {#code}þýśťíńó áďḿíń ǧŕáńť <éḿáíľ>{/code}, óŕ śéť ǦÁŤÉŴÁÝ_ÓÍĎĆ__* áńď ŕéśťáŕť.]",
+  "require_admin.title": "[Áďḿíńíśťŕáťóŕś óńľý]",
+  "require_admin.body": "[Ťȟíś śéćťíóń ńééďś ťȟé áďḿíńíśťŕáťóŕ ŕóľé. Áśķ ŵȟóéǚéŕ ḿáńáǧéś íť íń ťȟé íďéńťíťý þŕóǚíďéŕ.]",
+  "opencode_setup.intro": "[Úśé áń ÁÞÍ ķéý ŵíťȟ ťȟé óþéńćóďé ćóďíńǧ áǧéńť.]",
+  "opencode_setup.command_aria": "[Ćóḿḿáńď ťó ćóńƒíǧúŕé óþéńćóďé]",
+  "opencode_setup.copy": "[Ćóþý]",
+  "opencode_setup.copied": "[Ćóþíéď]",
+  "opencode_setup.clipboard_unavailable": "[Ćóúľď ńóť ŕéáćȟ ťȟé ćľíþƀóáŕď. Śéľéćť ťȟé ćóḿḿáńď áńď ćóþý íť ƀý ȟáńď.]",
+  "opencode_setup.detail": "[Íť áśķś ƒóŕ ťȟé ķéý, śȟóŵś ŵȟáť íť ŵíľľ ćȟáńǧé áńď áśķś ƀéƒóŕé ŵŕíťíńǧ. {#link}Ȟóŵ íť ŵóŕķś{/link}]",
+  "admin.heading": "[Áďḿíńíśťŕáťíóń]",
+  "admin.subtitle": "[Éǚéŕýťȟíńǧ ťȟáť áþþľíéś ťó óťȟéŕ þéóþľé. Ýóúŕ óŵń áććóúńť íś úńďéŕ Óǚéŕǚíéŵ.]",
+  "admin.sections.usage.title": "[Úśáǧé]",
+  "admin.sections.usage.description": "[Ŵȟáť ťȟé ŵȟóľé ďéþľóýḿéńť śþéńť, ƀý ǧŕóúþ, þéŕśóń, ḿóďéľ óŕ ďáý.]",
+  "admin.sections.quotas.title": "[Ǫúóťáś]",
+  "admin.sections.quotas.description": "[Ťȟé ćéíľíńǧś, ŵȟáť ťȟéý ȟáǚé ćóńśúḿéď, áńď ŕéśéťťíńǧ óńé óń ťȟé ŕéćóŕď.]",
+  "admin.sections.redaction.title": "[Ŕéďáćťíóń]",
+  "admin.sections.redaction.description": "[Ŵȟáť íś śťŕíþþéď ƒŕóḿ þŕóḿþťś ƀéƒóŕé á þŕóǚíďéŕ śééś ťȟéḿ, áńď ƒóŕ ŵȟóḿ.]",
+  "admin.sections.providers.title": "[Þŕóǚíďéŕś]",
+  "admin.sections.providers.description": "[Ŵȟéŕé ŕéǫúéśťś ǧó, ťȟé ćŕéďéńťíáľś ťó ǧéť ťȟéŕé, áńď ŵȟáť éáćȟ ŕéþóŕťś.]",
+  "admin.sections.models.title": "[Ḿóďéľś]",
+  "admin.sections.models.description": "[Ŵȟáť íś óń óƒƒéŕ, ŵȟó ḿáý úśé íť, áńď ŵȟáť íť ćóśťś þéŕ ťóķéń.]",
+  "admin.sections.users.title": "[Úśéŕś]",
+  "admin.sections.users.description": "[Þéóþľé, ťȟéíŕ áććóúńťś, áńď ťȟé ķéýś ťȟéý ȟóľď.]",
+  "admin.sections.groups.title": "[Ǧŕóúþś]",
+  "admin.sections.groups.description": "[Ŵȟó ƀéľóńǧś ťóǧéťȟéŕ, áńď ŵȟáť éáćȟ ǧŕóúþ ḿáý úśé.]",
+  "admin.sections.web_search.title": "[Ŵéƀ śéáŕćȟ]",
+  "admin.sections.web_search.description": "[Ťȟé śéáŕćȟ ƀáćķéńďś, ŵȟó ḿáý ŕúń ťȟéḿ, áńď ȟóŵ ḿáńý śéáŕćȟéś éáćȟ ǧŕóúþ ȟáś śþéńť.]",
+  "admin.sections.settings.title": "[Śéťťíńǧś]",
+  "admin.sections.settings.description": "[Ťȟé ḿáíľ śéŕǚéŕ, ťȟé íďéńťíťý þŕóǚíďéŕś, áńď ŵȟó ḿáý ƀéćóḿé á úśéŕ.]",
+  "disclosures.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ńóťé áƀóúť ťȟéśé ƒíǧúŕéś]",
+        "countPlural=other": "[{n} ńóťéś áƀóúť ťȟéśé ƒíǧúŕéś]"
+      }
+    }
+  ],
+  "subject_picker.all_scope": "[Áþþľíéś ťó éǚéŕý ŕéǫúéśť.]",
+  "subject_picker.choose": "[Ćȟóóśé…]",
+  "subject_picker.api_key.label": "[ÁÞÍ ķéý]",
+  "subject_picker.api_key.placeholder": "[ķéý íď]",
+  "subject_picker.api_key.hint": "[Ťȟé ķéý'ś íď. Ķéýś áŕé ńóť ľíśťéď ȟéŕé.]",
+  "subject_picker.provider.label": "[Þŕóǚíďéŕ]",
+  "subject_picker.model.label": "[Ḿóďéľ]",
+  "subject_picker.group.label": "[Ǧŕóúþ]",
+  "subject_picker.user.label": "[Úśéŕ]",
+  "subject_picker.scope.provider": "[Á þŕóǚíďéŕ]",
+  "subject_picker.scope.model": "[Á ḿóďéľ]",
+  "subject_picker.scope.group": "[Á ǧŕóúþ]",
+  "subject_picker.scope.user": "[Á úśéŕ]",
+  "subject_picker.scope.api_key": "[Áń ÁÞÍ ķéý]",
+  "subject_picker.noun.all": "[Éǚéŕý ŕéǫúéśť]",
+  "subject_picker.noun.provider": "[Þŕóǚíďéŕ]",
+  "subject_picker.noun.model": "[Ḿóďéľ]",
+  "subject_picker.noun.group": "[Ǧŕóúþ]",
+  "subject_picker.noun.user": "[Úśéŕ]",
+  "subject_picker.noun.api_key": "[ÁÞÍ ķéý]",
+  "subject_picker.noun_lower.all": "[éǚéŕý ŕéǫúéśť]",
+  "subject_picker.noun_lower.provider": "[þŕóǚíďéŕ]",
+  "subject_picker.noun_lower.model": "[ḿóďéľ]",
+  "subject_picker.noun_lower.group": "[ǧŕóúþ]",
+  "subject_picker.noun_lower.user": "[úśéŕ]",
+  "subject_picker.noun_lower.api_key": "[ÁÞÍ ķéý]",
+  "capabilities.not_stated": "[ńóť śťáťéď]",
+  "capability_picker.other_placeholder": "[ćóḿḿá śéþáŕáťéď]",
+  "capability_picker.gloss.image": "[ǚíśíóń]",
+  "capability_picker.gloss.tools": "[ƒúńćťíóń ćáľľíńǧ]",
+  "capability_picker.gloss.json_mode": "[śťŕúćťúŕéď óúťþúť]",
+  "admin_reports.title": "[Ŕéþóŕťś]",
+  "admin_reports.subtitle": "[Śþéńď óǚéŕ á ćáľéńďáŕ þéŕíóď, ƒóŕ ćȟáŕǧéƀáćķ.]",
+  "admin_reports.filters": "[Ƒíľťéŕś]",
+  "admin_reports.filter.period": "[Þéŕíóď]",
+  "admin_reports.filter.breakdown": "[Ɓŕéáķďóŵń]",
+  "admin_reports.filter.group": "[Ǧŕóúþ]",
+  "admin_reports.filter.model": "[Ḿóďéľ]",
+  "admin_reports.filter.all_groups": "[Áľľ ǧŕóúþś]",
+  "admin_reports.filter.all_models": "[Áľľ ḿóďéľś]",
+  "admin_reports.breakdown.group": "[Ɓý ǧŕóúþ]",
+  "admin_reports.breakdown.user": "[Ɓý úśéŕ]",
+  "admin_reports.breakdown.model": "[Ɓý ḿóďéľ]",
+  "admin_reports.breakdown.api_key": "[Ɓý ÁÞÍ ķéý]",
+  "admin_reports.breakdown.day": "[Ɓý ďáý]",
+  "admin_reports.breakdown.total": "[Ťóťáľ óńľý]",
+  "admin_reports.column.requests": "[Ŕéǫúéśťś]",
+  "admin_reports.column.tokens": "[Ťóķéńś]",
+  "admin_reports.column.images": "[Íḿáǧéś]",
+  "admin_reports.column.cost": "[Śþéńď]",
+  "admin_reports.running": "[Ŕúńńíńǧ ťȟé ŕéþóŕť]",
+  "admin_reports.error.title": "[Ćóúľď ńóť ŕúń ťȟé ŕéþóŕť]",
+  "admin_reports.error.unknown": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_reports.stat.spend": "[Śþéńď · {period}]",
+  "admin_reports.stat.period_detail": "[{timezone} ćáľéńďáŕ þéŕíóď]",
+  "admin_reports.stat.requests": "[Ŕéǫúéśťś]",
+  "admin_reports.stat.tokens_detail": "[{tokens: number} ťóķéńś]",
+  "admin_reports.stat.tokens_and_images_detail": "[{tokens: number} ťóķéńś, {images: number} íḿáǧéś]",
+  "admin_reports.stat.measured": "[Ḿéáśúŕéď]",
+  "admin_reports.stat.measured_detail.complete": "[éẋáćť úśáǧé ƒŕóḿ ťȟé þŕóǚíďéŕ]",
+  "admin_reports.stat.measured_detail.incomplete": "[ťȟé ŕéśť íś éśťíḿáťéď óŕ ḿíśśíńǧ]",
+  "admin_reports.breakdown_card": "[Ɓŕéáķďóŵń]",
+  "admin_reports.row_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ŕóŵ]",
+        "countPlural=other": "[{n} ŕóŵś]"
+      }
+    }
+  ],
+  "admin_reports.summary_detail": "[{period} · {breakdown}]",
+  "admin_reports.export_csv": "[Éẋþóŕť ĆŚǙ]",
+  "admin_reports.empty": "[Ńó úśáǧé íń ťȟíś þéŕíóď.]",
+  "admin_reports.caption": "[Śþéńď ƒóŕ {period}, {breakdown}.]",
+  "admin_reports.caption_period_fallback": "[ťȟé þéŕíóď]",
+  "admin_reports.heading.group": "[Ǧŕóúþ]",
+  "admin_reports.heading.user": "[Úśéŕ]",
+  "admin_reports.heading.model": "[Ḿóďéľ]",
+  "admin_reports.heading.api_key": "[ÁÞÍ ķéý]",
+  "admin_reports.heading.day": "[Ďáý]",
+  "admin_reports.heading.total": "[Áľľ]",
+  "admin_reports.heading.other": "[Íťéḿ]",
+  "admin_reports.heading_lower.group": "[ǧŕóúþ]",
+  "admin_reports.heading_lower.user": "[úśéŕ]",
+  "admin_reports.heading_lower.model": "[ḿóďéľ]",
+  "admin_reports.heading_lower.api_key": "[ÁÞÍ ķéý]",
+  "admin_reports.heading_lower.day": "[ďáý]",
+  "admin_reports.heading_lower.total": "[áľľ]",
+  "admin_reports.heading_lower.other": "[íťéḿ]",
+  "admin_reports.stat.measured_value": [
+    {
+      "declarations": [
+        "input percent"
+      ],
+      "match": {
+        "*": "[{percent}%]"
+      }
+    }
+  ],
+  "reports.title": "[Ýóúŕ úśáǧé]",
+  "reports.subtitle": "[Ŵȟáť ýóú śþéńť, áńď ŵȟáť ťȟé ƒíǧúŕéś ŕéśť óń.]",
+  "reports.filter.period": "[Þéŕíóď]",
+  "reports.filter.breakdown": "[Ɓŕéáķďóŵń]",
+  "reports.breakdown.model": "[Ɓý ḿóďéľ]",
+  "reports.breakdown.api_key": "[Ɓý ÁÞÍ ķéý]",
+  "reports.breakdown.day": "[Ɓý ďáý]",
+  "reports.breakdown.total": "[Ťóťáľ óńľý]",
+  "reports.column.requests": "[Ŕéǫúéśťś]",
+  "reports.column.tokens": "[Ťóķéńś]",
+  "reports.column.images": "[Íḿáǧéś]",
+  "reports.column.searches": "[Śéáŕćȟéś]",
+  "reports.column.own_searches": "[Óŵń śéáŕćȟéś]",
+  "reports.column.cost": "[Śþéńď]",
+  "reports.running": "[Ŕúńńíńǧ ťȟé ŕéþóŕť]",
+  "reports.error.title": "[Ćóúľď ńóť ŕúń ťȟé ŕéþóŕť]",
+  "reports.error.unknown": "[Úńķńóŵń éŕŕóŕ.]",
+  "reports.stat.spend": "[Śþéńď · {period}]",
+  "reports.stat.period_detail": "[{timezone} ćáľéńďáŕ þéŕíóď]",
+  "reports.stat.requests": "[Ŕéǫúéśťś]",
+  "reports.stat.tokens_detail": [
+    {
+      "declarations": [
+        "input tokens"
+      ],
+      "match": {
+        "*": "[{tokens: number} ťóķéńś]"
+      }
+    }
+  ],
+  "reports.stat.measured": "[Ḿéáśúŕéď]",
+  "reports.stat.measured_value": [
+    {
+      "declarations": [
+        "input percent"
+      ],
+      "match": {
+        "*": "[{percent}%]"
+      }
+    }
+  ],
+  "reports.stat.measured_detail.complete": "[éẋáćť úśáǧé ƒŕóḿ ťȟé þŕóǚíďéŕ]",
+  "reports.stat.measured_detail.incomplete": "[ťȟé ŕéśť íś éśťíḿáťéď óŕ ḿíśśíńǧ]",
+  "reports.breakdown_card": "[Ɓŕéáķďóŵń]",
+  "reports.row_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ŕóŵ]",
+        "countPlural=other": "[{n} ŕóŵś]"
+      }
+    }
+  ],
+  "reports.summary_detail": [
+    {
+      "declarations": [
+        "input period"
+      ],
+      "match": {
+        "*": "[{period} · {breakdown}]"
+      }
+    }
+  ],
+  "reports.export_csv": "[Éẋþóŕť ĆŚǙ]",
+  "reports.empty": "[Ńó úśáǧé íń ťȟíś þéŕíóď.]",
+  "reports.caption": "[Ýóúŕ śþéńď ƒóŕ {period}, {breakdown}.]",
+  "reports.caption_period_fallback": "[ťȟé þéŕíóď]",
+  "reports.heading.model": "[Ḿóďéľ]",
+  "reports.heading.api_key": "[ÁÞÍ ķéý]",
+  "reports.heading.day": "[Ďáý]",
+  "reports.heading.total": "[Áľľ]",
+  "reports.heading.other": "[Ĺáƀéľ]",
+  "reports.heading_lower.model": "[ḿóďéľ]",
+  "reports.heading_lower.api_key": "[ÁÞÍ ķéý]",
+  "reports.heading_lower.day": "[ďáý]",
+  "reports.heading_lower.total": "[áľľ]",
+  "reports.heading_lower.other": "[ľáƀéľ]",
+  "redaction_rule.title.rule": "[Ŕúľé · {subject}]",
+  "redaction_rule.title.clone": "[Ćľóńé ŕúľé]",
+  "redaction_rule.title.new": "[Ńéŵ ŕúľé]",
+  "redaction_rule.subtitle": "[Ťȟé śťŕíćťéśť áþþľíćáƀľé ŕúľé ŵíńś, śó áďďíńǧ óńé ćáń óńľý þŕóťéćť ḿóŕé.]",
+  "redaction_rule.back": "[Ɓáćķ]",
+  "redaction_rule.loading": "[Ĺóáďíńǧ ťȟé ŕúľé]",
+  "redaction_rule.missing.title": "[Ńó śúćȟ ŕúľé]",
+  "redaction_rule.missing.body": "[Íť ḿáý ȟáǚé ƀééń ďéľéťéď. {#link}Ɓáćķ ťó ŕéďáćťíóń{/link}]",
+  "redaction_rule.clone_notice.title": "[Ćľóńíńǧ “{name}”]",
+  "redaction_rule.clone_notice.unnamed": "[úńńáḿéď ŕúľé]",
+  "redaction_rule.clone_notice.body": "[Ťȟé þóľíćý áńď ŕéáśóń áŕé ćóþíéď. Á ćľóńé śťáŕťś íńáćťíǚé — ćȟóóśé íťś śúƀĵéćť, ŕéǚíéŵ íť, áńď áćťíǚáťé íť ƒŕóḿ ťȟé ŕúľéś ľíśť.]",
+  "redaction_rule.error.save_title": "[Ćóúľď ńóť śáǚé ťȟé ŕúľé]",
+  "redaction_rule.error.unknown": "[Úńķńóŵń éŕŕóŕ.]",
+  "redaction_rule.subject_card": "[Śúƀĵéćť]",
+  "redaction_rule.subject_missing.title": "[Ťȟíś ŕúľé'ś śúƀĵéćť ńó ľóńǧéŕ éẋíśťś]",
+  "redaction_rule.subject_missing.body": "[Íť ḿáťćȟéś ńó ŕéǫúéśť. Ćȟóóśé áńóťȟéŕ {scope} ƀéľóŵ, óŕ śćóþé íť ťó éǚéŕý ŕéǫúéśť.]",
+  "redaction_rule.scope.label": "[Śćóþé]",
+  "redaction_rule.scope.choose": "[Ćȟóóśé á śúƀĵéćť…]",
+  "redaction_rule.name_card": "[Ńáḿé áńď ŕéáśóń]",
+  "redaction_rule.name.label": "[Ŕúľé ńáḿé]",
+  "redaction_rule.reason.label": "[Ŕéáśóń (óþťíóńáľ)]",
+  "redaction_rule.submit.save": "[Śáǚé ŕúľé]",
+  "redaction_rule.submit.create": "[Ćŕéáťé ŕúľé]",
+  "redaction_rule.toast.saved": "[Ŕúľé śáǚéď.]",
+  "redaction_rule.toast.created": "[Ŕúľé ćŕéáťéď.]",
+  "redaction_rule.toast.cloned": "[Ćľóńé ćŕéáťéď — íť śťáŕťś íńáćťíǚé.]",
+  "identity_directory.run.dry_run": "[ďŕý ŕúń]",
+  "identity_directory.run.counts": [
+    {
+      "declarations": [
+        "input seen"
+      ],
+      "match": {
+        "*": "[śééń {seen: number} · ćŕéáťéď {created: number} · ľíńķéď {linked: number} · ǧŕóúþś ćȟáńǧéď {updated: number} · ďéáćťíǚáťéď {deactivated: number} · ŕéáćťíǚáťéď {reactivated: number}]"
+      }
+    }
+  ],
+  "identity_directory.run.change_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ćȟáńǧé]",
+        "countPlural=other": "[{n} ćȟáńǧéś]"
+      }
+    }
+  ],
+  "identity_directory.title": "[Úśéŕ śýńć — {provider}]",
+  "identity_directory.close": "[Ćľóśé]",
+  "identity_directory.intro": "[Óþťíóńáľ. Ķééþś ťȟíś ćóńśóľé'ś úśéŕ ľíśť íń śťéþ ŵíťȟ ýóúŕ íďéńťíťý þŕóǚíďéŕ: þéóþľé éẋíśť, ŵíťȟ ťȟéíŕ ǧŕóúþś áńď þŕé-áśśíǧńéď áććéśś, ƀéƒóŕé ťȟéíŕ ƒíŕśť śíǧń-íń, áńď áŕé ďéáćťíǚáťéď ŵȟéń ŕéḿóǚéď ťȟéŕé. Ýóú ďóń'ť ńééď ťȟíś ťó áďď úśéŕś — þéóþľé áþþéáŕ áť ťȟéíŕ ƒíŕśť śíǧń-íń.]",
+  "identity_directory.just_in_time.title": "[Ĵúśť-íń-ťíḿé óńľý]",
+  "identity_directory.just_in_time.body": "[Á {kind} þŕóǚíďéŕ óƒƒéŕś ńó ŵáý ťó ľíśť íťś úśéŕś: ÓÍĎĆ íťśéľƒ ȟáś ńó ľíśťíńǧ ÁÞÍ. Þéóþľé áþþéáŕ ȟéŕé ŵȟéń ťȟéý ƒíŕśť śíǧń íń.]",
+  "identity_directory.adapter.label": "[Ȟóŵ ťȟíś ďíŕéćťóŕý ťéľľś úś áƀóúť þéóþľé]",
+  "identity_directory.adapter.none": "[Óƒƒ (ďéƒáúľť) — þéóþľé áþþéáŕ áť ťȟéíŕ ƒíŕśť śíǧń-íń]",
+  "identity_directory.adapter.authelia_file": "[Áúťȟéľíá úśéŕś ƒíľé (ńóť ńééďéď: ťȟé Úśéŕś þáǧé ḿáńáǧéś ƀúńďľéď áććóúńťś)]",
+  "identity_directory.adapter.keycloak_admin": "[Ķéýćľóáķ áďḿíń ÁÞÍ — þúľľéď óń á śćȟéďúľé (śéŕǚíćé-áććóúńť ćľíéńť)]",
+  "identity_directory.adapter.scim": "[ŚĆÍḾ 2.0 — ýóúŕ íďéńťíťý þŕóǚíďéŕ þúśȟéś ćȟáńǧéś ȟéŕé]",
+  "identity_directory.pull_every.label": "[Þúľľ éǚéŕý (ḿíńúťéś)]",
+  "identity_directory.pull_every.hint": "[0 ḿéáńś óńľý ŵȟéń ŕúń ƒŕóḿ ȟéŕé.]",
+  "identity_directory.save": "[Śáǚé]",
+  "identity_directory.keycloak.detail": "[Śéŕǚíćé-áććóúńť ćľíéńť (ǚíéŵ-úśéŕś, ǫúéŕý-ǧŕóúþś)]",
+  "identity_directory.keycloak.client_id": "[Ćľíéńť ÍĎ]",
+  "identity_directory.keycloak.client_secret": "[Ćľíéńť śéćŕéť]",
+  "identity_directory.keycloak.client_secret_hint": "[Śťóŕéď éńćŕýþťéď, ńéǚéŕ śȟóŵń áǧáíń. Śáǚíńǧ íť ḿáķéś ťȟé ńéẋť ŕúń á ďŕý ŕúń.]",
+  "identity_directory.keycloak.save": "[Śáǚé ćŕéďéńťíáľś]",
+  "identity_directory.keycloak.saved": "[Ćŕéďéńťíáľś śáǚéď]",
+  "identity_directory.scim.detail": "[ŚĆÍḾ éńďþóíńť áńď ťóķéń]",
+  "identity_directory.scim.body": "[Ǧíǚé ťȟé íďéńťíťý þŕóǚíďéŕ'ś þŕóǚíśíóńíńǧ śéťťíńǧś ťȟíś éńďþóíńť áńď á ťóķéń. Ḿáþ ťȟé þéŕśóń'ś óƀĵéćť íď ťó {#code}éẋťéŕńáľÍď{/code} śó áććóúńťś ćáń éẋíśť ƀéƒóŕé ťȟéíŕ ƒíŕśť śíǧń-íń.]",
+  "identity_directory.scim.once_title": "[Śȟóŵń óńćé — ćóþý íť ńóŵ]",
+  "identity_directory.scim.generate": "[Ǧéńéŕáťé ťóķéń (ŕéþľáćéś ťȟé þŕéǚíóúś óńé)]",
+  "identity_directory.runs.detail": "[Ŕúńś]",
+  "identity_directory.runs.first_run_title": "[Ťȟé ƒíŕśť ŕúń íś á ďŕý ŕúń]",
+  "identity_directory.runs.first_run_body": "[Ńóťȟíńǧ ćȟáńǧéś úńťíľ ýóú ȟáǚé ľóóķéď áť ŵȟáť ťȟé áďáþťéŕ ŵóúľď ďó áńď ćóńƒíŕḿéď íť. Á ŕúń ťȟáť ŵóúľď ďéáćťíǚáťé ḿóŕé ťȟáń ḿáẋ(5, 10%) óƒ ťȟíś ďíŕéćťóŕý'ś áććóúńťś áľŵáýś śťóþś ƒóŕ ćóńƒíŕḿáťíóń.]",
+  "identity_directory.runs.test": "[Ťéśť ćóńńéćťíóń]",
+  "identity_directory.runs.test_failed": "[Ťéśť ƒáíľéď]",
+  "identity_directory.runs.sees": [
+    {
+      "declarations": [
+        "input people"
+      ],
+      "match": {
+        "*": "[Ťȟé áďáþťéŕ śééś {people: number} þéóþľé]"
+      }
+    }
+  ],
+  "identity_directory.runs.dry_run": "[Ďŕý ŕúń]",
+  "identity_directory.runs.confirm": "[Ćóńƒíŕḿ áńď éńáƀľé]",
+  "identity_directory.runs.run_now": "[Ŕúń ńóŵ]",
+  "identity_directory.runs.apply_anyway": "[Áþþľý áńýŵáý ({deactivations: number} ďéáćťíǚáťíóńś)]",
+  "identity_directory.runs.loading": "[Ĺóáďíńǧ ŕúńś]",
+  "identity_directory.settings_saved": "[Śýńć śéťťíńǧś śáǚéď]",
+  "identity_directory.save_failed": "[Ćóúľď ńóť śáǚé]",
+  "identity_directory.pending.detail": "[Ńóť śíǧńéď íń ýéť]",
+  "identity_directory.pending.all_accounted": "[Éǚéŕýóńé ťȟé ďíŕéćťóŕý ľíśťś ȟáś áń áććóúńť.]",
+  "identity_directory.pending.groups_label": "[Ǧŕóúþś áť ƒíŕśť śíǧń-íń]",
+  "admin_identity.join_mode.open.label": "[Óþéń]",
+  "admin_identity.join_mode.open.hint": "[Áńýóńé ŵȟó śíǧńś íń ťȟŕóúǧȟ ťȟé íďéńťíťý þŕóǚíďéŕ ǧéťś áń áćťíǚé áććóúńť áť óńćé.]",
+  "admin_identity.join_mode.approval.label": "[Áþþŕóǚáľ]",
+  "admin_identity.join_mode.approval.hint": "[Á ƒíŕśť-ťíḿé śíǧń-íń ćŕéáťéś á ďíśáƀľéď áććóúńť íń ťȟé Úśéŕś þáǧé'ś Áŵáíťíńǧ-áþþŕóǚáľ ǫúéúé; ýóú éńáƀľé ťȟé þéóþľé ýóú ŵáńť.]",
+  "admin_identity.join_mode.invite.label": "[Íńǚíťé]",
+  "admin_identity.join_mode.invite.hint": "[Óńľý þéóþľé ýóú íńǚíťéď (óŕ á ďíŕéćťóŕý þúśȟéď) ćáń śíǧń íń. Éǚéŕýóńé éľśé íś ŕéƒúśéď.]",
+  "admin_identity.join_mode.group.label": "[Ǧŕóúþ]",
+  "admin_identity.join_mode.group.hint": "[Óńľý ḿéḿƀéŕś óƒ ťȟé ŕéǫúíŕéď ǧŕóúþś ḿáý śíǧń íń — ćȟéćķéď áť éǚéŕý śíǧń-íń áńď éǚéŕý ÁÞÍ ćáľľ.]",
+  "admin_identity.toast.join_mode_updated": "[Ĵóíń ḿóďé úþďáťéď]",
+  "admin_identity.toast.save_failed": "[Ćóúľď ńóť śáǚé]",
+  "admin_identity.toast.preview_failed": "[Ćóúľď ńóť þŕéǚíéŵ ťȟé ćȟáńǧé]",
+  "admin_identity.loading": "[Ĺóáďíńǧ ťȟé íďéńťíťý þóľíćý]",
+  "admin_identity.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé íďéńťíťý þóľíćý]",
+  "admin_identity.load_error.unknown": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_identity.source.here": "[śéť ȟéŕé]",
+  "admin_identity.source.env": "[śéť íń .éńǚ]",
+  "admin_identity.who_may_join": "[Ŵȟó ḿáý ĵóíń]",
+  "admin_identity.join_mode_note": "[Ĵóíń ḿóďé {source}. Áďḿíńíśťŕáťóŕś áŕé ńéǚéŕ ŕéƒúśéď ƀý ťȟíś ǧáťé, śó á ŵŕóńǧ ǧŕóúþ ćáńńóť ľóćķ ýóú óúť.]",
+  "admin_identity.needs_groups.title": "[Þíćķ áť ľéáśť óńé ŕéǫúíŕéď ǧŕóúþ ƒíŕśť]",
+  "admin_identity.needs_groups.body": "[Á ǧŕóúþ ǧáťé ŵíťȟ ńó ǧŕóúþś ŕéƒúśéś éǚéŕýóńé ŵȟó íś ńóť áń áďḿíńíśťŕáťóŕ — íńćľúďíńǧ ťȟé áććóúńť ťȟáť ŵóúľď ƒíẋ íť.]",
+  "admin_identity.required_groups": "[Ŕéǫúíŕéď ǧŕóúþś]",
+  "admin_identity.group.unmapped": "[Ńó ÍďÞ ǧŕóúþ ḿáþś ťó ťȟíś: óńľý ḿéḿƀéŕś áďďéď ȟéŕé óŕ ƀý ŚĆÍḾ ćóúńť.]",
+  "admin_identity.group.none": "[Ńó ǧŕóúþś ýéť. Áń íďéńťíťý þŕóǚíďéŕ'ś ńáḿé ḿúśť ƒíŕśť ƀé ḿáþþéď óń ťȟé Ǧŕóúþś þáǧé.]",
+  "admin_identity.group.local_note": "[Ĺóćáľ ǧŕóúþ ńáḿéś. Ŕéǫúíŕéď ǧŕóúþś {source}.]",
+  "admin_identity.save_groups": "[Śáǚé áććéśś ǧŕóúþś]",
+  "admin_identity.fallback.label": "[Śóḿéóńé ŵíťȟóúť á ŕéǫúíŕéď ǧŕóúþ]",
+  "admin_identity.fallback.hint.refuse": "[Ťȟéý áŕé ŕéƒúśéď áńď ťóľď ťó áśķ áń áďḿíńíśťŕáťóŕ.]",
+  "admin_identity.fallback.hint.approval": "[Ťȟéíŕ áććóúńť íś ćŕéáťéď ďíśáƀľéď, ŵáíťíńǧ íń ťȟé áþþŕóǚáľ ǫúéúé.]",
+  "admin_identity.fallback.refuse": "[Ŕéƒúśé ťȟéḿ]",
+  "admin_identity.fallback.approval": "[Ȟóľď ťȟéḿ ƒóŕ áþþŕóǚáľ]",
+  "admin_identity.preview.title": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} þéŕśóń ŵíľľ ľóśé áććéśś áť ťȟéíŕ ńéẋť ŕéǫúéśť]",
+        "countPlural=other": "[{n} þéóþľé ŵíľľ ľóśé áććéśś áť ťȟéíŕ ńéẋť ŕéǫúéśť]"
+      }
+    }
+  ],
+  "admin_identity.preview.exempt": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} áďḿíńíśťŕáťóŕ íś éẋéḿþť.]",
+        "countPlural=other": "[{n} áďḿíńíśťŕáťóŕś áŕé éẋéḿþť.]"
+      }
+    }
+  ],
+  "admin_identity.preview.save_anyway": "[Śáǚé áńýŵáý]",
+  "admin_identity.preview.go_back": "[Ǧó ƀáćķ]",
+  "shell.nav.overview": "[Óǚéŕǚíéŵ]",
+  "shell.nav.your_usage": "[Ýóúŕ úśáǧé]",
+  "shell.nav.summary": "[Śúḿḿáŕý]",
+  "shell.nav.usage": "[Úśáǧé]",
+  "shell.nav.quotas": "[Ǫúóťáś]",
+  "shell.nav.redaction": "[Ŕéďáćťíóń]",
+  "shell.nav.providers": "[Þŕóǚíďéŕś]",
+  "shell.nav.web_search": "[Ŵéƀ śéáŕćȟ]",
+  "shell.nav.models": "[Ḿóďéľś]",
+  "shell.nav.users": "[Úśéŕś]",
+  "shell.nav.groups": "[Ǧŕóúþś]",
+  "shell.nav.settings": "[Śéťťíńǧś]",
+  "shell.nav.administration": "[Áďḿíńíśťŕáťíóń]",
+  "shell.nav.sections": "[Śéćťíóńś]",
+  "shell.nav.user_view": "[Úśéŕ ǚíéŵ]",
+  "shell.nav.admin_view": "[Áďḿíń ǚíéŵ]",
+  "shell.menu": "[Ḿéńú]",
+  "shell.account_aria": "[Áććóúńť — {name}]",
+  "shell.signed_in": "[Śíǧńéď íń]",
+  "shell.billing_to": "[Ɓíľľíńǧ ťó {group}]",
+  "shell.no_billing_group": "[Ńó ďéƒáúľť ƀíľľíńǧ ǧŕóúþ]",
+  "shell.administrator": "[Áďḿíńíśťŕáťóŕ]",
+  "shell.change_billing_group": "[Ćȟáńǧé ďéƒáúľť ƀíľľíńǧ ǧŕóúþ…]",
+  "shell.set_billing_group": "[Śéť ďéƒáúľť ƀíľľíńǧ ǧŕóúþ…]",
+  "shell.preferences": "[Þŕéƒéŕéńćéś]",
+  "shell.exact_figures": "[Éẋáćť ƒíǧúŕéś]",
+  "shell.exact_figures_hint": "[Éǚéŕý ďéćíḿáľ ťȟé ľéďǧéŕ ȟóľďś. Óťȟéŕŵíśé ŕóúńďéď ťó ḿíľľí-úńíťś.]",
+  "shell.dark_theme": "[Ďáŕķ ťȟéḿé]",
+  "shell.sign_out": "[Śíǧń óúť]",
+  "shell.billing_group.title": "[Ďéƒáúľť ƀíľľíńǧ ǧŕóúþ]",
+  "shell.billing_group.cancel": "[Ćáńćéľ]",
+  "shell.billing_group.save": "[Śáǚé]",
+  "shell.billing_group.error_title": "[Ćóúľď ńóť śéť ťȟé ďéƒáúľť ƀíľľíńǧ ǧŕóúþ]",
+  "shell.billing_group.set": "[Ďéƒáúľť ƀíľľíńǧ ǧŕóúþ śéť]",
+  "shell.billing_group.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "shell.billing_group.group_label": "[Ǧŕóúþ]",
+  "entity_type.person": "[Þéŕśóń ńáḿé]",
+  "entity_type.location": "[Þľáćé]",
+  "entity_type.organization": "[Óŕǧáńíśáťíóń]",
+  "entity_type.nrp": "[Ńáťíóńáľíťý, ŕéľíǧíóń óŕ þóľíťíćś]",
+  "entity_type.credit_card": "[Þáýḿéńť ćáŕď ńúḿƀéŕ]",
+  "entity_type.crypto": "[Ćŕýþťó ŵáľľéť áďďŕéśś]",
+  "entity_type.date_time": "[Ďáťé óŕ ťíḿé]",
+  "entity_type.email_address": "[Éḿáíľ áďďŕéśś]",
+  "entity_type.iban_code": "[Ɓáńķ áććóúńť (ÍƁÁŃ)]",
+  "entity_type.ip_address": "[ÍÞ áďďŕéśś]",
+  "entity_type.phone_number": "[Þȟóńé ńúḿƀéŕ]",
+  "entity_type.medical_license": "[Ḿéďíćáľ ľíćéńćé ńúḿƀéŕ]",
+  "entity_type.url": "[Ŵéƀ áďďŕéśś]",
+  "entity_type.it_fiscal_code": "[Íťáľíáń ťáẋ ćóďé]",
+  "entity_type.it_driver_license": "[Íťáľíáń ďŕíǚíńǧ ľíćéńćé]",
+  "entity_type.it_vat_code": "[Íťáľíáń ǙÁŤ ńúḿƀéŕ]",
+  "entity_type.it_passport": "[Íťáľíáń þáśśþóŕť ńúḿƀéŕ]",
+  "entity_type.it_identity_card": "[Íťáľíáń íďéńťíťý ćáŕď]",
+  "entity_type.es_nif": "[Śþáńíśȟ ťáẋ ńúḿƀéŕ]",
+  "entity_type.es_nie": "[Śþáńíśȟ ƒóŕéíǧńéŕ ńúḿƀéŕ]",
+  "entity_type.pl_pesel": "[Þóľíśȟ ńáťíóńáľ ńúḿƀéŕ]",
+  "entity_type.fi_personal_identity_code": "[Ƒíńńíśȟ þéŕśóńáľ íďéńťíťý ćóďé]",
+  "entity_type.uk_nhs": "[ŃȞŚ ńúḿƀéŕ]",
+  "entity_type.uk_nino": "[ÚĶ ńáťíóńáľ íńśúŕáńćé ńúḿƀéŕ]",
+  "entity_type.us_bank_number": "[ÚŚ ƀáńķ áććóúńť]",
+  "entity_type.us_driver_license": "[ÚŚ ďŕíǚíńǧ ľíćéńćé]",
+  "entity_type.us_itin": "[ÚŚ ťáẋþáýéŕ ńúḿƀéŕ]",
+  "entity_type.us_passport": "[ÚŚ þáśśþóŕť ńúḿƀéŕ]",
+  "entity_type.us_ssn": "[ÚŚ śóćíáľ śéćúŕíťý ńúḿƀéŕ]",
+  "entity_type.sg_nric_fin": "[Śíńǧáþóŕé ŃŔÍĆ óŕ ƑÍŃ]",
+  "entity_type.sg_uen": "[Śíńǧáþóŕé éńťíťý ńúḿƀéŕ]",
+  "entity_type.au_abn": "[Áúśťŕáľíáń ƀúśíńéśś ńúḿƀéŕ]",
+  "entity_type.au_acn": "[Áúśťŕáľíáń ćóḿþáńý ńúḿƀéŕ]",
+  "entity_type.au_tfn": "[Áúśťŕáľíáń ťáẋ ƒíľé ńúḿƀéŕ]",
+  "entity_type.au_medicare": "[Áúśťŕáľíáń Ḿéďíćáŕé ńúḿƀéŕ]",
+  "entity_type.in_pan": "[Íńďíáń ÞÁŃ]",
+  "entity_type.in_aadhaar": "[Íńďíáń Ááďȟááŕ ńúḿƀéŕ]",
+  "entity_type.in_passport": "[Íńďíáń þáśśþóŕť ńúḿƀéŕ]",
+  "entity_type.in_voter": "[Íńďíáń ǚóťéŕ ÍĎ]",
+  "entity_type.in_vehicle_registration": "[Íńďíáń ǚéȟíćľé ŕéǧíśťŕáťíóń]",
+  "redaction_mode.off.label": "[Ńóť ŕéďáćťéď]",
+  "redaction_mode.off.short": "[Óƒƒ]",
+  "redaction_mode.off.hint": "[ľéƒť éẋáćťľý áś ťȟé ćáľľéŕ ŵŕóťé íť]",
+  "redaction_mode.anonymise_restore.label": "[Áńóńýḿíśé, ŕéśťóŕé íń ťȟé áńśŵéŕ]",
+  "redaction_mode.anonymise_restore.short": "[Ŕéśťóŕé]",
+  "redaction_mode.anonymise_restore.hint": "[þľáćéȟóľďéŕ úþśťŕéáḿ, ŕéáľ ǚáľúé ƀáćķ ťó ťȟé ŕéáďéŕ]",
+  "redaction_mode.anonymise.label": "[Áńóńýḿíśé]",
+  "redaction_mode.anonymise.short": "[Áńóńýḿíśé]",
+  "redaction_mode.anonymise.hint": "[þľáćéȟóľďéŕ úþśťŕéáḿ áńď íń ťȟé áńśŵéŕ]",
+  "redaction_mode.redact.label": "[Ŕéďáćť]",
+  "redaction_mode.redact.short": "[Ŕéďáćť]",
+  "redaction_mode.redact.hint": "[<ÞÉŔŚÓŃ>, śó ťŵó þéóþľé ľóóķ ťȟé śáḿé]",
+  "redaction_mode.block.label": "[Ɓľóćķ]",
+  "redaction_mode.block.short": "[Ɓľóćķ]",
+  "redaction_mode.block.hint": "[ťȟé ŕéǫúéśť íś ŕéƒúśéď ƀéƒóŕé á þŕóǚíďéŕ śééś íť]",
+  "policy_summary.default_mode": [
+    {
+      "declarations": [
+        "input mode"
+      ],
+      "match": {
+        "*": "[{mode} ƀý ďéƒáúľť]"
+      }
+    }
+  ],
+  "policy_summary.types": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ťýþé]",
+        "countPlural=other": "[{n} ťýþéś]"
+      }
+    }
+  ],
+  "policy_summary.patterns": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} þáťťéŕń]",
+        "countPlural=other": "[{n} þáťťéŕńś]"
+      }
+    }
+  ],
+  "policy_summary.allow_list": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} áľľóŵéď]"
+      }
+    }
+  ],
+  "redaction_mode.title": [
+    {
+      "declarations": [
+        "input label",
+        "input hint"
+      ],
+      "match": {
+        "*": "[{label} — {hint}]"
+      }
+    }
+  ],
+  "pattern_template.openai_key.description": "[ÓþéńÁÍ-śťýľé śéćŕéť ķéý.]",
+  "pattern_template.aws_access_key_id.description": "[ÁŴŚ áććéśś-ķéý íďéńťíƒíéŕ.]",
+  "pattern_template.github_token.description": "[ǦíťȞúƀ ťóķéń ŵíťȟ á þúƀľíśȟéď þŕéƒíẋ.]",
+  "pattern_template.github_fine_grained_token.description": "[ǦíťȞúƀ ƒíńé-ǧŕáíńéď þéŕśóńáľ áććéśś ťóķéń.]",
+  "pattern_template.gitlab_token.description": "[ǦíťĹáƀ þéŕśóńáľ áććéśś ťóķéń.]",
+  "pattern_template.slack_token.description": "[Śľáćķ ťóķéń ŵíťȟ á þúƀľíśȟéď þŕéƒíẋ.]",
+  "pattern_template.google_api_key.description": "[Ǧóóǧľé ÁÞÍ ķéý.]",
+  "pattern_template.stripe_secret_key.description": "[Śťŕíþé ľíǚé óŕ ťéśť śéćŕéť ķéý.]",
+  "pattern_template.hugging_face_token.description": "[Ȟúǧǧíńǧ Ƒáćé áććéśś ťóķéń.]",
+  "pattern_template.telegram_bot_token.description": "[Ťéľéǧŕáḿ ƀóť ťóķéń.]",
+  "pattern_template.sendgrid_api_key.description": "[ŚéńďǦŕíď ÁÞÍ ķéý.]",
+  "pattern_template.npm_token.description": "[ńþḿ áććéśś ťóķéń.]",
+  "pattern_template.pypi_token.description": "[ÞýÞÍ ÁÞÍ ťóķéń.]",
+  "pattern_template.private_key.description": "[ÞÉḾ þŕíǚáťé-ķéý ȟéáďéŕ.]",
+  "pattern_template.bearer_token.description": "[ĴŴŤ ƀý śȟáþé: ťȟŕéé ďóť-śéþáŕáťéď ƀáśé64úŕľ śéǧḿéńťś.]",
+  "pattern_template.bearer_token_opaque.description": "[Áúťȟóŕíźáťíóń ȟéáďéŕ ćáŕŕýíńǧ á ńóń-ĴŴŤ ƀéáŕéŕ ťóķéń.]",
+  "pattern_template.basic_auth_header.description": "[ȞŤŤÞ Ɓáśíć ćŕéďéńťíáľ.]",
+  "pattern_template.url_with_password.description": "[ÚŔĹ ŵíťȟ áń éḿƀéďďéď þáśśŵóŕď.]",
+  "pattern_template.uuid.description": "[Úńíǚéŕśáľľý úńíǫúé íďéńťíƒíéŕ, óƒťéń á śéśśíóń óŕ ćóŕŕéľáťíóń ÍĎ.]",
+  "pattern_template.internal_ticket.description": "[Śȟóŕť þŕéƒíẋéď ťíćķéť óŕ íśśúé ŕéƒéŕéńćé.]",
+  "pattern_template.date_of_birth.description": "[Ćáľéńďáŕ ďáťé íń ďáý-ḿóńťȟ-ýéáŕ óŕďéŕ.]",
+  "period.month.january": "[Ĵáńúáŕý]",
+  "period.month.february": "[Ƒéƀŕúáŕý]",
+  "period.month.march": "[Ḿáŕćȟ]",
+  "period.month.april": "[Áþŕíľ]",
+  "period.month.may": "[Ḿáý]",
+  "period.month.june": "[Ĵúńé]",
+  "period.month.july": "[Ĵúľý]",
+  "period.month.august": "[Áúǧúśť]",
+  "period.month.september": "[Śéþťéḿƀéŕ]",
+  "period.month.october": "[Óćťóƀéŕ]",
+  "period.month.november": "[Ńóǚéḿƀéŕ]",
+  "period.month.december": "[Ďéćéḿƀéŕ]",
+  "period.month_with_year": [
+    {
+      "declarations": [
+        "input month"
+      ],
+      "match": {
+        "*": "[{month} {year}]"
+      }
+    }
+  ],
+  "period.month_with_year_current": [
+    {
+      "declarations": [
+        "input month"
+      ],
+      "match": {
+        "*": "[{month} {year} (ćúŕŕéńť)]"
+      }
+    }
+  ],
+  "period.quarter": [
+    {
+      "declarations": [
+        "input quarter"
+      ],
+      "match": {
+        "*": "[Ǫ{quarter} {year}]"
+      }
+    }
+  ],
+  "period.year": [
+    {
+      "declarations": [
+        "input year"
+      ],
+      "match": {
+        "*": "[{year} (ýéáŕ)]"
+      }
+    }
+  ],
+  "policy_fields.default_mode": "[Ďéƒáúľť ḿóďé]",
+  "policy_fields.default_mode_hint": "[Áþþľíéś ťó áńýťȟíńǧ ńóť ľíśťéď ƀéľóŵ, íńćľúďíńǧ ťýþéś áďďéď ľáťéŕ.]",
+  "policy_fields.no_entity_types": "[Ńó éńťíťý ťýþéś ťó ľíśť. Ťȟé ďéƒáúľť áƀóǚé śťíľľ áþþľíéś.]",
+  "policy_fields.source.pattern": "[Þáťťéŕń]",
+  "policy_fields.source.model": "[Ḿóďéľ]",
+  "policy_fields.confidence_for": "[Ćóńƒíďéńćé ƒóŕ {name}]",
+  "policy_fields.confidence_default": "[ďéƒáúľť]",
+  "policy_fields.confidence_default_value": "[{value} (ďéƒáúľť)]",
+  "policy_fields.detection_note": "[Ťúŕńíńǧ á ťýþé óƒƒ ćȟáńǧéś ŵȟáť íś ŕéþľáćéď, ńóť ȟóŵ ľóńǧ ďéťéćťíóń ťáķéś.]",
+  "policy_fields.patterns_legend": "[Ćúśťóḿ þáťťéŕńś]",
+  "policy_fields.pattern_name_label": "[Þáťťéŕń {number} ńáḿé]",
+  "policy_fields.pattern_name_placeholder": "[ŤÍĆĶÉŤ_ÍĎ]",
+  "policy_fields.pattern_regex_label": "[Þáťťéŕń {number} ŕéǧéẋ]",
+  "policy_fields.pattern_regex_placeholder": "[ĹÍŃĶŚ-[0-9]\\{4,\\}]",
+  "policy_fields.pattern_mode_label": "[Þáťťéŕń {number} ḿóďé]",
+  "policy_fields.pattern_remove": "[Ŕéḿóǚé]",
+  "policy_fields.pattern_add": "[Áďď þáťťéŕń]",
+  "policy_fields.pattern_from_template": "[Áďď þáťťéŕń ƒŕóḿ ťéḿþľáťé]",
+  "policy_fields.pattern_note": "[Ťȟé ńáḿé ƀéćóḿéś ťȟé éńťíťý ľáƀéľ. ŔÉ2 śýńťáẋ: ńó ƀáćķŕéƒéŕéńćéś, ńó ľóóķáŕóúńď.]",
+  "policy_fields.templates_note": "[Ťȟé éńǧíńé ďéťéćťś ńó ćŕéďéńťíáľś. Ťȟé ťéḿþľáťéś ćóǚéŕ ťȟé þúƀľíśȟéď þŕéƒíẋéś; á ƀéśþóķé ƒóŕḿáť ńééďś íťś óŵń þáťťéŕń.]",
+  "policy_fields.templates.done": "[Ďóńé]",
+  "policy_fields.templates.kind.credential": "[Ćŕéďéńťíáľ]",
+  "policy_fields.templates.kind.identifier": "[Íďéńťíƒíéŕ]",
+  "policy_fields.templates.mode.block": "[Ɓľóćķ]",
+  "policy_fields.templates.mode.redact": "[Ŕéďáćť]",
+  "policy_fields.templates.add_aria": "[Áďď {name} þáťťéŕń]",
+  "policy_fields.templates.added": "[Áďďéď]",
+  "policy_fields.templates.add": "[Áďď]",
+  "policy_fields.allowlist.label": "[Áľľóŵľíśť]",
+  "policy_fields.allowlist.placeholder": "[íľþóśť.íť, éẋáḿþľé.óŕǧ]",
+  "policy_fields.allowlist.hint": "[Ćóḿḿá śéþáŕáťéď. Ḿáťćȟéď éẋáćťľý, ćáśé-íńśéńśíťíǚéľý.]",
+  "admin_providers.toast.reachable": "[Þŕóǚíďéŕ ŕéáćȟáƀľé]",
+  "admin_providers.toast.unreachable": "[Þŕóǚíďéŕ íś ńóť ŕéáćȟáƀľé]",
+  "admin_providers.toast.test_failed": "[Ćóúľď ńóť ťéśť ťȟé þŕóǚíďéŕ]",
+  "admin_providers.toast.updated": "[Þŕóǚíďéŕ úþďáťéď]",
+  "admin_providers.toast.update_failed": "[Ćóúľď ńóť úþďáťé ťȟé þŕóǚíďéŕ]",
+  "admin_providers.toast.deleted": "[Þŕóǚíďéŕ ďéľéťéď]",
+  "admin_providers.toast.delete_failed": "[Ćóúľď ńóť ďéľéťé ťȟé þŕóǚíďéŕ]",
+  "admin_providers.toast.created": "[Þŕóǚíďéŕ ćŕéáťéď]",
+  "admin_providers.toast.create_failed": "[Ćóúľď ńóť ćŕéáťé ťȟé þŕóǚíďéŕ]",
+  "admin_providers.column.provider": "[Þŕóǚíďéŕ]",
+  "admin_providers.column.type": "[Ťýþé]",
+  "admin_providers.column.api_key": "[ÁÞÍ ķéý]",
+  "admin_providers.column.models": "[Ḿóďéľś]",
+  "admin_providers.column.status": "[Śťáťúś]",
+  "admin_providers.badge.router": "[ŕóúťéŕ]",
+  "admin_providers.badge.bills_from_provider": "[ƀíľľś ƒŕóḿ þŕóǚíďéŕ]",
+  "admin_providers.badge.kind_mismatch": "[ķíńď ḿíśḿáťćȟ]",
+  "admin_providers.badge.unpriced": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} úńþŕíćéď]"
+      }
+    }
+  ],
+  "admin_providers.badge.active": "[Áćťíǚé]",
+  "admin_providers.badge.inactive": "[Íńáćťíǚé]",
+  "admin_providers.test.tooltip": "[Ćáľľś /ḿóďéľś ŵíťȟ ťȟé śťóŕéď ćŕéďéńťíáľ — ńó ḿóďéľ ŕéǫúéśť íś ḿáďé.]",
+  "admin_providers.test.failed": "[Ťéśť ƒáíľéď]",
+  "admin_providers.test.models": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ḿóďéľś]",
+        "countPlural=other": "[{n} ḿóďéľś]"
+      }
+    }
+  ],
+  "admin_providers.test.latency": [
+    {
+      "declarations": [
+        "input latency"
+      ],
+      "match": {
+        "*": "[{latency}ḿś]"
+      }
+    }
+  ],
+  "admin_providers.action.test": "[Ťéśť]",
+  "admin_providers.action.edit": "[Éďíť]",
+  "admin_providers.action.deactivate": "[Ďéáćťíǚáťé]",
+  "admin_providers.action.activate": "[Áćťíǚáťé]",
+  "admin_providers.action.delete": "[Ďéľéťé]",
+  "admin_providers.internal.tooltip": "[Ťȟíś ďéþľóýḿéńť'ś óŵń íńƒŕáśťŕúćťúŕé — ďéáćťíǚáťé íť íńśťéáď óƒ ďéľéťíńǧ íť.]",
+  "admin_providers.title": "[Þŕóǚíďéŕś]",
+  "admin_providers.subtitle": "[Ťȟé éńďþóíńťś ḿóďéľś áŕé śéŕǚéď ƒŕóḿ. ÁÞÍ ķéýś áŕé éńćŕýþťéď áńď ńéǚéŕ śȟóŵń áǧáíń.]",
+  "admin_providers.add": "[Áďď þŕóǚíďéŕ]",
+  "admin_providers.delete_error.title": "[Ćóúľď ńóť ďéľéťé ťȟé þŕóǚíďéŕ]",
+  "admin_providers.unreachable_title": "[{provider} íś ńóť ŕéáćȟáƀľé]",
+  "admin_providers.provider_fallback": "[Þŕóǚíďéŕ]",
+  "admin_providers.loading": "[Ĺóáďíńǧ þŕóǚíďéŕś]",
+  "admin_providers.load_error.title": "[Ćóúľď ńóť ľóáď þŕóǚíďéŕś]",
+  "admin_providers.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} þŕóǚíďéŕ]",
+        "countPlural=other": "[{n} þŕóǚíďéŕś]"
+      }
+    }
+  ],
+  "admin_providers.state.empty": "[ńóťȟíńǧ ćáń ƀé śéŕǚéď úńťíľ óńé éẋíśťś]",
+  "admin_providers.state.all_active": "[áľľ áćťíǚé]",
+  "admin_providers.state.deactivated": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ďéáćťíǚáťéď]"
+      }
+    }
+  ],
+  "admin_providers.state.unpriced": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} úńþŕíćéď]"
+      }
+    }
+  ],
+  "admin_providers.empty": "[Ńó þŕóǚíďéŕś ćóńƒíǧúŕéď. Ńóťȟíńǧ ćáń ƀé śéŕǚéď úńťíľ óńé éẋíśťś.]",
+  "admin_providers.caption": "[Íńƒéŕéńćé éńďþóíńťś, ťȟéíŕ ćŕéďéńťíáľś áńď ȟóŵ ḿáńý ḿóďéľś ťȟéý śéŕǚé.]",
+  "admin_providers.plugin.default_label": "[ÓþéńÁÍ-ćóḿþáťíƀľé]",
+  "admin_providers.dialog.edit_title": "[Éďíť {provider}]",
+  "admin_providers.dialog.new_title": "[Ńéŵ þŕóǚíďéŕ]",
+  "admin_providers.dialog.cancel": "[Ćáńćéľ]",
+  "admin_providers.dialog.save": "[Śáǚé]",
+  "admin_providers.dialog.add": "[Áďď]",
+  "admin_providers.field.name": "[Ńáḿé]",
+  "admin_providers.field.name_placeholder": "[ćóŕťéćś]",
+  "admin_providers.field.name_hint.new": "[Ĺéťťéŕś, ďíǧíťś, ďóť, ďáśȟ áńď úńďéŕśćóŕé.]",
+  "admin_providers.field.name_hint.edit": "[Ĺéťťéŕś, ďíǧíťś, ďóť, ďáśȟ áńď úńďéŕśćóŕé. Ŕéńáḿíńǧ íś śáƒé; íť ćȟáńǧéś óŵńéď_ƀý óń ťȟíś þŕóǚíďéŕ'ś /ǚ1/ḿóďéľś ćáŕďś.]",
+  "admin_providers.field.prefix": "[Ḿóďéľ ńáḿé þŕéƒíẋ]",
+  "admin_providers.field.prefix_placeholder": "[ńóńé]",
+  "admin_providers.field.prefix_hint": [
+    {
+      "declarations": [
+        "input example"
+      ],
+      "match": {
+        "*": "[Þŕéþéńďéď ťó éǚéŕý ḿóďéľ ťȟíś þŕóǚíďéŕ ćóńťŕíƀúťéś — ťŵó ǚéńďóŕś ƀóťȟ śéľľíńǧ á \"ďééþ\" ƀéćóḿé \"{example}ďééþ\" áńď á śéćóńď ǚéńďóŕ'ś. Śáǚíńǧ áľśó ŕéńáḿéś ťȟé ḿóďéľś áľŕéáďý ȟéŕé.]"
+      }
+    }
+  ],
+  "admin_providers.field.type": "[Ťýþé]",
+  "admin_providers.field.type_hint": "[Ȟóŵ íť íś ťáľķéď ťó, áńď ŵȟéťȟéŕ íťś ŕéþóŕťéď ćóśť ćáń ƀé ƀéľíéǚéď.]",
+  "admin_providers.field.type_router_suffix": "[ — ćȟóóśéś áń éńďþóíńť þéŕ ŕéǫúéśť]",
+  "admin_providers.field.billing": "[Ɓíľľíńǧ]",
+  "admin_providers.field.billing_hint": "[Ŵȟíćȟ ƒíǧúŕé íś ćȟáŕǧéď. Ɓóťȟ áŕé ŕéćóŕďéď éíťȟéŕ ŵáý.]",
+  "admin_providers.field.billing_own_prices": "[Óúŕ þŕíćéś — ťóķéńś ćóúńťéď ȟéŕé]",
+  "admin_providers.field.billing_provider_reported": "[Ťȟé þŕóǚíďéŕ'ś ŕéþóŕťéď ćóśť — þáśś-ťȟŕóúǧȟ]",
+  "admin_providers.field.billing_warning": "[Þŕíćéś áŕé śťíľľ ńééďéď: áń úńþŕíćéď ḿóďéľ ŕéśéŕǚéś ńóťȟíńǧ, śó ńó ćóśť ćéíľíńǧ ťŕíþś.]",
+  "admin_providers.field.base_url": "[Ɓáśé ÚŔĹ]",
+  "admin_providers.field.base_url_placeholder": "[ȟťťþś://áþí.éẋáḿþľé.ćóḿ/ǚ1]",
+  "admin_providers.field.base_url_hint": "[Íńćľúďé ťȟé ǚéŕśíóń þáťȟ. Ḿóśť ÓþéńÁÍ-ćóḿþáťíƀľé éńďþóíńťś éńď íń /ǚ1.]",
+  "admin_providers.field.description": "[Ďéśćŕíþťíóń]",
+  "admin_providers.field.description_placeholder": "[Ćóḿḿéŕćíáľ ÁÞÍ, ÉÚ ŕéǧíóń]",
+  "admin_providers.field.api_key": "[ÁÞÍ ķéý]",
+  "admin_providers.field.api_key_placeholder_none": "[ľéáǚé éḿþťý íƒ ńóńé ńééďéď]",
+  "admin_providers.field.api_key_placeholder_unchanged": "[úńćȟáńǧéď]",
+  "admin_providers.field.api_key_hint_new": "[Éńćŕýþťéď ƀéƒóŕé śťóŕáǧé. Á ľóćáľ ǚĹĹḾ óŕ Óľľáḿá úśúáľľý ńééďś ńóńé.]",
+  "admin_providers.field.api_key_hint_edit": [
+    {
+      "declarations": [
+        "input hint"
+      ],
+      "match": {
+        "*": "[Ćúŕŕéńťľý {hint}. Ťýþé á ńéŵ ķéý ťó ŕéþľáćé íť; éḿþťý ķééþś íť.]"
+      }
+    }
+  ],
+  "admin_providers.field.remove_key": "[Ŕéḿóǚé ťȟé śťóŕéď ķéý]",
+  "admin_providers.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_providers.no_key": "[ńóńé]",
+  "admin_search.column.backend": "[Ɓáćķéńď]",
+  "admin_search.column.api_key": "[ÁÞÍ ķéý]",
+  "admin_search.column.tiers": "[Ťíéŕś]",
+  "admin_search.column.status": "[Śťáťúś]",
+  "admin_search.no_key": "[ńóńé — śéť óńé ƀéƒóŕé śéáŕćȟíńǧ]",
+  "admin_search.badge.active": "[Áćťíǚé]",
+  "admin_search.badge.inactive": "[Íńáćťíǚé]",
+  "admin_search.action.edit": "[Éďíť]",
+  "admin_search.action.delete": "[Ďéľéťé]",
+  "admin_search.title": "[Ŵéƀ śéáŕćȟ]",
+  "admin_search.intro": "[Á śéáŕćȟ ƀáćķéńď áńśŵéŕś {#code}ÞÓŚŤ /ǚ1/śéáŕćȟ/\\{backend\\}{/code} — áń áúťȟéńťíćáťéď, ḿéťéŕíńǧ þáśśťȟŕóúǧȟ: ťȟé ǧáťéŵáý ćóúńťś ťȟé ŕéǫúéśť, áťťáćȟéś ťȟé ƀáćķéńď'ś óŵń ćŕéďéńťíáľ, áńď ƒóŕŵáŕďś ťȟé ćáľľéŕ'ś ƀóďý ťó ťȟé ǚéńďóŕ ǚéŕƀáťíḿ, ŕéťúŕńíńǧ ťȟé ǚéńďóŕ'ś áńśŵéŕ ǚéŕƀáťíḿ (ÁĎŔ 0071). Ɓáćķéńďś áŕé áƀśéńť ƒŕóḿ {#code}/ǚ1/ḿóďéľś{/code} úńľéśś á ćľíéńť áśķś ƒóŕ ťȟéḿ éẋþľíćíťľý, śó ńó óťȟéŕ ćľíéńť ŵíľľ ḿíśťáķé óńé ƒóŕ á ćȟáť ḿóďéľ. Ŵȟó ḿáý śéáŕćȟ íś ťȟé ǧŕáńť ƀéľóŵ; ȟóŵ ḿúćȟ ťȟéý ḿáý śéáŕćȟ íś á ŕéǫúéśť ćéíľíńǧ óń Ǫúóťáś.]",
+  "admin_search.backends_card": "[Ɓáćķéńďś]",
+  "admin_search.loading_backends": "[Ĺóáďíńǧ ƀáćķéńďś]",
+  "admin_search.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ƀáćķéńď]",
+        "countPlural=other": "[{n} ƀáćķéńďś]"
+      }
+    }
+  ],
+  "admin_search.state.none": "[ńóńé ýéť — áďď ťȟé ƒíŕśť óńé]",
+  "admin_search.state.active": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} áćťíǚé]"
+      }
+    }
+  ],
+  "admin_search.add_backend": "[Áďď ƀáćķéńď]",
+  "admin_search.backends_empty": "[Ńó ƀáćķéńďś ýéť.]",
+  "admin_search.grants_heading": "[Ŵȟó ḿáý śéáŕćȟ]",
+  "admin_search.grants_body": "[Óńé ǧŕáńť þéŕ ƀáćķéńď — ćŕéáťíńǧ ťȟé ƀáćķéńď ḿáďé íťś ŕóŵ. Ŵȟáť ťȟé ćáľľéŕ śéńďś íńśíďé ťȟé ƀóďý (á ďéþťȟ, á ŕéśúľť ćóúńť) íś ťȟé ǚéńďóŕ'ś óŵń þŕíćíńǧ, ńóť á ďéćíśíóń ťȟíś śćŕééń ḿáķéś.]",
+  "admin_search.loading_tiers": "[Ĺóáďíńǧ ťíéŕś]",
+  "admin_search.tier_column.grants": "[Ǧŕóúþś ťȟáť ḿáý ŕúń íť]",
+  "admin_search.no_groups_yet": "[ńó ǧŕóúþś ýéť]",
+  "admin_search.tiers_empty": "[Ńó ƀáćķéńďś ýéť. Áďď óńé áƀóǚé.]",
+  "admin_search.policy_heading": "[Ŵȟíćȟ ƀáćķéńď éáćȟ ǧŕóúþ śéáŕćȟéś ťȟŕóúǧȟ]",
+  "admin_search.policy_body": "[Ťȟé þóľíćý ƀéȟíńď {#code}ÞÓŚŤ /ǚ1/śéáŕćȟ{/code} (ńó ƀáćķéńď íń ťȟé þáťȟ): óńé ŕéǫúéśť śȟáþé íń, óńé áńśŵéŕ śȟáþé óúť, ťȟŕóúǧȟ éẋáćťľý ťȟíś ƀáćķéńď áť íťś ďéƒáúľť ďéþťȟ. Óńľý ƀáćķéńďś ťȟé ǧŕóúþ íś ǧŕáńťéď áƀóǚé áŕé óƒƒéŕéď — á ǧŕóúþ ŵíťȟ ńóńé śéť ćáńńóť úśé ťȟé úńíƒíéď ŕóúťé áť áľľ.]",
+  "admin_search.policy_error.title": "[Ćóúľď ńóť śéť ťȟé śéáŕćȟ ƀáćķéńď]",
+  "admin_search.loading_groups": "[Ĺóáďíńǧ ǧŕóúþś]",
+  "admin_search.group_column.group": "[Ǧŕóúþ]",
+  "admin_search.group_column.backend": "[Śéáŕćȟéś ťȟŕóúǧȟ]",
+  "admin_search.backend_for_group": "[Śéáŕćȟ ƀáćķéńď ƒóŕ {group}]",
+  "admin_search.backend_unset": "[Úńśéť — ńó úńíƒíéď śéáŕćȟ]",
+  "admin_search.groups_empty": "[Ńó ǧŕóúþś ýéť.]",
+  "admin_search.toast.updated": "[Ɓáćķéńď úþďáťéď]",
+  "admin_search.toast.update_failed": "[Ćóúľď ńóť úþďáťé ťȟé ƀáćķéńď]",
+  "admin_search.toast.added": "[Ɓáćķéńď áďďéď]",
+  "admin_search.toast.add_failed": "[Ćóúľď ńóť áďď ťȟé ƀáćķéńď]",
+  "admin_search.dialog.edit_title": "[Éďíť {provider}]",
+  "admin_search.dialog.add_title": "[Áďď á śéáŕćȟ ƀáćķéńď]",
+  "admin_search.dialog.cancel": "[Ćáńćéľ]",
+  "admin_search.dialog.save": "[Śáǚé]",
+  "admin_search.dialog.add": "[Áďď]",
+  "admin_search.field.vendor": "[Ǚéńďóŕ]",
+  "admin_search.field.vendor_hint": "[Ťȟé éńďþóíńť áńď ťȟé ćŕéďéńťíáľ śćȟéḿé áŕé ťȟé ǚéńďóŕ'ś óŵń — ćóńƒíǧúŕéď ȟéŕé, ńóť ťýþéď áńýŵȟéŕé.]",
+  "admin_search.field.vendor_choose": "[Ćȟóóśé á ǚéńďóŕ…]",
+  "admin_search.field.endpoint": "[Éńďþóíńť]",
+  "admin_search.field.endpoint_hint": "[Ŵȟíćȟ óƒ ťȟé ǚéńďóŕ'ś ďóćúḿéńťéď ȟóśťś ťȟé śéáŕćȟéś ǧó ťó.]",
+  "admin_search.field.api_key": "[ÁÞÍ ķéý]",
+  "admin_search.field.api_key_placeholder_unset": "[úńśéť]",
+  "admin_search.field.api_key_placeholder": "[þáśťé ťȟé ǚéńďóŕ'ś ķéý]",
+  "admin_search.field.api_key_hint_edit": "[Ĺéáǚé éḿþťý ťó ķééþ ťȟé śťóŕéď ķéý; ťíćķ ťó ŕéḿóǚé íť.]",
+  "admin_search.field.api_key_hint_new": "[Śťóŕéď éńćŕýþťéď; śȟóŵń ƀáćķ óńľý áś á ȟíńť.]",
+  "admin_search.field.remove_key": "[Ŕéḿóǚé ťȟé śťóŕéď ķéý]",
+  "admin_search.delete.title": "[Ďéľéťé {backend}]",
+  "admin_search.delete.title_fallback": "[ťȟíś ƀáćķéńď]",
+  "admin_search.delete.toast_plain": "[Ɓáćķéńď ďéľéťéď]",
+  "admin_search.delete.toast_with_groups": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "input groups"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[Ɓáćķéńď ďéľéťéď — {groups} ľóśť íťś úńíƒíéď-śéáŕćȟ þóľíćý]",
+        "countPlural=other": "[Ɓáćķéńď ďéľéťéď — {groups} ľóśť ťȟéíŕ úńíƒíéď-śéáŕćȟ þóľíćý]"
+      }
+    }
+  ],
+  "admin_search.delete.toast_failed": "[Ćóúľď ńóť ďéľéťé ťȟé ƀáćķéńď]",
+  "admin_search.delete.confirm": "[Ďéľéťé þéŕḿáńéńťľý]",
+  "admin_search.delete.body": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[Ŕéḿóǚéś ťȟé ƀáćķéńď áńď íťś {n} ťíéŕ ƒŕóḿ ťȟé ǧáťéŵáý óúťŕíǧȟť. Ćáľľéŕś óƒ {#code}ÞÓŚŤ /ǚ1/śéáŕćȟ/\\{backend\\}{/code} ǧéť \"úńķńóŵń ƀáćķéńď\" ƒŕóḿ ťȟé ńéẋť ŕéǫúéśť óń, áńď ǧŕóúþś śéáŕćȟíńǧ ťȟŕóúǧȟ íť ľóśé ťȟéíŕ úńíƒíéď-śéáŕćȟ þóľíćý. Ťȟíś ćáńńóť ƀé úńďóńé.]",
+        "countPlural=other": "[Ŕéḿóǚéś ťȟé ƀáćķéńď áńď íťś {n} ťíéŕś ƒŕóḿ ťȟé ǧáťéŵáý óúťŕíǧȟť. Ćáľľéŕś óƒ {#code}ÞÓŚŤ /ǚ1/śéáŕćȟ/\\{backend\\}{/code} ǧéť \"úńķńóŵń ƀáćķéńď\" ƒŕóḿ ťȟé ńéẋť ŕéǫúéśť óń, áńď ǧŕóúþś śéáŕćȟíńǧ ťȟŕóúǧȟ íť ľóśé ťȟéíŕ úńíƒíéď-śéáŕćȟ þóľíćý. Ťȟíś ćáńńóť ƀé úńďóńé.]"
+      }
+    }
+  ],
+  "admin_search.delete.spend_note": "[Ŕéćóŕďéď śþéńď íś úńáƒƒéćťéď: þáśť śéáŕćȟéś ķééþ ťȟéíŕ áťťŕíƀúťíóń íń ťȟé ľéďǧéŕ.]",
+  "admin_search.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "quota_metric.unit.own_search_requests": "[ŵéƀ śéáŕćȟéś]",
+  "admin_quotas.title": "[Ǫúóťáś]",
+  "admin_quotas.subtitle": "[Áľľ ḿáťćȟíńǧ ŕúľéś ḿúśť þáśś, śó áďďíńǧ óńé ćáń óńľý ťíǧȟťéń á ƀúďǧéť.]",
+  "admin_quotas.new_rule": "[Ńéŵ ŕúľé]",
+  "admin_quotas.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ŕúľé]",
+        "countPlural=other": "[{n} ŕúľéś]"
+      }
+    }
+  ],
+  "admin_quotas.state.empty": "[ńóťȟíńǧ íś ćáþþéď]",
+  "admin_quotas.state.over": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} óǚéŕ ƀúďǧéť]"
+      }
+    }
+  ],
+  "admin_quotas.state.near": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ńéáŕľý śþéńť]"
+      }
+    }
+  ],
+  "admin_quotas.state.ok": "[áľľ ŵíťȟíń ƀúďǧéť]",
+  "admin_quotas.column.rule": "[Ŕúľé]",
+  "admin_quotas.column.limit": "[Ĺíḿíť]",
+  "admin_quotas.column.used": "[Úśéď]",
+  "admin_quotas.column.status": "[Śťáťúś]",
+  "admin_quotas.unnamed": "[úńńáḿéď]",
+  "admin_quotas.badge.inactive": "[Íńáćťíǚé]",
+  "admin_quotas.badge.over_budget": "[Óǚéŕ ƀúďǧéť]",
+  "admin_quotas.badge.nearly_spent": "[Ńéáŕľý śþéńť]",
+  "admin_quotas.badge.active": "[Áćťíǚé]",
+  "admin_quotas.badge.reset_date": "[Ŕéśéť {date}]",
+  "admin_quotas.action.history": "[Ȟíśťóŕý]",
+  "admin_quotas.action.reset": "[Ŕéśéť]",
+  "admin_quotas.action.delete": "[Ďéľéťé]",
+  "admin_quotas.toast.deleted": "[Ǫúóťá ŕúľé ďéľéťéď]",
+  "admin_quotas.toast.delete_failed": "[Ćóúľď ńóť ďéľéťé ťȟé ŕúľé]",
+  "admin_quotas.toast.created": "[Ǫúóťá ŕúľé ćŕéáťéď]",
+  "admin_quotas.toast.create_failed": "[Ćóúľď ńóť ćŕéáťé ťȟé ŕúľé]",
+  "admin_quotas.loading": "[Ĺóáďíńǧ ǫúóťá ŕúľéś]",
+  "admin_quotas.load_error.title": "[Ćóúľď ńóť ľóáď ǫúóťá ŕúľéś]",
+  "admin_quotas.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_quotas.empty": "[Ńó ǫúóťá ŕúľéś. Ńóťȟíńǧ íś ćáþþéď.]",
+  "admin_quotas.caption": "[Ǫúóťá ŕúľéś áńď ťȟéíŕ ľíǚé ćóńśúḿþťíóń.]",
+  "admin_quotas.window.days": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[24 ȟóúŕś]",
+        "countPlural=other": "[{n} ďáýś]"
+      }
+    }
+  ],
+  "admin_quotas.window.hours": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[ȟóúŕ]",
+        "countPlural=other": "[{n} ȟóúŕś]"
+      }
+    }
+  ],
+  "admin_quotas.window.minutes": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[ḿíńúťé]",
+        "countPlural=other": "[{n} ḿíńúťéś]"
+      }
+    }
+  ],
+  "admin_quotas.window.seconds": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number}ś]"
+      }
+    }
+  ],
+  "admin_quotas.window.per": "[þéŕ {window}]",
+  "admin_quotas.window.per_member": "[þéŕ {window} þéŕ ḿéḿƀéŕ]",
+  "admin_quotas.consumption.per_member_note": "[þéŕ ḿéḿƀéŕ · śéé ȟéáľťȟ]",
+  "admin_quotas.consumption.counter_unavailable": "[ćóúńťéŕ úńáǚáíľáƀľé]",
+  "admin_quotas.consumption.caption": "[{used} óƒ {limit}]",
+  "admin_quotas.consumption.label": "[{name} ćóńśúḿþťíóń]",
+  "admin_quotas.health.title": "[Ǫúóťá ȟéáľťȟ]",
+  "admin_quotas.health.body": "[Ŵȟáť éáćȟ ćóúńťéŕ ȟóľďś áǧáíńśť ŵȟáť ťȟé ľéďǧéŕ śáýś. Á ďíƒƒéŕéńćé íś ďŕíƒť; Ŕéćóńćíľé ŕéćóḿþúťéś éǚéŕý áćťíǚé ŕúľé ƒŕóḿ ťȟé ľéďǧéŕ.]",
+  "admin_quotas.health.reconcile": "[Ŕéćóńćíľé]",
+  "admin_quotas.health.toast.match": "[Ćóúńťéŕś áľŕéáďý ḿáťćȟ ťȟé ľéďǧéŕ]",
+  "admin_quotas.health.toast.corrected": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[Ćóŕŕéćťéď {n} ćóúńťéŕ]",
+        "countPlural=other": "[Ćóŕŕéćťéď {n} ćóúńťéŕś]"
+      }
+    }
+  ],
+  "admin_quotas.health.toast.failed": "[Ćóúľď ńóť ŕéćóńćíľé ťȟé ćóúńťéŕś]",
+  "admin_quotas.health.loading": "[Ĺóáďíńǧ ǫúóťá ȟéáľťȟ]",
+  "admin_quotas.health.load_error.title": "[Ćóúľď ńóť ľóáď ǫúóťá ȟéáľťȟ]",
+  "admin_quotas.health.column.rule": "[Ŕúľé]",
+  "admin_quotas.health.column.counter": "[Ćóúńťéŕ]",
+  "admin_quotas.health.column.ledger": "[Ĺéďǧéŕ]",
+  "admin_quotas.health.column.difference": "[Ďíƒƒéŕéńćé]",
+  "admin_quotas.health.column.ttl": "[Ćóúńťéŕ ŤŤĹ]",
+  "admin_quotas.health.column.stale": "[Śťúćķ íń þŕóǧŕéśś]",
+  "admin_quotas.health.unavailable": "[úńáǚáíľáƀľé]",
+  "admin_quotas.health.rule_line": "[{scope} · {metric} · {window}{member}{inactive}]",
+  "admin_quotas.health.inactive": "[íńáćťíǚé]",
+  "admin_quotas.health.counter_unavailable": "[ćóúńťéŕ úńáǚáíľáƀľé]",
+  "admin_quotas.health.none": "[ńóńé]",
+  "admin_quotas.health.no_counter": "[ńó ćóúńťéŕ]",
+  "admin_quotas.health.ttl": [
+    {
+      "declarations": [
+        "input hours"
+      ],
+      "match": {
+        "*": "[{hours: number} ȟ]"
+      }
+    }
+  ],
+  "admin_quotas.health.empty": "[Ńó ǫúóťá ŕúľéś ťó ćȟéćķ.]",
+  "admin_quotas.health.caption": "[Ćóúńťéŕ áńď ľéďǧéŕ ťóťáľś ƒóŕ éáćȟ ŕúľé'ś ćúŕŕéńť ŵíńďóŵ.]",
+  "admin_quotas.create.title": "[Ńéŵ ǫúóťá ŕúľé]",
+  "admin_quotas.create.cancel": "[Ćáńćéľ]",
+  "admin_quotas.create.submit": "[Ćŕéáťé]",
+  "admin_quotas.create.name": "[Ńáḿé]",
+  "admin_quotas.create.name_placeholder": "[ŕéśéáŕćȟ ḿóńťȟľý ƀúďǧéť]",
+  "admin_quotas.create.scope": "[Śćóþé]",
+  "admin_quotas.create.scope.global": "[Éǚéŕýóńé]",
+  "admin_quotas.create.scope.group": "[Á ǧŕóúþ]",
+  "admin_quotas.create.scope.user": "[Á úśéŕ]",
+  "admin_quotas.create.applies_to": "[Áþþľíéś ťó]",
+  "admin_quotas.create.applies.aggregate": "[Ťȟé ǧŕóúþ'ś ťóťáľ]",
+  "admin_quotas.create.applies.each_member": "[Éáćȟ ḿéḿƀéŕ]",
+  "admin_quotas.create.group": "[Ǧŕóúþ]",
+  "admin_quotas.create.user": "[Úśéŕ]",
+  "admin_quotas.create.choose": "[Ćȟóóśé…]",
+  "admin_quotas.create.metric": "[Ḿéťŕíć]",
+  "admin_quotas.create.metric.cost": "[Ćóśť]",
+  "admin_quotas.create.metric.tokens": "[Ťóķéńś]",
+  "admin_quotas.create.metric.requests": "[Ŕéǫúéśťś]",
+  "admin_quotas.create.metric.own_search": "[Ŵéƀ śéáŕćȟéś (óúŕś)]",
+  "admin_quotas.create.window": "[Ŵíńďóŵ]",
+  "admin_quotas.create.window.period": "[Ćáľéńďáŕ þéŕíóď]",
+  "admin_quotas.create.window.rolling": "[Ŕóľľíńǧ ŵíńďóŵ]",
+  "admin_quotas.create.period": "[Þéŕíóď]",
+  "admin_quotas.create.period.every": "[Éǚéŕý {period}]",
+  "admin_quotas.create.hours": "[Ȟóúŕś]",
+  "admin_quotas.create.hours_hint": "[Ŕóľľíńǧ, ƒŕóḿ ńóŵ ƀáćķŵáŕďś]",
+  "admin_quotas.create.limit_eur": "[Ĺíḿíť (ÉÚŔ)]",
+  "admin_quotas.create.limit_unit": "[Ĺíḿíť ({unit})]",
+  "admin_quotas.create.limit_hint.period": "[Ŕéśéťś óń ťȟé ćáľéńďáŕ ƀóúńďáŕý, íń ťȟé ƀíľľíńǧ ťíḿéźóńé.]",
+  "admin_quotas.create.limit_hint.rolling": "[Ćóúńťéď óǚéŕ ťȟé ŕóľľíńǧ ŵíńďóŵ.]",
+  "admin_quotas.create.volume_title": "[Ťȟíś ľíḿíťś ǚóľúḿé, ńóť śþéńď]",
+  "admin_quotas.create.volume_body": "[Ćóúńťś ćáľľś ťó óúŕ óŵń ŵéƀ-śéáŕćȟ ƀáćķéńďś. Ťȟéíŕ þéŕ-ŕéǫúéśť þŕíćéś ďíƒƒéŕ ƀý ḿóŕé ťȟáń ťéń ťíḿéś ƀéťŵééń ťíéŕś, śó á śéáŕćȟ ƀúďǧéť ďóéś ńóť ƀóúńď ŵȟáť śéáŕćȟéś ćóśť. Úśé á ćóśť ŕúľé ƒóŕ ťȟáť.]",
+  "admin_quotas.reset.title": "[Ŕéśéť {name}]",
+  "admin_quotas.reset.title_fallback": "[ťȟíś ŕúľé]",
+  "admin_quotas.reset.cancel": "[Ćáńćéľ]",
+  "admin_quotas.reset.submit": "[Ŕéśéť ćóńśúḿþťíóń]",
+  "admin_quotas.reset.notice_title": "[Ťȟíś ďóéś ńóť ćȟáńǧé áńýóńé'ś ƀíľľ]",
+  "admin_quotas.reset.notice_body": "[Óńľý ŵȟáť ťȟé ǫúóťá ćóúńťś ḿóǚéś; úśáǧé ŕéćóŕďś áŕé úńťóúćȟéď. Ťȟé ŕéśéť íś íḿḿéďíáťé áńď ćáńńóť ƀé śćȟéďúľéď.]",
+  "admin_quotas.reset.reason": "[Ŕéáśóń (óþťíóńáľ)]",
+  "admin_quotas.reset.reason_placeholder": "[ǧŕáńť éẋťéńśíóń áþþŕóǚéď]",
+  "admin_quotas.reset.reason_hint": "[Ķéþť þéŕḿáńéńťľý íń ťȟé áúďíť ľóǧ ŵȟéń ǧíǚéń.]",
+  "admin_quotas.reset.toast.done": "[Ćóńśúḿþťíóń ŕéśéť]",
+  "admin_quotas.reset.toast.failed": "[Ćóúľď ńóť ŕéśéť ćóńśúḿþťíóń]",
+  "admin_quotas.history.title": "[Ŕéśéťś · {name}]",
+  "admin_quotas.history.title_fallback": "[ŕúľé]",
+  "admin_quotas.history.empty": "[Ťȟíś ŕúľé ȟáś ńéǚéŕ ƀééń ŕéśéť.]",
+  "admin_quotas.history.column.when": "[Ŵȟéń]",
+  "admin_quotas.history.column.who": "[Ŵȟó]",
+  "admin_quotas.history.column.why": "[Ŕéáśóń]",
+  "admin_quotas.history.erased": "[(éŕáśéď úśéŕ)]",
+  "admin_quotas.history.noun": "[ŕéśéťś]",
+  "admin_settings.title": "[Śéťťíńǧś]",
+  "admin_settings.subtitle": "[Ťȟé ḿáíľ śéŕǚéŕ, ťȟé íďéńťíťý þŕóǚíďéŕś, ŵȟó ḿáý ƀéćóḿé á úśéŕ, áńď ŵȟáť ńéŵ ǧŕóúþś śťáŕť ŵíťȟ. Éáćȟ śéćťíóń śáǚéś óń íťś óŵń.]",
+  "admin_settings.provisioning_policy_card": "[Þŕóǚíśíóńíńǧ þóľíćý]",
+  "admin_settings.email.card": "[Éḿáíľ]",
+  "admin_settings.email.description": "[Ćóńƒíǧúŕéď íń .éńǚ; ćȟáńǧé ŵíťȟ ./ćóńƒíǧúŕé. Úśéď ƒóŕ ǫúóťá ńóťíćéś áńď ťȟé ƀúńďľéď Áúťȟéľíá'ś śéľƒ-śéŕǚíćé þáśśŵóŕď ŕéśéť.]",
+  "admin_settings.email.loading": "[Ĺóáďíńǧ ťȟé éḿáíľ śéťťíńǧś]",
+  "admin_settings.email.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé éḿáíľ śéťťíńǧś]",
+  "admin_settings.email.enabled": "[éńáƀľéď]",
+  "admin_settings.email.disabled": "[ďíśáƀľéď]",
+  "admin_settings.email.host": "[ŚḾŤÞ ȟóśť]",
+  "admin_settings.email.port": "[Þóŕť]",
+  "admin_settings.email.username": "[Úśéŕńáḿé]",
+  "admin_settings.email.password": "[Þáśśŵóŕď]",
+  "admin_settings.email.from_address": "[Ƒŕóḿ áďďŕéśś]",
+  "admin_settings.email.not_set": "[(ńóť śéť)]",
+  "admin_settings.email.none": "[(ńóńé)]",
+  "admin_settings.email.set": "[śéť]",
+  "admin_settings.email.test_to": "[Śéńď á ťéśť éḿáíľ ťó]",
+  "admin_settings.email.send_test": "[Śéńď ťéśť]",
+  "admin_settings.email.toast_sent": "[Ťéśť éḿáíľ śéńť]",
+  "admin_settings.email.toast_failed": "[Ťéśť éḿáíľ ƒáíľéď]",
+  "admin_settings.redirect_uri.label": "[Ŕéďíŕéćť ÚŔÍ]",
+  "admin_settings.redirect_uri.copy": "[Ćóþý]",
+  "admin_settings.redirect_uri.copied": "[Ćóþíéď]",
+  "admin_settings.redirect_uri.note": "[Ŕéǧíśťéŕ éẋáćťľý ťȟíś áť ťȟé þŕóǚíďéŕ — ńéǚéŕ á ŵíľďćáŕď.]",
+  "admin_settings.redirect_uri.clipboard": "[Ćóúľď ńóť ŕéáćȟ ťȟé ćľíþƀóáŕď; ćóþý íť ƀý ȟáńď.]",
+  "admin_settings.providers.card": "[Íďéńťíťý þŕóǚíďéŕś]",
+  "admin_settings.providers.description": "[Ćóńƒíǧúŕéď íń .éńǚ; ćȟáńǧé ŵíťȟ ./ćóńƒíǧúŕé. Úśéŕś ƒŕóḿ ďíƒƒéŕéńť þŕóǚíďéŕś áŕé ďíƒƒéŕéńť áććóúńťś — íďéńťíťý íś (íśśúéŕ, śúƀĵéćť).]",
+  "admin_settings.providers.loading": "[Ĺóáďíńǧ þŕóǚíďéŕś]",
+  "admin_settings.providers.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé íďéńťíťý þŕóǚíďéŕś]",
+  "admin_settings.providers.empty_title": "[Ńó íďéńťíťý þŕóǚíďéŕ íś ćóńƒíǧúŕéď]",
+  "admin_settings.providers.empty_detail": "[Ńóƀóďý ćáń śíǧń íń ýéť: śéť ǦÁŤÉŴÁÝ_ÓÍĎĆ__* íń .éńǚ, óŕ ŕúń ./ćóńƒíǧúŕé.]",
+  "admin_settings.providers.disabled_heading": "[Ďíśáƀľéď þŕéǚíóúś þŕóǚíďéŕś]",
+  "admin_settings.badge.enabled": "[éńáƀľéď]",
+  "admin_settings.badge.disabled": "[ďíśáƀľéď]",
+  "admin_settings.badge.admin_from_idp": "[áďḿíń ƒŕóḿ ÍďÞ]",
+  "admin_settings.badge.email_link": "[ľíńķś ńéŵ śíǧń-íńś ťó éẋíśťíńǧ áććóúńťś ƀý ǚéŕíƒíéď éḿáíľ]",
+  "admin_settings.badge.sync": "[śýńć: {adapter}]",
+  "admin_settings.badge.sync_unreviewed": "[śýńć: {adapter} (áŵáíťíńǧ ŕéǚíéŵ)]",
+  "admin_settings.provider_row.line": "[ćľíéńť {client} · ǧŕóúþś ćľáíḿ {#code}{claim}{/code} · ǧŕóúþ ḿáþþíńǧś áŕé ďéćíďéď óń ťȟé {#link}Ǧŕóúþś{/link} þáǧé · ǧŕóúþś ƒŕóḿ {source} · śýńć éǚéŕý {cadence} · {users}]",
+  "admin_settings.provider_row.source.claim": "[ťȟé ťóķéń]",
+  "admin_settings.provider_row.source.directory": "[ťȟé ďíŕéćťóŕý]",
+  "admin_settings.provider_row.source.console": "[ťȟíś ćóńśóľé óńľý]",
+  "admin_settings.provider_row.sync.every_login": "[śíǧń-íń]",
+  "admin_settings.provider_row.sync.first_login": "[ƒíŕśť śíǧń-íń óńľý]",
+  "admin_settings.provider_row.sync.never": "[ńéǚéŕ]",
+  "admin_settings.provider_row.users": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} úśéŕ]",
+        "countPlural=other": "[{n} úśéŕś]"
+      }
+    }
+  ],
+  "admin_settings.provider_row.user_sync": "[Úśéŕ śýńć…]",
+  "admin_settings.provider_row.remove": "[Ŕéḿóǚé]",
+  "admin_settings.remove.title": "[Ŕéḿóǚé {provider}?]",
+  "admin_settings.remove.title_fallback": "[ťȟíś þŕóǚíďéŕ]",
+  "admin_settings.remove.cancel": "[Ćáńćéľ]",
+  "admin_settings.remove.confirm": "[Ŕéḿóǚé]",
+  "admin_settings.remove.toast_done": "[Íďéńťíťý þŕóǚíďéŕ ŕéḿóǚéď]",
+  "admin_settings.remove.toast_failed": "[Ćóúľď ńóť ŕéḿóǚé ťȟé íďéńťíťý þŕóǚíďéŕ]",
+  "admin_settings.remove.body": "[Ńóƀóďý éǚéŕ śíǧńéď íń ťȟŕóúǧȟ {#code}{issuer}{/code}, śó ŕéḿóǚíńǧ íť úńľíńķś ńó óńé. Íťś ďíŕéćťóŕý éńťŕíéś áńď śýńć ȟíśťóŕý áŕé ďéľéťéď ŵíťȟ íť. Þóíńťíńǧ ťȟé ďéþľóýḿéńť áť ťȟíś íśśúéŕ áǧáíń íń .éńǚ ćŕéáťéś íť áƒŕéśȟ.]",
+  "admin_settings.capabilities.card": "[Ćáþáƀíľíťíéś]",
+  "admin_settings.capabilities.description": "[Á þéŕśóń ȟóľďś á ćáþáƀíľíťý áś áń áďḿíńíśťŕáťóŕ, óŕ ťȟŕóúǧȟ áń áćťíǚé ḿéḿƀéŕśȟíþ íń á ǧŕóúþ ćáŕŕýíńǧ íťś ƒľáǧ. Ťȟíś śéťś ŵȟáť ńéŵ ǧŕóúþś śťáŕť ŵíťȟ; ťȟé ťóǧǧľéś óń ťȟé Ǧŕóúþś þáǧé ďéćíďé ťȟé éẋíśťíńǧ óńéś. Ǧŕáńť óŕ ŕéḿóǚé ťȟé ƒľáǧś íń ƀúľķ ƀéľóŵ.]",
+  "admin_settings.capabilities.loading": "[Ĺóáďíńǧ ťȟé ćáþáƀíľíťý ďéƒáúľťś]",
+  "admin_settings.capabilities.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé ćáþáƀíľíťý ďéƒáúľťś]",
+  "admin_settings.capability.code_agents": "[Ćóďíńǧ áǧéńťś]",
+  "admin_settings.capability.code_agents_lower": "[ćóďíńǧ áǧéńťś]",
+  "admin_settings.capability.api_keys": "[ÁÞÍ ķéýś]",
+  "admin_settings.capability.api_keys_lower": "[ÁÞÍ ķéýś]",
+  "admin_settings.capability.code_agents_hint": "[Ťȟé /ćóďé þáńéľ áńď ťȟé ḿáćȟíńé ľíńķś ťȟáť śéŕǚé íť.]",
+  "admin_settings.capability.api_keys_hint": "[Ḿíńťíńǧ áńď úśíńǧ ÁÞÍ ķéýś.]",
+  "admin_settings.capability.badge_on": "[ńéŵ ǧŕóúþś: óń]",
+  "admin_settings.capability.badge_off": "[ńéŵ ǧŕóúþś: óƒƒ]",
+  "admin_settings.capability.turn_on_new": "[Ťúŕń óń ƒóŕ ńéŵ ǧŕóúþś]",
+  "admin_settings.capability.turn_off_new": "[Ťúŕń óƒƒ ƒóŕ ńéŵ ǧŕóúþś]",
+  "admin_settings.capability.turn_on_all": "[Ťúŕń óń ƒóŕ áľľ ǧŕóúþś]",
+  "admin_settings.capability.turn_off_all": "[Ťúŕń óƒƒ ƒóŕ áľľ ǧŕóúþś]",
+  "admin_settings.capability.toast_saved": "[{capability} ďéƒáúľť śáǚéď]",
+  "admin_settings.capability.toast_save_failed": "[Ćóúľď ńóť śáǚé]",
+  "admin_settings.capability.toast_preview_failed": "[Ćóúľď ńóť þŕéǚíéŵ]",
+  "admin_settings.capability.toast_apply_failed": "[Ćóúľď ńóť áþþľý]",
+  "admin_settings.capability.toast_updated": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[Úþďáťéď {n} ǧŕóúþ]",
+        "countPlural=other": "[Úþďáťéď {n} ǧŕóúþś]"
+      }
+    }
+  ],
+  "admin_settings.bulk.title_on": "[Ťúŕń {capability} óń ƒóŕ áľľ ǧŕóúþś?]",
+  "admin_settings.bulk.title_off": "[Ťúŕń {capability} óƒƒ ƒóŕ áľľ ǧŕóúþś?]",
+  "admin_settings.bulk.cancel": "[Ćáńćéľ]",
+  "admin_settings.bulk.turn_on": "[Ťúŕń óń]",
+  "admin_settings.bulk.turn_off": "[Ťúŕń óƒƒ]",
+  "admin_settings.bulk.gain": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local count = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{count} þéŕśóń ŵóúľď ǧáíń {capability} — éǚéŕýóńé ȟóľďíńǧ ńó ƒľáǧǧéď ǧŕóúþ ťóďáý. Áďḿíńíśťŕáťóŕś ȟóľď íť éíťȟéŕ ŵáý.]",
+        "countPlural=other": "[{count} þéóþľé ŵóúľď ǧáíń {capability} — éǚéŕýóńé ȟóľďíńǧ ńó ƒľáǧǧéď ǧŕóúþ ťóďáý. Áďḿíńíśťŕáťóŕś ȟóľď íť éíťȟéŕ ŵáý.]"
+      }
+    }
+  ],
+  "admin_settings.bulk.lose": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local count = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{count} þéŕśóń ŵóúľď ľóśé {capability} áť ťȟéíŕ ńéẋť ŕéǫúéśť — éǚéŕýóńé ŵȟóśé óńľý ƒľáǧǧéď ǧŕóúþ íś ťȟíś óńé ƀéíńǧ ćľéáŕéď. Áďḿíńíśťŕáťóŕś áŕé éẋéḿþť.]",
+        "countPlural=other": "[{count} þéóþľé ŵóúľď ľóśé {capability} áť ťȟéíŕ ńéẋť ŕéǫúéśť — éǚéŕýóńé ŵȟóśé óńľý ƒľáǧǧéď ǧŕóúþ íś ťȟíś óńé ƀéíńǧ ćľéáŕéď. Áďḿíńíśťŕáťóŕś áŕé éẋéḿþť.]"
+      }
+    }
+  ],
+  "admin_settings.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "overview.title": "[Óǚéŕǚíéŵ]",
+  "overview.subtitle": "[Ŵȟéŕé ýóú śťáńď ťȟíś þéŕíóď, áńď ťȟé ķéýś ýóú śþéńď ŵíťȟ.]",
+  "overview.filter.period": "[Þéŕíóď]",
+  "overview.build": "[Ćóńśóľé ƀúíľď {sha}]",
+  "overview.loading": "[Ĺóáďíńǧ ýóúŕ úśáǧé]",
+  "overview.load_error.title": "[Ćóúľď ńóť ľóáď ýóúŕ úśáǧé]",
+  "overview.stat.spend": "[Śþéńď · {period}]",
+  "overview.stat.period_detail": "[{timezone} ćáľéńďáŕ þéŕíóď]",
+  "overview.stat.requests": "[Ŕéǫúéśťś]",
+  "overview.stat.tokens_detail": [
+    {
+      "declarations": [
+        "input tokens"
+      ],
+      "match": {
+        "*": "[{tokens: number} ťóķéńś]"
+      }
+    }
+  ],
+  "overview.stat.groups": "[Ǧŕóúþś]",
+  "overview.stat.billing_to": "[Ɓíľľíńǧ ťó {group}]",
+  "overview.stat.no_billing_group": "[Ńó ďéƒáúľť ƀíľľíńǧ ǧŕóúþ]",
+  "overview.breakdown_card": "[Ɓŕéáķďóŵń]",
+  "overview.filter.breakdown": "[Ɓŕéáķďóŵń]",
+  "overview.breakdown.model": "[Ɓý ḿóďéľ]",
+  "overview.breakdown.day": "[Ɓý ďáý]",
+  "overview.breakdown.group": "[Ɓý ǧŕóúþ]",
+  "overview.breakdown.api_key": "[Ɓý ÁÞÍ ķéý]",
+  "overview.column.requests": "[Ŕéǫúéśťś]",
+  "overview.column.tokens": "[Ťóķéńś]",
+  "overview.column.cost": "[Śþéńď]",
+  "overview.row_count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ŕóŵ]",
+        "countPlural=other": "[{n} ŕóŵś]"
+      }
+    }
+  ],
+  "overview.summary_detail": "[{period} · {breakdown}]",
+  "overview.export_csv": "[Éẋþóŕť ĆŚǙ]",
+  "overview.empty": "[Ńó úśáǧé íń ťȟíś þéŕíóď.]",
+  "overview.caption": "[Ýóúŕ śþéńď ƒóŕ {period}, {breakdown}.]",
+  "overview.caption_period_fallback": "[ťȟé þéŕíóď]",
+  "overview.heading.model": "[Ḿóďéľ]",
+  "overview.heading.day": "[Ďáý]",
+  "overview.heading.group": "[Ǧŕóúþ]",
+  "overview.heading.api_key": "[ÁÞÍ ķéý]",
+  "overview.heading.other": "[Íťéḿ]",
+  "overview.heading_lower.model": "[ḿóďéľ]",
+  "overview.heading_lower.day": "[ďáý]",
+  "overview.heading_lower.group": "[ǧŕóúþ]",
+  "overview.heading_lower.api_key": "[ÁÞÍ ķéý]",
+  "overview.heading_lower.other": "[íťéḿ]",
+  "overview.keys_card": "[ÁÞÍ ķéýś]",
+  "overview.keys_description": "[Ťȟé śéćŕéť íś śȟóŵń óńćé, áť ćŕéáťíóń.]",
+  "overview.keys.denied_title": "[Ýóúŕ áććóúńť ḿáý ńóť úśé ÁÞÍ ķéýś óń ťȟíś ďéþľóýḿéńť]",
+  "overview.keys.denied_body": "[Áśķ áń áďḿíńíśťŕáťóŕ ťó ǧŕáńť ťȟé ćáþáƀíľíťý. Ýóúŕ éẋíśťíńǧ ķéýś ķééþ ŵóŕķíńǧ ťȟé ḿóḿéńť íť íś ǧŕáńťéď — ńóťȟíńǧ ŵáś ďéľéťéď.]",
+  "overview.keys.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ķéý]",
+        "countPlural=other": "[{n} ķéýś]"
+      }
+    }
+  ],
+  "overview.keys.none_yet": "[ńóńé ýéť — ḿíńť ťȟé ƒíŕśť óńé]",
+  "overview.keys.working": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ŵóŕķíńǧ]"
+      }
+    }
+  ],
+  "overview.keys.new_key": "[Ńéŵ ķéý]",
+  "overview.keys.empty": "[Ńó ÁÞÍ ķéýś.]",
+  "overview.opencode_card": "[Ćóńƒíǧúŕé óþéńćóďé ŵíťȟ Þýśťíńó]",
+  "overview.quotas.title": "[Ǫúóťáś]",
+  "overview.quotas.load_error.title": "[Ćóúľď ńóť ľóáď ýóúŕ ǫúóťáś]",
+  "overview.quotas.loading": "[Ĺóáďíńǧ ýóúŕ ǫúóťáś]",
+  "overview.quotas.none": "[Ńó ľíḿíť áþþľíéś ťó ýóú.]",
+  "overview.quotas.description": "[Éǚéŕý ćéíľíńǧ ťȟáť áþþľíéś ťó ýóú. Áľľ óƒ ťȟéḿ ḿúśť þáśś.]",
+  "overview.quotas.scope.global": "[Éǚéŕýóńé]",
+  "overview.quotas.scope.group": "[Ýóúŕ ǧŕóúþ]",
+  "overview.quotas.scope.user": "[Ýóú]",
+  "overview.quotas.unavailable": "[Ćóńśúḿþťíóń íś úńáǚáíľáƀľé — ťȟé ćóúńťéŕ śťóŕé ćóúľď ńóť ƀé ŕéáćȟéď.]",
+  "overview.quotas.cost_of": "[óƒ]",
+  "overview.quotas.count_line": "[{used: number} óƒ {limit: number} {unit} · {window}]",
+  "overview.quotas.notices_saved": "[Ńóťíćéś śáǚéď]",
+  "overview.quotas.notices_failed": "[Ćóúľď ńóť śáǚé ťȟé ńóťíćéś]",
+  "overview.quotas.thresholds_placeholder": "[é.ǧ. 50, 80, 95]",
+  "overview.quotas.thresholds_aria": "[Ńóťíćé ťȟŕéśȟóľďś ƒóŕ {name}]",
+  "overview.quotas.cancel": "[Ćáńćéľ]",
+  "overview.quotas.save": "[Śáǚé]",
+  "overview.quotas.threshold_set": "[Éḿáíľ ḿé áť {thresholds}% — ćȟáńǧé]",
+  "overview.quotas.threshold_unset": "[Éḿáíľ ḿé ŵȟéń ťȟíś ŕéáćȟéś…]",
+  "overview.mint.title": "[Ńéŵ ÁÞÍ ķéý]",
+  "overview.mint.title_minted": "[Ýóúŕ ńéŵ ÁÞÍ ķéý]",
+  "overview.mint.done": "[Ďóńé]",
+  "overview.mint.cancel": "[Ćáńćéľ]",
+  "overview.mint.create": "[Ćŕéáťé]",
+  "overview.mint.toast_created": "[ÁÞÍ ķéý ćŕéáťéď]",
+  "overview.mint.toast_failed": "[Ćóúľď ńóť ćŕéáťé ťȟé ķéý]",
+  "overview.mint.name": "[Ńáḿé]",
+  "overview.mint.name_placeholder": "[ľáþťóþ, ĆÍ, ńóťéƀóóķ]",
+  "overview.mint.name_hint": "[Ƒóŕ ýóúŕ óŵń ŕéƒéŕéńćé. Úśáǧé íś ŕéþóŕťéď þéŕ ķéý.]",
+  "overview.mint.billing_group": "[Ɓíľľíńǧ ǧŕóúþ]",
+  "overview.mint.billing_group_hint": "[Ŵȟíćȟ ǧŕóúþ'ś ƀúďǧéť ťȟíś ķéý śþéńďś ƒŕóḿ.]",
+  "overview.mint.default_group": "[Ḿý ďéƒáúľť ǧŕóúþ]",
+  "overview.mint.default_group_current": "[Ḿý ďéƒáúľť ǧŕóúþ — ćúŕŕéńťľý {group}]",
+  "overview.mint.no_default_warning": "[Ýóú ȟáǚé ńó ďéƒáúľť ƀíľľíńǧ ǧŕóúþ. Ćȟóóśé á ǧŕóúþ áƀóǚé.]",
+  "overview.mint.expires": "[Éẋþíŕéś]",
+  "overview.mint.expires_hint": "[Áń éẋþíŕíńǧ ķéý ƒáíľś ćľóśéď óń íťś óŵń.]",
+  "overview.mint.expires.never": "[Ńéǚéŕ]",
+  "overview.mint.expires.30": "[Íń 30 ďáýś]",
+  "overview.mint.expires.90": "[Íń 90 ďáýś]",
+  "overview.mint.expires.365": "[Íń á ýéáŕ]",
+  "overview.minted.copy_title": "[Ćóþý íť ńóŵ]",
+  "overview.minted.copy_body": "[Ťȟé ǧáťéŵáý ķééþś á ȟáśȟ, ńóť ťȟé ķéý, śó íť ćáńńóť ƀé śȟóŵń áǧáíń. Íƒ ýóú ľóśé íť, ŕéǚóķé ťȟíś óńé áńď ḿíńť áńóťȟéŕ.]",
+  "overview.minted.copy": "[Ćóþý]",
+  "overview.minted.copied": "[Ćóþíéď]",
+  "overview.minted.clipboard": "[Ćóúľď ńóť ŕéáćȟ ťȟé ćľíþƀóáŕď. Śéľéćť ťȟé ķéý áńď ćóþý íť ƀý ȟáńď.]",
+  "overview.minted.detail_expires": "[Śéńď íť áś {#code}Áúťȟóŕíźáťíóń: Ɓéáŕéŕ …{/code}. Ɓíľľéď ťó {group}, éẋþíŕéś {date}.]",
+  "overview.minted.detail_never": "[Śéńď íť áś {#code}Áúťȟóŕíźáťíóń: Ɓéáŕéŕ …{/code}. Ɓíľľéď ťó {group}, ńéǚéŕ éẋþíŕéś.]",
+  "overview.minted.group_fallback": "[ýóúŕ ďéƒáúľť ǧŕóúþ áť ŕéǫúéśť ťíḿé]",
+  "overview.minted.next_heading": "[Ńéẋť: ćóńƒíǧúŕé óþéńćóďé]",
+  "overview.revoke.title": "[Ŕéǚóķé {name}]",
+  "overview.revoke.title_fallback": "[ťȟíś ķéý]",
+  "overview.revoke.cancel": "[Ćáńćéľ]",
+  "overview.revoke.confirm": "[Ŕéǚóķé ķéý]",
+  "overview.revoke.toast_done": "[Ķéý ŕéǚóķéď]",
+  "overview.revoke.toast_failed": "[Ćóúľď ńóť ŕéǚóķé ťȟé ķéý]",
+  "overview.revoke.body": "[{#code}{prefix}{/code} śťóþś ŵóŕķíńǧ íḿḿéďíáťéľý áńď ćáńńóť ƀé ŕéśťóŕéď. Áńýťȟíńǧ śťíľľ úśíńǧ íť śťáŕťś ƒáíľíńǧ ťó áúťȟéńťíćáťé.]",
+  "overview.revoke.spend_note": "[Úśáǧé ȟíśťóŕý íś úńáƒƒéćťéď: ťȟé ķéý íś ŕéǚóķéď, ńéǚéŕ ďéľéťéď.]",
+  "overview.delete.title": "[Ďéľéťé {name}]",
+  "overview.delete.title_fallback": "[ťȟíś ķéý]",
+  "overview.delete.cancel": "[Ćáńćéľ]",
+  "overview.delete.confirm": "[Ďéľéťé þéŕḿáńéńťľý]",
+  "overview.delete.toast_done": "[Ķéý ďéľéťéď]",
+  "overview.delete.toast_failed": "[Ćóúľď ńóť ďéľéťé ťȟé ķéý]",
+  "overview.delete.body": "[{#code}{prefix}{/code} íś ŕéḿóǚéď ƒŕóḿ ťȟíś ľíśť áńď śťóþś ŵóŕķíńǧ íḿḿéďíáťéľý. Ťȟíś ćáńńóť ƀé úńďóńé — ŕéǚóķíńǧ íś ťȟé ŕéǚéŕśíƀľé-ľóóķíńǧ ćóúśíń, áńď éǚéń íť ćáńńóť ƀé ŕéśťóŕéď.]",
+  "overview.delete.history_note": "[Þáśť úśáǧé śťáýś íń ťȟé ľéďǧéŕ, śťíľľ áťťŕíƀúťéď ťó ýóú áńď ýóúŕ ƀíľľíńǧ ǧŕóúþ. Ťȟóśé ŕóŵś śíḿþľý śťóþ ćáŕŕýíńǧ ťȟíś ķéý'ś ńáḿé íń ťȟé ƀý-ķéý ƀŕéáķďóŵń.]",
+  "overview.key_column.name": "[Ńáḿé]",
+  "overview.key_column.prefix": "[Þŕéƒíẋ]",
+  "overview.key_column.billing_group": "[Ɓíľľíńǧ ǧŕóúþ]",
+  "overview.key_column.group_fallback": "[ďéƒáúľť ǧŕóúþ áť ŕéǫúéśť ťíḿé]",
+  "overview.key_column.status": "[Śťáťúś]",
+  "overview.key_column.last_used": "[Ĺáśť úśéď]",
+  "overview.key_column.never": "[ńéǚéŕ]",
+  "overview.key_badge.revoked": "[Ŕéǚóķéď]",
+  "overview.key_badge.expired": "[Éẋþíŕéď]",
+  "overview.key_badge.active": "[Áćťíǚé]",
+  "overview.key_action.revoke": "[Ŕéǚóķé]",
+  "overview.key_action.delete": "[Ďéľéťé]",
+  "overview.unnamed": "[úńńáḿéď]",
+  "overview.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "overview.quotas.meter_label": [
+    {
+      "declarations": [
+        "input name",
+        "input window"
+      ],
+      "match": {
+        "*": "[{name}, {window}]"
+      }
+    }
+  ],
+  "admin_groups.toast.update_failed": "[Ćóúľď ńóť úþďáťé ťȟé ǧŕóúþ]",
+  "admin_groups.column.group": "[Ǧŕóúþ]",
+  "admin_groups.column.source": "[Śóúŕćé]",
+  "admin_groups.column.members": "[Ḿéḿƀéŕś]",
+  "admin_groups.column.capabilities": "[Ćáþáƀíľíťíéś]",
+  "admin_groups.column.models": "[Ḿóďéľś]",
+  "admin_groups.capability.agents_aria": "[{name}: ćóďíńǧ áǧéńťś]",
+  "admin_groups.capability.api_keys_aria": "[{name}: ÁÞÍ ķéýś]",
+  "admin_groups.capability.agents": "[Áǧéńťś]",
+  "admin_groups.capability.api_keys": "[ÁÞÍ ķéýś]",
+  "admin_groups.models_none": "[ńóńé ǧŕáńťéď]",
+  "admin_groups.action.members": "[Ḿéḿƀéŕś]",
+  "admin_groups.action.delete": "[Ďéľéťé]",
+  "admin_groups.title": "[Ǧŕóúþś]",
+  "admin_groups.subtitle": "[Ŵȟó ƀéľóńǧś ťóǧéťȟéŕ, áńď ŵȟáť ťȟé ǧŕóúþ ḿáý úśé. Ḿóďéľ áććéśś íś ǧŕáńťéď þéŕ ǧŕóúþ, óń ťȟé Ḿóďéľś śćŕééń.]",
+  "admin_groups.new_group": "[Ńéŵ ǧŕóúþ]",
+  "admin_groups.load_error.title": "[Ćóúľď ńóť ľóáď ǧŕóúþś]",
+  "admin_groups.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_groups.search": "[Śéáŕćȟ]",
+  "admin_groups.search_placeholder": "[ǧŕóúþ ńáḿé óŕ ďéśćŕíþťíóń]",
+  "admin_groups.search_hint_matching": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ḿáťćȟíńǧ]"
+      }
+    }
+  ],
+  "admin_groups.search_hint_global": "[Śéáŕćȟéś éǚéŕý ǧŕóúþ, ńóť ĵúśť ťȟíś þáǧé.]",
+  "admin_groups.loading": "[Ĺóáďíńǧ ǧŕóúþś]",
+  "admin_groups.empty_query": "[Ńó ǧŕóúþ ḿáťćȟéś ťȟáť.]",
+  "admin_groups.empty": "[Ńó ǧŕóúþś ýéť.]",
+  "admin_groups.caption": "[Ǧŕóúþś, ťȟéíŕ ḿéḿƀéŕś áńď ťȟéíŕ ḿóďéľ áććéśś.]",
+  "admin_groups.noun": "[ǧŕóúþś]",
+  "admin_groups.create.title": "[Ńéŵ ǧŕóúþ]",
+  "admin_groups.create.cancel": "[Ćáńćéľ]",
+  "admin_groups.create.submit": "[Ćŕéáťé ǧŕóúþ]",
+  "admin_groups.create.toast_done": "[Ǧŕóúþ {name} ćŕéáťéď]",
+  "admin_groups.create.toast_failed": "[Ćóúľď ńóť ćŕéáťé ťȟé ǧŕóúþ]",
+  "admin_groups.create.name": "[Ńáḿé]",
+  "admin_groups.create.name_hint": "[Śȟóŵń ŵȟéŕéǚéŕ á ǧŕóúþ íś ńáḿéď: þíćķéŕś, ľíśťíńǧś, ŕéþóŕťś.]",
+  "admin_groups.create.description": "[Ďéśćŕíþťíóń]",
+  "admin_groups.create.description_hint": "[Óþťíóńáľ. Á śéńťéńćé śáýíńǧ ŵȟáť ťȟé ǧŕóúþ íś ƒóŕ.]",
+  "admin_groups.members.title": "[Ḿéḿƀéŕś — {name}]",
+  "admin_groups.members.title_plain": "[Ḿéḿƀéŕś]",
+  "admin_groups.members.done": "[Ďóńé]",
+  "admin_groups.members.add_search": "[Áďď á ḿéḿƀéŕ]",
+  "admin_groups.members.add_placeholder": "[éḿáíľ, ńáḿé óŕ íďéńťíťý þŕóǚíďéŕ śúƀĵéćť]",
+  "admin_groups.members.cancel": "[Ćáńćéľ]",
+  "admin_groups.members.add_member": "[Áďď ḿéḿƀéŕ]",
+  "admin_groups.members.searching": "[Śéáŕćȟíńǧ]",
+  "admin_groups.members.add": "[Áďď]",
+  "admin_groups.members.toast_added": "[Ḿéḿƀéŕ áďďéď]",
+  "admin_groups.members.toast_add_failed": "[Ćóúľď ńóť áďď ťȟé ḿéḿƀéŕ]",
+  "admin_groups.members.no_match": "[Ńó áććóúńť ḿáťćȟéś ťȟáť.]",
+  "admin_groups.members.loading": "[Ĺóáďíńǧ ḿéḿƀéŕś]",
+  "admin_groups.members.from_directory": "[ƒŕóḿ ťȟé ďíŕéćťóŕý]",
+  "admin_groups.members.remove": "[Ŕéḿóǚé]",
+  "admin_groups.members.toast_removed": "[Ḿéḿƀéŕ ŕéḿóǚéď]",
+  "admin_groups.members.toast_remove_failed": "[Ćóúľď ńóť ŕéḿóǚé ťȟé ḿéḿƀéŕ]",
+  "admin_groups.members.none_yet": "[Ńó ḿéḿƀéŕś ýéť.]",
+  "admin_groups.delete.title": "[Ďéľéťé {name}?]",
+  "admin_groups.delete.title_fallback": "[ťȟíś ǧŕóúþ]",
+  "admin_groups.delete.cancel": "[Ćáńćéľ]",
+  "admin_groups.delete.confirm": "[Ďéľéťé þéŕḿáńéńťľý]",
+  "admin_groups.delete.toast_done": "[Ǧŕóúþ ďéľéťéď]",
+  "admin_groups.delete.toast_failed": "[Ćóúľď ńóť ďéľéťé ťȟé ǧŕóúþ]",
+  "admin_groups.delete.body": "[Ḿóďéľ áććéśś ǧŕáńťéď ťó ťȟíś ǧŕóúþ íś ŕéḿóǚéď, áńď áńýóńé ƀíľľíńǧ ťó íť áś ťȟéíŕ ďéƒáúľť ǧóéś ƀáćķ ťó ćȟóóśíńǧ áť ŕéǫúéśť ťíḿé. Ťȟéíŕ ǫúóťá áńď ŕéďáćťíóń ŕúľéś śćóþéď ťó ťȟé ǧŕóúþ ķééþ ťȟéíŕ śćóþé ƀúť śťóþ ḿáťćȟíńǧ áńýóńé.]",
+  "admin_groups.delete.idp_title": "[Ťȟíś ǧŕóúþ ćóḿéś ƒŕóḿ ťȟé íďéńťíťý þŕóǚíďéŕ]",
+  "admin_groups.delete.idp_auto_body": "[Íť ŵíľľ ƀé ŕéćŕéáťéď ťȟé ńéẋť ťíḿé óńé óƒ íťś ḿéḿƀéŕś śíǧńś íń, úńľéśś ťȟé ḿáþþíńǧś óŕ ťȟé ďíŕéćťóŕý ȟáǚé ćȟáńǧéď.]",
+  "admin_groups.delete.idp_manual_body": "[Íťś ḿéḿƀéŕś ľóśé íť ńóŵ. Ŵȟéń óńé óƒ ťȟéḿ ńéẋť śíǧńś íń, íťś ńáḿé íś ľíśťéď úńďéŕ “Ǧŕóúþś ƒŕóḿ ýóúŕ íďéńťíťý þŕóǚíďéŕ” áǧáíń, áńď ńóťȟíńǧ íś ŕéćŕéáťéď úńľéśś ýóú ḿáþ íť.]",
+  "admin_groups.seen.card": "[Ǧŕóúþś ƒŕóḿ ýóúŕ íďéńťíťý þŕóǚíďéŕ]",
+  "admin_groups.seen.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé ǧŕóúþś ýóúŕ íďéńťíťý þŕóǚíďéŕ ŕéþóŕťéď]",
+  "admin_groups.seen.toast_ignored": "[{name} íǧńóŕéď]",
+  "admin_groups.seen.toast_relisted": "[{name} ľíśťéď áǧáíń]",
+  "admin_groups.seen.toast_dismiss_failed": "[Ćóúľď ńóť ďíśḿíśś {name}]",
+  "admin_groups.seen.toast_restore_failed": "[Ćóúľď ńóť ŕéśťóŕé {name}]",
+  "admin_groups.seen.map": "[Ḿáþ…]",
+  "admin_groups.seen.restore": "[Ŕéśťóŕé]",
+  "admin_groups.seen.ignore": "[Íǧńóŕé]",
+  "admin_groups.seen.column.name": "[Ńáḿé]",
+  "admin_groups.seen.column.people": "[Þéóþľé]",
+  "admin_groups.seen.column.last_seen": "[Ĺáśť śééń]",
+  "admin_groups.seen.mappings_heading": "[Ćúŕŕéńť ḿáþþíńǧś]",
+  "admin_groups.seen.unmap_aria": "[Úńḿáþ {idp}]",
+  "admin_groups.seen.unmap": "[Úńḿáþ]",
+  "admin_groups.seen.toast_unmapped": "[{idp} úńḿáþþéď]",
+  "admin_groups.seen.unmap_note": "[Ḿéḿƀéŕśȟíþś ǧŕáńťéď ťȟŕóúǧȟ ťȟé ḿáþþíńǧ ǧó áť éáćȟ þéŕśóń'ś ńéẋť śíǧń-íń.]",
+  "admin_groups.seen.toast_unmap_failed": "[Ćóúľď ńóť úńḿáþ]",
+  "admin_groups.seen.search_placeholder": "[ǧŕóúþ ńáḿé]",
+  "admin_groups.seen.hint_dismissed": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ďíśḿíśśéď]"
+      }
+    }
+  ],
+  "admin_groups.seen.hint_waiting": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ŵáíťíńǧ]"
+      }
+    }
+  ],
+  "admin_groups.seen.show_waiting": "[Śȟóŵ ŵáíťíńǧ]",
+  "admin_groups.seen.show_dismissed": "[Śȟóŵ ďíśḿíśśéď]",
+  "admin_groups.seen.loading": "[Ĺóáďíńǧ ťȟé ǧŕóúþś ýóúŕ íďéńťíťý þŕóǚíďéŕ ŕéþóŕťéď]",
+  "admin_groups.seen.empty_dismissed_title": "[Ńóťȟíńǧ ďíśḿíśśéď.]",
+  "admin_groups.seen.empty_waiting_title": "[Ńóťȟíńǧ ŵáíťíńǧ ťó ƀé ḿáþþéď.]",
+  "admin_groups.seen.empty_dismissed_detail": "[Ńáḿéś ýóú ďíśḿíśś áŕé ķéþť ȟéŕé, ťó ḿáþ óŕ ľíśť áǧáíń ľáťéŕ.]",
+  "admin_groups.seen.empty_waiting_detail": "[Ǧŕóúþ ńáḿéś ýóúŕ íďéńťíťý þŕóǚíďéŕ ŕéþóŕťś áþþéáŕ ȟéŕé áƒťéŕ śóḿéóńé śíǧńś íń ŵíťȟ ťȟéḿ.]",
+  "admin_groups.seen.empty_query": "[Ńó ǧŕóúþ ńáḿé ḿáťćȟéś ťȟáť.]",
+  "admin_groups.seen.caption": "[Ǧŕóúþ ńáḿéś ýóúŕ íďéńťíťý þŕóǚíďéŕ ŕéþóŕťéď, áńď ȟóŵ ḿáńý þéóþľé ćáŕŕý éáćȟ.]",
+  "admin_groups.seen.noun": "[ńáḿéś]",
+  "admin_groups.map.title": "[Ḿáþ {name}]",
+  "admin_groups.map.cancel": "[Ćáńćéľ]",
+  "admin_groups.map.confirm": "[Ḿáþ]",
+  "admin_groups.map.toast_done": "[{name} ḿáþþéď ťó {group}]",
+  "admin_groups.map.toast_failed": "[Ćóúľď ńóť ḿáþ]",
+  "admin_groups.map.legend": "[Ŵȟáť ťȟíś ńáḿé ǧŕáńťś]",
+  "admin_groups.map.option.new_same_name": "[Ńéŵ ǧŕóúþ ŵíťȟ ťȟé śáḿé ńáḿé]",
+  "admin_groups.map.option.new_named": "[Ńéŵ ǧŕóúþ ńáḿéď…]",
+  "admin_groups.map.option.existing": "[Éẋíśťíńǧ ǧŕóúþ…]",
+  "admin_groups.map.new_name": "[Ńáḿé ťȟé ńéŵ ǧŕóúþ]",
+  "admin_groups.map.new_name_placeholder": "[éńǧíńééŕíńǧ]",
+  "admin_groups.map.local_group": "[Ĺóćáľ ǧŕóúþ]",
+  "admin_groups.map.local_group_hint": "[Ťȟé ÍďÞ ńáḿé ńóŵ ǧŕáńťś ťȟíś ǧŕóúþ, ŵȟéŕéǚéŕ íť íś ćľáíḿéď.]",
+  "admin_groups.map.pick_group": "[Þíćķ á ǧŕóúþ…]",
+  "admin_groups.map.reason": "[Ŕéáśóń (óþťíóńáľ)]",
+  "admin_groups.map.reason_placeholder": "[ŕéćóŕďéď óń ťȟé þóľíćý ȟíśťóŕý]",
+  "admin_groups.mode.auto": "[Éǚéŕý ńáḿé íś ḿáþþéď áúťóḿáťíćáľľý áť śíǧń-íń. Ńáḿéś ľíśťéď ȟéŕé ŵéŕé śééń ƀéƒóŕé ťȟáť ŵáś ťúŕńéď óń.]",
+  "admin_groups.mode.manual": "[Ńóťȟíńǧ íś ćŕéáťéď úńťíľ ýóú ḿáþ íť. Ḿáþþíńǧ ćŕéáťéś ťȟé ǧŕóúþ (óŕ ńáḿéś óńé ťȟáť éẋíśťś) áńď ǧíǚéś íť ťó ťȟé þéóþľé ŵȟó ćáŕŕý íť ńóŵ — óŕ áť ťȟéíŕ ńéẋť śíǧń-íń ŵȟéŕé ťȟé þŕóǚíďéŕ'ś ǧŕóúþś óńľý áþþľý ťȟéń.]",
+  "admin_groups.mode.everyone": "[Éǚéŕýóńé ĵóíńś {#strong}{group}{/strong} áť ťȟéíŕ ƒíŕśť śíǧń-íń, śó ńéŵ þéóþľé ćáń úśé þúƀľíć ḿóďéľś ƀéƒóŕé áńýťȟíńǧ íś ḿáþþéď.]",
+  "admin_groups.import.next_login": "[Íťś ḿéḿƀéŕś ǧéť íť áť ťȟéíŕ ńéẋť śíǧń-íń. Ǧŕáńť íť ḿóďéľś óń ťȟé Ḿóďéľś śćŕééń.]",
+  "admin_groups.import.added_now": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[1 þéŕśóń áďďéď ńóŵ. Ǧŕáńť íť ḿóďéľś óń ťȟé Ḿóďéľś śćŕééń.]",
+        "countPlural=other": "[{n} þéóþľé áďďéď ńóŵ. Ǧŕáńť íť ḿóďéľś óń ťȟé Ḿóďéľś śćŕééń.]"
+      }
+    }
+  ],
+  "model_detail.loading": "[Ĺóáďíńǧ ťȟé ḿóďéľ]",
+  "model_detail.load_error.title": "[Ćóúľď ńóť ľóáď ťȟíś ḿóďéľ]",
+  "model_detail.back_link": "[Ɓáćķ ťó ťȟé ćáťáľóǧúé]",
+  "model_detail.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "model_detail.subtitle": "[{#link}Ḿóďéľś{/link} · śéŕǚéď áś {#code}{upstream}{/code} ƀý {provider}]",
+  "model_detail.toast.name_saved": "[Ďíśþľáý ńáḿé śáǚéď]",
+  "model_detail.toast.name_failed": "[Ćóúľď ńóť śáǚé ťȟé ďíśþľáý ńáḿé]",
+  "model_detail.toast.updated": "[Ḿóďéľ úþďáťéď]",
+  "model_detail.toast.update_failed": "[Ćóúľď ńóť úþďáťé ťȟé ḿóďéľ]",
+  "model_detail.toast.deleted": "[Ḿóďéľ ďéľéťéď]",
+  "model_detail.toast.delete_failed": "[Ćóúľď ńóť ďéľéťé ťȟé ḿóďéľ]",
+  "model_detail.action.deactivate": "[Ďéáćťíǚáťé]",
+  "model_detail.action.activate": "[Áćťíǚáťé]",
+  "model_detail.action.delete": "[Ďéľéťé]",
+  "model_detail.delete.title": "[Ďéľéťé {name}]",
+  "model_detail.delete.cancel": "[Ćáńćéľ]",
+  "model_detail.delete.confirm": "[Ďéľéťé þéŕḿáńéńťľý]",
+  "model_detail.delete.body": "[Ŕéḿóǚéď ƒŕóḿ ťȟé ćáťáľóǧúé áńď ƒŕóḿ {#code}/ǚ1/ḿóďéľś{/code}; íťś þŕíćéś áńď áććéśś ǧŕáńťś ǧó ŵíťȟ íť. Ťȟíś ćáńńóť ƀé úńďóńé.]",
+  "model_detail.delete.spend_note": "[Ŕéćóŕďéď śþéńď íś úńáƒƒéćťéď: þáśť úśáǧé ķééþś ťȟé ḿóďéľ'ś ńáḿé áńď śťáýś áťťŕíƀúťéď ťó ťȟé þéóþľé áńď ǧŕóúþś ťȟáť ŕáń íť.]",
+  "model_detail.no_price.title": "[Ťȟíś ḿóďéľ ȟáś ńó þŕíćé]",
+  "model_detail.no_price.body": "[Íť ŵíľľ śéŕǚé ŕéǫúéśťś áńď ŕéćóŕď á ćóśť óƒ źéŕó. Áþþéńď á þŕíćé ƀéľóŵ.]",
+  "model_detail.provider_inactive.title": "[{provider} íś ďéáćťíǚáťéď]",
+  "model_detail.provider_inactive.body": "[Éǚéŕý ḿóďéľ ƀéȟíńď íť íś óúť óƒ śéŕǚíćé.]",
+  "model_detail.details_card": "[Ďéťáíľś]",
+  "model_detail.detail.status": "[Śťáťúś]",
+  "model_detail.detail.visibility": "[Ǚíśíƀíľíťý]",
+  "model_detail.detail.callers_name": "[Ńáḿé ćáľľéŕś śéńď]",
+  "model_detail.detail.display_name": "[Ďíśþľáý ńáḿé]",
+  "model_detail.detail.upstream": "[Úþśťŕéáḿ ḿóďéľ]",
+  "model_detail.detail.provider": "[Þŕóǚíďéŕ]",
+  "model_detail.badge.active": "[Áćťíǚé]",
+  "model_detail.badge.inactive": "[Íńáćťíǚé]",
+  "model_detail.badge.public": "[Þúƀľíć]",
+  "model_detail.badge.private": "[Þŕíǚáťé]",
+  "model_detail.action.restrict": "[Ŕéśťŕíćť ťó ǧŕáńťś]",
+  "model_detail.action.make_public": "[Ḿáķé þúƀľíć]",
+  "model_detail.display_name_hint": "[Ŵȟáť á ćľíéńť śȟóŵś íń á ḿóďéľ þíćķéŕ, ƒŕóḿ /ǚ1/ḿóďéľś. Éḿþťý ḿéáńś ťȟé ńáḿé áƀóǚé. Íť ńéǚéŕ ćȟáńǧéś ŵȟáť ćáľľéŕś śéńď.]",
+  "model_detail.action.save_display_name": "[Śáǚé ďíśþľáý ńáḿé]",
+  "model_detail.action.clear_display_name": "[Ćľéáŕ ďíśþľáý ńáḿé]",
+  "model_detail.describe.card": "[Ćáþáƀíľíťíéś]",
+  "model_detail.describe.description": "[Ŵȟáť ćáľľéŕś áŕé ťóľď óń /ǚ1/ḿóďéľś. Ďíśćóǚéŕ ńéǚéŕ óǚéŕŵŕíťéś áń éďíť.]",
+  "model_detail.describe.saved": "[Śáǚéď.]",
+  "model_detail.describe.kind": "[Ķíńď]",
+  "model_detail.describe.kind_hint": "[Ŵȟíćȟ ŕóúťéś ŵíľľ śéŕǚé íť. Ďíśćóǚéŕý ćáń íńƒéŕ íť ŵŕóńǧ.]",
+  "model_detail.kind.chat": "[Ćȟáť — /ǚ1/ćȟáť/ćóḿþľéťíóńś, /ǚ1/ŕéśþóńśéś, /ǚ1/ḿéśśáǧéś]",
+  "model_detail.kind.embedding": "[Éḿƀéďďíńǧ — /ǚ1/éḿƀéďďíńǧś]",
+  "model_detail.kind.image": "[Íḿáǧé — /ǚ1/íḿáǧéś/ǧéńéŕáťíóńś]",
+  "model_detail.describe.accepts": "[Áććéþťś]",
+  "model_detail.describe.accepts_other": "[Óťȟéŕ íńþúť ḿóďáľíťíéś]",
+  "model_detail.describe.accepts_hint": "[Ŵȟáť ćáń ƀé śéńť ťó íť.]",
+  "model_detail.describe.produces": "[Þŕóďúćéś]",
+  "model_detail.describe.produces_other": "[Óťȟéŕ óúťþúť ḿóďáľíťíéś]",
+  "model_detail.describe.produces_hint": "[Ŵȟáť ćóḿéś ƀáćķ.]",
+  "model_detail.describe.features": "[Ƒéáťúŕéś]",
+  "model_detail.describe.features_other": "[Óťȟéŕ ƒéáťúŕéś]",
+  "model_detail.describe.features_hint": "[Ŵȟáťéǚéŕ ťȟé þŕóǚíďéŕ ŕéþóŕťś íś ķéþť.]",
+  "model_detail.describe.context_window": "[Ćóńťéẋť ŵíńďóŵ]",
+  "model_detail.describe.context_hint": "[Ťóťáľ ťóķéńś, íń áńď óúť. Ĺéáǚé éḿþťý íƒ úńķńóŵń.]",
+  "model_detail.describe.max_input": "[Ḿáẋ íńþúť ťóķéńś]",
+  "model_detail.describe.max_input_hint": "[Þŕóḿþť ćáþ ťȟé ǧáťéŵáý éńƒóŕćéś; śéť ƀý ȟáńď, ńó ćáťáľóǧúé ŕéþóŕťś íť. Éḿþťý ḿéáńś ńó ľóćáľ ľíḿíť.]",
+  "model_detail.describe.max_output": "[Ḿáẋ óúťþúť ťóķéńś]",
+  "model_detail.describe.max_output_hint": "[Ćóḿþľéťíóń ćáþ ŕéþóŕťéď óń /ǚ1/ḿóďéľś. Éḿþťý íƒ úńķńóŵń.]",
+  "model_detail.describe.save": "[Śáǚé ćáþáƀíľíťíéś]",
+  "model_detail.describe.toast_saved": "[Ćáþáƀíľíťíéś śáǚéď]",
+  "model_detail.describe.toast_failed": "[Ćóúľď ńóť śáǚé ťȟé ćáþáƀíľíťíéś]",
+  "model_detail.price.column.effective": "[Éƒƒéćťíǚé ƒŕóḿ]",
+  "model_detail.price.column.input": "[Íńþúť / Ḿťóķ]",
+  "model_detail.price.column.output": "[Óúťþúť / Ḿťóķ]",
+  "model_detail.price.column.cache": "[Ćáćȟé ŕéáď / ŵŕíťé]",
+  "model_detail.price.column.image": "[Þéŕ íḿáǧé]",
+  "model_detail.price.column.page": "[Þéŕ þáǧé]",
+  "model_detail.price.column.search": "[Þéŕ śéáŕćȟ]",
+  "model_detail.price.column.source": "[Śóúŕćé]",
+  "model_detail.price.scheduled": "[Śćȟéďúľéď]",
+  "model_detail.price.card": "[Þŕíćé ȟíśťóŕý]",
+  "model_detail.price.description": "[Ńéŵéśť ƒíŕśť. Á ćóŕŕéćťíóń íś á ńéŵ ŕóŵ.]",
+  "model_detail.price.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé þŕíćé ȟíśťóŕý]",
+  "model_detail.price.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} þŕíćé]",
+        "countPlural=other": "[{n} þŕíćéś]"
+      }
+    }
+  ],
+  "model_detail.price.current": [
+    {
+      "declarations": [
+        "input rates"
+      ],
+      "match": {
+        "*": "[ćúŕŕéńť: {rates}]"
+      }
+    }
+  ],
+  "model_detail.price.current_rates": [
+    {
+      "declarations": [
+        "input rin"
+      ],
+      "match": {
+        "*": "[{rin} íń / {rout} óúť]"
+      }
+    }
+  ],
+  "model_detail.price.no_current": "[ťȟíś ḿóďéľ ŕéćóŕďś á ćóśť óƒ źéŕó]",
+  "model_detail.price.empty": "[Ńó þŕíćé śéť. Ťȟíś ḿóďéľ ŕéćóŕďś á ćóśť óƒ źéŕó.]",
+  "model_detail.price.caption": "[Þŕíćé ȟíśťóŕý ƒóŕ {name}.]",
+  "model_detail.append.card": "[Ńéŵ þŕíćé]",
+  "model_detail.append.saved": "[Þŕíćé áþþéńďéď. Íť áþþľíéś ƒŕóḿ íťś éƒƒéćťíǚé ďáťé.]",
+  "model_detail.append.input": "[Íńþúť þéŕ Ḿťóķ]",
+  "model_detail.append.input_hint": "[Íń ťȟé ǧáťéŵáý'ś ƀíľľíńǧ ćúŕŕéńćý]",
+  "model_detail.append.output": "[Óúťþúť þéŕ Ḿťóķ]",
+  "model_detail.append.cache_read": "[Ćáćȟé ŕéáď þéŕ Ḿťóķ]",
+  "model_detail.append.cache_read_hint": "[Éḿþťý ƀíľľś ćáćȟéď íńþúť áť ťȟé ƒúľľ íńþúť ŕáťé.]",
+  "model_detail.append.cache_write": "[Ćáćȟé ŵŕíťé þéŕ Ḿťóķ]",
+  "model_detail.append.per_image": "[Þéŕ íḿáǧé]",
+  "model_detail.append.per_image_hint": "[Íḿáǧé ḿóďéľś óńľý, óń ťóþ óƒ áńý ťóķéń ŕáťéś.]",
+  "model_detail.append.per_page": "[Þéŕ þáǧé]",
+  "model_detail.append.per_page_hint": "[ÓĆŔ ḿóďéľś, ŵȟíćȟ ćȟáŕǧé ƀý ťȟé þáǧé áńď úśúáľľý ńóťȟíńǧ þéŕ ťóķéń.]",
+  "model_detail.append.per_search": "[Þéŕ śéáŕćȟ]",
+  "model_detail.append.per_search_hint": "[Þŕóǚíďéŕ-śíďé ŵéƀ śéáŕćȟ, ćȟáŕǧéď þéŕ śéáŕćȟ óń ťóþ óƒ ťóķéńś. Þŕóǚíďéŕś þúƀľíśȟ íť þéŕ ťȟóúśáńď — $10 þéŕ 1,000 íś 0.01 ȟéŕé.]",
+  "model_detail.append.effective": "[Éƒƒéćťíǚé ƒŕóḿ]",
+  "model_detail.append.effective_hint": "[Ĺéáǚé éḿþťý ƒóŕ ńóŵ. Á ƒúťúŕé ďáťé śćȟéďúľéś ťȟé ćȟáńǧé.]",
+  "model_detail.append.submit": "[Áþþéńď þŕíćé]",
+  "model_detail.append.toast_done": "[Þŕíćé áþþéńďéď]",
+  "model_detail.append.toast_failed": "[Ćóúľď ńóť áþþéńď ťȟé þŕíćé]",
+  "model_detail.access.card": "[Áććéśś]",
+  "model_detail.access.description": "[Ńó ǧŕáńť ḿéáńś ńó áććéśś; ťȟéŕé íś ńó áľľóŵ-áľľ.]",
+  "model_detail.access.groups": "[Ǧŕóúþś]",
+  "model_detail.access.individuals": "[Íńďíǚíďúáľś, íń áďďíťíóń ťó ťȟéíŕ ǧŕóúþś.]",
+  "model_detail.access.person_search": "[Þéŕśóń śéáŕćȟ]",
+  "model_detail.access.person_placeholder": "[éḿáíľ, ńáḿé óŕ śúƀĵéćť]",
+  "model_detail.access.no_grants": "[Ńó íńďíǚíďúáľ ǧŕáńťś.]",
+  "model_detail.access.type_to_find": "[Ťýþé ťó ƒíńď śóḿéóńé éľśé.]",
+  "model_detail.access.searching": "[Śéáŕćȟíńǧ…]",
+  "model_detail.access.no_match": "[Ńóƀóďý ḿáťćȟéś ťȟáť.]",
+  "model_detail.access.showing": [
+    {
+      "declarations": [
+        "input shown"
+      ],
+      "match": {
+        "*": "[Śȟóŵíńǧ {shown} óƒ {total} ḿáťćȟéś. Ńáŕŕóŵ ťȟé śéáŕćȟ ťó śéé ťȟé ŕéśť.]"
+      }
+    }
+  ],
+  "model_detail.access.revoke_note": "[Ŕéǚóķíńǧ ťáķéś éƒƒéćť óń ťȟé ńéẋť ŕéǫúéśť.]",
+  "admin_models.section.chat": "[Ćȟáť]",
+  "admin_models.section.chat_description": "[/ǚ1/ćȟáť/ćóḿþľéťíóńś, /ǚ1/ŕéśþóńśéś áńď /ǚ1/ḿéśśáǧéś.]",
+  "admin_models.section.embedding": "[Éḿƀéďďíńǧ]",
+  "admin_models.section.embedding_description": "[/ǚ1/éḿƀéďďíńǧś. Þŕíćéď þéŕ ťóķéń, áńď ťȟéý ǧéńéŕáťé ńóńé.]",
+  "admin_models.section.ocr": "[Ďóćúḿéńť éẋťŕáćťíóń]",
+  "admin_models.section.ocr_description": "[/ǚ1/óćŕ. Þŕíćéď þéŕ þáǧé ŕáťȟéŕ ťȟáń þéŕ ťóķéń.]",
+  "admin_models.section.image": "[Íḿáǧé]",
+  "admin_models.section.image_description": "[/ǚ1/íḿáǧéś/ǧéńéŕáťíóńś. Óƒťéń þŕíćéď þéŕ íḿáǧé.]",
+  "admin_models.section.other": "[Óťȟéŕ]",
+  "admin_models.section.caption": "[{section} ḿóďéľś, ťȟéíŕ ćúŕŕéńť þŕíćé áńď ŵȟó ḿáý úśé ťȟéḿ.]",
+  "admin_models.column.model": "[Ḿóďéľ]",
+  "admin_models.column.capabilities": "[Ćáþáƀíľíťíéś]",
+  "admin_models.column.provider": "[Þŕóǚíďéŕ]",
+  "admin_models.badge.provider_off": "[Þŕóǚíďéŕ óƒƒ]",
+  "admin_models.column.price": "[Þŕíćé / Ḿťóķ]",
+  "admin_models.price.in": [
+    {
+      "declarations": [
+        "input rate"
+      ],
+      "match": {
+        "*": "[{rate} íń]"
+      }
+    }
+  ],
+  "admin_models.price.out": [
+    {
+      "declarations": [
+        "input rate"
+      ],
+      "match": {
+        "*": "[{rate} óúť]"
+      }
+    }
+  ],
+  "admin_models.badge.no_price": "[Ńó þŕíćé]",
+  "admin_models.column.access": "[Áććéśś]",
+  "admin_models.access.nobody": "[ńóƀóďý]",
+  "admin_models.column.status": "[Śťáťúś]",
+  "admin_models.badge.active": "[Áćťíǚé]",
+  "admin_models.badge.inactive": "[Íńáćťíǚé]",
+  "admin_models.badge.public": "[Þúƀľíć]",
+  "admin_models.action.edit": "[Éďíť]",
+  "admin_models.action.deactivate": "[Ďéáćťíǚáťé]",
+  "admin_models.action.activate": "[Áćťíǚáťé]",
+  "admin_models.action.delete": "[Ďéľéťé]",
+  "admin_models.toast.updated": "[Ḿóďéľ úþďáťéď]",
+  "admin_models.toast.update_failed": "[Ćóúľď ńóť úþďáťé ťȟé ḿóďéľ]",
+  "admin_models.title": "[Ḿóďéľś]",
+  "admin_models.subtitle": "[Áń áľľóŵľíśť: á ḿóďéľ íś íńǚíśíƀľé ťó ćáľľéŕś úńťíľ á ǧŕóúþ íś ǧŕáńťéď íť.]",
+  "admin_models.discover": "[Ďíśćóǚéŕ]",
+  "admin_models.add_model": "[Áďď ḿóďéľ]",
+  "admin_models.load_error.update": "[Ćóúľď ńóť úþďáťé ťȟé ḿóďéľ]",
+  "admin_models.load_error.delete": "[Ćóúľď ńóť ďéľéťé ťȟé ḿóďéľ]",
+  "admin_models.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_models.search": "[Śéáŕćȟ]",
+  "admin_models.search_placeholder": "[ḿóďéľ ńáḿé óŕ úþśťŕéáḿ íď]",
+  "admin_models.search_hint_matching": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ḿáťćȟíńǧ]"
+      }
+    }
+  ],
+  "admin_models.search_hint_default": "[Ḿáťćȟéś ńáḿé áńď úþśťŕéáḿ íď.]",
+  "admin_models.loading": "[Ĺóáďíńǧ ťȟé ćáťáľóǧúé]",
+  "admin_models.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé ćáťáľóǧúé]",
+  "admin_models.empty_query": "[Ńó ḿóďéľ ḿáťćȟéś ťȟáť.]",
+  "admin_models.empty": "[Ńó ḿóďéľś ćáťáľóǧúéď. Úśé Ďíśćóǚéŕ ťó śéé ŵȟáť ťȟé þŕóǚíďéŕ óƒƒéŕś.]",
+  "admin_models.caption": "[Ćáťáľóǧúéď ḿóďéľś.]",
+  "admin_models.noun": "[ḿóďéľś]",
+  "admin_models.delete.title": "[Ďéľéťé {name}]",
+  "admin_models.delete.title_fallback": "[ťȟíś ḿóďéľ]",
+  "admin_models.delete.cancel": "[Ćáńćéľ]",
+  "admin_models.delete.confirm": "[Ďéľéťé þéŕḿáńéńťľý]",
+  "admin_models.delete.toast_done": "[Ḿóďéľ ďéľéťéď]",
+  "admin_models.delete.toast_failed": "[Ćóúľď ńóť ďéľéťé ťȟé ḿóďéľ]",
+  "admin_models.delete.body": "[Ŕéḿóǚéď ƒŕóḿ ťȟé ćáťáľóǧúé áńď ƒŕóḿ {#code}/ǚ1/ḿóďéľś{/code}; íťś þŕíćéś áńď áććéśś ǧŕáńťś ǧó ŵíťȟ íť. Ćáľľéŕś áśķíńǧ ƒóŕ {#code}{name}{/code} ǧéť \"ḿóďéľ ńóť ƒóúńď\" ƒŕóḿ ťȟé ńéẋť ŕéǫúéśť óń. Ťȟíś ćáńńóť ƀé úńďóńé.]",
+  "admin_models.delete.spend_note": "[Ŕéćóŕďéď śþéńď íś úńáƒƒéćťéď: þáśť úśáǧé ķééþś ťȟé ḿóďéľ'ś ńáḿé áńď śťáýś áťťŕíƀúťéď ťó ťȟé þéóþľé áńď ǧŕóúþś ťȟáť ŕáń íť.]",
+  "admin_models.create.title": "[Ńéŵ ḿóďéľ]",
+  "admin_models.create.cancel": "[Ćáńćéľ]",
+  "admin_models.create.submit": "[Áďď]",
+  "admin_models.create.toast_done": "[Ḿóďéľ ćŕéáťéď]",
+  "admin_models.create.toast_failed": "[Ćóúľď ńóť ćŕéáťé ťȟé ḿóďéľ]",
+  "admin_models.create.provider": "[Þŕóǚíďéŕ]",
+  "admin_models.create.choose_provider": "[Ćȟóóśé áń éńďþóíńť…]",
+  "admin_models.create.no_provider": "[Ńó áćťíǚé þŕóǚíďéŕ. Áďď óńé óń ťȟé Þŕóǚíďéŕś þáǧé ƒíŕśť.]",
+  "admin_models.create.name": "[Ńáḿé]",
+  "admin_models.create.name_placeholder": "[ƒáśť-śúḿḿáŕíśéŕ]",
+  "admin_models.create.name_hint": "[Ŵȟáť ćáľľéŕś śéńď áś `ḿóďéľ`. Ćáńńóť ƀé ćȟáńǧéď ľáťéŕ.]",
+  "admin_models.create.upstream": "[Úþśťŕéáḿ ḿóďéľ]",
+  "admin_models.create.upstream_placeholder": "[þŕóǚíďéŕ/ḿóďéľ-íď]",
+  "admin_models.create.upstream_hint": "[Ŵȟáť ťȟé ǧáťéŵáý áśķś ťȟé þŕóǚíďéŕ ƒóŕ.]",
+  "admin_models.create.kind": "[Ķíńď]",
+  "admin_models.create.kind_hint": "[Ŵȟíćȟ ŕóúťéś ŵíľľ śéŕǚé íť.]",
+  "admin_models.kind.chat": "[Ćȟáť — /ǚ1/ćȟáť/ćóḿþľéťíóńś, /ǚ1/ŕéśþóńśéś, /ǚ1/ḿéśśáǧéś]",
+  "admin_models.kind.embedding": "[Éḿƀéďďíńǧ — /ǚ1/éḿƀéďďíńǧś]",
+  "admin_models.kind.image": "[Íḿáǧé — /ǚ1/íḿáǧéś/ǧéńéŕáťíóńś]",
+  "admin_models.create.accepts": "[Áććéþťś]",
+  "admin_models.create.accepts_other": "[Óťȟéŕ íńþúť ḿóďáľíťíéś]",
+  "admin_models.create.accepts_hint": "[Ŵȟáť ćáń ƀé śéńť ťó íť.]",
+  "admin_models.create.produces": "[Þŕóďúćéś]",
+  "admin_models.create.produces_other": "[Óťȟéŕ óúťþúť ḿóďáľíťíéś]",
+  "admin_models.create.produces_hint": "[Ŵȟáť ćóḿéś ƀáćķ.]",
+  "admin_models.create.features": "[Ƒéáťúŕéś]",
+  "admin_models.create.features_other": "[Óťȟéŕ ƒéáťúŕéś]",
+  "admin_models.create.features_hint": "[Ńóť ľíḿíťéď ťó ťȟé ƀóẋéś áƀóǚé.]",
+  "admin_models.create.starting_note": "[Ńó ǧŕóúþ íś ǧŕáńťéď áććéśś, áńď ńó þŕíćé íś śéť.]",
+  "admin_models.discover.title": "[Þŕóǚíďéŕ ćáťáľóǧúé]",
+  "admin_models.discover.close": "[Ćľóśé]",
+  "admin_models.discover.toast_done": "[Ḿóďéľś íḿþóŕťéď]",
+  "admin_models.discover.toast_failed": "[Ćóúľď ńóť íḿþóŕť ḿóďéľś]",
+  "admin_models.discover.import": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[Íḿþóŕť {count}]"
+      }
+    }
+  ],
+  "admin_models.discover.import_aria": "[Íḿþóŕť {name}]",
+  "admin_models.discover.column.offered": "[Óƒƒéŕéď úþśťŕéáḿ]",
+  "admin_models.discover.column.context": "[Ćóńťéẋť]",
+  "admin_models.discover.column.price": "[Þŕíćé]",
+  "admin_models.discover.per_request": "[þéŕ ŕéǫúéśť]",
+  "admin_models.discover.price_pair": [
+    {
+      "declarations": [
+        "input rin"
+      ],
+      "match": {
+        "*": "[{rin} / {rout}]"
+      }
+    }
+  ],
+  "admin_models.discover.provider": "[Þŕóǚíďéŕ]",
+  "admin_models.discover.choose_provider": "[Ćȟóóśé áń éńďþóíńť…]",
+  "admin_models.discover.tag": "[Ćáťáľóǧúé ťáǧ]",
+  "admin_models.discover.tag_hint_live": "[Ćóŕťéćś ƒíľťéŕś íťś ćáťáľóǧúé ƀý ťáǧ áńď ďéƒáúľťś ťó Íńśťŕúćť — ťȟé ŵóŕďś áƀóǚé áŕé ŕéáď ľíǚé ƒŕóḿ íťś ćáťáľóǧúé, śó á ťáǧ áďďéď ťȟéŕé áþþéáŕś ȟéŕé.]",
+  "admin_models.discover.tag_hint_free": "[Ćóŕťéćś ƒíľťéŕś íťś ćáťáľóǧúé ƀý ťáǧ áńď ďéƒáúľťś ťó Íńśťŕúćť — áśķ ƒóŕ Éḿƀéďďíńǧ óŕ ÓĆŔ ťó śéé ťȟóśé.]",
+  "admin_models.discover.tag_default": "[Þŕóǚíďéŕ ďéƒáúľť]",
+  "admin_models.discover.tag_placeholder": "[Íńśťŕúćť]",
+  "admin_models.discover.fill_missing": "[Ƒíľľ ḿíśśíńǧ þŕíćéś ƒŕóḿ ĹíťéĹĹḾ]",
+  "admin_models.discover.community_gloss": "[(ćóḿḿúńíťý)]",
+  "admin_models.discover.asking": "[Áśķíńǧ ťȟé þŕóǚíďéŕ]",
+  "admin_models.discover.load_error.title": "[Ćóúľď ńóť ŕéáď ťȟé þŕóǚíďéŕ ćáťáľóǧúé]",
+  "admin_models.discover.import_finished": "[Íḿþóŕť ƒíńíśȟéď]",
+  "admin_models.discover.result_imported_community": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "[{name} íḿþóŕťéď ŵíťȟ á ćóḿḿúńíťý þŕíćé]"
+      }
+    }
+  ],
+  "admin_models.discover.result_imported_priced": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "[{name} íḿþóŕťéď ŵíťȟ íťś þŕíćé]"
+      }
+    }
+  ],
+  "admin_models.discover.result_imported_unpriced": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "[{name} íḿþóŕťéď — ḿéťéŕéď þéŕ ŕéǫúéśť, ńó ťóķéń þŕíćé]"
+      }
+    }
+  ],
+  "admin_models.discover.result_skipped": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "[{name} śķíþþéď — {reason}]"
+      }
+    }
+  ],
+  "admin_models.discover.missing_title": "[Śéŕǚéď ȟéŕé, ńó ľóńǧéŕ óƒƒéŕéď úþśťŕéáḿ]",
+  "admin_models.discover.badge.inactive": "[íńáćťíǚé]",
+  "admin_models.discover.missing_sr": "[íś ńó ľóńǧéŕ óƒƒéŕéď ƀý ťȟíś þŕóǚíďéŕ]",
+  "admin_models.discover.empty": "[Ťȟé þŕóǚíďéŕ óƒƒéŕś ńóťȟíńǧ ťȟáť íś ńóť áľŕéáďý ćáťáľóǧúéď.]",
+  "admin_models.discover.caption_models": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ḿóďéľś óƒƒéŕéď ƀý ťȟé þŕóǚíďéŕ.]"
+      }
+    }
+  ],
+  "admin_models.discover.search_tiers": "[Śéáŕćȟ ťíéŕś]",
+  "admin_models.discover.search_tiers_body": "[Á śéáŕćȟ ƀáćķéńď éẋþóśéś ńó ḿóďéľ ľíśť áńď ńó ťóķéń þŕíćé — ŵȟáť ťȟíś þŕóǚíďéŕ ćáľľś á ḿóďéľ íś á ďéþťȟ (Ĺíńķúþ’ś {#code}ďéþťȟ{/code}, Éẋá’ś {#code}ťýþé{/code}). Ḿéťéŕéď þéŕ ŕéǫúéśť; ƀóúńď ƀý ťȟé ŕéǫúéśť ćéíľíńǧ ýóú ǧŕáńť þéŕ ǧŕóúþ.]",
+  "admin_models.discover.caption_tiers": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} śéáŕćȟ ťíéŕś óƒƒéŕéď ƀý ťȟé þŕóǚíďéŕ.]"
+      }
+    }
+  ],
+  "admin_redaction.title": "[Ŕéďáćťíóń]",
+  "admin_redaction.subtitle": "[Ŵȟáť íś śťŕíþþéď ƒŕóḿ þŕóḿþťś ƀéƒóŕé ťȟéý ŕéáćȟ á þŕóǚíďéŕ.]",
+  "admin_redaction.loading": "[Ĺóáďíńǧ ŕéďáćťíóń]",
+  "admin_redaction.load_error.title": "[Ćóúľď ńóť ľóáď ŕéďáćťíóń śéťťíńǧś]",
+  "admin_redaction.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_redaction.stat.redaction": "[Ŕéďáćťíóń]",
+  "admin_redaction.stat.on": "[Óń]",
+  "admin_redaction.stat.off": "[Óƒƒ]",
+  "admin_redaction.stat.engine_detail": "[{engine} éńǧíńé]",
+  "admin_redaction.stat.off_detail": "[þŕóḿþťś ŕéáćȟ ťȟé þŕóǚíďéŕ úńćȟáńǧéď]",
+  "admin_redaction.stat.service": "[Ďéťéćťíóń śéŕǚíćé]",
+  "admin_redaction.stat.service_unknown": "[—]",
+  "admin_redaction.stat.service_ok": "[Áńśŵéŕíńǧ]",
+  "admin_redaction.stat.service_down": "[Ńóť áńśŵéŕíńǧ]",
+  "admin_redaction.stat.service_none": "[ńó śéŕǚíćé ťó ćáľľ]",
+  "admin_redaction.stat.entities": "[Éńťíťíéś ŕéḿóǚéď]",
+  "admin_redaction.stat.entities_detail": "[ƒŕóḿ {redacted: number} óƒ {requests: number} ŕéǫúéśťś, ľáśť {window}]",
+  "admin_redaction.config.card": "[Ćóńƒíǧúŕáťíóń]",
+  "admin_redaction.config.description_console": "[Ƒŕóḿ ťȟé ǧáťéŵáý'ś éńǚíŕóńḿéńť, éẋćéþť ťȟé éńǧíńé, ŵȟíćȟ ŵáś śéť ȟéŕé.]",
+  "admin_redaction.config.description_env": "[Ƒŕóḿ ťȟé ǧáťéŵáý'ś éńǚíŕóńḿéńť.]",
+  "admin_redaction.config.engine": "[Éńǧíńé]",
+  "admin_redaction.config.installed": "[· íńśťáľľéď: {engines}]",
+  "admin_redaction.config.none_engines": "[ńóńé]",
+  "admin_redaction.config.source": "[Śóúŕćé]",
+  "admin_redaction.config.source_console": "[Ťȟíś ćóńśóľé]",
+  "admin_redaction.config.source_env": "[Ťȟé ďéþľóýḿéńť'ś éńǚíŕóńḿéńť]",
+  "admin_redaction.config.endpoint": "[Ďéťéćťíóń éńďþóíńť]",
+  "admin_redaction.config.endpoint_none": "[ńóńé — íń-þŕóćéśś éńǧíńé]",
+  "admin_redaction.config.failure_mode": "[Ƒáíľúŕé ḿóďé]",
+  "admin_redaction.config.fail_open": "[Ƒóŕŵáŕď úńŕéďáćťéď]",
+  "admin_redaction.config.fail_closed": "[Ŕéƒúśé ťȟé ŕéǫúéśť]",
+  "admin_redaction.config.language": "[Ĺáńǧúáǧé]",
+  "admin_redaction.config.timeout": "[Ťíḿéóúť]",
+  "admin_redaction.config.timeout_value": [
+    {
+      "declarations": [
+        "input seconds"
+      ],
+      "match": {
+        "*": "[{seconds}ś]"
+      }
+    }
+  ],
+  "admin_redaction.config.cache": "[Ďéťéćťíóń ćáćȟé]",
+  "admin_redaction.config.cache_disabled": "[ďíśáƀľéď]",
+  "admin_redaction.config.cache_texts": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ťéẋťś]"
+      }
+    }
+  ],
+  "admin_redaction.config.placeholder_key": "[Þľáćéȟóľďéŕ ķéý]",
+  "admin_redaction.config.key_set": "[Śéť]",
+  "admin_redaction.config.key_not_set": "[Ńóť śéť]",
+  "admin_redaction.config.key_note": "[þľáćéȟóľďéŕś ďéŕíǚé ƒŕóḿ íť, śó íť ḿúśť śťáý śťáƀľé]",
+  "admin_redaction.entity_types.card": "[Éńťíťý ťýþéś]",
+  "admin_redaction.entity_types.description": "[ǦÁŤÉŴÁÝ_ŔÉĎÁĆŤÍÓŃ__ÉŃŤÍŤÝ_ŤÝÞÉŚ ľíḿíťś ťȟé śéáŕćȟ ťó ťȟéśé. Íť śéťś ťȟé þóľíćý ƀéľóŵ; ťȟé ćóńśóľé óǚéŕŕíďéś íť.]",
+  "admin_redaction.degraded.card": "[Ďéǧŕáďéď ľáńǧúáǧéś]",
+  "admin_redaction.degraded.description": "[Śéŕǚéď ŵíťȟóúť á ńáḿéď-éńťíťý ḿóďéľ.]",
+  "admin_redaction.rules.column.applies_to": "[Áþþľíéś ťó]",
+  "admin_redaction.rules.every_request": "[Éǚéŕý ŕéǫúéśť]",
+  "admin_redaction.rules.deleted_subject": "[ďéľéťéď śúƀĵéćť]",
+  "admin_redaction.rules.column.policy": "[Þóľíćý]",
+  "admin_redaction.rules.column.state": "[Śťáťé]",
+  "admin_redaction.badge.active": "[Áćťíǚé]",
+  "admin_redaction.badge.inactive": "[Íńáćťíǚé]",
+  "admin_redaction.action.edit": "[Éďíť]",
+  "admin_redaction.action.clone": "[Ćľóńé]",
+  "admin_redaction.action.deactivate": "[Ďéáćťíǚáťé]",
+  "admin_redaction.action.activate": "[Áćťíǚáťé]",
+  "admin_redaction.action.delete": "[Ďéľéťé]",
+  "admin_redaction.rules.no_catchall_title": "[Ńóťȟíńǧ íś ŕéďáćťéď ƀý ďéƒáúľť]",
+  "admin_redaction.rules.no_catchall_body": "[Þŕóḿþťś ŕéáćȟ þŕóǚíďéŕś áś ćáľľéŕś ŵŕóťé ťȟéḿ úńľéśś á ŕúľé ƀéľóŵ śáýś óťȟéŕŵíśé. Áďď á ŕúľé ƒóŕ éǚéŕý ŕéǫúéśť ťó ćȟáńǧé ťȟáť.]",
+  "admin_redaction.rules.card": "[Ŕúľéś]",
+  "admin_redaction.rules.description": "[Ťȟé śťŕíćťéśť áþþľíćáƀľé ŕúľé ŵíńś, śó áďďíńǧ óńé ćáń óńľý þŕóťéćť ḿóŕé.]",
+  "admin_redaction.rules.loading": "[Ĺóáďíńǧ ŕúľéś]",
+  "admin_redaction.rules.load_error.title": "[Ćóúľď ńóť ľóáď ŕúľéś]",
+  "admin_redaction.rules.count": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ŕúľé]",
+        "countPlural=other": "[{n} ŕúľéś]"
+      }
+    }
+  ],
+  "admin_redaction.rules.covered": "[éǚéŕý ŕéǫúéśť íś ćóǚéŕéď]",
+  "admin_redaction.rules.not_covered": "[ńó ćáťćȟ-áľľ — śóḿé ŕéǫúéśťś þáśś úńŕéďáćťéď]",
+  "admin_redaction.rules.new_rule": "[Ńéŵ ŕúľé]",
+  "admin_redaction.rules.empty": "[Ńó ŕúľéś, śó ńóťȟíńǧ íś ŕéďáćťéď.]",
+  "admin_redaction.rules.caption": "[Ŕéďáćťíóń ŕúľéś áńď ťȟé śúƀĵéćť éáćȟ óńé áþþľíéś ťó.]",
+  "admin_redaction.coverage.unserved_title": "[Ťȟéśé ťýþéś áŕé þŕóťéćťéď ƀý ťȟíś ŕúľé ƀúť ćáńńóť ƀé ďéťéćťéď ŵȟíľé ťȟéíŕ ƒáḿíľý íś óƒƒ, śó ḿáťćȟíńǧ ǚáľúéś ŕéáćȟ þŕóǚíďéŕś úńþŕóťéćťéď. Ťȟé ŕúľé śťáýś íń ƒóŕćé.]",
+  "admin_redaction.coverage.unserved_badge": "[Ďéťéćťíóń óƒƒ: {types}]",
+  "admin_redaction.coverage.default_title": "[Ťȟíś ŕúľé þŕóťéćťś úńńáḿéď ťýþéś ƀý ďéƒáúľť, áńď á ďéťéćťóŕ ƒáḿíľý íś śŵíťćȟéď óƒƒ, śó śóḿé óƒ ŵȟáť íť ćóǚéŕś ćáńńóť ƀé ďéťéćťéď. Ťȟé ŕúľé śťáýś íń ƒóŕćé.]",
+  "admin_redaction.coverage.default_badge": "[Ďéƒáúľť ćóǚéŕś á ďíśáƀľéď ƒáḿíľý]",
+  "admin_redaction.preview.toast_ran": "[Þŕéǚíéŵ ŕáń.]",
+  "admin_redaction.preview.toast_failed": "[Ťȟé þŕéǚíéŵ ďíď ńóť ŕúń]",
+  "admin_redaction.preview.column.match": "[Ḿáťćȟ]",
+  "admin_redaction.preview.column.detected": "[Ďéťéćťéď áś]",
+  "admin_redaction.preview.column.score": "[Śćóŕé]",
+  "admin_redaction.preview.needs": "[ńééďś {threshold}]",
+  "admin_redaction.preview.column.applied": "[Áþþľíéď]",
+  "admin_redaction.preview.allow_listed": "[Áľľóŵ-ľíśťéď]",
+  "admin_redaction.preview.card": "[Þŕéǚíéŵ]",
+  "admin_redaction.preview.description": "[Ŕúń á śáḿþľé ťȟŕóúǧȟ ťȟé þóľíćý íń ƒóŕćé.]",
+  "admin_redaction.preview.sample": "[Śáḿþľé]",
+  "admin_redaction.preview.sample_placeholder": "[Ŕíáśśúḿí ľé ńóťíźíé ďéľ ǧíóŕńó ďá íľþóśť.íť]",
+  "admin_redaction.preview.not_logged": "[Ńóť ľóǧǧéď áńýŵȟéŕé.]",
+  "admin_redaction.preview.preview_as": "[Þŕéǚíéŵ áś]",
+  "admin_redaction.preview.nobody": "[Ńóƀóďý íń þáŕťíćúľáŕ]",
+  "admin_redaction.preview.run": "[Ŕúń þŕéǚíéŵ]",
+  "admin_redaction.preview.blocked_title": "[Ťȟíś ŕéǫúéśť ŵóúľď ƀé ƀľóćķéď]",
+  "admin_redaction.preview.blocked_fallback": "[Á ƀľóćķéď éńťíťý ťýþé ŵáś ƒóúńď.]",
+  "admin_redaction.preview.receives": "[Ŵȟáť ťȟé þŕóǚíďéŕ ŕéćéíǚéś]",
+  "admin_redaction.preview.summary_replaced": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ŕéþľáćéď]"
+      }
+    }
+  ],
+  "admin_redaction.preview.summary_engine": "[{engine} éńǧíńé]",
+  "admin_redaction.preview.summary_policy": "[ťȟé ďéþľóýḿéńť þóľíćý]",
+  "admin_redaction.preview.summary_rule": "[{scope} ŕúľé]",
+  "admin_redaction.preview.empty": "[Ńóťȟíńǧ ŵáś ďéťéćťéď íń ťȟíś śáḿþľé.]",
+  "admin_redaction.preview.caption": "[Ŵȟáť ťȟé ďéťéćťóŕ ƒóúńď, áńď ŵȟáť ťȟé þóľíćý ďíď ŵíťȟ íť.]",
+  "admin_redaction.families.toast_saved": "[Ďéťéćťíóń ƒáḿíľíéś śáǚéď.]",
+  "admin_redaction.families.toast_failed": "[Ďéťéćťíóń ƒáḿíľíéś ŵéŕé ńóť ćȟáńǧéď]",
+  "admin_redaction.families.card": "[Þŕéśíďíó ďéťéćťíóń ƒáḿíľíéś]",
+  "admin_redaction.families.description": "[Ťȟéśé śŵíťćȟéś ćóńťŕóľ ťȟé ďéťéćťíóń śéŕǚíćé'ś ŕéćóǧńíźéŕ ƒáḿíľíéś, ńóť ćúśťóḿ ǧáťéŵáý þáťťéŕńś.]",
+  "admin_redaction.families.patterns": "[Þáťťéŕń ḿáťćȟíńǧ]",
+  "admin_redaction.families.patterns_description": "[Śťŕúćťúŕéď íďéńťíƒíéŕś: ćáŕďś, áććóúńťś, éḿáíľś, þȟóńéś, ńáťíóńáľ ÍĎś.]",
+  "admin_redaction.families.ner": "[Ńáḿéď-éńťíťý ŕéćóǧńíťíóń]",
+  "admin_redaction.families.ner_description": "[Ńáḿéś áńď þľáćéś ŕéáď ƀý ťȟé ľáńǧúáǧé ḿóďéľ.]",
+  "admin_redaction.families.saving": "[Śáǚíńǧ…]",
+  "admin_redaction.families.on": "[Óń]",
+  "admin_redaction.families.off": "[Óƒƒ]",
+  "admin_redaction.engine.toast_in_force": "[{label} íś íń ƒóŕćé.]",
+  "admin_redaction.engine.toast_failed": "[Ťȟé éńǧíńé ŵáś ńóť ćȟáńǧéď]",
+  "admin_redaction.engine.card": "[Éńǧíńé]",
+  "admin_redaction.engine.description": "[Óńé íś íń ƒóŕćé áť á ťíḿé; ľľḿþ.ŕéďáćťóŕś þľúǧíńś áþþéáŕ ȟéŕé.]",
+  "admin_redaction.engine.propagated": "[Śáǚéď. Óťȟéŕ ŵóŕķéŕś áþþľý íť ŵíťȟíń {seconds}ś.]",
+  "admin_redaction.badge.in_force": "[Íń ƒóŕćé]",
+  "admin_redaction.badge.redacts_nothing": "[Ŕéďáćťś ńóťȟíńǧ]",
+  "admin_redaction.engine.cannot_enable": "[Ćáńńóť ƀé éńáƀľéď.]",
+  "admin_redaction.engine.enabled": "[Éńáƀľéď]",
+  "admin_redaction.engine.enable": "[Éńáƀľé]",
+  "admin_redaction.engine.turn_off": "[Ťúŕń ŕéďáćťíóń óƒƒ]",
+  "admin_redaction.engine.off_toast": "[Ŕéďáćťíóń íś óƒƒ.]",
+  "admin_redaction.confirm.title": "[Ťúŕń ŕéďáćťíóń óƒƒ]",
+  "admin_redaction.confirm.cancel": "[Ćáńćéľ]",
+  "admin_redaction.confirm.saving": "[Śáǚíńǧ…]",
+  "admin_redaction.confirm.turn_off": "[Ťúŕń íť óƒƒ]",
+  "admin_redaction.confirm.warning": "[Þŕóḿþťś ŵíľľ ŕéáćȟ þŕóǚíďéŕś éẋáćťľý áś ćáľľéŕś śéńť ťȟéḿ.]",
+  "admin_redaction.confirm.recorded": "[Ŕéćóŕďéď ŵíťȟ ŵȟó ćȟáńǧéď íť áńď ŵȟéń.]",
+  "admin_redaction.activity.window_days": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[24 ȟóúŕś]",
+        "countPlural=other": "[{n} ďáýś]"
+      }
+    }
+  ],
+  "admin_redaction.activity.window_hours": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[ȟóúŕ]",
+        "countPlural=other": "[{n} ȟóúŕś]"
+      }
+    }
+  ],
+  "admin_users.login_hint": "[Ťȟé ńáḿé ťȟéý'ľľ ťýþé óń ťȟé śíǧń-íń þáǧé. Ĺóŵéŕćáśé ľéťťéŕś, ďíǧíťś, '.', '_' óŕ '-'.]",
+  "admin_users.taken_login": "['{login}' íś áľŕéáďý áńóťȟéŕ þéŕśóń'ś śíǧń-íń ńáḿé — þíćķ á ďíƒƒéŕéńť óńé.]",
+  "admin_users.toast.approved": "[Áþþŕóǚéď — ťȟéý ćáń śíǧń íń ńóŵ]",
+  "admin_users.toast.approve_failed": "[Ćóúľď ńóť áþþŕóǚé]",
+  "admin_users.column.user": "[Úśéŕ]",
+  "admin_users.column.groups": "[Ǧŕóúþś]",
+  "admin_users.column.billing_group": "[Ɓíľľíńǧ ǧŕóúþ]",
+  "admin_users.column.keys": "[Ķéýś]",
+  "admin_users.column.status": "[Śťáťúś]",
+  "admin_users.column.last_login": "[Ĺáśť ľóǧíń]",
+  "admin_users.groups_none": "[ńóńé]",
+  "admin_users.billing_unset": "[úńśéť]",
+  "admin_users.bundled_login_line": "[śíǧń-íń: {login}]",
+  "admin_users.badge.admin": "[Áďḿíń]",
+  "admin_users.badge.invited": "[Íńǚíťéď]",
+  "admin_users.badge.awaiting": "[Áŵáíťíńǧ áþþŕóǚáľ]",
+  "admin_users.badge.active": "[Áćťíǚé]",
+  "admin_users.badge.disabled": "[Ďíśáƀľéď]",
+  "admin_users.badge.expired": "[Éẋþíŕéď]",
+  "admin_users.badge.chat_only": "[Ćȟáť óńľý]",
+  "admin_users.never": "[ńéǚéŕ]",
+  "admin_users.action.edit": "[Éďíť]",
+  "admin_users.action.approve": "[Áþþŕóǚé]",
+  "admin_users.action.reinvite": "[Ŕé-íńǚíťé]",
+  "admin_users.action.enable": "[Éńáƀľé]",
+  "admin_users.action.disable": "[Ďíśáƀľé]",
+  "admin_users.action.delete": "[Ďéľéťé]",
+  "admin_users.title": "[Úśéŕś]",
+  "admin_users.subtitle.unknown": "[Áććóúńťś ľíǚé áť ťȟé íďéńťíťý þŕóǚíďéŕ — ťȟíś ďéþľóýḿéńť ćáńńóť áďď á ľóǧíń óŕ ŕéśéť íťś þáśśŵóŕď ȟéŕé. Ďíśáƀľé áńď Éńáƀľé śťíľľ áþþľý óń ťȟé ǧáťéŵáý śíďé.]",
+  "admin_users.subtitle.logins": "[Þéóþľé áŕŕíǚé áť ťȟéíŕ ƒíŕśť śíǧń-íń, óŕ ýóú ćáń áďď óńé ďíŕéćťľý ƀéľóŵ.]",
+  "admin_users.subtitle.invites": "[Þéóþľé áŕŕíǚé ŵȟéń ýóú íńǚíťé ťȟéḿ, áť ťȟéíŕ ƒíŕśť śíǧń-íń, óŕ ŵȟéń ťȟé ďíŕéćťóŕý þúśȟéś ťȟéḿ.]",
+  "admin_users.add_user": "[Áďď úśéŕ]",
+  "admin_users.invite": "[Íńǚíťé]",
+  "admin_users.erasures.title": "[Éŕáśúŕéś ŵáíťíńǧ ƒóŕ ťȟé ćȟáť]",
+  "admin_users.erasures.body": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} éŕáśúŕé ŵáíťíńǧ ƒóŕ ťȟé ćȟáť ťó ćóńƒíŕḿ. Ťȟéý ŕéťŕý áúťóḿáťíćáľľý; ńóťȟíńǧ ťó ďó ȟéŕé.]",
+        "countPlural=other": "[{n} éŕáśúŕéś ŵáíťíńǧ ƒóŕ ťȟé ćȟáť ťó ćóńƒíŕḿ. Ťȟéý ŕéťŕý áúťóḿáťíćáľľý; ńóťȟíńǧ ťó ďó ȟéŕé.]"
+      }
+    }
+  ],
+  "admin_users.toast.update_failed": "[Ćóúľď ńóť úþďáťé ťȟé úśéŕ]",
+  "admin_users.unknown_error": "[Úńķńóŵń éŕŕóŕ.]",
+  "admin_users.search": "[Śéáŕćȟ]",
+  "admin_users.search_placeholder": "[éḿáíľ, ńáḿé, úśéŕńáḿé óŕ íďéńťíťý þŕóǚíďéŕ śúƀĵéćť]",
+  "admin_users.search_hint_matching": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ḿáťćȟíńǧ]"
+      }
+    }
+  ],
+  "admin_users.search_hint_global": "[Śéáŕćȟéś éǚéŕý áććóúńť, ńóť ĵúśť ťȟíś þáǧé.]",
+  "admin_users.chip.all": "[Áľľ]",
+  "admin_users.chip.awaiting": "[Áŵáíťíńǧ áþþŕóǚáľ]",
+  "admin_users.chip.invited": "[Íńǚíťéď]",
+  "admin_users.chip.active": "[Áćťíǚé]",
+  "admin_users.chip.disabled": "[Ďíśáƀľéď]",
+  "admin_users.loading": "[Ĺóáďíńǧ úśéŕś]",
+  "admin_users.load_error.title": "[Ćóúľď ńóť ľóáď úśéŕś]",
+  "admin_users.empty_query": "[Ńó úśéŕ ḿáťćȟéś ťȟáť.]",
+  "admin_users.empty": "[Ńó úśéŕś ýéť.]",
+  "admin_users.caption": "[Úśéŕś, ťȟéíŕ ǧŕóúþś áńď ťȟéíŕ ķéýś.]",
+  "admin_users.noun": "[úśéŕś]",
+  "admin_users.delete.title": "[Ďéľéťé {name}?]",
+  "admin_users.delete.title_fallback": "[ťȟíś áććóúńť]",
+  "admin_users.delete.cancel": "[Ćáńćéľ]",
+  "admin_users.delete.confirm": "[Ďéľéťé þéŕḿáńéńťľý]",
+  "admin_users.delete.toast_done": "[Áććóúńť ďéľéťéď]",
+  "admin_users.delete.toast_chat_done": "[Ťȟé ćȟáť ćóńƒíŕḿéď éŕáśúŕé íḿḿéďíáťéľý.]",
+  "admin_users.delete.toast_chat_queued": "[Ťȟé ćȟáť ćóúľď ńóť ƀé ŕéáćȟéď; éŕáśúŕé íś ǫúéúéď áńď ŵíľľ ŕéťŕý.]",
+  "admin_users.delete.toast_failed": "[Ćóúľď ńóť ďéľéťé ťȟé áććóúńť]",
+  "admin_users.delete.loading": "[Ĺóáďíńǧ þŕéǚíéŵ]",
+  "admin_users.delete.load_error.title": "[Ćóúľď ńóť ľóáď ťȟé þŕéǚíéŵ]",
+  "admin_users.delete.bundled_login_line": "[Ɓúńďľéď ľóǧíń ŕéḿóǚéď: {login}]",
+  "admin_users.delete.chat_unavailable_title": "[Ćȟáť ćóúńťś úńáǚáíľáƀľé]",
+  "admin_users.delete.chat_unavailable_body": "[Ťȟé éŕáśúŕé ŵíľľ ƀé ǫúéúéď áńď ŕéťŕíéď.]",
+  "admin_users.delete.body": "[Ťȟé áććóúńť'ś ķéýś śťóþ ŵóŕķíńǧ íḿḿéďíáťéľý áńď ćáńńóť ƀé ŕéśťóŕéď. Ťȟéíŕ ǫúóťá áńď ŕéďáćťíóń ŕúľéś ķééþ ťȟéíŕ śćóþé ƀúť śťóþ ḿáťćȟíńǧ áńýóńé úńťíľ ýóú ďéľéťé óŕ ŕé-þóíńť ťȟéḿ.]",
+  "admin_users.delete.ledger_note": "[Þáśť úśáǧé śťáýś íń ťȟé ľéďǧéŕ, áťťŕíƀúťéď ťó ťȟéíŕ ǧŕóúþś áś íť ŵáś ƀíľľéď — óńľý ťȟé ńáḿé óń ťȟé þéŕ-úśéŕ ƀŕéáķďóŵń ǧóéś.]",
+  "admin_users.delete.shared_confirm_attributed": "[Ťȟíś áććóúńť ȟáś ćóńťéńť śȟáŕéď ŵíťȟ óťȟéŕś (íńćľúďíńǧ śóḿé ťȟáť ćáń ńó ľóńǧéŕ ƀé áťťŕíƀúťéď ťó áńýóńé). Í úńďéŕśťáńď íť ŵíľľ ďíśáþþéáŕ ƒóŕ ťȟéḿ ťóó.]",
+  "admin_users.delete.shared_confirm_named": "[Ťȟíś áććóúńť ȟáś ćóńťéńť śȟáŕéď ŵíťȟ óťȟéŕś (śȟáŕéď ŵíťȟ óťȟéŕ þéóþľé, ńáḿéď áƀóǚé). Í úńďéŕśťáńď íť ŵíľľ ďíśáþþéáŕ ƒóŕ ťȟéḿ ťóó.]",
+  "admin_users.merge.title": "[Ḿéŕǧé {name} íńťó…]",
+  "admin_users.merge.title_fallback": "[ťȟíś áććóúńť]",
+  "admin_users.merge.cancel": "[Ćáńćéľ]",
+  "admin_users.merge.confirm": "[Ḿéŕǧé, íŕŕéǚéŕśíƀľý]",
+  "admin_users.merge.toast_done": "[Áććóúńťś ḿéŕǧéď]",
+  "admin_users.merge.toast_failed": "[Ćóúľď ńóť ḿéŕǧé]",
+  "admin_users.merge.body": "[Ḿóǚéś éǚéŕý ḿéḿƀéŕśȟíþ, ķéý, ľéďǧéŕ ŕóŵ áńď íďéńťíťý óƒ {#strong}{name}{/strong} óńťó ťȟé ťáŕǧéť, ťȟéń ďéľéťéś íť. Ťȟéŕé íś ńó úńďó ƀúť ŕéśťóŕíńǧ á ƀáćķúþ ťáķéń ƀéƒóŕéȟáńď (ťȟé ŔÉÁĎḾÉ'ś ǚóľúḿé ťáŕ) — ťáķé óńé ńóŵ íƒ ýóú ȟáǚé ńóť ťóďáý.]",
+  "admin_users.merge.target_label": "[Ḿéŕǧé íńťó…]",
+  "admin_users.merge.target_placeholder": "[Śéáŕćȟ ƀý éḿáíľ, ńáḿé óŕ úśéŕńáḿé]",
+  "admin_users.merge.no_match": "[Ńó ḿáťćȟ.]",
+  "admin_users.merge.loading": "[Ĺóáďíńǧ þŕéǚíéŵ]",
+  "admin_users.merge.load_error.title": "[Ćóúľď ńóť þŕéǚíéŵ ťȟíś ḿéŕǧé]",
+  "admin_users.merge.into": "[Íńťó {name}]",
+  "admin_users.merge.identities_title": "[Ťȟéśé íďéńťíťíéś áŕé ďŕóþþéď, ńóť ḿóǚéď]",
+  "admin_users.merge.identities_body": "[Ťȟé ťáŕǧéť áľŕéáďý ȟáś áń íďéńťíťý áť ťȟé śáḿé íśśúéŕ: {issuers}.]",
+  "admin_users.merge.duplicate_rules": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[{n} ďúþľíćáťé ŕúľé ďŕóþþéď: ťȟé ťáŕǧéť áľŕéáďý ȟáś áń éǫúíǚáľéńť óńé, śó ťȟé śóúŕćé'ś íś ķéþť óƒƒ ŕáťȟéŕ ťȟáń ḿóǚéď.]",
+        "countPlural=other": "[{n} ďúþľíćáťé ŕúľéś ďŕóþþéď: ťȟé ťáŕǧéť áľŕéáďý ȟáś áń éǫúíǚáľéńť óńé, śó ťȟé śóúŕćé'ś íś ķéþť óƒƒ ŕáťȟéŕ ťȟáń ḿóǚéď.]"
+      }
+    }
+  ],
+  "admin_users.merge.bundled_disabled": [
+    {
+      "declarations": [
+        "input count",
+        "local countPlural = count: plural",
+        "local n = count: number"
+      ],
+      "selectors": [
+        "countPlural"
+      ],
+      "match": {
+        "countPlural=one": "[Ɓúńďľéď ľóǧíń ďíśáƀľéď: {logins}]",
+        "countPlural=other": "[Ɓúńďľéď ľóǧíńś ďíśáƀľéď: {logins}]"
+      }
+    }
+  ],
+  "admin_users.merge.admin_yes": "[Ŕéśúľťíńǧ áďḿíńíśťŕáťóŕ ƒľáǧ: ýéś.]",
+  "admin_users.merge.admin_no": "[Ŕéśúľťíńǧ áďḿíńíśťŕáťóŕ ƒľáǧ: ńó.]",
+  "admin_users.merge.type_confirm": "[Ťýþé \"{text}\" ťó ćóńƒíŕḿ]",
+  "admin_users.merge.reason": "[Ŕéáśóń (óþťíóńáľ)]",
+  "admin_users.merge.reason_placeholder": "[Ŵȟý ťȟéśé áŕé ťȟé śáḿé þéŕśóń]",
+  "admin_users.password.sign_in_as": "[Śíǧń íń áś {#strong}{login}{/strong} ŵíťȟ ťȟíś þáśśŵóŕď:]",
+  "admin_users.password.copy": "[Ćóþý]",
+  "admin_users.password.copied": "[Ćóþíéď]",
+  "admin_users.password.clipboard": "[Ćóúľď ńóť ŕéáćȟ ťȟé ćľíþƀóáŕď; ćóþý íť ƀý ȟáńď.]",
+  "admin_users.password.detail": "[Śȟáŕé íť óǚéŕ á óńé-ťíḿé ćȟáńńéľ (á þáśśŵóŕď ḿáńáǧéŕ śȟáŕé, óŕ íń þéŕśóń). Áúťȟéľíá ćáń'ť ƒóŕćé á ćȟáńǧé áť ƒíŕśť śíǧń-íń; áśķ ťȟéḿ ťó ćȟáńǧé íť ƒŕóḿ ťȟé śíǧń-íń þáǧé'ś ŕéśéť ľíńķ (ńééďś ŚḾŤÞ) óŕ ķééþ íť.]",
+  "admin_users.invite.title": "[Íńǚíťé]",
+  "admin_users.invite.done": "[Ďóńé]",
+  "admin_users.invite.cancel": "[Ćáńćéľ]",
+  "admin_users.invite.submit": "[Íńǚíťé]",
+  "admin_users.invite.submit_and_send": "[Íńǚíťé áńď śéńď]",
+  "admin_users.invite.load_error.title": "[Ćóúľď ńóť íńǚíťé]",
+  "admin_users.invite.sent_title": "[Íńǚíťáťíóń śéńť]",
+  "admin_users.invite.sent_body": "[Éḿáíľéď ťó {email}.]",
+  "admin_users.invite.email_failed_title": "[Ćóúľď ńóť śéńď ťȟé éḿáíľ]",
+  "admin_users.invite.email_failed_body": "[{error} — ćóþý ťȟé ťéẋť ƀéľóŵ íńśťéáď.]",
+  "admin_users.invite.text_heading": "[Íńǚíťé ťéẋť]",
+  "admin_users.invite.toast_copied": "[Íńǚíťé ťéẋť ćóþíéď]",
+  "admin_users.invite.toast_copy_failed": "[Ćóþý ƒáíľéď — śéľéćť ťȟé ťéẋť áƀóǚé]",
+  "admin_users.invite.copy": "[Ćóþý íńǚíťé ťéẋť]",
+  "admin_users.invite.copied": "[Ćóþíéď]",
+  "admin_users.invite.email": "[Éḿáíľ]",
+  "admin_users.invite.display_name": "[Ďíśþľáý ńáḿé]",
+  "admin_users.invite.groups": "[Ǧŕóúþś]",
+  "admin_users.invite.groups_placeholder": "[ćóḿḿá śéþáŕáťéď]",
+  "admin_users.invite.groups_hint": "[Ćóńśóľé ǧŕóúþś — ťȟé śáḿé ḿáńúáľ ḿéḿƀéŕśȟíþ áń áďḿíńíśťŕáťóŕ ǧŕáńťś áńýŵȟéŕé éľśé.]",
+  "admin_users.invite.email_them": "[Éḿáíľ ťȟéḿ ťȟé íńǚíťáťíóń]",
+  "admin_users.invite.email_unconfigured": "[Éḿáíľ íś ńóť ćóńƒíǧúŕéď, śó ćóþý ťȟé íńǚíťé ťéẋť ťó śéńď íť ýóúŕśéľƒ.]",
+  "admin_users.add.title": "[Áďď úśéŕ]",
+  "admin_users.add.done": "[Ďóńé]",
+  "admin_users.add.cancel": "[Ćáńćéľ]",
+  "admin_users.add.submit": "[Áďď úśéŕ]",
+  "admin_users.add.load_error.title": "[Ćóúľď ńóť áďď ťȟé úśéŕ]",
+  "admin_users.add.email": "[Éḿáíľ]",
+  "admin_users.add.login": "[Ĺóǧíń]",
+  "admin_users.add.display_name": "[Ďíśþľáý ńáḿé]",
+  "admin_users.add.groups": "[Ǧŕóúþś]",
+  "admin_users.add.groups_placeholder": "[ćóḿḿá śéþáŕáťéď]",
+  "admin_users.add.groups_hint": "[Ćóńśóľé ǧŕóúþś — ťȟé śáḿé ḿáńúáľ ḿéḿƀéŕśȟíþ áń áďḿíńíśťŕáťóŕ ǧŕáńťś áńýŵȟéŕé éľśé.]",
+  "admin_users.signin.title": "[Ćŕéáťé śíǧń-íń — {name}]",
+  "admin_users.signin.done": "[Ďóńé]",
+  "admin_users.signin.cancel": "[Ćáńćéľ]",
+  "admin_users.signin.submit": "[Ćŕéáťé śíǧń-íń]",
+  "admin_users.signin.load_error.title": "[Ćóúľď ńóť ćŕéáťé ťȟé śíǧń-íń]",
+  "admin_users.signin.login": "[Ĺóǧíń]",
+  "admin_users.reset.title": "[Ŕéśéť þáśśŵóŕď — {name}]",
+  "admin_users.reset.done": "[Ďóńé]",
+  "admin_users.reset.cancel": "[Ćáńćéľ]",
+  "admin_users.reset.submit": "[Ŕéśéť þáśśŵóŕď]",
+  "admin_users.reset.load_error.title": "[Ćóúľď ńóť ŕéśéť ťȟé þáśśŵóŕď]",
+  "admin_users.reset.body": "[Ťȟíś ḿíńťś á ńéŵ óńé-ťíḿé þáśśŵóŕď ƒóŕ ťȟéíŕ ƀúńďľéď ľóǧíń. Ťȟé óľď óńé śťóþś ŵóŕķíńǧ íḿḿéďíáťéľý.]",
+  "admin_users.toggle.disable_title": "[Ďíśáƀľé {name}?]",
+  "admin_users.toggle.enable_title": "[Éńáƀľé {name}?]",
+  "admin_users.toggle.title_fallback": "[ťȟíś áććóúńť]",
+  "admin_users.toggle.cancel": "[Ćáńćéľ]",
+  "admin_users.toggle.disable": "[Ďíśáƀľé]",
+  "admin_users.toggle.enable": "[Éńáƀľé]",
+  "admin_users.toggle.toast_disabled": "[Áććóúńť ďíśáƀľéď]",
+  "admin_users.toggle.toast_enabled": "[Áććóúńť éńáƀľéď]",
+  "admin_users.toggle.toast_disable_failed": "[Ćóúľď ńóť ďíśáƀľé ťȟé áććóúńť]",
+  "admin_users.toggle.toast_enable_failed": "[Ćóúľď ńóť éńáƀľé ťȟé áććóúńť]",
+  "admin_users.toggle.authelia_failed": "[Ťȟé ƀúńďľéď ľóǧíń ćóúľď ńóť ƀé úþďáťéď]",
+  "admin_users.toggle.disable_sessions": "[Ťȟéíŕ ćóńśóľé śéśśíóń, ćȟáť śéśśíóńś áńď ḿáćȟíńé ľíńķś áŕé ŕéƒúśéď ŵíťȟíń áƀóúť á ḿíńúťé. Ŕéƒŕéśȟ ćŕéďéńťíáľś áńď ḿíńťéď ÁÞÍ ķéýś áŕé ŕéǚóķéď áť óńćé.]",
+  "admin_users.toggle.disable_keys": "[Þéŕśóńáľ ÁÞÍ ķéýś áŕé ķéþť ƀúť śťóþ áďḿíťťíńǧ ŕéǫúéśťś ŵȟíľé ťȟé áććóúńť íś ďíśáƀľéď — ťȟéý ŕéťúŕń áúťóḿáťíćáľľý íƒ ýóú ŕé-éńáƀľé íť.]",
+  "admin_users.toggle.disable_bundled": "[Ťȟéíŕ ƀúńďľéď Áúťȟéľíá ľóǧíń íś ďíśáƀľéď ťóó, úńďéŕ ťȟé śáḿé áćťíóń.]",
+  "admin_users.toggle.disable_idp": "[Ťȟíś ďóéś ńóť ďíśáƀľé ťȟé þéŕśóń áť ťȟé íďéńťíťý þŕóǚíďéŕ — ďó ťȟáť ťȟéŕé ťóó, óŕ ťȟéý ćáń śťíľľ áúťȟéńťíćáťé éǚéń ťȟóúǧȟ ťȟé ǧáťéŵáý ŕéƒúśéś ťȟéḿ.]",
+  "admin_users.toggle.enable_body": "[Ťȟéý ćáń śíǧń íń áǧáíń íḿḿéďíáťéľý, áńď þéŕśóńáľ ÁÞÍ ķéýś áďḿíť ŕéǫúéśťś áǧáíń. Śéśśíóńś, ḿíńťéď ķéýś áńď ďéǚíćéś śťáý ŕéǚóķéď — ťȟéý śíǧń íń áǧáíń áńď ŕé-éńŕóľľ ŕáťȟéŕ ťȟáń ŕéśúḿíńǧ áúťóḿáťíćáľľý.]",
+  "admin_users.toggle.enable_bundled": "[Ťȟéíŕ ƀúńďľéď Áúťȟéľíá ľóǧíń íś ŕé-éńáƀľéď ťóó, úńďéŕ ťȟé śáḿé áćťíóń.]",
+  "admin_users.activity.title": "[Áćťíǚíťý — {name}]",
+  "admin_users.activity.close": "[Ćľóśé]",
+  "admin_users.activity.loading": "[Ĺóáďíńǧ áćťíǚíťý]",
+  "admin_users.activity.load_error.title": "[Ćóúľď ńóť ľóáď áćťíǚíťý]",
+  "admin_users.activity.none": "[Ńó áćťíǚíťý ŕéćóŕďéď ýéť.]",
+  "admin_users.edit.title": "[Éďíť — {name}]",
+  "admin_users.edit.title_plain": "[Éďíť]",
+  "admin_users.edit.close": "[Ćľóśé]",
+  "admin_users.edit.save": "[Śáǚé ćȟáńǧéś]",
+  "admin_users.edit.toast_done": "[Úśéŕ úþďáťéď]",
+  "admin_users.edit.toast_failed": "[Ćóúľď ńóť úþďáťé ťȟé úśéŕ]",
+  "admin_users.edit.identity": "[Íďéńťíťý]",
+  "admin_users.edit.badge_administrator": "[Áďḿíńíśťŕáťóŕ]",
+  "admin_users.edit.badge_active": "[Áćťíǚé]",
+  "admin_users.edit.badge_disabled": "[Ďíśáƀľéď]",
+  "admin_users.edit.kind_local": "[ľóćáľ]",
+  "admin_users.edit.kind_idp": "[ÍďÞ]",
+  "admin_users.edit.identity_note": "[— ťȟé ľóǧíń íďéńťíťý. Ńóť éďíťáƀľé ȟéŕé.]",
+  "admin_users.edit.profile": "[Þŕóƒíľé]",
+  "admin_users.edit.email": "[Éḿáíľ]",
+  "admin_users.edit.email_hint_local": "[Ŵȟéŕé ḿáíľ áƀóúť ťȟé áććóúńť ǧóéś. Á ľóćáľ áććóúńť śíǧńś íń ŵíťȟ íťś íďéńťíťý, ńóť ťȟíś áďďŕéśś.]",
+  "admin_users.edit.email_hint_idp": "[Ťȟé íďéńťíťý þŕóǚíďéŕ ŕéƒŕéśȟéś ťȟíś áť śíǧń-íń. Éďíťíńǧ íť ŕéćóŕďś ýóúŕ ǚáľúé, áńď śíǧń-íń śťóþś ćȟáńǧíńǧ íť.]",
+  "admin_users.edit.display_name": "[Ďíśþľáý ńáḿé]",
+  "admin_users.edit.display_name_hint": "[Ŕéƒŕéśȟéď áť śíǧń-íń ƒŕóḿ ťȟé íďéńťíťý þŕóǚíďéŕ, úńľéśś éďíťéď ȟéŕé.]",
+  "admin_users.edit.username": "[Úśéŕńáḿé]",
+  "admin_users.edit.username_hint": "[Ťȟé ďíŕéćťóŕý'ś óŵń ńáḿé ƒóŕ ťȟé þéŕśóń (`þŕéƒéŕŕéď_úśéŕńáḿé`). Ƒóľľóŵś ťȟé ďíŕéćťóŕý úńľéśś éďíťéď ȟéŕé.]",
+  "admin_users.edit.admin_label": "[Áďḿíńíśťŕáťóŕ]",
+  "admin_users.edit.admin_note": "[Ǧŕáńťíńǧ ťȟíś áďďś ťȟéḿ ťó ťȟé áďḿíń ǧŕóúþ ȟéŕé, áńď íť śúŕǚíǚéś ťȟéíŕ ńéẋť śíǧń-íń. Ŕéḿóǚíńǧ íť ŵóŕķś óńľý íƒ ťȟíś ćóńśóľé ǧŕáńťéď íť — áďḿíń ťȟé íďéńťíťý þŕóǚíďéŕ ǧŕáńťéď ȟáś ťó ƀé ŵíťȟďŕáŵń ťȟéŕé.]",
+  "admin_users.edit.actions": "[Áćťíóńś]",
+  "admin_users.edit.reset_password": "[Ŕéśéť þáśśŵóŕď]",
+  "admin_users.edit.create_signin": "[Ćŕéáťé śíǧń-íń]",
+  "admin_users.edit.activity": "[Áćťíǚíťý]",
+  "admin_users.edit.merge_into": "[Ḿéŕǧé íńťó…]",
+  "admin_users.edit.passwords_note": "[Þáśśŵóŕďś ƀéľóńǧ ťó ťȟé íďéńťíťý þŕóǚíďéŕ.]",
+  "admin_users.edit.passwords_note_bundled": "[Þáśśŵóŕďś ƀéľóńǧ ťó ťȟé íďéńťíťý þŕóǚíďéŕ. Ƒóŕ ťȟé ƀúńďľéď Áúťȟéľíá, ťȟé áćťíóńś áƀóǚé ḿíńť óńé áńď ŕéśéť íť.]",
+  "admin_users.toast.reissue_failed": "[Ćóúľď ńóť ŕé-íśśúé]",
+  "admin_models.discover.badge.no_price_yet": "[Ńó þŕíćé ýéť]",
+  "admin_models.discover.manual_rate.input": "[Íńþúť þéŕ Ḿťóķ]",
+  "admin_models.discover.manual_rate.output": "[Óúťþúť þéŕ Ḿťóķ]",
+  "admin_models.discover.manual_rate.per_page": "[Þéŕ þáǧé]",
+  "admin_models.discover.manual_rate.currency": "[Ćúŕŕéńćý]",
+  "admin_models.discover.manual_rate.rate_hint": "[þéŕ ḿíľľíóń ťóķéńś]",
+  "admin_models.discover.manual_rate.currency_hint": "[Ĺéáǚé éḿþťý ƒóŕ ťȟé ǧáťéŵáý'ś ƀíľľíńǧ ćúŕŕéńćý.]",
+  "admin_models.discover.manual_rate.required": "[Ŕéǫúíŕéď — ťȟé íḿþóŕť ŕéƒúśéś áń úńþŕíćéď ḿóďéľ.]",
+  "admin_models.discover.manual_rate.amount_invalid": "[Ďíǧíťś áńď áń óþťíóńáľ ďéćíḿáľ þóíńť.]",
+  "admin_models.discover.manual_rate.currency_invalid": "[Ťȟŕéé ľéťťéŕś, é.ǧ. ÉÚŔ.]",
+  "admin_models.discover.manual_rate.enter_price": "[Éńťéŕ á þŕíćé ťó íḿþóŕť ťȟíś ḿóďéľ.]",
+  "admin_models.discover.manual_rate.field_problem": [
+    {
+      "declarations": [
+        "input label"
+      ],
+      "match": {
+        "*": "[{label}: {error}]"
+      }
+    }
+  ],
+  "admin_models.discover.manual_rate.currency_problem": [
+    {
+      "declarations": [
+        "input error"
+      ],
+      "match": {
+        "*": "[Ćúŕŕéńćý: {error}]"
+      }
+    }
+  ],
+  "admin_models.discover.apply_to_all": "[Áþþľý ťȟíś þŕíćé ťó áľľ ťíćķéď]",
+  "admin_models.discover.result_imported_manual": [
+    {
+      "declarations": [
+        "input name"
+      ],
+      "match": {
+        "*": "[{name} íḿþóŕťéď ŵíťȟ ťȟé þŕíćé éńťéŕéď ƀý ȟáńď]"
+      }
+    }
+  ]
+}

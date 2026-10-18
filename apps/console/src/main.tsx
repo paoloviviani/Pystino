@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
 import { ToastProvider } from "@llmp/ui";
 import { App } from "./App";
+import { initLocale } from "./lib/locale";
 import { initTheme } from "./lib/theme";
 
 // The whole stylesheet — Tailwind's layers and the tokens file, in the right
@@ -16,6 +17,12 @@ import "./index.css";
 // meets dark at the first frame React paints. CSP rules out doing it earlier;
 // see lib/theme.ts for the trade.
 initTheme();
+
+// `<html lang="en">` in index.html is what the console is served with. The
+// locale in force is read from the browser before the first render, for the
+// same reason the theme is: the document should never paint a page in one
+// language and announce another.
+initLocale();
 
 const client = new QueryClient({
   defaultOptions: {

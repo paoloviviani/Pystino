@@ -29,12 +29,15 @@ import {
 import type { IdentityProvider, SyncAdapter, SyncRun } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { CODE, DETAIL_LABEL, FORM } from "../lib/layout";
+import { formatDateTime } from "../lib/format";
+import { Message } from "../components/Message";
+import { m } from "../paraglide/messages.js";
 
-const ADAPTER_LABEL: Record<SyncAdapter, string> = {
-  none: "Off (default) — people appear at their first sign-in",
-  authelia_file: "Authelia users file (not needed: the Users page manages bundled accounts)",
-  keycloak_admin: "Keycloak admin API — pulled on a schedule (service-account client)",
-  scim: "SCIM 2.0 — your identity provider pushes changes here",
+const ADAPTER_LABEL: Record<SyncAdapter, () => string> = {
+  none: m["identity_directory.adapter.none"],
+  authelia_file: m["identity_directory.adapter.authelia_file"],
+  keycloak_admin: m["identity_directory.adapter.keycloak_admin"],
+  scim: m["identity_directory.adapter.scim"],
 };
 
 function errorText(caught: unknown, fallback: string): string {
@@ -46,20 +49,32 @@ function RunSummary({ run }: { run: SyncRun }) {
   return (
     <div className="rounded-md border border-line p-3 text-sm">
       <div className="flex flex-wrap items-center gap-2">
+        {/* i18n: server text — `status` and `trigger` are the API's enum values. */}
         <Badge tone={tone}>{run.status.replace("_", " ")}</Badge>
-        {run.dry_run && <Badge tone="neutral">dry run</Badge>}
+        {run.dry_run && <Badge tone="neutral">{m["identity_directory.run.dry_run"]()}</Badge>}
         <Badge tone="neutral">{run.trigger}</Badge>
-        <span className="text-ink-faint">{run.started_at ? new Date(run.started_at).toLocaleString() : ""}</span>
+        <span className="text-ink-faint">{run.started_at ? formatDateTime(run.started_at) : ""}</span>
       </div>
       <div className="mt-1 text-ink-muted">
-        seen {run.seen} · created {run.created} · linked {run.linked} · groups changed {run.updated} ·
-        deactivated {run.deactivated} · reactivated {run.reactivated}
+        {m["identity_directory.run.counts"]({
+          seen: run.seen,
+          created: run.created,
+          linked: run.linked,
+          updated: run.updated,
+          deactivated: run.deactivated,
+          reactivated: run.reactivated,
+        })}
       </div>
+      {/* i18n: server text — the run's own error message. */}
       {run.error && <div className="mt-1 text-danger">{run.error}</div>}
       {run.changes.length > 0 && (
         <details className="mt-2">
-          <summary className="cursor-pointer text-ink-muted">{run.changes.length} change(s)</summary>
+          <summary className="cursor-pointer text-ink-muted">
+            {m["identity_directory.run.change_count"]({ count: run.changes.length })}
+          </summary>
           <ul className="mt-1 max-h-48 overflow-auto font-mono text-xs">
+            {/* i18n: server text — the change kind, the person and the field
+                names come from the API, which is where an operator looks them up. */}
             {run.changes.map((change, index) => (
               <li key={index}>
                 {change.change} · {change.who}
@@ -117,8 +132,11 @@ export function DirectoryDialog({
           intervalMinutes === null ? provider.sync_interval_minutes : Number(intervalMinutes),
       },
       {
-        onSuccess: () => toast?.add({ title: "Sync settings saved", type: "success" }),
-        onError: (caught) => toast?.add({ title: errorText(caught, "Could not save"), type: "error" }),
+        onSuccess: () =>
+          toast?.add({ title: m["identity_directory.settings_saved"](), type: "success" }),
+        onError: (caught) =>
+          // i18n: server text — the gateway's own error message.
+          toast?.add({ title: errorText(caught, m["identity_directory.save_failed"]()), type: "error" }),
       },
     );
 
@@ -133,38 +151,37 @@ export function DirectoryDialog({
   };
 
   return (
-    <Dialog open={open} title={`User sync — ${provider.name}`} onClose={close} footer={<Button onClick={close}>Close</Button>}>
+    <Dialog
+      open={open}
+      title={m["identity_directory.title"]({ provider: provider.name })}
+      onClose={close}
+      footer={<Button onClick={close}>{m["identity_directory.close"]()}</Button>}
+    >
       <div className={FORM}>
-        <p className="text-sm text-ink-muted">
-          Optional. Keeps this console's user list in step with your identity provider: people
-          exist, with their groups and pre-assigned access, before their first sign-in, and are
-          deactivated when removed there. You don't need this to add users — people appear at
-          their first sign-in.
-        </p>
+        <p className="text-sm text-ink-muted">{m["identity_directory.intro"]()}</p>
         {!provider.capabilities.adapters.length && (
-          <Notice tone="info" title="Just-in-time only">
-            A {provider.kind} provider offers no way to list its users: OIDC itself has no listing
-            API. People appear here when they first sign in.
+          <Notice tone="info" title={m["identity_directory.just_in_time.title"]()}>
+            {m["identity_directory.just_in_time.body"]({ kind: provider.kind })}
           </Notice>
         )}
         <Select
-          label="How this directory tells us about people"
+          label={m["identity_directory.adapter.label"]()}
           value={chosen}
           onChange={(e) => setAdapter(e.target.value as SyncAdapter)}
         >
           {options.map((option) => (
             <option key={option} value={option}>
-              {ADAPTER_LABEL[option]}
+              {ADAPTER_LABEL[option]()}
             </option>
           ))}
         </Select>
         {pull && (
           <Input
-            label="Pull every (minutes)"
+            label={m["identity_directory.pull_every.label"]()}
             type="number"
             value={intervalMinutes ?? String(provider.sync_interval_minutes)}
             onChange={(e) => setIntervalMinutes(e.target.value)}
-            hint="0 means only when run from here."
+            hint={m["identity_directory.pull_every.hint"]()}
           />
         )}
         <div>
@@ -174,20 +191,24 @@ export function DirectoryDialog({
             disabled={chosen === provider.sync_adapter && intervalMinutes === null}
             onClick={saveAdapter}
           >
-            Save
+            {m["identity_directory.save"]()}
           </Button>
         </div>
 
         {provider.sync_adapter === "keycloak_admin" && (
           <div className="flex flex-col gap-2">
-            <div className={DETAIL_LABEL}>Service-account client (view-users, query-groups)</div>
-            <Input label="Client ID" value={kcClientId} onChange={(e) => setKcClientId(e.target.value)} />
+            <div className={DETAIL_LABEL}>{m["identity_directory.keycloak.detail"]()}</div>
             <Input
-              label="Client secret"
+              label={m["identity_directory.keycloak.client_id"]()}
+              value={kcClientId}
+              onChange={(e) => setKcClientId(e.target.value)}
+            />
+            <Input
+              label={m["identity_directory.keycloak.client_secret"]()}
               type="password"
               value={kcSecret}
               onChange={(e) => setKcSecret(e.target.value)}
-              hint="Stored encrypted, never shown again. Saving it makes the next run a dry run."
+              hint={m["identity_directory.keycloak.client_secret_hint"]()}
             />
             <div>
               <Button
@@ -196,11 +217,14 @@ export function DirectoryDialog({
                 onClick={() =>
                   setConfig.mutate(
                     { id, config: { client_id: kcClientId, client_secret: kcSecret } },
-                    { onSuccess: () => toast?.add({ title: "Credentials saved", type: "success" }) },
+                    {
+                      onSuccess: () =>
+                        toast?.add({ title: m["identity_directory.keycloak.saved"](), type: "success" }),
+                    },
                   )
                 }
               >
-                Save credentials
+                {m["identity_directory.keycloak.save"]()}
               </Button>
             </div>
           </div>
@@ -208,21 +232,22 @@ export function DirectoryDialog({
 
         {provider.sync_adapter === "scim" && (
           <div className="flex flex-col gap-2">
-            <div className={DETAIL_LABEL}>SCIM endpoint and token</div>
+            <div className={DETAIL_LABEL}>{m["identity_directory.scim.detail"]()}</div>
             <p className="text-sm text-ink-muted">
-              Give the identity provider's provisioning settings this endpoint and a token. Map the
-              person's object id to <span className="font-mono">externalId</span> so accounts can
-              exist before their first sign-in.
+              <Message
+                message={m["identity_directory.scim.body"]}
+                markup={{ code: (children) => <span className="font-mono">{children}</span> }}
+              />
             </p>
             {scim ? (
-              <Notice tone="warn" title="Shown once — copy it now">
+              <Notice tone="warn" title={m["identity_directory.scim.once_title"]()}>
                 <div className={CODE}>{scim.endpoint}</div>
                 <div className={CODE}>{scim.token}</div>
               </Notice>
             ) : (
               <div>
                 <Button busy={mint.isPending} onClick={() => mint.mutate(id, { onSuccess: setScim })}>
-                  Generate token (replaces the previous one)
+                  {m["identity_directory.scim.generate"]()}
                 </Button>
               </div>
             )}
@@ -231,12 +256,10 @@ export function DirectoryDialog({
 
         {provider.sync_adapter !== "none" && provider.sync_adapter !== "scim" && (
           <div className="flex flex-col gap-2">
-            <div className={DETAIL_LABEL}>Runs</div>
+            <div className={DETAIL_LABEL}>{m["identity_directory.runs.detail"]()}</div>
             {!provider.sync_confirmed && (
-              <Notice tone="info" title="The first run is a dry run">
-                Nothing changes until you have looked at what the adapter would do and confirmed it.
-                A run that would deactivate more than max(5, 10%) of this directory's accounts always
-                stops for confirmation.
+              <Notice tone="info" title={m["identity_directory.runs.first_run_title"]()}>
+                {m["identity_directory.runs.first_run_body"]()}
               </Notice>
             )}
             <div className="flex flex-wrap gap-2">
@@ -245,15 +268,23 @@ export function DirectoryDialog({
                 onClick={() =>
                   test.mutate(id, {
                     onSuccess: (result) =>
-                      toast?.add({ title: `The adapter sees ${result.total} people`, type: "success" }),
-                    onError: (caught) => toast?.add({ title: errorText(caught, "Test failed"), type: "error" }),
+                      toast?.add({
+                        title: m["identity_directory.runs.sees"]({ people: result.total }),
+                        type: "success",
+                      }),
+                    onError: (caught) =>
+                      // i18n: server text — the gateway's own error message.
+                      toast?.add({
+                        title: errorText(caught, m["identity_directory.runs.test_failed"]()),
+                        type: "error",
+                      }),
                   })
                 }
               >
-                Test connection
+                {m["identity_directory.runs.test"]()}
               </Button>
               <Button busy={run.isPending} onClick={() => run.mutate({ id, dryRun: true })}>
-                Dry run
+                {m["identity_directory.runs.dry_run"]()}
               </Button>
               {!provider.sync_confirmed ? (
                 <Button
@@ -262,11 +293,11 @@ export function DirectoryDialog({
                   busy={confirm.isPending}
                   onClick={() => confirm.mutate(id)}
                 >
-                  Confirm and enable
+                  {m["identity_directory.runs.confirm"]()}
                 </Button>
               ) : (
                 <Button variant="primary" busy={run.isPending} onClick={() => run.mutate({ id, dryRun: false })}>
-                  Run now
+                  {m["identity_directory.runs.run_now"]()}
                 </Button>
               )}
               {lastRun?.status === "needs_confirmation" && (
@@ -274,12 +305,12 @@ export function DirectoryDialog({
                   className="text-danger"
                   onClick={() => run.mutate({ id, dryRun: false, force: true })}
                 >
-                  Apply anyway ({lastRun.deactivated} deactivations)
+                  {m["identity_directory.runs.apply_anyway"]({ deactivations: lastRun.deactivated })}
                 </Button>
               )}
             </div>
             {runs.isPending ? (
-              <Spinner label="Loading runs" />
+              <Spinner label={m["identity_directory.runs.loading"]()} />
             ) : (
               (runs.data ?? []).slice(0, 5).map((r) => <RunSummary key={r.id} run={r} />)
             )}
@@ -288,9 +319,11 @@ export function DirectoryDialog({
 
         {provider.sync_adapter !== "none" && (
           <div className="flex flex-col gap-2">
-            <div className={DETAIL_LABEL}>Not signed in yet</div>
+            <div className={DETAIL_LABEL}>{m["identity_directory.pending.detail"]()}</div>
             {(directory.data ?? []).filter((p) => !p.user_id && p.present).length === 0 ? (
-              <span className="text-sm text-ink-faint">Everyone the directory lists has an account.</span>
+              <span className="text-sm text-ink-faint">
+                {m["identity_directory.pending.all_accounted"]()}
+              </span>
             ) : (
               (directory.data ?? [])
                 .filter((p) => !p.user_id && p.present)
@@ -301,7 +334,7 @@ export function DirectoryDialog({
                       <div className="text-xs text-ink-faint">{person.email}</div>
                     </div>
                     <Input
-                      label="Groups at first sign-in"
+                      label={m["identity_directory.pending.groups_label"]()}
                       value={preassignDraft[person.id] ?? person.preassigned_groups.join(", ")}
                       onChange={(e) => setPreassignDraft((d) => ({ ...d, [person.id]: e.target.value }))}
                     />
@@ -315,7 +348,7 @@ export function DirectoryDialog({
                         })
                       }
                     >
-                      Save
+                      {m["identity_directory.save"]()}
                     </Button>
                   </div>
                 ))

@@ -22,6 +22,7 @@ import { useOptionalToast } from "../lib/toast";
 import { applyTheme, rememberTheme, storedTheme } from "../lib/theme";
 import type { Theme } from "../lib/theme";
 import type { Me } from "../lib/types";
+import { m } from "../paraglide/messages.js";
 
 export interface ShellProps {
   me: Me;
@@ -30,7 +31,8 @@ export interface ShellProps {
 
 interface NavItem {
   to: string;
-  label: string;
+  /** A message function: the list is built once, at import. */
+  label: () => string;
 }
 
 /**
@@ -47,24 +49,24 @@ interface NavItem {
  * button beside their name, and the header shows one flat row either way.
  */
 const NAV_YOU: NavItem[] = [
-  { to: "/", label: "Overview" },
-  { to: "/reports", label: "Your usage" },
+  { to: "/", label: m["shell.nav.overview"] },
+  { to: "/reports", label: m["shell.nav.your_usage"] },
 ];
 
 const NAV_ADMIN: NavItem[] = [
-  { to: "/admin", label: "Summary" },
-  { to: "/admin/reports", label: "Usage" },
-  { to: "/admin/quotas", label: "Quotas" },
-  { to: "/admin/redaction", label: "Redaction" },
-  { to: "/admin/providers", label: "Providers" },
-  { to: "/admin/search", label: "Web search" },
+  { to: "/admin", label: m["shell.nav.summary"] },
+  { to: "/admin/reports", label: m["shell.nav.usage"] },
+  { to: "/admin/quotas", label: m["shell.nav.quotas"] },
+  { to: "/admin/redaction", label: m["shell.nav.redaction"] },
+  { to: "/admin/providers", label: m["shell.nav.providers"] },
+  { to: "/admin/search", label: m["shell.nav.web_search"] },
   // No Pricing entry: a model's prices live on the model's own page, because
   // "what is this model" and "what does it cost" are one question asked in one
   // place. See routes/AdminModelDetail.tsx.
-  { to: "/admin/models", label: "Models" },
-  { to: "/admin/users", label: "Users" },
-  { to: "/admin/groups", label: "Groups" },
-  { to: "/admin/settings", label: "Settings" },
+  { to: "/admin/models", label: m["shell.nav.models"] },
+  { to: "/admin/users", label: m["shell.nav.users"] },
+  { to: "/admin/groups", label: m["shell.nav.groups"] },
+  { to: "/admin/settings", label: m["shell.nav.settings"] },
 ];
 
 /**
@@ -105,7 +107,7 @@ export function Shell({ me, children }: ShellProps) {
   // would not give them.
   const inAdmin = location.pathname.startsWith("/admin");
   const items = inAdmin && me.is_admin ? NAV_ADMIN : NAV_YOU;
-  const name = me.display_name || me.email || "Signed in";
+  const name = me.display_name || me.email || m["shell.signed_in"]();
 
   // Administrators only. A reader looking at their own spend has no use for
   // twelve decimal places, and the figures that need reconciling against a
@@ -152,7 +154,7 @@ export function Shell({ me, children }: ShellProps) {
                 sense — `alt=""`, with the wordmark beside it carrying the
                 name — so it costs a screen reader nothing. */}
             <img src={logoUrl} alt="" className="h-9 w-auto" />
-            <span className="font-bold">Pystino</span>
+            <span className="font-bold">{/* i18n: literal — the product's own name */}Pystino</span>
           </NavLink>
 
           {/* One navigation, two shapes: inline pills on a wide screen, and on
@@ -169,7 +171,7 @@ export function Shell({ me, children }: ShellProps) {
               "max-[40rem]:bg-surface max-[40rem]:p-3 max-[40rem]:shadow-md",
               !navOpen && "max-[40rem]:hidden",
             ].join(" ")}
-            aria-label={inAdmin ? "Administration" : "Sections"}
+            aria-label={inAdmin ? m["shell.nav.administration"]() : m["shell.nav.sections"]()}
           >
             {items.map((item) => (
               <NavLink
@@ -184,7 +186,7 @@ export function Shell({ me, children }: ShellProps) {
                   ].join(" ")
                 }
               >
-                {item.label}
+                {item.label()}
               </NavLink>
             ))}
             {me.is_admin && (
@@ -209,7 +211,7 @@ export function Shell({ me, children }: ShellProps) {
                   ].join(" ")
                 }
               >
-                {inAdmin ? "User view" : "Admin view"}
+                {inAdmin ? m["shell.nav.user_view"]() : m["shell.nav.admin_view"]()}
               </NavLink>
             )}
           </nav>
@@ -219,7 +221,7 @@ export function Shell({ me, children }: ShellProps) {
           <div className="ml-auto flex shrink-0 items-center gap-2">
             <button
               type="button"
-              aria-label="Menu"
+              aria-label={m["shell.menu"]()}
               aria-expanded={navOpen}
               onClick={() => setNavOpen((open) => !open)}
               className="hidden size-10 cursor-pointer items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:shadow-focus max-[40rem]:inline-flex"
@@ -354,7 +356,7 @@ function UserMenu({
           a name, not a statement of one. The dot is the admin marker the
           header row used to carry as a full badge. */}
       <MenuTrigger
-        aria-label={`Account — ${name}`}
+        aria-label={m["shell.account_aria"]({ name })}
         className="relative flex size-9 cursor-pointer items-center justify-center rounded-full bg-accent-subtle text-sm font-medium text-accent transition-colors hover:bg-accent hover:text-ink-inverse focus-visible:outline-none focus-visible:shadow-focus data-popup-open:bg-accent data-popup-open:text-ink-inverse"
       >
         <span aria-hidden="true">{initialsOf(name)}</span>
@@ -371,10 +373,10 @@ function UserMenu({
           {me.email && <div className="break-all text-ink">{me.email}</div>}
           <div className="text-ink-faint">
             {me.default_billing_group
-              ? `Billing to ${me.default_billing_group.name}`
-              : "No default billing group"}
+              ? m["shell.billing_to"]({ group: me.default_billing_group.name })
+              : m["shell.no_billing_group"]()}
           </div>
-          {me.is_admin && <Badge tone="accent">Administrator</Badge>}
+          {me.is_admin && <Badge tone="accent">{m["shell.administrator"]()}</Badge>}
         </div>
 
         {/* Reader preferences live with who you are, not as controls on every
@@ -388,19 +390,21 @@ function UserMenu({
             the plain sentence above. */}
         {me.groups.length > 0 && (
           <MenuItem onClick={openBillingGroupDialog}>
-            {me.default_billing_group ? "Change default billing group…" : "Set default billing group…"}
+            {me.default_billing_group
+              ? m["shell.change_billing_group"]()
+              : m["shell.set_billing_group"]()}
           </MenuItem>
         )}
-        <MenuSection label="Preferences">
+        <MenuSection label={m["shell.preferences"]()}>
           {me.is_admin && (
             <MenuCheckboxItem
               checked={exactMoney}
               onCheckedChange={(checked) => onSetExactMoney(checked === true)}
             >
               <span>
-                Exact figures
+                {m["shell.exact_figures"]()}
                 <span className="mt-0.5 block text-xs text-ink-faint">
-                  Every decimal the ledger holds. Otherwise rounded to milli-units.
+                  {m["shell.exact_figures_hint"]()}
                 </span>
               </span>
             </MenuCheckboxItem>
@@ -409,13 +413,13 @@ function UserMenu({
             checked={theme === "dark"}
             onCheckedChange={(checked) => onSetTheme(checked ? "dark" : "light")}
           >
-            Dark theme
+            {m["shell.dark_theme"]()}
           </MenuCheckboxItem>
         </MenuSection>
 
         <MenuSeparator />
         <MenuItem onClick={signOut} className={busy ? "cursor-progress opacity-60" : undefined}>
-          Sign out
+          {m["shell.sign_out"]()}
         </MenuItem>
       </MenuContent>
 
@@ -471,11 +475,14 @@ function BillingGroupDialog({
       { group_id: groupId },
       {
         onSuccess: () => {
-          toast?.add({ title: "Default billing group set", type: "success" });
+          toast?.add({ title: m["shell.billing_group.set"](), type: "success" });
           close();
         },
         onError: (caught: unknown) =>
-          setError(caught instanceof Error ? caught.message : "Unknown error."),
+          // i18n: server text — the API's own error message.
+          setError(
+            caught instanceof Error ? caught.message : m["shell.billing_group.unknown_error"](),
+          ),
       },
     );
   };
@@ -483,24 +490,24 @@ function BillingGroupDialog({
   return (
     <Dialog
       open={open}
-      title="Default billing group"
+      title={m["shell.billing_group.title"]()}
       onClose={close}
       footer={
         <>
-          <Button onClick={close}>Cancel</Button>
+          <Button onClick={close}>{m["shell.billing_group.cancel"]()}</Button>
           <Button variant="primary" busy={setDefault.isPending} disabled={!groupId} onClick={submit}>
-            Save
+            {m["shell.billing_group.save"]()}
           </Button>
         </>
       }
     >
       {error ? (
-        <Notice tone="danger" title="Could not set the default billing group">
+        <Notice tone="danger" title={m["shell.billing_group.error_title"]()}>
           {error}
         </Notice>
       ) : null}
       <Select
-        label="Group"
+        label={m["shell.billing_group.group_label"]()}
         value={groupId}
         onChange={(event) => onChangeGroupId(event.target.value)}
       >

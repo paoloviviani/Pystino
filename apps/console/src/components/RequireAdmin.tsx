@@ -1,5 +1,6 @@
 import { Notice } from "@llmp/ui";
 import type { ReactNode } from "react";
+import { m } from "../paraglide/messages.js";
 import type { Me } from "../lib/types";
 
 export interface RequireAdminProps {
@@ -18,9 +19,8 @@ export function RequireAdmin({ me, children }: RequireAdminProps) {
   if (!me.is_admin) {
     // The role follows a group in the identity provider, not a setting here.
     return (
-      <Notice tone="warn" title="Administrators only">
-        This section needs the administrator role. Ask whoever manages it in the identity
-        provider.
+      <Notice tone="warn" title={m["require_admin.title"]()}>
+        {m["require_admin.body"]()}
       </Notice>
     );
   }

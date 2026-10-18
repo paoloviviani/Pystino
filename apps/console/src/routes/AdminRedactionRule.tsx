@@ -10,8 +10,10 @@ import {
 import type { RedactionPolicy, RedactionRule, RedactionScope } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import { PolicyFields, seededPolicy } from "../components/PolicyFields";
-import { SubjectPicker, scopeNoun } from "../components/SubjectPicker";
+import { Message } from "../components/Message";
+import { SubjectPicker, scopeNoun, scopeNounLower } from "../components/SubjectPicker";
 import { FORM, PAGE } from "../lib/layout";
+import { m } from "../paraglide/messages.js";
 import { useOptionalToast } from "../lib/toast";
 
 //: Widest first, matching the order rules are folded in and listed.
@@ -118,18 +120,19 @@ export function AdminRedactionRule() {
       onSuccess: () => {
         toast?.add({
           title: existing
-            ? "Rule saved."
+            ? m["redaction_rule.toast.saved"]()
             : cloneFrom
-              ? "Clone created — it starts inactive."
-              : "Rule created.",
+              ? m["redaction_rule.toast.cloned"]()
+              : m["redaction_rule.toast.created"](),
           type: "success",
         });
         navigate("/admin/redaction");
       },
       onError: (error: Error) =>
         toast?.add({
-          title: "Could not save the rule",
-          description: error instanceof Error ? error.message : "Unknown error.",
+          title: m["redaction_rule.error.save_title"](),
+          // i18n: server text — the gateway's own error message.
+          description: error instanceof Error ? error.message : m["redaction_rule.error.unknown"](),
           type: "error",
         }),
     };
@@ -176,15 +179,18 @@ export function AdminRedactionRule() {
   if (ruleId && rules.isPending) {
     return (
       <div className={PAGE}>
-        <Spinner label="Loading the rule" />
+        <Spinner label={m["redaction_rule.loading"]()} />
       </div>
     );
   }
   if (ruleId && !existing) {
     return (
       <div className={PAGE}>
-        <Notice tone="danger" title="No such rule">
-          It may have been deleted. <a href="/admin/redaction">Back to redaction</a>
+        <Notice tone="danger" title={m["redaction_rule.missing.title"]()}>
+          <Message
+            message={m["redaction_rule.missing.body"]}
+            markup={{ link: (children) => <a href="/admin/redaction">{children}</a> }}
+          />
         </Notice>
       </div>
     );
@@ -195,41 +201,54 @@ export function AdminRedactionRule() {
       <PageHeader
         title={
           existing
-            ? `Rule · ${existing.subject_label ?? scopeNoun(existing.scope)}`
+            ? m["redaction_rule.title.rule"]({
+                // i18n: server text — `subject_label` is the API's name for the
+                // subject; the scope noun is the console's own when the API has
+                // none.
+                subject: existing.subject_label ?? scopeNoun(existing.scope),
+              })
             : cloneFrom
-              ? "Clone rule"
-              : "New rule"
+              ? m["redaction_rule.title.clone"]()
+              : m["redaction_rule.title.new"]()
         }
-        subtitle="The strictest applicable rule wins, so adding one can only protect more."
-        actions={<Button onClick={() => navigate("/admin/redaction")}>Back</Button>}
+        subtitle={m["redaction_rule.subtitle"]()}
+        actions={
+          <Button onClick={() => navigate("/admin/redaction")}>{m["redaction_rule.back"]()}</Button>
+        }
       />
 
       {cloneFrom && !existing && (
-        <Notice tone="info" title={`Cloning “${cloneFrom.name || "unnamed rule"}”`}>
-          The policy and reason are copied. A clone starts inactive — choose its
-          subject, review it, and activate it from the rules list.
+        <Notice
+          tone="info"
+          title={m["redaction_rule.clone_notice.title"]({
+            name: cloneFrom.name || m["redaction_rule.clone_notice.unnamed"](),
+          })}
+        >
+          {m["redaction_rule.clone_notice.body"]()}
         </Notice>
       )}
 
       {error ? (
-        <Notice tone="danger" title="Could not save the rule">
-          {error instanceof Error ? error.message : "Unknown error."}
+        <Notice tone="danger" title={m["redaction_rule.error.save_title"]()}>
+          {/* i18n: server text — the gateway's own error message. */}
+          {error instanceof Error ? error.message : m["redaction_rule.error.unknown"]()}
         </Notice>
       ) : null}
 
-      <Card title="Subject">
+      <Card title={m["redaction_rule.subject_card"]()}>
         {existing && existing.scope !== "all" && existing.subject_label === null && (
           // The one state a rule cannot stay in: scope_id is not a foreign key,
           // so a deleted subject leaves the rule matching nothing. Saying so is
           // the point of the subject_label contract; offering the repair is
           // what an editable subject is for.
-          <Notice tone="warn" title="This rule's subject no longer exists">
-            It matches no request. Choose another {scopeNoun(existing.scope).toLowerCase()}{" "}
-            below, or scope it to every request.
+          <Notice tone="warn" title={m["redaction_rule.subject_missing.title"]()}>
+            {m["redaction_rule.subject_missing.body"]({
+              scope: scopeNounLower(existing.scope),
+            })}
           </Notice>
         )}
         <Select
-          label="Scope"
+          label={m["redaction_rule.scope.label"]()}
           value={scope}
           onChange={(event) => {
             setScope(event.target.value as RedactionScope | "");
@@ -239,7 +258,7 @@ export function AdminRedactionRule() {
           {/* The clone's subject is deliberately unset — it cannot keep the
               source's, and defaulting to the catch-all would make "Every
               request" a choice nobody made. */}
-          {cloneFrom && !existing && <option value="">Choose a subject…</option>}
+          {cloneFrom && !existing && <option value="">{m["redaction_rule.scope.choose"]()}</option>}
           {SCOPE_OPTIONS.map((option) => (
             <option key={option} value={option}>
               {scopeNoun(option)}
@@ -256,21 +275,21 @@ export function AdminRedactionRule() {
         scoreThreshold={status.data?.score_threshold ?? null}
       />
 
-      <Card title="Name and reason">
+      <Card title={m["redaction_rule.name_card"]()}>
         <div className={FORM}>
           <input
-            aria-label="Rule name"
+            aria-label={m["redaction_rule.name.label"]()}
             className={INPUT}
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="Rule name"
+            placeholder={m["redaction_rule.name.label"]()}
           />
           <input
-            aria-label="Reason (optional)"
+            aria-label={m["redaction_rule.reason.label"]()}
             className={INPUT}
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="Reason (optional)"
+            placeholder={m["redaction_rule.reason.label"]()}
           />
           <div>
             <Button
@@ -281,7 +300,7 @@ export function AdminRedactionRule() {
               disabled={scope === "" || (scope !== "all" && !scopeId)}
               onClick={submit}
             >
-              {existing ? "Save rule" : "Create rule"}
+              {existing ? m["redaction_rule.submit.save"]() : m["redaction_rule.submit.create"]()}
             </Button>
           </div>
         </div>

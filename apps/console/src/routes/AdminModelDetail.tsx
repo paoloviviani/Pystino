@@ -24,6 +24,9 @@ import {
   KNOWN_OUTPUTS,
 } from "../components/CapabilityPicker";
 import { PageHeader } from "../components/PageHeader";
+import { formatDateTime, formatNumber } from "../lib/format";
+import { Message } from "../components/Message";
+import { m } from "../paraglide/messages.js";
 import {
   useCreatePrice,
   useDeleteModel,
@@ -75,7 +78,7 @@ export function AdminModelDetail() {
   if (model.isPending) {
     return (
       <div className={PAGE}>
-        <Spinner label="Loading the model" />
+        <Spinner label={m["model_detail.loading"]()} />
       </div>
     );
   }
@@ -83,9 +86,10 @@ export function AdminModelDetail() {
   if (model.error || !model.data) {
     return (
       <div className={PAGE}>
-        <Notice tone="danger" title="Could not load this model">
-          {model.error instanceof Error ? model.error.message : "Unknown error."}{" "}
-          <Link to="/admin/models">Back to the catalogue</Link>
+        <Notice tone="danger" title={m["model_detail.load_error.title"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {model.error instanceof Error ? model.error.message : m["model_detail.unknown_error"]()}{" "}
+          <Link to="/admin/models">{m["model_detail.back_link"]()}</Link>
         </Notice>
       </div>
     );
@@ -110,8 +114,10 @@ function ModelPage({ model }: { model: AdminModel }) {
     update.mutate(
       { id: model.id, display_name: value },
       {
-        onSuccess: () => toast?.add({ title: "Display name saved", type: "success" }),
-        onError: () => toast?.add({ title: "Could not save the display name", type: "error" }),
+        onSuccess: () =>
+          toast?.add({ title: m["model_detail.toast.name_saved"](), type: "success" }),
+        onError: () =>
+          toast?.add({ title: m["model_detail.toast.name_failed"](), type: "error" }),
       },
     );
   }
@@ -121,10 +127,18 @@ function ModelPage({ model }: { model: AdminModel }) {
       <PageHeader
         title={model.name}
         subtitle={
-          <>
-            <Link to="/admin/models">Models</Link> · served as{" "}
-            <code className={CODE}>{model.upstream_model}</code> by {model.provider_name}
-          </>
+          <Message
+            message={m["model_detail.subtitle"]}
+            markup={{
+              link: (children) => <Link to="/admin/models">{children}</Link>,
+              code: (children) => <code className={CODE}>{children}</code>,
+            }}
+            inputs={{
+              // i18n: server text — the model's own names, the provider's own name.
+              upstream: model.upstream_model,
+              provider: model.provider_name,
+            }}
+          />
         }
         actions={
           <>
@@ -134,68 +148,79 @@ function ModelPage({ model }: { model: AdminModel }) {
                 update.mutate(
                   { id: model.id, is_active: !model.is_active },
                   {
-                    onSuccess: () => toast?.add({ title: "Model updated", type: "success" }),
+                    onSuccess: () =>
+                      toast?.add({ title: m["model_detail.toast.updated"](), type: "success" }),
                     onError: () =>
-                      toast?.add({ title: "Could not update the model", type: "error" }),
+                      toast?.add({
+                        title: m["model_detail.toast.update_failed"](),
+                        type: "error",
+                      }),
                   },
                 )
               }
             >
-              {model.is_active ? "Deactivate" : "Activate"}
+              {model.is_active
+                ? m["model_detail.action.deactivate"]()
+                : m["model_detail.action.activate"]()}
             </Button>
             <Button variant="ghost" onClick={() => setConfirming(true)}>
-              Delete
+              {m["model_detail.action.delete"]()}
             </Button>
           </>
         }
       />
 
       {update.error ? (
-        <Notice tone="danger" title="Could not update the model">
-          {update.error instanceof Error ? update.error.message : "Unknown error."}
+        <Notice tone="danger" title={m["model_detail.toast.update_failed"]()}>
+          {/* i18n: server text — the API's own error message. */}
+          {update.error instanceof Error ? update.error.message : m["model_detail.unknown_error"]()}
         </Notice>
       ) : null}
 
       <Dialog
         open={confirming}
-        title={`Delete ${model.name}`}
+        title={m["model_detail.delete.title"]({ name: model.name })}
         onClose={() => setConfirming(false)}
         footer={
           <>
-            <Button onClick={() => setConfirming(false)}>Cancel</Button>
+            <Button onClick={() => setConfirming(false)}>
+              {m["model_detail.delete.cancel"]()}
+            </Button>
             <Button
               variant="danger"
               busy={del.isPending}
               onClick={() =>
                 del.mutate(model.id, {
                   onSuccess: () => {
-                    toast?.add({ title: "Model deleted", type: "success" });
+                    toast?.add({ title: m["model_detail.toast.deleted"](), type: "success" });
                     navigate("/admin/models");
                   },
                   onError: () =>
-                    toast?.add({ title: "Could not delete the model", type: "error" }),
+                    toast?.add({
+                      title: m["model_detail.toast.delete_failed"](),
+                      type: "error",
+                    }),
                 })
               }
             >
-              Delete permanently
+              {m["model_detail.delete.confirm"]()}
             </Button>
           </>
         }
       >
         {del.error ? (
           <Notice tone="danger">
-            {del.error instanceof Error ? del.error.message : "Unknown error."}
+            {/* i18n: server text — the API's own error message. */}
+            {del.error instanceof Error ? del.error.message : m["model_detail.unknown_error"]()}
           </Notice>
         ) : null}
         <p>
-          Removed from the catalogue and from{" "}
-          <code className={CODE}>/v1/models</code>; its prices and access grants go with it.
-          This cannot be undone.
+          <Message
+            message={m["model_detail.delete.body"]}
+            markup={{ code: (children) => <code className={CODE}>{children}</code> }}
+          />
         </p>
-        <p className={MUTED}>
-          Recorded spend is unaffected: past usage keeps the model's name and stays attributed to
-          the people and groups that ran it.
-        </p>
+        <p className={MUTED}>{m["model_detail.delete.spend_note"]()}</p>
       </Dialog>
 
       {/* The two states worth interrupting someone about, and they are not
@@ -205,24 +230,32 @@ function ModelPage({ model }: { model: AdminModel }) {
       {/* A price appended now applies from now on; it cannot rewrite what
           earlier requests were charged. */}
       {!model.current_price && (
-        <Notice tone="warn" title="This model has no price">
-          It will serve requests and record a cost of zero. Append a price below.
+        <Notice tone="warn" title={m["model_detail.no_price.title"]()}>
+          {m["model_detail.no_price.body"]()}
         </Notice>
       )}
       {!model.provider_is_active && (
-        <Notice tone="danger" title={`${model.provider_name} is deactivated`}>
-          Every model behind it is out of service.
+        <Notice tone="danger" title={m["model_detail.provider_inactive.title"]({ provider: model.provider_name })}>
+          {m["model_detail.provider_inactive.body"]()}
         </Notice>
       )}
 
-      <Card title="Details">
+      <Card title={m["model_detail.details_card"]()}>
         <dl className={DETAILS}>
-          <Detail label="Status">
-            {model.is_active ? <Badge tone="ok">Active</Badge> : <Badge>Inactive</Badge>}
+          <Detail label={m["model_detail.detail.status"]()}>
+            {model.is_active ? (
+              <Badge tone="ok">{m["model_detail.badge.active"]()}</Badge>
+            ) : (
+              <Badge>{m["model_detail.badge.inactive"]()}</Badge>
+            )}
           </Detail>
-          <Detail label="Visibility">
+          <Detail label={m["model_detail.detail.visibility"]()}>
             <div className={CHIPS}>
-              {model.is_public ? <Badge tone="accent">Public</Badge> : <Badge>Private</Badge>}
+              {model.is_public ? (
+                <Badge tone="accent">{m["model_detail.badge.public"]()}</Badge>
+              ) : (
+                <Badge>{m["model_detail.badge.private"]()}</Badge>
+              )}
               <Button
                 busy={update.isPending && update.variables?.is_public !== undefined}
                 onClick={() =>
@@ -230,29 +263,34 @@ function ModelPage({ model }: { model: AdminModel }) {
                     { id: model.id, is_public: !model.is_public },
                     {
                       onSuccess: () =>
-                        toast?.add({ title: "Model updated", type: "success" }),
+                        toast?.add({ title: m["model_detail.toast.updated"](), type: "success" }),
                       onError: () =>
-                        toast?.add({ title: "Could not update the model", type: "error" }),
+                        toast?.add({
+                          title: m["model_detail.toast.update_failed"](),
+                          type: "error",
+                        }),
                     },
                   )
                 }
               >
-                {model.is_public ? "Restrict to grants" : "Make public"}
+                {model.is_public
+                  ? m["model_detail.action.restrict"]()
+                  : m["model_detail.action.make_public"]()}
               </Button>
             </div>
           </Detail>
-          <Detail label="Name callers send">
+          <Detail label={m["model_detail.detail.callers_name"]()}>
             <code className={CODE}>{model.name}</code>
           </Detail>
-          <Detail label="Display name">
+          <Detail label={m["model_detail.detail.display_name"]()}>
             <div className="flex flex-wrap items-center gap-2">
               <div className="min-w-48 flex-1">
                 <Input
-                  label="Display name"
+                  label={m["model_detail.detail.display_name"]()}
                   value={displayName}
                   placeholder={model.name}
                   onChange={(event) => setDisplayName(event.target.value)}
-                  hint="What a client shows in a model picker, from /v1/models. Empty means the name above. It never changes what callers send."
+                  hint={m["model_detail.display_name_hint"]()}
                 />
               </div>
               <Button
@@ -260,7 +298,7 @@ function ModelPage({ model }: { model: AdminModel }) {
                 disabled={displayNameSaved}
                 onClick={() => saveDisplayName(displayName.trim() || null)}
               >
-                Save display name
+                {m["model_detail.action.save_display_name"]()}
               </Button>
               {model.display_name && (
                 <Button
@@ -270,15 +308,15 @@ function ModelPage({ model }: { model: AdminModel }) {
                     saveDisplayName(null);
                   }}
                 >
-                  Clear display name
+                  {m["model_detail.action.clear_display_name"]()}
                 </Button>
               )}
             </div>
           </Detail>
-          <Detail label="Upstream model">
+          <Detail label={m["model_detail.detail.upstream"]()}>
             <code className={CODE}>{model.upstream_model}</code>
           </Detail>
-          <Detail label="Provider">
+          <Detail label={m["model_detail.detail.provider"]()}>
             <Link to="/admin/providers">{model.provider_name}</Link>
           </Detail>
         </dl>
@@ -331,75 +369,78 @@ function Describe({ model }: { model: AdminModel }) {
 
   return (
     <Card
-      title="Capabilities"
-      description="What callers are told on /v1/models. Discover never overwrites an edit."
+      title={m["model_detail.describe.card"]()}
+      description={m["model_detail.describe.description"]()}
     >
       <div className={FORM}>
         {update.error ? (
           <Notice tone="danger">
-            {update.error instanceof Error ? update.error.message : "Unknown error."}
+            {/* i18n: server text — the API's own error message. */}
+            {update.error instanceof Error ? update.error.message : m["model_detail.unknown_error"]()}
           </Notice>
         ) : null}
-        {update.isSuccess && !update.isPending && <Notice tone="info">Saved.</Notice>}
+        {update.isSuccess && !update.isPending && (
+          <Notice tone="info">{m["model_detail.describe.saved"]()}</Notice>
+        )}
 
         <Select
-          label="Kind"
+          label={m["model_detail.describe.kind"]()}
           value={kind}
           onChange={(event) => setKind(event.target.value as ModelKind)}
-          hint="Which routes will serve it. Discovery can infer it wrong."
+          hint={m["model_detail.describe.kind_hint"]()}
         >
-          <option value="chat">Chat — /v1/chat/completions, /v1/responses, /v1/messages</option>
-          <option value="embedding">Embedding — /v1/embeddings</option>
-          <option value="image">Image — /v1/images/generations</option>
+          <option value="chat">{m["model_detail.kind.chat"]()}</option>
+          <option value="embedding">{m["model_detail.kind.embedding"]()}</option>
+          <option value="image">{m["model_detail.kind.image"]()}</option>
         </Select>
 
         <CapabilityPicker
-          label="Accepts"
-          otherLabel="Other input modalities"
-          hint="What can be sent to it."
+          label={m["model_detail.describe.accepts"]()}
+          otherLabel={m["model_detail.describe.accepts_other"]()}
+          hint={m["model_detail.describe.accepts_hint"]()}
           known={KNOWN_INPUTS}
           value={inputs}
           onChange={setInputs}
         />
         <CapabilityPicker
-          label="Produces"
-          otherLabel="Other output modalities"
-          hint="What comes back."
+          label={m["model_detail.describe.produces"]()}
+          otherLabel={m["model_detail.describe.produces_other"]()}
+          hint={m["model_detail.describe.produces_hint"]()}
           known={KNOWN_OUTPUTS}
           value={outputs}
           onChange={setOutputs}
         />
         <CapabilityPicker
-          label="Features"
-          otherLabel="Other features"
-          hint="Whatever the provider reports is kept."
+          label={m["model_detail.describe.features"]()}
+          otherLabel={m["model_detail.describe.features_other"]()}
+          hint={m["model_detail.describe.features_hint"]()}
           known={KNOWN_FEATURES}
           value={features}
           onChange={setFeatures}
         />
         <Input
-          label="Context window"
+          label={m["model_detail.describe.context_window"]()}
           type="number"
           min="1"
           value={context}
           onChange={(event) => setContext(event.target.value)}
-          hint="Total tokens, in and out. Leave empty if unknown."
+          hint={m["model_detail.describe.context_hint"]()}
         />
         <Input
-          label="Max input tokens"
+          label={m["model_detail.describe.max_input"]()}
           type="number"
           min="1"
           value={maxInput}
           onChange={(event) => setMaxInput(event.target.value)}
-          hint="Prompt cap the gateway enforces; set by hand, no catalogue reports it. Empty means no local limit."
+          hint={m["model_detail.describe.max_input_hint"]()}
         />
         <Input
-          label="Max output tokens"
+          label={m["model_detail.describe.max_output"]()}
           type="number"
           min="1"
           value={maxOutput}
           onChange={(event) => setMaxOutput(event.target.value)}
-          hint="Completion cap reported on /v1/models. Empty if unknown."
+          hint={m["model_detail.describe.max_output_hint"]()}
         />
 
         <div>
@@ -420,14 +461,17 @@ function Describe({ model }: { model: AdminModel }) {
                 },
                 {
                   onSuccess: () =>
-                    toast?.add({ title: "Capabilities saved", type: "success" }),
+                    toast?.add({ title: m["model_detail.describe.toast_saved"](), type: "success" }),
                   onError: () =>
-                    toast?.add({ title: "Could not save the capabilities", type: "error" }),
+                    toast?.add({
+                      title: m["model_detail.describe.toast_failed"](),
+                      type: "error",
+                    }),
                 },
               )
             }
           >
-            Save capabilities
+            {m["model_detail.describe.save"]()}
           </Button>
         </div>
       </div>
@@ -457,23 +501,25 @@ function Pricing({ model }: { model: AdminModel }) {
   const columns: Column<Price>[] = [
     {
       key: "effective",
-      header: "Effective from",
+      header: m["model_detail.price.column.effective"](),
       render: (price) => (
         <>
           <div>{formatDateTime(price.effective_from)}</div>
-          {new Date(price.effective_from) > now && <Badge tone="accent">Scheduled</Badge>}
+          {new Date(price.effective_from) > now && (
+            <Badge tone="accent">{m["model_detail.price.scheduled"]()}</Badge>
+          )}
         </>
       ),
     },
     {
       key: "input",
-      header: "Input / Mtok",
+      header: m["model_detail.price.column.input"](),
       numeric: true,
       render: (price) => <Money amount={price.input_per_mtok} currency={price.currency} />,
     },
     {
       key: "output",
-      header: "Output / Mtok",
+      header: m["model_detail.price.column.output"](),
       numeric: true,
       render: (price) => <Money amount={price.output_per_mtok} currency={price.currency} />,
     },
@@ -482,7 +528,7 @@ function Pricing({ model }: { model: AdminModel }) {
     // facts, and one of them is a decision somebody made.
     {
       key: "cache",
-      header: "Cache read / write",
+      header: m["model_detail.price.column.cache"](),
       numeric: true,
       render: (price) =>
         price.cache_read_per_mtok || price.cache_write_per_mtok ? (
@@ -500,7 +546,7 @@ function Pricing({ model }: { model: AdminModel }) {
     },
     {
       key: "image",
-      header: "Per image",
+      header: m["model_detail.price.column.image"](),
       numeric: true,
       // Both unit rates share a column: a model is priced per image or per
       // page, never both, and two mostly-empty columns on a narrow screen
@@ -511,21 +557,22 @@ function Pricing({ model }: { model: AdminModel }) {
     },
     {
       key: "page",
-      header: "Per page",
+      header: m["model_detail.price.column.page"](),
       numeric: true,
       render: (price) => <Rate amount={price.per_page} currency={price.currency} />,
       hideBelow: "md",
     },
     {
       key: "search",
-      header: "Per search",
+      header: m["model_detail.price.column.search"](),
       numeric: true,
       render: (price) => <Rate amount={price.per_search} currency={price.currency} />,
       hideBelow: "lg",
     },
     {
       key: "source",
-      header: "Source",
+      header: m["model_detail.price.column.source"](),
+      // i18n: server text — the price's source is the API's enum value.
       render: (price) => <Badge>{price.source}</Badge>,
     },
   ];
@@ -533,25 +580,34 @@ function Pricing({ model }: { model: AdminModel }) {
   return (
     <>
       <Card
-        title="Price history"
+        title={m["model_detail.price.card"]()}
         flush
-        description="Newest first. A correction is a new row."
+        description={m["model_detail.price.description"]()}
       >
         {prices.isPending ? (
           <Spinner />
         ) : prices.error ? (
-          <Notice tone="danger" title="Could not load the price history">
-            {prices.error instanceof Error ? prices.error.message : "Unknown error."}
+          <Notice tone="danger" title={m["model_detail.price.load_error.title"]()}>
+            {/* i18n: server text — the API's own error message. */}
+            {prices.error instanceof Error ? prices.error.message : m["model_detail.unknown_error"]()}
           </Notice>
         ) : (
           <>
             <div className="p-5">
               <SummaryStrip
-                headline={`${items.length} ${items.length === 1 ? "price" : "prices"}`}
+                headline={m["model_detail.price.count"]({ count: items.length })}
                 detail={
                   current
-                    ? `current: ${formatMoney(current.input_per_mtok, current.currency, { exact })} in / ${formatMoney(current.output_per_mtok, current.currency, { exact })} out`
-                    : "this model records a cost of zero"
+                    ? m["model_detail.price.current"]({
+                        rates: m["model_detail.price.current_rates"]({
+                          // Money is a string end to end; `formatMoney` reads it
+                          // without parsing it, and the message carries both
+                          // figures as the parameters they are.
+                          rin: formatMoney(current.input_per_mtok, current.currency, { exact }),
+                          rout: formatMoney(current.output_per_mtok, current.currency, { exact }),
+                        }),
+                      })
+                    : m["model_detail.price.no_current"]()
                 }
                 active={items.length > 0}
               />
@@ -560,8 +616,8 @@ function Pricing({ model }: { model: AdminModel }) {
               columns={columns}
               rows={items}
               rowKey={(price) => price.id}
-              empty="No price set. This model records a cost of zero."
-              caption={`Price history for ${model.name}.`}
+              empty={m["model_detail.price.empty"]()}
+              caption={m["model_detail.price.caption"]({ name: model.name })}
             />
           </>
         )}
@@ -608,7 +664,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
       },
       {
         onSuccess: () => {
-          toast?.add({ title: "Price appended", type: "success" });
+          toast?.add({ title: m["model_detail.append.toast_done"](), type: "success" });
           setInput("");
           setOutput("");
           setCacheRead("");
@@ -618,35 +674,37 @@ function AppendPrice({ model }: { model: AdminModel }) {
           setPerSearch("");
           setEffective("");
         },
-        onError: () => toast?.add({ title: "Could not append the price", type: "error" }),
+        onError: () =>
+          toast?.add({ title: m["model_detail.append.toast_failed"](), type: "error" }),
       },
     );
   };
 
   return (
-    <Card title="New price">
+    <Card title={m["model_detail.append.card"]()}>
       <div className={FORM}>
         {create.error ? (
           <Notice tone="danger">
-            {create.error instanceof Error ? create.error.message : "Unknown error."}
+            {/* i18n: server text — the API's own error message. */}
+            {create.error instanceof Error ? create.error.message : m["model_detail.unknown_error"]()}
           </Notice>
         ) : null}
         {create.isSuccess && !create.isPending && (
-          <Notice tone="info">Price appended. It applies from its effective date.</Notice>
+          <Notice tone="info">{m["model_detail.append.saved"]()}</Notice>
         )}
 
         <div className={FORM_ROW}>
           <Input
-            label="Input per Mtok"
+            label={m["model_detail.append.input"]()}
             type="number"
             min="0"
             step="0.000001"
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            hint="In the gateway's billing currency"
+            hint={m["model_detail.append.input_hint"]()}
           />
           <Input
-            label="Output per Mtok"
+            label={m["model_detail.append.output"]()}
             type="number"
             min="0"
             step="0.000001"
@@ -654,16 +712,16 @@ function AppendPrice({ model }: { model: AdminModel }) {
             onChange={(event) => setOutput(event.target.value)}
           />
           <Input
-            label="Cache read per Mtok"
+            label={m["model_detail.append.cache_read"]()}
             type="number"
             min="0"
             step="0.000001"
             value={cacheRead}
             onChange={(event) => setCacheRead(event.target.value)}
-            hint="Empty bills cached input at the full input rate."
+            hint={m["model_detail.append.cache_read_hint"]()}
           />
           <Input
-            label="Cache write per Mtok"
+            label={m["model_detail.append.cache_write"]()}
             type="number"
             min="0"
             step="0.000001"
@@ -671,39 +729,38 @@ function AppendPrice({ model }: { model: AdminModel }) {
             onChange={(event) => setCacheWrite(event.target.value)}
           />
           <Input
-            label="Per image"
+            label={m["model_detail.append.per_image"]()}
             type="number"
             min="0"
             step="0.000001"
             value={perImage}
             onChange={(event) => setPerImage(event.target.value)}
-            hint="Image models only, on top of any token rates."
+            hint={m["model_detail.append.per_image_hint"]()}
           />
           <Input
-            label="Per page"
+            label={m["model_detail.append.per_page"]()}
             type="number"
             min="0"
             step="0.0000001"
             value={perPage}
             onChange={(event) => setPerPage(event.target.value)}
-            hint="OCR models, which charge by the page and usually nothing per token."
+            hint={m["model_detail.append.per_page_hint"]()}
           />
           <Input
-            label="Per search"
+            label={m["model_detail.append.per_search"]()}
             type="number"
             min="0"
             step="0.0000001"
             value={perSearch}
             onChange={(event) => setPerSearch(event.target.value)}
-            hint="Provider-side web search, charged per search on top of tokens.
-              Providers publish it per thousand — $10 per 1,000 is 0.01 here."
+            hint={m["model_detail.append.per_search_hint"]()}
           />
           <Input
-            label="Effective from"
+            label={m["model_detail.append.effective"]()}
             type="datetime-local"
             value={effective}
             onChange={(event) => setEffective(event.target.value)}
-            hint="Leave empty for now. A future date schedules the change."
+            hint={m["model_detail.append.effective_hint"]()}
           />
         </div>
 
@@ -714,7 +771,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
             disabled={input === "" || output === ""}
             onClick={submit}
           >
-            Append price
+            {m["model_detail.append.submit"]()}
           </Button>
         </div>
       </div>
@@ -743,14 +800,18 @@ function Access({ model }: { model: AdminModel }) {
   const granted = model.granted_to_users;
 
   return (
-    <Card title="Access" description="No grant means no access; there is no allow-all.">
+    <Card
+      title={m["model_detail.access.card"]()}
+      description={m["model_detail.access.description"]()}
+    >
       {access.error ? (
         <Notice tone="danger">
-          {access.error instanceof Error ? access.error.message : "Unknown error."}
+          {/* i18n: server text — the API's own error message. */}
+          {access.error instanceof Error ? access.error.message : m["model_detail.unknown_error"]()}
         </Notice>
       ) : null}
 
-      <p className={MUTED}>Groups</p>
+      <p className={MUTED}>{m["model_detail.access.groups"]()}</p>
       {groups.isPending ? (
         <Spinner />
       ) : (
@@ -774,7 +835,7 @@ function Access({ model }: { model: AdminModel }) {
         </div>
       )}
 
-      <p className={MUTED}>Individuals, in addition to their groups.</p>
+      <p className={MUTED}>{m["model_detail.access.individuals"]()}</p>
       {granted.length > 0 && (
         <div className={CHECK_LIST}>
           {granted.map((email) => (
@@ -801,15 +862,18 @@ function Access({ model }: { model: AdminModel }) {
         </div>
       )}
       <Input
-        label="Person search"
+        label={m["model_detail.access.person_search"]()}
         hideLabel
         value={finder.search}
         onChange={(event) => finder.setSearch(event.target.value)}
-        placeholder="email, name or subject"
+        placeholder={m["model_detail.access.person_placeholder"]()}
       />
       {userAccess.error ? (
         <Notice tone="danger">
-          {userAccess.error instanceof Error ? userAccess.error.message : "Unknown error."}
+          {/* i18n: server text — the API's own error message. */}
+          {userAccess.error instanceof Error
+            ? userAccess.error.message
+            : m["model_detail.unknown_error"]()}
         </Notice>
       ) : null}
       <div className={CHECK_LIST}>
@@ -833,34 +897,27 @@ function Access({ model }: { model: AdminModel }) {
           <span className={MUTED}>
             {!finder.query.trim()
               ? granted.length === 0
-                ? "No individual grants."
-                : "Type to find someone else."
+                ? m["model_detail.access.no_grants"]()
+                : m["model_detail.access.type_to_find"]()
               : users.isFetching
-                ? "Searching…"
-                : "Nobody matches that."}
+                ? m["model_detail.access.searching"]()
+                : m["model_detail.access.no_match"]()}
           </span>
         )}
         {users.data && users.data.total > matching.length && (
           <span className={MUTED}>
-            Showing {matching.length} of {users.data.total.toLocaleString()} matches. Narrow
-            the search to see the rest.
+            {m["model_detail.access.showing"]({
+              shown: formatNumber(matching.length),
+              total: formatNumber(users.data.total),
+            })}
           </span>
         )}
       </div>
 
       {/* Deactivating the model instead takes it away from everyone at once, and
           keeps historical spend attributable. */}
-      <Notice tone="info">Revoking takes effect on the next request.</Notice>
+      <Notice tone="info">{m["model_detail.access.revoke_note"]()}</Notice>
     </Card>
   );
 }
 
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
