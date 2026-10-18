@@ -1540,6 +1540,8 @@ def _manual_catalogue_price(
             input_per_mtok=manual.input_per_mtok or Decimal(0),
             output_per_mtok=manual.output_per_mtok or Decimal(0),
             currency=currency,
+            cache_read_per_mtok=manual.cache_read_per_mtok,
+            cache_write_per_mtok=manual.cache_write_per_mtok,
             per_page=manual.per_page,
             kind=kind,
         ),

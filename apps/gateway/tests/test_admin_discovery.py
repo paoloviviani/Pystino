@@ -352,6 +352,106 @@ class TestManualPriceImport:
         assert str(price.output_per_mtok) == "6.000000000000"
         assert price.currency == "EUR"
 
+    async def test_cache_rates_entered_by_hand_land_on_the_price_row(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        session: AsyncSession,
+    ) -> None:
+        """The price form can set cache rates; the import door must too, or an
+        unpriced provider's cached tokens are billed at the full input rate."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/unpriced-1",
+                        "manual_price": {
+                            "input_per_mtok": "1.5",
+                            "output_per_mtok": "6",
+                            "cache_read_per_mtok": "0.15",
+                            "cache_write_per_mtok": "1.875",
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["results"][0]["imported"] is True
+        price = (
+            await session.execute(
+                select(ModelPrice)
+                .join(ModelDef, ModelDef.id == ModelPrice.model_id)
+                .where(ModelDef.upstream_model == "vendor/unpriced-1")
+            )
+        ).scalar_one()
+        assert price.source is PriceSource.MANUAL
+        assert str(price.cache_read_per_mtok) == "0.150000000000"
+        assert str(price.cache_write_per_mtok) == "1.875000000000"
+
+    async def test_a_manual_price_without_cache_rates_leaves_them_null(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        session: AsyncSession,
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/unpriced-1",
+                        "manual_price": {"input_per_mtok": "1", "output_per_mtok": "2"},
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        price = (
+            await session.execute(
+                select(ModelPrice)
+                .join(ModelDef, ModelDef.id == ModelPrice.model_id)
+                .where(ModelDef.upstream_model == "vendor/unpriced-1")
+            )
+        ).scalar_one()
+        assert price.cache_read_per_mtok is None
+        assert price.cache_write_per_mtok is None
+
+    async def test_a_negative_cache_rate_is_refused_as_on_the_price_form(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/unpriced-1",
+                        "manual_price": {
+                            "input_per_mtok": "1",
+                            "output_per_mtok": "2",
+                            "cache_read_per_mtok": "-0.1",
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 400, response.text
+        assert "cache_read_per_mtok" in response.text
+
     async def test_the_price_entered_by_hand_round_trips_as_a_string(
         self,
         app: object,

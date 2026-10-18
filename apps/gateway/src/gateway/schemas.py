@@ -2420,6 +2420,10 @@ class ManualImportPrice(BaseModel):
     # Per page read, for an OCR model, whose real price is here. Same field,
     # same meaning, as on the price row itself.
     per_page: Money | None = Field(default=None, ge=0)
+    # Optional, as on the price form, which takes them for any kind: empty bills
+    # the cached slice of a prompt at the input rate (accounting/cost.py).
+    cache_read_per_mtok: Money | None = Field(default=None, ge=0)
+    cache_write_per_mtok: Money | None = Field(default=None, ge=0)
     # Defaults to the gateway's billing currency, as on the price form; anything
     # else is refused rather than converted.
     currency: str | None = Field(default=None, min_length=3, max_length=3)
