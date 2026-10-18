@@ -727,10 +727,12 @@ const EMPTY_DRAFT: ManualPriceDraft = {
   currency: "",
 };
 
-/** Kinds whose price row can carry cache rates here. The gateway takes them on
- * any kind, as the model page's price form does, but only a chat prompt has a
- * cached slice worth pricing, so only a chat row is asked. */
-const CACHE_KINDS = new Set(["chat"]);
+/** Kinds whose price row can carry cache rates here: the token-priced ones whose
+ * prompt a provider may serve from a cache. The gateway takes them on any kind,
+ * as the model page's price form does; an OCR row is priced per page and has no
+ * cached slice to price. Embedding is asked too (owner, 2026-10-18), although
+ * the providers seen so far report no cached embedding tokens. */
+const CACHE_KINDS = new Set(["chat", "embedding"]);
 const takesCacheRates = (row: DiscoveredModel) => CACHE_KINDS.has(row.kind);
 
 /**

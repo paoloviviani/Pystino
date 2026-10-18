@@ -1119,37 +1119,67 @@ describe("AdminModels", () => {
       return { user, calls };
     };
 
-    it("offers optional cache fields on a ticked chat row only, and sends what is typed", async () => {
+    it("offers optional cache fields on ticked chat and embedding rows, not OCR, and sends what is typed", async () => {
       const { user, calls } = await setup([
         unpriced("provider/chatty"),
         unpriced("provider/embedder", "embedding"),
+        unpriced("provider/reader", "ocr"),
       ]);
       await user.click(screen.getByRole("checkbox", { name: "Import chatty" }));
-      await user.click(screen.getByRole("checkbox", { name: "Import embedder" }));
-      // One chat row: one pair of cache fields. The embedding row has none.
-      expect(screen.getAllByLabelText("Cache read per Mtok")).toHaveLength(1);
-      expect(screen.getAllByLabelText("Cache write per Mtok")).toHaveLength(1);
+      await user.click(
+        screen.getByRole("checkbox", { name: "Import embedder" }),
+      );
+      await user.click(screen.getByRole("checkbox", { name: "Import reader" }));
+      // Chat and embedding: a pair of cache fields each. OCR is priced per page: none.
+      expect(screen.getAllByLabelText("Cache read per Mtok")).toHaveLength(2);
+      expect(screen.getAllByLabelText("Cache write per Mtok")).toHaveLength(2);
       expect(
-        screen.getAllByText("Leave empty to bill cached tokens at the input rate."),
-      ).toHaveLength(1);
+        screen.getAllByText(
+          "Leave empty to bill cached tokens at the input rate.",
+        ),
+      ).toHaveLength(2);
 
       const inputs = screen.getAllByLabelText("Input per Mtok");
       await user.type(inputs[0]!, "1.5");
       await user.type(screen.getByLabelText("Output per Mtok"), "6");
       await user.type(inputs[1]!, "0.1");
-      await user.type(screen.getByLabelText("Cache read per Mtok"), "0.15");
-      await user.type(screen.getByLabelText("Cache write per Mtok"), "1.875");
+      await user.type(
+        screen.getAllByLabelText("Cache read per Mtok")[0]!,
+        "0.15",
+      );
+      await user.type(
+        screen.getAllByLabelText("Cache write per Mtok")[0]!,
+        "1.875",
+      );
+      await user.type(
+        screen.getAllByLabelText("Cache read per Mtok")[1]!,
+        "0.01",
+      );
+      await user.type(screen.getByLabelText("Per page"), "0.002");
       await user.click(screen.getByRole("button", { name: /^Import/ }));
       await waitFor(() => expect(calls.importBodies).toHaveLength(1));
       const bodies = calls.importBodies![0]!.models;
-      expect(bodies.find((x) => x.upstream_model === "provider/chatty")?.manual_price).toEqual({
+      expect(
+        bodies.find((x) => x.upstream_model === "provider/chatty")
+          ?.manual_price,
+      ).toEqual({
         input_per_mtok: "1.5",
         output_per_mtok: "6",
         cache_read_per_mtok: "0.15",
         cache_write_per_mtok: "1.875",
       });
-      expect(bodies.find((x) => x.upstream_model === "provider/embedder")?.manual_price).toEqual({
+      expect(
+        bodies.find((x) => x.upstream_model === "provider/embedder")
+          ?.manual_price,
+      ).toEqual({
         input_per_mtok: "0.1",
+        cache_read_per_mtok: "0.01",
+      });
+      expect(
+        bodies.find((x) => x.upstream_model === "provider/reader")
+          ?.manual_price,
+      ).toEqual({
+        per_page: "0.002",
       });
     });
 
