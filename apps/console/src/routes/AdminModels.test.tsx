@@ -1080,4 +1080,148 @@ describe("AdminModels", () => {
       },
     ]);
   });
+
+  describe("cache rates on a hand-typed price", () => {
+    const unpriced = (upstream: string, kind = "chat") => ({
+      upstream_model: upstream,
+      suggested_name: upstream.replace("provider/", ""),
+      input_per_mtok: null,
+      output_per_mtok: null,
+      per_page: null,
+      currency: null,
+      context_window: null,
+      kind,
+      input_modalities: [],
+      output_modalities: [],
+      supported_features: [],
+      blocked_reason: "the provider publishes no price: enter one to import it",
+      price_source: null,
+    });
+    const setup = async (rows: ReturnType<typeof unpriced>[]) => {
+      const user = userEvent.setup();
+      const calls: {
+        importBodies?: { models: { upstream_model: string; manual_price?: unknown }[] }[];
+      } = {};
+      const base = routes([model()], calls);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (String(input).includes("/models/discover")) {
+            return jsonResponse({ ...DISCOVERY_FILLED, available: rows });
+          }
+          return base(input, init);
+        }),
+      );
+      renderScreen(<AdminModels />);
+      await user.click(screen.getByRole("button", { name: "Discover" }));
+      await openCatalogue(user);
+      await waitFor(() => expect(screen.getByText(rows[0]!.suggested_name)).toBeInTheDocument());
+      return { user, calls };
+    };
+
+    it("offers optional cache fields on ticked chat and embedding rows, not OCR, and sends what is typed", async () => {
+      const { user, calls } = await setup([
+        unpriced("provider/chatty"),
+        unpriced("provider/embedder", "embedding"),
+        unpriced("provider/reader", "ocr"),
+      ]);
+      await user.click(screen.getByRole("checkbox", { name: "Import chatty" }));
+      await user.click(
+        screen.getByRole("checkbox", { name: "Import embedder" }),
+      );
+      await user.click(screen.getByRole("checkbox", { name: "Import reader" }));
+      // Chat and embedding: a pair of cache fields each. OCR is priced per page: none.
+      expect(screen.getAllByLabelText("Cache read per Mtok")).toHaveLength(2);
+      expect(screen.getAllByLabelText("Cache write per Mtok")).toHaveLength(2);
+      expect(
+        screen.getAllByText(
+          "Leave empty to bill cached tokens at the input rate.",
+        ),
+      ).toHaveLength(2);
+
+      const inputs = screen.getAllByLabelText("Input per Mtok");
+      await user.type(inputs[0]!, "1.5");
+      await user.type(screen.getByLabelText("Output per Mtok"), "6");
+      await user.type(inputs[1]!, "0.1");
+      await user.type(
+        screen.getAllByLabelText("Cache read per Mtok")[0]!,
+        "0.15",
+      );
+      await user.type(
+        screen.getAllByLabelText("Cache write per Mtok")[0]!,
+        "1.875",
+      );
+      await user.type(
+        screen.getAllByLabelText("Cache read per Mtok")[1]!,
+        "0.01",
+      );
+      await user.type(screen.getByLabelText("Per page"), "0.002");
+      await user.click(screen.getByRole("button", { name: /^Import/ }));
+      await waitFor(() => expect(calls.importBodies).toHaveLength(1));
+      const bodies = calls.importBodies![0]!.models;
+      expect(
+        bodies.find((x) => x.upstream_model === "provider/chatty")
+          ?.manual_price,
+      ).toEqual({
+        input_per_mtok: "1.5",
+        output_per_mtok: "6",
+        cache_read_per_mtok: "0.15",
+        cache_write_per_mtok: "1.875",
+      });
+      expect(
+        bodies.find((x) => x.upstream_model === "provider/embedder")
+          ?.manual_price,
+      ).toEqual({
+        input_per_mtok: "0.1",
+        cache_read_per_mtok: "0.01",
+      });
+      expect(
+        bodies.find((x) => x.upstream_model === "provider/reader")
+          ?.manual_price,
+      ).toEqual({
+        per_page: "0.002",
+      });
+    });
+
+    it("omits an empty cache field, and blocks a malformed one", async () => {
+      const { user, calls } = await setup([unpriced("provider/chatty")]);
+      await user.click(screen.getByRole("checkbox", { name: "Import chatty" }));
+      await user.type(await screen.findByLabelText("Input per Mtok"), "1");
+      await user.type(screen.getByLabelText("Output per Mtok"), "2");
+      await user.type(screen.getByLabelText("Cache read per Mtok"), "abc");
+      expect(screen.getByRole("button", { name: /^Import/ })).toBeDisabled();
+      await user.clear(screen.getByLabelText("Cache read per Mtok"));
+      await user.click(screen.getByRole("button", { name: /^Import/ }));
+      await waitFor(() => expect(calls.importBodies).toHaveLength(1));
+      expect(calls.importBodies![0]!.models[0]!.manual_price).toEqual({
+        input_per_mtok: "1",
+        output_per_mtok: "2",
+      });
+    });
+
+    it("copies the cache rates with the rest of the price", async () => {
+      const { user, calls } = await setup([
+        unpriced("provider/cheap-a"),
+        unpriced("provider/cheap-b"),
+      ]);
+      await user.click(screen.getByRole("checkbox", { name: "Import cheap-a" }));
+      await user.click(screen.getByRole("checkbox", { name: "Import cheap-b" }));
+      await user.type((await screen.findAllByLabelText("Input per Mtok"))[0]!, "0.5");
+      await user.type(screen.getAllByLabelText("Output per Mtok")[0]!, "2");
+      await user.type(screen.getAllByLabelText("Cache read per Mtok")[0]!, "0.05");
+      await user.click(
+        await screen.findByRole("button", { name: /apply this price to all ticked/i }),
+      );
+      expect(screen.getAllByLabelText("Cache read per Mtok")[1]).toHaveValue("0.05");
+      await user.click(screen.getByRole("button", { name: /^Import/ }));
+      await waitFor(() => expect(calls.importBodies).toHaveLength(1));
+      for (const entry of calls.importBodies![0]!.models) {
+        expect(entry.manual_price).toEqual({
+          input_per_mtok: "0.5",
+          output_per_mtok: "2",
+          cache_read_per_mtok: "0.05",
+        });
+      }
+    });
+  });
 });

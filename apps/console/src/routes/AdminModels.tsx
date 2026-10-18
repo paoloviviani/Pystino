@@ -713,10 +713,27 @@ interface ManualPriceDraft {
   input: string;
   output: string;
   perPage: string;
+  cacheRead: string;
+  cacheWrite: string;
   currency: string;
 }
 
-const EMPTY_DRAFT: ManualPriceDraft = { input: "", output: "", perPage: "", currency: "" };
+const EMPTY_DRAFT: ManualPriceDraft = {
+  input: "",
+  output: "",
+  perPage: "",
+  cacheRead: "",
+  cacheWrite: "",
+  currency: "",
+};
+
+/** Kinds whose price row can carry cache rates here: the token-priced ones whose
+ * prompt a provider may serve from a cache. The gateway takes them on any kind,
+ * as the model page's price form does; an OCR row is priced per page and has no
+ * cached slice to price. Embedding is asked too (owner, 2026-10-18), although
+ * the providers seen so far report no cached embedding tokens. */
+const CACHE_KINDS = new Set(["chat", "embedding"]);
+const takesCacheRates = (row: DiscoveredModel) => CACHE_KINDS.has(row.kind);
 
 /**
  * The rates a kind is metered on, mirrored from the gateway's `_KIND_RATES` so
@@ -748,6 +765,13 @@ function rateError(value: string): string | null {
   return AMOUNT_PATTERN.test(value) ? null : m["admin_models.discover.manual_rate.amount_invalid"]();
 }
 
+/** A cache rate is optional: empty is fine and sends nothing; anything typed is
+ * judged by shape like the other rates. */
+function optionalRateError(value: string): string | null {
+  if (value === "") return null;
+  return AMOUNT_PATTERN.test(value) ? null : m["admin_models.discover.manual_rate.amount_invalid"]();
+}
+
 function currencyError(value: string): string | null {
   if (value === "") return null;
   return CURRENCY_PATTERN.test(value)
@@ -768,10 +792,16 @@ function manualPricePayload(
   const fields = RATE_FIELDS[row.kind] ?? ["input"];
   if (fields.some((field) => draft[field] === "")) return undefined;
   if (currencyError(draft.currency) !== null) return undefined;
+  if (takesCacheRates(row) && (optionalRateError(draft.cacheRead) || optionalRateError(draft.cacheWrite)))
+    return undefined;
   const price: ManualImportPrice = {};
   if (fields.includes("input")) price.input_per_mtok = draft.input;
   if (fields.includes("output")) price.output_per_mtok = draft.output;
   if (fields.includes("perPage")) price.per_page = draft.perPage;
+  if (takesCacheRates(row)) {
+    if (draft.cacheRead !== "") price.cache_read_per_mtok = draft.cacheRead;
+    if (draft.cacheWrite !== "") price.cache_write_per_mtok = draft.cacheWrite;
+  }
   if (draft.currency !== "") price.currency = draft.currency.toUpperCase();
   return price;
 }
@@ -790,6 +820,17 @@ function manualPriceProblem(
         label: RATE_LABELS[field] ?? field,
         error,
       });
+    }
+  }
+  if (takesCacheRates(row)) {
+    for (const [label, value] of [
+      [m["admin_models.discover.manual_rate.cache_read"], draft.cacheRead],
+      [m["admin_models.discover.manual_rate.cache_write"], draft.cacheWrite],
+    ] as const) {
+      const error = optionalRateError(value);
+      if (error) {
+        return m["admin_models.discover.manual_rate.field_problem"]({ label, error });
+      }
     }
   }
   const currency = currencyError(draft.currency);
@@ -830,6 +871,29 @@ function ManualPriceFields({
           hint={m["admin_models.discover.manual_rate.rate_hint"]()}
         />
       ))}
+      {takesCacheRates(row) && (
+        <>
+          <Input
+            label={m["admin_models.discover.manual_rate.cache_read"]()}
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={draft.cacheRead}
+            onChange={(event) => onChange({ ...draft, cacheRead: event.target.value })}
+            error={optionalRateError(draft.cacheRead) ?? undefined}
+            hint={m["admin_models.discover.manual_rate.cache_hint"]()}
+          />
+          <Input
+            label={m["admin_models.discover.manual_rate.cache_write"]()}
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            value={draft.cacheWrite}
+            onChange={(event) => onChange({ ...draft, cacheWrite: event.target.value })}
+            error={optionalRateError(draft.cacheWrite) ?? undefined}
+          />
+        </>
+      )}
       <Input
         label={m["admin_models.discover.manual_rate.currency"]()}
         type="text"

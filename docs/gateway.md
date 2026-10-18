@@ -150,6 +150,11 @@ embedding model an input rate, an OCR model a page rate; a search tier takes no
 price at all, because its meter counts requests. Each kind's missing rate is
 refused per item, so one bad price does not lose the rest of the batch.
 
+A hand-typed price may also carry `cache_read_per_mtok` and `cache_write_per_mtok`,
+the same optional, non-negative amounts the price form takes (on any kind, as
+there); they land on the price row and in its history, and when absent the
+cached slice of a prompt is billed at the input rate.
+
 A catalogue price — the provider's own, or one the community file supplied when
 the import was made with `fill_missing_prices` — always outranks a hand-typed
 one: the counterparty's figure is the one that will actually invoice. When a

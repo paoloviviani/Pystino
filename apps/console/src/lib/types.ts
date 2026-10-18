@@ -523,6 +523,9 @@ export interface ManualImportPrice {
   input_per_mtok?: string;
   output_per_mtok?: string;
   per_page?: string;
+  /** Optional; omitted bills cached tokens at the input rate. */
+  cache_read_per_mtok?: string;
+  cache_write_per_mtok?: string;
   /** Empty means the gateway's billing currency, as on the price form. */
   currency?: string;
 }
