@@ -20,15 +20,14 @@ sockets, and asserts the two things that matter:
   refuse the next legitimate request too.
 
 Usage:
-    # The override file is what publishes 6379 on the host. Passing any -f at
-    # all stops Compose loading it automatically, so it has to be named — and
-    # without it this script cannot reach Valkey at all.
-    docker compose --env-file deploy/.env \\
-      -f deploy/compose/docker-compose.yml \\
-      -f deploy/compose/docker-compose.override.yml up -d valkey
-    uv run python scripts/test_quota_race_live.py
+    # deploy/compose.yaml does not publish Valkey on the host, so name the
+    # container's address: with the stack up (the project name is
+    # COMPOSE_PROJECT_NAME in deploy/.env),
+    ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \\
+      <project>-valkey-1)
+    VALKEY_URL=redis://$ip:6379/9 uv run python scripts/test_quota_race_live.py
 
-Set VALKEY_URL to point somewhere else. Database 9 is used and flushed.
+VALKEY_URL defaults to redis://localhost:6379/9. Database 9 is used and flushed.
 """
 
 from __future__ import annotations

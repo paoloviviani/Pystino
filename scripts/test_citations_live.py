@@ -16,9 +16,7 @@ refuses rather than reporting a false success.
 
 Usage:
     docker compose --env-file deploy/.env \\
-      -f deploy/compose/docker-compose.yml \\
-      -f deploy/compose/docker-compose.smoke.yml \\
-      -f deploy/compose/docker-compose.redaction.yml up -d --build
+      -f deploy/compose.yaml -f deploy/dev/smoke.yml up -d --wait
     set -a; . deploy/.env; set +a; python3 scripts/test_citations_live.py
 """
 

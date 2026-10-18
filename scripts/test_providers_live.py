@@ -12,9 +12,9 @@ What only this can prove (ADR 0027):
 
 Usage:
     docker compose --env-file deploy/.env \\
-      -f deploy/compose/docker-compose.yml \\
-      -f deploy/compose/docker-compose.smoke.yml \\
-      -f deploy/compose/docker-compose.redaction.yml up -d --build
+      -f deploy/compose.yaml -f deploy/dev/smoke.yml up -d --wait
+    docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/dev/smoke.yml \\
+      exec -T gateway gateway seed --model smoke-model --upstream-model smoke-model
     set -a; . deploy/.env; set +a; python3 scripts/test_providers_live.py
 """
 
@@ -38,11 +38,9 @@ COMPOSE = [
     "--env-file",
     "deploy/.env",
     "-f",
-    "deploy/compose/docker-compose.yml",
+    "deploy/compose.yaml",
     "-f",
-    "deploy/compose/docker-compose.smoke.yml",
-    "-f",
-    "deploy/compose/docker-compose.redaction.yml",
+    "deploy/dev/smoke.yml",
 ]
 
 
@@ -195,12 +193,22 @@ def main() -> int:
 
     print()
     print("=== a provider in use cannot be deleted ===")
-    status, _refusal = api(dave, f"/api/admin/providers/{default['id']}", method="DELETE")
-    expect(
-        "the one serving models is refused",
-        status == 409,
-        f"HTTP {status} — cascading would orphan historical spend",
-    )
+    # Only when `default` really serves a model. On a stack where no model is
+    # catalogued yet (run `gateway seed` first) the delete would *succeed* and
+    # remove the provider this whole file, and every later run, depends on: the
+    # next `gateway seed` then recreates it without its key.
+    if default.get("model_count", 0) > 0:
+        status, _refusal = api(dave, f"/api/admin/providers/{default['id']}", method="DELETE")
+        expect(
+            "the one serving models is refused",
+            status == 409,
+            f"HTTP {status} — cascading would orphan historical spend",
+        )
+    else:
+        skip(
+            "the one serving models is refused",
+            "`default` serves no model here; run `gateway seed` first (a delete would succeed)",
+        )
     status, _ = api(dave, f"/api/admin/providers/{created['id']}", method="DELETE")
     expect("the unused one is removed", status == 204, f"HTTP {status}")
 

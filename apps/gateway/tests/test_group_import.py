@@ -388,6 +388,43 @@ class TestEveryCreationPathCarriesTheDefaults:
         assert group.code_agents_allowed is (access == "on")
         assert group.api_keys_allowed is (access == "on")
 
+    async def test_gateway_seed_gives_a_new_default_provider_the_configured_key(
+        self,
+        session: AsyncSession,
+        settings: Settings,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A `default` provider seed creates (the migration normally does) must
+        carry GATEWAY_UPSTREAM__API_KEY, encrypted, as the migration's does."""
+        from gateway import cli
+        from gateway.models import Provider
+        from gateway.secrets import SecretBox
+        from pydantic import SecretStr
+
+        box_key = "seed-test-secret-key"
+        upstream = settings.upstream.model_copy(
+            update={"api_key": SecretStr("sk-seed-upstream-key")}
+        )
+        seeded = settings.model_copy(
+            update={"upstream": upstream, "secret_key": SecretStr(box_key)}
+        )
+        monkeypatch.setattr(cli, "get_settings", lambda: seeded)
+        await cli._seed(
+            group_name="demo",
+            model_name="demo-model",
+            upstream_model="up",
+            input_price=Decimal("1"),
+            output_price=Decimal("1"),
+            email="seed@example.org",
+        )
+        provider = (
+            await session.execute(select(Provider).where(Provider.name == "default"))
+        ).scalar_one()
+        assert provider.api_key_encrypted.startswith("v1:")
+        assert "sk-seed-upstream-key" not in provider.api_key_encrypted
+        assert provider.api_key_hint
+        assert SecretBox([box_key]).decrypt(provider.api_key_encrypted) == "sk-seed-upstream-key"
+
 
 class TestTheHotPath:
     async def test_an_unimported_name_is_not_a_divergence(self, session: AsyncSession) -> None:

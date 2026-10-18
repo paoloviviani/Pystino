@@ -36,6 +36,7 @@ from gateway.models import (
     Provider,
     User,
 )
+from gateway.secrets import SecretBox, hint_for
 from gateway.security import generate_api_key
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,14 @@ async def _seed(
                     description="Created by `gateway seed`",
                     base_url=settings.upstream.base_url,
                 )
+                # The same credential the migration would have stored: without
+                # it the provider is keyless and every upstream call goes out
+                # unauthenticated.
+                upstream_key = settings.upstream.api_key.get_secret_value()
+                box = SecretBox(settings.secret_key_list())
+                if upstream_key and box.enabled:
+                    provider.api_key_encrypted = box.encrypt(upstream_key)
+                    provider.api_key_hint = hint_for(upstream_key)
                 session.add(provider)
                 await session.flush()
 
