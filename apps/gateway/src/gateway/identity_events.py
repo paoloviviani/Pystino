@@ -98,6 +98,12 @@ DETAIL_ALLOWLIST: dict[IdentityEventAction, frozenset[str]] = {
     IdentityEventAction.GROUP_CAPABILITY_BULK: frozenset({"capability", "value", "count"}),
     # ADR 0095: `reason` is the join mode that refused (`invite`, `group`).
     IdentityEventAction.ACCESS_REFUSED: frozenset({"reason"}),
+    # ADR 0101. `detail.target` is the *new* target's name on a retarget, so the
+    # audit row says which model answers the alias after the change — the one
+    # fact a retarget leaves invisible everywhere else by design.
+    IdentityEventAction.ALIAS_CREATE: frozenset({"target"}),
+    IdentityEventAction.ALIAS_UPDATE: frozenset({"target", "fields"}),
+    IdentityEventAction.ALIAS_DELETE: frozenset({"target"}),
 }
 
 #: Unconditional, whatever the action: the review's rule is "never a password,

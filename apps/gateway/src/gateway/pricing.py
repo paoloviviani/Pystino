@@ -676,13 +676,29 @@ async def import_prices(
     if not prices:
         return report
 
-    catalogue = list((await session.execute(select(ModelDef))).scalars().all())
+    # Served models only. An alias has no upstream model of its own and no
+    # price to strike (ADR 0101): its target carries the price, and matching an
+    # alias row here would write a rate onto a row that never reaches a
+    # provider. The filter is here rather than in `by_name` so that `name` is
+    # not polluted either — a community price file naming "fast" must report an
+    # unknown model, not silently reprice an alias by its client-facing name.
+    catalogue = list(
+        (await session.execute(select(ModelDef).where(ModelDef.is_alias.is_(False))))
+        .scalars()
+        .all()
+    )
     by_name: dict[str, ModelDef] = {known.name: known for known in catalogue}
     if match_on_upstream_model:
         # The published id is the *upstream* model name, which is what our
-        # `upstream_model` column holds; `name` is ours to choose.
+        # `upstream_model` column holds; `name` is ours to choose. A None can
+        # never appear: the query above excluded aliases, and
+        # `ck_models_alias_or_served` leaves an upstream model non-null on every
+        # row that remains. Checked rather than asserted, because a `None` here
+        # would silently become the key `None` and match a candidate with a
+        # missing model_id.
         for known in catalogue:
-            by_name.setdefault(known.upstream_model, known)
+            if known.upstream_model is not None:
+                by_name.setdefault(known.upstream_model, known)
 
     for candidate in prices:
         model = by_name.get(candidate.model_id)

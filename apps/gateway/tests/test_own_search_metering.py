@@ -70,6 +70,8 @@ from gateway.quota import (
     to_units,
 )
 from gateway.routers import _metered
+from gateway.routers._metered import ResolvedModel
+from gateway.routers._metered import ResolvedModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import joinedload, selectinload
@@ -767,7 +769,7 @@ class TestTheSharedPipeline:
                 settings=state.settings,
                 quota=state.quota_engine,
                 estimator=state.token_estimator,
-                model=model,
+                resolved=ResolvedModel(model=model, requested_name=model.name),
                 surface=ApiSurface.CHAT_COMPLETIONS,
                 request_id="req-search-reserve",
                 worst_case=TokenCounts(prompt=10, completion=10),
@@ -788,7 +790,7 @@ class TestTheSharedPipeline:
                 settings=state.settings,
                 quota=state.quota_engine,
                 estimator=state.token_estimator,
-                model=model,
+                resolved=ResolvedModel(model=model, requested_name=model.name),
                 surface=ApiSurface.CHAT_COMPLETIONS,
                 request_id="req-search-refused",
                 worst_case=TokenCounts(prompt=10, completion=10),
@@ -828,7 +830,7 @@ class TestTheSharedPipeline:
                 settings=state.settings,
                 quota=state.quota_engine,
                 estimator=state.token_estimator,
-                model=model,
+                resolved=ResolvedModel(model=model, requested_name=model.name),
                 surface=ApiSurface.CHAT_COMPLETIONS,
                 request_id="req-no-search",
                 worst_case=TokenCounts(prompt=10, completion=10),
