@@ -2404,10 +2404,36 @@ class CatalogueTagsResponse(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class ManualImportPrice(BaseModel):
+    """A price typed by an administrator while importing a model nobody prices.
+
+    The same amounts, the same bounds and the same money-as-string rule as
+    `PriceCreateRequest` — the model page's price form — so there is one shape
+    for "a rate we will bill at" and not a second, weaker one at the import
+    door. Which rates a kind *requires* is decided where the kind is known
+    (`routers/admin.py`), not here: the refusal belongs to the item being
+    imported, so one bad price cannot lose the rest of the batch.
+    """
+
+    input_per_mtok: Money | None = Field(default=None, ge=0)
+    output_per_mtok: Money | None = Field(default=None, ge=0)
+    # Per page read, for an OCR model, whose real price is here. Same field,
+    # same meaning, as on the price row itself.
+    per_page: Money | None = Field(default=None, ge=0)
+    # Defaults to the gateway's billing currency, as on the price form; anything
+    # else is refused rather than converted.
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+
+
 class ModelImportItem(BaseModel):
     upstream_model: str
     # Defaults to the upstream id with any provider prefix stripped.
     name: str | None = Field(default=None, max_length=255)
+    # A price supplied at import time, for a model the provider listed and left
+    # unpriced. Ignored when the catalogue (or the community fill) has a price:
+    # the counterparty's own figure outranks one typed from memory, and the
+    # result says so when it happens.
+    manual_price: ManualImportPrice | None = None
 
 
 class ModelImportRequest(BaseModel):

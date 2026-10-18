@@ -265,6 +265,426 @@ class TestCommunityPriceFill:
         result = response.json()["results"][0]
         assert result["imported"] is False
         assert result["priced"] is False
+        # The refusal is worded as it always was: without a price from anyone,
+        # the model is simply not offered for import.
+        assert result["reason"] == "not offered by the provider"
+
+
+#: Unpriced entries that say what they are, so a hand-typed price can be judged
+#: against the kind it must serve. `kinds_by_id` reads these without a price —
+#: that is what it is for.
+CATALOGUE_OF_KINDS = {
+    "data": [
+        {"id": "vendor/plain-chat"},
+        {"id": "vendor/the-embedder", "output_modalities": ["embeddings"]},
+        {"id": "vendor/the-reader", "tags": ["OCR"]},
+        {"id": "vendor/the-finder", "tags": ["Search"]},
+    ]
+}
+
+
+@pytest.fixture
+def catalogue_of_kinds(app: object) -> None:
+    """Unpriced entries of every kind, answered by the control-plane client."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=CATALOGUE_OF_KINDS)
+
+    app.state.control_http = httpx.AsyncClient(  # type: ignore[attr-defined]
+        transport=httpx.MockTransport(handler)
+    )
+
+
+class TestManualPriceImport:
+    """A price typed by an administrator, for a model nobody prices.
+
+    The refusal to import an unpriced model stands: what is new is that the
+    operator can *supply* the price at import, in the same shape the model
+    page's price form takes, recorded in the same append-only history with the
+    source that says a person typed it. A catalogue that does publish a price
+    wins — the counterparty's own figure outranks one typed from memory, and a
+    hand-typed price that silently lost to a published one would be exactly the
+    mismatch between reviewed and written prices this screen exists to prevent,
+    so the result says so when it happens.
+    """
+
+    async def test_an_unpriced_model_imports_with_the_price_entered_by_hand(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        session: AsyncSession,
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/unpriced-1",
+                        "manual_price": {
+                            "input_per_mtok": "1.5",
+                            "output_per_mtok": "6",
+                            "currency": "EUR",
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        result = response.json()["results"][0]
+        assert result["imported"] is True
+        assert result["priced"] is True
+        assert result["price_source"] == "manual"
+        assert result["reason"] is None
+
+        price = (
+            await session.execute(
+                select(ModelPrice)
+                .join(ModelDef, ModelDef.id == ModelPrice.model_id)
+                .where(ModelDef.upstream_model == "vendor/unpriced-1")
+            )
+        ).scalar_one()
+        assert price.source is PriceSource.MANUAL
+        assert str(price.input_per_mtok) == "1.500000000000"
+        assert str(price.output_per_mtok) == "6.000000000000"
+        assert price.currency == "EUR"
+
+    async def test_the_price_entered_by_hand_round_trips_as_a_string(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Money is a string end to end: what the operator typed reaches the
+        price history as digits, never a float and never an exponent."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/unpriced-1",
+                        "manual_price": {"input_per_mtok": "0.001", "output_per_mtok": "0.002"},
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["results"][0]["imported"] is True
+        items = (await client.get("/api/admin/models?limit=200")).json()["items"]
+        model_id = next(m["id"] for m in items if m["upstream_model"] == "vendor/unpriced-1")
+        listed = (await client.get(f"/api/admin/models/{model_id}/prices")).json()["items"]
+        assert len(listed) == 1
+        assert listed[0]["input_per_mtok"] == "0.001000000000"
+        assert listed[0]["output_per_mtok"] == "0.002000000000"
+        # The stored precision is twelve places; the point here is the type.
+        assert isinstance(listed[0]["input_per_mtok"], str)
+
+    async def test_a_published_price_beats_the_one_entered_by_hand(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        session: AsyncSession,
+    ) -> None:
+        """The counterparty's own figure outranks one typed from memory — but
+        the result says the hand-typed price was not used, so nothing is
+        silently different from what the operator reviewed."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/priced-1",
+                        "manual_price": {"input_per_mtok": "9", "output_per_mtok": "9"},
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        result = response.json()["results"][0]
+        assert result["imported"] is True
+        assert result["priced"] is True
+        assert result["price_source"] == "provider"
+        assert "by hand" in result["reason"]
+
+        price = (
+            await session.execute(
+                select(ModelPrice)
+                .join(ModelDef, ModelDef.id == ModelPrice.model_id)
+                .where(ModelDef.upstream_model == "vendor/priced-1")
+            )
+        ).scalar_one()
+        assert price.source is PriceSource.CATALOGUE
+        assert str(price.input_per_mtok) == "1.000000000000"
+
+    async def test_a_manual_price_that_cannot_serve_the_kind_is_refused(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_of_kinds: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A chat model bills output tokens too; a price with no input rate
+        prices nothing at all. The refusal is per item, so the rest of the
+        batch still imports."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/plain-chat",
+                        "manual_price": {"per_page": "0.01"},
+                    },
+                    {
+                        "upstream_model": "vendor/the-embedder",
+                        "manual_price": {"output_per_mtok": "3"},
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        results = {r["upstream_model"]: r for r in response.json()["results"]}
+        assert results["vendor/plain-chat"]["imported"] is False
+        assert "input rate" in results["vendor/plain-chat"]["reason"]
+        assert results["vendor/the-embedder"]["imported"] is False
+        assert "input rate" in results["vendor/the-embedder"]["reason"]
+
+    async def test_an_ocr_model_needs_a_per_page_price(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_of_kinds: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        session: AsyncSession,
+    ) -> None:
+        """An OCR model's price is per page; token rates alone price nothing.
+        With the page rate present, the token rates are stored as the zeros the
+        catalogue path stores, and the currency defaults to the gateway's
+        billing currency, exactly as the model page's price form does."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/the-reader",
+                        "manual_price": {"input_per_mtok": "1", "output_per_mtok": "2"},
+                    }
+                ]
+            },
+        )
+        results = {r["upstream_model"]: r for r in response.json()["results"]}
+        assert results["vendor/the-reader"]["imported"] is False
+        assert "per page" in results["vendor/the-reader"]["reason"]
+
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {"upstream_model": "vendor/the-reader", "manual_price": {"per_page": "0.01"}}
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        result = response.json()["results"][0]
+        assert result["imported"] is True
+        assert result["priced"] is True
+        assert result["price_source"] == "manual"
+
+        price = (
+            await session.execute(
+                select(ModelPrice)
+                .join(ModelDef, ModelDef.id == ModelPrice.model_id)
+                .where(ModelDef.upstream_model == "vendor/the-reader")
+            )
+        ).scalar_one()
+        assert str(price.per_page) == "0.010000000000"
+        # Zero round-trips as `Decimal("0E-12")` off a Numeric column — the
+        # boundary serialiser, not the column, renders plain digits — so the
+        # zero rates are asserted by value.
+        assert price.input_per_mtok == 0
+        assert price.currency == "EUR"
+
+    async def test_a_search_tier_is_unchanged(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_of_kinds: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A search tier is metered per request (ADR 0071); there is no token
+        rate to supply and no price to type, with or without one in hand."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {"upstream_model": "vendor/the-finder"},
+                    {
+                        "upstream_model": "vendor/the-finder",
+                        "manual_price": {"input_per_mtok": "1", "output_per_mtok": "2"},
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        results = response.json()["results"]
+        assert all(r["imported"] is False and r["priced"] is False for r in results)
+
+    async def test_zero_rates_are_allowed_as_on_the_price_form(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_of_kinds: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        session: AsyncSession,
+    ) -> None:
+        """The model page's price form accepts a rate of zero — a deliberate
+        "free" — so a hand-typed one may say the same thing. What is refused is
+        an *absent* rate, not a zero one."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/plain-chat",
+                        "manual_price": {"input_per_mtok": "0", "output_per_mtok": "0"},
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        result = response.json()["results"][0]
+        assert result["imported"] is True
+        assert result["priced"] is True
+        price = (
+            await session.execute(
+                select(ModelPrice)
+                .join(ModelDef, ModelDef.id == ModelPrice.model_id)
+                .where(ModelDef.upstream_model == "vendor/plain-chat")
+            )
+        ).scalar_one()
+        assert price.input_per_mtok == 0
+
+    async def test_a_foreign_currency_is_refused_as_on_the_price_form(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The same rule the model page's price form enforces: a price in
+        another currency would have to be converted, and a conversion applied
+        silently produces invoices that look right and are wrong."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/unpriced-1",
+                        "manual_price": {
+                            "input_per_mtok": "1",
+                            "output_per_mtok": "2",
+                            "currency": "USD",
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        result = response.json()["results"][0]
+        assert result["imported"] is False
+        assert "bills in EUR" in result["reason"]
+
+    async def test_a_manual_price_cannot_import_a_model_the_provider_does_not_list(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        session: AsyncSession,
+    ) -> None:
+        """ "Unpriced" is a statement about a model the provider *lists*. A
+        manual price is a figure for one of those, not a licence to invent an
+        upstream id: an id the catalogue does not name at all is refused
+        exactly as before, price or no price — it would otherwise come in with
+        the chat default for a kind nobody declared."""
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/imaginary",
+                        "manual_price": {"input_per_mtok": "1", "output_per_mtok": "2"},
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        result = response.json()["results"][0]
+        assert result["imported"] is False
+        assert result["priced"] is False
+        assert result["reason"] == "not offered by the provider"
+
+        # And nothing was created: no model row, no price row.
+        found = (
+            await session.execute(
+                select(ModelDef).where(ModelDef.upstream_model == "vendor/imaginary")
+            )
+        ).scalar_one_or_none()
+        assert found is None
+
+    async def test_the_block_reason_offers_entering_a_price(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A model the provider lists unpriced is no longer a dead end: the
+        reason says a price can be entered, rather than pointing at the
+        community file or hand-added models as the only ways in."""
+        as_user(app, await make_admin(session_factory, seeded))
+        body = (
+            await client.get("/api/admin/models/discover?provider_id=" + str(seeded.provider.id))
+        ).json()
+        rows = {row["upstream_model"]: row for row in body["available"]}
+        assert rows["vendor/unpriced-1"]["blocked_reason"] == (
+            "the provider publishes no price: enter one to import it"
+        )
+
+        filled = (
+            await client.get(
+                "/api/admin/models/discover?fill_missing_prices=true&provider_id="
+                + str(seeded.provider.id)
+            )
+        ).json()
+        nobody = {row["upstream_model"]: row for row in filled["available"]}[
+            "vendor/nobody-prices-this"
+        ]
+        assert "enter one" in nobody["blocked_reason"]
+        assert "fill missing prices" not in nobody["blocked_reason"]
+        assert "by hand" not in nobody["blocked_reason"]
 
 
 class TestDiscovery:
