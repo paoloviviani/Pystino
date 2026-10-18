@@ -36,13 +36,14 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
-from gateway.access import accessible_model_by_name
+from gateway.access import accessible_model_by_name, alias_target, alias_unavailable_reason
 from gateway.accounting import RequestAccounting, RequestContext, TokenCounts
 from gateway.accounting.cost import CostBreakdown, compute_cost, select_price
 from gateway.accounting.tokens import TokenEstimator
 from gateway.config import EffectivePolicy, Settings
 from gateway.deps import Principal
 from gateway.errors import (
+    AliasUnavailableError,
     BadRequestError,
     ContentBlockedError,
     ModelNotFoundError,
@@ -51,7 +52,15 @@ from gateway.errors import (
     error_response,
 )
 from gateway.fx import FXService
-from gateway.models import ApiSurface, ModelDef, ModelKind, UsageRecord, UsageSource, UsageStatus
+from gateway.models import (
+    ApiSurface,
+    ModelDef,
+    ModelKind,
+    Provider,
+    UsageRecord,
+    UsageSource,
+    UsageStatus,
+)
 from gateway.providers import ProviderConfigurationError, ProviderRegistry
 from gateway.quota import (
     QuotaAmounts,
@@ -90,13 +99,77 @@ _KIND_ROUTES: dict[ModelKind, str] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedModel:
+    """What a request will actually be served by, and what the caller asked for.
+
+    Two fields because an alias makes them different (ADR 0101): ``model`` is
+    always the **target**, because everything downstream — the upstream call,
+    the price, the quota, the ledger's ``model_id`` — follows what serves the
+    request, while ``requested_name`` is the name the caller sent, which the
+    ledger keeps beside it so a retarget cannot rewrite history.
+
+    A frozen dataclass rather than an attribute hung on the ORM row, which was
+    the tempting spelling: the row is in the identity map and the attribute
+    would outlive the request that set it, so a second resolution of the same
+    alias in one session would read the first one's value.
+    """
+
+    model: ModelDef
+    requested_name: str
+
+    @property
+    def via_alias(self) -> bool:
+        """Whether the caller reached this model through an alias.
+
+        Cheap enough to ask per request and the only honest way to phrase the
+        two things that differ: which name goes in ``requested_model``, and
+        which name a "wrong kind" error quotes back at the caller.
+        """
+        return self.requested_name != self.model.name
+
+    @property
+    def provider(self) -> Provider:
+        """The provider that will serve this request.
+
+        **Non-optional by construction**, which is the point of carrying the
+        resolution rather than the raw row: ``ck_models_alias_or_served`` makes
+        an alias's provider null and a served model's not, and resolution never
+        returns an alias. Every reader that used to take a ``ModelDef`` and hope
+        now has to go through here, so the null case is one check in one place
+        instead of an ``AttributeError`` on a request that worked.
+        """
+        provider = self.model.provider
+        if provider is None:  # pragma: no cover - the constraint forbids this
+            raise AliasUnavailableError(
+                f"The model alias {self.requested_name!r} has no available target."
+            )
+        return provider
+
+    @property
+    def upstream_model(self) -> str:
+        """The name to send the provider — the target's, never the alias's.
+
+        Same construction as :attr:`provider`, and the same reasoning: an alias
+        has no upstream name of its own, so sending one would send ``None`` and
+        let the provider reject the request with its own error, which is the
+        failure mode this whole module exists to avoid.
+        """
+        upstream = self.model.upstream_model
+        if upstream is None:  # pragma: no cover - the constraint forbids this
+            raise AliasUnavailableError(
+                f"The model alias {self.requested_name!r} has no available target."
+            )
+        return upstream
+
+
 async def resolve_model(
     session: AsyncSession,
     name: str,
     *,
     principal: Principal,
     surface: ApiSurface,
-) -> ModelDef:
+) -> ResolvedModel:
     """The model this caller may use on this surface, or a 404/400 explaining why.
 
     "Not available to you" and "does not exist" deliberately answer the same
@@ -105,6 +178,13 @@ async def resolve_model(
     mistake the caller can fix, so the answer names the route that would have
     worked rather than forwarding the request to fail upstream with a
     provider-specific error nobody can act on.
+
+    **Access is decided on the name the caller sent, and only that name**
+    (ADR 0101). If that name is an alias, the alias row is the grant and the
+    target is loaded with no access filter at all; a caller who may use `fast`
+    and not the model behind it is exactly the case the alias exists for. The
+    target is then returned as the served model, so provider, upstream name,
+    prices, input limits and kind all follow it.
     """
     stmt = accessible_model_by_name(
         name, user_id=principal.user.id, group_ids=[principal.billing_group.id]
@@ -115,14 +195,57 @@ async def resolve_model(
             f"The model {name!r} does not exist or you do not have access to it."
         )
 
+    if model.is_alias:
+        model = await _dereference_alias(session, model)
     allowed = _SURFACE_KINDS[surface]
     if model.kind not in allowed:
+        # The kind is the target's — the alias's own `kind` is set to it on save
+        # and must equal it, so the two are one fact — but the name quoted back
+        # is the one the caller sent. "…is an embedding model" naming a model
+        # they never asked for sends them off to fix a request that was already
+        # correct.
         raise BadRequestError(
-            f"{model.name!r} is a{'n' if model.kind.value[0] in 'aeiou' else ''} "
+            f"{name!r} is a{'n' if model.kind.value[0] in 'aeiou' else ''} "
             f"{model.kind.value} model. Use {_KIND_ROUTES[model.kind]} for it.",
             code="wrong_model_kind",
         )
-    return model
+    return ResolvedModel(model=model, requested_name=name)
+
+
+async def dereference(session: AsyncSession, resolved: ResolvedModel) -> ResolvedModel:
+    """Replace an alias with its target; a served model passes straight through.
+
+    Separate from :func:`resolve_model` because the search surface has a second
+    way in — a group policy naming a backend by id rather than by the caller's
+    own name — and that path needs the same dereference without re-running the
+    access check it has already done by a different route.
+    """
+    if not resolved.model.is_alias:
+        return resolved
+    return ResolvedModel(
+        model=await _dereference_alias(session, resolved.model),
+        requested_name=resolved.requested_name,
+    )
+
+
+async def _dereference_alias(session: AsyncSession, alias: ModelDef) -> ModelDef:
+    """The model behind ``alias``, or a 503 saying why there isn't one.
+
+    One level deep, refusing a chain (ADR 0101). Chains are refused at save time
+    and again here, because the second check is the one that holds when the
+    first is bypassed — a row inserted directly, or a target that became an
+    alias by some other route. What is refused is served by nothing, and what
+    that means for the caller is the same answer as "no target", because what
+    they asked for is a model the gateway will not serve.
+    """
+    target = (await session.execute(alias_target(alias))).scalars().first()
+    reason = alias_unavailable_reason(alias, target)
+
+    if reason is not None or target is None:
+        logger.info("alias %r is unavailable: %s", alias.name, reason)
+        raise AliasUnavailableError(f"The model alias {alias.name!r} has no available target.")
+
+    return target
 
 
 def enforce_input_limit(model: ModelDef, prompt_tokens: int) -> None:
@@ -143,17 +266,21 @@ def enforce_input_limit(model: ModelDef, prompt_tokens: int) -> None:
 
 
 async def resolve_upstream(
-    providers: ProviderRegistry, model: ModelDef
+    providers: ProviderRegistry, resolved: ResolvedModel
 ) -> OpenAICompatibleUpstream:
     """That model's provider, with that provider's credentials and pool.
 
     Surfaces here, before any accounting row exists, so a misconfigured
     provider never leaves an orphaned in-progress row behind.
+
+    Takes the resolution rather than the row so that the provider is
+    ``resolved.provider`` — the **target's**, for an alias — and a caller
+    cannot pass an alias row here and get an ``AttributeError`` on the hot path.
     """
     try:
-        return await providers.upstream_for(model.provider)
+        return await providers.upstream_for(resolved.provider)
     except ProviderConfigurationError as exc:
-        logger.error("provider misconfigured for model %s: %s", model.name, exc)
+        logger.error("provider misconfigured for model %s: %s", resolved.model.name, exc)
         raise UpstreamUnavailableError(str(exc)) from exc
 
 
@@ -428,7 +555,7 @@ async def begin(
     settings: Settings,
     quota: QuotaEngine,
     estimator: TokenEstimator,
-    model: ModelDef,
+    resolved: ResolvedModel,
     surface: ApiSurface,
     request_id: str,
     worst_case: TokenCounts,
@@ -457,6 +584,10 @@ async def begin(
     refusal is a normal answer with a ``retry-after`` header on it, not an
     exception.
     """
+    # The **target** (ADR 0101): admission and the reservation are priced by
+    # what serves the request, and rules that name the target apply, exactly as
+    # if the target had been called.
+    model = resolved.model
     worst_case_cost = await estimate_cost(
         model, worst_case, currency=settings.billing_currency, fx=fx
     )
@@ -490,6 +621,9 @@ async def begin(
         context=RequestContext(
             request_id=request_id,
             model_name=model.name,
+            # The alias, when the caller named one. Null for a direct call,
+            # which is every request that existed before ADR 0101.
+            requested_model=resolved.requested_name if resolved.via_alias else None,
             currency=settings.billing_currency,
             streamed=streamed,
             user_id=principal.user.id,
@@ -502,8 +636,8 @@ async def begin(
             redaction_scope=outcome.scope if outcome else None,
             redaction_rule_id=outcome.rule_id if outcome else None,
             surface=surface,
-            plugin=model.provider.plugin,
-            billing_mode=model.provider.billing_mode.value,
+            plugin=resolved.provider.plugin,
+            billing_mode=resolved.provider.billing_mode.value,
         ),
         session_factory=session_factory,
         settings=settings,

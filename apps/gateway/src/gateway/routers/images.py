@@ -68,8 +68,13 @@ async def create_image(
         raise BadRequestError("'prompt' must not be empty.")
 
     request_id = _metered.request_id_for(request, settings)
-    model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
-    upstream = await _metered.resolve_upstream(providers, model)
+    resolved = await _metered.resolve_model(
+        session, body.model, principal=principal, surface=SURFACE
+    )
+    # The target, when the name sent was an alias (ADR 0101); everything below
+    # follows what serves the request.
+    model = resolved.model
+    upstream = await _metered.resolve_upstream(providers, resolved)
 
     outcome = await _metered.redact_or_block(
         request,
@@ -98,7 +103,7 @@ async def create_image(
         settings=settings,
         quota=quota,
         estimator=estimator,
-        model=model,
+        resolved=resolved,
         surface=SURFACE,
         request_id=request_id,
         worst_case=worst_case,
@@ -108,7 +113,7 @@ async def create_image(
     if isinstance(metered, JSONResponse):
         return metered
 
-    payload = body.upstream_payload(outcome, upstream_model=model.upstream_model)
+    payload = body.upstream_payload(outcome, upstream_model=resolved.upstream_model)
     payload = metered.shape_payload(payload, surface=SURFACE)
 
     try:

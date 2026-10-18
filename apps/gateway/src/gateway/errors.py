@@ -155,6 +155,30 @@ class ServiceUnavailableError(GatewayError):
     code = "service_unavailable"
 
 
+class AliasUnavailableError(GatewayError):
+    """A model alias whose target cannot serve right now (ADR 0101).
+
+    503 and not 404: the caller's access was already decided, against the name
+    they sent, and that access is fine. The alias is reachable and its target is
+    not — the operator deleted the target, deactivated it, or deactivated its
+    provider — so this is the service being unable to answer, not the name being
+    unknown. Answering 404 would tell a client to re-enrol a model that is there,
+    and would hide the reason from the administrator who can fix it.
+
+    Never silently served by anything else. An alias that quietly fell back to a
+    second model would bill the target's price for work a different model did,
+    which is the one thing the alias's name is supposed to promise.
+
+    Separate from :class:`UpstreamUnavailableError` (a 502) on purpose: that one
+    is the provider refusing or being unreachable, this one is us knowing before
+    the call that there is nothing to call.
+    """
+
+    status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    error_type = "api_error"
+    code = "alias_unavailable"
+
+
 class TooManyRequestsError(GatewayError):
     status_code = status.HTTP_429_TOO_MANY_REQUESTS
     error_type = "rate_limit_error"

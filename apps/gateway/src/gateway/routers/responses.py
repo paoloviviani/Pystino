@@ -85,8 +85,13 @@ async def create_response(
         raise BadRequestError("'input' must contain at least one message or a non-empty string.")
 
     request_id = _metered.request_id_for(request, settings)
-    model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
-    upstream = await _metered.resolve_upstream(providers, model)
+    resolved = await _metered.resolve_model(
+        session, body.model, principal=principal, surface=SURFACE
+    )
+    # The target, when the name sent was an alias (ADR 0101); everything below
+    # follows what serves the request.
+    model = resolved.model
+    upstream = await _metered.resolve_upstream(providers, resolved)
 
     outcome = await _metered.redact_or_block(
         request,
@@ -123,7 +128,7 @@ async def create_response(
         settings=settings,
         quota=quota,
         estimator=estimator,
-        model=model,
+        resolved=resolved,
         surface=SURFACE,
         request_id=request_id,
         worst_case=worst_case,
@@ -133,7 +138,7 @@ async def create_response(
     if isinstance(metered, JSONResponse):
         return metered
 
-    payload = body.upstream_payload(outcome, upstream_model=model.upstream_model)
+    payload = body.upstream_payload(outcome, upstream_model=resolved.upstream_model)
     search.apply(payload)
     payload = metered.shape_payload(payload, surface=SURFACE)
 
@@ -168,7 +173,7 @@ async def create_response(
     # Our model name, not the provider's, and placeholders restored wherever
     # this surface repeats the answer.
     if out.get("model") is not None:
-        out["model"] = model.name
+        out["model"] = resolved.requested_name
     if assembled := _assembled_text(out):
         restored = await redactor.restore_response(assembled, outcome)
         _rewrite_all(out, restored.text)

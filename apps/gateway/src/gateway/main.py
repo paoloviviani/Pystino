@@ -42,6 +42,7 @@ from gateway.redaction.resolver import RedactionResolver
 from gateway.retention import TranscriptRetentionLoop
 from gateway.routers import (
     admin,
+    aliases,
     auth,
     billing,
     chat,
@@ -427,6 +428,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router)
     app.include_router(me.router)
     app.include_router(admin.router)
+    app.include_router(aliases.router)
     app.include_router(identity_events.router)
     app.include_router(directory.router)
     app.include_router(scim.router)
