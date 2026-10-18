@@ -108,6 +108,12 @@ class TestUnauthenticatedListing:
         response = await client.get("/v1/models")
         assert response.status_code == 200, response.text
         card = response.json()["data"][0]
+        # An exact set on purpose: this card is the whole public surface of a
+        # model, and the test exists to catch anything *added* to it as well as
+        # anything that leaks. `description` arrived with model aliases
+        # (ADR 0101), which need their own text beside the target's
+        # capabilities; it is null for a model nobody described, and OpenAI
+        # clients ignore the field either way.
         assert set(card) == {
             "id",
             "object",
@@ -117,6 +123,7 @@ class TestUnauthenticatedListing:
             "max_output_tokens",
             "max_input_tokens",
             "display_name",
+            "description",
             "kind",
             "input_modalities",
             "output_modalities",

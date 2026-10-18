@@ -512,6 +512,11 @@ class ModelCard(BaseModel):
     # cap prompt harder than the window total implies; null means unknown.
     max_input_tokens: int | None = None
     display_name: str | None = None
+    # The alias's or the model's own free text (ADR 0101). Null when nobody has
+    # written one, which is the common case and a normal answer here: Cerea has
+    # parsed a null `display_name` since 0.15.6, and a name the operator never
+    # gave has no honest value to put in this field.
+    description: str | None = None
     # What the model accepts, produces and can do. Not in OpenAI's schema
     # either, and the reason a client can pick a model that does tool calling
     # without a lookup table of its own (ADR 0031).
@@ -1163,6 +1168,21 @@ class PriceCreateRequest(BaseModel):
     effective_from: datetime | None = None
 
 
+class AliasPointer(BaseModel):
+    """The minimum to link to an alias: which row, and what to call it.
+
+    Deliberately not the whole alias response. A model page showing twenty
+    pointing aliases needs their names, not each one's visibility summary.
+    """
+
+    id: uuid.UUID
+    name: str
+    # Whether the alias is active: an inactive alias is invisible to callers
+    # whatever its target does, so "this delete will break 3 names" has to be
+    # able to say "2 of the 3 were already off".
+    is_active: bool = True
+
+
 class ModelAdminResponse(BaseModel):
     id: uuid.UUID
     name: str
@@ -1192,6 +1212,82 @@ class ModelAdminResponse(BaseModel):
     granted_to: list[str]
     # Users granted this model personally, over and above their groups.
     granted_to_users: list[str] = Field(default_factory=list)
+    #: The aliases that resolve to **this** model (ADR 0101). On the model's
+    #: page, so that deleting or deactivating it shows which names will stop
+    #: working. Never populated on the listing — it is a second query per row,
+    #: and a page of forty models does not need forty of them.
+    aliases_pointing_here: list[AliasPointer] = Field(default_factory=list)
+
+
+# -- aliases (ADR 0101) ------------------------------------------------------
+
+
+class AliasTargetResponse(BaseModel):
+    """The model an alias serves, as the admin surface shows it.
+
+    Not the same shape as `ModelAdminResponse`: no provider, no prices, no
+    upstream name — an administrator retargeting an alias is choosing between
+    models, and nothing else on this screen is about the counterparty.
+    """
+
+    id: uuid.UUID
+    name: str
+    kind: str
+    is_active: bool
+
+
+class AliasResponse(BaseModel):
+    """One alias, as the Routing page shows it."""
+
+    id: uuid.UUID
+    name: str
+    display_name: str | None
+    description: str | None
+    kind: str
+    is_active: bool
+    is_public: bool
+    #: Null when the alias has no target, which is one of the three states an
+    #: alias can be in (ADR 0101, decision 5) rather than an error.
+    target: AliasTargetResponse | None
+    #: `available`, or `unavailable` with `unavailable_reason` set to one of
+    #: `target_deleted`, `target_inactive`, `target_provider_inactive`.
+    status: str
+    unavailable_reason: str | None = None
+    granted_to: list[str] = Field(default_factory=list)
+    granted_to_users: list[str] = Field(default_factory=list)
+    created_at: datetime
+
+
+class AliasCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    display_name: str | None = Field(default=None, max_length=255)
+    description: str | None = None
+    #: The one model this alias serves. Must exist, must not be an alias, and
+    #: must be active — all checked in the save path rather than by the schema,
+    #: because each is a fact about another row.
+    target_model_id: uuid.UUID
+    is_active: bool = True
+    # Defaults closed, as for a model (ADR 0045): widening access is a decision,
+    # and granting an alias is how a caller gets a model they cannot otherwise
+    # reach.
+    is_public: bool = False
+
+
+class AliasUpdateRequest(BaseModel):
+    """Every field optional; only what is sent is changed.
+
+    ``name`` **is** editable here, unlike a model's. Nothing denormalises an
+    alias name into the ledger — `usage_records.requested_model` is a copy of a
+    string, not a foreign key — and a stable name is the whole point of an
+    alias, so being unable to fix a typo in one would be its own kind of bug.
+    """
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    display_name: str | None = Field(default=None, max_length=255)
+    description: str | None = None
+    target_model_id: uuid.UUID | None = None
+    is_active: bool | None = None
+    is_public: bool | None = None
 
 
 class IdentityProviderResponse(BaseModel):
