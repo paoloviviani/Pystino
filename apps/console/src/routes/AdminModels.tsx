@@ -38,7 +38,12 @@ import {
 } from "../lib/admin";
 import { CHIPS, CODE, FORM, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
-import type { AdminModel, DiscoveredModel, ModelKind } from "../lib/types";
+import type {
+  AdminModel,
+  DiscoveredModel,
+  ManualImportPrice,
+  ModelKind,
+} from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 
 
@@ -695,6 +700,149 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
  * invites the reading that one overrides the other. Nothing here can *remove*
  * access a group grants — there are no denials.
  */
+
+// -- the discovery dialog, and the hand-typed price a row can carry ----------
+// A provider that publishes no price for a model does not make the model
+// unimportable; it makes the price the operator's to supply. These pieces hold
+// that price while it is typed: one draft per row, judged by shape, sent as
+// the string that was typed.
+
+/** One row's hand-typed price, while it is being typed. Strings throughout:
+ * what the operator typed is what the import sends, and the gateway stores. */
+interface ManualPriceDraft {
+  input: string;
+  output: string;
+  perPage: string;
+  currency: string;
+}
+
+const EMPTY_DRAFT: ManualPriceDraft = { input: "", output: "", perPage: "", currency: "" };
+
+/**
+ * The rates a kind is metered on, mirrored from the gateway's `_KIND_RATES` so
+ * a row asks for what the import will demand and no more: a chat model bills
+ * output tokens too, an embedding model generates none, an OCR model charges
+ * by the page, and a search tier is metered per request — never priced per
+ * token at all.
+ */
+const RATE_FIELDS: Record<string, ("input" | "output" | "perPage")[]> = {
+  chat: ["input", "output"],
+  embedding: ["input"],
+  image: ["input"],
+  ocr: ["perPage"],
+};
+
+const RATE_LABELS: Record<string, () => string> = {
+  input: m["admin_models.discover.manual_rate.input"],
+  output: m["admin_models.discover.manual_rate.output"],
+  perPage: m["admin_models.discover.manual_rate.per_page"],
+};
+
+/** Money is a string end to end, so a draft is judged by shape and never by
+ * parsing it into a float: digits and one decimal point, nothing else. */
+const AMOUNT_PATTERN = /^\d+(\.\d+)?$/;
+const CURRENCY_PATTERN = /^[A-Za-z]{3}$/;
+
+function rateError(value: string): string | null {
+  if (value === "") return m["admin_models.discover.manual_rate.required"]();
+  return AMOUNT_PATTERN.test(value) ? null : m["admin_models.discover.manual_rate.amount_invalid"]();
+}
+
+function currencyError(value: string): string | null {
+  if (value === "") return null;
+  return CURRENCY_PATTERN.test(value)
+    ? null
+    : m["admin_models.discover.manual_rate.currency_invalid"]();
+}
+
+/** The payload for a hand-typed price, or null while it is incomplete — the
+ * Import button is held until every ticked unpriced row has one. The currency
+ * is omitted when empty, which the gateway reads as its billing currency:
+ * the same default the model page's price form sends, and the only one the
+ * console can offer, because the deployment's currency is not readable here. */
+function manualPricePayload(
+  row: DiscoveredModel,
+  draft: ManualPriceDraft | undefined,
+): ManualImportPrice | undefined {
+  if (!draft) return undefined;
+  const fields = RATE_FIELDS[row.kind] ?? ["input"];
+  if (fields.some((field) => draft[field] === "")) return undefined;
+  if (currencyError(draft.currency) !== null) return undefined;
+  const price: ManualImportPrice = {};
+  if (fields.includes("input")) price.input_per_mtok = draft.input;
+  if (fields.includes("output")) price.output_per_mtok = draft.output;
+  if (fields.includes("perPage")) price.per_page = draft.perPage;
+  if (draft.currency !== "") price.currency = draft.currency.toUpperCase();
+  return price;
+}
+
+/** Why a row cannot be imported yet, in words, or null when it can. */
+function manualPriceProblem(
+  row: DiscoveredModel,
+  draft: ManualPriceDraft | undefined,
+): string | null {
+  if (!draft) return m["admin_models.discover.manual_rate.enter_price"]();
+  const fields = RATE_FIELDS[row.kind] ?? ["input"];
+  for (const field of fields) {
+    const error = rateError(draft[field]);
+    if (error) {
+      return m["admin_models.discover.manual_rate.field_problem"]({
+        label: RATE_LABELS[field] ?? field,
+        error,
+      });
+    }
+  }
+  const currency = currencyError(draft.currency);
+  return currency
+    ? m["admin_models.discover.manual_rate.currency_problem"]({ error: currency })
+    : null;
+}
+
+/**
+ * The price fields for one unpriced row, shown under its name once the row is
+ * ticked. They sit in the row rather than in a second dialog because the price
+ * is part of the decision the checkbox asks for, and stacked full-width so a
+ * phone — where this dialog is used — gets one field per line instead of the
+ * narrow column the reason text used to wrap into.
+ */
+function ManualPriceFields({
+  row,
+  draft,
+  onChange,
+}: {
+  row: DiscoveredModel;
+  draft: ManualPriceDraft;
+  onChange: (next: ManualPriceDraft) => void;
+}) {
+  const fields = RATE_FIELDS[row.kind] ?? ["input"];
+  return (
+    <div className="mt-2 flex w-full flex-col gap-2">
+      {fields.map((field) => (
+        <Input
+          key={field}
+          label={RATE_LABELS[field]?.() ?? field}
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          value={draft[field]}
+          onChange={(event) => onChange({ ...draft, [field]: event.target.value })}
+          error={rateError(draft[field]) ?? undefined}
+          hint={m["admin_models.discover.manual_rate.rate_hint"]()}
+        />
+      ))}
+      <Input
+        label={m["admin_models.discover.manual_rate.currency"]()}
+        type="text"
+        autoComplete="off"
+        value={draft.currency}
+        onChange={(event) => onChange({ ...draft, currency: event.target.value })}
+        error={currencyError(draft.currency) ?? undefined}
+        hint={m["admin_models.discover.manual_rate.currency_hint"]()}
+      />
+    </div>
+  );
+}
+
 /**
  * What the provider offers against what we carry.
  *
@@ -737,6 +885,12 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
   const importModels = useImportModels();
   const toast = useOptionalToast();
   const [selected, setSelected] = useState<string[]>([]);
+  // The price typed on an unpriced row, keyed by upstream id, reset whenever
+  // the catalogue under review changes — a draft carried across providers (or
+  // across a fill tick that changes which rows need one) would be a price
+  // applied to a row nobody reviewed it against.
+  const [manualPrices, setManualPrices] = useState<Record<string, ManualPriceDraft>>({});
+  const forgetManualPrices = () => setManualPrices({});
 
   const choices = (providers.data?.items ?? []).filter(
     // Search backends are not catalogue importers: their grant anchor is
@@ -746,10 +900,55 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
     (provider) => provider.is_active && provider.kind !== "search" && provider.kind !== "internal",
   );
 
+  // A row the provider listed and nobody prices. The only reason discovery
+  // ever blocks a row is that missing price, and that is now supplied here —
+  // so such a row is tickable, with its price fields on the row itself.
+  // Search tiers stay out: their meter counts requests, so no price belongs on
+  // one, whatever the row says. Anything else the server refuses is its call,
+  // reported per item.
+  const needsManualPrice = (row: DiscoveredModel) =>
+    row.kind !== "search" && row.price_source === null && row.blocked_reason !== null;
+
   const toggle = (id: string) =>
     setSelected((current) =>
       current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id],
     );
+
+  const rowsById = new Map(
+    (discovery.data?.available ?? []).map((row) => [row.upstream_model, row]),
+  );
+  const selectedRows = selected
+    .map((id) => rowsById.get(id))
+    .filter((row) => row !== undefined);
+  // Every ticked unpriced row must carry a complete price before the import
+  // can go: the server would refuse it per item, and a button that goes
+  // nowhere is the honest version of that refusal.
+  const manualBlocked = selectedRows.some(
+    (row) => needsManualPrice(row) && manualPriceProblem(row, manualPrices[row.upstream_model]) !== null,
+  );
+  // The first ticked unpriced row whose price is complete — the source for
+  // "apply this price to all ticked", for a provider with many models at one
+  // rate. Only offered when there is something to copy onto.
+  const priceSourceRow = selectedRows.find(
+    (row) =>
+      needsManualPrice(row) &&
+      manualPriceProblem(row, manualPrices[row.upstream_model]) === null &&
+      manualPrices[row.upstream_model] !== undefined,
+  );
+  const copyableCount = selectedRows.filter(needsManualPrice).length;
+
+  const applyPriceToAll = () => {
+    if (!priceSourceRow) return;
+    const source = manualPrices[priceSourceRow.upstream_model];
+    if (!source) return;
+    setManualPrices((current) => {
+      const next: Record<string, ManualPriceDraft> = { ...current };
+      for (const row of selectedRows) {
+        if (needsManualPrice(row)) next[row.upstream_model] = source;
+      }
+      return next;
+    });
+  };
 
   const columns: Column<DiscoveredModel>[] = [
     {
@@ -759,7 +958,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
         <input
           type="checkbox"
           checked={selected.includes(row.upstream_model)}
-          disabled={row.blocked_reason !== null}
+          disabled={row.blocked_reason !== null && !needsManualPrice(row)}
           aria-label={m["admin_models.discover.import_aria"]({ name: row.suggested_name })}
           onChange={() => toggle(row.upstream_model)}
         />
@@ -774,10 +973,23 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           <div className={`${MUTED} ${CODE}`}>{row.upstream_model}</div>
           {row.blocked_reason && (
             <div className={MUTED}>
-              <Badge tone="warn">{m["admin_models.discover.badge.blocked"]()}</Badge>{" "}
+              {/* Not "cannot import": a price typed below the name is what
+                  makes the row importable, and the reason beside it says so. */}
+              <Badge tone="warn">
+                {m["admin_models.discover.badge.no_price_yet"]()}
+              </Badge>{" "}
               {/* i18n: server text — the provider's own reason. */}
               {row.blocked_reason}
             </div>
+          )}
+          {selected.includes(row.upstream_model) && needsManualPrice(row) && (
+            <ManualPriceFields
+              row={row}
+              draft={manualPrices[row.upstream_model] ?? EMPTY_DRAFT}
+              onChange={(next) =>
+                setManualPrices((current) => ({ ...current, [row.upstream_model]: next }))
+              }
+            />
           )}
         </>
       ),
@@ -866,12 +1078,19 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
           <Button
             variant="primary"
             busy={importModels.isPending}
-            disabled={selected.length === 0 || !providerId}
+            disabled={selected.length === 0 || !providerId || manualBlocked}
             onClick={() =>
               importModels.mutate(
                 {
                   providerId,
-                  upstreamModels: selected,
+                  models: selected.map((upstream_model) => {
+                    const row = rowsById.get(upstream_model);
+                    const manual_price =
+                      row && needsManualPrice(row)
+                        ? manualPricePayload(row, manualPrices[upstream_model])
+                        : undefined;
+                    return manual_price ? { upstream_model, manual_price } : { upstream_model };
+                  }),
                   fillMissingPrices: fillMissing,
                   tag,
                 },
@@ -882,6 +1101,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
                       type: "success",
                     });
                     setSelected([]);
+                    forgetManualPrices();
                   },
                   onError: () =>
                     toast?.add({
@@ -909,6 +1129,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             // empty catalogue rather than the mismatch it is.
             setTag("");
             setSelected([]);
+            forgetManualPrices();
           }}
         >
           <option value="">{m["admin_models.discover.choose_provider"]()}</option>
@@ -926,6 +1147,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             onChange={(event) => {
               setTag(event.target.value);
               setSelected([]);
+              forgetManualPrices();
             }}
             hint={m["admin_models.discover.tag_hint_live"]()}
           >
@@ -947,6 +1169,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             onChange={(event) => {
               setTag(event.target.value);
               setSelected([]);
+              forgetManualPrices();
             }}
             placeholder={m["admin_models.discover.tag_placeholder"]()}
             hint={m["admin_models.discover.tag_hint_free"]()}
@@ -967,6 +1190,7 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
             onChange={(event) => {
               setFillMissing(event.target.checked);
               setSelected([]);
+              forgetManualPrices();
             }}
           />
           <span>
@@ -1002,9 +1226,13 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
                               // would have interpolated is what the message gets.
                               name: String(result.name),
                             })
-                          : m["admin_models.discover.result_imported_priced"]({
-                              name: String(result.name),
-                            })
+                          : result.price_source === "manual"
+                            ? m["admin_models.discover.result_imported_manual"]({
+                                name: String(result.name),
+                              })
+                            : m["admin_models.discover.result_imported_priced"]({
+                                name: String(result.name),
+                              })
                         : m["admin_models.discover.result_imported_unpriced"]({
                             name: String(result.name),
                           })
@@ -1013,6 +1241,9 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
                           name: result.upstream_model,
                           reason: String(result.reason),
                         })}
+                    {/* i18n: server text — a manual price the catalogue or the
+                        community file outranked is the API's own sentence. */}
+                    {result.reason ? ` — ${result.reason}` : ""}
                   </div>
                 ))}
               </Notice>
@@ -1056,6 +1287,18 @@ function DiscoveryDialog({ open, onClose }: { open: boolean; onClose: () => void
               const searchRows = discovery.data.available.filter((row) => row.kind === "search");
               return (
                 <>
+                  {priceSourceRow && copyableCount > 1 && (
+                    <div className="flex items-baseline gap-2">
+                      {/* A provider with many models at one rate would
+                          otherwise mean retyping the same figures per row. The
+                          copy overwrites the other ticked rows' drafts, which
+                          is what "apply" says; each row's own validation still
+                          holds before the import can go. */}
+                      <Button onClick={applyPriceToAll}>
+                        {m["admin_models.discover.apply_to_all"]()}
+                      </Button>
+                    </div>
+                  )}
                   <Table
                     columns={columns}
                     rows={chatRows}

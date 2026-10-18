@@ -216,6 +216,7 @@ from gateway.schemas import (
     LimitRuleResetRequest,
     LimitRuleResponse,
     LimitRuleUpdateRequest,
+    ManualImportPrice,
     MergePreviewResponse,
     MergeRequest,
     MergeResponse,
@@ -1306,11 +1307,17 @@ async def discover_models(
                 output_modalities=["text"] if kind == ModelKind.SEARCH else [],
                 blocked_reason=None
                 if kind == ModelKind.SEARCH
+                # The console offers a price field on the row itself, so the
+                # reason must not send anyone round to the fill checkbox or
+                # the add-model form as if they were the only ways in — the
+                # figure the provider withholds can be typed here.
                 else (
-                    "the provider publishes no price for this model"
-                    if fill_missing_prices
-                    else "the provider publishes no price — tick “fill missing prices” or "
-                    "add the model by hand"
+                    "the provider publishes no price: enter one to import it"
+                    if not fill_missing_prices
+                    else (
+                        "neither the provider nor the community file publishes a "
+                        "price: enter one to import it"
+                    )
                 ),
                 price_source=None,
             )
@@ -1452,6 +1459,94 @@ async def list_catalogue_tags(
     )
 
 
+def _billing_currency(currency: str | None, settings: Settings) -> str:
+    """The currency a price row is recorded in: the payload's, when it names
+    the one this gateway bills in; the billing currency itself otherwise.
+
+    Shared by the model page's price form and by a hand-typed price at import,
+    so there is one rule and one refusal. Refused rather than converted: an
+    exchange rate applied silently produces invoices that look right and are
+    wrong.
+    """
+    resolved = (currency or settings.billing_currency).upper()
+    if resolved != settings.billing_currency.upper():
+        raise BadRequestError(
+            f"This gateway bills in {settings.billing_currency}, so a price in "
+            f"{resolved} would have to be converted. Convert it yourself, or change "
+            "GATEWAY_BILLING_CURRENCY.",
+            code="price_currency_mismatch",
+        )
+    return resolved
+
+
+#: Which rates each kind is *metered on*, and therefore which a hand-typed
+#: price must carry to serve it. A rate of zero is allowed — the price form
+#: accepts a deliberate "free" — what is refused is an absent one, because an
+#: absent rate is stored as zero and a chat model whose output rate is zero
+#: gives away every completion. That is the same quiet leak the import refusal
+#: for an unpriced model exists to prevent.
+_KIND_RATES: dict[ModelKind, tuple[str, ...]] = {
+    ModelKind.CHAT: ("input_per_mtok", "output_per_mtok"),
+    ModelKind.EMBEDDING: ("input_per_mtok",),
+    ModelKind.IMAGE: ("input_per_mtok",),
+    ModelKind.OCR: ("per_page",),
+}
+
+_RATE_PHRASES: dict[str, str] = {
+    "input_per_mtok": "an input rate per million tokens",
+    "output_per_mtok": "an output rate per million tokens",
+    "per_page": "a rate per page",
+}
+
+
+def _manual_catalogue_price(
+    manual: ManualImportPrice, kind: ModelKind, settings: Settings
+) -> tuple[CataloguePrice | None, str | None]:
+    """A hand-typed price as a catalogue-shaped one, or the reason it cannot be.
+
+    Returns ``(price, None)`` when the price can serve the kind, and
+    ``(None, reason)`` when it cannot — the reason goes back to the operator
+    per item, so one bad price never loses the rest of the batch the way a 400
+    for the whole request would.
+
+    Search tiers take no price at any door: their meter is a request count
+    (``LimitMetric.OWN_SEARCH_REQUESTS``), no rate multiplies it, and a token
+    price written onto one would sit unread forever.
+    """
+    if kind is ModelKind.SEARCH:
+        return None, "a search tier is metered per request and takes no token price"
+    try:
+        currency = _billing_currency(manual.currency, settings)
+    except BadRequestError as exc:
+        return None, exc.message
+    # A kind this gateway does not know yet is treated as chat-shaped — the
+    # same safe default the catalogue parser gives an entry that says nothing.
+    missing = [
+        name
+        for name in _KIND_RATES.get(kind, ("input_per_mtok", "output_per_mtok"))
+        if getattr(manual, name) is None
+    ]
+    if missing:
+        phrases = " and ".join(_RATE_PHRASES[name] for name in missing)
+        return None, (
+            f"a {kind.value} model needs {phrases}: the price entered by hand is missing them"
+        )
+    # The rates the kind does not meter are stored as zeros, as the catalogue
+    # path stores them for an OCR model — an absent rate and a zero one must
+    # not come out of the same import looking different in the price history.
+    return (
+        CataloguePrice(
+            model_id="",
+            input_per_mtok=manual.input_per_mtok or Decimal(0),
+            output_per_mtok=manual.output_per_mtok or Decimal(0),
+            currency=currency,
+            per_page=manual.per_page,
+            kind=kind,
+        ),
+        None,
+    )
+
+
 @router.post(
     "/models/import",
     response_model=ModelImportResponse,
@@ -1485,6 +1580,16 @@ async def import_models(
     its meter counts requests and no rate multiplies it. What bounds it is the
     request ceiling, granted per group like any other access.
 
+    A model the provider listed **unpriced** can still be imported when the
+    request carries a price for it (`manual_price`): the operator supplies the
+    figure the catalogue withholds, validated against the kind the same way the
+    model page's price form is, and recorded in the same append-only history
+    with the source that says a person typed it. The catalogue's own figure —
+    the provider's, or a community fill — always outranks a hand-typed one, and
+    the result says so when a manual price is set aside, because a price that
+    silently differed from the one reviewed is the failure this screen exists to
+    prevent.
+
     ``fill_missing_prices`` must match what the operator was shown: the price
     written here is stamped with who supplied it (`catalogue` or `community`),
     so the append-only history answers "where did this figure come from"
@@ -1493,7 +1598,7 @@ async def import_models(
     provider, catalogue_url, api_key = await _catalogue_source(
         session, secrets, provider_id, url, tag
     )
-    by_upstream, _unpriced, filled, _kinds = await _catalogue_with_prices(
+    by_upstream, _unpriced, filled, kinds = await _catalogue_with_prices(
         http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
     )
 
@@ -1538,36 +1643,75 @@ async def import_models(
             )
             continue
 
-        if price is None:
-            # Search backends no longer import tiers: the anchor row is created
-            # with the provider, and a tier is a body field now (ADR 0071).
-            results.append(
-                ModelImportResult(
-                    upstream_model=item.upstream_model,
-                    name=name,
-                    imported=False,
-                    priced=False,
-                    reason="not offered by the provider",
-                )
+        from_community = item.upstream_model in filled
+
+        # The catalogue's own figure outranks one typed from memory. Silently
+        # would be the worst of both: the operator typed a number, reviewed it,
+        # and a different one would have been written — so the result says the
+        # hand-typed price was not used, and names who did supply it. The
+        # import itself proceeds on the catalogue price exactly as if no manual
+        # price had been sent. A catalogue price with no currency is no price —
+        # the same "unusable" the import refuses below — and a hand-typed one
+        # may fill that gap.
+        manual_used = False
+        manual_set_aside: str | None = None
+        if price is not None and price.currency != "" and item.manual_price is not None:
+            manual_set_aside = "the price entered by hand was not used: " + (
+                "the community file supplies one"
+                if from_community
+                else "the provider publishes one"
             )
-            continue
-        # ADR 0054 removes the currency refusal the import used to carry: a
-        # USD-priced model imports with its USD prices, and conversion happens
-        # at admission and settle using the day's rate. What is still skipped
-        # is a model with NO usable price at all — an unpriced model serves
-        # happily and records a cost of zero, which is a quiet way to give
-        # away money.
-        if price.currency == "":
-            results.append(
-                ModelImportResult(
-                    upstream_model=item.upstream_model,
-                    name=name,
-                    imported=False,
-                    priced=False,
-                    reason="the catalogue carries no usable price for this model",
+
+        if price is None or price.currency == "":
+            if item.manual_price is None:
+                if price is None:
+                    # Search backends no longer import tiers: the anchor row is
+                    # created with the provider, and a tier is a body field now
+                    # (ADR 0071).
+                    results.append(
+                        ModelImportResult(
+                            upstream_model=item.upstream_model,
+                            name=name,
+                            imported=False,
+                            priced=False,
+                            reason="not offered by the provider",
+                        )
+                    )
+                    continue
+                # ADR 0054 removes the currency refusal the import used to carry:
+                # a USD-priced model imports with its USD prices, and conversion
+                # happens at admission and settle using the day's rate. What is
+                # still skipped is a model with NO usable price at all — an
+                # unpriced model serves happily and records a cost of zero,
+                # which is a quiet way to give away money.
+                results.append(
+                    ModelImportResult(
+                        upstream_model=item.upstream_model,
+                        name=name,
+                        imported=False,
+                        priced=False,
+                        reason="the catalogue carries no usable price for this model",
+                    )
                 )
-            )
-            continue
+                continue
+            # Nothing priced it, and the operator did: judge the price against
+            # the kind before anything is written, so a per-page figure cannot
+            # quietly become a chat model's token rate (or vice versa).
+            manual_used = True
+            kind = kinds.get(item.upstream_model, ModelKind.CHAT)
+            candidate, refusal = _manual_catalogue_price(item.manual_price, kind, settings)
+            if candidate is None:
+                results.append(
+                    ModelImportResult(
+                        upstream_model=item.upstream_model,
+                        name=name,
+                        imported=False,
+                        priced=False,
+                        reason=refusal,
+                    )
+                )
+                continue
+            price = candidate
 
         model = ModelDef(
             name=name,
@@ -1585,8 +1729,17 @@ async def import_models(
         await session.flush()
         # Who supplied this figure, kept on the row itself. Until ADR 0053 every
         # catalogue import wrote `cortecs` regardless of provider or source, so a
-        # community price for an OpenAI model was recorded as Cortecs' own.
-        from_community = item.upstream_model in filled
+        # community price for an OpenAI model was recorded as Cortecs' own. A
+        # hand-typed one is recorded the way the model page's price form records
+        # one — `manual` — because it is the same act: a person vouching for a
+        # figure.
+        source = (
+            PriceSource.COMMUNITY
+            if from_community
+            else PriceSource.MANUAL
+            if manual_used
+            else PriceSource.CATALOGUE
+        )
         session.add(
             ModelPrice(
                 model_id=model.id,
@@ -1598,7 +1751,7 @@ async def import_models(
                 per_page=price.per_page,
                 currency=price.currency,
                 effective_from=utcnow(),
-                source=PriceSource.COMMUNITY if from_community else PriceSource.CATALOGUE,
+                source=source,
             )
         )
         taken_names.add(name)
@@ -1609,7 +1762,10 @@ async def import_models(
                 name=name,
                 imported=True,
                 priced=True,
-                price_source="community" if from_community else "provider",
+                reason=manual_set_aside,
+                price_source=(
+                    "community" if from_community else "manual" if manual_used else "provider"
+                ),
             )
         )
 
@@ -1678,16 +1834,7 @@ async def create_price(
     """
     model = await _load_model(session, model_id)
 
-    currency = (payload.currency or settings.billing_currency).upper()
-    if currency != settings.billing_currency.upper():
-        # Refused rather than converted: an exchange rate applied silently
-        # produces invoices that look right and are wrong.
-        raise BadRequestError(
-            f"This gateway bills in {settings.billing_currency}, so a price in "
-            f"{currency} would have to be converted. Convert it yourself, or change "
-            "GATEWAY_BILLING_CURRENCY.",
-            code="price_currency_mismatch",
-        )
+    currency = _billing_currency(payload.currency, settings)
 
     price = ModelPrice(
         model_id=model.id,

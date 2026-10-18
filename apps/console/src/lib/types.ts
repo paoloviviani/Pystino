@@ -513,6 +513,27 @@ export interface CatalogueTags {
   tags: string[];
 }
 
+/**
+ * A price typed by an administrator on an unpriced discovery row, sent with
+ * the import. The same shape the model page's price form posts — money is the
+ * string as typed, never a number — with the rates a kind is metered on
+ * required by the gateway and the rest omitted.
+ */
+export interface ManualImportPrice {
+  input_per_mtok?: string;
+  output_per_mtok?: string;
+  per_page?: string;
+  /** Empty means the gateway's billing currency, as on the price form. */
+  currency?: string;
+}
+
+/** One row of an import request. */
+export interface ModelImportItem {
+  upstream_model: string;
+  /** Present only for a row the provider listed and nobody prices. */
+  manual_price?: ManualImportPrice;
+}
+
 export interface ModelImportResult {
   upstream_model: string;
   name: string | null;
@@ -520,7 +541,7 @@ export interface ModelImportResult {
   priced: boolean;
   reason: string | null;
   /** Who supplied the price that was written to the append-only history. */
-  price_source: "provider" | "community" | null;
+  price_source: "provider" | "community" | "manual" | null;
 }
 
 export interface ModelImportResponse {

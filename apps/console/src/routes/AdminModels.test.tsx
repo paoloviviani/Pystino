@@ -159,6 +159,8 @@ function routes(
     discoverUrls?: string[];
     importUrls?: string[];
     tagUrls?: string[];
+    /** The import bodies as they were sent, for tests that assert the payload. */
+    importBodies?: { models: { upstream_model: string; manual_price?: unknown }[] }[];
   } = {},
   captured: { bodies: unknown[] } = { bodies: [] },
   /** What `/models/tags` answers. Null means the provider reports no known
@@ -196,7 +198,10 @@ function routes(
       payload = url.includes("fill_missing_prices=true") ? DISCOVERY_FILLED : DISCOVERY;
     } else if (url.includes("/models/import") && method === "POST") {
       (calls.importUrls ??= []).push(url);
-      const body = JSON.parse(String(init?.body)) as { models: { upstream_model: string }[] };
+      const body = JSON.parse(String(init?.body)) as {
+        models: { upstream_model: string; manual_price?: unknown }[];
+      };
+      (calls.importBodies ??= []).push(body);
       calls.imported = body.models.map((entry) => entry.upstream_model);
       payload = {
         results: body.models.map((entry) => ({
@@ -205,7 +210,14 @@ function routes(
           imported: true,
           priced: true,
           reason: null,
-          price_source: url.includes("fill_missing_prices=true") ? "community" : "provider",
+          // An entry that carried a price typed by hand is answered as one;
+          // the older tests send no manual_price and are unaffected.
+          price_source:
+            entry.manual_price !== undefined
+              ? "manual"
+              : url.includes("fill_missing_prices=true")
+                ? "community"
+                : "provider",
         })),
       };
     } else if (url.includes("/models/tags")) {
@@ -501,8 +513,10 @@ describe("AdminModels", () => {
     // Exactly one row is marked: the filled one. The provider's own prices are
     // unmarked, which is what makes the mark mean something.
     expect(screen.getAllByText("community")).toHaveLength(1);
-    // And a model nobody prices cannot be selected for import.
-    expect(screen.getByRole("checkbox", { name: /Import nowhere-1/i })).toBeDisabled();
+    // And a model nobody prices can now be selected: a price entered on the
+    // row itself is what makes it importable, which is the whole point of the
+    // fields this dialog offers (this used to pin the opposite).
+    expect(screen.getByRole("checkbox", { name: /Import nowhere-1/i })).toBeEnabled();
   });
 
   it("imports with the same fill the prices were reviewed under", async () => {
@@ -846,5 +860,224 @@ describe("AdminModels", () => {
         .getAllByRole("option")
         .map((option) => option.textContent),
     ).toEqual(["Choose an endpoint…", "acme"]);
+  });
+
+  it("offers a price on a ticked unpriced row, and imports it by hand", async () => {
+    // The provider lists the model and prices nothing; until now the only way
+    // in was one form per model. The price is typed on the row itself, sent
+    // with the import, and the answer says who supplied it.
+    const user = userEvent.setup();
+    const calls: {
+      imported?: string[];
+      importUrls?: string[];
+      importBodies?: { models: { upstream_model: string; manual_price?: unknown }[] }[];
+    } = {};
+    vi.stubGlobal("fetch", routes([model()], calls));
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+    await user.click(screen.getByRole("checkbox", { name: /fill missing prices/i }));
+    await waitFor(() => expect(screen.getByText("nowhere-1")).toBeInTheDocument());
+
+    // Nothing to type until the row is chosen: the fields belong to a row, not
+    // to the dialog.
+    expect(screen.queryByLabelText("Input per Mtok")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Import nowhere-1" }));
+    await user.type(await screen.findByLabelText("Input per Mtok"), "1.5");
+    await user.type(screen.getByLabelText("Output per Mtok"), "6");
+
+    await user.click(screen.getByRole("button", { name: /^Import/ }));
+    await waitFor(() => expect(calls.imported).toEqual(["provider/nowhere-1"]));
+    expect(calls.importBodies).toHaveLength(1);
+    expect(calls.importBodies?.[0]?.models[0]?.manual_price).toEqual({
+      input_per_mtok: "1.5",
+      output_per_mtok: "6",
+    });
+    expect(await screen.findByText(/with the price entered by hand/i)).toBeInTheDocument();
+  });
+
+  it("does not import an unpriced row whose price is missing or malformed", async () => {
+    // An empty price would import the model unpriced, which is the refusal the
+    // server keeps; a malformed one would be refused there anyway. Both are
+    // stopped at the button, with the reason under the field.
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", routes([model()]));
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+    await user.click(screen.getByRole("checkbox", { name: /fill missing prices/i }));
+    await waitFor(() => expect(screen.getByText("nowhere-1")).toBeInTheDocument());
+    await user.click(screen.getByRole("checkbox", { name: "Import nowhere-1" }));
+
+    const importButton = await screen.findByRole("button", { name: /^Import/ });
+    await waitFor(() => expect(importButton).toBeDisabled());
+
+    const input = screen.getByLabelText("Input per Mtok");
+    await user.type(input, "1,5");
+    expect(importButton).toBeDisabled();
+    expect(screen.getByText(/digits and an optional decimal point/i)).toBeInTheDocument();
+
+    await user.clear(input);
+    await user.type(input, "1.5");
+    await user.type(screen.getByLabelText("Output per Mtok"), "6");
+    await waitFor(() => expect(importButton).toBeEnabled());
+  });
+
+  it("asks the currency only when one is typed, and then only three letters", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal("fetch", routes([model()]));
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+    await user.click(screen.getByRole("checkbox", { name: /fill missing prices/i }));
+    await waitFor(() => expect(screen.getByText("nowhere-1")).toBeInTheDocument());
+    await user.click(screen.getByRole("checkbox", { name: "Import nowhere-1" }));
+
+    const importButton = await screen.findByRole("button", { name: /^Import/ });
+    const currency = screen.getByLabelText("Currency");
+    // Empty means the gateway's billing currency — the same default the model
+    // page's price form sends — so an empty field is a valid one.
+    expect(currency).toHaveValue("");
+    await user.type(currency, "EURO");
+    await user.type(screen.getByLabelText("Input per Mtok"), "1");
+    await user.type(screen.getByLabelText("Output per Mtok"), "2");
+    await waitFor(() => expect(importButton).toBeDisabled());
+
+    await user.clear(currency);
+    await user.type(currency, "EUR");
+    await waitFor(() => expect(importButton).toBeEnabled());
+  });
+
+  it("asks each kind for the rates it is metered on", async () => {
+    // A chat model bills output tokens too, an embedding model generates none,
+    // an OCR model charges by the page, and a search tier is metered per
+    // request — the same rule the server enforces, mirrored so the row says
+    // what it needs before the import is refused for saying something else.
+    const user = userEvent.setup();
+    const base = routes([model()]);
+    const unpriced = (upstream: string, kind: string) => ({
+      upstream_model: upstream,
+      suggested_name: upstream.replace("provider/", ""),
+      input_per_mtok: null,
+      output_per_mtok: null,
+      per_page: null,
+      currency: null,
+      context_window: null,
+      kind,
+      input_modalities: [],
+      output_modalities: [],
+      supported_features: [],
+      blocked_reason: "the provider publishes no price: enter one to import it",
+      price_source: null,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes("/models/discover")) {
+          return jsonResponse({
+            ...DISCOVERY_FILLED,
+            available: [
+              unpriced("provider/plain-chat", "chat"),
+              unpriced("provider/the-embedder", "embedding"),
+              unpriced("provider/the-reader", "ocr"),
+              unpriced("provider/the-finder", "search"),
+            ],
+          });
+        }
+        return base(input, init);
+      }),
+    );
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+    await waitFor(() => expect(screen.getByText("plain-chat")).toBeInTheDocument());
+
+    for (const name of ["plain-chat", "the-embedder", "the-reader", "the-finder"]) {
+      await user.click(screen.getByRole("checkbox", { name: `Import ${name}` }));
+    }
+
+    // The chat row wants both token rates; the embedding row only an input
+    // rate; the OCR row only a page rate.
+    expect(screen.getAllByLabelText("Input per Mtok")).toHaveLength(2);
+    expect(screen.getByLabelText("Output per Mtok")).toBeInTheDocument();
+    expect(screen.getByLabelText("Per page")).toBeInTheDocument();
+    // And the search tier wants nothing at all — it was never priced per token.
+    expect(screen.getAllByLabelText("Currency")).toHaveLength(3);
+    const searchTable = screen.getByRole("table", { name: /search tiers/i });
+    expect(within(searchTable).queryAllByRole("textbox")).toHaveLength(0);
+  });
+
+  it("copies the typed price to every other ticked unpriced row", async () => {
+    // A provider with many models at one rate would otherwise mean retyping
+    // the same three figures per row.
+    const user = userEvent.setup();
+    const calls: {
+      importBodies?: { models: { upstream_model: string; manual_price?: unknown }[] }[];
+    } = {};
+    const base = routes([model()], calls);
+    const unpriced = (upstream: string) => ({
+      upstream_model: upstream,
+      suggested_name: upstream.replace("provider/", ""),
+      input_per_mtok: null,
+      output_per_mtok: null,
+      per_page: null,
+      currency: null,
+      context_window: null,
+      kind: "chat",
+      input_modalities: [],
+      output_modalities: [],
+      supported_features: [],
+      blocked_reason: "the provider publishes no price: enter one to import it",
+      price_source: null,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).includes("/models/discover")) {
+          return jsonResponse({
+            ...DISCOVERY_FILLED,
+            available: [unpriced("provider/cheap-a"), unpriced("provider/cheap-b")],
+          });
+        }
+        return base(input, init);
+      }),
+    );
+    renderScreen(<AdminModels />);
+
+    await user.click(screen.getByRole("button", { name: "Discover" }));
+    await openCatalogue(user);
+    await waitFor(() => expect(screen.getByText("cheap-a")).toBeInTheDocument());
+    await user.click(screen.getByRole("checkbox", { name: "Import cheap-a" }));
+    await user.click(screen.getByRole("checkbox", { name: "Import cheap-b" }));
+
+    const firstInput = (await screen.findAllByLabelText("Input per Mtok"))[0]!;
+    await user.type(firstInput, "0.5");
+    await user.type(screen.getAllByLabelText("Output per Mtok")[0]!, "2");
+    await user.click(
+      await screen.findByRole("button", { name: /apply this price to all ticked/i }),
+    );
+
+    // Both rows carry the same figures now, and both go out priced by hand.
+    const inputs = screen.getAllByLabelText("Input per Mtok");
+    expect(inputs).toHaveLength(2);
+    expect(inputs[1]).toHaveValue("0.5");
+    expect(screen.getAllByLabelText("Output per Mtok")[1]).toHaveValue("2");
+
+    await user.click(screen.getByRole("button", { name: /^Import/ }));
+    await waitFor(() => expect(calls.importBodies).toHaveLength(1));
+    expect(calls.importBodies?.[0]?.models).toEqual([
+      {
+        upstream_model: "provider/cheap-a",
+        manual_price: { input_per_mtok: "0.5", output_per_mtok: "2" },
+      },
+      {
+        upstream_model: "provider/cheap-b",
+        manual_price: { input_per_mtok: "0.5", output_per_mtok: "2" },
+      },
+    ]);
   });
 });
