@@ -8,17 +8,21 @@ person — so most of what is asserted here is what the endpoints refuse to do.
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 import httpx
 import pytest
 from conftest import Seeded
+from gateway.fx import FXService
 from gateway.models import (
+    FXRate,
     GroupModelAccess,
     ModelDef,
     ModelKind,
     ModelPrice,
     PriceSource,
 )
+from gateway.types import utcnow
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
@@ -759,7 +763,7 @@ class TestManualPriceImport:
         ).scalar_one()
         assert price.input_per_mtok == 0
 
-    async def test_a_foreign_currency_is_refused_as_on_the_price_form(
+    async def test_a_foreign_currency_is_kept_and_converted_at_billing(
         self,
         app: object,
         client: httpx.AsyncClient,
@@ -767,9 +771,13 @@ class TestManualPriceImport:
         catalogue_with_a_gap: None,
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
-        """The same rule the model page's price form enforces: a price in
-        another currency would have to be converted, and a conversion applied
-        silently produces invoices that look right and are wrong."""
+        """A price typed in USD is stored in USD, the same as a catalogue
+        price in USD: ADR 0054 converts it at admission and in reports with
+        the day's rate, so refusing it here would only send the operator to
+        convert by hand with a rate nobody records."""
+        async with session_factory() as session:
+            session.add(FXRate(base="USD", quote="EUR", rate=Decimal("0.9"), fetched_at=utcnow()))
+            await session.commit()
         as_user(app, await make_admin(session_factory, seeded))
         response = await client.post(
             "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
@@ -780,7 +788,51 @@ class TestManualPriceImport:
                         "manual_price": {
                             "input_per_mtok": "1",
                             "output_per_mtok": "2",
-                            "currency": "USD",
+                            "currency": "usd",
+                        },
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["results"][0]["imported"] is True
+        async with session_factory() as session:
+            price = (
+                await session.execute(
+                    select(ModelPrice)
+                    .join(ModelDef, ModelDef.id == ModelPrice.model_id)
+                    .where(ModelDef.upstream_model == "vendor/unpriced-1")
+                )
+            ).scalar_one()
+        assert price.currency == "USD"
+
+    async def test_a_currency_with_no_exchange_rate_is_refused(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        catalogue_with_a_gap: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Stored anyway, a price in a currency no rate exists for would make
+        admission refuse every request on the model, with no hint why."""
+
+        async def no_rate(*_args: object) -> None:
+            return None
+
+        monkeypatch.setattr(FXService, "_fetch", no_rate)
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "vendor/unpriced-1",
+                        "manual_price": {
+                            "input_per_mtok": "1",
+                            "output_per_mtok": "2",
+                            "currency": "XYZ",
                         },
                     }
                 ]
@@ -789,7 +841,7 @@ class TestManualPriceImport:
         assert response.status_code == 201, response.text
         result = response.json()["results"][0]
         assert result["imported"] is False
-        assert "bills in EUR" in result["reason"]
+        assert "No exchange rate from XYZ to EUR" in result["reason"]
 
     async def test_a_manual_price_cannot_import_a_model_the_provider_does_not_list(
         self,

@@ -2495,7 +2495,7 @@
   "admin_models.discover.manual_rate.cache_hint": "Leave empty to bill cached tokens at the input rate.",
   "admin_models.discover.manual_rate.currency": "Currency",
   "admin_models.discover.manual_rate.rate_hint": "per million tokens",
-  "admin_models.discover.manual_rate.currency_hint": "Leave empty for the gateway's billing currency.",
+  "admin_models.discover.manual_rate.currency_hint": "Leave empty for the gateway's billing currency. Any other is converted at the day's ECB rate.",
   "admin_models.discover.manual_rate.required": "Required — the import refuses an unpriced model.",
   "admin_models.discover.manual_rate.amount_invalid": "Digits and an optional decimal point.",
   "admin_models.discover.manual_rate.currency_invalid": "Three letters, e.g. EUR.",

@@ -2495,7 +2495,7 @@
   "admin_models.discover.manual_rate.cache_hint": "[Ĺéáǚé éḿþťý ťó ƀíľľ ćáćȟéď ťóķéńś áť ťȟé íńþúť ŕáťé.]",
   "admin_models.discover.manual_rate.currency": "[Ćúŕŕéńćý]",
   "admin_models.discover.manual_rate.rate_hint": "[þéŕ ḿíľľíóń ťóķéńś]",
-  "admin_models.discover.manual_rate.currency_hint": "[Ĺéáǚé éḿþťý ƒóŕ ťȟé ǧáťéŵáý'ś ƀíľľíńǧ ćúŕŕéńćý.]",
+  "admin_models.discover.manual_rate.currency_hint": "[Ĺéáǚé éḿþťý ƒóŕ ťȟé ǧáťéŵáý'ś ƀíľľíńǧ ćúŕŕéńćý. Áńý óťȟéŕ íś ćóńǚéŕťéď áť ťȟé ďáý'ś ÉĆƁ ŕáťé.]",
   "admin_models.discover.manual_rate.required": "[Ŕéǫúíŕéď — ťȟé íḿþóŕť ŕéƒúśéś áń úńþŕíćéď ḿóďéľ.]",
   "admin_models.discover.manual_rate.amount_invalid": "[Ďíǧíťś áńď áń óþťíóńáľ ďéćíḿáľ þóíńť.]",
   "admin_models.discover.manual_rate.currency_invalid": "[Ťȟŕéé ľéťťéŕś, é.ǧ. ÉÚŔ.]",
