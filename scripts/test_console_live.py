@@ -13,8 +13,7 @@ it, which is exactly the seam those tests cannot see.
 
 Usage:
     docker compose --env-file deploy/.env \\
-      -f deploy/compose/docker-compose.yml \\
-      -f deploy/compose/docker-compose.smoke.yml up -d --build
+      -f deploy/compose.yaml -f deploy/dev/smoke.yml up -d --wait
     set -a; . deploy/.env; set +a; python3 scripts/test_console_live.py
 """
 

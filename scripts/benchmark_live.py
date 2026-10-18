@@ -54,11 +54,12 @@ BENCH_MODEL = "benchmark-live"
 BENCH_KEY_NAME = "benchmark-live"
 UPSTREAM_DIRECT = os.environ.get("FAKE_UPSTREAM_URL", "http://localhost:8081")
 
+_PROJECT = os.environ.get("COMPOSE_PROJECT_NAME", "pystino")
 CONTAINERS = {
-    "gateway": "llm-platform-gateway-1",
-    "redaction": "llm-platform-redaction-1",
-    "postgres": "llm-platform-postgres-1",
-    "valkey": "llm-platform-valkey-1",
+    "gateway": f"{_PROJECT}-gateway-1",
+    "redaction": f"{_PROJECT}-redaction-1",
+    "postgres": f"{_PROJECT}-postgres-1",
+    "valkey": f"{_PROJECT}-valkey-1",
 }
 COMPOSE = [
     "docker",
@@ -66,7 +67,7 @@ COMPOSE = [
     "--env-file",
     "deploy/.env",
     "-f",
-    "deploy/compose/docker-compose.yml",
+    "deploy/compose.yaml",
 ]
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 

@@ -22,13 +22,12 @@ scripts. Nothing here calls a model.
 
 Usage:
     docker compose --env-file deploy/.env \\
-      -f deploy/compose/docker-compose.yml \\
-      -f deploy/compose/docker-compose.smoke.yml \\
-      -f deploy/compose/docker-compose.redaction.yml up -d --build
+      -f deploy/compose.yaml -f deploy/dev/smoke.yml up -d --wait
     set -a; . deploy/.env; set +a; python3 scripts/test_pystino_usage_live.py
 
 The access-token half additionally needs an identity provider with a direct
-grant enabled — `deploy/keycloak/setup.sh` configures one — and
+grant enabled (a Keycloak client with `directAccessGrantsEnabled`; the
+development Keycloak is `deploy/dev/keycloak/compose.yml`) and
 KEYCLOAK_TEST_USER / KEYCLOAK_TEST_PASSWORD for a real person to sign in as.
 Without them that half is reported skipped, not failed: the API-key half
 alone still proves the route.
@@ -103,9 +102,8 @@ def access_token() -> str | None:
     JSON parser accepts (the trap AGENTS.md records under "Sourcing
     deploy/.env mangles CHAT_OPENID_CONFIG"). The three ``GATEWAY_OIDC__*``
     variables are plain strings and survive sourcing unharmed. The gateway's
-    own console client works for this because `deploy/keycloak/setup.sh` sets
-    ``directAccessGrantsEnabled`` on every client it creates, this one
-    included.
+    own console client works for this when the client has
+    ``directAccessGrantsEnabled`` set in Keycloak.
     """
     issuer = os.environ.get("GATEWAY_OIDC__ISSUER", "")
     client_id = os.environ.get("GATEWAY_OIDC__CLIENT_ID", "")
@@ -187,7 +185,7 @@ def check_document(label: str, status: int, body: Any) -> None:
 
 
 def per_member_rules(opener: Any) -> list[str]:
-    """Create one rule of each kind on the caller's default group (ADR 0098).
+    """Create one rule of each kind on a group the caller belongs to (ADR 0098).
 
     What a live gateway can prove that the unit suite cannot: the rules a
     person actually sees through `/v1/pystino/usage` come from real rows, the
@@ -195,17 +193,25 @@ def per_member_rules(opener: Any) -> list[str]:
     reports is the caller's own counter key — zero here, since nothing calls a
     model, but present and readable, not absent. Returns the ids, for cleanup.
     """
-    status, groups = api(opener, "/api/admin/groups")
-    payload = groups.get("items") if isinstance(groups, dict) else groups
-    if status != 200 or not isinstance(payload, list) or not payload:
-        expect("a group to hang the per-member rule on", False, f"HTTP {status}: {groups}")
+    # A group the caller is *in*: `/v1/pystino/usage` lists only the rules that
+    # constrain the caller, so a rule on any other group (the first row of
+    # `/api/admin/groups` is whichever sorts first by name — `demo`, after a
+    # `gateway seed`) is correctly absent from the document.
+    status, me = api(opener, "/api/me")
+    mine = me.get("groups") if isinstance(me, dict) else None
+    if status != 200 or not isinstance(mine, list) or not mine:
+        expect(
+            "the signed-in user belongs to a group to hang the per-member rule on",
+            False,
+            f"HTTP {status}: {me}",
+        )
         return []
     group_id = next(
-        (str(group["id"]) for group in payload if isinstance(group, dict) and group.get("id")),
+        (str(group["id"]) for group in mine if isinstance(group, dict) and group.get("id")),
         None,
     )
     if group_id is None:
-        expect("the billable groups carry ids", False, str(payload))
+        expect("the user's groups carry ids", False, str(mine))
         return []
 
     made: list[str] = []
@@ -303,7 +309,7 @@ def main() -> int:
         skip(
             "the access-token case",
             "set KEYCLOAK_TEST_USER / KEYCLOAK_TEST_PASSWORD, with an OIDC "
-            "provider configured (deploy/keycloak/setup.sh)",
+            "provider configured (deploy/dev/keycloak/compose.yml)",
         )
     else:
         status, body = bearer_get(token, "/v1/pystino/usage")

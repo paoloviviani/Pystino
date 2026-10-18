@@ -50,6 +50,9 @@ def main() -> int:
         return 1
     status, profile = api(dave, "/api/me")
     expect("the admin is an admin", bool(profile.get("is_admin")), str(profile.get("is_admin")))
+    # The login name ("admin") is not the identity the gateway records: it
+    # records the signed-in user's email, which /api/me reports.
+    expect("the signed-in user has an email", bool(profile.get("email")), str(profile.get("email")))
 
     this_month = datetime.now(UTC).strftime("%Y-%m")
 
@@ -214,7 +217,7 @@ def main() -> int:
     expect("the rule can be reset", status == 200, f"HTTP {status}: {reset}")
     expect(
         "the reset records who did it",
-        reset.get("created_by_email") == credentials[0],
+        reset.get("created_by_email") == profile.get("email"),
         str(reset.get("created_by_email")),
     )
 

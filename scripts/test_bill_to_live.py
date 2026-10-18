@@ -18,7 +18,8 @@ reach, and both are the point of this file:
   token's `groups` claim passes every other check and fails this one.
 
 Needs an OIDC provider with the direct access grant enabled, which
-`deploy/keycloak/setup.sh` configures. Source deploy/.env first, so PUBLIC_HOST
+a Keycloak client sets (the development Keycloak is
+`deploy/dev/keycloak/compose.yml`). Source deploy/.env first, so PUBLIC_HOST
 and the credentials are set:
 
     set -a; . deploy/.env; set +a
@@ -160,7 +161,8 @@ def main() -> int:
         skip(
             "the whole file",
             "no reachable OIDC provider with a direct grant; "
-            "run deploy/keycloak/setup.sh and source deploy/.env",
+            "configure a Keycloak client with the direct grant "
+            "(deploy/dev/keycloak/compose.yml) and source deploy/.env",
         )
         return 0
     ok("obtained an access token", f"{len(token)} chars")

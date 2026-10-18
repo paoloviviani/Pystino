@@ -278,6 +278,12 @@ Traps when running them:
   upstream bills a million tokens per request. The scripts report that as
   skipped. Flushing Valkey alone does not reset it: the counters rebuild from
   `usage_records`, so clear both, or raise the rule temporarily.
+- **Run `gateway seed` before `test_providers_live.py`** (the commands are in
+  its docstring). On a stack with no model catalogued, `default` serves nothing
+  and a delete of it would succeed, so the script skips that check rather than
+  remove the provider. Compare people by `/api/me`'s `email`, not by the login
+  name, and hang per-member rules on a group the signed-in user belongs to:
+  `/v1/pystino/usage` lists only the caller's own rules.
 - **From a git worktree, `deploy/.env` does not exist** (it is gitignored).
   Symlink it, or scripts that shell out to `docker compose --env-file` do
   nothing.

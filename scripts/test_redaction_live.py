@@ -13,9 +13,7 @@ that left the process.
 
 Usage:
     docker compose --env-file deploy/.env \\
-      -f deploy/compose/docker-compose.yml \\
-      -f deploy/compose/docker-compose.smoke.yml \\
-      -f deploy/compose/docker-compose.redaction.yml up -d --build
+      -f deploy/compose.yaml -f deploy/dev/smoke.yml up -d --wait
     python3 scripts/test_redaction_live.py
 """
 
@@ -133,7 +131,7 @@ def main() -> int:
         expect(
             "the fake upstream exposes what it received",
             False,
-            "start the stack with docker-compose.smoke.yml",
+            "start the stack with deploy/dev/smoke.yml and the redaction profile",
         )
     else:
         sent = json.dumps(seen)

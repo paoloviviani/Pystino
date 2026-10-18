@@ -57,7 +57,7 @@ COMPOSE = [
     "--env-file",
     "deploy/.env",
     "-f",
-    "deploy/compose/docker-compose.yml",
+    "deploy/compose.yaml",
 ]
 # Long enough to cross the usual automatic-cache threshold, and identical between
 # the two calls so the second is a hit if the provider caches at all.
