@@ -81,6 +81,84 @@ COMMUNITY_CATALOGUE = {
 }
 
 
+#: Entrim's shape: no prices, limits on the entry (verified 2026-10-18).
+ENTRIM_CATALOGUE = {
+    "data": [
+        {
+            "id": "zai-org/GLM-5.3",
+            "object": "model",
+            "owned_by": "zai-org",
+            "max_input_tokens": 1048576,
+            "max_output_tokens": 65536,
+            "datacenters": [{"country_code": "SI"}],
+        }
+    ]
+}
+
+
+@pytest.fixture
+def entrim_catalogue(app: object) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=ENTRIM_CATALOGUE)
+
+    app.state.control_http = httpx.AsyncClient(  # type: ignore[attr-defined]
+        transport=httpx.MockTransport(handler)
+    )
+
+
+class TestUnpricedCatalogueLimits:
+    async def test_discovery_shows_an_unpriced_models_limits(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        entrim_catalogue: None,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        body = (
+            await client.get("/api/admin/models/discover?provider_id=" + str(seeded.provider.id))
+        ).json()
+        row = body["available"][0]
+        assert row["price_source"] is None
+        assert row["context_window"] == 1048576
+        assert row["max_output_tokens"] == 65536
+        assert row["max_input_tokens"] is None
+
+    async def test_a_manual_price_import_carries_the_limits(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        entrim_catalogue: None,
+        session_factory: async_sessionmaker[AsyncSession],
+        session: AsyncSession,
+    ) -> None:
+        as_user(app, await make_admin(session_factory, seeded))
+        response = await client.post(
+            "/api/admin/models/import?provider_id=" + str(seeded.provider.id),
+            json={
+                "models": [
+                    {
+                        "upstream_model": "zai-org/GLM-5.3",
+                        "manual_price": {"input_per_mtok": "1", "output_per_mtok": "2"},
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["results"][0]["imported"] is True
+        model = (
+            await session.execute(
+                select(ModelDef).where(ModelDef.upstream_model == "zai-org/GLM-5.3")
+            )
+        ).scalar_one()
+        assert model.context_window == 1048576
+        assert model.max_output_tokens == 65536
+        # The operator's own cap is never filled from a catalogue.
+        assert model.max_input_tokens is None
+
+
 @pytest.fixture
 def catalogue(app: object) -> None:
     """Point the control-plane client at a canned provider catalogue."""

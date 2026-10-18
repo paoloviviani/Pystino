@@ -468,6 +468,8 @@ export interface DiscoveredModel {
   per_page: string | null;
   currency: string | null;
   context_window: number | null;
+  /** The reply limit the catalogue states, where it does. */
+  max_output_tokens?: number | null;
   /** What the provider claims, shown before importing so the choice is informed. */
   kind: ModelKind;
   input_modalities: string[];
