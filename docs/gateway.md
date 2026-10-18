@@ -137,6 +137,14 @@ provider has dropped, and the models the provider listed and left unpriced.
 "import everything"; the allowlist stays a human decision — and grants no
 access: a newly imported model is invisible until a group is granted it.
 
+Discovery also reads each entry's limits, priced or not: `context_size`,
+`context_length`, `context_window`, `max_context` or `max_input_tokens` (first
+one present) is the model's context window, and `max_output_tokens` (or
+`max_completion_tokens`) its output limit. An import writes them onto the new
+model's `context_window` and `max_output_tokens`, including a model imported
+with a manual price. A catalogue never fills the operator's own
+`max_input_tokens` cap, which stays empty.
+
 A model the provider lists **unpriced** is refused by the import, and the
 refusal stands: an unpriced model serves happily and records a cost of zero,
 which is a quiet way to give away money. What the import does accept is a price

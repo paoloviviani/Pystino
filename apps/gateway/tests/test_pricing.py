@@ -15,6 +15,7 @@ from gateway.pricing import (
     CataloguePrice,
     fill_missing_prices,
     import_prices,
+    limits_by_id,
     parse_catalogue,
     parse_litellm_catalogue,
     parse_openrouter_catalogue,
@@ -192,6 +193,51 @@ class TestCapabilities:
         assert parse_catalogue([]) == ([], [])
         assert parse_catalogue(None) == ([], [])
         assert parse_catalogue("nonsense") == ([], [])
+
+
+#: Entrim's /v1/models shape (verified 2026-10-18): no prices, the limits under
+#: `max_input_tokens` / `max_output_tokens`.
+ENTRIM_ENTRY = {
+    "id": "zai-org/GLM-5.3",
+    "object": "model",
+    "created": 1760000000,
+    "owned_by": "zai-org",
+    "max_input_tokens": 1048576,
+    "max_output_tokens": 65536,
+    "datacenters": [{"country_code": "SI"}],
+}
+
+
+class TestCatalogueTokenLimits:
+    def test_max_input_tokens_is_the_context_window_and_output_is_kept(self) -> None:
+        entry = {
+            **catalogue_entry("zai-org/GLM-5.3"),
+            "max_input_tokens": 1048576,
+            "max_output_tokens": 65536,
+        }
+        prices, _ = parse_catalogue({"data": [entry]})
+        assert prices[0].context_window == 1048576
+        assert prices[0].max_output_tokens == 65536
+
+    def test_an_existing_context_key_wins_over_max_input_tokens(self) -> None:
+        entry = {**catalogue_entry(), "context_length": 8192, "max_input_tokens": 1048576}
+        prices, _ = parse_catalogue({"data": [entry]})
+        assert prices[0].context_window == 8192
+
+    def test_no_limits_stay_none(self) -> None:
+        prices, _ = parse_catalogue({"data": [catalogue_entry()]})
+        assert prices[0].max_output_tokens is None
+
+    def test_an_unpriced_entry_stays_unparsable_but_its_limits_are_readable(self) -> None:
+        payload = {"data": [ENTRIM_ENTRY]}
+        prices, unparsable = parse_catalogue(payload)
+        assert prices == []
+        assert unparsable == ["zai-org/GLM-5.3"]
+        assert limits_by_id(payload) == {"zai-org/GLM-5.3": (1048576, 65536)}
+
+    def test_junk_limits_are_ignored(self) -> None:
+        payload = {"data": [{"id": "a", "max_input_tokens": "lots", "max_output_tokens": None}]}
+        assert limits_by_id(payload) == {"a": (None, None)}
 
 
 class TestImportPrices:

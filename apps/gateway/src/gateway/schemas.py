@@ -2343,6 +2343,9 @@ class DiscoveredModel(BaseModel):
     per_page: Money | None = None
     currency: str | None
     context_window: int | None
+    #: The model's reply limit as the catalogue states it; imports onto
+    #: `ModelDef.max_output_tokens`. Not the operator's input cap below.
+    max_output_tokens: int | None = None
     max_input_tokens: int | None = None
     # What the provider says it can do, shown before importing so the choice is
     # informed — "does this one do tool calling" is the commonest question at

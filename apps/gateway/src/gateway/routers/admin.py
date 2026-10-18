@@ -162,6 +162,7 @@ from gateway.pricing import (
     CatalogueUnavailable,
     fetch_catalogue,
     kinds_by_id,
+    limits_by_id,
     parse_catalogue,
     parse_litellm_catalogue,
     parse_openrouter_catalogue,
@@ -1154,7 +1155,13 @@ async def _catalogue_with_prices(
     api_key: str | None,
     *,
     fill_missing: bool,
-) -> tuple[dict[str, CataloguePrice], list[str], set[str], dict[str, ModelKind]]:
+) -> tuple[
+    dict[str, CataloguePrice],
+    list[str],
+    set[str],
+    dict[str, ModelKind],
+    dict[str, tuple[int | None, int | None]],
+]:
     """The provider's catalogue, optionally with community prices in the gaps.
 
     Returns ``(prices by upstream id, unpriced ids, ids filled from the
@@ -1197,7 +1204,13 @@ async def _catalogue_with_prices(
     else:
         prices = list(published)
 
-    return {price.model_id: price for price in prices}, unpriced, filled, kinds_by_id(payload)
+    return (
+        {price.model_id: price for price in prices},
+        unpriced,
+        filled,
+        kinds_by_id(payload),
+        limits_by_id(payload),
+    )
 
 
 @router.get("/models/discover", response_model=CatalogueDiscoveryResponse)
@@ -1231,7 +1244,7 @@ async def discover_models(
     provider, catalogue_url, api_key = await _catalogue_source(
         session, secrets, provider_id, url, tag
     )
-    by_upstream, unpriced, filled, kinds = await _catalogue_with_prices(
+    by_upstream, unpriced, filled, kinds, limits = await _catalogue_with_prices(
         http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
     )
 
@@ -1262,7 +1275,10 @@ async def discover_models(
                 output_per_mtok=price.output_per_mtok,
                 per_page=price.per_page,
                 currency=price.currency,
-                context_window=price.context_window,
+                context_window=price.context_window or limits.get(upstream_id, (None, None))[0],
+                max_output_tokens=(
+                    price.max_output_tokens or limits.get(upstream_id, (None, None))[1]
+                ),
                 # Deliberately not carried from the price candidate: the input
                 # cap is the operator's claim about the upstream, and no
                 # catalogue reports one — a discovered model is always imported
@@ -1298,7 +1314,8 @@ async def discover_models(
                 input_per_mtok=None,
                 output_per_mtok=None,
                 currency=None,
-                context_window=None,
+                context_window=limits.get(upstream_id, (None, None))[0],
+                max_output_tokens=limits.get(upstream_id, (None, None))[1],
                 # What the catalogue says it is, even with no price to read:
                 # an unpriced OCR model showed as `chat` because a row built
                 # from an id alone has no kind and the default is chat.
@@ -1356,7 +1373,7 @@ async def discover_models(
         base_catalogue_url = url or f"{provider.base_url}/models"
         joiner = "&" if "?" in base_catalogue_url else "?"
         full_catalogue_url = f"{base_catalogue_url}{joiner}tag={quote(sentinel)}"
-        full_by_upstream, full_unpriced, _, _ = await _catalogue_with_prices(
+        full_by_upstream, full_unpriced, _, _, _ = await _catalogue_with_prices(
             http, provider, full_catalogue_url, api_key, fill_missing=False
         )
         offered = set(full_by_upstream) | (set(full_unpriced) - ANONYMOUS_UNPARSABLE)
@@ -1600,7 +1617,7 @@ async def import_models(
     provider, catalogue_url, api_key = await _catalogue_source(
         session, secrets, provider_id, url, tag
     )
-    by_upstream, unpriced, filled, kinds = await _catalogue_with_prices(
+    by_upstream, unpriced, filled, kinds, limits = await _catalogue_with_prices(
         http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
     )
     # The ids a manual price may name: what the provider listed and nobody
@@ -1740,7 +1757,12 @@ async def import_models(
             name=name,
             upstream_model=item.upstream_model,
             provider_id=provider.id,
-            context_window=price.context_window,
+            # A priced entry's own figures first; a manual-price import has none
+            # on its candidate, so the listing's limits fill them. The operator's
+            # `max_input_tokens` cap is deliberately left null.
+            context_window=price.context_window or limits.get(item.upstream_model, (None, None))[0],
+            max_output_tokens=price.max_output_tokens
+            or limits.get(item.upstream_model, (None, None))[1],
             # From the catalogue, so an imported embedding model lands on the
             # right route without anyone editing it afterwards (ADR 0028).
             kind=price.kind,

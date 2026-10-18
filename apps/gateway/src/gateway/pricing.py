@@ -111,6 +111,8 @@ class CataloguePrice:
     #: parser exists to prevent one order of magnitude up.
     per_page: Decimal | None = None
     context_window: int | None = None
+    #: The most the model can generate in one reply, where the catalogue says.
+    max_output_tokens: int | None = None
     # Chat unless the catalogue says otherwise. Cortecs reports it in
     # `output_modalities`; a catalogue that says nothing gets the safe default,
     # since every model catalogued before this existed was a chat model.
@@ -379,6 +381,59 @@ def fill_missing_prices(
     return prices, still_unpriced, filled
 
 
+#: `context_size` is what the reference provider actually sends, and its absence
+#: from this list is why every imported model once had a null context window.
+#: `max_input_tokens` (Entrim and LiteLLM's spelling) comes last so any of the
+#: others wins when an entry carries both.
+_CONTEXT_KEYS = (
+    "context_size",
+    "context_length",
+    "context_window",
+    "max_context",
+    "max_input_tokens",
+)
+_OUTPUT_LIMIT_KEYS = ("max_output_tokens", "max_completion_tokens")
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        number = int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    return number if number is not None and number > 0 else None
+
+
+def _limits_of(entry: dict[str, Any]) -> tuple[int | None, int | None]:
+    """``(context window, output limit)`` an entry declares, each None if absent.
+
+    A catalogue's ``max_input_tokens`` is the model's *context* size. It is not
+    the operator's input cap on ``ModelDef.max_input_tokens``, which no
+    catalogue fills.
+    """
+    return (
+        _positive_int(_first(entry, _CONTEXT_KEYS)),
+        _positive_int(_first(entry, _OUTPUT_LIMIT_KEYS)),
+    )
+
+
+def limits_by_id(payload: Any) -> dict[str, tuple[int | None, int | None]]:
+    """Each entry's ``(context window, output limit)``, priced or not.
+
+    `parse_catalogue` reports an unpriced entry as a bare id, so its limits
+    would be lost before anyone read them (Entrim lists limits and no prices).
+    Like `kinds_by_id`, this reads them without requiring a price.
+    """
+    limits: dict[str, tuple[int | None, int | None]] = {}
+    for entry in _catalogue_entries(payload):
+        if not isinstance(entry, dict):
+            continue
+        raw_id = _first(entry, _ID_KEYS)
+        if raw_id is None:
+            continue
+        limits[str(raw_id)] = _limits_of(entry)
+    return limits
+
+
 def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
     """Extract prices from a catalogue response.
 
@@ -433,15 +488,7 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
 
         kind = _kind_of(entry)
 
-        # `context_size` is what the reference provider actually sends, and its
-        # absence from this list is why every imported model had a null context
-        # window until now. The other spellings stay for catalogues that use
-        # them.
-        context = _first(entry, ("context_size", "context_length", "context_window", "max_context"))
-        try:
-            context_window = int(context) if context is not None else None
-        except (TypeError, ValueError):
-            context_window = None
+        context_window, max_output_tokens = _limits_of(entry)
 
         prices.append(
             CataloguePrice(
@@ -456,6 +503,7 @@ def parse_catalogue(payload: Any) -> tuple[list[CataloguePrice], list[str]]:
                 cache_read_per_mtok=_as_decimal(_first(source, _CACHE_READ_KEYS)),
                 cache_write_per_mtok=_as_decimal(_first(source, _CACHE_WRITE_KEYS)),
                 context_window=context_window,
+                max_output_tokens=max_output_tokens,
                 kind=kind,
             )
         )
