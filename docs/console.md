@@ -30,6 +30,7 @@ the **Exact figures** toggle.
 | add a provider, its credentials and what it reports | **Providers** | [Providers and plugins](gateway.md#providers-and-plugins) |
 | change what models are on offer, who may use them and what they cost, and name a model as your clients should show it | **Models** | [Three cost figures](accounting-and-quotas.md#three-cost-figures-one-meaning-each), [A model's name and its display name](gateway.md#a-models-name-and-its-display-name) |
 | choose the search backends and see how many searches each group spent | **Web search** | [Surfaces](gateway.md#surfaces) |
+| offer a model under a name of your own, and change what that name serves without any client changing | **Routing** | [Model aliases](model-aliases.md) |
 | add, disable, reset or merge a person | **Users** | [Bundled accounts](bundled-accounts.md), [Identity](identity.md) |
 | see at a glance who may use only the chat | **Users** (the **Chat only** badge) | [Chat-only people](identity.md#chat-only-people) |
 | decide who belongs together, what a group may use, and who holds coding agents or API keys | **Groups** (the two **Capabilities** toggles) | [Groups](identity.md#groups), [Chat-only people](identity.md#chat-only-people) |

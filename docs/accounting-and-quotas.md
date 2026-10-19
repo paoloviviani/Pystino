@@ -36,6 +36,14 @@ hung up before the terminal frame — tokens are counted locally and stamped
 zero tokens, zero cost, but counted, because "this deployment refused 400
 prompts last month" is a number a data-protection review asks for).
 
+**Requested by way of an alias.** `model_id` and `model_name` are always the
+model that served the request, even when the caller sent a [model alias](model-aliases.md);
+`requested_model` keeps the name they sent, and is null for an ordinary request.
+Billing follows the target — prices, quotas and reports read the served model —
+and the alias is kept beside it so a report can say "via alias" and a retarget
+cannot rewrite the row. It is a copy of a string, not a foreign key, so an
+alias that is deleted or retargeted leaves the ledger readable.
+
 ## Running without a ledger
 
 A deployment that wants routing, keys, model access control and redaction — and
