@@ -30,6 +30,8 @@
   "admin.sections.providers.description": "Where requests go, the credentials to get there, and what each reports.",
   "admin.sections.models.title": "Models",
   "admin.sections.models.description": "What is on offer, who may use it, and what it costs per token.",
+  "admin.sections.routing.title": "Routing",
+  "admin.sections.routing.description": "The aliases callers send, the model each resolves to, and who may use them.",
   "admin.sections.users.title": "Users",
   "admin.sections.users.description": "People, their accounts, and the keys they hold.",
   "admin.sections.groups.title": "Groups",
