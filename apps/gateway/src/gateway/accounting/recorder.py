@@ -129,6 +129,11 @@ class RequestContext:
     group_id: uuid.UUID | None = None
     api_key_id: uuid.UUID | None = None
     model_id: uuid.UUID | None = None
+    #: The alias the caller named, when they named one (ADR 0101). `model_name`
+    #: is always the model that served the request, because billing follows the
+    #: target; this is the name they typed, kept so a report can say "via fast"
+    #: and so the row still reads correctly after the alias is retargeted.
+    requested_model: str | None = None
     # Locally counted prompt size, used for the pre-call reservation and as the
     # fallback when the upstream never reports usage.
     estimated_prompt_tokens: int = 0
@@ -250,6 +255,7 @@ class RequestAccounting:
             api_key_id=self._ctx.api_key_id,
             model_id=self._ctx.model_id,
             model_name=self._ctx.model_name,
+            requested_model=self._ctx.requested_model,
             streamed=self._ctx.streamed,
             api_surface=self._ctx.surface,
             currency=self._ctx.currency,

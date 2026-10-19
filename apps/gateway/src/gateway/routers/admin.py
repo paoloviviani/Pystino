@@ -125,6 +125,7 @@ from gateway.models import (
     ModelDef,
     ModelKind,
     ModelPrice,
+    ModelRouteTarget,
     OIDCPolicyConfig,
     PriceSource,
     Provider,
@@ -190,6 +191,7 @@ from gateway.reporting import (
     resolve_period,
 )
 from gateway.schemas import (
+    AliasPointer,
     BundledUserCreatedResponse,
     CatalogueDiscoveryResponse,
     CatalogueDriftRow,
@@ -333,7 +335,15 @@ class NotFoundError(GatewayError):
     code = "not_found"
 
 
-async def _unpriced_counts(session: SessionDep) -> dict[uuid.UUID, int]:
+async def _unpriced_counts(session: SessionDep) -> dict[uuid.UUID | None, int]:
+    """Active, unpriced, non-internal models per provider.
+
+    Keyed `uuid.UUID | None` because that is what ``models.provider_id`` now
+    declares. A None cannot actually appear: the query filters aliases out, and
+    `ck_models_alias_or_served` requires a provider on every row that is not
+    one. Annotating the real type rather than silencing it means a future change
+    to that column surfaces here instead of being absorbed.
+    """
     """Active models with no price row, per provider.
 
     An unpriced model bills zero and, more importantly, *reserves* zero — so a
@@ -357,11 +367,21 @@ async def _unpriced_counts(session: SessionDep) -> dict[uuid.UUID, int]:
         .outerjoin(ModelPrice, ModelPrice.model_id == ModelDef.id)
         .where(
             ModelDef.is_active.is_(True),
+            # Served models only (ADR 0101). The inner join above already drops
+            # aliases, since they have no provider; naming it makes that a
+            # decision rather than a coincidence, and keeps it true if that join
+            # is ever made outer.
+            ModelDef.is_alias.is_(False),
             ModelPrice.id.is_(None),
             Provider.kind != ProviderKind.INTERNAL,
         )
         .group_by(ModelDef.provider_id)
     )
+    # Keyed `uuid.UUID | None` because that is the column's declared type, and
+    # neither query below can produce a None: both filter `is_alias` out, and
+    # `ck_models_alias_or_served` requires a provider on every row that is not
+    # an alias. Written out rather than silenced, so the narrowing survives the
+    # column becoming nullable again.
     return _pairs((await session.execute(stmt)).all())
 
 
@@ -401,8 +421,23 @@ def _price_response(price: ModelPrice | None) -> PriceResponse | None:
 
 
 def _model_response(
-    model: ModelDef, granted_to: list[str], granted_to_users: list[str] | None = None
+    model: ModelDef,
+    granted_to: list[str],
+    granted_to_users: list[str] | None = None,
+    aliases_pointing_here: list[AliasPointer] | None = None,
 ) -> ModelAdminResponse:
+    """A served model, for the admin list and the detail page.
+
+    Only ever a served model (ADR 0101). Aliases are not in this surface at
+    all — they have their own routes under `/api/admin/aliases` — so the two
+    asserts below are not defensive noise: `_load_model` and `list_models` both
+    exclude them, and these lines exist to make that a fact the type checker
+    enforces rather than a comment somebody can delete.
+    """
+    assert model.provider is not None, "guaranteed by ck_models_alias_or_served"
+    assert model.provider_id is not None and model.upstream_model is not None, (
+        "guaranteed by ck_models_alias_or_served"
+    )
     return ModelAdminResponse(
         id=model.id,
         name=model.name,
@@ -432,6 +467,7 @@ def _model_response(
         current_price=_price_response(select_price(list(model.prices))),
         granted_to=granted_to,
         granted_to_users=granted_to_users or [],
+        aliases_pointing_here=aliases_pointing_here or [],
     )
 
 
@@ -471,7 +507,31 @@ async def _user_grants_by_model(
     return grants
 
 
-async def _load_model(session: SessionDep, model_id: uuid.UUID) -> ModelDef:
+async def _load_model(
+    session: SessionDep, model_id: uuid.UUID, *, grantable: bool = False
+) -> ModelDef:
+    """A **served** model by id, for an endpoint that only means served models.
+
+    An alias id is refused here rather than half-worked (ADR 0101). Every
+    caller of this function reads `model.provider`, `model.upstream_model` or
+    the provider's kind, and an alias has none of them: a PATCH that got
+    through would set a provider on an alias row and trip the check constraint
+    as an unhandled `IntegrityError`, and a price edit would write a rate onto a
+    row that never reaches a provider.
+
+    400 and not 404, with a code, because this is not "no such model" — the row
+    is right there, under a different name for the same thing, and an
+    administrator who passed an alias id can be told where to edit it.
+
+    ``grantable`` lifts the refusal for the two **grant** endpoints, which are
+    the exception the whole design stands on: an alias row uses
+    `group_model_access`, `user_model_access` and `is_public` exactly as a model
+    does (ADR 0101, decision 1), and granting an alias is the point of having
+    one. Refusing the alias id there would leave an alias that only `is_public`
+    could ever reach. What a grant endpoint does with the row is nothing — it
+    reads the id, writes an access row, and touches no served-model column — so
+    the reason for the refusal does not apply. Everything else keeps it.
+    """
     model = (
         await session.execute(
             select(ModelDef)
@@ -481,6 +541,13 @@ async def _load_model(session: SessionDep, model_id: uuid.UUID) -> ModelDef:
     ).scalar_one_or_none()
     if model is None:
         raise NotFoundError(f"No model with id {model_id}.")
+    if model.is_alias and not grantable:
+        raise BadRequestError(
+            f"{model.name!r} is a model alias, not a served model. Edit it under "
+            "Routing (/api/admin/aliases), which is where its target and "
+            "availability live.",
+            code="model_is_alias",
+        )
     return model
 
 
@@ -522,7 +589,7 @@ def _provider_response(provider: Provider, model_count: int, unpriced: int = 0) 
     )
 
 
-async def _model_counts(session: SessionDep) -> dict[uuid.UUID, int]:
+async def _model_counts(session: SessionDep) -> dict[uuid.UUID | None, int]:
     """How many models each provider serves.
 
     Shown beside every provider because it is the blast radius of deactivating
@@ -531,7 +598,14 @@ async def _model_counts(session: SessionDep) -> dict[uuid.UUID, int]:
     """
     rows = (
         await session.execute(
-            select(ModelDef.provider_id, func.count(ModelDef.id)).group_by(ModelDef.provider_id)
+            select(ModelDef.provider_id, func.count(ModelDef.id))
+            # Served models only (ADR 0101). Without this an alias lands under a
+            # `None` key — which is then looked up as "models behind this
+            # provider" and never matches, so the delete guard silently stops
+            # counting aliases. Correct today by accident; this makes it
+            # correct on purpose.
+            .where(ModelDef.is_alias.is_(False))
+            .group_by(ModelDef.provider_id)
         )
     ).all()
     return _pairs(rows)
@@ -943,10 +1017,16 @@ async def list_models(
     substring match, deliberately: an operator looking for a model half-knows
     its name, and a prefix match on a catalogue full of
     ``meta-llama/Llama-3.3-70B-Instruct`` finds nothing.
+
+    **Aliases are not here** (ADR 0101, decision 8): they have no provider, no
+    upstream model and no price, so every column this screen renders would be
+    either empty or wrong, and an operator editing "the model" needs the row
+    that actually reaches a provider. They have their own tab.
     """
     stmt = (
         select(ModelDef)
         .options(selectinload(ModelDef.prices), selectinload(ModelDef.provider))
+        .where(ModelDef.is_alias.is_(False))
         .order_by(ModelDef.name)
     )
     if not include_inactive:
@@ -1030,7 +1110,20 @@ async def update_model(
         model.kind = ModelKind(kind)
     for field, value in fields.items():
         setattr(model, field, value)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # The two ways this can fail now that `models` holds aliases as well as
+        # served models: a rename onto a name that already exists (a model *or*
+        # an alias — one name namespace), and a `provider_id`/`upstream_model`
+        # pair that violates `ck_models_alias_or_served`. Handled as create
+        # already handles them, because an unhandled `IntegrityError` here is a
+        # 500 and a constraint the operator can satisfy is not a crash.
+        await session.rollback()
+        raise ConflictError(
+            "That change would leave the model without a provider and an upstream "
+            "model, or would take a name that already exists."
+        ) from exc
     await session.refresh(model, attribute_names=["prices", "provider"])
     grants = await _grants_by_model(session, [model.id])
     user_grants = await _user_grants_by_model(session, [model.id])
@@ -1072,6 +1165,26 @@ async def delete_model(model_id: uuid.UUID, admin: AdminUserDep, session: Sessio
         raise ConflictError(
             f"Groups {names} search through this backend. Point their search "
             "policies elsewhere, or clear them, before deleting it.",
+        )
+    # Aliases are **not** a reason to refuse: the delete is what an operator
+    # wants, and the cascade on `model_route_targets.target_model_id` leaves
+    # each alias standing with its grants and no target, which is the
+    # "unavailable, target_deleted" state an administrator can then fix or
+    # delete. Blocking here would make "this model is no longer served, remove
+    # it" un-doable until every alias was retargeted by hand first, which is
+    # the wrong order.
+    #
+    # What the operator sees before clicking is `aliases_pointing_here` on this
+    # model's detail response, which the console's confirmation dialog already
+    # reads — so the consequence is named without a second endpoint. Logged here
+    # as well, because after the cascade the mapping only exists in this line.
+    orphaned = await _aliases_pointing_at(session, model_id)
+    if orphaned:
+        logger.info(
+            "deleting model %r leaves %d alias(es) without a target: %s",
+            model.name,
+            len(orphaned),
+            ", ".join(sorted(alias.name for alias in orphaned)),
         )
     # Explicit child deletes rather than ORM cascade: the same outcome either
     # way, but these name what goes, and the usage rows are conspicuously not
@@ -1635,8 +1748,13 @@ async def import_models(
     listed_unpriced = set(unpriced) - ANONYMOUS_UNPARSABLE
 
     existing = (await session.execute(select(ModelDef))).scalars().all()
+    # Names clash with aliases too — one name namespace across both (ADR 0101),
+    # so importing a model over a live alias would break every caller using it.
     taken_names = {model.name for model in existing}
-    taken_upstream = {model.upstream_model for model in existing}
+    # Upstream ids do not: an alias has none, and collecting the nulls here
+    # would put a `None` key in a set that is tested against strings. Filtered
+    # rather than filtered-by-handling-None, so the set means one thing.
+    taken_upstream = {model.upstream_model for model in existing if not model.is_alias}
 
     results: list[ModelImportResult] = []
     for item in payload.models:
@@ -1848,8 +1966,35 @@ async def get_model(
     grants = await _grants_by_model(session, [model.id])
     user_grants = await _user_grants_by_model(session, [model.id])
     return _model_response(
-        model, sorted(grants.get(model.id, [])), sorted(user_grants.get(model.id, []))
+        model,
+        sorted(grants.get(model.id, [])),
+        sorted(user_grants.get(model.id, [])),
+        # One extra query on the detail page only (ADR 0101, decision 8). The
+        # listing deliberately does not: it would be one per row on a page.
+        aliases_pointing_here=await _aliases_pointing_at(session, model.id),
     )
+
+
+async def _aliases_pointing_at(session: SessionDep, model_id: uuid.UUID) -> list[AliasPointer]:
+    """The aliases that resolve to this model, by name.
+
+    Reverse direction over `model_route_targets`, which is what
+    `ix_model_route_targets_target` is for. The rows that *point here* are not
+    cascaded away by this model's deletion — that is the other half of the same
+    fact: the route rows go, the aliases stay behind and read as unavailable.
+    """
+    rows = (
+        await session.execute(
+            select(ModelDef.id, ModelDef.name, ModelDef.is_active)
+            .join(ModelRouteTarget, ModelRouteTarget.alias_id == ModelDef.id)
+            .where(ModelRouteTarget.target_model_id == model_id)
+            .order_by(ModelDef.name)
+        )
+    ).all()
+    return [
+        AliasPointer(id=alias_id, name=name, is_active=is_active)
+        for alias_id, name, is_active in rows
+    ]
 
 
 # -- prices -----------------------------------------------------------------
@@ -1988,6 +2133,7 @@ def _group_admin_response(
     member_count: int,
     models: list[str],
     search_backend: str | None,
+    aliases: list[str] | None = None,
 ) -> GroupAdminResponse:
     """One constructor for every GroupAdminResponse, so the capability flags
     (ADR 0096) cannot drift between the list and the write answers again —
@@ -2005,6 +2151,11 @@ def _group_admin_response(
         api_keys_allowed=group.api_keys_allowed,
         member_count=member_count,
         models=models,
+        # Which of `models` is an alias, so the Groups page can badge them
+        # (ADR 0101). Optional here and defaulting empty rather than required,
+        # so a caller that does not have the set simply shows no badges — which
+        # is the right answer for a response assembled before it was read.
+        aliases=aliases or [],
         search_backend=search_backend,
     )
 
@@ -2369,21 +2520,20 @@ async def update_group(
     member_count = await session.scalar(
         select(func.count()).select_from(Membership).where(Membership.group_id == group.id)
     )
-    models = [
-        name
-        for (name,) in (
-            await session.execute(
-                select(ModelDef.name)
-                .join(GroupModelAccess, GroupModelAccess.model_id == ModelDef.id)
-                .where(GroupModelAccess.group_id == group.id)
-                .order_by(ModelDef.name)
-            )
-        ).all()
-    ]
+    rows = (
+        await session.execute(
+            select(ModelDef.name, ModelDef.is_alias)
+            .join(GroupModelAccess, GroupModelAccess.model_id == ModelDef.id)
+            .where(GroupModelAccess.group_id == group.id)
+            .order_by(ModelDef.name)
+        )
+    ).all()
+    models = [name for (name, _) in rows]
     return _group_admin_response(
         group,
         member_count=member_count or 0,
         models=models,
+        aliases=[name for (name, is_alias) in rows if is_alias],
         search_backend=(
             await session.scalar(select(ModelDef.name).where(ModelDef.id == group.search_model_id))
             if group.search_model_id is not None
@@ -2586,7 +2736,7 @@ async def grant_model_access(
     group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
     if group is None:
         raise NotFoundError(f"No group with id {group_id}.")
-    await _load_model(session, model_id)
+    await _load_model(session, model_id, grantable=True)
 
     existing = (
         await session.execute(
@@ -2690,7 +2840,7 @@ async def grant_user_model_access(
     user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if user is None:
         raise NotFoundError(f"No user with id {user_id}.")
-    await _load_model(session, model_id)
+    await _load_model(session, model_id, grantable=True)
 
     existing = (
         await session.execute(

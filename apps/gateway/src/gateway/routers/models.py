@@ -28,13 +28,21 @@ step the exemption does not cover.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from sqlalchemy import or_
+from typing import Any
 
-from gateway.access import accessible_model_by_name, accessible_models, all_active_models
+from fastapi import APIRouter
+from sqlalchemy import Select, or_
+from sqlalchemy.orm import aliased
+
+from gateway.access import (
+    accessible_model_by_name,
+    accessible_models,
+    alias_unavailable_reason,
+    all_active_models,
+)
 from gateway.deps import OptionalPrincipalDep, PrincipalDep, SessionDep
 from gateway.errors import BadRequestError
-from gateway.models import ModelDef, ModelKind, Provider, ProviderKind
+from gateway.models import ModelDef, ModelKind, ModelRouteTarget, Provider, ProviderKind
 from gateway.schemas import ModelCard, ModelList
 
 #: The `?include=` vocabulary. Search is the odd one out — its tiers answer
@@ -101,27 +109,118 @@ async def list_models(
     visible = Provider.kind != _NOT_CALLER_FACING
     if explicit_ocr:
         visible = or_(visible, ModelDef.kind == ModelKind.OCR)
-    stmt = base.where(ModelDef.kind.in_(kinds), visible).order_by(ModelDef.name)
-    models = (await session.execute(stmt)).scalars().all()
+    # An alias has no provider, so `Provider.kind != _NOT_CALLER_FACING` reads
+    # NULL for it and the comparison is not true — every alias would vanish
+    # from the listing while its target was right there. Internal-ness is the
+    # *target's* property (see `_card`), and this listing already hides internal
+    # models by default, so the arm here is only about not dropping the row
+    # before `_card` gets to decide.
+    visible = or_(visible, ModelDef.is_alias.is_(True))
 
-    return ModelList(
-        data=[
-            ModelCard(
-                id=model.name,
-                created=int(model.created_at.timestamp()),
-                owned_by=model.provider.name,
-                context_window=model.context_window,
-                max_output_tokens=model.max_output_tokens,
-                max_input_tokens=model.max_input_tokens,
-                display_name=model.display_name,
-                kind=model.kind.value,
-                input_modalities=list(model.input_modalities or []),
-                output_modalities=list(model.output_modalities or []),
-                supported_features=list(model.supported_features or []),
-                local=model.provider.kind == _NOT_CALLER_FACING,
-            )
-            for model in models
-        ]
+    stmt = _with_alias_target(base.where(ModelDef.kind.in_(kinds), visible)).order_by(
+        ModelDef.name, ModelRouteTarget.position
+    )
+    rows = (await session.execute(stmt)).all()
+
+    cards = []
+    for model, target, target_provider in rows:
+        card = _card(model, target, target_provider)
+        if card is not None:
+            cards.append(card)
+
+    return ModelList(data=cards)
+
+
+#: The `models` row an alias points at, and its provider, as two more things to
+#: select from the **same** statement.
+_Target = aliased(ModelDef)
+_TargetProvider = aliased(Provider)
+
+
+def _with_alias_target(statement: Select[Any]) -> Select[Any]:
+    """Attach an alias's target and the target's provider to ``statement``.
+
+    Two left joins and two extra selected columns, rather than a
+    `selectinload`. The reason is `test_query_counts.py`: `/v1/models` is pinned
+    at four selects, and `selectinload` on a collection issues its round trip
+    whether or not any row needs it — a deployment with no aliases at all would
+    pay for the feature. Joining keeps the count at four with any number of
+    aliases, and one alias's target is one row rather than a query, so the cost
+    does not grow with the size of the catalogue either.
+
+    Left joins throughout, so a served model — which has no route target — comes
+    back with two nulls rather than being filtered away, and an alias whose
+    target was deleted (the cascade removed the route row) comes back as one too
+    rather than vanishing before `_card` can say why.
+    """
+    return (
+        statement.outerjoin(ModelRouteTarget, ModelRouteTarget.alias_id == ModelDef.id)
+        .outerjoin(_Target, _Target.id == ModelRouteTarget.target_model_id)
+        .outerjoin(_TargetProvider, _TargetProvider.id == _Target.provider_id)
+        .add_columns(_Target, _TargetProvider)
+    )
+
+
+def _card(
+    model: ModelDef, target: ModelDef | None, target_provider: Provider | None
+) -> ModelCard | None:
+    """The card for one catalogue row, or None if it must not be listed.
+
+    An alias's card is **assembled from two rows and names only one of them**
+    (ADR 0101, decision 6): the name, `display_name` and `description` are the
+    alias's own — they are what an administrator wrote for this name and what a
+    caller must see — while every capability is the target's, because the target
+    is what will actually run the request and a card that under-promises is a
+    request that 400s. The target's own name, id and provider are absent from the
+    card entirely: retargeting has to be invisible, and the target may be a
+    model this caller cannot see.
+
+    ``owned_by`` is the only field where the two would have collided, and it is
+    the reason it reads "gateway" rather than the target's provider name. The
+    one thing the target's provider is allowed to decide is ``local``: it is a
+    boolean about where bytes go, not an identity, and answering ``false`` for an
+    alias onto this deployment's own extractor would tell a client to send a
+    document off-box that never had to leave.
+    """
+    if not model.is_alias:
+        return ModelCard(
+            id=model.name,
+            created=int(model.created_at.timestamp()),
+            owned_by=model.provider.name if model.provider is not None else "gateway",
+            context_window=model.context_window,
+            max_output_tokens=model.max_output_tokens,
+            max_input_tokens=model.max_input_tokens,
+            display_name=model.display_name,
+            description=model.description,
+            kind=model.kind.value,
+            input_modalities=list(model.input_modalities or []),
+            output_modalities=list(model.output_modalities or []),
+            supported_features=list(model.supported_features or []),
+            local=model.provider.kind == _NOT_CALLER_FACING
+            if model.provider is not None
+            else False,
+        )
+
+    # Unavailable aliases are left out (ADR 0101, decision 5) — a card is a
+    # promise that the name works, and `retrieve_model` 404s for the same rows.
+    if target is None or alias_unavailable_reason(model, target) is not None:
+        return None
+
+    return ModelCard(
+        id=model.name,
+        created=int(model.created_at.timestamp()),
+        # Never the target's provider name: see the docstring.
+        owned_by="gateway",
+        context_window=target.context_window,
+        max_output_tokens=target.max_output_tokens,
+        max_input_tokens=target.max_input_tokens,
+        display_name=model.display_name,
+        description=model.description,
+        kind=target.kind.value,
+        input_modalities=list(target.input_modalities or []),
+        output_modalities=list(target.output_modalities or []),
+        supported_features=list(target.supported_features or []),
+        local=target_provider.kind == _NOT_CALLER_FACING if target_provider is not None else False,
     )
 
 
@@ -134,21 +233,20 @@ async def retrieve_model(
     stmt = accessible_model_by_name(
         model_name, user_id=principal.user.id, group_ids=principal.user.group_ids()
     )
-    model = (await session.execute(stmt)).scalars().first()
-    if model is None:
+    row = (await session.execute(_with_alias_target(stmt))).first()
+    if row is None:
         raise ModelNotFoundError(
             f"The model {model_name!r} does not exist or you do not have access to it."
         )
-    return ModelCard(
-        id=model.name,
-        created=int(model.created_at.timestamp()),
-        owned_by=model.provider.name,
-        context_window=model.context_window,
-        max_output_tokens=model.max_output_tokens,
-        max_input_tokens=model.max_input_tokens,
-        display_name=model.display_name,
-        kind=model.kind.value,
-        input_modalities=list(model.input_modalities or []),
-        output_modalities=list(model.output_modalities or []),
-        supported_features=list(model.supported_features or []),
-    )
+    model, target, target_provider = row
+    # One row can be missing from the listing for two reasons that are the same
+    # answer to a caller: the name is not theirs, or the alias behind it has
+    # nothing to serve. Both are a 404 here — this route has always answered
+    # "not available to you" for an inaccessible model, and an alias whose
+    # target is deleted is not available.
+    card = _card(model, target, target_provider)
+    if card is None:
+        raise ModelNotFoundError(
+            f"The model {model_name!r} does not exist or you do not have access to it."
+        )
+    return card

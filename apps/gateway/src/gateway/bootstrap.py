@@ -37,6 +37,7 @@ from __future__ import annotations
 import logging
 import uuid
 
+import sqlalchemy as sa
 from sqlalchemy import Connection, insert, select, update
 
 from gateway.models import BillingMode, ModelDef, ModelKind, Provider, ProviderKind
@@ -52,6 +53,34 @@ logger = logging.getLogger(__name__)
 #: creates. `test_extractor_bootstrap` pins the seed against the catalogue, so
 #: the two cannot drift apart silently.
 MODEL_NAME = "markitdown"
+
+#: The `models` columns this seed writes, named explicitly rather than through
+#: ``insert(ModelDef)``.
+#:
+#: A Core insert against a mapped class renders **every** column the class
+#: declares, whether or not `.values()` mentions one. That made the seed break
+#: as soon as 0063 added `is_alias`: revision 0041 runs before that column
+#: exists, so a fresh install — the only case where this seed ever writes —
+#: failed with "table models has no column named is_alias". A migration that
+#: names its own columns is what the rest of this file already relies on (see
+#: `migrations/env.py`'s note that a migration should describe SQL, not import
+#: the app); this is that same rule applied to the one migration helper that is
+#: shared with the running application.
+_model_seed = sa.table(
+    "models",
+    sa.column("id", sa.Uuid()),
+    sa.column("name", sa.String()),
+    sa.column("upstream_model", sa.String()),
+    sa.column("provider_id", sa.Uuid()),
+    sa.column("kind", sa.String()),
+    sa.column("is_active", sa.Boolean()),
+    sa.column("is_public", sa.Boolean()),
+    sa.column("input_modalities", sa.JSON()),
+    sa.column("output_modalities", sa.JSON()),
+    sa.column("supported_features", sa.JSON()),
+    sa.column("created_at", sa.DateTime(timezone=True)),
+    sa.column("updated_at", sa.DateTime(timezone=True)),
+)
 
 
 def normalize_extractor_kind(connection: Connection) -> None:
@@ -150,12 +179,12 @@ def seed_extractor(connection: Connection) -> None:
         )
     )
     connection.execute(
-        insert(ModelDef).values(
+        _model_seed.insert().values(
             id=uuid.uuid4(),
             name=MODEL_NAME,
             upstream_model=MODEL_NAME,
             provider_id=provider_id,
-            kind=ModelKind.OCR,
+            kind=ModelKind.OCR.value,
             is_active=True,
             # Public access (ADR 0045) is what "serves by default" means on the
             # access plane: any authenticated caller may read a document

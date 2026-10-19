@@ -1010,23 +1010,70 @@ class Provider(Base):
 
 
 class ModelDef(Base):
-    """A model the gateway is willing to expose, and how to reach it upstream."""
+    """A model the gateway is willing to expose, and how to reach it upstream.
+
+    **Or a model alias** (ADR 0101): a name an administrator defines, which
+    resolves to another row in this same table through ``model_route_targets``
+    rather than to a provider. One table on purpose — aliases and served models
+    share one name namespace, one access mechanism and one catalogue — which
+    means this class now describes two shapes and every reader of ``provider``
+    or ``upstream_model`` has to cope with a null. ``ck_models_alias_or_served``
+    is what keeps the two shapes honest at the storage layer, and the audit in
+    the ADR's implementation notes is what keeps the readers honest.
+    """
 
     __tablename__ = "models"
+    __table_args__ = (
+        # Either a served model or an alias, never a half of each (ADR 0101).
+        #
+        # Without this a reader that forgets the `is_alias` branch silently
+        # reads NULL, and an operator who edits an alias row by hand can leave
+        # one that is both an alias and points at a provider. Written so that
+        # every row satisfies exactly one arm: `is_alias` is NOT NULL with a
+        # server default, so "unknown" is not available as a third state.
+        CheckConstraint(
+            "(is_alias AND provider_id IS NULL AND upstream_model IS NULL) OR "
+            "(NOT is_alias AND provider_id IS NOT NULL AND upstream_model IS NOT NULL)",
+            name="ck_models_alias_or_served",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    # What clients send as "model". Stable and ours to choose.
+    # What clients send as "model". Stable and ours to choose. Unique across
+    # served models **and** aliases alike: they share one name namespace, and a
+    # caller cannot tell the two apart. That is this one column, not two
+    # unique indexes that would have to be kept in step.
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     # What we send upstream. Lets us rename or repoint without breaking clients.
-    upstream_model: Mapped[str] = mapped_column(String(255))
+    # Null for an alias only — the alias has no upstream of its own; its
+    # target's is the one that gets sent.
+    upstream_model: Mapped[str | None] = mapped_column(String(255), default=None)
 
-    # Which endpoint serves it. NOT NULL and RESTRICT on delete: a model must
-    # resolve to exactly one provider, and a provider cannot be removed while
-    # anything still points at it — cascading would leave historical spend
-    # attributed to a model nobody can explain.
-    provider_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("providers.id", ondelete="RESTRICT"), index=True
+    # Which endpoint serves it. RESTRICT on delete: a model must resolve to
+    # exactly one provider, and a provider cannot be removed while anything
+    # still points at it — cascading would leave historical spend attributed to
+    # a model nobody can explain.
+    #
+    # Null for an alias. Note the index: `ix_models_provider_id` stays correct
+    # with nulls in it, because a plain b-tree index simply does not list them
+    # and no uniqueness rides on this column (ADR 0101's implementation notes
+    # asked whether any partial or unique index over `provider_id` /
+    # `upstream_model` exists; as of 0063 there is none, so there is no
+    # "Postgres treats nulls as distinct" behaviour to reason about — but if a
+    # unique index is ever added over one of these, an alias must not be able
+    # to collide with another alias through it).
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("providers.id", ondelete="RESTRICT"), index=True, default=None
     )
+
+    # An alias is a name that resolves to a target model, not a served model.
+    #
+    # The flag rather than "provider_id IS NULL" as the test, so that a query
+    # can say what it means (`ModelDef.is_alias.is_(False)`) instead of
+    # reasoning about a null, and so that the check constraint above has
+    # something to name. Everything that only ever means a served model filters
+    # this explicitly; see the ADR's audit.
+    is_alias: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
     kind: Mapped[ModelKind] = mapped_column(
         _enum(ModelKind, "model_kind"), default=ModelKind.CHAT, server_default="chat"
@@ -1087,10 +1134,98 @@ class ModelDef(Base):
     user_access: Mapped[list[UserModelAccess]] = relationship(
         back_populates="model", cascade="all, delete-orphan"
     )
-    provider: Mapped[Provider] = relationship(back_populates="models", lazy="joined")
+    # Many-to-one, so `lazy="joined"` is a LEFT OUTER JOIN and an alias (no
+    # provider) still loads — as None, not as a missing row. It is the explicit
+    # `.join(Provider, ...)` in `access.all_active_models` that had to become
+    # an outer join; this relationship was never the problem.
+    provider: Mapped[Provider | None] = relationship(back_populates="models", lazy="joined")
+
+    #: An alias's route targets, in order (ADR 0101). A served model has none.
+    #:
+    #: `foreign_keys` is not optional here: `model_route_targets` points at
+    #: `models` **twice**, so SQLAlchemy cannot guess which of the two columns
+    #: this relationship walks, and mapping it without the argument fails at
+    #: import time rather than at first use.
+    route_targets: Mapped[list[ModelRouteTarget]] = relationship(
+        back_populates="alias",
+        cascade="all, delete-orphan",
+        order_by="ModelRouteTarget.position",
+        foreign_keys="ModelRouteTarget.alias_id",
+        # Never loaded implicitly: resolution loads exactly one of these on a
+        # path that pins its query count, and the catalogue loads them for a
+        # whole page of aliases. An implicit lazy load on a metered request is
+        # the MissingGreenlet this codebase keeps tripping over. `raise` rather
+        # than the default, so a caller that forgot to load it is told at the
+        # attribute access instead of issuing a query on the request path.
+        lazy="raise",
+    )
+
+    @property
+    def target(self) -> ModelDef | None:
+        """The model this alias serves, or None if it has none.
+
+        **The single target**, which is what this step supports (ADR 0101):
+        `model_route_targets` is a list because routing will make it one, but
+        the save path writes exactly one row and a request reads the first.
+        Returning None when there are none is not a corner case — it is the
+        "target was deleted" half of unavailability, and the cascade on the
+        target's foreign key is what leaves it in that state.
+        """
+        return self.route_targets[0].target_model if self.route_targets else None
 
     def __repr__(self) -> str:
-        return f"<ModelDef {self.name}>"
+        return f"<ModelDef {'alias ' if self.is_alias else ''}{self.name}>"
+
+
+class ModelRouteTarget(Base):
+    """One row of an alias's route: which model serves it (ADR 0101).
+
+    A child table rather than a column on the alias, so that routing later adds
+    rows and a selection rule instead of rewriting the schema.
+
+    **Exactly one row per alias today.** The table is not what enforces that —
+    a unique index on ``(alias_id, position)`` cannot, because a second target
+    at position 1 satisfies it. The save path in `routers/aliases.py` is the
+    enforcement, and `ModelDef.target` is the reader that assumes the shape.
+    Keeping the table honest for one step is deliberate: the multi-target
+    version needs the same table, and a column would have to be migrated away.
+
+    **Both foreign keys cascade.** The one on the alias is obvious. The one on
+    the target is the mechanism behind "deleting a target makes its aliases
+    unavailable" (ADR 0101, decision 5): the row disappears, the alias row stays
+    where it was with its grants intact, and the alias reads as unavailable
+    rather than vanishing from an administrator's list without explanation.
+    """
+
+    __tablename__ = "model_route_targets"
+    __table_args__ = (
+        UniqueConstraint("alias_id", "position", name="uq_model_route_targets_alias_position"),
+        # "which aliases point at this model", asked by the model detail page
+        # (`aliases_pointing_here`) and by the delete confirmation that has to
+        # name them. The unique index above leads with alias_id and cannot serve
+        # this direction.
+        Index("ix_model_route_targets_target", "target_model_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    alias_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("models.id", ondelete="CASCADE"))
+    target_model_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("models.id", ondelete="CASCADE"))
+    # Order of preference, for the routing step that makes this a list. Today
+    # there is one row, so this is always 0 — but it is NOT NULL so that the
+    # multi-target migration is a data change and not a schema rewrite.
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+
+    alias: Mapped[ModelDef] = relationship(back_populates="route_targets", foreign_keys=[alias_id])
+    # The served model. Also a foreign key to `models`, and never loaded on
+    # demand: resolution needs it on every alias request and the catalogue needs
+    # it for a page of aliases, so both eager-load it, and a third caller that
+    # forgets should be told rather than silently costing a round trip.
+    target_model: Mapped[ModelDef] = relationship(foreign_keys=[target_model_id], lazy="raise")
+
+    def __repr__(self) -> str:
+        return f"<ModelRouteTarget {self.alias_id} -> {self.target_model_id}>"
 
 
 class ModelPrice(Base):
@@ -1228,6 +1363,18 @@ class UsageRecord(Base):
     )
     # Denormalised so the ledger stays readable after a model is retired.
     model_name: Mapped[str] = mapped_column(String(255))
+
+    # The alias the caller asked for, when they asked for one (ADR 0101).
+    #
+    # Null for an ordinary request, so it costs nothing to read and nothing to
+    # leave null. It exists because `model_name` above is now always the
+    # **target**: billing follows the target, so a retarget must not rewrite
+    # history, and a report that could not tell "this group used `fast`" from
+    # "this group used the model behind `fast`" could not answer the question an
+    # operator asks about an alias. A copy of a string, never a foreign key —
+    # the ledger keeps its meaning when the alias is deleted or retargeted,
+    # exactly as `model_name` does when the model is retired.
+    requested_model: Mapped[str | None] = mapped_column(String(255), default=None)
 
     streamed: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -1836,6 +1983,16 @@ class IdentityEventAction(enum.StrEnum):
     # `detail.reason` is the mode that refused. Plain VARCHAR(32) column, so
     # no migration.
     ACCESS_REFUSED = "access.refused"
+    # ADR 0101: an alias was created, changed (including a retarget) or
+    # deleted. Model CRUD itself is not audited, so these are the first rows of
+    # their kind here; the ADR asks for them explicitly, and a retarget is the
+    # one model-affecting change whose consequences are invisible by design —
+    # every client sees the same name and a different model answers, which is
+    # exactly the change nobody would otherwise be able to reconstruct.
+    # Plain VARCHAR(32) column, so no migration.
+    ALIAS_CREATE = "alias.create"
+    ALIAS_UPDATE = "alias.update"
+    ALIAS_DELETE = "alias.delete"
 
 
 #: Raised by both dialects' triggers, so a caller sees the same reason whether

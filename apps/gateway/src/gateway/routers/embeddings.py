@@ -73,8 +73,13 @@ async def create_embeddings(
         raise BadRequestError("'input' must contain at least one non-empty string.")
 
     request_id = _metered.request_id_for(request, settings)
-    model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
-    upstream = await _metered.resolve_upstream(providers, model)
+    resolved = await _metered.resolve_model(
+        session, body.model, principal=principal, surface=SURFACE
+    )
+    # The target, when the name sent was an alias (ADR 0101); everything below
+    # follows what serves the request.
+    model = resolved.model
+    upstream = await _metered.resolve_upstream(providers, resolved)
 
     # -- redaction ----------------------------------------------------------
     # Reuses the message-shaped interface so one engine covers both routes: each
@@ -104,7 +109,7 @@ async def create_embeddings(
         settings=settings,
         quota=quota,
         estimator=estimator,
-        model=model,
+        resolved=resolved,
         surface=SURFACE,
         request_id=request_id,
         worst_case=TokenCounts(prompt=prompt_tokens, completion=0),
@@ -115,7 +120,7 @@ async def create_embeddings(
         return metered
 
     payload: dict[str, Any] = body.model_dump(exclude_unset=True)
-    payload["model"] = model.upstream_model
+    payload["model"] = resolved.upstream_model
     # Single string in, single string out: a provider may index its response by
     # position, and turning one string into a one-element list would change the
     # shape the caller gets back.
@@ -143,7 +148,7 @@ async def create_embeddings(
     # clients compare the echoed name with what they sent. The original is in the
     # ledger.
     if body_out.get("model") is not None:
-        body_out["model"] = model.name
+        body_out["model"] = resolved.requested_name
     # Finalised after the answer is sent, not before it (ADR 0060).
     return JSONResponse(
         status_code=response.status_code,

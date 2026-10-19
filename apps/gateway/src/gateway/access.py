@@ -16,17 +16,52 @@ into a question requiring a search.
 A model whose *provider* is inactive is also excluded. Deactivating a provider
 is how an operator takes an endpoint out of service, and leaving its models
 listed would advertise something every request then fails on.
+
+**An alias is in or out on its own account** (ADR 0101). It has no provider of
+its own, so the provider rule above cannot apply to it; what an alias inherits
+is its ``is_active`` flag and its grants, and what it does *not* inherit is its
+target's access. The caller must be able to use a model behind ``fast`` without
+being able to use that model directly, or the alias buys nothing. The one
+exception is the target's usability, which is a **request-time** refusal
+(``503 alias_unavailable``) rather than a visibility rule: see :func:`alias_target`.
 """
 
 from __future__ import annotations
 
+import enum
 import uuid
 from collections.abc import Iterable
 
-from sqlalchemy import ColumnElement, Select, literal, or_, select
+from sqlalchemy import ColumnElement, Select, and_, literal, or_, select
 from sqlalchemy.orm import joinedload, selectinload
 
-from gateway.models import GroupModelAccess, ModelDef, Provider, UserModelAccess
+from gateway.models import (
+    GroupModelAccess,
+    ModelDef,
+    ModelRouteTarget,
+    Provider,
+    UserModelAccess,
+)
+
+
+class AliasUnavailable(enum.StrEnum):
+    """Why an alias cannot serve a request (ADR 0101, decision 5).
+
+    The values are the console's and the admin API's wire form, so they are
+    stable identifiers rather than a message. ``TARGET_DELETED`` covers a target
+    that was deleted *and* one that was never there — the cascade removes the
+    route row either way, and the two are the same state to an operator, who
+    cannot act differently on either.
+    """
+
+    TARGET_DELETED = "target_deleted"
+    TARGET_INACTIVE = "target_inactive"
+    TARGET_PROVIDER_INACTIVE = "target_provider_inactive"
+    #: Not one of ADR 0101's three, because it is not reachable through the
+    #: console: the save path refuses to write it. It exists so that a chain
+    #: forced into the table directly is classified like the other three rather
+    #: than falling through as "available".
+    TARGET_IS_ALIAS = "target_is_alias"
 
 
 def all_active_models() -> Select[tuple[ModelDef]]:
@@ -39,10 +74,33 @@ def all_active_models() -> Select[tuple[ModelDef]]:
     of :func:`accessible_models` rather than duplicated, per this module's own
     rule about one predicate written in one place.
     """
+    # An **outer** join, and the alias arm beside the served arm — the two go
+    # together, because either alone drops every alias (ADR 0101).
+    #
+    # The inner join this replaced eliminated alias rows from the result
+    # outright: `providers.id = models.provider_id` is NULL for an alias, NULL
+    # is not true, and the row never arrives. A caller granted an alias would
+    # get a 404 for a name their console says they can use, and `/v1/models`
+    # would simply not list it. Nothing raises — the predicate is the one place
+    # that decides who may use what, so a join that quietly narrows it is the
+    # worst kind of bug to have here.
+    #
+    # With the join made outer, `providers.is_active` still has to be waived for
+    # an alias: it reads NULL there, and `NULL AND NOT is_alias` is not true.
+    # An alias's provider is its *target's* provider, and that is checked where
+    # the target is dereferenced — refusing the request, not hiding the name,
+    # because an administrator has to be able to see an alias whose target is
+    # down in order to retarget it.
     return (
         select(ModelDef)
-        .join(Provider, Provider.id == ModelDef.provider_id)
-        .where(ModelDef.is_active.is_(True), Provider.is_active.is_(True))
+        .outerjoin(Provider, Provider.id == ModelDef.provider_id)
+        .where(
+            ModelDef.is_active.is_(True),
+            or_(
+                ModelDef.is_alias.is_(True),
+                and_(ModelDef.is_alias.is_(False), Provider.is_active.is_(True)),
+            ),
+        )
     )
 
 
@@ -113,6 +171,13 @@ def accessible_model_by_name(
     Eager-loads prices and the provider: the chat path needs both immediately,
     and touching an unloaded relationship from async code raises MissingGreenlet
     rather than quietly emitting a query.
+
+    Deliberately does **not** load an alias's route targets. `selectinload` on
+    the collection issues its round trip whether or not any row needs it, so
+    loading here would cost every direct request a query it does not use — and
+    `test_query_counts.py` pins that number. An alias pays for its own
+    dereference through :func:`alias_target`, once, and only when the name it
+    sent turned out to be one.
     """
     return (
         accessible_models(user_id=user_id, group_ids=group_ids)
@@ -121,4 +186,68 @@ def accessible_model_by_name(
         # prices are to-many and stay a separate IN query. One round trip saved
         # on every metered request.
         .options(selectinload(ModelDef.prices), joinedload(ModelDef.provider))
+    )
+
+
+def alias_unavailable_reason(alias: ModelDef, target: ModelDef | None) -> AliasUnavailable | None:
+    """Why this alias cannot serve a request right now, or ``None`` if it can.
+
+    **The one place this is decided** (ADR 0101, decision 5). Three surfaces ask
+    it and must agree, because disagreeing is how an operator ends up chasing a
+    console that says "Available" while every request 503s: the request path
+    turns the answer into the ``503``, ``/v1/models`` drops the card, and the
+    admin list shows the reason.
+
+    Written as one function over an *already loaded* target rather than a query,
+    so a caller can batch-load targets for a whole page of aliases and classify
+    them without a round trip each.
+    """
+    if target is None:
+        return AliasUnavailable.TARGET_DELETED
+    if target.is_alias:
+        return AliasUnavailable.TARGET_IS_ALIAS
+    if not target.is_active:
+        return AliasUnavailable.TARGET_INACTIVE
+    if target.provider is None or not target.provider.is_active:
+        return AliasUnavailable.TARGET_PROVIDER_INACTIVE
+    return None
+
+
+def alias_target(alias: ModelDef) -> Select[tuple[ModelDef]]:
+    """The model serving ``alias`` — **no access filter at all** (ADR 0101).
+
+    This is the one query in the access module that deliberately does not ask
+    whether the caller may use what it returns. The caller's access was already
+    decided, against the name they sent, and an alias *is* the grant: requiring
+    access to the target as well would remove the only thing an alias is for,
+    which is offering a model under terms different from the model's own.
+
+    Also unfiltered on `is_active` and on the provider being active. Those
+    become the 503 in ``routers/_metered.py``: an alias whose target is down
+    must fail the request with a reason, not 404 as though the name did not
+    exist, because the caller *does* have it and an administrator has to be able
+    to see why it is failing.
+
+    Ordered and limited to one row rather than assuming the save path's
+    invariant: a second target is a routing-policy state this step does not
+    have, and the shape of the answer should not depend on a rule only another
+    module is keeping.
+    """
+    return (
+        select(ModelDef)
+        .join(
+            ModelRouteTarget,
+            ModelRouteTarget.target_model_id == ModelDef.id,
+        )
+        .where(ModelRouteTarget.alias_id == alias.id)
+        .order_by(ModelRouteTarget.position)
+        .limit(1)
+        # Both joins, not a selectinload, because this is the **one extra query**
+        # the alias path is allowed on a metered request and it has to carry the
+        # target's provider and prices with it. A `selectinload` of the prices
+        # would be a second one — `test_query_counts.py` pins this statement at
+        # a single round trip for exactly that reason. The `limit` is handled by
+        # SQLAlchemy wrapping the primary select in a subquery, so joining a
+        # to-many does not truncate it.
+        .options(joinedload(ModelDef.prices), joinedload(ModelDef.provider))
     )

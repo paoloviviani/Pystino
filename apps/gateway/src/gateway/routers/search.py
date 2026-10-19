@@ -105,6 +105,7 @@ from gateway.models import ApiSurface, ModelDef, ModelKind
 from gateway.plugins import registry as plugin_registry
 from gateway.plugins.search import SearchPlugin
 from gateway.routers import _metered
+from gateway.routers._metered import ResolvedModel
 from gateway.schemas import SearchRequest, SearchResponse
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ SURFACE = ApiSurface.SEARCH
 
 async def _policy_backend(
     backend_id: uuid.UUID, principal: PrincipalDep, session: SessionDep
-) -> tuple[ModelDef, SearchPlugin]:
+) -> tuple[ResolvedModel, SearchPlugin]:
     """The billing group's policy backend, as its plugin and its grant anchor.
 
     The grant check runs against the policy's anchor row through the same
@@ -138,6 +139,12 @@ async def _policy_backend(
     model = (await session.execute(stmt)).scalars().first()
     if model is None:
         raise NotFoundError("No search backend is available to your billing group.")
+    # A policy may name an alias, in which case the kind that matters is the
+    # target's — checked after dereferencing, below, for the same reason the
+    # request path checks the target's kind.
+    resolved = ResolvedModel(model=model, requested_name=model.name)
+    resolved = await _metered.dereference(session, resolved)
+    model = resolved.model
     if model.kind != ModelKind.SEARCH:
         raise BadRequestError(
             f"{model.name!r} is a {model.kind.value} model, not a search backend. "
@@ -157,7 +164,7 @@ async def _policy_backend(
             "which is not a search backend.",
             code="not_a_search_backend",
         )
-    return model, plugin
+    return resolved, plugin
 
 
 @router.post("/search", response_model=None)
@@ -182,7 +189,7 @@ async def unified_search(
         # unknown name is a 404 and is *not* retried against the policy — a
         # silent fallback would spend on a backend nobody asked for and hide a
         # stale setting from whoever has to fix it.
-        model, plugin = await _backend(payload.backend, principal, session)
+        resolved, plugin = await _backend(payload.backend, principal, session)
     else:
         # No name: the policy names the backend. None means the group cannot
         # use this route at all — a 404 with a message an administrator can act
@@ -193,8 +200,12 @@ async def unified_search(
                 "No search provider is configured for your billing group.",
                 code="no_search_provider",
             )
-        model, plugin = await _policy_backend(backend_id, principal, session)
-    upstream = await _metered.resolve_upstream(providers, model)
+        resolved, plugin = await _policy_backend(backend_id, principal, session)
+    # The target, when the name came from an alias (ADR 0101). A policy may name
+    # an alias just as a caller may send one.
+    resolved = await _metered.dereference(session, resolved)
+    model = resolved.model
+    upstream = await _metered.resolve_upstream(providers, resolved)
 
     # -- redaction ----------------------------------------------------------
     # The one field the route reads is the one field it screens, under the
@@ -227,7 +238,7 @@ async def unified_search(
         settings=settings,
         quota=quota,
         estimator=estimator,
-        model=model,
+        resolved=resolved,
         surface=SURFACE,
         request_id=request_id,
         worst_case=TokenCounts(),
@@ -359,7 +370,7 @@ async def unified_search(
 
 async def _backend(
     backend_name: str, principal: PrincipalDep, session: SessionDep
-) -> tuple[ModelDef, SearchPlugin]:
+) -> tuple[ResolvedModel, SearchPlugin]:
     """The backend to search with, as its plugin and its grant anchor.
 
     The anchor is the one model row a backend owns — named after it — and it
@@ -369,11 +380,16 @@ async def _backend(
     which backends exist is not the caller's business.
     """
     try:
-        model = await _metered.resolve_model(
+        resolved = await _metered.resolve_model(
             session, backend_name, principal=principal, surface=SURFACE
         )
     except NotFoundError as exc:
         raise NotFoundError(f"No such search backend: {backend_name}") from exc
+    # The target, when the name sent was an alias (ADR 0101). A search backend is
+    # a model like any other, so an alias onto one resolves here too — and the
+    # plugin that follows is the *target's* provider's, which is what makes the
+    # call work.
+    model = resolved.model
     provider = model.provider
     name = provider.plugin if provider is not None else None
     try:
@@ -387,7 +403,7 @@ async def _backend(
             "which is not a search backend.",
             code="not_a_search_backend",
         )
-    return model, plugin
+    return resolved, plugin
 
 
 @router.post("/search/{backend_name:path}", response_model=None)
@@ -402,7 +418,8 @@ async def search(
     estimator: EstimatorDep,
     secrets: SecretsDep,
 ) -> JSONResponse:
-    model, plugin = await _backend(backend_name, principal, session)
+    resolved, plugin = await _backend(backend_name, principal, session)
+    model = resolved.model
     if callable(getattr(plugin, "build_search_form", None)):
         # No verbatim JSON exists for a form/HTML backend: its answer is a
         # page, and the passthrough's promise is the vendor's answer as JSON.
@@ -414,7 +431,7 @@ async def search(
             "through your billing group's search policy.",
             code="form_backend_has_no_passthrough",
         )
-    upstream = await _metered.resolve_upstream(providers, model)
+    upstream = await _metered.resolve_upstream(providers, resolved)
 
     body = await request.body()
     if not body:
@@ -435,7 +452,7 @@ async def search(
         settings=settings,
         quota=quota,
         estimator=estimator,
-        model=model,
+        resolved=resolved,
         surface=SURFACE,
         request_id=_metered.request_id_for(request, settings),
         worst_case=TokenCounts(),

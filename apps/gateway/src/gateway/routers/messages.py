@@ -76,8 +76,13 @@ async def create_message(
         raise BadRequestError("'messages' must contain at least one message.")
 
     request_id = _metered.request_id_for(request, settings)
-    model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
-    upstream = await _metered.resolve_upstream(providers, model)
+    resolved = await _metered.resolve_model(
+        session, body.model, principal=principal, surface=SURFACE
+    )
+    # The target, when the name sent was an alias (ADR 0101); everything below
+    # follows what serves the request.
+    model = resolved.model
+    upstream = await _metered.resolve_upstream(providers, resolved)
 
     outcome = await _metered.redact_or_block(
         request,
@@ -115,7 +120,7 @@ async def create_message(
         settings=settings,
         quota=quota,
         estimator=estimator,
-        model=model,
+        resolved=resolved,
         surface=SURFACE,
         request_id=request_id,
         worst_case=worst_case,
@@ -125,7 +130,7 @@ async def create_message(
     if isinstance(metered, JSONResponse):
         return metered
 
-    payload = body.upstream_payload(outcome, upstream_model=model.upstream_model)
+    payload = body.upstream_payload(outcome, upstream_model=resolved.upstream_model)
     search.apply(payload)
     payload = metered.shape_payload(payload, surface=SURFACE)
 
@@ -158,7 +163,7 @@ async def create_message(
     metered.accounting.observe_payload(out, headers=response.headers)
 
     if out.get("model") is not None:
-        out["model"] = model.name
+        out["model"] = resolved.requested_name
     for block in out.get("content") or []:
         if isinstance(block, dict) and isinstance(block.get("text"), str):
             # `.text` alone: this surface's citations carry their own copy of

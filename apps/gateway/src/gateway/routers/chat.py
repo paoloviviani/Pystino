@@ -179,8 +179,15 @@ async def chat_completions(
     # model swap, all gateway-side. They moved to the chat (ADR 0067): a
     # client's own construction, assembled before this call, and the wire name
     # arriving here is always a plain model.
-    model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
-    upstream = await _metered.resolve_upstream(providers, model)
+    resolved = await _metered.resolve_model(
+        session, body.model, principal=principal, surface=SURFACE
+    )
+    # The **target**, when the name sent was an alias (ADR 0101). Everything
+    # below — the upstream call, the price, the quota, the ledger — follows what
+    # serves the request; `resolved.requested_name` is the only thing that
+    # remembers what the caller typed.
+    model = resolved.model
+    upstream = await _metered.resolve_upstream(providers, resolved)
 
     # -- redaction (step 2) -------------------------------------------------
     outcome = await _metered.redact_or_block(
@@ -221,7 +228,7 @@ async def chat_completions(
         settings=settings,
         quota=quota,
         estimator=estimator,
-        model=model,
+        resolved=resolved,
         surface=SURFACE,
         request_id=request_id,
         worst_case=worst_case,
@@ -231,7 +238,7 @@ async def chat_completions(
     if isinstance(metered, JSONResponse):
         return metered
 
-    payload = build_upstream_payload(body, outcome=outcome, upstream_model=model.upstream_model)
+    payload = build_upstream_payload(body, outcome=outcome, upstream_model=resolved.upstream_model)
     search.apply(payload)
     payload = metered.shape_payload(payload, surface=SURFACE)
 
@@ -240,6 +247,7 @@ async def chat_completions(
             request=request,
             payload=payload,
             model=model,
+            client_facing_name=resolved.requested_name,
             body=body,
             outcome=outcome,
             redactor=redactor,
@@ -251,6 +259,7 @@ async def chat_completions(
     return await _buffered_response(
         payload=payload,
         model=model,
+        client_facing_name=resolved.requested_name,
         outcome=outcome,
         redactor=redactor,
         upstream=upstream,
@@ -263,13 +272,21 @@ async def _buffered_response(
     *,
     payload: dict[str, Any],
     model: ModelDef,
+    client_facing_name: str,
     outcome: RedactionOutcome,
     redactor: Redactor,
     upstream: OpenAICompatibleUpstream,
     metered: _metered.Metered,
     request_id: str,
 ) -> JSONResponse:
-    """Non-streaming completion."""
+    """Non-streaming completion.
+
+    ``model`` is what serves the request and ``client_facing_name`` is what the
+    caller asked for, which differ when the name was an alias (ADR 0101). The
+    response echoes the name they sent: echoing the target's would name a model
+    they may not be allowed to see, which is the one thing an alias card is
+    forbidden to do and a response body should not undo.
+    """
     try:
         response = await upstream.chat_completion(payload, request_id=request_id)
     except UpstreamError as exc:
@@ -286,8 +303,9 @@ async def _buffered_response(
     body_payload = response.payload or {}
     metered.accounting.observe_payload(body_payload, headers=response.headers)
 
-    # Report our model name, and restore any placeholders we introduced.
-    body_payload["model"] = model.name
+    # Report the name the caller sent, and restore any placeholders we
+    # introduced.
+    body_payload["model"] = client_facing_name
     # One restoration per choice, kept by choice index: each choice is different
     # text, so the *positions* the substitutions edited differ even though the
     # placeholder map is one per request.
@@ -328,6 +346,7 @@ async def _stream_response(
     request: Request,
     payload: dict[str, Any],
     model: ModelDef,
+    client_facing_name: str,
     body: ChatCompletionRequest,
     outcome: RedactionOutcome,
     redactor: Redactor,
@@ -341,6 +360,9 @@ async def _stream_response(
     upstream error can still become a real HTTP status. Once a StreamingResponse
     has been handed back, the status line is already committed and the only way to
     report a failure is an error frame inside the stream.
+
+    ``client_facing_name`` as in ``_buffered_response``: the name echoed in
+    every frame is the one the caller sent, not the model's (ADR 0101).
     """
     stack = AsyncExitStack()
     try:
@@ -380,7 +402,7 @@ async def _stream_response(
                 # Observe first: accounting must see usage frames that the client
                 # will not be shown.
                 tap(metered.accounting.observe_event),
-                rename_model_stage(model.name),
+                rename_model_stage(client_facing_name),
                 redactor.response_stage(outcome),
                 usage_visibility_stage(body.client_wants_usage()),
             )

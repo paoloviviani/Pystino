@@ -51,6 +51,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
     supported_features: [],
     granted_to: ["research"],
     granted_to_users: [],
+    aliases_pointing_here: [],
     ...overrides,
   };
 }

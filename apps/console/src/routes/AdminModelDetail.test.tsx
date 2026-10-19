@@ -61,6 +61,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
     supported_features: [],
     granted_to: ["research"],
     granted_to_users: [],
+    aliases_pointing_here: [],
     ...overrides,
   };
 }
@@ -472,5 +473,62 @@ describe("AdminModelDetail", () => {
     await ready();
 
     expect(await screen.findByText("acme is deactivated")).toBeInTheDocument();
+  });
+
+  it("names the aliases pointing here and links to Routing", async () => {
+    // The reason this section exists (ADR 0101, decision 8): deleting or
+    // deactivating this model is what breaks those names, and an
+    // administrator should not have to know aliases exist to be told one is
+    // about to stop working.
+    vi.stubGlobal(
+      "fetch",
+      routes(
+        model({
+          aliases_pointing_here: [
+            { id: "a1", name: "fast", is_active: true },
+            { id: "a2", name: "quick", is_active: false },
+          ],
+        }),
+        [],
+        { bodies: [], prices: [] },
+      ),
+    );
+    renderScreen();
+    await ready();
+
+    expect(screen.getByText("Aliases pointing here")).toBeInTheDocument();
+    expect(screen.getByText("fast")).toBeInTheDocument();
+    expect(screen.getByText("quick")).toBeInTheDocument();
+  });
+
+  it("shows no aliases section when nothing points here", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes(model({ aliases_pointing_here: [] }), [], { bodies: [], prices: [] }),
+    );
+    renderScreen();
+    await ready();
+    expect(screen.queryByText("Aliases pointing here")).toBeNull();
+  });
+
+  it("the delete confirmation names the aliases that will lose their target", async () => {
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal(
+      "fetch",
+      routes(
+        model({ aliases_pointing_here: [{ id: "a1", name: "fast", is_active: true }] }),
+        [],
+        { bodies: [], prices: [] },
+      ),
+    );
+    renderScreen();
+    await ready();
+
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("dialog");
+    // Both the count and the name, because "some aliases will break" is not
+    // something anybody can act on.
+    expect(within(dialog).getByText(/1 alias points here/)).toBeInTheDocument();
+    expect(within(dialog).getByText("fast")).toBeInTheDocument();
   });
 });

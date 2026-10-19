@@ -178,7 +178,12 @@ async def extract_document(
         )
 
     request_id = _metered.request_id_for(request, settings)
-    model = await _metered.resolve_model(session, body.model, principal=principal, surface=SURFACE)
+    resolved = await _metered.resolve_model(
+        session, body.model, principal=principal, surface=SURFACE
+    )
+    # The target, when the name sent was an alias (ADR 0101); everything below
+    # follows what serves the request.
+    model = resolved.model
 
     # Which backend reads this document: our own extractor, or the model's
     # provider. Decided by `providers.plugin`, which is already the answer to
@@ -200,7 +205,7 @@ async def extract_document(
             code="document_url_not_supported",
         )
 
-    upstream = None if local else await _metered.resolve_upstream(providers, model)
+    upstream = None if local else await _metered.resolve_upstream(providers, resolved)
 
     # -- reservation --------------------------------------------------------
     # What can be proven before the call: the caller's own page selection —
@@ -218,7 +223,7 @@ async def extract_document(
         settings=settings,
         quota=quota,
         estimator=estimator,
-        model=model,
+        resolved=resolved,
         surface=SURFACE,
         request_id=request_id,
         worst_case=TokenCounts(pages=reserved_pages),
@@ -266,7 +271,7 @@ async def extract_document(
             # cost nothing and had no counterparty to invoice it.
             extracted = extraction.as_ocr_response(
                 outcome,
-                model_name=model.upstream_model,
+                model_name=resolved.upstream_model,
                 want_page_images=body.page_images is not None,
             )
         except extraction.DocumentRefused as exc:
@@ -291,7 +296,7 @@ async def extract_document(
         ) is not None:
             return blocked
         # Our name for the caller, the extractor's own in the ledger.
-        extracted["model"] = model.name
+        extracted["model"] = resolved.requested_name
         return JSONResponse(
             status_code=200,
             content=extracted,
@@ -299,7 +304,7 @@ async def extract_document(
         )
 
     assert upstream is not None  # `local` is false, so this was resolved above
-    payload = body.upstream_payload(upstream_model=model.upstream_model)
+    payload = body.upstream_payload(upstream_model=resolved.upstream_model)
     payload = metered.shape_payload(payload, surface=SURFACE)
 
     try:
@@ -336,7 +341,7 @@ async def extract_document(
     # clients compare the echoed name against what they sent. The upstream's own
     # name is in the ledger.
     if body_out.get("model") is not None:
-        body_out["model"] = model.name
+        body_out["model"] = resolved.requested_name
     return JSONResponse(
         status_code=response.status_code,
         content=body_out,

@@ -291,3 +291,135 @@ class TestTheMeteredPath:
         print(f"  aggregate+per-member: {member[0]} selects, {member[1]} writes")
         assert member == aggregate, f"per-member rules cost extra queries: {aggregate} -> {member}"
         assert member[1] <= 2
+
+
+class TestTheAliasPath:
+    """An alias costs one round trip more than the model it points at (ADR 0101).
+
+    The existing pins in this file are unchanged by that: a direct request still
+    costs five selects, because `accessible_model_by_name` deliberately does
+    **not** eager-load an alias's route targets. `selectinload` on that collection
+    would issue its round trip whether or not the row needed one, so a
+    deployment with no aliases at all would pay for the feature on every request
+    forever. Dereferencing only when the row turned out to be an alias is what
+    keeps the ordinary path where it was.
+    """
+
+    async def _alias(
+        self, session_factory: async_sessionmaker[AsyncSession], seeded: Seeded
+    ) -> str:
+        """An alias on the seeded model, granted to the seeded group."""
+        from gateway.models import GroupModelAccess, ModelDef, ModelRouteTarget
+
+        async with session_factory() as session:
+            alias = ModelDef(
+                name="fast",
+                provider_id=None,
+                upstream_model=None,
+                is_alias=True,
+                kind=seeded.model.kind,
+                display_name="Fast",
+                is_active=True,
+                is_public=True,
+            )
+            session.add(alias)
+            await session.flush()
+            session.add(
+                ModelRouteTarget(alias_id=alias.id, target_model_id=seeded.model.id, position=0)
+            )
+            session.add(GroupModelAccess(group_id=seeded.group.id, model_id=alias.id))
+            await session.commit()
+            return alias.name
+
+    async def test_a_direct_model_costs_no_more_than_it_did(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        app: object,
+        fake_upstream: FakeUpstream,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The pin that matters: an alias existing changes nothing for a caller
+        who is not using one.
+
+        Without this, a regression that made every request load route targets
+        would still satisfy the alias pin below and only ever show up as latency.
+        """
+        await self._alias(session_factory, seeded)
+        engine = app.state.engine  # type: ignore[attr-defined]
+        fake_upstream.set_json(
+            {
+                "id": "c1",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+            }
+        )
+        await client.post(
+            "/v1/chat/completions",
+            json={"model": seeded.model.name, "messages": [{"role": "user", "content": "hi"}]},
+            headers=seeded.auth,
+        )
+
+        with counted(engine) as statements:
+            response = await client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": seeded.model.name,
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+                headers=seeded.auth,
+            )
+        assert response.status_code == 200
+        selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+        print(f"\n  direct model, with an alias present: {len(selects)} selects")
+        print(summarise(selects))
+        assert len(selects) <= 5, f"{len(selects)} selects:\n{summarise(selects)}"
+
+    async def test_the_alias_path_costs_exactly_one_more_select(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        app: object,
+        fake_upstream: FakeUpstream,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Six: the five above, plus the one that reads the target.
+
+        The reason it is one and not three — `alias_target` loads the target
+        joined to its provider, and `selectinload`s its prices — is that the
+        request path needs all three immediately. There is no cache to make a
+        second request cheaper, because a retarget has to take effect on the
+        next request (ADR 0101).
+        """
+        alias = await self._alias(session_factory, seeded)
+        engine = app.state.engine  # type: ignore[attr-defined]
+        fake_upstream.set_json(
+            {
+                "id": "c1",
+                "object": "chat.completion",
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+            }
+        )
+        await client.post(
+            "/v1/chat/completions",
+            json={"model": alias, "messages": [{"role": "user", "content": "hi"}]},
+            headers=seeded.auth,
+        )
+
+        with counted(engine) as statements:
+            response = await client.post(
+                "/v1/chat/completions",
+                json={"model": alias, "messages": [{"role": "user", "content": "hi"}]},
+                headers=seeded.auth,
+            )
+        assert response.status_code == 200
+        selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+        writes = [
+            s for s in statements if s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+        ]
+        print(f"\n  alias path: {len(selects)} selects, {len(writes)} writes")
+        print(summarise(selects))
+        assert len(writes) <= 2, f"{len(writes)} writes:\n{summarise(writes)}"
+        assert len(selects) <= 6, f"{len(selects)} selects:\n{summarise(selects)}"

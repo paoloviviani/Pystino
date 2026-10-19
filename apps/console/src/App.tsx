@@ -6,6 +6,7 @@ import { NotAuthenticatedError } from "./lib/api";
 import { useMe } from "./lib/queries";
 import { AdminModelDetail } from "./routes/AdminModelDetail";
 import { AdminModels } from "./routes/AdminModels";
+import { AdminRouting } from "./routes/AdminRouting";
 import { AdminProviders } from "./routes/AdminProviders";
 import { AdminSearch } from "./routes/AdminSearch";
 import { AdminQuotas } from "./routes/AdminQuotas";
@@ -85,6 +86,14 @@ export function App() {
           element={
             <RequireAdmin me={me_}>
               <AdminModelDetail />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/routing"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminRouting />
             </RequireAdmin>
           }
         />

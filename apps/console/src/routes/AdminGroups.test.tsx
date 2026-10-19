@@ -35,13 +35,15 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual") {
     if (url.includes("/api/admin/groups/seen/") && method === "POST") {
       if (url.endsWith("/import"))
         return jsonResponse({
-          group: { id: "g9", name: "gitlab/eng", description: null, source: "oidc", is_active: true, member_count: 12, models: [], search_backend: null },
+          group: { id: "g9", name: "gitlab/eng", description: null, source: "oidc", is_active: true, member_count: 12, models: [],
+            aliases: [], search_backend: null },
           members_added: 12,
           applied: "now",
         });
       if (url.endsWith("/map"))
         return jsonResponse({
-          group: { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, member_count: 3, models: [], search_backend: null },
+          group: { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, member_count: 3, models: [],
+            aliases: [], search_backend: null },
           members_added: 2,
           applied: "now",
         });
@@ -89,13 +91,15 @@ function routes(items: SeenGroup[], mode: "manual" | "auto" = "manual") {
         api_keys_allowed: payload.api_keys_allowed ?? true,
         member_count: 1,
         models: [],
+            aliases: [],
         search_backend: null,
       });
     }
     if (url.includes("/api/admin/groups"))
       return jsonResponse({
         items: [
-          { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, code_agents_allowed: false, api_keys_allowed: true, member_count: 1, models: [], search_backend: null },
+          { id: "g2", name: "engineering", description: null, source: "manual", is_active: true, code_agents_allowed: false, api_keys_allowed: true, member_count: 1, models: [],
+            aliases: [], search_backend: null },
         ],
         total: 1,
         limit: 50,
