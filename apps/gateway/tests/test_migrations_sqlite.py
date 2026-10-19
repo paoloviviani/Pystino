@@ -245,13 +245,17 @@ def test_0063_model_aliases_keeps_existing_models_intact(tmp_path: Path) -> None
             for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
         }
         columns = {row[1] for row in connection.execute("PRAGMA table_info(models)")}
+        usage_columns = {row[1] for row in connection.execute("PRAGMA table_info(usage_records)")}
     assert row == ("test-model", "upstream/test-model", "p1", 0)
     assert {"is_alias"} <= columns
     assert "model_route_targets" in tables
     assert "ix_model_route_targets_target" in indexes
-    assert "requested_model" in {
-        row[1] for row in sqlite3.connect(database).execute("PRAGMA table_info(usage_records)")
-    }
+    # Inside the same `with closing(...)` as the rest, deliberately. A
+    # connection left to the garbage collector raises
+    # `ResourceWarning: unclosed database` mid-suite, which pytest's unraisable
+    # collection turns into an error on *whichever test happens to be running*
+    # — the flakiest possible failure, naming a test with nothing to do with it.
+    assert "requested_model" in usage_columns
 
 
 def test_0063_the_check_constraint_rejects_a_half_alias(tmp_path: Path) -> None:
