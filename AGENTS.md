@@ -552,3 +552,14 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   by it).
 - **Comments in `deploy/cli.py` still name `cerea-deploy`**: the deploy kit
   is now Cerea's `kit/`. Fix them with the next change to that file.
+- **CI runs SQLite only.** `TEST_DATABASE_URL` buys a per-test PostgreSQL
+  database (one fresh copy of a session template) and is the only thing that
+  exercises advisory locks, `FOR UPDATE`, `SKIP LOCKED`, and the check
+  constraints a migration adds — SQLite is more forgiving in ways that hide real
+  bugs, as the two notes above it say. There is deliberately no CI job for it;
+  the owner's CI minutes are small. **Run `test_model_aliases.py`,
+  `test_admin_aliases.py`, `test_migrations_sqlite.py` and
+  `test_query_counts.py` on a throwaway `pgvector/pgvector:pg18` by hand before
+  releasing a change that touches model aliases, migrations or the ledger.** One
+  process at a time, or the shared test database shows setup errors that pass on
+  rerun.
