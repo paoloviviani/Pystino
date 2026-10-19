@@ -71,7 +71,6 @@ from gateway.quota import (
 )
 from gateway.routers import _metered
 from gateway.routers._metered import ResolvedModel
-from gateway.routers._metered import ResolvedModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import joinedload, selectinload
