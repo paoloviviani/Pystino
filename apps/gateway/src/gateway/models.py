@@ -1983,6 +1983,16 @@ class IdentityEventAction(enum.StrEnum):
     # `detail.reason` is the mode that refused. Plain VARCHAR(32) column, so
     # no migration.
     ACCESS_REFUSED = "access.refused"
+    # ADR 0101: an alias was created, changed (including a retarget) or
+    # deleted. Model CRUD itself is not audited, so these are the first rows of
+    # their kind here; the ADR asks for them explicitly, and a retarget is the
+    # one model-affecting change whose consequences are invisible by design —
+    # every client sees the same name and a different model answers, which is
+    # exactly the change nobody would otherwise be able to reconstruct.
+    # Plain VARCHAR(32) column, so no migration.
+    ALIAS_CREATE = "alias.create"
+    ALIAS_UPDATE = "alias.update"
+    ALIAS_DELETE = "alias.delete"
 
 
 #: Raised by both dialects' triggers, so a caller sees the same reason whether

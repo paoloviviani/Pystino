@@ -185,6 +185,17 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
         func.coalesce(
             func.sum(case((UsageRecord.usage_source == UsageSource.UNAVAILABLE, 1), else_=0)), 0
         ).label("unavailable"),
+        # Requests that reached the gateway under a model alias (ADR 0101). One
+        # extra aggregate in the statement rather than a second query, and a
+        # count rather than a regrouping: `model_name` is the **target** on every
+        # one of these rows, so a report grouped by model shows the target and a
+        # reader has no way to tell how much of it arrived under a name callers
+        # chose. Which alias is in `usage_records.requested_model`; how much of
+        # a given model's spend came through one is this figure, and that is the
+        # question an operator asks after offering `fast` to a group.
+        func.coalesce(
+            func.sum(case((UsageRecord.requested_model.is_not(None), 1), else_=0)), 0
+        ).label("via_alias"),
     ).where(
         # Half-open, matching Period and the quota engine exactly. A record at
         # 00:00:00 on 1 September belongs to September, in both places.
@@ -260,6 +271,7 @@ def _row(
         native_currency,
         estimated,
         unavailable,
+        via_alias,
     ) = values
     if key is None:
         label = _NO_KEY_LABEL[group_by]
@@ -289,6 +301,7 @@ def _row(
         native_currency=native_currency if show_native else None,
         estimated_requests=int(estimated or 0),
         unavailable_requests=int(unavailable or 0),
+        via_alias_requests=int(via_alias or 0),
     )
 
 
@@ -306,6 +319,7 @@ def _totals(rows: Sequence[UsageReportRow]) -> UsageReportRow:
         cost=sum((row.cost for row in rows), Decimal(0)),
         estimated_requests=sum(row.estimated_requests for row in rows),
         unavailable_requests=sum(row.unavailable_requests for row in rows),
+        via_alias_requests=sum(row.via_alias_requests for row in rows),
     )
 
 
@@ -601,6 +615,7 @@ CSV_HEADER = [
     "currency",
     "estimated_requests",
     "unavailable_requests",
+    "via_alias_requests",
 ]
 
 
@@ -641,6 +656,7 @@ def report_to_csv(report: UsageReport) -> str:
                 report.currency,
                 row.estimated_requests,
                 row.unavailable_requests,
+                row.via_alias_requests,
             ]
         )
     return buffer.getvalue()

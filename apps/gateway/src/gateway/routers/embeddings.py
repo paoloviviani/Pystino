@@ -120,7 +120,7 @@ async def create_embeddings(
         return metered
 
     payload: dict[str, Any] = body.model_dump(exclude_unset=True)
-    payload["model"] = model.upstream_model
+    payload["model"] = resolved.upstream_model
     # Single string in, single string out: a provider may index its response by
     # position, and turning one string into a one-element list would change the
     # shape the caller gets back.

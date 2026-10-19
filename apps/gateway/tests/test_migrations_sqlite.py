@@ -159,3 +159,163 @@ def test_0059_capability_flags_round_trip_on_sqlite(tmp_path: Path) -> None:
         policy_columns = {row[1] for row in connection.execute("PRAGMA table_info(oidc_config)")}
     assert not {"code_agents_allowed", "api_keys_allowed"} & group_columns
     assert not {"code_agents_mode", "api_keys_mode"} & policy_columns
+
+
+def _insert_provider(connection: sqlite3.Connection, provider_id: str) -> None:
+    """A minimal served provider, spelled out because `lastrowid` is not it."""
+    connection.execute(
+        "INSERT INTO providers (id, name, base_url, api_key_encrypted, api_key_hint, "
+        "extra_headers, is_active, prefix, plugin, kind, billing_mode, created_at, "
+        "updated_at) VALUES (?, 'fake', 'http://example.invalid', '', '', '{}', 1, '', "
+        "'generic_openai', 'provider', 'own_prices', '2026-10-18', '2026-10-18')",
+        (provider_id,),
+    )
+
+
+def _insert_model(
+    connection: sqlite3.Connection,
+    model_id: str,
+    name: str,
+    *,
+    upstream: str | None = None,
+    provider: str | None = None,
+    is_alias: int | None = None,
+) -> None:
+    """A row of `models`, of either shape, with bound parameters throughout.
+
+    Bound rather than interpolated because a NULL has no literal spelling in SQL:
+    an f-string would have to write the string "None", which SQLite reads as an
+    identifier — and the test would then be proving that a column named None is
+    missing.
+
+    ``is_alias=None`` omits the column, which is how a row written **before**
+    0063 is made: naming a column the old schema does not have is the error, not
+    the way to write one.
+    """
+    columns = "id, name, upstream_model, provider_id, kind"
+    values = "(?, ?, ?, ?, 'chat'"
+    parameters: list[object] = [model_id, name, upstream, provider]
+    if is_alias is not None:
+        columns += ", is_alias"
+        values += ", ?"
+        parameters.append(is_alias)
+    columns += (
+        ", is_active, is_public, input_modalities, output_modalities, "
+        "supported_features, created_at, updated_at"
+    )
+    values += ", 1, 0, '[]', '[]', '[]', '2026-10-18', '2026-10-18')"
+    connection.execute(
+        f"INSERT INTO models ({columns}) VALUES {values}",  # noqa: S608 - fixed fragments
+        tuple(parameters),
+    )
+
+
+def test_0063_model_aliases_keeps_existing_models_intact(tmp_path: Path) -> None:
+    """An upgrade over a catalogue that already has models leaves them alone.
+
+    The data half of 0063: `is_alias` defaults to false, so every row written
+    before it satisfies the new constraint without a backfill. A migration that
+    quietly rewrote rows here would turn "every existing model is a served
+    model" into an assumption instead of a fact.
+    """
+    database = tmp_path / "alias.db"
+    url = f"url=sqlite+aiosqlite:///{database}"
+    assert _alembic("-x", url, "upgrade", "0062").returncode == 0
+
+    with closing(sqlite3.connect(database)) as connection:
+        _insert_provider(connection, "p1")
+        _insert_model(connection, "m1", "test-model", upstream="upstream/test-model", provider="p1")
+        connection.commit()
+
+    assert _alembic("-x", url, "upgrade", "head").returncode == 0
+
+    with closing(sqlite3.connect(database)) as connection:
+        # By name, not "the only row": migration 0041 seeds the local extractor,
+        # so a fresh database already has a second model.
+        row = connection.execute(
+            "SELECT name, upstream_model, provider_id, is_alias FROM models "
+            "WHERE name = 'test-model'"
+        ).fetchone()
+        tables = {
+            name
+            for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        indexes = {
+            name
+            for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+        }
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(models)")}
+    assert row == ("test-model", "upstream/test-model", "p1", 0)
+    assert {"is_alias"} <= columns
+    assert "model_route_targets" in tables
+    assert "ix_model_route_targets_target" in indexes
+    assert "requested_model" in {
+        row[1] for row in sqlite3.connect(database).execute("PRAGMA table_info(usage_records)")
+    }
+
+
+def test_0063_the_check_constraint_rejects_a_half_alias(tmp_path: Path) -> None:
+    """Both halves of a half-alias are refused (ADR 0101).
+
+    An alias with a provider, and a served model without one. Each is a row some
+    code could otherwise write and some other code would then read as whichever
+    of the two it expected — which is the whole failure the constraint exists
+    to make loud.
+    """
+    database = tmp_path / "constraint.db"
+    url = f"url=sqlite+aiosqlite:///{database}"
+    assert _alembic("-x", url, "upgrade", "head").returncode == 0
+
+    with closing(sqlite3.connect(database)) as connection:
+        _insert_provider(connection, "p1")
+        connection.commit()
+
+        def insert(name: str, *, is_alias: int, upstream: str | None, provider: str | None):
+            _insert_model(
+                connection, name, name, upstream=upstream, provider=provider, is_alias=is_alias
+            )
+            connection.commit()
+
+        # The two shapes that are allowed.
+        insert("a-served", is_alias=0, upstream="upstream/a", provider="p1")
+        insert("an-alias", is_alias=1, upstream=None, provider=None)
+
+        with pytest.raises(sqlite3.IntegrityError, match="ck_models_alias_or_served"):
+            insert("half-a", is_alias=1, upstream=None, provider="p1")
+        with pytest.raises(sqlite3.IntegrityError, match="ck_models_alias_or_served"):
+            insert("half-b", is_alias=0, upstream="upstream/b", provider=None)
+
+
+def test_0063_downgrade_refuses_while_an_alias_exists(tmp_path: Path) -> None:
+    """The downgrade cannot restore NOT NULL over a row that has no provider,
+    and it says so instead of deleting an operator's aliases to get there."""
+    database = tmp_path / "downgrade.db"
+    url = f"url=sqlite+aiosqlite:///{database}"
+    assert _alembic("-x", url, "upgrade", "head").returncode == 0
+
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute(
+            "INSERT INTO models (id, name, kind, is_alias, is_active, is_public, "
+            "input_modalities, output_modalities, supported_features, created_at, "
+            "updated_at) VALUES ('m1', 'fast', 'chat', 1, 1, 0, '[]', '[]', '[]', "
+            "'2026-10-18', '2026-10-18')"
+        )
+        connection.commit()
+
+    refused = _alembic("-x", url, "downgrade", "0062")
+    assert refused.returncode != 0
+    assert "downgrade refused" in refused.stderr
+
+    # With the alias gone it goes through, and leaves 0062's shape behind.
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute("DELETE FROM models WHERE name = 'fast'")
+        connection.commit()
+    assert _alembic("-x", url, "downgrade", "0062").returncode == 0
+    with closing(sqlite3.connect(database)) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(models)")}
+        tables = {
+            name
+            for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+    assert "is_alias" not in columns
+    assert "model_route_targets" not in tables

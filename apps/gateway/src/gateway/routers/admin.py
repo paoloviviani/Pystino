@@ -2122,6 +2122,7 @@ def _group_admin_response(
     member_count: int,
     models: list[str],
     search_backend: str | None,
+    aliases: list[str] | None = None,
 ) -> GroupAdminResponse:
     """One constructor for every GroupAdminResponse, so the capability flags
     (ADR 0096) cannot drift between the list and the write answers again —
@@ -2139,6 +2140,11 @@ def _group_admin_response(
         api_keys_allowed=group.api_keys_allowed,
         member_count=member_count,
         models=models,
+        # Which of `models` is an alias, so the Groups page can badge them
+        # (ADR 0101). Optional here and defaulting empty rather than required,
+        # so a caller that does not have the set simply shows no badges — which
+        # is the right answer for a response assembled before it was read.
+        aliases=aliases or [],
         search_backend=search_backend,
     )
 
@@ -2503,21 +2509,20 @@ async def update_group(
     member_count = await session.scalar(
         select(func.count()).select_from(Membership).where(Membership.group_id == group.id)
     )
-    models = [
-        name
-        for (name,) in (
-            await session.execute(
-                select(ModelDef.name)
-                .join(GroupModelAccess, GroupModelAccess.model_id == ModelDef.id)
-                .where(GroupModelAccess.group_id == group.id)
-                .order_by(ModelDef.name)
-            )
-        ).all()
-    ]
+    rows = (
+        await session.execute(
+            select(ModelDef.name, ModelDef.is_alias)
+            .join(GroupModelAccess, GroupModelAccess.model_id == ModelDef.id)
+            .where(GroupModelAccess.group_id == group.id)
+            .order_by(ModelDef.name)
+        )
+    ).all()
+    models = [name for (name, _) in rows]
     return _group_admin_response(
         group,
         member_count=member_count or 0,
         models=models,
+        aliases=[name for (name, is_alias) in rows if is_alias],
         search_backend=(
             await session.scalar(select(ModelDef.name).where(ModelDef.id == group.search_model_id))
             if group.search_model_id is not None

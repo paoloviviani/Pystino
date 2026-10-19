@@ -1375,7 +1375,14 @@ class GroupAdminResponse(BaseModel):
     code_agents_allowed: bool = False
     api_keys_allowed: bool = False
     member_count: int
+    #: Every model name this group may use, aliases included — they are rows of
+    #: the same table, and granting an alias is the point of having one.
     models: list[str]
+    #: The subset of `models` that is an **alias** (ADR 0101). Sent alongside
+    #: rather than instead, so the console can badge them without a second
+    #: query per group: "which names is this group allowed to send" and "which
+    #: of those are names we defined" are one list and a set drawn from it.
+    aliases: list[str] = Field(default_factory=list)
     #: The search backend this group searches through on ``POST /v1/search``,
     #: by model-row name. Null means no policy: the group cannot use the
     #: unified route at all.
@@ -2037,6 +2044,12 @@ class UsageReportRow(BaseModel):
     # totals so a reader can see how much of the figure is measured.
     estimated_requests: int = 0
     unavailable_requests: int = 0
+    # How many of this row's requests arrived under a model alias (ADR 0101).
+    # `key`/`label` are the **target** on those rows — billing follows it — so
+    # without this a report cannot tell an operator how much of a model's spend
+    # came in through a name callers chose, which is the question they ask after
+    # granting one to a group.
+    via_alias_requests: int = 0
 
 
 class BillingDrift(BaseModel):

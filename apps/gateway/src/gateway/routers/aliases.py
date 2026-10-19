@@ -164,8 +164,23 @@ def _response(
     )
 
 
-async def _one_alias_response(session: SessionDep, alias: ModelDef) -> AliasResponse:
-    """``_response`` with the grants for a single alias, read just now."""
+async def _one_alias_response(session: SessionDep, alias_id: uuid.UUID) -> AliasResponse:
+    """The response for one alias: re-read, then its grants.
+
+    Re-read rather than reusing the in-session object, because a retarget
+    replaces the route row and the identity map still holds the old one. Through
+    the same loaders ``_load_alias`` uses — a
+    `refresh(attribute_names=["route_targets"])` reloads the route rows
+    *without* the target and provider they are chained to, so the very next
+    `alias.target` raises instead of returning the model that was just set.
+    """
+    # `expire_all` before the re-read, not just a re-query: a select returns the
+    # identity-mapped object, and after a retarget that object still holds the
+    # route row that was deleted — so the re-read would faithfully return the
+    # old target. An admin write is not a hot path and this is the only place
+    # that has to think about it.
+    session.expire_all()
+    alias = await _load_alias(session, alias_id)
     grants, user_grants = await _grants(session, [alias.id])
     return _response(alias, grants, user_grants)
 
@@ -316,30 +331,32 @@ async def create_alias(
         is_public=payload.is_public,
     )
     session.add(alias)
-    await session.flush()
-    await _write_target(session, alias, target, adopt_kind=True)
-    await record_event(
-        session,
-        actor_type=IdentityEventActor.USER,
-        actor_user_id=admin.id,
-        actor_label=admin.email or "",
-        action=IdentityEventAction.ALIAS_CREATE,
-        target_label=payload.name,
-        detail={"target": target.name},
-    )
     try:
+        # The flush is *inside* the try on purpose. It is what emits the INSERT,
+        # and so what raises the unique-name violation — one name namespace
+        # across models and aliases (ADR 0101). Catching it only at commit would
+        # have let a clashing name through as a 500.
+        await session.flush()
+        await _write_target(session, alias, target, adopt_kind=True)
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.ALIAS_CREATE,
+            target_label=payload.name,
+            detail={"target": target.name},
+        )
         await session.commit()
     except IntegrityError as exc:
-        # One name namespace across models and aliases, so this is a clash with
-        # either (ADR 0101). A 409 naming the name, not a 500: the operator can
-        # go and look at what holds it.
         await session.rollback()
+        # A 409 naming the name, not a 500: the operator can go and look at
+        # what holds it, on the model page or the Routing tab.
         raise ConflictError(
             f"The name {payload.name!r} is already used by a model or another alias."
         ) from exc
 
-    await session.refresh(alias, attribute_names=["route_targets"])
-    return await _one_alias_response(session, alias)
+    return await _one_alias_response(session, alias.id)
 
 
 @router.patch("/aliases/{alias_id}", response_model=AliasResponse)
@@ -393,23 +410,30 @@ async def update_alias(
     # everywhere else: the alias card, the request and the ledger all keep
     # saying the same name.
     now = alias.target
-    await record_event(
-        session,
-        actor_type=IdentityEventActor.USER,
-        actor_user_id=admin.id,
-        actor_label=admin.email or "",
-        action=IdentityEventAction.ALIAS_UPDATE,
-        target_label=alias.name,
-        detail={"fields": sorted(changed), "target": now.name if now is not None else ""},
-    )
     try:
+        # `record_event` flushes, so it is inside the try for the same reason
+        # the create path's flush is: that flush is what emits the UPDATE, and
+        # so what raises the unique-name violation. Catching only at commit
+        # would have left a rename onto a taken name as a 500.
+        await record_event(
+            session,
+            actor_type=IdentityEventActor.USER,
+            actor_user_id=admin.id,
+            actor_label=admin.email or "",
+            action=IdentityEventAction.ALIAS_UPDATE,
+            target_label=alias.name,
+            detail={"fields": sorted(changed), "target": now.name if now is not None else ""},
+        )
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
-        raise ConflictError("That change would take a name that is already in use.") from exc
+        raise ConflictError(
+            f"The name {payload.name!r} is already used by a model or another alias."
+            if payload.name is not None
+            else "That change would leave the model without a provider and an upstream model."
+        ) from exc
 
-    await session.refresh(alias, attribute_names=["route_targets"])
-    return await _one_alias_response(session, alias)
+    return await _one_alias_response(session, alias.id)
 
 
 @router.delete("/aliases/{alias_id}", status_code=status.HTTP_204_NO_CONTENT)
