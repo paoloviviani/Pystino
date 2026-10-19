@@ -242,7 +242,12 @@ def alias_target(alias: ModelDef) -> Select[tuple[ModelDef]]:
         .where(ModelRouteTarget.alias_id == alias.id)
         .order_by(ModelRouteTarget.position)
         .limit(1)
-        # As for `accessible_model_by_name`: the target's provider and prices
-        # are needed immediately by the request path.
-        .options(selectinload(ModelDef.prices), joinedload(ModelDef.provider))
+        # Both joins, not a selectinload, because this is the **one extra query**
+        # the alias path is allowed on a metered request and it has to carry the
+        # target's provider and prices with it. A `selectinload` of the prices
+        # would be a second one — `test_query_counts.py` pins this statement at
+        # a single round trip for exactly that reason. The `limit` is handled by
+        # SQLAlchemy wrapping the primary select in a subquery, so joining a
+        # to-many does not truncate it.
+        .options(joinedload(ModelDef.prices), joinedload(ModelDef.provider))
     )
