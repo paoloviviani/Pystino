@@ -9,9 +9,19 @@ proxied from the upstream. Two reasons:
   whose configuration silently empties would otherwise make every model vanish
   from our clients' view too.
 
-The union across *all* the user's groups is returned, not just the current billing
-group, because a client discovering models should see everything it could reach
-after switching group.
+The list follows the *billing group* — the same group a request is admitted
+against, `principal.billing_group`, which is where ``x-bill-to`` lands in
+(`gateway.deps`). It used to be the union across **all** the person's groups,
+because a client discovering models might expect to see everything it could
+reach after switching group — and that is exactly the mismatch the owner
+reported: a model granted to group B was listed to someone billing group A,
+and every request on it answered 404, because `resolve_model` (the request
+path) scopes by the billing group only. The decision now is that the list
+shows exactly what a request would accept, nothing more: discovery uses the
+same scope as admission. A client that wants the other group's view sends
+``x-bill-to`` (as Cerea's model list does, `src/lib/server/billTo.ts`).
+Personal grants and public models span billing groups, so they stay listed
+from whichever group is paying.
 
 **The list is public; a card's detail is not** (ADR 0081). An unauthenticated
 ``GET /v1/models`` answers with the full, unfiltered catalogue rather than 401ing
@@ -96,13 +106,17 @@ async def list_models(
     else:
         kinds = set(ModelKind) - {ModelKind.SEARCH}
 
-    # Group grants and personal grants, unioned in one place (ADR 0027). The
-    # empty case is handled there too, so there is no early return to keep in
-    # step with the predicate. No principal at all (ADR 0081) skips grant
-    # filtering entirely rather than running it against nothing — the full
-    # catalogue, not the subset a groupless caller would see.
+    # Billing-group grants plus personal grants, unioned in one place (ADR
+    # 0027) — and scoped to the billing group, because that is the group a
+    # request would be admitted against (`resolve_model`): the list answering
+    # more than that is the mismatch this route once shipped (see the
+    # docstring). The empty case is handled there too, so there is no early
+    # return to keep in step with the predicate. No principal at all (ADR
+    # 0081) skips grant filtering entirely rather than running it against
+    # nothing — the full catalogue, not the subset a groupless caller would
+    # see.
     base = (
-        accessible_models(user_id=principal.user.id, group_ids=principal.user.group_ids())
+        accessible_models(user_id=principal.user.id, group_ids=[principal.billing_group.id])
         if principal is not None
         else all_active_models()
     )
@@ -230,8 +244,12 @@ async def retrieve_model(
 ) -> ModelCard:
     from gateway.errors import ModelNotFoundError
 
+    # The same scope the request path admits on (`resolve_model`): billing
+    # group, personal grants, public. Retrieval disagreeing with the listing
+    # — here, admitting a name the list would not show — was the other half of
+    # the mismatch the listing once had.
     stmt = accessible_model_by_name(
-        model_name, user_id=principal.user.id, group_ids=principal.user.group_ids()
+        model_name, user_id=principal.user.id, group_ids=[principal.billing_group.id]
     )
     row = (await session.execute(_with_alias_target(stmt))).first()
     if row is None:
