@@ -152,10 +152,17 @@ unchanged, which Caddy does by default.
 - `Authorization: Bearer <access token>` for the `opencode-enrollment` client. It is
   validated locally like every OIDC bearer: issuer, audience, signature, expiry.
   The shim refreshes it before it expires, and opencode never holds it.
-- `x-bill-to: <group>`: the group chosen at enrolment, which must be one of the
-  person's groups. Spend lands in the gateway ledger under that group,
-  where the console shows it, and `GET /v1/pystino/usage` returns the
-  caller's own spend and quotas to anything holding the same token.
+- `x-bill-to`: which group the machine's requests bill. Pinned at enrolment
+  (`--group`, or the prompt), it must be one of the person's groups; spend
+  lands in the gateway ledger under that group, where the console shows it.
+  `galopin enroll --default-group` (or `galopin auth group --default` later)
+  instead records *follow the default*: the machine sends no `x-bill-to` and
+  bills whatever the person's console default points at, so one console
+  change moves billing and model visibility for the person and every machine
+  that follows. `galopin auth group NAME` switches a machine without
+  re-enrolling; [Billing groups](billing-groups.md) is the whole rule, and
+  `GET /v1/pystino/usage` returns the caller's own spend and quotas to
+  anything holding the same token.
 - Revoking the grant at the IdP ends the machine's `/v1` access and its chat link
   together within one access-token lifetime, because both use the same enrolment
   credential.

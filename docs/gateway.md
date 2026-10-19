@@ -63,7 +63,9 @@ caller's default), the caller's personal grants, and public models. It used
 to union every group the person belonged to, which advertised a model every
 request then refused with a 404 to anyone who belonged to two groups and
 billed the other one. Anonymous, it is the whole catalogue: the listing is
-public, a card's detail is not (ADR 0081).
+public, a card's detail is not (ADR 0081). The whole rule — what decides the
+billing group, what it decides in turn, and how a machine follows a person's
+default — is on [Billing groups](billing-groups.md).
 
 `GET /v1/models` reports each model's `kind`, `context_window`,
 `max_input_tokens`, `max_output_tokens`, `input_modalities`,

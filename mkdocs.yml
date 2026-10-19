@@ -80,6 +80,7 @@ nav:
   - Getting started: getting-started.md
   - Gateway: gateway.md
   - Accounting and quotas: accounting-and-quotas.md
+  - Billing groups: billing-groups.md
   - Model aliases: model-aliases.md
   - Redaction: redaction.md
   - Deployment: deployment.md

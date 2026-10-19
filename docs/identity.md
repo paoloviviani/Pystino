@@ -360,6 +360,11 @@ person with only `users` can use.
   had: no second group, and nobody's membership changes.
 - An empty value turns it off.
 
+What the default billing group decides — admission, the model list, ledger
+attribution and group quotas — and how a request may bill another of the
+person's groups with `x-bill-to`, is on
+[Billing groups](billing-groups.md).
+
 ## Administrators
 
 Administrators come from two environment rules, re-checked at every sign-in:
