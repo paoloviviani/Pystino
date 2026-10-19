@@ -59,6 +59,14 @@ const ADMIN_SECTIONS: Section[] = [
     description: m["admin.sections.models.description"],
   },
   {
+    // Beside Models, the same adjacency the header's nav holds: an alias is a
+    // name for a model, and a section the landing page omits is one
+    // administrators do not learn exists (ADR 0101).
+    to: "/admin/routing",
+    title: m["admin.sections.routing.title"],
+    description: m["admin.sections.routing.description"],
+  },
+  {
     to: "/admin/users",
     title: m["admin.sections.users.title"],
     description: m["admin.sections.users.description"],
