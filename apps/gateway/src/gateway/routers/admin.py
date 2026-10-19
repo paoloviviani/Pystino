@@ -507,7 +507,9 @@ async def _user_grants_by_model(
     return grants
 
 
-async def _load_model(session: SessionDep, model_id: uuid.UUID) -> ModelDef:
+async def _load_model(
+    session: SessionDep, model_id: uuid.UUID, *, grantable: bool = False
+) -> ModelDef:
     """A **served** model by id, for an endpoint that only means served models.
 
     An alias id is refused here rather than half-worked (ADR 0101). Every
@@ -520,6 +522,15 @@ async def _load_model(session: SessionDep, model_id: uuid.UUID) -> ModelDef:
     400 and not 404, with a code, because this is not "no such model" — the row
     is right there, under a different name for the same thing, and an
     administrator who passed an alias id can be told where to edit it.
+
+    ``grantable`` lifts the refusal for the two **grant** endpoints, which are
+    the exception the whole design stands on: an alias row uses
+    `group_model_access`, `user_model_access` and `is_public` exactly as a model
+    does (ADR 0101, decision 1), and granting an alias is the point of having
+    one. Refusing the alias id there would leave an alias that only `is_public`
+    could ever reach. What a grant endpoint does with the row is nothing — it
+    reads the id, writes an access row, and touches no served-model column — so
+    the reason for the refusal does not apply. Everything else keeps it.
     """
     model = (
         await session.execute(
@@ -530,7 +541,7 @@ async def _load_model(session: SessionDep, model_id: uuid.UUID) -> ModelDef:
     ).scalar_one_or_none()
     if model is None:
         raise NotFoundError(f"No model with id {model_id}.")
-    if model.is_alias:
+    if model.is_alias and not grantable:
         raise BadRequestError(
             f"{model.name!r} is a model alias, not a served model. Edit it under "
             "Routing (/api/admin/aliases), which is where its target and "
@@ -2725,7 +2736,7 @@ async def grant_model_access(
     group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
     if group is None:
         raise NotFoundError(f"No group with id {group_id}.")
-    await _load_model(session, model_id)
+    await _load_model(session, model_id, grantable=True)
 
     existing = (
         await session.execute(
@@ -2829,7 +2840,7 @@ async def grant_user_model_access(
     user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if user is None:
         raise NotFoundError(f"No user with id {user_id}.")
-    await _load_model(session, model_id)
+    await _load_model(session, model_id, grantable=True)
 
     existing = (
         await session.execute(

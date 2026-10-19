@@ -436,6 +436,66 @@ class TestTheModelEndpointsIgnoreAliases:
         listed = await client.get("/api/admin/models")
         assert all(row["aliases_pointing_here"] == [] for row in listed.json()["items"])
 
+    async def test_a_group_is_granted_the_alias_through_the_model_endpoint(
+        self,
+        admin: None,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        alias: str,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The exception the whole design stands on (ADR 0101, decision 1).
+
+        An alias row uses `group_model_access` exactly as a model does, so the
+        model grant endpoint takes its id. Refusing it here would leave an
+        alias only `is_public` could ever reach — and this was found by the
+        live check, not by the unit suite, because the refusal lives in
+        `_load_model` and nothing else in this file had reason to go through
+        it.
+        """
+        group_id = str(seeded.group.id)
+        granted = await client.put(f"/api/admin/groups/{group_id}/models/{alias}")
+        assert granted.status_code == 204, granted.text
+
+        rows = (await client.get("/api/admin/aliases")).json()
+        assert rows[0]["granted_to"] == ["research"]
+
+        # And revoked again, by the same endpoint.
+        assert (
+            await client.delete(f"/api/admin/groups/{group_id}/models/{alias}")
+        ).status_code == 204
+        rows = (await client.get("/api/admin/aliases")).json()
+        assert rows[0]["granted_to"] == []
+
+    async def test_a_user_is_granted_the_alias_through_the_model_endpoint(
+        self,
+        admin: None,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        alias: str,
+    ) -> None:
+        user_id = str(seeded.user.id)
+        assert (await client.put(f"/api/admin/users/{user_id}/models/{alias}")).status_code == 204
+        rows = (await client.get("/api/admin/aliases")).json()
+        assert rows[0]["granted_to_users"] == ["member@example.org"]
+
+    async def test_a_group_search_policy_still_refuses_an_alias_id(
+        self,
+        admin: None,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        alias: str,
+    ) -> None:
+        """A policy names a served backend, not a name: the alias would resolve
+        and then fail the SearchPlugin check one level down, so the clear 400
+        is here rather than at request time."""
+        response = await client.put(
+            f"/api/admin/groups/{seeded.group.id}/search-backend",
+            json={"model_id": alias},
+        )
+        assert response.status_code == 400
+        assert response.json()["error"]["code"] == "model_is_alias"
+
     async def test_the_detail_of_an_alias_id_is_a_clear_400(
         self,
         admin: None,
