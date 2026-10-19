@@ -9,16 +9,83 @@ and grants still bound everything either way.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 import pytest
 from conftest import Seeded, make_token
 from conftest import bearer_auth as auth
 from fastapi import FastAPI
-from gateway.models import GroupModelAccess, ModelKind, Provider, ProviderKind
+from gateway.models import (
+    Group,
+    GroupModelAccess,
+    ModelDef,
+    ModelKind,
+    ModelPrice,
+    ModelRouteTarget,
+    Provider,
+    ProviderKind,
+    UserModelAccess,
+)
+from helpers import completion_body
 from joserfc.jwk import RSAKey
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
+
+#: The billing header. Declared here rather than copied from test_bill_to so
+#: the tests below read the wire directly: what they defend is that the
+#: listing answers the same question the header does.
+BILL_TO = "x-bill-to"
+
+
+async def _second_group_and_model(
+    session_factory: async_sessionmaker[AsyncSession],
+    seeded: Seeded,
+    app: FastAPI,
+    *,
+    group_name: str = "beta",
+    model_name: str = "only-beta",
+) -> Group:
+    """A second group owning a chat model no other group is granted.
+
+    Written directly, in the shape the admin save path leaves behind: a model
+    behind the seeded provider (so a completion through it is otherwise
+    ordinary), priced so metering has nothing to complain about, and granted
+    to exactly one group. The group is also mapped in the identity policy
+    (`group_import=manual` imports mapped names only), so a token claiming it
+    becomes a member the way a real login would.
+    """
+    from gateway.models import OIDCPolicyConfig
+
+    async with session_factory() as db:
+        group = Group(name=group_name)
+        db.add(group)
+        await db.flush()
+        model = ModelDef(
+            name=model_name,
+            upstream_model=f"upstream/{model_name}",
+            provider_id=seeded.provider.id,
+            context_window=8192,
+        )
+        db.add(model)
+        await db.flush()
+        db.add(
+            ModelPrice(
+                model_id=model.id,
+                input_per_mtok=Decimal("1"),
+                output_per_mtok=Decimal("2"),
+                currency="EUR",
+            )
+        )
+        db.add(GroupModelAccess(group_id=group.id, model_id=model.id))
+        config = (await db.execute(select(OIDCPolicyConfig))).scalar_one()
+        config.group_mappings = [*config.group_mappings, [group_name, group_name]]
+        await db.commit()
+        resolver = getattr(app.state, "oidc_policy", None)
+        if resolver is not None:
+            await resolver.refresh_once()
+        return group
 
 
 async def _seed_search_tier(
@@ -382,3 +449,243 @@ class TestInternalOcrListing:
         assert response.status_code == 200, response.text
         by_id = {entry["id"]: entry for entry in response.json()["data"]}
         assert by_id["mistral-ocr-4.1"]["local"] is False
+
+
+class TestListingFollowsTheBillingGroup:
+    """The list and the admission answer the same question, on the same scope.
+
+    The owner's report: "as an admin, I still see models that I'm not entitled
+    to use." It was never an admin thing — it hit anyone with more than one
+    membership, because the listing was scoped to the *union* of the caller's
+    groups while a request is admitted against the *billing group* only, so a
+    model granted to group B answered 404 to anyone billing group A. The
+    owner's decision: the list shows exactly what a request would accept,
+    nothing more.
+
+    Every test here bills through the ``x-bill-to`` header because that is
+    how the chat's requests arrive; a user with two directory groups and no
+    header has, by design, no default to fall back on.
+    """
+
+    def _headers(self, signing_key: RSAKey, *, bill_to: str) -> dict[str, str]:
+        return {
+            **auth(make_token(signing_key, groups=["research", "beta"])),
+            "x-bill-to": bill_to,
+        }
+
+    @pytest.mark.asyncio
+    async def test_not_billable_means_not_listed_and_not_usable(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        fake_upstream: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The owner's case: granted to group B, billing group A — off the
+        list, refused by name, refused as a completion."""
+        await _second_group_and_model(session_factory, seeded, bearer_app)
+        headers = self._headers(signing_key, bill_to="research")
+        response = await client.get("/v1/models", headers=headers)
+        assert response.status_code == 200, response.text
+        names = {entry["id"] for entry in response.json()["data"]}
+        assert names == {"test-model"}, names
+        assert (await client.get("/v1/models/only-beta", headers=headers)).status_code == 404
+        completion = await client.post(
+            "/v1/chat/completions",
+            json={"model": "only-beta", "messages": [{"role": "user", "content": "hi"}]},
+            headers=headers,
+        )
+        assert completion.status_code == 404, completion.text
+
+    @pytest.mark.asyncio
+    async def test_billable_means_listed_and_usable(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        fake_upstream: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The same person asking to bill the group that holds the grant gets
+        the model on the list, by name, and through a completion."""
+        await _second_group_and_model(session_factory, seeded, bearer_app)
+        fake_upstream.set_json(completion_body())
+        headers = self._headers(signing_key, bill_to="beta")
+        response = await client.get("/v1/models", headers=headers)
+        assert response.status_code == 200, response.text
+        names = {entry["id"] for entry in response.json()["data"]}
+        assert names == {"only-beta"}, names
+        assert (await client.get("/v1/models/only-beta", headers=headers)).status_code == 200
+        completion = await client.post(
+            "/v1/chat/completions",
+            json={"model": "only-beta", "messages": [{"role": "user", "content": "hi"}]},
+            headers=headers,
+        )
+        assert completion.status_code == 200, completion.text
+
+    @pytest.mark.asyncio
+    async def test_a_key_lists_what_its_billing_group_admits(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A key never negotiates scope: it bills the group it was minted for
+        (``billing_group_id`` pins it), whatever else its user belongs to.
+
+        The owner's case in the key's shape: the person joins `beta`, so the
+        *union* of their groups now holds `only-beta` — but this key bills
+        `research` without sending any header (it may not: the gateway
+        refuses `x-bill-to` from a key, so there is no way for a key to
+        widen its scope either). The listing shows the key's billing group's
+        models, the person's own grants and the public ones — the same set
+        `resolve_model` would admit — and `only-beta` is off the list and
+        refused by name.
+        """
+        from gateway.models import Membership
+
+        await _second_group_and_model(session_factory, seeded, bearer_app)
+        async with session_factory() as db:
+            beta = (await db.execute(select(Group).where(Group.name == "beta"))).scalar_one()
+            # A membership with no OIDC story on purpose: whatever put the
+            # person in beta, a request through this key cannot bill it.
+            db.add(Membership(user_id=seeded.user.id, group_id=beta.id))
+            personal = ModelDef(
+                name="just-mine",
+                upstream_model="upstream/just-mine",
+                provider_id=seeded.provider.id,
+            )
+            public = ModelDef(
+                name="shared",
+                upstream_model="upstream/shared",
+                provider_id=seeded.provider.id,
+                is_public=True,
+            )
+            db.add_all([personal, public])
+            await db.flush()
+            db.add(UserModelAccess(user_id=seeded.user.id, model_id=personal.id))
+            await db.commit()
+
+        response = await client.get("/v1/models", headers=seeded.auth)
+        assert response.status_code == 200, response.text
+        names = {entry["id"] for entry in response.json()["data"]}
+        assert names == {"test-model", "just-mine", "shared"}, names
+        # The list and the admission answer the same question for the key:
+        # the model that only the other group holds is refused by name.
+        completion = await client.post(
+            "/v1/chat/completions",
+            json={"model": "only-beta", "messages": [{"role": "user", "content": "hi"}]},
+            headers=seeded.auth,
+        )
+        assert completion.status_code == 404, completion.text
+
+    @pytest.mark.asyncio
+    async def test_public_models_are_listed_regardless(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A public model needs no grant and follows every billing group."""
+        async with session_factory() as db:
+            db.add(
+                ModelDef(
+                    name="shared",
+                    upstream_model="upstream/shared",
+                    provider_id=seeded.provider.id,
+                    is_public=True,
+                )
+            )
+            await db.commit()
+        headers = self._headers(signing_key, bill_to="research")
+        response = await client.get("/v1/models", headers=headers)
+        assert response.status_code == 200, response.text
+        names = {entry["id"] for entry in response.json()["data"]}
+        assert "shared" in names, names
+        # A card's detail still answers for it: listing and retrieval agree.
+        assert (await client.get("/v1/models/shared", headers=headers)).status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_personal_grants_are_listed_regardless(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A grant made to the person, not to any group, follows the person."""
+        from gateway.models import User
+
+        headers = self._headers(
+            signing_key, bill_to="research"
+        )  # A first call provisions the caller the way a real first request does.
+        first = await client.get("/v1/models", headers=headers)
+        assert first.status_code == 200, first.text
+        assert "just-mine" not in {entry["id"] for entry in first.json()["data"]}
+        async with session_factory() as db:
+            model = ModelDef(
+                name="just-mine",
+                upstream_model="upstream/just-mine",
+                provider_id=seeded.provider.id,
+            )
+            db.add(model)
+            await db.flush()
+            user = (await db.execute(select(User).where(User.subject == "subject-1"))).scalar_one()
+            db.add(UserModelAccess(user_id=user.id, model_id=model.id))
+            await db.commit()
+        response = await client.get("/v1/models", headers=headers)
+        assert response.status_code == 200, response.text
+        names = {entry["id"] for entry in response.json()["data"]}
+        assert "just-mine" in names, names
+
+    @pytest.mark.asyncio
+    async def test_an_alias_is_listed_on_its_own_billable_grant(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        signing_key: RSAKey,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """An alias is in or out on its *own* grant (ADR 0101), and that grant
+        is read the same way the request path reads it: against the billing
+        group the caller is asking to charge."""
+        await _second_group_and_model(session_factory, seeded, bearer_app, group_name="beta")
+        async with session_factory() as db:
+            alias = ModelDef(
+                name="fast",
+                provider_id=None,
+                upstream_model=None,
+                is_alias=True,
+                kind=ModelKind.CHAT,
+                display_name="Fast",
+                is_active=True,
+            )
+            db.add(alias)
+            await db.flush()
+            target = (
+                await db.execute(select(ModelDef).where(ModelDef.name == "test-model"))
+            ).scalar_one()
+            db.add(ModelRouteTarget(alias_id=alias.id, target_model_id=target.id, position=0))
+            beta = (await db.execute(select(Group).where(Group.name == "beta"))).scalar_one()
+            db.add(GroupModelAccess(group_id=beta.id, model_id=alias.id))
+            await db.commit()
+
+        research = self._headers(signing_key, bill_to="research")
+        response = await client.get("/v1/models", headers=research)
+        assert response.status_code == 200, response.text
+        assert "fast" not in {entry["id"] for entry in response.json()["data"]}
+        assert (await client.get("/v1/models/fast", headers=research)).status_code == 404
+
+        billing = self._headers(signing_key, bill_to="beta")
+        response = await client.get("/v1/models", headers=billing)
+        assert response.status_code == 200, response.text
+        assert "fast" in {entry["id"] for entry in response.json()["data"]}
+        assert (await client.get("/v1/models/fast", headers=billing)).status_code == 200

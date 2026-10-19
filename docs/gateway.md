@@ -14,7 +14,7 @@ per-group model availability and a pluggable redaction layer.
 | `POST /v1/images/generations` | key or bearer | Image generation, billed per picture or per token depending on the model |
 | `POST /v1/ocr` | key or bearer | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor |
 | `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina, DuckDuckGo), metered per call. The backend is the billing group's search policy, or the one the body names in an optional `backend` (a search model the caller is granted; an ungranted name is a 404, never a fallback to the policy). `POST /v1/search/{backend}` is the verbatim passthrough |
-| `GET /v1/models` | key, bearer or none | Models the caller may use, by group or personal grant, with capabilities |
+| `GET /v1/models` | key, bearer or none | Models this caller may use — billing-group grants (or the group named by `x-bill-to`), personal grants, and public models. Unauthenticated: the full catalogue, brochure fields only |
 | `GET /v1/pystino/usage` | key or bearer | This caller's own spend, for a client that wants to show it without a console session |
 | `GET /v1/billing/groups` | key or bearer | Which groups this caller may bill, and which one paid for this request |
 | `GET /v1/me` | key or bearer | Who is calling, their groups and `is_admin` (from effective memberships; never `true` for a key) |
@@ -55,6 +55,15 @@ already carries its answer, and quietly overriding it is how somebody finds
 out from an invoice. `GET /v1/models` is the other exception, in the opposite
 direction: it answers unauthenticated too, brochure-level fields only, so a
 client can build a catalogue before anyone has signed in.
+
+Authenticated, the model list shows *exactly what a request would accept,
+nothing more*: the same scope the request path admits on (`resolve_model`) —
+the billing group's grants (the group named by `x-bill-to`, else the
+caller's default), the caller's personal grants, and public models. It used
+to union every group the person belonged to, which advertised a model every
+request then refused with a 404 to anyone who belonged to two groups and
+billed the other one. Anonymous, it is the whole catalogue: the listing is
+public, a card's detail is not (ADR 0081).
 
 `GET /v1/models` reports each model's `kind`, `context_window`,
 `max_input_tokens`, `max_output_tokens`, `input_modalities`,
