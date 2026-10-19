@@ -66,6 +66,7 @@ function tier(overrides: Partial<AdminModel> = {}): AdminModel {
     current_price: null,
     granted_to: ["cerea"],
     granted_to_users: [],
+    aliases_pointing_here: [],
     ...overrides,
   };
 }
@@ -81,6 +82,7 @@ function group(overrides: Partial<AdminGroup> = {}): AdminGroup {
     api_keys_allowed: false,
     member_count: 3,
     models: ["linkup"],
+            aliases: [],
     search_backend: "linkup",
     ...overrides,
   };
@@ -235,7 +237,8 @@ function searchRoutes(
       return jsonResponse({
         items: [
           group({ search_backend: cereaBackend }),
-          group({ id: "g-other", name: "other", models: [], search_backend: null }),
+          group({ id: "g-other", name: "other", models: [],
+            aliases: [], search_backend: null }),
         ],
         total: 2,
         limit: 200,

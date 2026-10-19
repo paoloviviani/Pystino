@@ -64,6 +64,10 @@ const NAV_ADMIN: NavItem[] = [
   // "what is this model" and "what does it cost" are one question asked in one
   // place. See routes/AdminModelDetail.tsx.
   { to: "/admin/models", label: m["shell.nav.models"] },
+  // Beside Models, not under it: an alias is a name, and the screen an
+  // administrator opens to change one is the same screen whose delete
+  // confirmation names them (ADR 0101).
+  { to: "/admin/routing", label: m["shell.nav.routing"] },
   { to: "/admin/users", label: m["shell.nav.users"] },
   { to: "/admin/groups", label: m["shell.nav.groups"] },
   { to: "/admin/settings", label: m["shell.nav.settings"] },

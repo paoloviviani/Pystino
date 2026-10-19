@@ -151,9 +151,21 @@ export function AdminGroups() {
           <span className={MUTED}>{m["admin_groups.models_none"]()}</span>
         ) : (
           <div className={CHIPS}>
-            {group.models.map((model) => (
-              <Badge key={model}>{model}</Badge>
-            ))}
+            {/* An alias is a name this deployment defined and resolves to a
+                model. It sits in the same list because it is granted the same
+                way, and it is badged because an operator comparing "Research
+                may use gpt-4o-mini" with "Research may use fast" needs to know
+                those are not the same kind of thing (ADR 0101). */}
+            {group.models.map((model) =>
+              group.aliases.includes(model) ? (
+                <Badge key={model} tone="accent">
+                  {model}
+                  <span className={MUTED}> {m["admin_groups.models.alias_badge"]()}</span>
+                </Badge>
+              ) : (
+                <Badge key={model}>{model}</Badge>
+              ),
+            )}
           </div>
         ),
     },

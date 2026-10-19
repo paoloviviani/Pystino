@@ -7,6 +7,7 @@ import {
 import { ApiError, request } from "./api";
 import { MAX_LIMIT, type Page, type PageQuery, pageParams } from "./paging";
 import type {
+  AdminAlias,
   AdminGroup,
   AdminModel,
   AdminProvider,
@@ -76,6 +77,13 @@ export const adminKeys = {
   // afford to be a second view of the same row rather than its own cache.
   model: (modelId: string) => ["admin", "models", modelId] as const,
   prices: (modelId: string) => ["admin", "models", modelId, "prices"] as const,
+  // Prefixed by `models`, deliberately, not a sibling of it: a retarget or a
+  // grant change has to refresh an open model page too, because the model page
+  // shows which aliases point at it (ADR 0101). Putting aliases under
+  // `["admin", "aliases"]` would mean every alias mutation had to remember to
+  // invalidate the catalogue as well.
+  aliases: ["admin", "models", "aliases"] as const,
+  alias: (aliasId: string) => ["admin", "models", "aliases", aliasId] as const,
   discovery: ["admin", "models", "discover"] as const,
   tags: ["admin", "models", "tags"] as const,
   groups: ["admin", "groups"] as const,
@@ -637,6 +645,73 @@ export function useDeleteModel() {
       client.invalidateQueries({ queryKey: adminKeys.models });
       client.invalidateQueries({ queryKey: adminKeys.providers });
     },
+  });
+}
+
+// -- aliases (ADR 0101) ------------------------------------------------------
+//
+// Grants are deliberately absent. An alias row uses the same
+// `group_model_access` / `user_model_access` / `is_public` as a model, so
+// `useModelAccess` and `useUserModelAccess` below drive it unchanged — one
+// implementation of "who may use this name" rather than two that drift.
+
+/** Every alias, available or not. Not paged: the gateway returns them as a
+ *  plain list, and a deployment has as many aliases as an administrator chose
+ *  to write rather than a catalogue's worth. */
+export function useAliases() {
+  return useQuery({
+    queryKey: adminKeys.aliases,
+    queryFn: () => request<AdminAlias[]>("/api/admin/aliases"),
+  });
+}
+
+export function useCreateAlias() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AliasCreateInput) =>
+      request<AdminAlias>("/api/admin/aliases", { method: "POST", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.models }),
+  });
+}
+
+export interface AliasCreateInput {
+  name: string;
+  display_name?: string | null;
+  description?: string | null;
+  /** Exactly one target for this step (ADR 0101): the routing table it leaves
+   *  behind is a list, but the save path refuses a second row. */
+  target_model_id: string;
+  is_active?: boolean;
+  is_public?: boolean;
+}
+
+/** Every field optional; only what is sent is changed, matching the API.
+ *  `name` is editable here and not on a model, because a stable name is the
+ *  whole point of an alias and nothing foreign-keys it. */
+export interface AliasUpdateInput {
+  name?: string;
+  display_name?: string | null;
+  description?: string | null;
+  target_model_id?: string;
+  is_active?: boolean;
+  is_public?: boolean;
+}
+
+export function useUpdateAlias() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string } & AliasUpdateInput) =>
+      request<AdminAlias>(`/api/admin/aliases/${id}`, { method: "PATCH", body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.models }),
+  });
+}
+
+export function useDeleteAlias() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      request<void>(`/api/admin/aliases/${id}`, { method: "DELETE" }),
+    onSuccess: () => client.invalidateQueries({ queryKey: adminKeys.models }),
   });
 }
 

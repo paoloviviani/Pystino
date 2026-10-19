@@ -23,6 +23,7 @@ import {
   KNOWN_INPUTS,
   KNOWN_OUTPUTS,
 } from "../components/CapabilityPicker";
+import { ModelAccess } from "../components/ModelAccess";
 import { PageHeader } from "../components/PageHeader";
 import { formatDateTime, formatNumber } from "../lib/format";
 import { Message } from "../components/Message";
@@ -30,18 +31,12 @@ import { m } from "../paraglide/messages.js";
 import {
   useCreatePrice,
   useDeleteModel,
-  useGroups,
   useModel,
-  useModelAccess,
   usePrices,
   useUpdateModel,
-  useUserModelAccess,
-  useUsers,
 } from "../lib/admin";
 import {
   CHIPS,
-  CHECK_ITEM,
-  CHECK_LIST,
   CODE,
   DETAIL_LABEL,
   DETAIL_VALUE,
@@ -51,7 +46,6 @@ import {
   MUTED,
   PAGE,
 } from "../lib/layout";
-import { usePaginated } from "../lib/paging";
 import type { AdminModel, ModelKind, Price } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 
@@ -109,6 +103,10 @@ function ModelPage({ model }: { model: AdminModel }) {
   // operator names freely is the display name, which is what a picker shows.
   const [displayName, setDisplayName] = useState(model.display_name ?? "");
   const displayNameSaved = (displayName.trim() || null) === (model.display_name ?? null);
+  // Always an array: the gateway sends `[]` on the listing as well as the
+  // detail, so this cannot be undefined on a deployment whose gateway is behind
+  // and a `.length` here would crash the page rather than hide a section.
+  const pointingHere = model.aliases_pointing_here ?? [];
 
   function saveDisplayName(value: string | null) {
     update.mutate(
@@ -221,6 +219,30 @@ function ModelPage({ model }: { model: AdminModel }) {
           />
         </p>
         <p className={MUTED}>{m["model_detail.delete.spend_note"]()}</p>
+        {/* What is about to stop working, by name. Not a warning about the
+            aliases themselves — they survive, with their grants, and read as
+            unavailable; this is the list of names that will start answering 503,
+            because "delete this model" is not a complete statement of what it
+            costs and this is where it is completed (ADR 0101, decision 8). */}
+        {pointingHere.length > 0 ? (
+          <Notice tone="warn">
+            <p>
+              {pointingHere.length === 1
+                ? m["model_detail.aliases.affected_one"]()
+                : m["model_detail.aliases.affected_many"]({
+                    count: formatNumber(pointingHere.length),
+                  })}
+            </p>
+            <ul>
+              {pointingHere.map((alias) => (
+                <li key={alias.id}>
+                  <code className={CODE}>{alias.name}</code>
+                </li>
+              ))}
+            </ul>
+            <p>{m["model_detail.aliases.affected_note"]()}</p>
+          </Notice>
+        ) : null}
       </Dialog>
 
       {/* The two states worth interrupting someone about, and they are not
@@ -324,7 +346,32 @@ function ModelPage({ model }: { model: AdminModel }) {
 
       <Describe model={model} />
       <Pricing model={model} />
-      <Access model={model} />
+      <ModelAccess
+        id={model.id}
+        name={model.name}
+        grantedToUsers={model.granted_to_users}
+        revokedNote={() => m["model_detail.access.revoke_note"]()}
+        cardDescription={() => m["model_detail.access.description"]()}
+      />
+
+      {/* The reverse direction over the routing table: which names resolve to
+          **this** model. Here because deleting or deactivating it is what
+          breaks them, and an administrator should not have to know that an
+          alias exists to be told one is about to stop working (ADR 0101). */}
+      {pointingHere.length > 0 ? (
+        <Card
+          title={m["model_detail.aliases.title"]()}
+          description={m["model_detail.aliases.description"]()}
+        >
+          <div className={CHIPS}>
+            {pointingHere.map((alias) => (
+              <Link key={alias.id} to="/admin/routing" className="underline">
+                <code className={CODE}>{alias.name}</code>
+              </Link>
+            ))}
+          </div>
+        </Card>
+      ) : null}
     </div>
   );
 }
@@ -779,145 +826,4 @@ function AppendPrice({ model }: { model: AdminModel }) {
   );
 }
 
-/**
- * Who may use this model.
- *
- * Groups and individuals are unioned at request time, so they are shown
- * together rather than as alternatives — a person may reach a model through
- * their group or personally, and removing one leaves the other.
- */
-function Access({ model }: { model: AdminModel }) {
-  const groups = useGroups();
-  const access = useModelAccess();
-  const userAccess = useUserModelAccess();
-  const finder = usePaginated(20);
-
-  // The directory is searched, not downloaded. Nothing is requested until
-  // something is typed: granting one person access should not pull a page of
-  // accounts nobody asked about.
-  const users = useUsers(finder.page, finder.query.trim().length > 0);
-  const matching = finder.query.trim() ? (users.data?.items ?? []) : [];
-  const granted = model.granted_to_users;
-
-  return (
-    <Card
-      title={m["model_detail.access.card"]()}
-      description={m["model_detail.access.description"]()}
-    >
-      {access.error ? (
-        <Notice tone="danger">
-          {/* i18n: server text — the API's own error message. */}
-          {access.error instanceof Error ? access.error.message : m["model_detail.unknown_error"]()}
-        </Notice>
-      ) : null}
-
-      <p className={MUTED}>{m["model_detail.access.groups"]()}</p>
-      {groups.isPending ? (
-        <Spinner />
-      ) : (
-        <div className={CHECK_LIST}>
-          {(groups.data?.items ?? []).map((group) => {
-            const has = group.models.includes(model.name);
-            return (
-              <label key={group.id} className={CHECK_ITEM}>
-                <input
-                  type="checkbox"
-                  checked={has}
-                  disabled={access.isPending}
-                  onChange={() =>
-                    access.mutate({ groupId: group.id, modelId: model.id, grant: !has })
-                  }
-                />
-                <span>{group.name}</span>
-              </label>
-            );
-          })}
-        </div>
-      )}
-
-      <p className={MUTED}>{m["model_detail.access.individuals"]()}</p>
-      {granted.length > 0 && (
-        <div className={CHECK_LIST}>
-          {granted.map((email) => (
-            <label key={email} className={CHECK_ITEM}>
-              <input
-                type="checkbox"
-                checked
-                disabled={userAccess.isPending}
-                onChange={() => {
-                  // Revoking needs the id, and the grant list carries only the
-                  // label — so find the account by searching for it. Exact,
-                  // because an email is unique.
-                  const match = users.data?.items.find((entry) => entry.email === email);
-                  if (match) {
-                    userAccess.mutate({ userId: match.id, modelId: model.id, grant: false });
-                  } else {
-                    finder.setSearch(email);
-                  }
-                }}
-              />
-              <span>{email}</span>
-            </label>
-          ))}
-        </div>
-      )}
-      <Input
-        label={m["model_detail.access.person_search"]()}
-        hideLabel
-        value={finder.search}
-        onChange={(event) => finder.setSearch(event.target.value)}
-        placeholder={m["model_detail.access.person_placeholder"]()}
-      />
-      {userAccess.error ? (
-        <Notice tone="danger">
-          {/* i18n: server text — the API's own error message. */}
-          {userAccess.error instanceof Error
-            ? userAccess.error.message
-            : m["model_detail.unknown_error"]()}
-        </Notice>
-      ) : null}
-      <div className={CHECK_LIST}>
-        {matching.map((user) => {
-          const has = granted.includes(user.email ?? "");
-          return (
-            <label key={user.id} className={CHECK_ITEM}>
-              <input
-                type="checkbox"
-                checked={has}
-                disabled={userAccess.isPending}
-                onChange={() =>
-                  userAccess.mutate({ userId: user.id, modelId: model.id, grant: !has })
-                }
-              />
-              <span>{user.email ?? user.display_name ?? user.subject}</span>
-            </label>
-          );
-        })}
-        {matching.length === 0 && (
-          <span className={MUTED}>
-            {!finder.query.trim()
-              ? granted.length === 0
-                ? m["model_detail.access.no_grants"]()
-                : m["model_detail.access.type_to_find"]()
-              : users.isFetching
-                ? m["model_detail.access.searching"]()
-                : m["model_detail.access.no_match"]()}
-          </span>
-        )}
-        {users.data && users.data.total > matching.length && (
-          <span className={MUTED}>
-            {m["model_detail.access.showing"]({
-              shown: formatNumber(matching.length),
-              total: formatNumber(users.data.total),
-            })}
-          </span>
-        )}
-      </div>
-
-      {/* Deactivating the model instead takes it away from everyone at once, and
-          keeps historical spend attributable. */}
-      <Notice tone="info">{m["model_detail.access.revoke_note"]()}</Notice>
-    </Card>
-  );
-}
 

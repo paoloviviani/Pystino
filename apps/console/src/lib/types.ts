@@ -166,6 +166,66 @@ export interface AdminModel {
   granted_to: string[];
   /** Users granted this model personally, on top of their groups. */
   granted_to_users: string[];
+  /** The aliases that resolve to **this** model (ADR 0101).
+   *
+   *  On the model's page, so that deleting or deactivating it shows which names
+   *  will stop working. Always empty on the listing: the gateway sends it only
+   *  for a detail response, because it is a second query per row. The gateway
+   *  always sends it (as `[]` on the listing), so it is required and a client
+   *  that renders `aliases_pointing_here.length` cannot crash on a deployment
+   *  whose gateway is a version behind. */
+  aliases_pointing_here: AliasPointer[];
+}
+
+/** Which alias, and under what name — enough to link to it and to say whether
+ *  it is switched on. Not the whole alias response: a model page showing twenty
+ *  pointing aliases needs their names, not each one's visibility summary. */
+export interface AliasPointer {
+  id: string;
+  name: string;
+  is_active: boolean;
+}
+
+/** The model an alias serves. No provider and no upstream name: choosing a
+ *  target is choosing between models, and nothing on this screen is about the
+ *  counterparty behind one. */
+export interface AliasTarget {
+  id: string;
+  name: string;
+  kind: ModelKind;
+  is_active: boolean;
+}
+
+/** Why an alias cannot serve a request. `null` on an available one.
+ *
+ *  `target_is_alias` is not reachable through the console — the save path
+ *  refuses to write it — and exists so a chain forced into the table directly
+ *  is shown as a fault rather than as an available alias. */
+export type AliasUnavailableReason =
+  | "target_deleted"
+  | "target_inactive"
+  | "target_provider_inactive"
+  | "target_is_alias";
+
+/** One alias, as the Routing tab shows it (ADR 0101). */
+export interface AdminAlias {
+  id: string;
+  name: string;
+  display_name: string | null;
+  description: string | null;
+  /** The target's kind, set on save. Read-only on the form: retargeting across
+   *  kinds is refused (ADR 0101), so this is a fact rather than a choice. */
+  kind: ModelKind;
+  is_active: boolean;
+  is_public: boolean;
+  /** Null when the alias has no target — one of its three unavailable states
+   *  rather than an error, and why `status` exists beside it. */
+  target: AliasTarget | null;
+  status: "available" | "unavailable";
+  unavailable_reason: AliasUnavailableReason | null;
+  granted_to: string[];
+  granted_to_users: string[];
+  created_at: string;
 }
 
 /** A group name an identity provider reported that no group here carries
@@ -203,7 +263,12 @@ export interface AdminGroup {
   code_agents_allowed: boolean;
   api_keys_allowed: boolean;
   member_count: number;
+  /** Every model name this group may use, aliases included (ADR 0101).
+   *  The console badges the ones in `aliases` so an operator can see which
+   *  names the deployment defined and which are models behind them. */
   models: string[];
+  /** The subset of `models` that is an alias. Always sent. */
+  aliases: string[];
   /** The search backend this group searches through on POST /v1/search, by
       model-row name — null when the group has no policy and cannot use the
       unified route. */
