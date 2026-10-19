@@ -52,7 +52,7 @@ from http.cookiejar import CookieJar
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from live_session import (  # noqa: E402
+from live_session import (
     LocalhostSecureCookiePolicy,
     NoRedirect,
     admin_credentials,
@@ -105,7 +105,9 @@ def opener_and_verify() -> tuple[urllib.request.OpenerDirector, ssl.SSLContext |
     jar = CookieJar(policy=LocalhostSecureCookiePolicy())
     return (
         urllib.request.build_opener(
-            NoRedirect, urllib.request.HTTPCookieProcessor(jar), urllib.request.HTTPSHandler(context=context)
+            NoRedirect,
+            urllib.request.HTTPCookieProcessor(jar),
+            urllib.request.HTTPSHandler(context=context),
         ),
         context if bundle else True,
     )
@@ -204,7 +206,9 @@ def device_token(op: urllib.request.OpenerDirector) -> str | None:
         query = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(location).query))
         if "consent" in location and query.get("flow_id"):
             _, _, info = request(
-                op, f"{base}/api/oidc/consent?flow_id={query['flow_id']}", headers={"origin": origin_}
+                op,
+                f"{base}/api/oidc/consent?flow_id={query['flow_id']}",
+                headers={"origin": origin_},
             )
             claims = (json.loads(info).get("data") or {}).get("claims") or []
             status, _, decision = request(
@@ -312,14 +316,19 @@ def device_token(op: urllib.request.OpenerDirector) -> str | None:
             return payload["access_token"]
         error = payload.get("error")
         if error not in ("authorization_pending", "slow_down"):
-            skip("the token endpoint answered", f"{error}: {payload.get('error_description', '')[:120]}")
+            skip(
+                "the token endpoint answered",
+                f"{error}: {payload.get('error_description', '')[:120]}",
+            )
             return None
         time.sleep(interval)
     skip("the token endpoint answered", "the device code was never exchanged")
     return None
 
 
-def admin_api(op: urllib.request.OpenerDirector, path: str, method: str = "GET", data: dict | None = None):
+def admin_api(
+    op: urllib.request.OpenerDirector, path: str, method: str = "GET", data: dict | None = None
+):
     status, _, body = request(op, f"{origin().rstrip('/')}{path}", method=method, data=data)
     try:
         parsed = json.loads(body) if body else None
@@ -343,7 +352,9 @@ def setup_second_group_and_model(op: urllib.request.OpenerDirector) -> tuple[str
         return None
     second = next((g for g in groups["items"] if g["name"] == SECOND_GROUP), None)
     if second is None:
-        status, second = admin_api(op, "/api/admin/groups", method="POST", data={"name": SECOND_GROUP})
+        status, second = admin_api(
+            op, "/api/admin/groups", method="POST", data={"name": SECOND_GROUP}
+        )
         if status != 201:
             skip("the second group", f"creating it answered HTTP {status}")
             return None
@@ -426,7 +437,7 @@ def main() -> int:
     base = origin()
     print(f"origin: {base}\n")
 
-    op, verify = opener_and_verify()
+    op, _verify = opener_and_verify()
 
     print("=== a real access token, by the device flow ===")
     token = device_token(op)
@@ -457,10 +468,8 @@ def main() -> int:
     ok(f"the person is {me.get('email')} (billing group {me.get('billing_group')})")
 
     print("\n=== the two-group shape, through the management API ===")
-    ids = setup_second_group_and_model(op)
-    if ids is None:
+    if setup_second_group_and_model(op) is None:
         return 1
-    second_id, model_id = ids
 
     print("\n=== the listing follows the billing group ===")
     status, listing = v1("/v1/models")
@@ -495,7 +504,10 @@ def main() -> int:
         data={"model": SECOND_MODEL, "messages": [{"role": "user", "content": "hi"}]},
     )
     if status == 429:
-        skip("a chat completion on the second group's model", "a quota is exhausted in this deployment")
+        skip(
+            "a chat completion on the second group's model",
+            "a quota is exhausted in this deployment",
+        )
     else:
         check(
             "a chat completion on the second group's model succeeds",
