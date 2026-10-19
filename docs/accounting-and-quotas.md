@@ -24,7 +24,8 @@ fails in a specific, boring, expensive way.
 
 Every admitted request writes one row to `usage_records` — before the upstream
 call, not after. A request the quota refuses (a `429` with `code:
-quota_exceeded`) writes none: it never reached a provider and cost nothing. The row carries the caller, the billing group, the requested and served
+quota_exceeded`) writes none: it never reached a provider and cost nothing. The row carries the caller, the billing group (see
+[Billing groups](billing-groups.md) for what decides it), the requested and served
 models (which can differ behind a router),
 token counts, status, redaction provenance (`redaction_scope`,
 `redaction_rule_id`) and three cost figures.
