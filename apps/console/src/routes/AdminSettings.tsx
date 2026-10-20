@@ -576,7 +576,9 @@ function CapabilityDefaultsCard() {
                 </div>
                 <div className={`mt-1 text-sm ${MUTED}`}>{entry.hint()}</div>
               </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {/* w-full on phones: shrink-0 alone kept the two long labels
+                  side by side and they ran past the card edge. */}
+              <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
                 <Button
                   variant="ghost"
                   disabled={mode === "on"}
