@@ -12,6 +12,11 @@ against quotas, redacted, metered and written to a ledger you can report on.
 > The name is *pistino*: Turin dialect for a nitpicker, the person who checks
 > every last detail. Which is what an accounting gateway is for.
 
+<p align="center">
+  <img src="docs/screenshot.png" alt="Screenshot" />
+</p>
+
+
 ## Pystino and Cerea
 
 Pystino is one half of a pair. Each half solves a different problem, and each
