@@ -149,6 +149,15 @@ def get_token(base: str, verify: str | bool) -> str | None:
     return token
 
 
+def device_flow_token() -> str | None:
+    """An access token from the bundled Authelia's device flow, or None."""
+    sys.path.insert(0, os.path.dirname(__file__))
+    from test_models_billing_live import device_token, opener_and_verify
+
+    op, _verify = opener_and_verify()
+    return device_token(op)
+
+
 def main() -> int:
     base = origin()
     bundle = ca_bundle()
@@ -158,11 +167,16 @@ def main() -> int:
     print("=== a token from the configured identity provider ===")
     token = get_token(base, verify)
     if token is None:
+        # No Keycloak direct grant: the bundled Authelia's device flow gives a
+        # real access token too, the way an agent machine gets one. Without
+        # this the whole file skipped on the default stack, including at a
+        # release (0.11.0).
+        token = device_flow_token()
+    if token is None:
         skip(
             "the whole file",
-            "no reachable OIDC provider with a direct grant; "
-            "configure a Keycloak client with the direct grant "
-            "(deploy/dev/keycloak/compose.yml) and source deploy/.env",
+            "no Keycloak direct grant and no Authelia device flow; "
+            "configure one (deploy/dev/keycloak/compose.yml) and source deploy/.env",
         )
         return 0
     ok("obtained an access token", f"{len(token)} chars")

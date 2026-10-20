@@ -255,7 +255,7 @@ uv run python scripts/test_surfaces_live.py          # responses, Anthropic mess
 uv run python scripts/test_quota_race_live.py        # admission under concurrency, real Valkey
 uv run python scripts/test_cache_accounting_live.py  # a real cache hit, and the ledger
 uv run python scripts/test_web_search_live.py        # per-search billing, the report and its CSV
-uv run python scripts/test_bill_to_live.py           # x-bill-to against a real OIDC token
+uv run python scripts/test_bill_to_live.py           # x-bill-to against a real OIDC token (Keycloak direct grant, else the Authelia device flow)
 uv run python scripts/test_pystino_usage_live.py     # GET /v1/pystino/usage under both credentials
 uv run python scripts/test_citations_live.py         # citation offsets after a real placeholder
 uv run python scripts/test_public_tls_live.py        # TLS, the IdP, a Secure cookie, nothing else exposed
@@ -263,7 +263,11 @@ uv run python scripts/benchmark_live.py              # per-layer cost; see docs/
 ```
 
 They sign in through the bundled Authelia (`scripts/live_session.py`), so the
-stack needs the `authelia` profile. **Run them.** More than half the serious
+stack needs the `authelia` profile. Without `PYSTINO_LIVE_USER`, they create
+(or re-key) a non-admin `live-check-user` themselves through the console API,
+so the non-admin assertions run instead of skipping (`PYSTINO_LIVE_AUTO_USER=0`
+turns that off). Behind the stack's internal TLS, point `GATEWAY_CA_BUNDLE` at
+Caddy's root (`docker cp <proxy>:/data/caddy/pki/authorities/local/root.crt`). **Run them.** More than half the serious
 bugs in this project were only findable against a running stack: a counter
 seeded at zero, a migration given the wrong environment, a 500 on `/v1/models`
 that every unit test passed through.
