@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -214,22 +214,14 @@ describe("Shell", () => {
     expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
   });
 
-  it("makes the wordmark the way home", () => {
-    // What a wordmark does everywhere else on the web, and the shortest route
-    // back to your own overview from six levels into administration.
-    renderShell(me({ is_admin: true }), "/admin/models");
-    const brand = screen.getByRole("link", { name: /Pystino/ });
-    expect(brand).toHaveAttribute("href", "/");
-  });
-
   it("does not offer the way into administration to a non-administrator", () => {
     renderShell(me({ is_admin: false }));
     expect(screen.queryByRole("link", { name: "Admin view" })).not.toBeInTheDocument();
   });
 
-  it("keeps administration out of the header until you are in it", () => {
+  it("keeps administration out of the navigation until you are in it", () => {
     // The point of the split: an administrator reading their own spend is not
-    // administering anything, and six section links above that page said
+    // administering anything, and ten section links beside that page said
     // otherwise.
     renderShell(me({ is_admin: true }));
     expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
@@ -238,7 +230,7 @@ describe("Shell", () => {
     expect(screen.getByRole("link", { name: "Admin view" })).toBeInTheDocument();
   });
 
-  it("swaps the header for the admin sections once inside", () => {
+  it("swaps the navigation for the admin sections once inside", () => {
     // Driven by the route, not by a toggle: somebody following a link straight
     // to /admin/models must arrive with the right navigation around it.
     renderShell(me({ is_admin: true }), "/admin/models");
@@ -250,10 +242,107 @@ describe("Shell", () => {
   });
 
   it("shows a non-administrator their own navigation even at an admin path", () => {
-    // RequireAdmin refuses the page; the header must not imply otherwise.
+    // RequireAdmin refuses the page; the navigation must not imply otherwise.
     renderShell(me({ is_admin: false }), "/admin/models");
     expect(screen.getByRole("link", { name: "Overview" })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Providers" })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The sidebar, and specifically its shape in administration.
+ *
+ * The order of the links is worth pinning for the same reason the landing
+ * page's order is: it is edited whenever a screen is added, and it has to
+ * agree with routes/Admin.tsx — both read lib/adminNav.ts, so the grouping is
+ * one list, but these tests are what notice if a screen stops being reached.
+ */
+describe("Shell: the sidebar", () => {
+  afterEach(() => {
+    try {
+      window.localStorage.clear();
+    } catch {
+      // Nothing to clear if storage is unavailable, which is also fine.
+    }
+  });
+
+  it("carries the title as the way home", () => {
+    // What a wordmark does everywhere else on the web, and the shortest route
+    // back to your own overview from six levels into administration.
+    renderShell(me({ is_admin: true }), "/admin/models");
+    const brand = screen.getByRole("link", { name: "Pystino LLM gateway" });
+    expect(brand).toHaveAttribute("href", "/");
+  });
+
+  it("groups the admin navigation under the five categories", () => {
+    renderShell(me({ is_admin: true }), "/admin/models");
+
+    const sidebar = screen.getByRole("navigation", { name: "Administration" });
+    for (const heading of ["Usage & limits", "Serving", "Privacy", "People", "Deployment"]) {
+      expect(within(sidebar).getByText(heading)).toBeInTheDocument();
+    }
+
+    // The landing page leads, then the groups in their order — the same order
+    // routes/Admin.tsx renders its cards in.
+    const hrefs = within(sidebar)
+      .getAllByRole("link")
+      .map((link) => link.getAttribute("href"));
+    expect(hrefs).toEqual([
+      "/admin",
+      "/admin/reports",
+      "/admin/quotas",
+      "/admin/providers",
+      "/admin/models",
+      "/admin/routing",
+      "/admin/search",
+      "/admin/redaction",
+      "/admin/users",
+      "/admin/groups",
+      "/admin/settings",
+    ]);
+    // The view switcher is deliberately not one of the links — it sits pinned
+    // under the navigation, the sidebar's one control.
+    expect(screen.getByRole("link", { name: "User view" })).toHaveAttribute("href", "/");
+  });
+
+  it("collapses to a rail: the labels go, the named links stay", () => {
+    renderShell(me({ is_admin: true }), "/admin/models");
+
+    fireEvent.click(screen.getByRole("button", { name: "Collapse the navigation" }));
+
+    expect(screen.queryByText("Providers")).not.toBeInTheDocument();
+    // The accessible name survives the text's removal — on the link itself,
+    // and on the tooltip that stands in for it.
+    expect(screen.getByRole("link", { name: "Providers" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Expand the navigation" })).toBeInTheDocument();
+  });
+
+  it("remembers the collapsed rail across a reload", () => {
+    const first = renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse the navigation" }));
+    first.unmount();
+
+    renderShell();
+    expect(screen.queryByText("Your usage")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Your usage" })).toBeInTheDocument();
+  });
+
+  it("opens as a drawer on a phone, and closes from inside it", () => {
+    renderShell();
+
+    fireEvent.click(screen.getByRole("button", { name: "Menu" }));
+    expect(screen.getByRole("button", { name: "Menu" })).toHaveAttribute("aria-expanded", "true");
+    // The backdrop and the drawer's own close button share the name; both are
+    // ways out, and both are named.
+    const waysOut = screen.getAllByRole("button", { name: "Close the navigation" });
+    expect(waysOut).toHaveLength(2);
+
+    fireEvent.click(waysOut[0]!);
+    // The backdrop unmounts; the drawer's button stays in the DOM (the phone
+    // hides it with CSS, which jsdom does not evaluate) — what is observable
+    // is that there is one way out left and the hamburger says it is shut.
+    expect(screen.getAllByRole("button", { name: "Close the navigation" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Menu" })).toHaveAttribute("aria-expanded", "false");
   });
 });
 

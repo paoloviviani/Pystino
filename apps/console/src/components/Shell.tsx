@@ -11,18 +11,43 @@ import {
   MenuTrigger,
   Notice,
   Select,
+  Tooltip,
 } from "@llmp/ui";
 import { useState } from "react";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode, SVGProps } from "react";
 import { NavLink, useLocation } from "react-router";
-import logoUrl from "../assets/logo.png";
+import { ADMIN_GROUPS } from "../lib/adminNav";
 import { request } from "../lib/api";
+import {
+  SIDEBAR_GROUP,
+  SIDEBAR_LINK,
+  SIDEBAR_LINK_ACTIVE,
+  SIDEBAR_LINK_COLLAPSED,
+} from "../lib/layout";
 import { useSetDefaultBillingGroup } from "../lib/queries";
 import { useOptionalToast } from "../lib/toast";
 import { applyTheme, rememberTheme, storedTheme } from "../lib/theme";
 import type { Theme } from "../lib/theme";
 import type { Me } from "../lib/types";
 import { m } from "../paraglide/messages.js";
+import {
+  BoxIcon,
+  ChartColumnIcon,
+  EyeOffIcon,
+  GaugeIcon,
+  GlobeIcon,
+  HouseIcon,
+  LayoutDashboardIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
+  ServerIcon,
+  SettingsIcon,
+  ShieldIcon,
+  ShuffleIcon,
+  UserIcon,
+  UsersRoundIcon,
+  XIcon,
+} from "./icons";
 
 export interface ShellProps {
   me: Me;
@@ -33,45 +58,39 @@ interface NavItem {
   to: string;
   /** A message function: the list is built once, at import. */
   label: () => string;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
+  /** Exact rather than prefix matching: "/" must not be active everywhere. */
+  end?: boolean;
 }
 
 /**
- * Two navigations, and which one you see is where you are.
- *
- * They were one bar with two headed groups, and that could not work: two
- * heading rows above two link rows in a horizontal header have no shared
- * baseline, so nothing lined up with anything. The layout was arguing with the
- * information.
- *
- * The fix is not typographic. Administration is a *place*, not a section of the
- * page a person is on — an administrator looking at their own spend is not
- * administering anything — so it gets its own space, reached by the Admin
- * button beside their name, and the header shows one flat row either way.
+ * The reader's own navigation: two screens, no categories to name.
  */
 const NAV_YOU: NavItem[] = [
-  { to: "/", label: m["shell.nav.overview"] },
-  { to: "/reports", label: m["shell.nav.your_usage"] },
+  { to: "/", label: m["shell.nav.overview"], icon: HouseIcon, end: true },
+  { to: "/reports", label: m["shell.nav.your_usage"], icon: ChartColumnIcon },
 ];
 
-const NAV_ADMIN: NavItem[] = [
-  { to: "/admin", label: m["shell.nav.summary"] },
-  { to: "/admin/reports", label: m["shell.nav.usage"] },
-  { to: "/admin/quotas", label: m["shell.nav.quotas"] },
-  { to: "/admin/redaction", label: m["shell.nav.redaction"] },
-  { to: "/admin/providers", label: m["shell.nav.providers"] },
-  { to: "/admin/search", label: m["shell.nav.web_search"] },
-  // No Pricing entry: a model's prices live on the model's own page, because
-  // "what is this model" and "what does it cost" are one question asked in one
-  // place. See routes/AdminModelDetail.tsx.
-  { to: "/admin/models", label: m["shell.nav.models"] },
-  // Beside Models, not under it: an alias is a name, and the screen an
-  // administrator opens to change one is the same screen whose delete
-  // confirmation names them (ADR 0101).
-  { to: "/admin/routing", label: m["shell.nav.routing"] },
-  { to: "/admin/users", label: m["shell.nav.users"] },
-  { to: "/admin/groups", label: m["shell.nav.groups"] },
-  { to: "/admin/settings", label: m["shell.nav.settings"] },
-];
+/**
+ * Which icon stands for an administration screen.
+ *
+ * Keyed by route rather than living in `ADMIN_GROUPS` (lib/adminNav.ts): the
+ * landing page does not draw icons, and the vocabulary of that module is the
+ * screens and their order, not how the sidebar decorates them.
+ */
+const ADMIN_ICONS: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
+  "/admin": LayoutDashboardIcon,
+  "/admin/reports": ChartColumnIcon,
+  "/admin/quotas": GaugeIcon,
+  "/admin/providers": ServerIcon,
+  "/admin/models": BoxIcon,
+  "/admin/routing": ShuffleIcon,
+  "/admin/search": GlobeIcon,
+  "/admin/redaction": EyeOffIcon,
+  "/admin/users": UserIcon,
+  "/admin/groups": UsersRoundIcon,
+  "/admin/settings": SettingsIcon,
+};
 
 /**
  * Whether this reader has asked for exact figures, remembered across reloads.
@@ -93,24 +112,44 @@ function readExactMoney(): boolean {
   }
 }
 
-/*
- * Header chrome, in one place: the sticky bar, the nav pills, and the identity
- * button all share it. Breakpoints are `max-[40rem]`, matching the width the
- * CSS Modules this replaces used to break at.
+/**
+ * Whether the sidebar is collapsed to its icon rail, remembered the same way
+ * and for the same reason as the exact-figures preference: a property of one
+ * browser, not of the account, and worth less than a migration.
  */
-const NAV_LINK =
-  "rounded-full px-3 py-2 text-sm font-medium tracking-[0.01em] whitespace-nowrap no-underline " +
-  "text-ink-muted transition-colors hover:bg-sunken hover:text-ink " +
-  "focus-visible:outline-none focus-visible:shadow-focus";
-const NAV_LINK_ACTIVE = "bg-accent-subtle text-accent hover:bg-accent-subtle hover:text-accent";
+const SIDEBAR_COLLAPSED_KEY = "llmp.console.sidebarCollapsed";
 
+function readSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The console's frame: a bar that carries the title and the account, and a
+ * sidebar that carries the navigation.
+ *
+ * The navigation used to be pills in the bar, and twelve of them in
+ * administration is a row that scrolls off a laptop's edge; a sidebar holds
+ * them at any count and gives each a line of its own. It is collapsible —
+ * down to an icon rail, the labels on tooltips — because a person who has
+ * learned the screens does not need to keep paying the width, and the choice
+ * is remembered per browser like the other display preferences. On a phone
+ * the sidebar does not collapse but slides in as a drawer, which is the same
+ * element with the labels kept: a rail of icons has no room to earn there.
+ *
+ * The bar keeps exactly two things: the title, which is the way home (what
+ * the wordmark was for), and the account. Everything else lives in the
+ * sidebar, so "where can I go" and "who am I" stop sharing a row.
+ */
 export function Shell({ me, children }: ShellProps) {
   const location = useLocation();
   // The route decides, not a toggle. A person who follows a link into an admin
   // screen arrives with the right navigation around it, which a stateful switch
   // would not give them.
   const inAdmin = location.pathname.startsWith("/admin");
-  const items = inAdmin && me.is_admin ? NAV_ADMIN : NAV_YOU;
   const name = me.display_name || me.email || m["shell.signed_in"]();
 
   // Administrators only. A reader looking at their own spend has no use for
@@ -126,9 +165,24 @@ export function Shell({ me, children }: ShellProps) {
     }
   };
 
-  // The phone's navigation panel. Desktop never hides the pills, so this is
-  // only read through the mobile-only classes; a route change closes it.
-  const [navOpen, setNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => readSidebarCollapsed());
+  const setCollapsedPersisted = (next: boolean) => {
+    setCollapsed(next);
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+    } catch {
+      // The same small loss as above.
+    }
+  };
+
+  // The phone's drawer. Desktop never hides the sidebar behind state, so this
+  // is only read through the mobile-only classes; a route change closes it.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // The rail is the desktop's collapsed shape. The drawer keeps its labels
+  // whatever the desktop preference says — icon-only rows on a phone are a
+  // list of guesses — so "collapsed" drives the classes while this decides
+  // whether the labels render at all.
+  const rail = collapsed && !drawerOpen;
 
   // Light and dark: the OS's answer until the reader picks, then theirs. See
   // lib/theme.ts for why this is a class and a localStorage key and nothing else.
@@ -140,109 +194,58 @@ export function Shell({ me, children }: ShellProps) {
   };
 
   return (
-    <div className="min-h-dvh">
-      <header className="sticky top-0 z-10 border-b border-line bg-surface">
-        <div className="relative mx-auto flex max-w-[var(--layout-max-width)] items-center gap-6 px-5 py-3 max-[40rem]:gap-3 max-[40rem]:px-4">
-          {/* The wordmark is the way home, which is what a wordmark is for
-              everywhere else on the web. `end`, so it is only "current" on the
-              overview itself rather than on every route beneath it. */}
+    <div className="flex min-h-dvh flex-col">
+      <header className="sticky top-0 z-20 border-b border-line bg-surface">
+        <div className="mx-auto flex h-15 w-full max-w-[var(--layout-max-width)] items-center gap-1 px-5 max-[40rem]:px-3">
+          {/* On a phone, the hamburger that brings the drawer in. */}
+          <button
+            type="button"
+            aria-label={m["shell.menu"]()}
+            aria-expanded={drawerOpen}
+            onClick={() => setDrawerOpen(true)}
+            className="inline-flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:shadow-focus min-[40rem]:hidden"
+          >
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 16 16"
+              className="size-5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            >
+              <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" />
+            </svg>
+          </button>
+
+          {/* On a desktop, the collapse toggle: the sidebar down to its icon
+              rail and back. `aria-pressed` rather than `aria-expanded` — the
+              button names a state of the frame, not a disclosure of content. */}
+          <button
+            type="button"
+            aria-label={collapsed ? m["shell.sidebar.expand"]() : m["shell.sidebar.collapse"]()}
+            aria-pressed={collapsed}
+            onClick={() => setCollapsedPersisted(!collapsed)}
+            className="hidden size-9 shrink-0 cursor-pointer items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:shadow-focus min-[40rem]:inline-flex"
+          >
+            {collapsed ? (
+              <PanelLeftOpenIcon className="size-4.5" />
+            ) : (
+              <PanelLeftCloseIcon className="size-4.5" />
+            )}
+          </button>
+
+          {/* The title is the way home, which is what the wordmark was for:
+              the shortest route back to your own overview from six levels
+              into administration. */}
           <NavLink
             to="/"
-            end
-            className="flex shrink-0 items-center gap-2 rounded-sm text-ink no-underline focus-visible:outline-none focus-visible:shadow-focus"
+            className="ml-1 rounded-sm font-semibold text-ink no-underline transition-colors hover:text-ink-muted focus-visible:outline-none focus-visible:shadow-focus max-[40rem]:ml-0"
           >
-            {/* The Pystino mark, from the simplified_logo.png the operator
-                pushed to GitHub (564px original), resized to a 72px 2x asset
-                (8-bit, 2.4 KB) and displayed at 36px — a step up from the
-                28px the detailed original sat at. Decorative in the strict
-                sense — `alt=""`, with the wordmark beside it carrying the
-                name — so it costs a screen reader nothing. */}
-            <img src={logoUrl} alt="" className="h-9 w-auto" />
-            <span className="font-bold">{/* i18n: literal — the product's own name */}Pystino</span>
+            {/* i18n: literal — the product's own name */}Pystino LLM gateway
           </NavLink>
 
-          {/* One navigation, two shapes: inline pills on a wide screen, and on
-              a phone the same element re-dressed as a panel the hamburger
-              drops under the bar. Rendered once and always in the DOM — a
-              CSS-hidden element stays in the accessibility tree, and there is
-              exactly one "Providers" link for a test to find, whichever shape
-              the reader is looking at. */}
-          <nav
-            className={[
-              "flex flex-1 items-center gap-1",
-              "max-[40rem]:absolute max-[40rem]:inset-x-0 max-[40rem]:top-full max-[40rem]:z-20",
-              "max-[40rem]:flex-col max-[40rem]:items-stretch max-[40rem]:border-b max-[40rem]:border-line",
-              "max-[40rem]:bg-surface max-[40rem]:p-3 max-[40rem]:shadow-md",
-              !navOpen && "max-[40rem]:hidden",
-            ].join(" ")}
-            aria-label={inAdmin ? m["shell.nav.administration"]() : m["shell.nav.sections"]()}
-          >
-            {items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === "/" || item.to === "/admin"}
-                onClick={() => setNavOpen(false)}
-                className={({ isActive }) =>
-                  [
-                    isActive ? `${NAV_LINK} ${NAV_LINK_ACTIVE}` : NAV_LINK,
-                    "max-[40rem]:w-full",
-                  ].join(" ")
-                }
-              >
-                {item.label()}
-              </NavLink>
-            ))}
-            {me.is_admin && (
-              // Administration is a place, not a section — but it rides in the
-              // one navigation rather than getting a second element for each
-              // screen size. On a desktop it is dressed as a control (it
-              // changes where you are; reading like the sections beside it
-              // would make administration look like one of them); on a phone
-              // it is the last row of the hamburger panel, still one click.
-              <NavLink
-                to={inAdmin ? "/" : "/admin"}
-                end={inAdmin}
-                onClick={() => setNavOpen(false)}
-                className={({ isActive }) =>
-                  [
-                    isActive ? `${NAV_LINK} ${NAV_LINK_ACTIVE}` : NAV_LINK,
-                    "max-[40rem]:w-full",
-                    "min-[40rem]:ml-2 min-[40rem]:rounded-full min-[40rem]:border",
-                    "min-[40rem]:border-line-strong min-[40rem]:px-3 min-[40rem]:py-1.5",
-                    "min-[40rem]:font-medium min-[40rem]:whitespace-nowrap min-[40rem]:text-ink",
-                    "min-[40rem]:no-underline min-[40rem]:hover:bg-sunken",
-                  ].join(" ")
-                }
-              >
-                {inAdmin ? m["shell.nav.user_view"]() : m["shell.nav.admin_view"]()}
-              </NavLink>
-            )}
-          </nav>
-
-          {/* The right cluster: on a phone, the hamburger that opens the
-              navigation above. */}
           <div className="ml-auto flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              aria-label={m["shell.menu"]()}
-              aria-expanded={navOpen}
-              onClick={() => setNavOpen((open) => !open)}
-              className="hidden size-10 cursor-pointer items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:shadow-focus max-[40rem]:inline-flex"
-            >
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 16 16"
-                className="size-5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              >
-                <path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" />
-              </svg>
-            </button>
-
             <UserMenu
               me={me}
               name={name}
@@ -255,11 +258,242 @@ export function Shell({ me, children }: ShellProps) {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[var(--layout-max-width)] px-5 pt-6 pb-7 max-[40rem]:px-4 max-[40rem]:pt-5 max-[40rem]:pb-6">
-        {children}
-      </main>
+      <div className="mx-auto flex w-full max-w-[var(--layout-max-width)] flex-1 items-stretch gap-5 px-5 max-[40rem]:gap-0 max-[40rem]:px-4">
+        {drawerOpen && (
+          // The drawer's backdrop, and the click that closes it. A button
+          // rather than a div: the dismiss is an action, and a keyboard
+          // reader gets it named.
+          <button
+            type="button"
+            aria-label={m["shell.sidebar.close"]()}
+            onClick={() => setDrawerOpen(false)}
+            className="fixed inset-0 z-30 cursor-pointer bg-ink/40 min-[40rem]:hidden"
+          />
+        )}
+
+        <aside
+          className={[
+            // The phone's drawer: fixed to the left edge, over the content
+            // and the bar (the close button below stands in for the
+            // hamburger it covers).
+            "fixed inset-y-0 left-0 z-40 flex w-60 shrink-0 flex-col border-r border-line bg-surface shadow-lg",
+            // The desktop's column: sticky under the bar, the height of the
+            // viewport less the bar, and never wider than its rail allows.
+            "min-[40rem]:sticky min-[40rem]:inset-y-auto min-[40rem]:left-auto min-[40rem]:top-15 min-[40rem]:z-auto",
+            "min-[40rem]:max-h-[calc(100dvh-3.75rem)] min-[40rem]:self-start min-[40rem]:border-line-quiet min-[40rem]:shadow-none",
+            collapsed && "min-[40rem]:w-14",
+            !drawerOpen && "max-[40rem]:hidden",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
+          {/* Mobile only: the drawer covers the bar, so it carries its own
+              way out. */}
+          <div className="flex shrink-0 items-center justify-end px-3 pt-3 min-[40rem]:hidden">
+            <button
+              type="button"
+              aria-label={m["shell.sidebar.close"]()}
+              onClick={() => setDrawerOpen(false)}
+              className="inline-flex size-9 cursor-pointer items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:shadow-focus"
+            >
+              <XIcon className="size-4.5" />
+            </button>
+          </div>
+
+          <SidebarNav
+            me={me}
+            inAdmin={inAdmin}
+            rail={rail}
+            onClose={() => setDrawerOpen(false)}
+          />
+        </aside>
+
+        <main className="min-w-0 flex-1 pt-6 pb-7 max-[40rem]:pt-5 max-[40rem]:pb-6">
+          {children}
+        </main>
+      </div>
     </div>
   );
+}
+
+/**
+ * The sidebar's contents: the navigation of the place you are in, and at the
+ * bottom the switch to the other place.
+ *
+ * Rendered once and always in the DOM, whatever the width — the phone hides it
+ * with `hidden`, the desktop re-dresses it as a rail — so there is exactly one
+ * "Providers" link for a test to find, whichever shape the reader is looking
+ * at.
+ */
+function SidebarNav({
+  me,
+  inAdmin,
+  rail,
+  onClose,
+}: {
+  me: Me;
+  inAdmin: boolean;
+  rail: boolean;
+  onClose: () => void;
+}) {
+  const admin = inAdmin && me.is_admin;
+
+  return (
+    <>
+      <nav
+        aria-label={admin ? m["shell.nav.administration"]() : m["shell.nav.sections"]()}
+        className="min-h-0 flex-1 overflow-y-auto px-2.5 py-4 max-[40rem]:py-5"
+      >
+        {admin ? (
+          <>
+            {/* The landing page itself leads the list: an administrator who
+                wants the overview of sections gets it from the sidebar too,
+                and a group heading over it would say less than the dashboard
+                icon does. */}
+            <NavList
+              items={[
+                {
+                  to: "/admin",
+                  label: m["shell.nav.summary"],
+                  icon: ADMIN_ICONS["/admin"] ?? SettingsIcon,
+                  end: true,
+                },
+              ]}
+              rail={rail}
+              onClose={onClose}
+            />
+            {/*
+                The five categories the landing page groups its cards into
+                (lib/adminNav.ts), so the sidebar and the page cannot drift
+                into two orderings of one set of screens.
+            */}
+            {ADMIN_GROUPS.map((group) => (
+              <div key={group.id} className="mt-4">
+                {rail ? (
+                  // The rail cannot hold a label; a rule between the icon
+                  // clusters keeps the categories readable as categories.
+                  <div className="mx-2 my-2 border-t border-line-quiet" />
+                ) : (
+                  <p className={`${SIDEBAR_GROUP} px-2.5 pb-1.5`}>{group.heading()}</p>
+                )}
+                <NavList
+                  items={group.sections.map((section) => ({
+                    to: section.to,
+                    label: section.title,
+                    icon: ADMIN_ICONS[section.to] ?? SettingsIcon,
+                  }))}
+                  rail={rail}
+                  onClose={onClose}
+                />
+              </div>
+            ))}
+          </>
+        ) : (
+          <NavList items={NAV_YOU} rail={rail} onClose={onClose} />
+        )}
+      </nav>
+
+      {/* Administration is a place, not a section — so the way between the two
+          places is not a link among the links but the sidebar's one control,
+          pinned at the bottom where a switcher belongs. Absent for a reader
+          with no second place to switch to: a non-administrator offered "Admin
+          view" would be offered a screen that refuses them. */}
+      {me.is_admin && (
+        <div className="shrink-0 border-t border-line-quiet p-2.5">
+          <SideLink
+            to={inAdmin ? "/" : "/admin"}
+            end={inAdmin}
+            label={inAdmin ? m["shell.nav.user_view"]() : m["shell.nav.admin_view"]()}
+            icon={ShieldIcon}
+            rail={rail}
+            onClose={onClose}
+            neverActive
+            className="text-ink"
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+function NavList({
+  items,
+  rail,
+  onClose,
+}: {
+  items: NavItem[];
+  rail: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <ul className="flex flex-col gap-0.5">
+      {items.map((item) => (
+        <li key={item.to}>
+          <SideLink
+            to={item.to}
+            end={item.end}
+            label={item.label()}
+            icon={item.icon}
+            rail={rail}
+            onClose={onClose}
+          />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * One sidebar row, in both of its shapes.
+ *
+ * Expanded, icon and label; in the rail, the icon alone with the label on a
+ * tooltip — and as the link's `aria-label`, so the accessible name survives
+ * the text's removal. The active state follows the route, as the header pills
+ * used to; the view switcher declines it, because the control that moves you
+ * somewhere is not the marker of where you are.
+ */
+function SideLink({
+  to,
+  end = false,
+  label,
+  icon: Icon,
+  rail,
+  onClose,
+  neverActive = false,
+  className,
+}: {
+  to: string;
+  end?: boolean;
+  label: string;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
+  rail: boolean;
+  onClose: () => void;
+  neverActive?: boolean;
+  className?: string;
+}) {
+  const link = (
+    <NavLink
+      to={to}
+      end={end}
+      onClick={onClose}
+      aria-label={rail ? label : undefined}
+      className={({ isActive }) =>
+        [
+          SIDEBAR_LINK,
+          isActive && !neverActive ? SIDEBAR_LINK_ACTIVE : "",
+          rail ? SIDEBAR_LINK_COLLAPSED : "",
+          className,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      }
+    >
+      <Icon className="size-4 shrink-0" />
+      {!rail && label}
+    </NavLink>
+  );
+
+  return rail ? <Tooltip label={label}>{link}</Tooltip> : link;
 }
 
 /**
@@ -437,7 +671,6 @@ function UserMenu({
     </MenuRoot>
   );
 }
-
 
 /**
  * Choosing your own default billing group, from your own groups.

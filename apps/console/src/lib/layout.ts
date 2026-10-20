@@ -87,6 +87,42 @@ export const SECTION_LINK =
   "hover:[&>*]:border-accent hover:[&>*]:shadow-sm " +
   "focus-visible:outline-none focus-visible:[&>*]:shadow-focus";
 
+/** One category of the administration landing page: its label and its cards. */
+export const SECTION_GROUP = "flex flex-col gap-3";
+
+/**
+ * The category label itself. Small caps in faint ink — a signpost, not a
+ * heading that wants to compete with the card titles under it.
+ */
+export const SECTION_GROUP_HEADING =
+  "text-xs font-medium uppercase tracking-[0.08em] text-ink-faint";
+
+/* -- the sidebar ----------------------------------------------------------- */
+
+/**
+ * A navigation row in the sidebar: icon and label on one line. The collapsed
+ * rail re-dresses the same row as a centred icon button (the label is then on
+ * a tooltip, and the narrow width is Shell's to apply), so one element serves
+ * both widths and a test finds exactly one link per screen.
+ */
+export const SIDEBAR_LINK =
+  "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium tracking-[0.01em] no-underline " +
+  "text-ink-muted transition-colors hover:bg-sunken hover:text-ink " +
+  "focus-visible:outline-none focus-visible:shadow-focus";
+
+export const SIDEBAR_LINK_ACTIVE =
+  "bg-accent-subtle text-accent hover:bg-accent-subtle hover:text-accent";
+
+/** Desktop-only: the rail centres the icon and drops the row's padding. */
+export const SIDEBAR_LINK_COLLAPSED = "min-[40rem]:justify-center min-[40rem]:px-0";
+
+/**
+ * The category label in the sidebar — the same voice as the landing page's
+ * group headings (SECTION_GROUP_HEADING), because the two are meant to read as
+ * one vocabulary, not two.
+ */
+export const SIDEBAR_GROUP = SECTION_GROUP_HEADING;
+
 /* -- the redaction engine list ------------------------------------------- */
 
 /**

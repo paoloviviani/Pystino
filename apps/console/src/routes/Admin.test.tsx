@@ -6,27 +6,30 @@ import { Admin } from "./Admin";
 /**
  * The administration landing page.
  *
- * The order of the cards is the only thing asserted, and it is worth asserting
- * because it is the kind of thing that drifts: the list is edited whenever a
- * screen is added, and the header's nav — which has to agree with it — lives in
- * another file.
+ * The page's whole shape is the grouping: five categories, each naming the
+ * question its cards answer, in an order the sidebar repeats (both read
+ * lib/adminNav.ts, so a drift between them is a code change away — but the
+ * order itself is still worth pinning, because it is edited whenever a screen
+ * is added).
  */
 describe("Admin", () => {
-  it("puts Settings last, as the header's nav does", () => {
+  it("groups the sections under five headings, in the sidebar's order", () => {
     render(
       <MemoryRouter>
         <Admin />
       </MemoryRouter>,
     );
 
-    const titles = screen.getAllByRole("link").map((link) => link.textContent ?? "");
-    expect(titles.at(-1)).toContain("Settings");
-    // Usage leads: the deployment's spend is what an administrator opens this
-    // section to look at.
-    expect(titles.at(0)).toContain("Usage");
+    // Each named section is one group; its heading is the h2 inside it. (The
+    // cards' own titles are h2s too, which is why the groups are located as
+    // regions rather than by heading level.)
+    const headings = screen
+      .getAllByRole("region")
+      .map((region) => region.querySelector("h2")?.textContent ?? "");
+    expect(headings).toEqual(["Usage & limits", "Serving", "Privacy", "People", "Deployment"]);
   });
 
-  it("carries Routing beside Models, at /admin/routing as the header's nav does", () => {
+  it("carries every screen exactly once, in the grouped order", () => {
     render(
       <MemoryRouter>
         <Admin />
@@ -34,13 +37,25 @@ describe("Admin", () => {
     );
 
     const hrefs = screen.getAllByRole("link").map((link) => link.getAttribute("href"));
-    // Routing shipped after this page existed (ADR 0101), and a section the
-    // landing page omits is one administrators do not learn exists.
-    const routing = hrefs.indexOf("/admin/routing");
-    expect(routing).toBeGreaterThan(-1);
-    // Beside Models, not under it — the same adjacency the header's nav holds,
-    // because an alias is a name for a model (components/Shell.tsx).
-    expect(hrefs.indexOf("/admin/models")).toBeLessThan(routing);
-    expect(hrefs.indexOf("/admin/users")).toBeGreaterThan(routing);
+    expect(hrefs).toEqual([
+      // Usage & limits: the deployment's spend is what an administrator opens
+      // this page to look at, so it leads.
+      "/admin/reports",
+      "/admin/quotas",
+      // Serving: where requests go and what they cost, web search with them
+      // (a search backend is a provider).
+      "/admin/providers",
+      "/admin/models",
+      "/admin/routing",
+      "/admin/search",
+      // Privacy.
+      "/admin/redaction",
+      // People.
+      "/admin/users",
+      "/admin/groups",
+      // Deployment last: the wiring of the deployment, not its traffic — the
+      // one position that would read as "start with this" if it led.
+      "/admin/settings",
+    ]);
   });
 });
