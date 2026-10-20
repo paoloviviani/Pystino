@@ -15,9 +15,10 @@ from typing import Any
 import httpx
 import yaml
 from fastapi import FastAPI
-from gateway.models import DirectoryEntry, IdentityProvider, User
+from gateway.models import DirectoryEntry, IdentityProvider, UsageRecord, UsageStatus, User
 from gateway.secrets import SecretBox
 from pydantic import SecretStr
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from test_admin import as_user, make_admin
 
@@ -242,6 +243,47 @@ class TestDeleteSucceeds:
 
         async with session_factory() as session:
             assert await session.get(User, victim_id) is None
+
+    async def test_their_assistant_text_is_blanked_and_the_ledger_kept(
+        self,
+        app: FastAPI,
+        client: Any,
+        seeded: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """The ledger outlives the person on purpose, but the reply text kept
+        for a suspended client is their content: it goes with them, now, not at
+        the next retention sweep. The amounts and the row stay."""
+        admin = await make_admin(session_factory, seeded)
+        as_user(app, admin)
+        app.state.control_http = _fake_chat({"conversations": 0})
+        app.state.settings.chat.erasure_url = "http://chat/internal/erasure"
+        app.state.settings.chat.erasure_token = SecretStr("test-erasure-token")
+        victim_id = await _victim(session_factory)
+        async with session_factory() as session:
+            row = UsageRecord(
+                request_id=f"r-{uuid.uuid4().hex[:8]}",
+                status=UsageStatus.COMPLETED,
+                user_id=victim_id,
+                model_name="test-model",
+                currency="EUR",
+                assistant_text="something they were told",
+            )
+            session.add(row)
+            await session.commit()
+            row_id = row.id
+
+        response = await client.request(
+            "DELETE", f"/api/admin/users/{victim_id}", json={"confirm_shared_loss": False}
+        )
+        assert response.status_code == 200, response.text
+
+        async with session_factory() as session:
+            kept = (
+                await session.execute(select(UsageRecord).where(UsageRecord.id == row_id))
+            ).scalar_one()
+        assert kept.assistant_text is None
+        assert kept.user_id is None
 
     async def test_the_inline_call_failing_still_returns_200_pending(
         self,

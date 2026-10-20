@@ -4577,6 +4577,14 @@ async def delete_user(
         target_user_id=user.id,
         target_label=user.email or "",
     )
+    # The ledger survives the person (``ON DELETE SET NULL``); the reply text
+    # kept on it for a suspended client does not. It is their content, so it
+    # goes in this transaction rather than at the next retention sweep.
+    await session.execute(
+        update(UsageRecord)
+        .where(UsageRecord.user_id == user.id, UsageRecord.assistant_text.is_not(None))
+        .values(assistant_text=None)
+    )
     await session.delete(user)
     erasure = await queue_erasure(session, gateway_user_id=user.id, identities=identities)
     await session.commit()

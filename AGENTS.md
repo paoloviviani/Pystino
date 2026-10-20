@@ -541,17 +541,9 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
 
 ## Known open items
 
-- **The estimated-usage disclosure blames the provider for client
-  disconnects.** `_disclosures` in `reporting.py` should split its sentence on
-  `status`.
-- **Deleting a person does not blank `assistant_text`** on their ledger rows;
-  only the retention sweep (`GATEWAY_TRANSCRIPT_RETENTION_HOURS`, default 24)
-  clears it.
 - **Reranking, image editing and variations, and per-size image pricing** are
   not implemented (`image_size` is recorded on every image row; nothing prices
   by it).
-- **Comments in `deploy/cli.py` still name `cerea-deploy`**: the deploy kit
-  is now Cerea's `kit/`. Fix them with the next change to that file.
 - **CI runs SQLite only.** `TEST_DATABASE_URL` buys a per-test PostgreSQL
   database (one fresh copy of a session template) and is the only thing that
   exercises advisory locks, `FOR UPDATE`, `SKIP LOCKED`, and the check

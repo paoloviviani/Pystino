@@ -299,20 +299,20 @@ Stated plainly, so none of them is a surprise later.
   groups live, whether they appear in the ID token at all, how they are named.
   Test any new provider against your instance before relying on it; see the
   [OIDC guide](oidc-generic-provider.md) for the checklist.
-- **GDPR erasure is incomplete.** Deleting a person (the Users page) removes
-  their account, keys, memberships and bundled login, and erases them from the
-  chat ([Merging and deleting accounts](identity.md#merging-and-deleting-accounts)).
-  Identity foreign keys on the ledger use `ON DELETE SET NULL`, so the financial
-  rows survive — but `assistant_text` on those rows may itself contain personal
-  data and is *not* cleared by the delete. Nothing blanks it on demand. What
-  does exist is retention: the text is cleared from every usage row after
-  `GATEWAY_TRANSCRIPT_RETENTION_HOURS` (default 24; `0` keeps it for ever), so
-  the exposure is bounded to that window. The row itself (tokens, cost,
-  timestamps) is kept. The sweep runs every `GATEWAY_TRANSCRIPT_SWEEP_SECONDS`
-  (default 600) and measures age from finalisation, or from the last streaming
-  flush for a row that never finalised, so an answer still being written is
-  never cleared. The text exists so a suspended client can recover an answer;
-  a recovery after the window finds the row but not the text.
+- **Assistant text on the ledger is personal data, with a bounded lifetime.**
+  Deleting a person (the Users page) removes their account, keys, memberships
+  and bundled login, and erases them from the chat
+  ([Merging and deleting accounts](identity.md#merging-and-deleting-accounts)).
+  Identity foreign keys on the ledger use `ON DELETE SET NULL`, so the
+  financial rows survive (tokens, cost, timestamps), and the delete **blanks
+  `assistant_text` on that person's rows** in the same transaction. For
+  everyone else, retention clears the text from every usage row after
+  `GATEWAY_TRANSCRIPT_RETENTION_HOURS` (default 24; `0` keeps it for ever). The
+  sweep runs every `GATEWAY_TRANSCRIPT_SWEEP_SECONDS` (default 600) and
+  measures age from finalisation, or from the last streaming flush for a row
+  that never finalised, so an answer still being written is never cleared. The
+  text exists so a suspended client can recover an answer; a recovery after the
+  window finds the row but not the text.
 - **The redaction HMAC key must be backed up with the transcripts it
   labelled.** Losing or rotating it breaks cross-turn placeholder consistency
   for existing conversations.

@@ -318,6 +318,43 @@ class TestDisclosures:
         assert body["totals"]["estimated_requests"] == 1
         assert any("estimated" in note for note in body["disclosures"])
 
+    async def test_an_estimate_from_a_client_disconnect_is_not_blamed_on_the_provider(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        """A client that hangs up before the terminal frame leaves an estimated
+        row that the provider is not at fault for: the row's status says who
+        left. The sentence used to blame the provider for every estimate."""
+        await record(
+            session,
+            group_id=seeded.group.id,
+            at=inside_this_month(),
+            source=UsageSource.ESTIMATED,
+            status=UsageStatus.CLIENT_DISCONNECTED,
+        )
+        body = (await admin_client.get("/api/admin/reports/usage")).json()
+        assert body["totals"]["estimated_requests"] == 1
+        assert body["totals"]["estimated_disconnected_requests"] == 1
+        notes = [note for note in body["disclosures"] if "estimated" in note]
+        assert len(notes) == 1
+        assert "client disconnected" in notes[0]
+        assert "provider did not report" not in notes[0]
+
+    async def test_both_estimate_causes_are_declared_separately(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        for status in (UsageStatus.COMPLETED, UsageStatus.CLIENT_DISCONNECTED):
+            await record(
+                session,
+                group_id=seeded.group.id,
+                at=inside_this_month(),
+                source=UsageSource.ESTIMATED,
+                status=status,
+            )
+        body = (await admin_client.get("/api/admin/reports/usage")).json()
+        notes = [note for note in body["disclosures"] if "estimated" in note]
+        assert any("1 of 2" in note and "provider did not report" in note for note in notes)
+        assert any("1 of 2" in note and "client disconnected" in note for note in notes)
+
     async def test_missing_usage_says_the_total_is_a_floor(
         self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
     ) -> None:
