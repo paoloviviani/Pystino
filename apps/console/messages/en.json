@@ -2599,5 +2599,15 @@
   "model_detail.aliases.affected_one": "1 alias points here:",
   "model_detail.aliases.affected_many": "{count} aliases point here:",
   "model_detail.aliases.affected_note": "They are not deleted with the model: each keeps its name and its grants, and can be pointed at a model again from the Routing tab.",
-  "admin_groups.models.alias_badge": "alias"
+  "admin_groups.models.alias_badge": "alias",
+  "ui.dialog.close": "Close",
+  "ui.toast.dismiss": "Dismiss",
+  "ui.spinner.loading": "Loading",
+  "ui.table.empty": "Nothing to show.",
+  "ui.pagination.label": "Pagination",
+  "ui.pagination.previous": "Previous",
+  "ui.pagination.next": "Next",
+  "ui.pagination.rows": "rows",
+  "ui.pagination.none": "No {noun}",
+  "ui.pagination.of": "of {total} {noun}"
 }

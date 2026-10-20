@@ -1,6 +1,7 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import type { ReactNode } from "react";
 import { cx } from "../cx";
+import { useUiMessages } from "../messages";
 
 export interface DialogProps {
   open: boolean;
@@ -27,6 +28,7 @@ export interface DialogProps {
  * is the one that survives review.
  */
 export function Dialog({ open, title, onClose, footer, children }: DialogProps) {
+  const t = useUiMessages();
   return (
     <BaseDialog.Root
       open={open}
@@ -62,7 +64,7 @@ export function Dialog({ open, title, onClose, footer, children }: DialogProps) 
               {title}
             </BaseDialog.Title>
             <BaseDialog.Close
-              aria-label="Close"
+              aria-label={t.close}
               className={cx(
                 // `rounded-lg`, not the `rounded-full` this used to be: ADR 0077
                 // reserves the pill for status pills (`Badge`), and a round

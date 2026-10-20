@@ -2599,5 +2599,15 @@
   "model_detail.aliases.affected_one": "[1 áľíáś þóíńťś ȟéŕé:]",
   "model_detail.aliases.affected_many": "[{count} áľíáśéś þóíńť ȟéŕé:]",
   "model_detail.aliases.affected_note": "[Ťȟéý áŕé ńóť ďéľéťéď ŵíťȟ ťȟé ḿóďéľ: éáćȟ ķééþś íťś ńáḿé áńď íťś ǧŕáńťś, áńď ćáń ƀé þóíńťéď áť á ḿóďéľ áǧáíń ƒŕóḿ ťȟé Ŕóúťíńǧ ťáƀ.]",
-  "admin_groups.models.alias_badge": "[áľíáś]"
+  "admin_groups.models.alias_badge": "[áľíáś]",
+  "ui.dialog.close": "[Ćľóśé]",
+  "ui.toast.dismiss": "[Ďíśḿíśś]",
+  "ui.spinner.loading": "[Ĺóáďíńǧ]",
+  "ui.table.empty": "[Ńóťȟíńǧ ťó śȟóŵ.]",
+  "ui.pagination.label": "[Þáǧíńáťíóń]",
+  "ui.pagination.previous": "[Þŕéǚíóúś]",
+  "ui.pagination.next": "[Ńéẋť]",
+  "ui.pagination.rows": "[ŕóŵś]",
+  "ui.pagination.none": "[Ńó {noun}]",
+  "ui.pagination.of": "[óƒ {total} {noun}]"
 }

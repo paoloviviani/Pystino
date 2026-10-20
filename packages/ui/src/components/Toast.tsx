@@ -1,6 +1,7 @@
 import { Toast as BaseToast } from "@base-ui/react/toast";
 import type { ReactNode } from "react";
 import { cx } from "../cx";
+import { useUiMessages } from "../messages";
 
 /**
  * The console's toast plumbing, pre-assembled.
@@ -38,6 +39,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 }
 
 function ToastList() {
+  const t = useUiMessages();
   const { toasts } = BaseToast.useToastManager();
   return toasts.map((toast) => (
     <BaseToast.Root
@@ -59,7 +61,7 @@ function ToastList() {
           )}
         </div>
         <BaseToast.Close className="cursor-pointer text-sm text-ink-faint transition-colors hover:text-ink">
-          Dismiss
+          {t.dismiss}
         </BaseToast.Close>
       </BaseToast.Content>
     </BaseToast.Root>

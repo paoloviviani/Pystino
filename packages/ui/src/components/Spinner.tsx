@@ -1,4 +1,5 @@
 import { cx } from "../cx";
+import { useUiMessages } from "../messages";
 
 export interface SpinnerProps {
   /** Announced to assistive technology; also the tooltip. */
@@ -6,7 +7,8 @@ export interface SpinnerProps {
 }
 
 /** A quiet loading indicator for a panel that is fetching. */
-export function Spinner({ label = "Loading" }: SpinnerProps) {
+export function Spinner({ label }: SpinnerProps) {
+  const t = useUiMessages();
   return (
     <div className="flex items-center justify-center gap-2 px-4 py-6 text-sm text-ink-muted" role="status">
       <span
@@ -21,7 +23,7 @@ export function Spinner({ label = "Loading" }: SpinnerProps) {
           "animate-spin",
         )}
       />
-      <span>{label}…</span>
+      <span>{label ?? t.loading}…</span>
     </div>
   );
 }
