@@ -30,6 +30,7 @@ from gateway.models import (
     LimitRule,
     LimitScope,
     LocalCredential,
+    UsageStatus,
 )
 from gateway.pagination import Page, PageDep, count_of
 from gateway.quota.notifications import replace_thresholds
@@ -40,6 +41,7 @@ from gateway.reporting import (
     report_to_csv,
     resolve_period,
 )
+from gateway.request_log import RequestLogFilter, list_requests, requests_to_csv
 from gateway.schemas import (
     ApiKeyCreatedResponse,
     ApiKeyCreateRequest,
@@ -49,6 +51,7 @@ from gateway.schemas import (
     MeResponse,
     MyLimitResponse,
     MyNotificationThresholdsRequest,
+    RequestLogRow,
     SetDefaultBillingGroupRequest,
     UsageReport,
     UsageSummaryResponse,
@@ -310,6 +313,63 @@ async def my_usage_report_csv(
         content=report_to_csv(report),
         media_type="text/csv; charset=utf-8",
         headers={"content-disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/me/requests", response_model=Page[RequestLogRow])
+async def my_requests(
+    user: ManagementUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    page: PageDep,
+    period: str = "",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    group_id: uuid.UUID | None = None,
+    model: str | None = None,
+    status: UsageStatus | None = None,
+) -> Page[RequestLogRow]:
+    """The caller's own requests, newest first, with no prompt or completion text.
+
+    The user filter is pinned to the caller and there is no parameter that
+    changes it; ``user_id`` is not accepted here at all.
+    """
+    return await list_requests(
+        session,
+        RequestLogFilter(
+            period=resolve_period(period, start, end, settings.billing_timezone),
+            user_id=user.id,
+            group_id=group_id,
+            model=model,
+            status=status,
+        ),
+        page,
+    )
+
+
+@router.get("/me/requests.csv", response_class=PlainTextResponse)
+async def my_requests_csv(
+    user: ManagementUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    period: str = "",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    group_id: uuid.UUID | None = None,
+    model: str | None = None,
+    status: UsageStatus | None = None,
+) -> Response:
+    f = RequestLogFilter(
+        period=resolve_period(period, start, end, settings.billing_timezone),
+        user_id=user.id,
+        group_id=group_id,
+        model=model,
+        status=status,
+    )
+    return Response(
+        content=await requests_to_csv(session, f),
+        media_type="text/csv; charset=utf-8",
+        headers={"content-disposition": f'attachment; filename="my-requests-{f.period.label}.csv"'},
     )
 
 

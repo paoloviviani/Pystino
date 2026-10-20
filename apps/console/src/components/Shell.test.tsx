@@ -290,6 +290,7 @@ describe("Shell: the sidebar", () => {
     expect(hrefs).toEqual([
       "/admin",
       "/admin/reports",
+      "/admin/requests",
       "/admin/quotas",
       "/admin/providers",
       "/admin/models",

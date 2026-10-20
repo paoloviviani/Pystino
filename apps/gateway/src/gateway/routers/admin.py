@@ -190,6 +190,7 @@ from gateway.reporting import (
     report_to_csv,
     resolve_period,
 )
+from gateway.request_log import RequestLogFilter, list_requests, requests_to_csv
 from gateway.schemas import (
     AliasPointer,
     BundledUserCreatedResponse,
@@ -262,6 +263,7 @@ from gateway.schemas import (
     RedactionScopeName,
     RedactionServiceHealth,
     RedactionStatusResponse,
+    RequestLogRow,
     SearchBackendDeleteResponse,
     SeenGroupImportResponse,
     SeenGroupMapRequest,
@@ -5229,6 +5231,73 @@ async def usage_report_csv(
         content=report_to_csv(report),
         media_type="text/csv; charset=utf-8",
         headers={"content-disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# -- request log --------------------------------------------------------------
+
+
+def _request_log_filter(
+    settings: SettingsDep,
+    period: str,
+    start: datetime | None,
+    end: datetime | None,
+    user_id: uuid.UUID | None,
+    group_id: uuid.UUID | None,
+    model: str | None,
+    status: UsageStatus | None,
+) -> RequestLogFilter:
+    return RequestLogFilter(
+        period=resolve_period(period, start, end, settings.billing_timezone),
+        user_id=user_id,
+        group_id=group_id,
+        model=model,
+        status=status,
+    )
+
+
+@router.get("/requests", response_model=Page[RequestLogRow])
+async def request_log(
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    page: PageDep,
+    period: str = "",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    user_id: uuid.UUID | None = None,
+    group_id: uuid.UUID | None = None,
+    model: str | None = None,
+    status: UsageStatus | None = None,
+) -> Page[RequestLogRow]:
+    """One line per request, newest first, with no prompt or completion text.
+
+    ``model`` matches the alias the caller asked for or the model that served
+    it. The period is resolved as in the reports (default: the current month).
+    """
+    f = _request_log_filter(settings, period, start, end, user_id, group_id, model, status)
+    return await list_requests(session, f, page)
+
+
+@router.get("/requests.csv", response_class=PlainTextResponse)
+async def request_log_csv(
+    admin: AdminUserDep,
+    session: SessionDep,
+    settings: SettingsDep,
+    period: str = "",
+    start: datetime | None = None,
+    end: datetime | None = None,
+    user_id: uuid.UUID | None = None,
+    group_id: uuid.UUID | None = None,
+    model: str | None = None,
+    status: UsageStatus | None = None,
+) -> Response:
+    """The same filtered set as CSV (refused above 100,000 rows, never cut)."""
+    f = _request_log_filter(settings, period, start, end, user_id, group_id, model, status)
+    return Response(
+        content=await requests_to_csv(session, f),
+        media_type="text/csv; charset=utf-8",
+        headers={"content-disposition": f'attachment; filename="requests-{f.period.label}.csv"'},
     )
 
 

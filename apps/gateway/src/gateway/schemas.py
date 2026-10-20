@@ -2009,6 +2009,42 @@ class PeriodResponse(BaseModel):
     timezone: str
 
 
+class RequestLogRow(BaseModel):
+    """One request, as the request log shows it: metadata only.
+
+    There is deliberately no field here that could carry prompt or completion
+    text, and none for the error message (a provider's error body can echo the
+    prompt back). The row is built from named columns in
+    ``gateway.request_log``, never from the ORM object, so a column added to
+    ``usage_records`` later does not reach this response by accident.
+    """
+
+    request_id: str
+    created_at: datetime
+    user_id: uuid.UUID | None
+    #: The person's email, falling back to their subject; null for an erased user.
+    user_label: str | None
+    group_id: uuid.UUID | None
+    group_name: str | None
+    #: The alias the caller asked for, when they asked for one; null otherwise.
+    requested_model: str | None
+    #: The model that served it (the alias's target when an alias was used).
+    model: str
+    #: What the provider reported answering, when it said.
+    upstream_model: str | None
+    streamed: bool
+    prompt_tokens: int
+    completion_tokens: int
+    cached_prompt_tokens: int
+    cost: Money
+    currency: str
+    status: str
+    latency_ms: int | None
+    #: ``api_key`` when a gateway API key authenticated the request, ``token``
+    #: when a sign-in token or session did.
+    source: Literal["api_key", "token"]
+
+
 class UsageReportRow(BaseModel):
     key: str | None
     label: str
