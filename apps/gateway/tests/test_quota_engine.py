@@ -460,6 +460,73 @@ class TestReserveAndSettle:
         # more and is refused.
         assert admitted == 3, f"admitted {admitted} of 10"
 
+    async def test_a_request_that_waits_on_rules_cannot_slip_past_a_later_one(
+        self,
+        session: AsyncSession,
+        session_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Issue #12 (P11): the clock must be read where it is used.
+
+        `check_and_reserve` read the time, then awaited the rule query, then
+        reserved in the bucket for the *earlier* time and summed only the
+        buckets up to it. A request held up by that query across a bucket
+        boundary therefore reserved behind a request that arrived later and
+        could not see it: two callers admitted against a limit of one. Here the
+        first request is held at the rule query while the clock crosses a
+        one-second boundary and a second request runs to completion. The
+        flaky 4-of-50 in the concurrency test above was this, with the SQLite
+        round trips as the delay and the wall clock as the boundary.
+        """
+        from datetime import UTC, datetime
+
+        from gateway.quota import engine as engine_module
+
+        group_id = uuid.uuid4()
+        await add_rule(
+            session,
+            scope=LimitScope.GROUP,
+            scope_id=group_id,
+            metric=LimitMetric.REQUESTS,
+            limit="1",
+        )
+        clock = [1_000_000.9]
+        monkeypatch.setattr(
+            engine_module, "utcnow", lambda: datetime.fromtimestamp(clock[0], tz=UTC)
+        )
+        quota = engine_for()
+        subject = QuotaSubject(None, group_id)
+
+        real_load_rules = quota.load_rules
+        first_is_waiting = asyncio.Event()
+        release_first = asyncio.Event()
+        calls = 0
+
+        async def load_rules(*args: object, **kwargs: object) -> list[LimitRule]:
+            nonlocal calls
+            calls += 1
+            rules = await real_load_rules(*args, **kwargs)  # type: ignore[arg-type]
+            if calls == 1:
+                first_is_waiting.set()
+                await release_first.wait()
+            return rules
+
+        monkeypatch.setattr(quota, "load_rules", load_rules)
+
+        async def first_request() -> None:
+            # Its own session: two tasks must not share one AsyncSession.
+            async with session_factory() as own_session:
+                await quota.check_and_reserve(own_session, subject, QuotaAmounts())
+
+        first = asyncio.create_task(first_request())
+        await first_is_waiting.wait()
+        clock[0] = 1_000_001.1  # the next bucket
+        await quota.check_and_reserve(session, subject, QuotaAmounts())  # admitted: 0 < 1
+        release_first.set()
+
+        with pytest.raises(QuotaExceeded):
+            await first
+
 
 # --------------------------------------------------------------------------
 # fallback behaviour

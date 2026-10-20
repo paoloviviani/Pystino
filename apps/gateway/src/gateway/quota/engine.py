@@ -795,6 +795,16 @@ class QuotaEngine:
         if not rules:
             return Reservation(created_at=moment)
 
+        # Read the clock again, now that the last await before reserving is
+        # behind us. A moment taken before the rule query is stale by however
+        # long the query took, and a stale moment is not harmless: the
+        # reservation lands in the bucket of that earlier time and the total is
+        # summed only up to it, so a request that crossed a bucket boundary
+        # inside the query reserves behind requests that arrived later and
+        # cannot see them. That admitted 4 of 50 against a limit of 3 (issue
+        # #12). A caller-supplied ``now`` is a pinned clock and stays as given.
+        if now is None:
+            moment = utcnow().timestamp()
         as_datetime = datetime.fromtimestamp(moment, tz=UTC)
         scoped: list[tuple[LimitRule, WindowQuery]] = []
         for rule in rules:
