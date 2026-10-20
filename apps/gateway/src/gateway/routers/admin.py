@@ -412,6 +412,11 @@ def _price_response(price: ModelPrice | None) -> PriceResponse | None:
         cache_read_per_mtok=price.cache_read_per_mtok,
         cache_write_per_mtok=price.cache_write_per_mtok,
         per_image=price.per_image,
+        per_image_by_size=(
+            {size: Decimal(rate) for size, rate in price.per_image_by_size.items()}
+            if price.per_image_by_size
+            else None
+        ),
         per_page=price.per_page,
         per_search=price.per_search,
         currency=price.currency,
@@ -2044,6 +2049,12 @@ async def create_price(
         cache_read_per_mtok=payload.cache_read_per_mtok,
         cache_write_per_mtok=payload.cache_write_per_mtok,
         per_image=payload.per_image,
+        # Strings in JSON: an exact amount, never a float.
+        per_image_by_size=(
+            {size: format(rate, "f") for size, rate in payload.per_image_by_size.items()}
+            if payload.per_image_by_size
+            else None
+        ),
         per_page=payload.per_page,
         per_search=payload.per_search,
         currency=currency,

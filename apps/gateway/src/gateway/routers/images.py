@@ -11,7 +11,8 @@ apply to whatever usage came back. A model can carry both, and a model can
 carry neither, in which case the row records zero cost with a null price and
 the gap shows up in reporting rather than hiding in a rounding.
 
-``image_size`` is recorded on every row even though nothing prices by size yet.
+``image_size`` is recorded on every row, and prices by size when the model's
+price carries ``per_image_by_size``.
 It is the difference between being able to introduce size-dependent pricing
 later and having a ledger that cannot say what was bought (ADR 0030).
 
@@ -93,7 +94,9 @@ async def create_image(
     # per-image-priced model the prompt is a rounding error and `n` is the
     # bill. Asked for up front, because `n` is in the request.
     prompt_tokens = estimator.count_text(redacted_prompt)
-    worst_case = TokenCounts(prompt=prompt_tokens, completion=0, images=body.n)
+    worst_case = TokenCounts(
+        prompt=prompt_tokens, completion=0, images=body.n, image_size=body.size
+    )
 
     metered = await _metered.begin(
         fx=request.app.state.fx,

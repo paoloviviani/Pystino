@@ -124,6 +124,8 @@ export interface Price {
   cache_write_per_mtok: string | null;
   /** Per generated image, for image models nobody prices per token. */
   per_image: string | null;
+  /** Per image at a given size; a size not listed takes `per_image`. */
+  per_image_by_size?: Record<string, string> | null;
   /** Per page read, for OCR models, whose token rates are usually zero. */
   per_page: string | null;
   /** Per provider-side web search, charged on top of tokens (ADR 0058). */

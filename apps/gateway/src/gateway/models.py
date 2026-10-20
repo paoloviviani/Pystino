@@ -1253,6 +1253,11 @@ class ModelPrice(Base):
     # Per generated image, for the image models that are not priced per token
     # (ADR 0030). Not per million of anything — the divisor does not apply.
     per_image: Mapped[Decimal | None] = mapped_column(default=None)
+    # Per image at a given size (``{"1024x1024": "0.04", "1792x1024": "0.08"}``),
+    # for the image models that charge by size. Amounts are strings: JSON has no
+    # exact decimal. A size missing here takes ``per_image``; an unknown size
+    # takes the highest rate (``accounting.cost.image_rate``).
+    per_image_by_size: Mapped[dict[str, str] | None] = mapped_column(JSON, default=None)
     # Per page read, for OCR and document extraction, which is what every OCR
     # counterparty charges by. Same shape as `per_image` and for the same
     # reason: the unit is not a token, so the per-million divisor is wrong.

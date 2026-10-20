@@ -542,7 +542,11 @@ class RequestAccounting:
         would have been how a searched request recorded one too. A copy that
         cannot forget a field is worth more than a fast path that can.
         """
-        return replace(counts, images=self._images or counts.images)
+        return replace(
+            counts,
+            images=self._images or counts.images,
+            image_size=self._image_size or counts.image_size,
+        )
 
     def _was_substituted(self) -> bool:
         """Whether the provider served a model other than the one we asked for.

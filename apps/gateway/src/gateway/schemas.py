@@ -14,6 +14,7 @@ The management surface is ours, so it is strict.
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -1135,6 +1136,7 @@ class PriceResponse(BaseModel):
     cache_read_per_mtok: Money | None
     cache_write_per_mtok: Money | None
     per_image: Money | None
+    per_image_by_size: dict[str, Money] | None = None
     per_page: Money | None
     per_search: Money | None
     currency: str
@@ -1153,6 +1155,10 @@ class PriceCreateRequest(BaseModel):
     # anything, and set alongside the token rates rather than instead of them —
     # a model can be metered both ways (ADR 0030).
     per_image: Money | None = Field(default=None, ge=0)
+    # Per image at a given size, for models that charge by size:
+    # ``{"1024x1024": "0.04", "1792x1024": "0.08"}``. A size not listed takes
+    # ``per_image``; an unknown size takes the highest rate.
+    per_image_by_size: dict[str, Money] | None = None
     # Per page read, for OCR models. Same shape, same reason: an OCR
     # counterparty charges by the page, and a page is not a million of
     # anything.
@@ -1166,6 +1172,24 @@ class PriceCreateRequest(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     # Future-dated prices are allowed: that is how a change is scheduled.
     effective_from: datetime | None = None
+
+    @field_validator("per_image_by_size")
+    @classmethod
+    def _sizes_are_sizes(cls, value: dict[str, Decimal] | None) -> dict[str, Decimal] | None:
+        """Sizes as the providers write them (``1024x1024``, ``auto``),
+        lower-cased so a lookup cannot miss on case; rates not negative.
+        Empty means none, so a cleared form does not store ``{}``."""
+        if not value:
+            return None
+        cleaned: dict[str, Decimal] = {}
+        for size, rate in value.items():
+            key = size.strip().lower()
+            if not re.fullmatch(r"[a-z0-9_-]{1,32}", key):
+                raise ValueError(f"{size!r} is not an image size (e.g. 1024x1024)")
+            if rate < 0:
+                raise ValueError(f"the rate for {size!r} is negative")
+            cleaned[key] = rate
+        return cleaned
 
 
 class AliasPointer(BaseModel):
