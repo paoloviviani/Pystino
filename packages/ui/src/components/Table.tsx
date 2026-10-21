@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cx } from "../cx";
+import { useUiMessages } from "../messages";
 import { EmptyState } from "./EmptyState";
 
 export interface Column<Row> {
@@ -52,10 +53,12 @@ export function Table<Row>({
   columns,
   rows,
   rowKey,
-  empty = "Nothing to show.",
+  empty,
   footer,
   caption,
 }: TableProps<Row>) {
+  const t = useUiMessages();
+  const emptyContent = empty ?? t.tableEmpty;
   if (rows.length === 0 && !footer) {
     // A bare sentence becomes the dashed empty state rather than a centred
     // line of muted text: every listing with nothing to show says so the same
@@ -67,7 +70,7 @@ export function Table<Row>({
     // `EmptyState` (or anything else) explicitly instead of a string.
     return (
       <div className="p-5">
-        {typeof empty === "string" ? <EmptyState title={empty} /> : empty}
+        {typeof emptyContent === "string" ? <EmptyState title={emptyContent} /> : emptyContent}
       </div>
     );
   }

@@ -9,7 +9,7 @@ import { cx } from "../cx";
  * caller that genuinely needs state-dependent classes composes the underlying
  * `@base-ui/react/menu` parts directly, which is what they are there for.
  */
-type StringClassProps<P> = Omit<P, "className"> & { className?: string };
+type StringClassProps<P> = Omit<P, "className"> & { className?: string }; // i18n: literal (a type, not text)
 
 export const MenuRoot = BaseMenu.Root;
 export const MenuTrigger = BaseMenu.Trigger;

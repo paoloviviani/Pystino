@@ -2,9 +2,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router";
-import { ToastProvider } from "@llmp/ui";
+import { ToastProvider, UiMessagesProvider } from "@llmp/ui";
 import { App } from "./App";
 import { initLocale } from "./lib/locale";
+import { uiMessages } from "./lib/uiMessages";
 import { initTheme } from "./lib/theme";
 
 // The whole stylesheet — Tailwind's layers and the tokens file, in the right
@@ -44,14 +45,16 @@ createRoot(container).render(
     {/* Toasts are app-global plumbing: one provider, one viewport, and any
         screen can say "saved" without owning the corner of the screen it
         appears in. */}
-    <ToastProvider>
-      <QueryClientProvider client={client}>
-        {/* Served under /console/, so the router must be told: without this every
-            route match is off by the prefix and only the index page works. */}
-        <BrowserRouter basename="/console">
-          <App />
-        </BrowserRouter>
-      </QueryClientProvider>
-    </ToastProvider>
+    <UiMessagesProvider messages={uiMessages()}>
+      <ToastProvider>
+        <QueryClientProvider client={client}>
+          {/* Served under /console/, so the router must be told: without this every
+              route match is off by the prefix and only the index page works. */}
+          <BrowserRouter basename="/console">
+            <App />
+          </BrowserRouter>
+        </QueryClientProvider>
+      </ToastProvider>
+    </UiMessagesProvider>
   </StrictMode>,
 );

@@ -29,6 +29,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const APP = resolve(HERE, "..");
 const SRC = join(APP, "src");
 const MESSAGES = join(APP, "messages");
+const UI_SRC = resolve(APP, "../../packages/ui/src");
 
 /**
  * Screens that have been through the conversion, and so may not carry
@@ -42,6 +43,15 @@ const MESSAGES = join(APP, "messages");
  * the text that slips back in afterwards.
  */
 const CONVERTED_FILES = ["src/routes/NotFound.tsx", "src/routes/Login.tsx", "src/components/RequireAdmin.tsx", "src/components/OpencodeSetup.tsx", "src/routes/Admin.tsx", "src/components/Disclosures.tsx", "src/components/SubjectPicker.tsx", "src/components/CapabilityPicker.tsx", "src/routes/AdminReports.tsx", "src/routes/Reports.tsx", "src/routes/AdminRedactionRule.tsx", "src/routes/IdentityDirectory.tsx", "src/routes/AdminIdentity.tsx", "src/components/Shell.tsx", "src/components/PolicyFields.tsx", "src/routes/AdminProviders.tsx", "src/routes/AdminSearch.tsx", "src/routes/AdminQuotas.tsx", "src/routes/AdminSettings.tsx", "src/routes/Overview.tsx", "src/routes/AdminGroups.tsx", "src/routes/AdminModelDetail.tsx", "src/routes/AdminModels.tsx", "src/routes/AdminRedaction.tsx", "src/routes/AdminUsers.tsx"];
+
+/**
+ * The shared component package is held to the same rule as a converted screen,
+ * wholesale: a primitive that spells a word out in JSX or in a `title`/`aria-label`
+ * leaves it behind in every locale, in every screen that uses it. Its words come
+ * through `UiMessages` (packages/ui/src/messages.tsx), filled from this catalogue
+ * by src/lib/uiMessages.ts; a deliberate literal says `i18n: literal`.
+ */
+const UI_COMPONENTS = join(UI_SRC, "components");
 
 /** Props whose string value is read by a person, one way or another. */
 const TEXT_PROPS = ["title", "placeholder", "aria-label", "alt", "label"];
@@ -250,6 +260,14 @@ async function main() {
       continue;
     }
     for (const problem of hardCoded(source, file)) {
+      failures.push(`${problem.file}:${problem.lineNumber} hard-coded ${problem.kind}: ${problem.value}`);
+    }
+  }
+
+  // 4. The same, for every component in the shared package.
+  for (const path of (await walk(UI_COMPONENTS)).filter((p) => p.endsWith(".tsx")).sort()) {
+    const file = relative(resolve(APP, "../.."), path);
+    for (const problem of hardCoded(await readFile(path, "utf8"), file)) {
       failures.push(`${problem.file}:${problem.lineNumber} hard-coded ${problem.kind}: ${problem.value}`);
     }
   }

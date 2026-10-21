@@ -1,3 +1,4 @@
+import { useUiMessages } from "../messages";
 import { Button } from "./Button";
 
 export interface PaginationProps {
@@ -30,9 +31,11 @@ export function Pagination({
   limit,
   offset,
   onOffsetChange,
-  noun = "rows",
+  noun,
   busy = false,
 }: PaginationProps) {
+  const t = useUiMessages();
+  const word = noun ?? t.paginationRows;
   // One page and nothing to say: rendering "1–3 of 3" next to two dead buttons
   // is noise on every small table in the console.
   if (total <= limit && offset === 0) return null;
@@ -45,7 +48,7 @@ export function Pagination({
   return (
     <nav
       className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-sunken px-5 py-3"
-      aria-label="Pagination"
+      aria-label={t.paginationLabel}
     >
       <span
         className="text-sm text-ink-muted transition-opacity duration-120 data-busy:opacity-50"
@@ -53,13 +56,13 @@ export function Pagination({
         data-busy={busy || undefined}
       >
         {total === 0 ? (
-          `No ${noun}`
+          t.paginationNone(word)
         ) : (
           <>
             <strong className="font-medium text-ink">
               {first.toLocaleString()}–{last.toLocaleString()}
             </strong>{" "}
-            of {total.toLocaleString()} {noun}
+            {t.paginationOf(total.toLocaleString(), word)}
           </>
         )}
       </span>
@@ -68,10 +71,10 @@ export function Pagination({
           disabled={!hasPrevious}
           onClick={() => onOffsetChange(Math.max(0, offset - limit))}
         >
-          Previous
+          {t.paginationPrevious}
         </Button>
         <Button disabled={!hasNext} onClick={() => onOffsetChange(offset + limit)}>
-          Next
+          {t.paginationNext}
         </Button>
       </div>
     </nav>
