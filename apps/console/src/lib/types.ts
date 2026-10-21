@@ -484,8 +484,9 @@ export interface LimitRule {
   scope: "global" | "group" | "user" | "api_key";
   scope_id: string | null;
   metric: "requests" | "tokens" | "cost";
-  /** "aggregate" caps the scope's total; "each_member" caps each member (group scope only). */
-  applies_to: "aggregate" | "each_member";
+  /** "aggregate" caps the scope's total; "each_member" caps each member (group scope only);
+   * "each_user" caps every person across all their usage (global scope only). */
+  applies_to: "aggregate" | "each_member" | "each_user";
   window_seconds: number | null;
   period: string | null;
   /** "3600s" or "month" — one string to print, whichever kind of rule it is. */

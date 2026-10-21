@@ -872,7 +872,7 @@ export interface CreateLimitInput {
   window_seconds: number | null;
   period: string | null;
   limit_value: string;
-  /** "aggregate" or "each_member" — only meaningful for group scope. */
+  /** "aggregate", "each_member" (group scope only) or "each_user" (global scope only). */
   applies_to?: string;
 }
 
