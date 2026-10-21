@@ -38,6 +38,7 @@ import {
   GlobeIcon,
   HouseIcon,
   LayoutDashboardIcon,
+  ListIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
   ServerIcon,
@@ -64,11 +65,12 @@ interface NavItem {
 }
 
 /**
- * The reader's own navigation: two screens, no categories to name.
+ * The reader's own navigation: three screens, no categories to name.
  */
 const NAV_YOU: NavItem[] = [
   { to: "/", label: m["shell.nav.overview"], icon: HouseIcon, end: true },
   { to: "/reports", label: m["shell.nav.your_usage"], icon: ChartColumnIcon },
+  { to: "/requests", label: m["shell.nav.your_requests"], icon: ListIcon },
 ];
 
 /**
@@ -81,6 +83,7 @@ const NAV_YOU: NavItem[] = [
 const ADMIN_ICONS: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
   "/admin": LayoutDashboardIcon,
   "/admin/reports": ChartColumnIcon,
+  "/admin/requests": ListIcon,
   "/admin/quotas": GaugeIcon,
   "/admin/providers": ServerIcon,
   "/admin/models": BoxIcon,

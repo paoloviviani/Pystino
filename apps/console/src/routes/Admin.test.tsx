@@ -41,6 +41,7 @@ describe("Admin", () => {
       // Usage & limits: the deployment's spend is what an administrator opens
       // this page to look at, so it leads.
       "/admin/reports",
+      "/admin/requests",
       "/admin/quotas",
       // Serving: where requests go and what they cost, web search with them
       // (a search backend is a provider).

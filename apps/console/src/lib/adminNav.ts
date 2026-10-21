@@ -43,6 +43,11 @@ export const ADMIN_GROUPS: AdminGroup[] = [
         description: m["admin.sections.usage.description"],
       },
       {
+        to: "/admin/requests",
+        title: m["admin.sections.requests.title"],
+        description: m["admin.sections.requests.description"],
+      },
+      {
         to: "/admin/quotas",
         title: m["admin.sections.quotas.title"],
         description: m["admin.sections.quotas.description"],

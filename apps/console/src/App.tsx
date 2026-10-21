@@ -14,6 +14,8 @@ import { AdminRedaction } from "./routes/AdminRedaction";
 import { AdminRedactionRule } from "./routes/AdminRedactionRule";
 import { Admin } from "./routes/Admin";
 import { AdminReports } from "./routes/AdminReports";
+import { AdminRequests } from "./routes/AdminRequests";
+import { MyRequests } from "./routes/MyRequests";
 import { AdminGroups } from "./routes/AdminGroups";
 import { AdminSettings } from "./routes/AdminSettings";
 import { AdminUsers } from "./routes/AdminUsers";
@@ -60,6 +62,7 @@ export function App() {
         {/* A person's own consumption. Not admin-gated: everyone has usage,
             including administrators, whose own spend is not administration. */}
         <Route path="/reports" element={<Reports />} />
+        <Route path="/requests" element={<MyRequests />} />
 
         {/* Wrapped rather than conditionally registered: a non-admin who follows
             a bookmarked link should be told, not handed a blank 404 that reads
@@ -170,6 +173,14 @@ export function App() {
           element={
             <RequireAdmin me={me_}>
               <AdminReports />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/requests"
+          element={
+            <RequireAdmin me={me_}>
+              <AdminRequests />
             </RequireAdmin>
           }
         />

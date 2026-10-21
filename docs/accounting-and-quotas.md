@@ -45,6 +45,39 @@ and the alias is kept beside it so a report can say "via alias" and a retarget
 cannot rewrite the row. It is a copy of a string, not a foreign key, so an
 alias that is deleted or retargeted leaves the ledger readable.
 
+## The request log
+
+The reports add rows up; the request log lists them. It shows one line per
+request, newest first: time, person, billing group, the model asked for and the
+model that served it (the alias and its target when an alias was used), tokens in,
+out and cached, cost, latency, status and source (`api_key` when a gateway API
+key authenticated the request, `token` for a sign-in token or session).
+
+**It never carries content.** The listing reads named metadata columns only.
+`assistant_text` and `error_message` are not selected, so neither the reply nor a
+provider error that echoed the prompt can reach the API, the console or the CSV.
+
+| Route | Who | Notes |
+|---|---|---|
+| `GET /api/admin/requests` | administrators | Every request. Filters: `period` or `start` and `end` (as for the reports, default the current month), `user_id`, `group_id`, `model`, `status`. |
+| `GET /api/admin/requests.csv` | administrators | The same filtered set as CSV. |
+| `GET /api/me/requests` | any signed-in person | Only the caller's own requests. Same filters except `user_id`, which is ignored: the user is fixed to the caller. |
+| `GET /api/me/requests.csv` | any signed-in person | The caller's own, as CSV. |
+
+Both listings use the standard pagination envelope (`items`, `total`, `limit`,
+`offset`; 50 rows by default, 200 at most). `model` matches either the alias the
+caller asked for or the model that served the request. `status` is one of
+`in_progress`, `blocked`, `completed`, `client_disconnected`, `upstream_error`.
+Unlike the reports, the log includes `in_progress` rows, so a request that never
+settled is visible.
+
+The CSV writes cost as a plain decimal string, never a float or scientific
+notation, and prefixes a text cell that starts with `=`, `+`, `-` or `@` with an
+apostrophe so a spreadsheet does not run it as a formula. An export holds at most
+100,000 rows; a larger set is refused with `export_too_large` rather than cut, so
+narrow the period or add a filter. In the console, administrators find it under
+**Requests**, and everyone has **Your requests** in the sidebar.
+
 ## Running without a ledger
 
 A deployment that wants routing, keys, model access control and redaction — and

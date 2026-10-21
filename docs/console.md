@@ -25,6 +25,7 @@ the **Exact figures** toggle.
 | I want to… | Screen | Read |
 |---|---|---|
 | see what the deployment spent, by group, person, model or day | **Usage** | [Accounting and quotas](accounting-and-quotas.md#the-ledger) |
+| list every request, one line each and never its content, filter it and export it | **Requests** | [The request log](accounting-and-quotas.md#the-request-log) |
 | set a ceiling — the group's total or each member — see what it has consumed, check a counter against the ledger (**Quota health**, with **Reconcile**), or reset it on the record, with or without a reason | **Quotas** | [Quotas](accounting-and-quotas.md#quotas), [Group rules: the total, or each member](accounting-and-quotas.md#group-rules-the-total-or-each-member), [Quota health and reconcile](accounting-and-quotas.md#quota-health-and-reconcile) |
 | decide what is stripped from prompts before a provider sees them, and for whom | **Redaction** | [Redaction](redaction.md#operating-it) |
 | add a provider, its credentials and what it reports | **Providers** | [Providers and plugins](gateway.md#providers-and-plugins) |
