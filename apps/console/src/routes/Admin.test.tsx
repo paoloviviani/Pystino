@@ -56,6 +56,7 @@ describe("Admin", () => {
       "/admin/groups",
       // Deployment last: the wiring of the deployment, not its traffic — the
       // one position that would read as "start with this" if it led.
+      "/admin/audit",
       "/admin/settings",
     ]);
   });

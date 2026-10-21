@@ -38,6 +38,7 @@ the **Exact figures** toggle.
 | map or dismiss the group names your identity provider reports | **Groups**, *Groups from your identity provider* | [Mapping the provider's groups](identity.md#mapping-the-providers-groups) |
 | configure mail, read the identity provider, decide who may become a user, set what new groups start with, or turn a capability on or off for every group | **Settings** | [Identity](identity.md) |
 | see what happened to a person's account, and who did it | **Users → Edit → Activity** | [The audit trail](identity.md#the-audit-trail) |
+| see what administrators changed in models, prices, aliases, grants, providers and quota rules, and who did it | **Audit log** | [The administrator audit log](#the-administrator-audit-log) |
 
 Two things on the **Settings** screen are worth knowing before you look for
 them. The **identity provider is read-only**: it is set in `.env` and rewritten
@@ -65,6 +66,32 @@ users, a redaction rule, the sign-in policy) labels the field *Reason
 
 A non-administrator who follows a bookmarked admin link is told they are not
 one, rather than shown a blank page; the API refuses them regardless.
+
+## The administrator audit log
+
+The **Audit log** screen (`GET /api/admin/audit`, administrators only) lists what
+administrators changed in configuration, newest first: when, who (their email at
+the time), the action, the target, and an expandable before and after for the
+fields that changed. It is separate from the [identity audit
+trail](identity.md#the-audit-trail), which records who exists and who may sign
+in.
+
+Recorded actions: `model.create|update|delete` (including models imported from a
+catalogue), `price.create`, `alias.create|update|delete`,
+`grant.group.add|remove` and `grant.user.add|remove` (only when a grant really
+changed, so a repeated request records nothing), `provider.create|update|delete`
+and `limit.create|update|delete` (quota rules). Each event is written in the
+same transaction as the change, so a change that fails leaves no event.
+
+**Credentials are never recorded.** A provider's API key shows only as
+`api_key: set`, `rotated` or `cleared`; its extra headers show as header names,
+with `extra_headers_values: rotated` when only a value changed; any credential
+embedded in a base URL is stripped. Aliases still also write to the identity
+events, as before.
+
+Filters: from and to (a day, inclusive), administrator (their id, or part of
+their email), action prefix (`grant.` lists every grant change) and target type.
+Rows are kept **indefinitely**: there is no retention setting or purge.
 
 ## Translations
 

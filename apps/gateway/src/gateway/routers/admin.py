@@ -50,6 +50,14 @@ from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from gateway import identity_policy
 from gateway.accounting.cost import select_price
+from gateway.admin_audit import (
+    headers_snapshot,
+    limit_view,
+    model_view,
+    price_view,
+    provider_view,
+    record_audit,
+)
 from gateway.capabilities import Capabilities, effective_capabilities, new_group_flags
 from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings, Settings
 from gateway.deployment_state import mark_bootstrap_consumed
@@ -691,6 +699,7 @@ async def create_provider(
             )
 
     provider = Provider(
+        id=uuid.uuid4(),
         name=payload.name,
         description=payload.description,
         base_url=base_url.rstrip("/"),
@@ -705,6 +714,16 @@ async def create_provider(
         _store_api_key(provider, secrets, payload.api_key.get_secret_value())
 
     session.add(provider)
+    record_audit(
+        session,
+        admin,
+        "provider.create",
+        "provider",
+        provider.id,
+        provider.name,
+        after=provider_view(provider),
+        markers={"api_key": "set"} if payload.api_key is not None else None,
+    )
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -773,10 +792,14 @@ async def update_provider(
     """
     provider = await _load_provider(session, provider_id)
     fields = payload.model_dump(exclude_unset=True)
+    audit_before = provider_view(provider)
+    headers_before = headers_snapshot(provider)
+    audit_markers: dict[str, str] = {}
 
     if "api_key" in fields:
         secret = payload.api_key.get_secret_value() if payload.api_key is not None else ""
         _store_api_key(provider, secrets, secret)
+        audit_markers["api_key"] = "rotated" if secret else "cleared"
     fields.pop("api_key", None)
 
     # The prefix is not a stored-and-forgotten field: whatever it now is, the
@@ -833,6 +856,23 @@ async def update_provider(
     for field, value in fields.items():
         setattr(provider, field, value)
 
+    audit_after = provider_view(provider)
+    if headers_snapshot(provider) != headers_before and (
+        audit_after["extra_headers"] == audit_before["extra_headers"]
+    ):
+        # Same header names, different values: say so without saying what.
+        audit_markers["extra_headers_values"] = "rotated"
+    record_audit(
+        session,
+        admin,
+        "provider.update",
+        "provider",
+        provider.id,
+        provider.name,
+        before=audit_before,
+        after=audit_after,
+        markers=audit_markers,
+    )
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -883,6 +923,7 @@ async def delete_provider(
     the denormalised name.
     """
     provider = await _load_provider(session, provider_id)
+    audit_before = provider_view(provider)
 
     if provider.kind == ProviderKind.INTERNAL:
         # This deployment's own infrastructure (the local extractor is the one
@@ -903,6 +944,15 @@ async def delete_provider(
             )
 
         await session.execute(delete(Provider).where(Provider.id == provider_id))
+        record_audit(
+            session,
+            admin,
+            "provider.delete",
+            "provider",
+            provider_id,
+            audit_before["name"],
+            before=audit_before,
+        )
         await session.commit()
         await providers.forget(provider_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -946,6 +996,15 @@ async def delete_provider(
         await session.execute(delete(UserModelAccess).where(UserModelAccess.model_id.in_(tier_ids)))
         await session.execute(delete(ModelDef).where(ModelDef.provider_id == provider_id))
     await session.execute(delete(Provider).where(Provider.id == provider_id))
+    record_audit(
+        session,
+        admin,
+        "provider.delete",
+        "provider",
+        provider_id,
+        audit_before["name"],
+        before={**audit_before, "tiers_deleted": len(tier_ids), "cleared_groups": cleared},
+    )
     await session.commit()
     await providers.forget(provider_id)
 
@@ -1074,6 +1133,7 @@ async def create_model(
     await _load_provider(session, payload.provider_id)
 
     model = ModelDef(
+        id=uuid.uuid4(),
         name=payload.name,
         upstream_model=payload.upstream_model,
         provider_id=payload.provider_id,
@@ -1090,6 +1150,9 @@ async def create_model(
         is_public=payload.is_public,
     )
     session.add(model)
+    record_audit(
+        session, admin, "model.create", "model", model.id, model.name, after=model_view(model)
+    )
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -1108,6 +1171,7 @@ async def update_model(
 ) -> ModelAdminResponse:
     """Change a model in place. Deactivate here rather than deleting."""
     model = await _load_model(session, model_id)
+    audit_before = model_view(model)
     fields = payload.model_dump(exclude_unset=True)
     if (provider_id := fields.get("provider_id")) is not None:
         # Repointing at another endpoint is allowed and is how a migration off a
@@ -1117,6 +1181,16 @@ async def update_model(
         model.kind = ModelKind(kind)
     for field, value in fields.items():
         setattr(model, field, value)
+    record_audit(
+        session,
+        admin,
+        "model.update",
+        "model",
+        model.id,
+        model.name,
+        before=audit_before,
+        after=model_view(model),
+    )
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -1155,6 +1229,7 @@ async def delete_model(model_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     with the model — they are meaningless without it.
     """
     model = await _load_model(session, model_id)
+    audit_before = model_view(model)
     if model.provider is not None and model.provider.kind == ProviderKind.INTERNAL:
         # The same protection as the provider row itself, and for the same
         # reason: this is the deployment's own infrastructure, and "delete"
@@ -1200,6 +1275,15 @@ async def delete_model(model_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     await session.execute(delete(GroupModelAccess).where(GroupModelAccess.model_id == model_id))
     await session.execute(delete(UserModelAccess).where(UserModelAccess.model_id == model_id))
     await session.execute(delete(ModelDef).where(ModelDef.id == model_id))
+    record_audit(
+        session,
+        admin,
+        "model.delete",
+        "model",
+        model_id,
+        audit_before["name"],
+        before=audit_before,
+    )
     await session.commit()
 
 
@@ -1905,8 +1989,12 @@ async def import_models(
             output_modalities=list(price.output_modalities),
             supported_features=list(price.supported_features),
         )
+        model.id = uuid.uuid4()
         session.add(model)
         await session.flush()
+        record_audit(
+            session, admin, "model.create", "model", model.id, model.name, after=model_view(model)
+        )
         # Who supplied this figure, kept on the row itself. Until ADR 0053 every
         # catalogue import wrote `cortecs` regardless of provider or source, so a
         # community price for an OpenAI model was recorded as Cortecs' own. A
@@ -1920,19 +2008,28 @@ async def import_models(
             if manual_used
             else PriceSource.CATALOGUE
         )
-        session.add(
-            ModelPrice(
-                model_id=model.id,
-                input_per_mtok=price.input_per_mtok,
-                output_per_mtok=price.output_per_mtok,
-                cache_read_per_mtok=price.cache_read_per_mtok,
-                cache_write_per_mtok=price.cache_write_per_mtok,
-                # An OCR model's whole price is here; the token rates are zero.
-                per_page=price.per_page,
-                currency=price.currency,
-                effective_from=utcnow(),
-                source=source,
-            )
+        imported_price = ModelPrice(
+            id=uuid.uuid4(),
+            model_id=model.id,
+            input_per_mtok=price.input_per_mtok,
+            output_per_mtok=price.output_per_mtok,
+            cache_read_per_mtok=price.cache_read_per_mtok,
+            cache_write_per_mtok=price.cache_write_per_mtok,
+            # An OCR model's whole price is here; the token rates are zero.
+            per_page=price.per_page,
+            currency=price.currency,
+            effective_from=utcnow(),
+            source=source,
+        )
+        session.add(imported_price)
+        record_audit(
+            session,
+            admin,
+            "price.create",
+            "price",
+            imported_price.id,
+            model.name,
+            after=price_view(imported_price),
         )
         taken_names.add(name)
         taken_upstream.add(item.upstream_model)
@@ -2045,6 +2142,7 @@ async def create_price(
     currency = await _price_currency(payload.currency, settings, request.app.state.fx)
 
     price = ModelPrice(
+        id=uuid.uuid4(),
         model_id=model.id,
         input_per_mtok=payload.input_per_mtok,
         output_per_mtok=payload.output_per_mtok,
@@ -2064,6 +2162,9 @@ async def create_price(
         source=PriceSource.MANUAL,
     )
     session.add(price)
+    record_audit(
+        session, admin, "price.create", "price", price.id, model.name, after=price_view(price)
+    )
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -2749,7 +2850,7 @@ async def grant_model_access(
     group = (await session.execute(select(Group).where(Group.id == group_id))).scalar_one_or_none()
     if group is None:
         raise NotFoundError(f"No group with id {group_id}.")
-    await _load_model(session, model_id, grantable=True)
+    granted = await _load_model(session, model_id, grantable=True)
 
     existing = (
         await session.execute(
@@ -2761,6 +2862,15 @@ async def grant_model_access(
     ).scalar_one_or_none()
     if existing is None:
         session.add(GroupModelAccess(group_id=group_id, model_id=model_id))
+        record_audit(
+            session,
+            admin,
+            "grant.group.add",
+            "grant",
+            f"{group_id}:{model_id}",
+            f"{group.name} -> {granted.name}",
+            after={"group": group.name, "model": granted.name},
+        )
         await session.commit()
 
 
@@ -2788,12 +2898,28 @@ async def revoke_model_access(
             "search policy at another backend, or clear it, before revoking "
             "access.",
         )
-    await session.execute(
+    removed = await session.execute(
         delete(GroupModelAccess).where(
             GroupModelAccess.group_id == group_id,
             GroupModelAccess.model_id == model_id,
         )
     )
+    if removed.rowcount:  # type: ignore[attr-defined]
+        group_name = (
+            await session.execute(select(Group.name).where(Group.id == group_id))
+        ).scalar_one_or_none()
+        model_name = (
+            await session.execute(select(ModelDef.name).where(ModelDef.id == model_id))
+        ).scalar_one_or_none()
+        record_audit(
+            session,
+            admin,
+            "grant.group.remove",
+            "grant",
+            f"{group_id}:{model_id}",
+            f"{group_name} -> {model_name}",
+            before={"group": group_name, "model": model_name},
+        )
     await session.commit()
 
 
@@ -2853,7 +2979,7 @@ async def grant_user_model_access(
     user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if user is None:
         raise NotFoundError(f"No user with id {user_id}.")
-    await _load_model(session, model_id, grantable=True)
+    granted = await _load_model(session, model_id, grantable=True)
 
     existing = (
         await session.execute(
@@ -2865,6 +2991,15 @@ async def grant_user_model_access(
     ).scalar_one_or_none()
     if existing is None:
         session.add(UserModelAccess(user_id=user_id, model_id=model_id))
+        record_audit(
+            session,
+            admin,
+            "grant.user.add",
+            "grant",
+            f"{user_id}:{model_id}",
+            f"{user.email or user.id} -> {granted.name}",
+            after={"user": user.email or str(user.id), "model": granted.name},
+        )
         await session.commit()
 
 
@@ -2877,12 +3012,28 @@ async def revoke_user_model_access(
     The person may still reach the model through a group: this removes the
     personal grant only, because there is no such thing as a denial here.
     """
-    await session.execute(
+    removed = await session.execute(
         delete(UserModelAccess).where(
             UserModelAccess.user_id == user_id,
             UserModelAccess.model_id == model_id,
         )
     )
+    if removed.rowcount:  # type: ignore[attr-defined]
+        user_label = (
+            await session.execute(select(User.email).where(User.id == user_id))
+        ).scalar_one_or_none() or str(user_id)
+        model_name = (
+            await session.execute(select(ModelDef.name).where(ModelDef.id == model_id))
+        ).scalar_one_or_none()
+        record_audit(
+            session,
+            admin,
+            "grant.user.remove",
+            "grant",
+            f"{user_id}:{model_id}",
+            f"{user_label} -> {model_name}",
+            before={"user": user_label, "model": model_name},
+        )
     await session.commit()
 
 
@@ -3063,6 +3214,7 @@ async def create_limit(
             raise NotFoundError(f"No API key with id {payload.scope_id}.")
 
     rule = LimitRule(
+        id=uuid.uuid4(),
         name=payload.name,
         scope=scope,
         scope_id=payload.scope_id,
@@ -3074,6 +3226,9 @@ async def create_limit(
         applies_to=LimitAppliesTo(payload.applies_to),
     )
     session.add(rule)
+    record_audit(
+        session, admin, "limit.create", "limit", rule.id, rule.name, after=limit_view(rule)
+    )
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -3117,8 +3272,19 @@ async def update_limit(
     """
     rule = await _load_rule(session, rule_id)
     was_active = rule.is_active
+    audit_before = limit_view(rule)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(rule, field, value)
+    record_audit(
+        session,
+        admin,
+        "limit.update",
+        "limit",
+        rule.id,
+        rule.name,
+        before=audit_before,
+        after=limit_view(rule),
+    )
     await session.commit()
     await session.refresh(rule, attribute_names=["resets"])
     if rule.is_active and not was_active:
@@ -3214,6 +3380,19 @@ async def delete_limit(rule_id: uuid.UUID, admin: AdminUserDep, session: Session
     Safe to delete, unlike a model or a key: nothing in the ledger references a
     rule. Counters for it simply stop being read.
     """
+    rule = (
+        await session.execute(select(LimitRule).where(LimitRule.id == rule_id))
+    ).scalar_one_or_none()
+    if rule is not None:
+        record_audit(
+            session,
+            admin,
+            "limit.delete",
+            "limit",
+            rule.id,
+            rule.name,
+            before=limit_view(rule),
+        )
     await session.execute(delete(LimitRule).where(LimitRule.id == rule_id))
     await session.commit()
 
