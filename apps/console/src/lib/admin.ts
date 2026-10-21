@@ -682,6 +682,8 @@ export interface AliasCreateInput {
   targets: AliasTargetInput[];
   route_rule?: string;
   route_sticky_ttl_seconds?: number;
+  route_price_input_weight?: number;
+  route_price_output_weight?: number;
   is_active?: boolean;
   is_public?: boolean;
 }
@@ -702,6 +704,8 @@ export interface AliasUpdateInput {
   targets?: AliasTargetInput[];
   route_rule?: string;
   route_sticky_ttl_seconds?: number;
+  route_price_input_weight?: number;
+  route_price_output_weight?: number;
   is_active?: boolean;
   is_public?: boolean;
 }

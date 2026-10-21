@@ -168,6 +168,13 @@ export function AdminRouting() {
                       minutes: minutesOf(alias.route_sticky_ttl_seconds),
                     })
                   : m["admin_routing.row.not_sticky"]()}
+                {alias.route_rule === "cheapest" &&
+                (alias.route_price_input_weight !== 1 || alias.route_price_output_weight !== 1)
+                  ? ` · ${m["admin_routing.row.price_weights"]({
+                      input: alias.route_price_input_weight,
+                      output: alias.route_price_output_weight,
+                    })}`
+                  : null}
               </div>
             ) : null}
           </>
@@ -444,6 +451,8 @@ function AliasDialog({
     targets: { model_id: string; weight: number }[];
     route_rule: string;
     route_sticky_ttl_seconds?: number;
+    route_price_input_weight: number;
+    route_price_output_weight: number;
     is_public: boolean;
   }) => void;
 }) {
@@ -459,6 +468,8 @@ function AliasDialog({
   const [rule, setRule] = useState<string>(alias?.route_rule ?? "first_available");
   const initialMinutes = minutesOf(alias?.route_sticky_ttl_seconds ?? 3600);
   const [minutes, setMinutes] = useState(String(initialMinutes));
+  const [inputWeight, setInputWeight] = useState(String(alias?.route_price_input_weight ?? 1));
+  const [outputWeight, setOutputWeight] = useState(String(alias?.route_price_output_weight ?? 1));
   const [nextKey, setNextKey] = useState(1000);
   const [rows, setRows] = useState<TargetRow[]>(() =>
     alias && alias.targets.length > 0
@@ -503,6 +514,9 @@ function AliasDialog({
     return Number.isInteger(weight) && weight >= 1 && weight <= 1000;
   });
   const minutesValid = /^\d+$/.test(minutes) && Number(minutes) <= 43200;
+  const priceWeightValid = (value: string) =>
+    /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 1000;
+  const priceWeightsValid = priceWeightValid(inputWeight) && priceWeightValid(outputWeight);
 
   const submit = () => {
     onSubmit({
@@ -516,6 +530,8 @@ function AliasDialog({
       ...(Number(minutes) !== initialMinutes || alias === null
         ? { route_sticky_ttl_seconds: Number(minutes) * 60 }
         : {}),
+      route_price_input_weight: Number(inputWeight),
+      route_price_output_weight: Number(outputWeight),
       is_public: isPublic,
     });
   };
@@ -533,7 +549,7 @@ function AliasDialog({
           <Button
             variant="primary"
             busy={busy}
-            disabled={name.trim() === "" || chosen.length === 0 || !weightsValid || !minutesValid}
+            disabled={name.trim() === "" || chosen.length === 0 || !weightsValid || !minutesValid || !priceWeightsValid}
             onClick={submit}
           >
             {alias ? m["admin_routing.action.save"]() : m["admin_routing.action.create"]()}
@@ -672,6 +688,30 @@ function AliasDialog({
             hint={m["admin_routing.form.sticky_hint"]()}
           />
         </div>
+
+        {/* Only the cheapest rule reads them; hidden otherwise rather than
+            shown disabled, because they mean nothing to the other rules. */}
+        {rule === "cheapest" ? (
+          <div className={FORM_ROW}>
+            <Input
+              label={m["admin_routing.form.price_input_weight"]()}
+              type="number"
+              min={1}
+              max={1000}
+              value={inputWeight}
+              onChange={(event) => setInputWeight(event.target.value)}
+              hint={m["admin_routing.form.price_weight_hint"]()}
+            />
+            <Input
+              label={m["admin_routing.form.price_output_weight"]()}
+              type="number"
+              min={1}
+              max={1000}
+              value={outputWeight}
+              onChange={(event) => setOutputWeight(event.target.value)}
+            />
+          </div>
+        ) : null}
 
         {/* Read-only on purpose, and said to be: it is the targets' kind, and
             the server refuses a route that would mix them. Showing it as a

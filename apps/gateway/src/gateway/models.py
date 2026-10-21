@@ -1087,6 +1087,15 @@ class ModelDef(Base):
     route_sticky_ttl_seconds: Mapped[int] = mapped_column(
         Integer, default=3600, server_default=text("3600")
     )
+    # How `cheapest` weighs a target's input and output rates against each
+    # other: it ranks by input * this + output * that. 1:1 adds them; an alias
+    # whose traffic is long prompts and short answers sets, say, 10:1.
+    route_price_input_weight: Mapped[int] = mapped_column(
+        Integer, default=1, server_default=text("1")
+    )
+    route_price_output_weight: Mapped[int] = mapped_column(
+        Integer, default=1, server_default=text("1")
+    )
 
     kind: Mapped[ModelKind] = mapped_column(
         _enum(ModelKind, "model_kind"), default=ModelKind.CHAT, server_default="chat"

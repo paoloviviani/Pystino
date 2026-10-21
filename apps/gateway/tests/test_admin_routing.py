@@ -90,6 +90,8 @@ class TestCreate:
         assert alias["target"]["name"] == "m-b"
         assert alias["route_rule"] == "weighted"
         assert alias["route_sticky_ttl_seconds"] == 600
+        # Price weights default to 1:1.
+        assert (alias["route_price_input_weight"], alias["route_price_output_weight"]) == (1, 1)
         assert alias["status"] == "available"
 
         listed = (await client.get("/api/admin/aliases")).json()
@@ -164,6 +166,8 @@ class TestCreate:
             {"targets": [{"model_id": str(uuid.uuid4())}], "route_sticky_ttl_seconds": -1},
             {"targets": [{"model_id": str(uuid.uuid4())}], "route_sticky_ttl_seconds": 99_999_999},
             {"targets": [{"model_id": str(uuid.uuid4())} for _ in range(17)]},
+            {"targets": [{"model_id": str(uuid.uuid4())}], "route_price_input_weight": 0},
+            {"targets": [{"model_id": str(uuid.uuid4())}], "route_price_output_weight": 1001},
         ],
         ids=[
             "no targets at all",
@@ -174,6 +178,8 @@ class TestCreate:
             "negative ttl",
             "ttl over the bound",
             "too many targets",
+            "input price weight zero",
+            "output price weight over the bound",
         ],
     )
     async def test_malformed_routes_are_a_400(
@@ -244,12 +250,18 @@ class TestUpdate:
         alias, _ = await self._alias(client, seeded, session_factory)
         patched = await client.patch(
             f"/api/admin/aliases/{alias['id']}",
-            json={"route_rule": "cheapest", "route_sticky_ttl_seconds": 0},
+            json={
+                "route_rule": "cheapest",
+                "route_sticky_ttl_seconds": 0,
+                "route_price_input_weight": 10,
+                "route_price_output_weight": 1,
+            },
         )
         assert patched.status_code == 200, patched.text
         body = patched.json()
         assert body["route_rule"] == "cheapest"
         assert body["route_sticky_ttl_seconds"] == 0
+        assert (body["route_price_input_weight"], body["route_price_output_weight"]) == (10, 1)
         assert [t["name"] for t in body["targets"]] == ["m-a", "m-b"]
 
     async def test_the_single_target_spelling_collapses_the_route_to_that_model(

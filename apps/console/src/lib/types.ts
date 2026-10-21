@@ -242,6 +242,9 @@ export interface AdminAlias {
   /** How long a session stays on the target that served it, in seconds; 0 is
    *  off. */
   route_sticky_ttl_seconds: number;
+  /** How `cheapest` weighs input against output rates; 1:1 by default. */
+  route_price_input_weight: number;
+  route_price_output_weight: number;
   /** `available` while at least one target can serve. */
   status: "available" | "unavailable";
   unavailable_reason: AliasUnavailableReason | null;

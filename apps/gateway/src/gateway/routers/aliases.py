@@ -181,6 +181,8 @@ def _response(
         targets=targets,
         route_rule=alias.route_rule,
         route_sticky_ttl_seconds=alias.route_sticky_ttl_seconds,
+        route_price_input_weight=alias.route_price_input_weight,
+        route_price_output_weight=alias.route_price_output_weight,
         status="unavailable" if status_reason is not None else "available",
         unavailable_reason=status_reason,
         granted_to=sorted(grants.get(alias.id, [])),
@@ -416,6 +418,8 @@ async def create_alias(
         is_public=payload.is_public,
         route_rule=payload.route_rule,
         route_sticky_ttl_seconds=payload.route_sticky_ttl_seconds,
+        route_price_input_weight=payload.route_price_input_weight,
+        route_price_output_weight=payload.route_price_output_weight,
     )
     session.add(alias)
     try:
@@ -484,7 +488,12 @@ async def update_alias(
     if (rule := fields.get("route_rule")) is not None:
         _check_rule(rule)
     # `None` for a field that has no "unset" meaning is never a change.
-    for field in ("route_rule", "route_sticky_ttl_seconds"):
+    for field in (
+        "route_rule",
+        "route_sticky_ttl_seconds",
+        "route_price_input_weight",
+        "route_price_output_weight",
+    ):
         if field in fields and fields[field] is None:
             del fields[field]
 

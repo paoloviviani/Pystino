@@ -113,7 +113,7 @@ first is tried and the rest are the fallback order.
 |---|---|
 | `first_available` (default) | The order you listed the targets in. |
 | `weighted` | A random draw in proportion to each target's weight (1 to 1000). The draw also sets the fallback order: the next target is drawn from what remains with the same odds. |
-| `cheapest` | Lowest list price first: input plus output per million tokens, or the per-image or per-page rate for models priced that way. Prices in another currency are converted at the day's rate. A target with **no price** is tried last, never first, because an unpriced model reserves nothing and bills nothing. Ties keep your order. |
+| `cheapest` | Lowest list price first: input rate × the alias's input price weight plus output rate × its output price weight, per million tokens (1:1 by default, which adds them; 10:1 suits long prompts with short answers), or the per-image or per-page rate for models priced that way. Prices in another currency are converted at the day's rate. A target with **no price** is tried last, never first, because an unpriced model reserves nothing and bills nothing. Ties keep your order. |
 
 The rules are one interface in `gateway/routing.py` (`SelectionRule`): given the
 available targets, return them in preference order, possibly fewer. A rule that

@@ -195,18 +195,22 @@ class Weighted:
         return [c for _, c in sorted(keyed, key=lambda pair: pair[0], reverse=True)]
 
 
-def list_price(model: ModelDef) -> tuple[Decimal, str] | None:
+def list_price(
+    model: ModelDef, input_weight: int = 1, output_weight: int = 1
+) -> tuple[Decimal, str] | None:
     """The one number ``cheapest`` compares, with its currency.
 
-    Input plus output rate per million tokens; or, for a model priced by the
-    image or by the page instead, that rate. Cache and search rates are left out:
+    Input rate * ``input_weight`` plus output rate * ``output_weight``, per
+    million tokens (the alias's weights; 1:1 adds them, 10:1 suits long prompts
+    with short answers); or, for a model priced by the image or by the page
+    instead, that rate, which the weights do not touch. Cache and search rates are left out:
     they depend on the request, and this is a ranking of list prices, not an
     estimate of a bill. ``None`` for a model with no price in force.
     """
     price = select_price(list(model.prices))
     if price is None:
         return None
-    tokens = price.input_per_mtok + price.output_per_mtok
+    tokens = price.input_per_mtok * input_weight + price.output_per_mtok * output_weight
     if tokens > 0:
         return tokens, price.currency
     for unit in (price.per_image, price.per_page):
@@ -241,7 +245,12 @@ class Cheapest:
 
     @staticmethod
     async def _cost(model: ModelDef, context: SelectionContext) -> Decimal | None:
-        found = list_price(model)
+        # `or 1`: an alias row not yet flushed has no column defaults applied.
+        found = list_price(
+            model,
+            context.alias.route_price_input_weight or 1,
+            context.alias.route_price_output_weight or 1,
+        )
         if found is None:
             return None
         amount, currency = found

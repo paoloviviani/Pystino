@@ -64,6 +64,8 @@ ALIAS_FIELDS = (
     "is_public",
     "route_rule",
     "route_sticky_ttl_seconds",
+    "route_price_input_weight",
+    "route_price_output_weight",
 )
 PRICE_FIELDS = (
     "input_per_mtok",

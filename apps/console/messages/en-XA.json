@@ -2706,6 +2706,7 @@
   "admin_routing.row.weight": "[ŵéíǧȟť {weight}]",
   "admin_routing.row.sticky": "[śťíćķý {minutes} ḿíń]",
   "admin_routing.row.not_sticky": "[ńóť śťíćķý]",
+  "admin_routing.row.price_weights": "[þŕíćé ŵéíǧȟťś {input}:{output}]",
   "admin_routing.form.targets": "[Ťáŕǧéťś]",
   "admin_routing.form.targets_hint": "[Íń óŕďéŕ óƒ þŕéƒéŕéńćé. Íƒ á ťáŕǧéť ƒáíľś ƒóŕ íťś óŵń ŕéáśóńś (úńŕéáćȟáƀľé, ťíḿéóúť, 429, 5ẋẋ, óŕ óúŕ ćŕéďéńťíáľ óŕ ƀáľáńćé áť íťś þŕóǚíďéŕ: 401, 402) óŕ íś ńóť áďḿíťťéď ƀý ǫúóťá, ťȟé ńéẋť óńé íś ťŕíéď, úþ ťó ťȟŕéé íń áľľ. Á śťŕéáḿéď áńśŵéŕ ńéǚéŕ śŵíťćȟéś ťáŕǧéť óńćé íť ȟáś śťáŕťéď.]",
   "admin_routing.form.target_n": "[Ťáŕǧéť {n}]",
@@ -2717,5 +2718,8 @@
   "admin_routing.form.rule": "[Śéľéćťíóń ŕúľé]",
   "admin_routing.form.sticky": "[Śéśśíóń śťíćķíńéśś (ḿíńúťéś)]",
   "admin_routing.form.sticky_hint": "[Á śéśśíóń ťȟáť śéńďś á śéśśíóń íď śťáýś óń ťȟé ťáŕǧéť ťȟáť śéŕǚéď íť ƒóŕ ťȟíś ľóńǧ. 0 ťúŕńś śťíćķíńéśś óƒƒ.]",
+  "admin_routing.form.price_input_weight": "[Íńþúť þŕíćé ŵéíǧȟť]",
+  "admin_routing.form.price_output_weight": "[Óúťþúť þŕíćé ŵéíǧȟť]",
+  "admin_routing.form.price_weight_hint": "[Ćȟéáþéśť ŕáńķś ťáŕǧéťś ƀý íńþúť ŕáťé × ťȟíś + óúťþúť ŕáťé × ťȟé óúťþúť ŵéíǧȟť. 1:1 áďďś ťȟéḿ; 10:1 śúíťś ľóńǧ þŕóḿþťś ŵíťȟ śȟóŕť áńśŵéŕś.]",
   "request_log.attempt": "[ťŕý {n}]"
 }

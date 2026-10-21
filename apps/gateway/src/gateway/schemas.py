@@ -1291,6 +1291,10 @@ class AliasResponse(BaseModel):
     route_rule: str = "first_available"
     #: How long a session stays on the target that served it; 0 is off.
     route_sticky_ttl_seconds: int = 3600
+    #: How `cheapest` weighs input against output rates (input * this +
+    #: output * that). 1:1 by default.
+    route_price_input_weight: int = 1
+    route_price_output_weight: int = 1
     #: `available` while at least one target can serve, otherwise `unavailable`
     #: with `unavailable_reason` set to one of `target_deleted`,
     #: `target_inactive`, `target_provider_inactive`.
@@ -1326,6 +1330,8 @@ class AliasCreateRequest(BaseModel):
     targets: list[AliasTargetInput] | None = Field(default=None, max_length=MAX_ALIAS_TARGETS)
     route_rule: str = Field(default="first_available", max_length=32)
     route_sticky_ttl_seconds: int = Field(default=3600, ge=0, le=2_592_000)
+    route_price_input_weight: int = Field(default=1, ge=1, le=1000)
+    route_price_output_weight: int = Field(default=1, ge=1, le=1000)
     is_active: bool = True
     # Defaults closed, as for a model (ADR 0045): widening access is a decision,
     # and granting an alias is how a caller gets a model they cannot otherwise
@@ -1360,6 +1366,8 @@ class AliasUpdateRequest(BaseModel):
     targets: list[AliasTargetInput] | None = Field(default=None, max_length=MAX_ALIAS_TARGETS)
     route_rule: str | None = Field(default=None, max_length=32)
     route_sticky_ttl_seconds: int | None = Field(default=None, ge=0, le=2_592_000)
+    route_price_input_weight: int | None = Field(default=None, ge=1, le=1000)
+    route_price_output_weight: int | None = Field(default=None, ge=1, le=1000)
     is_active: bool | None = None
     is_public: bool | None = None
 

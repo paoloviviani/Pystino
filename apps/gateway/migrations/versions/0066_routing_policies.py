@@ -58,6 +58,22 @@ def upgrade() -> None:
                 server_default=sa.text("3600"),
             )
         )
+        batch_op.add_column(
+            sa.Column(
+                "route_price_input_weight",
+                sa.Integer(),
+                nullable=False,
+                server_default=sa.text("1"),
+            )
+        )
+        batch_op.add_column(
+            sa.Column(
+                "route_price_output_weight",
+                sa.Integer(),
+                nullable=False,
+                server_default=sa.text("1"),
+            )
+        )
 
     op.create_table(
         "route_sessions",
@@ -105,6 +121,8 @@ def downgrade() -> None:
     op.drop_table("route_sessions")
 
     with op.batch_alter_table("models", schema=None) as batch_op:
+        batch_op.drop_column("route_price_output_weight")
+        batch_op.drop_column("route_price_input_weight")
         batch_op.drop_column("route_sticky_ttl_seconds")
         batch_op.drop_column("route_rule")
 

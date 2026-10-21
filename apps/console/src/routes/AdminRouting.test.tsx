@@ -75,6 +75,8 @@ function alias(overrides: Partial<AdminAlias> = {}): AdminAlias {
     targets: [TARGET],
     route_rule: "first_available",
     route_sticky_ttl_seconds: 3600,
+    route_price_input_weight: 1,
+    route_price_output_weight: 1,
     status: "available",
     unavailable_reason: null,
     granted_to: ["research"],
@@ -439,6 +441,8 @@ describe("the Routing tab", () => {
         targets: { model_id: string; weight: number }[];
         route_rule: string;
         route_sticky_ttl_seconds?: number;
+        route_price_input_weight?: number;
+        route_price_output_weight?: number;
       };
     }
 
@@ -586,6 +590,35 @@ describe("the Routing tab", () => {
       ).map((o) => o.textContent);
       expect(options).toContain("claude-haiku");
       expect(options).not.toContain("text-embedding-3-small");
+    });
+
+    it("offers price weights only under the cheapest rule, and sends them", async () => {
+      const { captured, user } = await open([routed()], [MODEL, THIRD_MODEL]);
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).queryByLabelText("Input price weight")).toBeNull();
+
+      await user.selectOptions(within(dialog).getByLabelText("Selection rule"), "cheapest");
+      const input = within(dialog).getByLabelText("Input price weight") as HTMLInputElement;
+      expect(input.value).toBe("1");
+      expect((within(dialog).getByLabelText("Output price weight") as HTMLInputElement).value).toBe(
+        "1",
+      );
+      await user.clear(input);
+      await user.type(input, "10");
+      await user.click(within(dialog).getByRole("button", { name: /Save alias/ }));
+      await waitFor(() => expect(captured.bodies.some((b) => b.method === "PATCH")).toBe(true));
+      const body = sent(captured, "PATCH");
+      expect(body.route_rule).toBe("cheapest");
+      expect([body.route_price_input_weight, body.route_price_output_weight]).toEqual([10, 1]);
+    });
+
+    it("shows non-default price weights in the row", async () => {
+      await open(
+        [routed({ route_rule: "cheapest", route_price_input_weight: 10 })],
+        [MODEL, THIRD_MODEL],
+      );
+      expect(screen.getByText(/price weights 10:1/)).toBeTruthy();
     });
 
     it("does not rewrite a stickiness window that is not a whole number of minutes", async () => {

@@ -124,6 +124,20 @@ class TestCheapest:
         ]
         assert names(await Cheapest().order(candidates, ctx())) == ["cheap", "mid", "dear"]
 
+    async def test_the_alias_weights_input_against_output(self) -> None:
+        # Long prompts, short answers: at 10:1 the cheap-input target wins even
+        # though its plain input + output sum is the higher one.
+        candidates = [
+            cand("cheap_out", 0, price=("2", "2", "EUR")),  # 1:1 -> 4,  10:1 -> 22
+            cand("cheap_in", 1, price=("0.5", "4", "EUR")),  # 1:1 -> 4.5, 10:1 -> 9
+        ]
+        assert names(await Cheapest().order(candidates, ctx())) == ["cheap_out", "cheap_in"]
+        heavy_input = SelectionContext(
+            alias=ModelDef(name="alias", route_price_input_weight=10, route_price_output_weight=1),
+            surface=ApiSurface.CHAT_COMPLETIONS,
+        )
+        assert names(await Cheapest().order(candidates, heavy_input)) == ["cheap_in", "cheap_out"]
+
     async def test_an_unpriced_target_is_last_not_first(self) -> None:
         candidates = [cand("free?", 0, price=None), cand("priced", 1, price=("5", "5", "EUR"))]
         assert names(await Cheapest().order(candidates, ctx())) == ["priced", "free?"]

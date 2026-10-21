@@ -2706,6 +2706,7 @@
   "admin_routing.row.weight": "weight {weight}",
   "admin_routing.row.sticky": "sticky {minutes} min",
   "admin_routing.row.not_sticky": "not sticky",
+  "admin_routing.row.price_weights": "price weights {input}:{output}",
   "admin_routing.form.targets": "Targets",
   "admin_routing.form.targets_hint": "In order of preference. If a target fails for its own reasons (unreachable, timeout, 429, 5xx, or our credential or balance at its provider: 401, 402) or is not admitted by quota, the next one is tried, up to three in all. A streamed answer never switches target once it has started.",
   "admin_routing.form.target_n": "Target {n}",
@@ -2717,5 +2718,8 @@
   "admin_routing.form.rule": "Selection rule",
   "admin_routing.form.sticky": "Session stickiness (minutes)",
   "admin_routing.form.sticky_hint": "A session that sends a session id stays on the target that served it for this long. 0 turns stickiness off.",
+  "admin_routing.form.price_input_weight": "Input price weight",
+  "admin_routing.form.price_output_weight": "Output price weight",
+  "admin_routing.form.price_weight_hint": "Cheapest ranks targets by input rate × this + output rate × the output weight. 1:1 adds them; 10:1 suits long prompts with short answers.",
   "request_log.attempt": "try {n}"
 }
