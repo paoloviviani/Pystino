@@ -657,7 +657,7 @@ def test_install_opencode_runs_the_pinned_installer_without_the_key(
     assert result.returncode == 0, result.stderr
     text = log.read_text()
     assert "curl -fsSL https://opencode.ai/install" in text
-    assert "installer args: --version 1.18.34" in text
+    assert "installer args: --version 1.19.3" in text
     assert "key in env: no" in text
 
 
