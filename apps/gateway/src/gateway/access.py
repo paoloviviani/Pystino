@@ -23,7 +23,7 @@ is its ``is_active`` flag and its grants, and what it does *not* inherit is its
 target's access. The caller must be able to use a model behind ``fast`` without
 being able to use that model directly, or the alias buys nothing. The one
 exception is the target's usability, which is a **request-time** refusal
-(``503 alias_unavailable``) rather than a visibility rule: see :func:`alias_target`.
+(``503 alias_unavailable``) rather than a visibility rule: see :func:`alias_targets`.
 """
 
 from __future__ import annotations
@@ -176,7 +176,7 @@ def accessible_model_by_name(
     the collection issues its round trip whether or not any row needs it, so
     loading here would cost every direct request a query it does not use — and
     `test_query_counts.py` pins that number. An alias pays for its own
-    dereference through :func:`alias_target`, once, and only when the name it
+    dereference through :func:`alias_targets`, once, and only when the name it
     sent turned out to be one.
     """
     return (
@@ -213,41 +213,24 @@ def alias_unavailable_reason(alias: ModelDef, target: ModelDef | None) -> AliasU
     return None
 
 
-def alias_target(alias: ModelDef) -> Select[tuple[ModelDef]]:
-    """The model serving ``alias`` — **no access filter at all** (ADR 0101).
+def alias_targets(alias: ModelDef) -> Select[tuple[ModelDef, int, int]]:
+    """Every model that may serve ``alias``, with its position and weight.
 
-    This is the one query in the access module that deliberately does not ask
-    whether the caller may use what it returns. The caller's access was already
-    decided, against the name they sent, and an alias *is* the grant: requiring
-    access to the target as well would remove the only thing an alias is for,
-    which is offering a model under terms different from the model's own.
-
-    Also unfiltered on `is_active` and on the provider being active. Those
-    become the 503 in ``routers/_metered.py``: an alias whose target is down
-    must fail the request with a reason, not 404 as though the name did not
-    exist, because the caller *does* have it and an administrator has to be able
-    to see why it is failing.
-
-    Ordered and limited to one row rather than assuming the save path's
-    invariant: a second target is a routing-policy state this step does not
-    have, and the shape of the answer should not depend on a rule only another
-    module is keeping.
+    No access filter at all: the caller's access was decided against the name
+    they sent, and an alias *is* the grant (ADR 0101), so requiring access to the
+    targets as well would remove the only thing an alias is for. None on
+    `is_active` or the provider either (the planner classifies each row
+    with :func:`alias_unavailable_reason`, so an unavailable target is skipped
+    for a reason rather than missing), and **one statement** for the whole
+    route, carrying each target's provider and prices — `test_query_counts.py`
+    pins the alias path at a single extra round trip however many targets there
+    are. The joined prices are a to-many, so the caller reads the result through
+    ``.unique()``.
     """
     return (
-        select(ModelDef)
-        .join(
-            ModelRouteTarget,
-            ModelRouteTarget.target_model_id == ModelDef.id,
-        )
+        select(ModelDef, ModelRouteTarget.position, ModelRouteTarget.weight)
+        .join(ModelRouteTarget, ModelRouteTarget.target_model_id == ModelDef.id)
         .where(ModelRouteTarget.alias_id == alias.id)
         .order_by(ModelRouteTarget.position)
-        .limit(1)
-        # Both joins, not a selectinload, because this is the **one extra query**
-        # the alias path is allowed on a metered request and it has to carry the
-        # target's provider and prices with it. A `selectinload` of the prices
-        # would be a second one — `test_query_counts.py` pins this statement at
-        # a single round trip for exactly that reason. The `limit` is handled by
-        # SQLAlchemy wrapping the primary select in a subquery, so joining a
-        # to-many does not truncate it.
         .options(joinedload(ModelDef.prices), joinedload(ModelDef.provider))
     )

@@ -38,6 +38,7 @@ step the exemption does not cover.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from fastapi import APIRouter
@@ -137,10 +138,17 @@ async def list_models(
     rows = (await session.execute(stmt)).all()
 
     cards = []
+    listed: set[uuid.UUID] = set()
     for model, target, target_provider in rows:
+        # A routed alias comes back once per target (the join fans out, ordered
+        # by position). Its card is the first target that can serve: one card per
+        # name, and the name is listed as long as any target works.
+        if model.id in listed:
+            continue
         card = _card(model, target, target_provider)
         if card is not None:
             cards.append(card)
+            listed.add(model.id)
 
     return ModelList(data=cards)
 
@@ -251,18 +259,22 @@ async def retrieve_model(
     stmt = accessible_model_by_name(
         model_name, user_id=principal.user.id, group_ids=[principal.billing_group.id]
     )
-    row = (await session.execute(_with_alias_target(stmt))).first()
-    if row is None:
+    rows = (
+        await session.execute(_with_alias_target(stmt).order_by(ModelRouteTarget.position))
+    ).all()
+    if not rows:
         raise ModelNotFoundError(
             f"The model {model_name!r} does not exist or you do not have access to it."
         )
-    model, target, target_provider = row
     # One row can be missing from the listing for two reasons that are the same
     # answer to a caller: the name is not theirs, or the alias behind it has
     # nothing to serve. Both are a 404 here — this route has always answered
     # "not available to you" for an inaccessible model, and an alias whose
-    # target is deleted is not available.
-    card = _card(model, target, target_provider)
+    # targets are all deleted or off is not available. A routed alias has one
+    # row per target; the first that can serve gives the card.
+    card = next(
+        (c for model, target, provider in rows if (c := _card(model, target, provider))), None
+    )
     if card is None:
         raise ModelNotFoundError(
             f"The model {model_name!r} does not exist or you do not have access to it."

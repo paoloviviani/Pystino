@@ -84,7 +84,14 @@ class TestAliasCrud:
             "name": "test-model",
             "kind": "chat",
             "is_active": True,
+            "position": 0,
+            "weight": 1,
+            "available": True,
+            "unavailable_reason": None,
         }
+        assert alias["targets"] == [alias["target"]]
+        assert alias["route_rule"] == "first_available"
+        assert alias["route_sticky_ttl_seconds"] == 3600
         assert alias["status"] == "available"
         assert alias["unavailable_reason"] is None
         # The kind is the target's, set on save.

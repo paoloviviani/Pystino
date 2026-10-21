@@ -46,6 +46,7 @@ from gateway.models import ApiSurface
 from gateway.protocols import reader_for
 from gateway.routers import _metered
 from gateway.routers.chat import STREAM_HEADERS, settle_completed, spawn_finalisation
+from gateway.routing import affinity_key
 from gateway.schemas import ResponsesRequest
 from gateway.sse import chain, iter_sse_events
 from gateway.sse.pipeline import tap
@@ -85,106 +86,120 @@ async def create_response(
         raise BadRequestError("'input' must contain at least one message or a non-empty string.")
 
     request_id = _metered.request_id_for(request, settings)
-    resolved = await _metered.resolve_model(
-        session, body.model, principal=principal, surface=SURFACE
-    )
-    # The target, when the name sent was an alias (ADR 0101); everything below
-    # follows what serves the request.
-    model = resolved.model
-    upstream = await _metered.resolve_upstream(providers, resolved)
-
-    outcome = await _metered.redact_or_block(
-        request,
-        messages,
-        redactor=redactor,
-        session=session,
+    plan = await _metered.resolve_plan(
+        session,
+        body.model,
         principal=principal,
-        model=model,
-        settings=settings,
         surface=SURFACE,
-        request_id=request_id,
-    )
-
-    prompt_tokens = estimator.count_messages(outcome.messages)
-    # `instructions` is a system prompt by another name and is charged like one.
-    prompt_tokens += estimator.count_text(body.instructions or "")
-    _metered.enforce_input_limit(model, prompt_tokens)
-    max_output = body.max_output_tokens or settings.quota.default_max_output_tokens
-    # Server-side web search is charged per search on top of tokens, and
-    # nothing in the request bounds it unless the caller said so (ADR 0058).
-    # Read once, here: the same object supplies the reservation below and the
-    # cap written into the outgoing tools, so the two cannot disagree.
-    search = _metered.bound_web_search(
-        (body.model_extra or {}).get("tools"),
-        default=settings.quota.default_max_web_searches,
-    )
-    worst_case = TokenCounts(prompt=prompt_tokens, completion=max_output, searches=search.reserved)
-
-    metered = await _metered.begin(
+        affinity=affinity_key(request.headers, body),
         fx=request.app.state.fx,
-        session_factory=request.app.state.session_factory,
-        session=session,
-        principal=principal,
-        settings=settings,
-        quota=quota,
-        estimator=estimator,
-        resolved=resolved,
-        surface=SURFACE,
-        request_id=request_id,
-        worst_case=worst_case,
-        outcome=outcome,
-        streamed=body.stream,
+        currency=settings.billing_currency,
     )
-    if isinstance(metered, JSONResponse):
-        return metered
 
-    payload = body.upstream_payload(outcome, upstream_model=resolved.upstream_model)
-    search.apply(payload)
-    payload = metered.shape_payload(payload, surface=SURFACE)
+    async def serve(resolved: _metered.ResolvedModel) -> JSONResponse | StreamingResponse:
+        # The target, when the name sent was an alias (ADR 0101); everything below
+        # follows what serves the request.
+        model = resolved.model
+        upstream = await _metered.resolve_upstream(providers, resolved)
 
-    if body.stream:
-        return await _stream(
-            request=request,
-            payload=payload,
-            model_name=model.name,
-            outcome=outcome,
+        outcome = await _metered.redact_or_block(
+            request,
+            messages,
             redactor=redactor,
-            upstream=upstream,
-            metered=metered,
+            session=session,
+            principal=principal,
+            model=model,
+            settings=settings,
+            surface=SURFACE,
             request_id=request_id,
         )
 
-    try:
-        response = await upstream.responses(payload, request_id=request_id)
-    except UpstreamError as exc:
-        raise await metered.upstream_unreachable(exc) from exc
-
-    if response.status_code >= 400:
-        return await metered.upstream_refused(
-            status_code=response.status_code,
-            message=_metered.error_text(response.payload),
-            content=response.payload
-            or error_payload("The upstream provider returned an error.", type_="api_error"),
+        prompt_tokens = estimator.count_messages(outcome.messages)
+        # `instructions` is a system prompt by another name and is charged like one.
+        prompt_tokens += estimator.count_text(body.instructions or "")
+        _metered.enforce_input_limit(model, prompt_tokens)
+        max_output = body.max_output_tokens or settings.quota.default_max_output_tokens
+        # Server-side web search is charged per search on top of tokens, and
+        # nothing in the request bounds it unless the caller said so (ADR 0058).
+        # Read once, here: the same object supplies the reservation below and the
+        # cap written into the outgoing tools, so the two cannot disagree.
+        search = _metered.bound_web_search(
+            (body.model_extra or {}).get("tools"),
+            default=settings.quota.default_max_web_searches,
+        )
+        worst_case = TokenCounts(
+            prompt=prompt_tokens, completion=max_output, searches=search.reserved
         )
 
-    out = dict(response.payload or {})
-    metered.accounting.observe_payload(out, headers=response.headers)
+        metered = await _metered.begin(
+            fx=request.app.state.fx,
+            session_factory=request.app.state.session_factory,
+            session=session,
+            principal=principal,
+            settings=settings,
+            quota=quota,
+            estimator=estimator,
+            resolved=resolved,
+            surface=SURFACE,
+            request_id=request_id,
+            worst_case=worst_case,
+            outcome=outcome,
+            streamed=body.stream,
+        )
+        if isinstance(metered, JSONResponse):
+            return metered
 
-    # Our model name, not the provider's, and placeholders restored wherever
-    # this surface repeats the answer.
-    if out.get("model") is not None:
-        out["model"] = resolved.requested_name
-    if assembled := _assembled_text(out):
-        restored = await redactor.restore_response(assembled, outcome)
-        _rewrite_all(out, restored.text)
-        if restored.moved:
-            reader_for(SURFACE).shift_citations(out, lambda _choice, offset: restored.shift(offset))
+        payload = body.upstream_payload(outcome, upstream_model=resolved.upstream_model)
+        search.apply(payload)
+        payload = metered.shape_payload(payload, surface=SURFACE)
 
-    return JSONResponse(
-        status_code=response.status_code,
-        content=out,
-        background=metered.completed_after_response(upstream_status=response.status_code),
-    )
+        if body.stream:
+            return await _stream(
+                request=request,
+                payload=payload,
+                model_name=model.name,
+                outcome=outcome,
+                redactor=redactor,
+                upstream=upstream,
+                metered=metered,
+                request_id=request_id,
+            )
+
+        try:
+            response = await upstream.responses(payload, request_id=request_id)
+        except UpstreamError as exc:
+            raise await metered.upstream_unreachable(exc) from exc
+
+        if response.status_code >= 400:
+            return await metered.upstream_refused(
+                status_code=response.status_code,
+                message=_metered.error_text(response.payload),
+                content=response.payload
+                or error_payload("The upstream provider returned an error.", type_="api_error"),
+            )
+
+        out = dict(response.payload or {})
+        metered.accounting.observe_payload(out, headers=response.headers)
+
+        # Our model name, not the provider's, and placeholders restored wherever
+        # this surface repeats the answer.
+        if out.get("model") is not None:
+            out["model"] = resolved.requested_name
+        if assembled := _assembled_text(out):
+            restored = await redactor.restore_response(assembled, outcome)
+            _rewrite_all(out, restored.text)
+            if restored.moved:
+                reader_for(SURFACE).shift_citations(
+                    out, lambda _choice, offset: restored.shift(offset)
+                )
+
+        return JSONResponse(
+            status_code=response.status_code,
+            content=out,
+            background=metered.completed_after_response(upstream_status=response.status_code),
+        )
+
+    return await _metered.serve_with_failover(session, plan, serve)
 
 
 def _assembled_text(payload: dict[str, Any]) -> str:

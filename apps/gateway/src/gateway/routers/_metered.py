@@ -26,17 +26,19 @@ failed before producing anything.
 from __future__ import annotations
 
 import logging
+import random
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
+from typing import Any, TypeVar, cast
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
-from gateway.access import accessible_model_by_name, alias_target, alias_unavailable_reason
+from gateway.access import accessible_model_by_name, alias_targets, alias_unavailable_reason
 from gateway.accounting import RequestAccounting, RequestContext, TokenCounts
 from gateway.accounting.cost import CostBreakdown, compute_cost, select_price
 from gateway.accounting.tokens import TokenEstimator
@@ -71,6 +73,19 @@ from gateway.quota import (
 )
 from gateway.redaction import RedactionOutcome, Redactor
 from gateway.redaction.resolver import RedactionResolver
+from gateway.routing import (
+    MAX_ATTEMPTS,
+    Candidate,
+    SelectionContext,
+    StickyHit,
+    needs_write,
+    recall,
+    remember,
+    rule_named,
+    session_key_hash,
+    status_falls_back,
+)
+from gateway.types import utcnow
 from gateway.upstream import OpenAICompatibleUpstream
 
 logger = logging.getLogger(__name__)
@@ -117,6 +132,16 @@ class ResolvedModel:
 
     model: ModelDef
     requested_name: str
+    #: Which try this is (1-based) in the plan the request was given, and
+    #: whether it is the last one. A failure on a non-last attempt moves on to
+    #: the next target (see `AttemptFailed`); on the last it is the caller's
+    #: answer, exactly as it is for a direct call. A direct call is attempt 1 of
+    #: 1, so nothing here changes for it.
+    attempt: int = 1
+    last: bool = True
+    #: Whether this came through an alias with several targets, i.e. whether the
+    #: ledger should number the attempt.
+    routed: bool = False
 
     @property
     def via_alias(self) -> bool:
@@ -163,14 +188,83 @@ class ResolvedModel:
         return upstream
 
 
-async def resolve_model(
+class AttemptFailed(Exception):
+    """One target of a routed alias could not serve this request; try the next.
+
+    Raised only for a **non-last** attempt, and only after that attempt's ledger
+    row has been finalised and its reservation settled, so catching it leaves
+    nothing open. It carries what the caller would have been given had this been
+    the only target (``response`` for a pass-through or a 429, ``error`` for a
+    503), which is what the planner hands on if it turns out nothing else is
+    left. Never escapes `serve_with_failover`.
+    """
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        response: Response | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.response = response
+        self.error = error
+
+
+ResponseT = TypeVar("ResponseT", bound=Response)
+
+
+@dataclass(frozen=True, slots=True)
+class _Sticky:
+    """What the planner learned about this session, for the write after serving."""
+
+    alias_id: uuid.UUID
+    key_hash: str
+    ttl_seconds: int
+    hit: StickyHit | None
+
+
+@dataclass(frozen=True, slots=True)
+class RoutePlan:
+    """The targets to try for one request, in order (issue P1).
+
+    One element for a direct call or an alias with a single target; up to
+    `MAX_ATTEMPTS` for a routed alias. ``attempts[i].last`` is true only on the
+    final one.
+    """
+
+    attempts: tuple[ResolvedModel, ...]
+    sticky: _Sticky | None = None
+
+    @property
+    def first(self) -> ResolvedModel:
+        return self.attempts[0]
+
+
+def _wrong_kind(name: str, model: ModelDef) -> BadRequestError:
+    # The name quoted back is the one the caller sent. "…is an embedding model"
+    # naming a model they never asked for sends them off to fix a request that
+    # was already correct.
+    return BadRequestError(
+        f"{name!r} is a{'n' if model.kind.value[0] in 'aeiou' else ''} "
+        f"{model.kind.value} model. Use {_KIND_ROUTES[model.kind]} for it.",
+        code="wrong_model_kind",
+    )
+
+
+async def resolve_plan(
     session: AsyncSession,
     name: str,
     *,
     principal: Principal,
     surface: ApiSurface,
-) -> ResolvedModel:
-    """The model this caller may use on this surface, or a 404/400 explaining why.
+    affinity: str | None = None,
+    fx: FXService | None = None,
+    currency: str = "EUR",
+    rng: random.Random | None = None,
+) -> RoutePlan:
+    """The models to try for this caller and surface, or a 404/400/503 saying why not.
 
     "Not available to you" and "does not exist" deliberately answer the same
     404: which models another group can reach is not this caller's business.
@@ -181,10 +275,15 @@ async def resolve_model(
 
     **Access is decided on the name the caller sent, and only that name**
     (ADR 0101). If that name is an alias, the alias row is the grant and the
-    target is loaded with no access filter at all; a caller who may use `fast`
-    and not the model behind it is exactly the case the alias exists for. The
-    target is then returned as the served model, so provider, upstream name,
-    prices, input limits and kind all follow it.
+    targets are loaded with no access filter at all; a caller who may use `fast`
+    and not the models behind it is exactly the case the alias exists for. Each
+    target is returned as a served model, so provider, upstream name, prices,
+    input limits and kind all follow it.
+
+    For an alias with several targets the order is: unavailable targets dropped
+    (inactive, inactive provider, wrong kind), the alias's rule applied, then —
+    when the caller sent a session key and the alias has stickiness on — the
+    target that session last used moved to the front if it is still in the list.
     """
     stmt = accessible_model_by_name(
         name, user_id=principal.user.id, group_ids=[principal.billing_group.id]
@@ -195,57 +294,196 @@ async def resolve_model(
             f"The model {name!r} does not exist or you do not have access to it."
         )
 
-    if model.is_alias:
-        model = await _dereference_alias(session, model)
     allowed = _SURFACE_KINDS[surface]
-    if model.kind not in allowed:
-        # The kind is the target's — the alias's own `kind` is set to it on save
-        # and must equal it, so the two are one fact — but the name quoted back
-        # is the one the caller sent. "…is an embedding model" naming a model
-        # they never asked for sends them off to fix a request that was already
-        # correct.
-        raise BadRequestError(
-            f"{name!r} is a{'n' if model.kind.value[0] in 'aeiou' else ''} "
-            f"{model.kind.value} model. Use {_KIND_ROUTES[model.kind]} for it.",
-            code="wrong_model_kind",
+    if not model.is_alias:
+        if model.kind not in allowed:
+            raise _wrong_kind(name, model)
+        return RoutePlan(attempts=(ResolvedModel(model=model, requested_name=name),))
+
+    rows = (await session.execute(alias_targets(model))).unique().all()
+    candidates: list[Candidate] = []
+    wrong_kind: ModelDef | None = None
+    reasons = []
+    for target, position, weight in rows:
+        reason = alias_unavailable_reason(model, target)
+        if reason is not None:
+            reasons.append(reason)
+        elif target.kind not in allowed:
+            wrong_kind = wrong_kind or target
+        else:
+            candidates.append(Candidate(target=target, position=position, weight=weight))
+    if not candidates and wrong_kind is not None:
+        raise _wrong_kind(name, wrong_kind)
+
+    rule = rule_named(model.route_rule)
+    context = SelectionContext(
+        alias=model,
+        surface=surface,
+        session_key=affinity,
+        currency=currency,
+        fx=fx,
+        rng=rng or random.Random(),  # noqa: S311 - ordering targets, not secrets
+    )
+    ordered = await rule.order(candidates, context) if candidates else []
+    if not ordered:
+        logger.info(
+            "alias %r is unavailable: %s",
+            model.name,
+            reasons[0] if reasons else "no target",
         )
-    return ResolvedModel(model=model, requested_name=name)
+        raise AliasUnavailableError(f"The model alias {model.name!r} has no available target.")
+
+    # Stickiness is decided by how many targets the alias *has*, not how many
+    # are up: a session pinned to B while A was down must still be on B when A
+    # comes back, which is the whole point of pinning it.
+    sticky: _Sticky | None = None
+    if len(rows) > 1 and affinity and model.route_sticky_ttl_seconds > 0:
+        key_hash = session_key_hash(principal.user.id, affinity)
+        hit = await recall(session, model.id, key_hash)
+        sticky = _Sticky(
+            alias_id=model.id,
+            key_hash=key_hash,
+            ttl_seconds=model.route_sticky_ttl_seconds,
+            hit=hit,
+        )
+        if hit is not None:
+            pinned = [c for c in ordered if c.target.id == hit.target_model_id]
+            if pinned:
+                ordered = pinned + [c for c in ordered if c is not pinned[0]]
+
+    chosen = [c.target for c in ordered[:MAX_ATTEMPTS]]
+    routed = len(rows) > 1
+    return RoutePlan(
+        attempts=tuple(
+            ResolvedModel(
+                model=target,
+                requested_name=name,
+                attempt=index + 1,
+                last=index == len(chosen) - 1,
+                routed=routed,
+            )
+            for index, target in enumerate(chosen)
+        ),
+        sticky=sticky,
+    )
+
+
+async def resolve_model(
+    session: AsyncSession,
+    name: str,
+    *,
+    principal: Principal,
+    surface: ApiSurface,
+    affinity: str | None = None,
+) -> ResolvedModel:
+    """The one model this request will be served by, with no fallback.
+
+    For the surfaces that do not retry (OCR and search): the plan's first choice,
+    with stickiness honoured on the way in but never written, since nothing here
+    knows the call succeeded. A routed alias on those surfaces is therefore
+    served by its rule's first pick and fails if that target fails.
+    """
+    plan = await resolve_plan(
+        session, name, principal=principal, surface=surface, affinity=affinity
+    )
+    first = plan.first
+    return ResolvedModel(model=first.model, requested_name=first.requested_name)
 
 
 async def dereference(session: AsyncSession, resolved: ResolvedModel) -> ResolvedModel:
-    """Replace an alias with its target; a served model passes straight through.
+    """Replace an alias with its first target; a served model passes straight through.
 
     Separate from :func:`resolve_model` because the search surface has a second
     way in — a group policy naming a backend by id rather than by the caller's
     own name — and that path needs the same dereference without re-running the
-    access check it has already done by a different route.
+    access check it has already done by a different route. One target, no
+    fallback, as for `resolve_model`.
     """
-    if not resolved.model.is_alias:
+    alias = resolved.model
+    if not alias.is_alias:
         return resolved
-    return ResolvedModel(
-        model=await _dereference_alias(session, resolved.model),
-        requested_name=resolved.requested_name,
+    rows = (await session.execute(alias_targets(alias))).unique().all()
+    candidates = [
+        Candidate(target=target, position=position, weight=weight)
+        for target, position, weight in rows
+        if alias_unavailable_reason(alias, target) is None
+    ]
+    ordered = (
+        await rule_named(alias.route_rule).order(
+            candidates, SelectionContext(alias=alias, surface=ApiSurface.SEARCH)
+        )
+        if candidates
+        else []
     )
-
-
-async def _dereference_alias(session: AsyncSession, alias: ModelDef) -> ModelDef:
-    """The model behind ``alias``, or a 503 saying why there isn't one.
-
-    One level deep, refusing a chain (ADR 0101). Chains are refused at save time
-    and again here, because the second check is the one that holds when the
-    first is bypassed — a row inserted directly, or a target that became an
-    alias by some other route. What is refused is served by nothing, and what
-    that means for the caller is the same answer as "no target", because what
-    they asked for is a model the gateway will not serve.
-    """
-    target = (await session.execute(alias_target(alias))).scalars().first()
-    reason = alias_unavailable_reason(alias, target)
-
-    if reason is not None or target is None:
-        logger.info("alias %r is unavailable: %s", alias.name, reason)
+    if not ordered:
+        logger.info("alias %r is unavailable", alias.name)
         raise AliasUnavailableError(f"The model alias {alias.name!r} has no available target.")
+    return ResolvedModel(model=ordered[0].target, requested_name=resolved.requested_name)
 
-    return target
+
+async def serve_with_failover[ResponseT: Response](
+    session: AsyncSession,
+    plan: RoutePlan,
+    serve: Callable[[ResolvedModel], Awaitable[ResponseT]],
+) -> ResponseT:
+    """Run ``serve`` against each target of the plan until one answers.
+
+    ``serve`` is a route's whole post-resolution pipeline (redact, count,
+    admit, record, call, shape the answer), so everything per-target — the
+    redaction policy, the input limit, the price, the quota rules that name the
+    target — is evaluated per attempt for free. A non-last attempt that cannot
+    serve raises `AttemptFailed` *after* settling its own row and reservation;
+    this moves on. The last attempt's outcome is the caller's, as it is for a
+    direct call.
+
+    A response with a status below 400 pins the session (when the plan has a
+    sticky memory) to the target that produced it. A failure to write that
+    memory is logged and never fails the request: stickiness is an optimisation
+    on top of an answer the caller already has.
+    """
+    failure: AttemptFailed | None = None
+    for resolved in plan.attempts:
+        try:
+            response = await serve(resolved)
+        except AttemptFailed as failed:
+            logger.info(
+                "attempt %d on %s failed (%s); trying the next target",
+                resolved.attempt,
+                resolved.model.name,
+                failed.reason,
+            )
+            failure = failed
+            continue
+        if response.status_code < 400:
+            await _stick(session, plan, resolved)
+        return response
+    # Unreachable by construction (the last attempt never raises AttemptFailed);
+    # kept so that a future change cannot turn it into a silent `None`.
+    assert failure is not None
+    if failure.error is not None:
+        raise failure.error
+    assert failure.response is not None
+    return cast(ResponseT, failure.response)
+
+
+async def _stick(session: AsyncSession, plan: RoutePlan, resolved: ResolvedModel) -> None:
+    sticky = plan.sticky
+    if sticky is None:
+        return
+    now = utcnow()
+    if not needs_write(sticky.hit, resolved.model.id, sticky.ttl_seconds, now):
+        return
+    try:
+        await remember(
+            session,
+            sticky.alias_id,
+            sticky.key_hash,
+            resolved.model.id,
+            sticky.ttl_seconds,
+            now=now,
+        )
+    except Exception:
+        logger.exception("could not remember the session's target; continuing unpinned")
 
 
 def enforce_input_limit(model: ModelDef, prompt_tokens: int) -> None:
@@ -281,7 +519,13 @@ async def resolve_upstream(
         return await providers.upstream_for(resolved.provider)
     except ProviderConfigurationError as exc:
         logger.error("provider misconfigured for model %s: %s", resolved.model.name, exc)
-        raise UpstreamUnavailableError(str(exc)) from exc
+        error = UpstreamUnavailableError(str(exc))
+        if not resolved.last:
+            # A target we cannot even call is the operator's fault, not the
+            # request's: the next one may be fine. No row exists yet, so there
+            # is nothing to settle.
+            raise AttemptFailed("provider_misconfigured", error=error) from exc
+        raise error from exc
 
 
 async def estimate_cost(
@@ -329,6 +573,10 @@ class Metered:
     accounting: RequestAccounting
     reservation: Reservation
     quota: QuotaEngine
+    #: True on a non-last attempt of a routed alias: a failure that is the
+    #: target's, not the request's, ends *this attempt* (row finalised, quota
+    #: settled, as ever) and raises `AttemptFailed` instead of answering.
+    may_fall_back: bool = False
 
     def shape_payload(self, payload: dict[str, Any], *, surface: ApiSurface) -> dict[str, Any]:
         """Let the counterparty's plugin adjust the body before it is sent.
@@ -356,7 +604,10 @@ class Metered:
             error_message=str(exc),
         )
         await self.quota.settle(self.reservation, actuals)
-        return UpstreamUnavailableError("The upstream provider could not be reached.")
+        error = UpstreamUnavailableError("The upstream provider could not be reached.")
+        if self.may_fall_back:
+            raise AttemptFailed("upstream_unreachable", error=error)
+        return error
 
     async def upstream_refused(
         self,
@@ -389,7 +640,12 @@ class Metered:
             error_message=message,
         )
         await self.quota.settle(self.reservation, actuals)
-        return JSONResponse(status_code=status_code, content=content if content is not None else {})
+        response = JSONResponse(
+            status_code=status_code, content=content if content is not None else {}
+        )
+        if self.may_fall_back and status_falls_back(status_code):
+            raise AttemptFailed(f"upstream_{status_code}", response=response)
+        return response
 
     async def completed(self, *, upstream_status: int | None = None) -> QuotaAmounts:
         actuals = await self.accounting.finalise(
@@ -604,13 +860,19 @@ async def begin(
         )
     except QuotaExceeded as exc:
         logger.info("quota refusal for user=%s: %s", principal.user.id, exc)
-        return error_response(
+        refusal = error_response(
             f"Quota exceeded. {exc}",
             status_code=429,
             type_="insufficient_quota",
             code="quota_exceeded",
             headers={"retry-after": str(exc.retry_after_seconds)},
         )
+        if not resolved.last:
+            # Admission is per attempt: a rule that names this target (or this
+            # target's provider) can refuse here while the next target is fine.
+            # No ledger row exists for a refusal, so nothing else to undo.
+            raise AttemptFailed("quota_exceeded", response=refusal) from exc
+        return refusal
     except QuotaUnavailable as exc:
         raise ServiceUnavailableError(
             "Quota state is temporarily unavailable, so the request was refused "
@@ -624,6 +886,7 @@ async def begin(
             # The alias, when the caller named one. Null for a direct call,
             # which is every request that existed before ADR 0101.
             requested_model=resolved.requested_name if resolved.via_alias else None,
+            route_attempt=resolved.attempt if resolved.routed else None,
             currency=settings.billing_currency,
             streamed=streamed,
             user_id=principal.user.id,
@@ -646,7 +909,12 @@ async def begin(
         model=model,
     )
     await accounting.begin()
-    return Metered(accounting=accounting, reservation=reservation, quota=quota)
+    return Metered(
+        accounting=accounting,
+        reservation=reservation,
+        quota=quota,
+        may_fall_back=not resolved.last,
+    )
 
 
 def redaction_policy(

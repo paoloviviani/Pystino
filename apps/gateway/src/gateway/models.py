@@ -1075,6 +1075,19 @@ class ModelDef(Base):
     # this explicitly; see the ADR's audit.
     is_alias: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
+    # How an alias with several targets picks one per request (issue P1). A
+    # name from `gateway.routing`'s registry, kept as text rather than an enum
+    # so that a rule added later (a decision model, a residency rule) is a code
+    # change and not a column migration. Meaningless on a served model.
+    route_rule: Mapped[str] = mapped_column(
+        String(32), default="first_available", server_default="first_available"
+    )
+    # How long a session stays on the target that served it, in seconds; 0
+    # turns stickiness off for this alias. Sliding: a use renews it.
+    route_sticky_ttl_seconds: Mapped[int] = mapped_column(
+        Integer, default=3600, server_default=text("3600")
+    )
+
     kind: Mapped[ModelKind] = mapped_column(
         _enum(ModelKind, "model_kind"), default=ModelKind.CHAT, server_default="chat"
     )
@@ -1161,15 +1174,23 @@ class ModelDef(Base):
     )
 
     @property
-    def target(self) -> ModelDef | None:
-        """The model this alias serves, or None if it has none.
+    def targets(self) -> list[ModelDef]:
+        """The models this alias may serve from, in the operator's order.
 
-        **The single target**, which is what this step supports (ADR 0101):
-        `model_route_targets` is a list because routing will make it one, but
-        the save path writes exactly one row and a request reads the first.
-        Returning None when there are none is not a corner case — it is the
-        "target was deleted" half of unavailability, and the cascade on the
-        target's foreign key is what leaves it in that state.
+        Needs `route_targets` and each `target_model` loaded (both are
+        `lazy="raise"`). Empty when every target was deleted, which is the
+        "target was deleted" state of ADR 0101, decision 5.
+        """
+        return [row.target_model for row in self.route_targets]
+
+    @property
+    def target(self) -> ModelDef | None:
+        """The first target, or None if there are none.
+
+        What the single-target screens and the audit label read; with several
+        targets it is the one the operator listed first, not necessarily the
+        one a request is served by (that is the routing policy's decision, in
+        `gateway.routing`).
         """
         return self.route_targets[0].target_model if self.route_targets else None
 
@@ -1214,6 +1235,8 @@ class ModelRouteTarget(Base):
     # there is one row, so this is always 0 — but it is NOT NULL so that the
     # multi-target migration is a data change and not a schema rewrite.
     position: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    # Relative share under the `weighted` rule; ignored by the other rules.
+    weight: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
 
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
@@ -1226,6 +1249,34 @@ class ModelRouteTarget(Base):
 
     def __repr__(self) -> str:
         return f"<ModelRouteTarget {self.alias_id} -> {self.target_model_id}>"
+
+
+class RouteSession(Base):
+    """Which target a session last used behind an alias (issue P1, stickiness).
+
+    The key is a **hash** of the caller and the session identifier they sent
+    (`gateway.routing.session_key_hash`), never the identifier itself: this table
+    is read only to answer "where did this session go", and a raw conversation
+    id has no business sitting in it. Scoping the hash by user also means one
+    person cannot land on another's memory by guessing an id.
+
+    Expiry is a column, not a cache setting, so the memory survives a restart and
+    is shared by every gateway process. Rows are deleted lazily, per alias, on
+    the write that replaces them. The target cascades: deleting a model forgets
+    every session that was pinned to it, which is what "stick while the target
+    is available" means for a target that no longer exists.
+    """
+
+    __tablename__ = "route_sessions"
+    __table_args__ = (Index("ix_route_sessions_expires", "alias_id", "expires_at"),)
+
+    alias_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("models.id", ondelete="CASCADE"), primary_key=True
+    )
+    key_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    target_model_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("models.id", ondelete="CASCADE"))
+    expires_at: Mapped[datetime]
+    updated_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
 class ModelPrice(Base):
@@ -1380,6 +1431,13 @@ class UsageRecord(Base):
     # the ledger keeps its meaning when the alias is deleted or retargeted,
     # exactly as `model_name` does when the model is retired.
     requested_model: Mapped[str | None] = mapped_column(String(255), default=None)
+
+    # Which try of an alias request this row is (1 = the first target chosen).
+    # Null for a direct call. A request that fell back leaves one row per
+    # attempt under one request id: the failed ones `upstream_error` against the
+    # target that failed, the last against the target that served, so the ledger
+    # can bill and explain each (issue P1).
+    route_attempt: Mapped[int | None] = mapped_column(Integer, default=None)
 
     streamed: Mapped[bool] = mapped_column(Boolean, default=False)
 

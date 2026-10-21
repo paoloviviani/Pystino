@@ -323,3 +323,96 @@ def test_0063_downgrade_refuses_while_an_alias_exists(tmp_path: Path) -> None:
         }
     assert "is_alias" not in columns
     assert "model_route_targets" not in tables
+
+
+def _route_row(
+    connection: sqlite3.Connection, row_id: str, alias: str, target: str, pos: int
+) -> None:
+    connection.execute(
+        "INSERT INTO model_route_targets (id, alias_id, target_model_id, position, created_at) "
+        "VALUES (?, ?, ?, ?, '2026-10-21')",
+        (row_id, alias, target, pos),
+    )
+
+
+def test_0066_routing_policies_keeps_existing_aliases_behaving_as_before(tmp_path: Path) -> None:
+    """An alias written before 0066 comes out first-available with one-hour stickiness.
+
+    The defaults are the whole compatibility story: one target means no rule has
+    anything to choose, so an upgrade must not change what any existing alias
+    does, and the new columns must be filled on every existing row without a
+    backfill step that could be skipped.
+    """
+    database = tmp_path / "routing.db"
+    url = f"url=sqlite+aiosqlite:///{database}"
+    assert _alembic("-x", url, "upgrade", "0065").returncode == 0
+
+    with closing(sqlite3.connect(database)) as connection:
+        _insert_provider(connection, "p1")
+        _insert_model(connection, "m1", "served", upstream="up/served", provider="p1", is_alias=0)
+        _insert_model(connection, "m2", "an-alias", upstream=None, provider=None, is_alias=1)
+        _route_row(connection, "r1", "m2", "m1", 0)
+        connection.commit()
+
+    assert _alembic("-x", url, "upgrade", "head").returncode == 0
+
+    with closing(sqlite3.connect(database)) as connection:
+        alias = connection.execute(
+            "SELECT route_rule, route_sticky_ttl_seconds FROM models WHERE name = 'an-alias'"
+        ).fetchone()
+        served = connection.execute(
+            "SELECT route_rule, route_sticky_ttl_seconds FROM models WHERE name = 'served'"
+        ).fetchone()
+        weight = connection.execute("SELECT weight FROM model_route_targets").fetchone()
+        tables = {
+            name
+            for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        sessions = {row[1] for row in connection.execute("PRAGMA table_info(route_sessions)")}
+        usage = {row[1] for row in connection.execute("PRAGMA table_info(usage_records)")}
+    assert alias == ("first_available", 3600)
+    assert served == ("first_available", 3600)
+    assert weight == (1,)
+    assert "route_sessions" in tables
+    assert sessions == {"alias_id", "key_hash", "target_model_id", "expires_at", "updated_at"}
+    assert "route_attempt" in usage
+
+
+def test_0066_downgrade_refuses_while_an_alias_has_several_targets(tmp_path: Path) -> None:
+    """Dropping the columns would silently collapse a routing decision, so it
+    refuses until the operator reduces each alias to one target."""
+    database = tmp_path / "routing-down.db"
+    url = f"url=sqlite+aiosqlite:///{database}"
+    assert _alembic("-x", url, "upgrade", "head").returncode == 0
+
+    with closing(sqlite3.connect(database)) as connection:
+        _insert_provider(connection, "p1")
+        _insert_model(connection, "m1", "a", upstream="up/a", provider="p1", is_alias=0)
+        _insert_model(connection, "m2", "b", upstream="up/b", provider="p1", is_alias=0)
+        _insert_model(connection, "m3", "routed", upstream=None, provider=None, is_alias=1)
+        _route_row(connection, "r1", "m3", "m1", 0)
+        _route_row(connection, "r2", "m3", "m2", 1)
+        connection.commit()
+
+    refused = _alembic("-x", url, "downgrade", "0065")
+    assert refused.returncode != 0
+    assert "0066 downgrade refused" in refused.stderr
+
+    with closing(sqlite3.connect(database)) as connection:
+        connection.execute("DELETE FROM model_route_targets WHERE id = 'r2'")
+        connection.commit()
+    assert _alembic("-x", url, "downgrade", "0065").returncode == 0
+    with closing(sqlite3.connect(database)) as connection:
+        models = {row[1] for row in connection.execute("PRAGMA table_info(models)")}
+        targets = {row[1] for row in connection.execute("PRAGMA table_info(model_route_targets)")}
+        usage = {row[1] for row in connection.execute("PRAGMA table_info(usage_records)")}
+        tables = {
+            name
+            for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+    assert not {"route_rule", "route_sticky_ttl_seconds"} & models
+    assert "weight" not in targets
+    assert "route_attempt" not in usage
+    assert "route_sessions" not in tables
+    # And it goes up again: the pair is symmetric.
+    assert _alembic("-x", url, "upgrade", "head").returncode == 0

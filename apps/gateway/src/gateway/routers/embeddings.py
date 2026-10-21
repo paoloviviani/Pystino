@@ -46,6 +46,7 @@ from gateway.errors import (
 )
 from gateway.models import ApiSurface
 from gateway.routers import _metered
+from gateway.routing import affinity_key
 from gateway.schemas import EmbeddingRequest
 from gateway.upstream import UpstreamError
 
@@ -73,85 +74,95 @@ async def create_embeddings(
         raise BadRequestError("'input' must contain at least one non-empty string.")
 
     request_id = _metered.request_id_for(request, settings)
-    resolved = await _metered.resolve_model(
-        session, body.model, principal=principal, surface=SURFACE
-    )
-    # The target, when the name sent was an alias (ADR 0101); everything below
-    # follows what serves the request.
-    model = resolved.model
-    upstream = await _metered.resolve_upstream(providers, resolved)
-
-    # -- redaction ----------------------------------------------------------
-    # Reuses the message-shaped interface so one engine covers both routes: each
-    # input becomes a user message, and the redacted text comes back out. There
-    # is no response path to restore — the response is an array of numbers.
-    outcome = await _metered.redact_or_block(
-        request,
-        [{"role": "user", "content": text} for text in texts],
-        redactor=redactor,
-        session=session,
+    plan = await _metered.resolve_plan(
+        session,
+        body.model,
         principal=principal,
-        model=model,
-        settings=settings,
         surface=SURFACE,
-        request_id=request_id,
-    )
-    redacted = [str(message.get("content") or "") for message in outcome.messages]
-
-    # -- reservation --------------------------------------------------------
-    prompt_tokens = sum(estimator.count_text(text) for text in redacted)
-    _metered.enforce_input_limit(model, prompt_tokens)
-    metered = await _metered.begin(
+        affinity=affinity_key(request.headers, body),
         fx=request.app.state.fx,
-        session_factory=request.app.state.session_factory,
-        session=session,
-        principal=principal,
-        settings=settings,
-        quota=quota,
-        estimator=estimator,
-        resolved=resolved,
-        surface=SURFACE,
-        request_id=request_id,
-        worst_case=TokenCounts(prompt=prompt_tokens, completion=0),
-        outcome=outcome,
-        streamed=False,
+        currency=settings.billing_currency,
     )
-    if isinstance(metered, JSONResponse):
-        return metered
 
-    payload: dict[str, Any] = body.model_dump(exclude_unset=True)
-    payload["model"] = resolved.upstream_model
-    # Single string in, single string out: a provider may index its response by
-    # position, and turning one string into a one-element list would change the
-    # shape the caller gets back.
-    payload["input"] = redacted[0] if isinstance(body.input, str) else redacted
-    payload = metered.shape_payload(payload, surface=SURFACE)
+    async def serve(resolved: _metered.ResolvedModel) -> JSONResponse:
+        # The target, when the name sent was an alias (ADR 0101); everything below
+        # follows what serves the request.
+        model = resolved.model
+        upstream = await _metered.resolve_upstream(providers, resolved)
 
-    try:
-        response = await upstream.embeddings(payload, request_id=request_id)
-    except UpstreamError as exc:
-        raise await metered.upstream_unreachable(exc) from exc
+        # -- redaction ----------------------------------------------------------
+        # Reuses the message-shaped interface so one engine covers both routes: each
+        # input becomes a user message, and the redacted text comes back out. There
+        # is no response path to restore — the response is an array of numbers.
+        outcome = await _metered.redact_or_block(
+            request,
+            [{"role": "user", "content": text} for text in texts],
+            redactor=redactor,
+            session=session,
+            principal=principal,
+            model=model,
+            settings=settings,
+            surface=SURFACE,
+            request_id=request_id,
+        )
+        redacted = [str(message.get("content") or "") for message in outcome.messages]
 
-    if response.status_code >= 400:
-        return await metered.upstream_refused(
+        # -- reservation --------------------------------------------------------
+        prompt_tokens = sum(estimator.count_text(text) for text in redacted)
+        _metered.enforce_input_limit(model, prompt_tokens)
+        metered = await _metered.begin(
+            fx=request.app.state.fx,
+            session_factory=request.app.state.session_factory,
+            session=session,
+            principal=principal,
+            settings=settings,
+            quota=quota,
+            estimator=estimator,
+            resolved=resolved,
+            surface=SURFACE,
+            request_id=request_id,
+            worst_case=TokenCounts(prompt=prompt_tokens, completion=0),
+            outcome=outcome,
+            streamed=False,
+        )
+        if isinstance(metered, JSONResponse):
+            return metered
+
+        payload: dict[str, Any] = body.model_dump(exclude_unset=True)
+        payload["model"] = resolved.upstream_model
+        # Single string in, single string out: a provider may index its response by
+        # position, and turning one string into a one-element list would change the
+        # shape the caller gets back.
+        payload["input"] = redacted[0] if isinstance(body.input, str) else redacted
+        payload = metered.shape_payload(payload, surface=SURFACE)
+
+        try:
+            response = await upstream.embeddings(payload, request_id=request_id)
+        except UpstreamError as exc:
+            raise await metered.upstream_unreachable(exc) from exc
+
+        if response.status_code >= 400:
+            return await metered.upstream_refused(
+                status_code=response.status_code,
+                message=_metered.error_text(response.payload),
+                content=response.payload,
+            )
+
+        if response.payload is not None:
+            # Feeds usage, and the model/provider that actually served it.
+            metered.accounting.observe_payload(response.payload, headers=response.headers)
+
+        body_out = dict(response.payload or {})
+        # Report our model name, not the upstream's, exactly as the chat route does:
+        # clients compare the echoed name with what they sent. The original is in the
+        # ledger.
+        if body_out.get("model") is not None:
+            body_out["model"] = resolved.requested_name
+        # Finalised after the answer is sent, not before it (ADR 0060).
+        return JSONResponse(
             status_code=response.status_code,
-            message=_metered.error_text(response.payload),
-            content=response.payload,
+            content=body_out,
+            background=metered.completed_after_response(upstream_status=response.status_code),
         )
 
-    if response.payload is not None:
-        # Feeds usage, and the model/provider that actually served it.
-        metered.accounting.observe_payload(response.payload, headers=response.headers)
-
-    body_out = dict(response.payload or {})
-    # Report our model name, not the upstream's, exactly as the chat route does:
-    # clients compare the echoed name with what they sent. The original is in the
-    # ledger.
-    if body_out.get("model") is not None:
-        body_out["model"] = resolved.requested_name
-    # Finalised after the answer is sent, not before it (ADR 0060).
-    return JSONResponse(
-        status_code=response.status_code,
-        content=body_out,
-        background=metered.completed_after_response(upstream_status=response.status_code),
-    )
+    return await _metered.serve_with_failover(session, plan, serve)

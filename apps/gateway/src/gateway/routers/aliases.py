@@ -39,7 +39,7 @@ from sqlalchemy import Row, delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
-from gateway.access import alias_unavailable_reason
+from gateway.access import AliasUnavailable, alias_unavailable_reason
 from gateway.admin_audit import alias_view, record_audit
 from gateway.deps import AdminUserDep, SessionDep
 from gateway.errors import BadRequestError
@@ -50,14 +50,18 @@ from gateway.models import (
     IdentityEventAction,
     IdentityEventActor,
     ModelDef,
+    ModelKind,
     ModelRouteTarget,
+    RouteSession,
     User,
     UserModelAccess,
 )
 from gateway.routers.admin import ConflictError, NotFoundError
+from gateway.routing import RULES
 from gateway.schemas import (
     AliasCreateRequest,
     AliasResponse,
+    AliasTargetInput,
     AliasTargetResponse,
     AliasUpdateRequest,
 )
@@ -137,8 +141,34 @@ def _response(
     while every request 503s, which is the failure three surfaces disagreeing
     about invites.
     """
-    target = alias.target
-    reason = alias_unavailable_reason(alias, target)
+    targets: list[AliasTargetResponse] = []
+    reasons = []
+    for row in alias.route_targets:
+        target = row.target_model
+        reason = alias_unavailable_reason(alias, target)
+        reasons.append(reason)
+        targets.append(
+            AliasTargetResponse(
+                id=target.id,
+                name=target.name,
+                kind=target.kind.value,
+                is_active=target.is_active,
+                position=row.position,
+                weight=row.weight,
+                available=reason is None,
+                unavailable_reason=None if reason is None else reason.value,
+            )
+        )
+    # Available while any target can serve (issue P1); with none at all it is
+    # the ADR 0101 "target deleted" state. When every target is down the reason
+    # shown is the first one's, the one the operator listed as most preferred.
+    if not targets:
+        status_reason: str | None = AliasUnavailable.TARGET_DELETED.value
+    elif any(reason is None for reason in reasons):
+        status_reason = None
+    else:
+        first = reasons[0]
+        status_reason = first.value if first is not None else None
     return AliasResponse(
         id=alias.id,
         name=alias.name,
@@ -147,18 +177,12 @@ def _response(
         kind=alias.kind.value,
         is_active=alias.is_active,
         is_public=alias.is_public,
-        target=(
-            AliasTargetResponse(
-                id=target.id,
-                name=target.name,
-                kind=target.kind.value,
-                is_active=target.is_active,
-            )
-            if target is not None
-            else None
-        ),
-        status="unavailable" if reason is not None else "available",
-        unavailable_reason=None if reason is None else reason.value,
+        target=targets[0] if targets else None,
+        targets=targets,
+        route_rule=alias.route_rule,
+        route_sticky_ttl_seconds=alias.route_sticky_ttl_seconds,
+        status="unavailable" if status_reason is not None else "available",
+        unavailable_reason=status_reason,
         granted_to=sorted(grants.get(alias.id, [])),
         granted_to_users=sorted(user_grants.get(alias.id, [])),
         created_at=alias.created_at,
@@ -276,29 +300,85 @@ async def _load_target(session: SessionDep, model_id: uuid.UUID, *, alias_name: 
     return target
 
 
-async def _write_target(
-    session: SessionDep, alias: ModelDef, target: ModelDef, *, adopt_kind: bool
-) -> None:
-    """Leave this alias with exactly one route target.
+def _names(targets: Sequence[ModelDef]) -> str:
+    """The route as one label for the audit trail: names, in order."""
+    return ", ".join(t.name for t in targets)
 
-    Delete-then-insert rather than an update, and that is what makes a retarget
+
+def _check_rule(rule: str) -> None:
+    if rule not in RULES:
+        raise BadRequestError(
+            f"Unknown routing rule {rule!r}. Known: {', '.join(sorted(RULES))}.",
+            code="unknown_route_rule",
+        )
+
+
+async def _load_targets(
+    session: SessionDep, entries: Sequence[AliasTargetInput], *, alias_name: str
+) -> list[tuple[ModelDef, int]]:
+    """Each entry through `_load_target`, refusing the same model twice.
+
+    A duplicate would give the model two shares under `weighted` and two
+    attempts under fallback, neither of which anybody means by listing it twice.
+    """
+    seen: set[uuid.UUID] = set()
+    loaded: list[tuple[ModelDef, int]] = []
+    for entry in entries:
+        if entry.model_id in seen:
+            raise BadRequestError(
+                f"The same model is listed twice for {alias_name!r}.",
+                code="alias_duplicate_target",
+            )
+        seen.add(entry.model_id)
+        loaded.append(
+            (await _load_target(session, entry.model_id, alias_name=alias_name), entry.weight)
+        )
+    return loaded
+
+
+def _check_same_kind(
+    alias_name: str, kind: ModelKind, targets: Sequence[tuple[ModelDef, int]]
+) -> None:
+    """Targets of one alias must serve the same API surfaces (ADR 0101)."""
+    for target, _ in targets:
+        if target.kind != kind:
+            raise BadRequestError(
+                f"{alias_name!r} is a {kind.value} alias and {target.name!r} is a "
+                f"{target.kind.value} model. An alias can only point at a model that "
+                "serves the same API surfaces.",
+                code="alias_kind_mismatch",
+            )
+
+
+async def _write_targets(
+    session: SessionDep,
+    alias: ModelDef,
+    targets: Sequence[tuple[ModelDef, int]],
+    *,
+    adopt_kind: bool,
+) -> None:
+    """Leave this alias with exactly these route targets, in this order.
+
+    Delete-then-insert rather than an update, and that is what makes a change
     immediate and atomic: there is no cache to invalidate because resolution
     reads this table on every request, and the commit covers both statements, so
-    a crash between them leaves the alias pointing at the old target rather than
-    with no target at all.
+    a crash between them leaves the alias with its old route rather than with
+    none. Position is the index in ``targets``. Sessions pinned to a target that
+    is no longer in the route are not touched: they are stale, not wrong — the
+    planner only honours a pin whose target is still in the list.
     """
     await session.execute(delete(ModelRouteTarget).where(ModelRouteTarget.alias_id == alias.id))
-    session.add(
-        ModelRouteTarget(
-            alias_id=alias.id,
-            target_model_id=target.id,
-            # Always 0. The column exists for the routing step; this one does not
-            # pretend to choose between rows.
-            position=0,
+    for position, (target, weight) in enumerate(targets):
+        session.add(
+            ModelRouteTarget(
+                alias_id=alias.id,
+                target_model_id=target.id,
+                position=position,
+                weight=weight,
+            )
         )
-    )
     if adopt_kind:
-        alias.kind = target.kind
+        alias.kind = targets[0][0].kind
 
 
 @router.post("/aliases", response_model=AliasResponse, status_code=status.HTTP_201_CREATED)
@@ -313,7 +393,11 @@ async def create_alias(
     and there is one implementation of "who may use this name" rather than two
     that drift apart.
     """
-    target = await _load_target(session, payload.target_model_id, alias_name=payload.name)
+    _check_rule(payload.route_rule)
+    entries = payload.targets or [AliasTargetInput(model_id=payload.target_model_id)]
+    targets = await _load_targets(session, entries, alias_name=payload.name)
+    target = targets[0][0]
+    _check_same_kind(payload.name, target.kind, targets)
 
     alias = ModelDef(
         name=payload.name,
@@ -330,6 +414,8 @@ async def create_alias(
         description=payload.description,
         is_active=payload.is_active,
         is_public=payload.is_public,
+        route_rule=payload.route_rule,
+        route_sticky_ttl_seconds=payload.route_sticky_ttl_seconds,
     )
     session.add(alias)
     try:
@@ -338,7 +424,8 @@ async def create_alias(
         # across models and aliases (ADR 0101). Catching it only at commit would
         # have let a clashing name through as a 500.
         await session.flush()
-        await _write_target(session, alias, target, adopt_kind=True)
+        await _write_targets(session, alias, targets, adopt_kind=True)
+        names = ", ".join(t.name for t, _ in targets)
         await record_event(
             session,
             actor_type=IdentityEventActor.USER,
@@ -346,7 +433,7 @@ async def create_alias(
             actor_label=admin.email or "",
             action=IdentityEventAction.ALIAS_CREATE,
             target_label=payload.name,
-            detail={"target": target.name},
+            detail={"target": names},
         )
         record_audit(
             session,
@@ -355,7 +442,7 @@ async def create_alias(
             "alias",
             alias.id,
             alias.name,
-            after=alias_view(alias, target.name),
+            after=alias_view(alias, names),
         )
         await session.commit()
     except IntegrityError as exc:
@@ -390,37 +477,45 @@ async def update_alias(
     corrected is its own kind of bug.
     """
     alias = await _load_alias(session, alias_id)
-    audit_before = alias_view(alias, alias.target.name if alias.target is not None else None)
+    audit_before = alias_view(alias, _names(alias.targets))
     fields = payload.model_dump(exclude_unset=True)
     changed: list[str] = []
 
-    target: ModelDef | None = None
+    if (rule := fields.get("route_rule")) is not None:
+        _check_rule(rule)
+    # `None` for a field that has no "unset" meaning is never a change.
+    for field in ("route_rule", "route_sticky_ttl_seconds"):
+        if field in fields and fields[field] is None:
+            del fields[field]
+
+    entries: list[AliasTargetInput] | None = None
     if (target_id := fields.pop("target_model_id", None)) is not None:
-        target = await _load_target(session, target_id, alias_name=alias.name)
-        # Interchangeability starts now (ADR 0101, "Designed for routing"): the
-        # targets of one alias must be substitutable for one another, and the
-        # only thing this step can check is the kind. Retargeting across kinds
-        # would leave the alias promising chat to a caller who then gets a 400
-        # naming a model they never asked for.
-        if target.kind != alias.kind:
-            raise BadRequestError(
-                f"{alias.name!r} is a {alias.kind.value} alias and {target.name!r} is a "
-                f"{target.kind.value} model. An alias can only point at a model that "
-                "serves the same API surfaces.",
-                code="alias_kind_mismatch",
-            )
-        await _write_target(session, alias, target, adopt_kind=False)
+        entries = [AliasTargetInput(model_id=target_id)]
+    if payload.targets is not None:
+        fields.pop("targets", None)
+        entries = payload.targets
+    fields.pop("targets", None)
+
+    names_after = _names(alias.targets)
+    if entries is not None:
+        targets = await _load_targets(session, entries, alias_name=alias.name)
+        # Interchangeability (ADR 0101, "Designed for routing"): the targets of
+        # one alias must be substitutable for one another, and the only thing
+        # that can be checked here is the kind. Retargeting across kinds would
+        # leave the alias promising chat to a caller who then gets a 400 naming
+        # a model they never asked for.
+        _check_same_kind(alias.name, alias.kind, targets)
+        await _write_targets(session, alias, targets, adopt_kind=False)
+        names_after = _names([t for t, _ in targets])
         changed.append("target")
 
     for field, value in fields.items():
         setattr(alias, field, value)
         changed.append(field)
 
-    # The target the alias points at *after* the change — read from the route
-    # row we just rewrote, which is the one fact a retarget leaves invisible
-    # everywhere else: the alias card, the request and the ledger all keep
-    # saying the same name.
-    now = alias.target
+    # The targets the alias has *after* the change: the one fact a retarget
+    # leaves invisible everywhere else, because the alias card, the request and
+    # the ledger all keep saying the same name.
     try:
         # `record_event` flushes, so it is inside the try for the same reason
         # the create path's flush is: that flush is what emits the UPDATE, and
@@ -433,7 +528,7 @@ async def update_alias(
             actor_label=admin.email or "",
             action=IdentityEventAction.ALIAS_UPDATE,
             target_label=alias.name,
-            detail={"fields": sorted(changed), "target": now.name if now is not None else ""},
+            detail={"fields": sorted(changed), "target": names_after},
         )
         record_audit(
             session,
@@ -443,7 +538,7 @@ async def update_alias(
             alias.id,
             alias.name,
             before=audit_before,
-            after=alias_view(alias, now.name if now is not None else None),
+            after=alias_view(alias, names_after),
         )
         await session.commit()
     except IntegrityError as exc:
@@ -467,7 +562,7 @@ async def delete_alias(alias_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     name is gone.
     """
     alias = await _load_alias(session, alias_id)
-    target_name = alias.target.name if alias.target is not None else ""
+    target_name = _names(alias.targets)
     await record_event(
         session,
         actor_type=IdentityEventActor.USER,
@@ -488,6 +583,7 @@ async def delete_alias(alias_id: uuid.UUID, admin: AdminUserDep, session: Sessio
     )
     # Explicit child deletes rather than ORM cascade, matching `delete_model`:
     # the same outcome, and these name what goes.
+    await session.execute(delete(RouteSession).where(RouteSession.alias_id == alias.id))
     await session.execute(delete(ModelRouteTarget).where(ModelRouteTarget.alias_id == alias.id))
     await session.execute(delete(GroupModelAccess).where(GroupModelAccess.model_id == alias.id))
     await session.execute(delete(UserModelAccess).where(UserModelAccess.model_id == alias.id))

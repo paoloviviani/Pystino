@@ -57,6 +57,7 @@ from gateway.quota import (
 )
 from gateway.redaction import RedactionOutcome, Redactor
 from gateway.routers import _metered
+from gateway.routing import affinity_key
 from gateway.schemas import ChatCompletionRequest
 from gateway.sse import SSEEvent, chain, iter_sse_events
 from gateway.sse.pipeline import StreamStage, tap
@@ -179,76 +180,99 @@ async def chat_completions(
     # model swap, all gateway-side. They moved to the chat (ADR 0067): a
     # client's own construction, assembled before this call, and the wire name
     # arriving here is always a plain model.
-    resolved = await _metered.resolve_model(
-        session, body.model, principal=principal, surface=SURFACE
-    )
-    # The **target**, when the name sent was an alias (ADR 0101). Everything
-    # below — the upstream call, the price, the quota, the ledger — follows what
-    # serves the request; `resolved.requested_name` is the only thing that
-    # remembers what the caller typed.
-    model = resolved.model
-    upstream = await _metered.resolve_upstream(providers, resolved)
-
-    # -- redaction (step 2) -------------------------------------------------
-    outcome = await _metered.redact_or_block(
-        request,
-        body.messages,
-        redactor=redactor,
-        session=session,
+    plan = await _metered.resolve_plan(
+        session,
+        body.model,
         principal=principal,
-        model=model,
-        settings=settings,
         surface=SURFACE,
-        request_id=request_id,
-    )
-
-    # -- local counting and reservation estimate (steps 3-4) ----------------
-    prompt_tokens = estimator.count_messages(outcome.messages)
-    _metered.enforce_input_limit(model, prompt_tokens)
-    max_output = (
-        body.requested_max_output_tokens(settings.quota.default_max_output_tokens)
-        * body.choice_count()
-    )
-    # Server-side web search is charged per search on top of tokens, and
-    # nothing in the request bounds it unless the caller said so (ADR 0058).
-    # Read once, here: the same object supplies the reservation below and the
-    # cap written into the outgoing tools, so the two cannot disagree.
-    search = _metered.bound_web_search(
-        (body.model_extra or {}).get("tools"),
-        default=settings.quota.default_max_web_searches,
-    )
-    worst_case = TokenCounts(prompt=prompt_tokens, completion=max_output, searches=search.reserved)
-
-    # -- reserve, then open the usage row (steps 4-5) -----------------------
-    metered = await _metered.begin(
+        affinity=affinity_key(request.headers, body),
         fx=request.app.state.fx,
-        session_factory=request.app.state.session_factory,
-        session=session,
-        principal=principal,
-        settings=settings,
-        quota=quota,
-        estimator=estimator,
-        resolved=resolved,
-        surface=SURFACE,
-        request_id=request_id,
-        worst_case=worst_case,
-        outcome=outcome,
-        streamed=body.stream,
+        currency=settings.billing_currency,
     )
-    if isinstance(metered, JSONResponse):
-        return metered
 
-    payload = build_upstream_payload(body, outcome=outcome, upstream_model=resolved.upstream_model)
-    search.apply(payload)
-    payload = metered.shape_payload(payload, surface=SURFACE)
+    async def serve(resolved: _metered.ResolvedModel) -> JSONResponse | StreamingResponse:
+        # The **target**, when the name sent was an alias (ADR 0101). Everything
+        # below — the upstream call, the price, the quota, the ledger — follows what
+        # serves the request; `resolved.requested_name` is the only thing that
+        # remembers what the caller typed.
+        model = resolved.model
+        upstream = await _metered.resolve_upstream(providers, resolved)
 
-    if body.stream:
-        return await _stream_response(
-            request=request,
+        # -- redaction (step 2) -------------------------------------------------
+        outcome = await _metered.redact_or_block(
+            request,
+            body.messages,
+            redactor=redactor,
+            session=session,
+            principal=principal,
+            model=model,
+            settings=settings,
+            surface=SURFACE,
+            request_id=request_id,
+        )
+
+        # -- local counting and reservation estimate (steps 3-4) ----------------
+        prompt_tokens = estimator.count_messages(outcome.messages)
+        _metered.enforce_input_limit(model, prompt_tokens)
+        max_output = (
+            body.requested_max_output_tokens(settings.quota.default_max_output_tokens)
+            * body.choice_count()
+        )
+        # Server-side web search is charged per search on top of tokens, and
+        # nothing in the request bounds it unless the caller said so (ADR 0058).
+        # Read once, here: the same object supplies the reservation below and the
+        # cap written into the outgoing tools, so the two cannot disagree.
+        search = _metered.bound_web_search(
+            (body.model_extra or {}).get("tools"),
+            default=settings.quota.default_max_web_searches,
+        )
+        worst_case = TokenCounts(
+            prompt=prompt_tokens, completion=max_output, searches=search.reserved
+        )
+
+        # -- reserve, then open the usage row (steps 4-5) -----------------------
+        metered = await _metered.begin(
+            fx=request.app.state.fx,
+            session_factory=request.app.state.session_factory,
+            session=session,
+            principal=principal,
+            settings=settings,
+            quota=quota,
+            estimator=estimator,
+            resolved=resolved,
+            surface=SURFACE,
+            request_id=request_id,
+            worst_case=worst_case,
+            outcome=outcome,
+            streamed=body.stream,
+        )
+        if isinstance(metered, JSONResponse):
+            return metered
+
+        payload = build_upstream_payload(
+            body, outcome=outcome, upstream_model=resolved.upstream_model
+        )
+        search.apply(payload)
+        payload = metered.shape_payload(payload, surface=SURFACE)
+
+        if body.stream:
+            return await _stream_response(
+                request=request,
+                payload=payload,
+                model=model,
+                client_facing_name=resolved.requested_name,
+                body=body,
+                outcome=outcome,
+                redactor=redactor,
+                upstream=upstream,
+                metered=metered,
+                request_id=request_id,
+            )
+
+        return await _buffered_response(
             payload=payload,
             model=model,
             client_facing_name=resolved.requested_name,
-            body=body,
             outcome=outcome,
             redactor=redactor,
             upstream=upstream,
@@ -256,16 +280,7 @@ async def chat_completions(
             request_id=request_id,
         )
 
-    return await _buffered_response(
-        payload=payload,
-        model=model,
-        client_facing_name=resolved.requested_name,
-        outcome=outcome,
-        redactor=redactor,
-        upstream=upstream,
-        metered=metered,
-        request_id=request_id,
-    )
+    return await _metered.serve_with_failover(session, plan, serve)
 
 
 async def _buffered_response(

@@ -56,7 +56,15 @@ MODEL_FIELDS = (
     "is_active",
     "is_public",
 )
-ALIAS_FIELDS = ("name", "display_name", "description", "is_active", "is_public")
+ALIAS_FIELDS = (
+    "name",
+    "display_name",
+    "description",
+    "is_active",
+    "is_public",
+    "route_rule",
+    "route_sticky_ttl_seconds",
+)
 PRICE_FIELDS = (
     "input_per_mtok",
     "output_per_mtok",
