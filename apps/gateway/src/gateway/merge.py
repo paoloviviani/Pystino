@@ -137,7 +137,12 @@ MERGE_RULES: tuple[MergeRule, ...] = (
 #: is this feature's own record of who went where. Named here, not just left
 #: absent, so the guard's own failure message can say why on purpose rather
 #: than someone reading a bare mismatch and wondering if it is a bug.
-_DELIBERATELY_UNMANAGED = frozenset({"identity_events", "user_merges"})
+#:
+#: `admin_audit_events` is the exception to "not a foreign key": its
+#: `actor_user_id` is one, but ON DELETE SET NULL, and it is history. A merge
+#: must not rewrite who made a change; deleting the source nulls the id and
+#: `actor_label` still says who.
+_DELIBERATELY_UNMANAGED = frozenset({"identity_events", "user_merges", "admin_audit_events"})
 
 
 def _fk_and_scope_columns() -> set[tuple[str, str]]:
