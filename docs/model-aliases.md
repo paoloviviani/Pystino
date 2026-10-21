@@ -131,7 +131,9 @@ long as it is still available and admitted.
 The session key is the first of these that is present:
 
 1. the `x-session-id` header;
-2. the `x-session-affinity` header (the name coding agents use);
+2. the `x-session-affinity` header (opencode 1.19.3 sends this, and `X-Session-Id`
+   with its session id, to providers other than opencode's own; verified, so a
+   coding agent on opencode is sticky with no configuration);
 3. `prompt_cache_key` in the request body;
 4. `user` in the request body.
 
@@ -173,18 +175,20 @@ tried, up to **three attempts** per request.
 | upstream `5xx` (including 529 "overloaded") | yes |
 | upstream `429` | yes (the provider is refusing *our* key or quota, not judging the request) |
 | upstream `408` | yes |
+| upstream `401` or `402` | yes (the caller already authenticated to the gateway, so this is *our* credential or balance at that provider; one provider answers "Insufficient Balance." with a 401). Logged at warning level naming the provider |
+| upstream `403` whose body says auth, billing, quota, balance, credit or an API key | yes, with the same warning |
 | a provider whose credential cannot be read (misconfigured) | yes |
 | quota refusal for this attempt | yes (see below) |
-| any other upstream `4xx` (400, 401, 402, 403, 404, 413, 422 ...) | **no**: the answer is returned as is |
+| any other upstream `4xx` (400, a `403` that says nothing about our account, 404, 413, 422 ...) | **no**: the answer is returned as is |
 | a request blocked by redaction policy | **no**: it is the same on every target |
 | quota state unavailable | **no**: 503, as for any request |
 
 The reasoning for the `4xx` line: those say the **request** is wrong, and another
 target would be asked the same question and either refuse it too (doubling what a
-bad request costs) or accept what the first correctly refused. `401` and `402`
-are the one debatable pair, since they can mean *our* credential or balance at
-that provider is the problem. They are not retried today; say so if you want
-them to be.
+bad request costs) or accept what the first correctly refused. `403` is judged by
+its body because a content-policy refusal is the request's and a suspended
+account is ours. If the last attempt fails this way, the caller gets that answer
+in the same form as for a direct call.
 
 **Streaming.** The fallback window closes when the upstream's stream has opened
 with a success status. Once the first byte of a stream is on its way to the

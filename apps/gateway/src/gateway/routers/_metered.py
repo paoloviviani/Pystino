@@ -577,6 +577,8 @@ class Metered:
     #: target's, not the request's, ends *this attempt* (row finalised, quota
     #: settled, as ever) and raises `AttemptFailed` instead of answering.
     may_fall_back: bool = False
+    #: For the warning a credential or balance failure logs.
+    provider_name: str = ""
 
     def shape_payload(self, payload: dict[str, Any], *, surface: ApiSurface) -> dict[str, Any]:
         """Let the counterparty's plugin adjust the body before it is sent.
@@ -643,7 +645,14 @@ class Metered:
         response = JSONResponse(
             status_code=status_code, content=content if content is not None else {}
         )
-        if self.may_fall_back and status_falls_back(status_code):
+        if self.may_fall_back and status_falls_back(status_code, content, message):
+            if status_code in (401, 402, 403):
+                logger.warning(
+                    "provider %r answered %d (our credential, balance or quota, not the "
+                    "request); falling back to the next target",
+                    self.provider_name,
+                    status_code,
+                )
             raise AttemptFailed(f"upstream_{status_code}", response=response)
         return response
 
@@ -914,6 +923,7 @@ async def begin(
         reservation=reservation,
         quota=quota,
         may_fall_back=not resolved.last,
+        provider_name=resolved.provider.name,
     )
 
 

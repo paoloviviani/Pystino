@@ -75,17 +75,45 @@ _MAX_KEY_CHARS = 512
 #:
 #: 5xx, because the provider is failing and another may not be. 429, because the
 #: provider is refusing *us* (our key's rate limit or credit) and is no verdict
-#: on the request. 408 is a timeout the provider reports. Every other 4xx is
-#: what the **request** did wrong (400 bad body, 413 too long, 422, a content
-#: policy 403): a second target would be asked the same question and either
-#: refuse it too, doubling the spend on a bad request, or, worse, accept
-#: something the first correctly refused.
-FALLBACK_STATUSES = frozenset({408, 429})
+#: on the request. 408 is a timeout the provider reports. 401 and 402 as well:
+#: the caller already authenticated to this gateway, so an upstream 401 or 402
+#: means *our* credential or balance at that provider is bad (one provider
+#: answers "Insufficient Balance." with a 401). 403 is ambiguous (a content
+#: policy is the request's fault, a suspended account is ours), so it falls back
+#: only when the body says auth, billing or quota (:func:`refusal_is_ours`).
+#: Every other 4xx (400, 404, 413, 422 ...) is what the **request** did wrong: a
+#: second target would be asked the same question and either refuse it too,
+#: doubling the spend on a bad request, or accept something the first correctly
+#: refused.
+FALLBACK_STATUSES = frozenset({401, 402, 408, 429})
+
+#: Words in a 403 body that say the refusal is about our account, not the request.
+_OURS = ("auth", "billing", "quota", "balance", "credit", "api key", "api_key", "subscription")
 
 
-def status_falls_back(status_code: int) -> bool:
+def refusal_is_ours(content: Any, message: str | None = None) -> bool:
+    """Whether a 403 body says authentication, billing or quota.
+
+    Reads the provider's ``error`` object (``code``, ``type``, ``message``) or a
+    plain message; anything that mentions none of the words stays the request's
+    fault.
+    """
+    parts: list[str] = [message or ""]
+    if isinstance(content, dict):
+        error = content.get("error", content)
+        if isinstance(error, dict):
+            parts += [str(error.get(k) or "") for k in ("code", "type", "message")]
+        elif isinstance(error, str):
+            parts.append(error)
+    text = " ".join(parts).lower()
+    return any(word in text for word in _OURS)
+
+
+def status_falls_back(status_code: int, content: Any = None, message: str | None = None) -> bool:
     """Whether an upstream answer with this status moves on to the next target."""
-    return status_code in FALLBACK_STATUSES or 500 <= status_code <= 599
+    if status_code in FALLBACK_STATUSES or 500 <= status_code <= 599:
+        return True
+    return status_code == 403 and refusal_is_ours(content, message)
 
 
 # -- the selection interface ---------------------------------------------------

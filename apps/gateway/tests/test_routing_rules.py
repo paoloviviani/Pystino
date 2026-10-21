@@ -172,13 +172,35 @@ class TestRegistry:
 
 
 class TestFallbackPolicy:
-    @pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504, 529, 599])
+    @pytest.mark.parametrize("status", [401, 402, 408, 429, 500, 502, 503, 504, 529, 599])
     def test_provider_side_failures_move_on(self, status: int) -> None:
         assert status_falls_back(status)
 
-    @pytest.mark.parametrize("status", [200, 201, 301, 400, 401, 402, 403, 404, 409, 413, 422])
+    @pytest.mark.parametrize("status", [200, 201, 301, 400, 403, 404, 409, 413, 422])
     def test_the_requests_own_failures_do_not(self, status: int) -> None:
         assert not status_falls_back(status)
+
+
+class TestForbidden:
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"error": {"message": "Insufficient Balance."}},
+            {"error": {"code": "billing_hard_limit_reached"}},
+            {"error": {"type": "authentication_error", "message": "x"}},
+            {"error": {"message": "You exceeded your current quota"}},
+            {"error": "invalid api key"},
+        ],
+    )
+    def test_a_403_about_our_account_falls_back(self, body: dict[str, Any]) -> None:
+        assert status_falls_back(403, body)
+
+    @pytest.mark.parametrize(
+        "body",
+        [None, {}, {"error": {"message": "content policy violation"}}, {"error": {"code": "x"}}],
+    )
+    def test_any_other_403_is_the_requests(self, body: Any) -> None:
+        assert not status_falls_back(403, body)
 
 
 class TestSessionKey:

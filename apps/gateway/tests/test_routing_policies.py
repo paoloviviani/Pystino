@@ -314,7 +314,7 @@ class TestSelection:
 class TestFallbackMatrix:
     @pytest.mark.parametrize(
         "failure",
-        [500, 502, 503, 504, 529, 429, 408, "connect", "timeout"],
+        [500, 502, 503, 504, 529, 429, 408, 401, 402, "connect", "timeout"],
         ids=lambda v: str(v),
     )
     async def test_provider_side_failures_fall_back_and_bill_the_target_that_served(
@@ -349,7 +349,7 @@ class TestFallbackMatrix:
         assert served.cost > 0
         assert failed.request_id == served.request_id
 
-    @pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 409, 413, 422])
+    @pytest.mark.parametrize("status", [400, 403, 404, 409, 413, 422])
     async def test_failures_the_request_caused_are_the_answer_not_a_reason_to_retry(
         self,
         status: int,
@@ -365,6 +365,68 @@ class TestFallbackMatrix:
         assert upstreams.calls == ["up-t-a"]
         rows = await ledger(session_factory)
         assert [(r.model_name, r.status) for r in rows] == [("t-a", UsageStatus.UPSTREAM_ERROR)]
+
+    async def test_a_403_about_billing_falls_back_and_warns_naming_the_provider(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: Any,
+        upstreams: Upstreams,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        await make_route(session_factory, seeded, ("t-a", 1), ("t-b", 1))
+        upstreams.set(
+            "up-t-a",
+            lambda _: httpx.Response(403, json={"error": {"message": "Insufficient Balance."}}),
+        )
+        with caplog.at_level("WARNING", logger="gateway.routers._metered"):
+            response = await post(client, seeded, chat())
+        assert response.status_code == 200
+        assert upstreams.calls == ["up-t-a", "up-t-b"]
+        warned = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert any("'fake'" in r.getMessage() and "403" in r.getMessage() for r in warned)
+
+    @pytest.mark.parametrize("status", [401, 402])
+    async def test_a_credential_failure_warns_naming_the_provider(
+        self,
+        status: int,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: Any,
+        upstreams: Upstreams,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        await make_route(session_factory, seeded, ("t-a", 1), ("t-b", 1))
+        upstreams.set("up-t-a", status)
+        with caplog.at_level("WARNING", logger="gateway.routers._metered"):
+            assert (await post(client, seeded, chat())).status_code == 200
+        assert any(
+            "'fake'" in r.getMessage() and str(status) in r.getMessage()
+            for r in caplog.records
+            if r.levelname == "WARNING"
+        )
+
+    @pytest.mark.parametrize("status", [401, 402])
+    async def test_a_last_attempt_credential_failure_reaches_the_caller_as_a_direct_call_would(
+        self,
+        status: int,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        session_factory: Any,
+        upstreams: Upstreams,
+    ) -> None:
+        await make_route(session_factory, seeded, ("t-a", 1), ("t-b", 1))
+        upstreams.set("up-t-a", status)
+        upstreams.set("up-t-b", status)
+        async with session_factory() as session:
+            b = (await session.execute(select(ModelDef).where(ModelDef.name == "t-b"))).scalar_one()
+            session.add(GroupModelAccess(group_id=seeded.group.id, model_id=b.id))
+            await session.commit()
+        routed = await post(client, seeded, chat())
+        # The same call made directly on a target that fails the same way.
+        direct = await post(client, seeded, chat("t-b"))
+        assert routed.status_code == direct.status_code == status
+        assert routed.json() == direct.json()
 
     async def test_when_every_target_fails_the_caller_gets_the_last_failure(
         self, client: httpx.AsyncClient, seeded: Seeded, session_factory: Any, upstreams: Upstreams
