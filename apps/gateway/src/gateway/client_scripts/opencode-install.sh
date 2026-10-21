@@ -34,7 +34,7 @@ set -euo pipefail
 # Cerea's agent/packaging/opencode-version (the version galopin is tested
 # against); keep this in step when that file moves. The environment variable
 # is an escape hatch, not a setting anyone should need.
-opencode_pin="${PYSTINO_OPENCODE_VERSION:-1.18.34}"
+opencode_pin="${PYSTINO_OPENCODE_VERSION:-1.19.3}"
 
 # The gateway replaces the next line with the validated origin of the request
 # that fetched this script. Empty when the file is run from a checkout.

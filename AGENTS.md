@@ -545,9 +545,8 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
 
 ## Known open items
 
-- **Reranking, image editing and variations, and per-size image pricing** are
-  not implemented (`image_size` is recorded on every image row; nothing prices
-  by it).
+- **Reranking and image editing and variations** are not implemented (the
+  owner decided against both for now).
 - **CI runs SQLite only.** `TEST_DATABASE_URL` buys a per-test PostgreSQL
   database (one fresh copy of a session template) and is the only thing that
   exercises advisory locks, `FOR UPDATE`, `SKIP LOCKED`, and the check
