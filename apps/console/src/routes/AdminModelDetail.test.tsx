@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdminModel, Price } from "../lib/types";
 import { jsonResponse } from "../test-helpers";
-import { AdminModelDetail } from "./AdminModelDetail";
+import { AdminModelDetail, parseSizeRates } from "./AdminModelDetail";
 
 /**
  * The model page: what a model is, what it costs, and who may spend it.
@@ -530,5 +530,24 @@ describe("AdminModelDetail", () => {
     // something anybody can act on.
     expect(within(dialog).getByText(/1 alias points here/)).toBeInTheDocument();
     expect(within(dialog).getByText("fast")).toBeInTheDocument();
+  });
+});
+
+describe("parseSizeRates", () => {
+  it("reads size=rate pairs into strings, sizes lower-cased", () => {
+    expect(parseSizeRates("1024x1024=0.04, 1792X1024=0.08")).toEqual({
+      "1024x1024": "0.04",
+      "1792x1024": "0.08",
+    });
+  });
+
+  it("treats an empty field as no per-size rates", () => {
+    expect(parseSizeRates("   ")).toBeNull();
+  });
+
+  it("refuses anything it cannot read, so the form never sends a guess", () => {
+    expect(parseSizeRates("1024x1024 0.04")).toBeUndefined();
+    expect(parseSizeRates("1024x1024=-1")).toBeUndefined();
+    expect(parseSizeRates("1024x1024=abc")).toBeUndefined();
   });
 });

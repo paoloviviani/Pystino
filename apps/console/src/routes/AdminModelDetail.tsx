@@ -599,7 +599,20 @@ function Pricing({ model }: { model: AdminModel }) {
       // page, never both, and two mostly-empty columns on a narrow screen
       // pushed the source badge off the edge. The header names whichever this
       // model uses.
-      render: (price) => <Rate amount={price.per_image} currency={price.currency} />,
+      render: (price) =>
+        price.per_image_by_size && Object.keys(price.per_image_by_size).length > 0 ? (
+          <span>
+            <Rate amount={price.per_image} currency={price.currency} />
+            {/* i18n: literal (sizes and amounts, not text) */}
+            <span className="block text-xs text-ink-muted">
+              {Object.entries(price.per_image_by_size)
+                .map(([size, rate]) => `${size} ${rate}`)
+                .join(" · ")}
+            </span>
+          </span>
+        ) : (
+          <Rate amount={price.per_image} currency={price.currency} />
+        ),
       hideBelow: "md",
     },
     {
@@ -679,6 +692,25 @@ function Rate({ amount, currency }: { amount: string | null; currency: string })
   return <Money amount={amount} currency={currency} />;
 }
 
+/**
+ * `1024x1024=0.04, 1792x1024=0.08` into `{ "1024x1024": "0.04", ... }`.
+ * Empty is `null` (no per-size rates); anything unreadable is `undefined`, which
+ * the form shows as an error and refuses to send. Amounts stay strings.
+ */
+export function parseSizeRates(text: string): Record<string, string> | null | undefined {
+  const trimmed = text.trim();
+  if (trimmed === "") return null;
+  const rates: Record<string, string> = {};
+  for (const part of trimmed.split(",")) {
+    const match = /^\s*([A-Za-z0-9_-]{1,32})\s*=\s*(\d+(?:\.\d+)?)\s*$/.exec(part);
+    const size = match?.[1];
+    const rate = match?.[2];
+    if (size === undefined || rate === undefined) return undefined;
+    rates[size.toLowerCase()] = rate;
+  }
+  return rates;
+}
+
 function AppendPrice({ model }: { model: AdminModel }) {
   const create = useCreatePrice();
   const toast = useOptionalToast();
@@ -687,11 +719,15 @@ function AppendPrice({ model }: { model: AdminModel }) {
   const [cacheRead, setCacheRead] = useState("");
   const [cacheWrite, setCacheWrite] = useState("");
   const [perImage, setPerImage] = useState("");
+  const [perSize, setPerSize] = useState("");
   const [perPage, setPerPage] = useState("");
   const [perSearch, setPerSearch] = useState("");
   const [effective, setEffective] = useState("");
 
+  const sizes = parseSizeRates(perSize);
+
   const submit = () => {
+    if (sizes === undefined) return;
     create.mutate(
       {
         modelId: model.id,
@@ -703,6 +739,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
         cache_read_per_mtok: cacheRead === "" ? null : cacheRead,
         cache_write_per_mtok: cacheWrite === "" ? null : cacheWrite,
         per_image: perImage === "" ? null : perImage,
+        per_image_by_size: sizes,
         per_page: perPage === "" ? null : perPage,
         per_search: perSearch === "" ? null : perSearch,
         // A datetime-local value carries no zone; converting through Date makes
@@ -717,6 +754,7 @@ function AppendPrice({ model }: { model: AdminModel }) {
           setCacheRead("");
           setCacheWrite("");
           setPerImage("");
+          setPerSize("");
           setPerPage("");
           setPerSearch("");
           setEffective("");
@@ -784,6 +822,16 @@ function AppendPrice({ model }: { model: AdminModel }) {
             onChange={(event) => setPerImage(event.target.value)}
             hint={m["model_detail.append.per_image_hint"]()}
           />
+          {model.kind === "image" && (
+            <Input
+              label={m["model_detail.append.per_image_by_size"]()}
+              value={perSize}
+              placeholder={m["model_detail.append.per_image_by_size_placeholder"]()}
+              onChange={(event) => setPerSize(event.target.value)}
+              hint={m["model_detail.append.per_image_by_size_hint"]()}
+              error={sizes === undefined ? m["model_detail.append.per_image_by_size_invalid"]() : undefined}
+            />
+          )}
           <Input
             label={m["model_detail.append.per_page"]()}
             type="number"

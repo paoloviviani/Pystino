@@ -804,6 +804,8 @@ export interface CreatePriceInput {
   cache_write_per_mtok?: string | null;
   /** Omitted for a token-priced model; the two are not alternatives. */
   per_image?: string | null;
+  /** Per image at a given size: `{"1792x1024": "0.08"}`. */
+  per_image_by_size?: Record<string, string> | null;
   per_page?: string | null;
   /** Per provider-side web search. Per one search, not per thousand. */
   per_search?: string | null;

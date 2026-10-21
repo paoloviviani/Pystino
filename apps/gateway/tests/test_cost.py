@@ -16,6 +16,7 @@ from gateway.accounting.cost import (
     CostBreakdown,
     TokenCounts,
     compute_cost,
+    image_rate,
     select_price,
 )
 from gateway.models import ModelPrice
@@ -414,3 +415,40 @@ class TestSearchUsageReader:
         )
         assert counts.images == 2
         assert counts.searches == 1
+
+
+class TestImageRateBySize:
+    """A per-size rate wins; a known size without one takes the flat rate;
+    an unknown size takes the highest, so neither a reservation nor a bill
+    assumes the cheapest picture."""
+
+    def _price(self, flat: str | None, by_size: dict[str, str] | None) -> ModelPrice:
+        p = price(input_rate="0", output_rate="0")
+        p.per_image = Decimal(flat) if flat is not None else None
+        p.per_image_by_size = by_size
+        return p
+
+    def test_a_listed_size_takes_its_own_rate(self) -> None:
+        p = self._price("0.04", {"1792x1024": "0.08"})
+        assert image_rate(p, "1792x1024") == Decimal("0.08")
+        assert image_rate(p, "1792X1024") == Decimal("0.08")
+
+    def test_an_unlisted_known_size_takes_the_flat_rate(self) -> None:
+        p = self._price("0.04", {"1792x1024": "0.08"})
+        assert image_rate(p, "1024x1024") == Decimal("0.04")
+
+    def test_an_unknown_size_takes_the_highest_rate(self) -> None:
+        p = self._price("0.04", {"1792x1024": "0.08", "512x512": "0.02"})
+        assert image_rate(p, None) == Decimal("0.08")
+
+    def test_sizes_only_and_an_unlisted_size_takes_the_highest(self) -> None:
+        p = self._price(None, {"1024x1024": "0.04", "1792x1024": "0.08"})
+        assert image_rate(p, "256x256") == Decimal("0.08")
+
+    def test_no_image_rate_at_all_is_none(self) -> None:
+        assert image_rate(self._price(None, None), "1024x1024") is None
+
+    def test_the_cost_uses_the_size(self) -> None:
+        p = self._price("0.04", {"1792x1024": "0.08"})
+        cost = compute_cost(TokenCounts(images=3, image_size="1792x1024"), p)
+        assert cost.total == Decimal("0.24")

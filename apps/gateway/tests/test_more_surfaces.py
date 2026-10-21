@@ -37,6 +37,7 @@ async def add_model(
     kind: ModelKind,
     upstream: str = "vendor/x",
     per_image: str | None = None,
+    per_image_by_size: dict[str, str] | None = None,
     input_per_mtok: str = "1",
     output_per_mtok: str = "2",
     cache_read_per_mtok: str | None = None,
@@ -53,6 +54,7 @@ async def add_model(
             cache_read_per_mtok=Decimal(cache_read_per_mtok) if cache_read_per_mtok else None,
             cache_write_per_mtok=Decimal(cache_write_per_mtok) if cache_write_per_mtok else None,
             per_image=Decimal(per_image) if per_image else None,
+            per_image_by_size=per_image_by_size,
             currency="EUR",
         )
     )
@@ -551,6 +553,34 @@ class TestImages:
         # row must not be labelled an estimate just because no tokens came back.
         assert record.usage_source is UsageSource.UPSTREAM_EXACT
         assert record.total_tokens == 0
+
+    async def test_a_size_with_its_own_rate_is_billed_at_it(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        fake_upstream: FakeUpstream,
+        session: AsyncSession,
+    ) -> None:
+        model = await add_model(
+            session,
+            seeded,
+            name="pic-sized",
+            kind=ModelKind.IMAGE,
+            per_image="0.04",
+            per_image_by_size={"1792x1024": "0.08"},
+            input_per_mtok="0",
+            output_per_mtok="0",
+        )
+        fake_upstream.set_json({"created": 1, "size": "1792x1024", "data": [{"b64_json": "a"}] * 2})
+        response = await client.post(
+            "/v1/images/generations",
+            json={"model": model.name, "prompt": "a wide cat", "n": 2, "size": "1792x1024"},
+            headers=seeded.auth,
+        )
+        assert response.status_code == 200
+        record = await latest_record(session)
+        assert record.image_size == "1792x1024"
+        assert record.cost == Decimal("0.16")
 
     async def test_the_size_is_recorded(
         self,

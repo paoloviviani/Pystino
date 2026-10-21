@@ -62,6 +62,10 @@ class TokenCounts:
     #: Images produced. Only ever non-zero on the image route, where many models
     #: are priced per image rather than per token (ADR 0030).
     images: int = 0
+    #: The size those images were made at (``1024x1024``), when known. Picks a
+    #: per-size rate; ``None`` means unknown, which prices at the highest rate
+    #: the model has (see :func:`image_rate`).
+    image_size: str | None = None
     #: Pages read. Only ever non-zero on the OCR route. Taken from the
     #: counterparty's `usage_info.pages_processed` where it reports one, and from
     #: the document itself when extraction happened locally — never inferred
@@ -409,6 +413,31 @@ def select_price(prices: list[ModelPrice], *, at: datetime | None = None) -> Mod
     return max(applicable, key=lambda price: price.effective_from)
 
 
+def image_rate(price: ModelPrice, size: str | None) -> Decimal | None:
+    """The rate for one image at ``size``, or ``None`` when the model has none.
+
+    A size with its own rate (``per_image_by_size``) takes it. A known size
+    without one takes the flat ``per_image``. An **unknown** size, which is what
+    admission sees when the request names none and what settle sees when the
+    provider reports none, takes the highest rate the model has: a reservation
+    that assumed the cheapest picture would let a quota be overspent, and a bill
+    that did would charge less than the counterparty does.
+    """
+    by_size = {
+        str(key).strip().lower(): as_decimal(value)
+        for key, value in (price.per_image_by_size or {}).items()
+    }
+    flat = as_decimal(price.per_image) if price.per_image is not None else None
+    if size is not None:
+        key = size.strip().lower()
+        if key in by_size:
+            return by_size[key]
+        if flat is not None:
+            return flat
+    candidates = list(by_size.values()) + ([flat] if flat is not None else [])
+    return max(candidates) if candidates else None
+
+
 def compute_cost(
     counts: TokenCounts,
     price: ModelPrice | None,
@@ -465,8 +494,9 @@ def compute_cost(
     # them: a token-priced image model reports usage and charges nothing here,
     # and a per-image model reports no usage and charges nothing per token.
     image_cost = Decimal(0)
-    if counts.images and price.per_image is not None:
-        image_cost = Decimal(counts.images) * as_decimal(price.per_image)
+    rate = image_rate(price, counts.image_size) if counts.images else None
+    if rate is not None:
+        image_cost = Decimal(counts.images) * rate
 
     # Per-page pricing, for the same reason and on the same terms: an OCR
     # counterparty charges by the page, and a page is not a million of anything.
