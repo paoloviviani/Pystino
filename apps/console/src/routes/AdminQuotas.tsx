@@ -127,6 +127,9 @@ export function AdminQuotas() {
           {rule.is_active && !exhausted(rule) && !nearLimit(rule) && (
             <Badge tone="ok">{m["admin_quotas.badge.active"]()}</Badge>
           )}
+          {rule.overrides_each_user && (
+            <Badge tone="accent">{m["admin_quotas.badge.overrides"]()}</Badge>
+          )}
           {rule.last_reset_at && (
             <Badge tone="accent">
               {m["admin_quotas.badge.reset_date"]({ date: formatShortDate(rule.last_reset_at) })}
@@ -427,6 +430,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const [scope, setScope] = useState("group");
   const [scopeId, setScopeId] = useState("");
   const [appliesTo, setAppliesTo] = useState("aggregate");
+  const [overrides, setOverrides] = useState(false);
   const [metric, setMetric] = useState("cost");
   const [kind, setKind] = useState<"period" | "rolling">("period");
   const [period, setPeriod] = useState("month");
@@ -445,6 +449,8 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
         // everyone; the choice is offered there alone, and anything else goes
         // out as the aggregate default.
         applies_to: scope === "group" || scope === "global" ? appliesTo : "aggregate",
+        // Only a rule for one person can stand in for everyone's ceiling.
+        overrides_each_user: scope === "user" ? overrides : false,
         metric,
         window_seconds: kind === "rolling" ? Math.round(Number(hours) * 3600) : null,
         period: kind === "period" ? period : null,
@@ -497,6 +503,7 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
             setScope(e.target.value);
             setScopeId("");
             setAppliesTo("aggregate");
+            setOverrides(false);
           }}
         >
           <option value="global">{m["admin_quotas.create.scope.global"]()}</option>
@@ -556,6 +563,20 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
           </Select>
         )}
       </div>
+
+      {scope === "user" && (
+        <>
+          <label className="flex cursor-pointer items-baseline gap-2">
+            <input
+              type="checkbox"
+              checked={overrides}
+              onChange={(event) => setOverrides(event.target.checked)}
+            />
+            <span>{m["admin_quotas.create.overrides"]()}</span>
+          </label>
+          <div className={MUTED}>{m["admin_quotas.create.overrides_help"]()}</div>
+        </>
+      )}
 
       <div className={FORM_ROW}>
         <Select

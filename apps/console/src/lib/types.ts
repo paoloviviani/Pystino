@@ -487,6 +487,8 @@ export interface LimitRule {
   /** "aggregate" caps the scope's total; "each_member" caps each member (group scope only);
    * "each_user" caps every person across all their usage (global scope only). */
   applies_to: "aggregate" | "each_member" | "each_user";
+  /** A user rule that replaces the global each-user ceiling for that person. */
+  overrides_each_user?: boolean;
   window_seconds: number | null;
   period: string | null;
   /** "3600s" or "month" — one string to print, whichever kind of rule it is. */
