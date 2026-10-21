@@ -270,9 +270,12 @@ row. A row reconciles only when both sides have a reported figure
 (`upstream_cost IS NOT NULL` on both) — which correctly excludes
 `client_disconnected` rows, since the counterparty reported nothing for them.
 
-Two known imperfections, recorded rather than hidden: the reconciliation
+One known imperfection, recorded rather than hidden: the reconciliation
 summary counts only the reconciled rows (a total covering 39 requests can sit
-next to a drift row about 34), and the estimated-usage disclosure currently
-attributes every unreported case to "the provider did not report usage" when
-the row itself records that the client disconnected. The fix is small and
-tracked; until then, read `status` before believing the sentence.
+next to a drift row about 34).
+
+The estimated-usage disclosure names its cause. A request whose provider did
+not report usage, and one whose client disconnected before the provider's final
+usage report, are counted and explained separately
+(`estimated_disconnected_requests` on each report row is the second kind), so
+the report never blames the provider for a client that hung up.

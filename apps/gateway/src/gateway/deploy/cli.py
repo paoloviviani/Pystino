@@ -5,7 +5,7 @@ Every command takes its answers as flags so CI and scripts never meet a prompt.
 
 Writing `.env` and standing up a deployment is no longer this CLI's job
 (ADR 0091): `deploy/.env.example` in this repository (a Pystino-only
-deployment) and the separate `cerea-deploy` repository (the full stack, with
+deployment) and Cerea's deploy kit, `kit/` in the Cerea repository (the full stack, with
 its own `./configure`) are what an operator reads and edits directly. What
 stays here runs *inside* a deployment: `bootstrap` (the compose one-shot on
 every `up`), `admin grant|revoke` (the ordinary-case recovery) and
@@ -110,7 +110,7 @@ def cmd_break_glass(args: argparse.Namespace) -> int:
 def cmd_email_export_env(args: argparse.Namespace) -> int:
     """The mail configuration in force, as `KEY=VALUE` lines (ADR 0093 §13.5).
 
-    For `cerea-deploy`'s `./configure --import-smtp`: a deployment carrying
+    For the Cerea deploy kit's `./configure --import-smtp`: a deployment carrying
     an old console-set row (from before mail became one environment
     setting) exports it once, including the password — which nothing else
     ever returns in plain text — so an operator moving to `SMTP_*` in `.env`
@@ -228,7 +228,7 @@ def cmd_quota_health(args: argparse.Namespace) -> int:
     """Quota counters against the ledger, as JSON on stdout (the same figures as
     ``GET /api/admin/quota/health``, without a browser session).
 
-    Read-only, and for ``cerea-deploy``'s ``tools/diagnose``, which runs it with
+    Read-only, and for the Cerea deploy kit's ``tools/diagnose``, which runs it with
     ``docker compose exec gateway`` so an operator can attach the result to a
     report. Prints no secret: only rule names, ids and figures.
     """

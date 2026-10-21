@@ -113,13 +113,6 @@ a benchmark cannot distort billing.
 
 None blocking; all recorded so they are not rediscovered as surprises.
 
-- **The estimated-usage disclosure blames the provider for every case.** It
-  cannot yet tell "the provider reported no usage" from "the client
-  disconnected mid-stream". The row knows — read `status` before believing the
-  sentence.
-- **GDPR erasure is incomplete** — deleting a person does not blank
-  `assistant_text` on their ledger rows, but it is cleared after `GATEWAY_TRANSCRIPT_RETENTION_HOURS`
-  (24 by default). See [Gateway — known gaps](gateway.md#known-gaps).
 - **Counters rebuild only at startup**: a Valkey wipe while the gateway keeps
   running leaves quotas briefly too permissive. Restart the gateway after any
   cache loss.

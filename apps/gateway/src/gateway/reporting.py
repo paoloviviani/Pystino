@@ -183,6 +183,19 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
             func.sum(case((UsageRecord.usage_source == UsageSource.ESTIMATED, 1), else_=0)), 0
         ).label("estimated"),
         func.coalesce(
+            func.sum(
+                case(
+                    (
+                        (UsageRecord.usage_source == UsageSource.ESTIMATED)
+                        & (UsageRecord.status == UsageStatus.CLIENT_DISCONNECTED),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("estimated_disconnected"),
+        func.coalesce(
             func.sum(case((UsageRecord.usage_source == UsageSource.UNAVAILABLE, 1), else_=0)), 0
         ).label("unavailable"),
         # Requests that reached the gateway under a model alias (ADR 0101). One
@@ -270,6 +283,7 @@ def _row(
         native_cost,
         native_currency,
         estimated,
+        estimated_disconnected,
         unavailable,
         via_alias,
     ) = values
@@ -300,6 +314,7 @@ def _row(
         native_cost=Decimal(str(native_cost or 0)) if show_native else None,
         native_currency=native_currency if show_native else None,
         estimated_requests=int(estimated or 0),
+        estimated_disconnected_requests=int(estimated_disconnected or 0),
         unavailable_requests=int(unavailable or 0),
         via_alias_requests=int(via_alias or 0),
     )
@@ -318,6 +333,7 @@ def _totals(rows: Sequence[UsageReportRow]) -> UsageReportRow:
         own_searches=sum(row.own_searches for row in rows),
         cost=sum((row.cost for row in rows), Decimal(0)),
         estimated_requests=sum(row.estimated_requests for row in rows),
+        estimated_disconnected_requests=sum(row.estimated_disconnected_requests for row in rows),
         unavailable_requests=sum(row.unavailable_requests for row in rows),
         via_alias_requests=sum(row.via_alias_requests for row in rows),
     )
@@ -408,10 +424,21 @@ def _disclosures(
             "report covers nothing. Requests are served and access is still "
             "enforced; only the ledger is absent."
         )
-    if totals.estimated_requests:
+    # Two causes, two sentences: the row's status says which. A client that
+    # hangs up before the terminal frame gets no usage from the provider either,
+    # and blaming the provider for it sends an operator after the wrong party.
+    disconnected = totals.estimated_disconnected_requests
+    unreported = totals.estimated_requests - disconnected
+    if unreported:
         notes.append(
-            f"{totals.estimated_requests} of {totals.requests} requests have estimated "
+            f"{unreported} of {totals.requests} requests have estimated "
             "token counts: the provider did not report usage, so their cost is inferred."
+        )
+    if disconnected:
+        notes.append(
+            f"{disconnected} of {totals.requests} requests have estimated token counts: "
+            "the client disconnected before the provider's final usage report, so their "
+            "cost is inferred from our prices."
         )
     if totals.unavailable_requests:
         notes.append(

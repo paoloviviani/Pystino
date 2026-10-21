@@ -2043,6 +2043,10 @@ class UsageReportRow(BaseModel):
     # requests where usage could not be determined at all. Kept separate from the
     # totals so a reader can see how much of the figure is measured.
     estimated_requests: int = 0
+    # Of `estimated_requests`, those whose client hung up before the provider's
+    # final usage frame. Counted apart because the cause is different: the
+    # provider was not at fault, and the disclosure must not say it was.
+    estimated_disconnected_requests: int = 0
     unavailable_requests: int = 0
     # How many of this row's requests arrived under a model alias (ADR 0101).
     # `key`/`label` are the **target** on those rows — billing follows it — so
