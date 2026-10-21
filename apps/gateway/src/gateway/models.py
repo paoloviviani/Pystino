@@ -134,16 +134,19 @@ class LimitScope(enum.StrEnum):
 
 
 class LimitAppliesTo(enum.StrEnum):
-    """Who a group rule's budget belongs to (ADR 0098).
+    """Who a rule's budget belongs to (ADR 0098).
 
     ``aggregate`` is every rule that existed before: one budget for the whole
     scope, every member's usage together. ``each_member`` is only meaningful
     for group scope: one budget per member, each counting only what that
-    member had billed to the group.
+    member had billed to the group. ``each_user`` is only meaningful for
+    global scope: one budget per person, each counting everything that person
+    spent through any group, personally or on an API key they own.
     """
 
     AGGREGATE = "aggregate"
     EACH_MEMBER = "each_member"
+    EACH_USER = "each_user"
 
 
 class RedactionScope(enum.StrEnum):
@@ -1622,13 +1625,15 @@ class LimitRule(Base):
             " OR (scope <> 'global' AND scope_id IS NOT NULL)",
             name="ck_limit_rules_scope_id_presence",
         ),
-        # Per-member only means something for a group (ADR 0098): one
-        # constraint covers the value set and the scope, so a writer that
-        # bypasses the API still cannot store a per-member user rule — or any
-        # other spelling — and the admin route's 400 stays the explanation,
-        # not the enforcement.
+        # Per-member only means something for a group (ADR 0098) and per-user
+        # only for the global scope: one constraint covers the value set and
+        # the scope, so a writer that bypasses the API still cannot store a
+        # per-member user rule — or any other spelling — and the admin
+        # route's 400 stays the explanation, not the enforcement.
         CheckConstraint(
-            "(applies_to = 'aggregate') OR (applies_to = 'each_member' AND scope = 'group')",
+            "(applies_to = 'aggregate')"
+            " OR (applies_to = 'each_member' AND scope = 'group')"
+            " OR (applies_to = 'each_user' AND scope = 'global')",
             name="ck_limit_rules_applies_to_group",
         ),
         # Correct as-is for a nullable column: a CHECK passes when its expression

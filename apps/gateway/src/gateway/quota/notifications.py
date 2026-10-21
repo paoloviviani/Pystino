@@ -30,7 +30,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from gateway.config import Settings
 from gateway.email_config import effective_smtp
 from gateway.mail import send_mail_async
-from gateway.models import LimitRule, QuotaNotificationSetting, QuotaNotificationState, User
+from gateway.models import (
+    LimitAppliesTo,
+    LimitRule,
+    QuotaNotificationSetting,
+    QuotaNotificationState,
+    User,
+)
 from gateway.secrets import SecretBox
 
 logger = logging.getLogger(__name__)
@@ -120,12 +126,20 @@ class QuotaNotifier:
         # state starts from zero, which is what "never announced" means.
         self._announced = {key: pct for key, pct in announced.items() if key[0] in subscriptions}
 
-    def observe(self, entries: list[tuple[LimitRule, int]]) -> None:
+    def observe(
+        self, entries: list[tuple[LimitRule, int]], *, requester: uuid.UUID | None = None
+    ) -> None:
         """Admission's view of the rules it just measured.
 
         ``entries`` is (rule, usage percentage). Synchronous and in-memory by
         design: this runs inside every admitted request, and a query here
         would break the round-trip budget that test_query_counts.py pins.
+
+        ``requester`` is whose request was measured. For a rule that gives
+        each person their own budget (``each_member``, ``each_user``) the
+        percentage is that requester's, so only their own subscription may act
+        on it: without the check, one person crossing 80% of their own cap
+        mailed everyone who had asked to hear about the same rule at 80%.
         """
         if not self._subscriptions or not entries:
             return
@@ -133,7 +147,10 @@ class QuotaNotifier:
             subscriptions = self._subscriptions.get(rule.id)
             if not subscriptions:
                 continue
+            personal = rule.applies_to is not LimitAppliesTo.AGGREGATE
             for user_id, threshold in subscriptions:
+                if personal and user_id != requester:
+                    continue
                 key = (rule.id, user_id)
                 announced = self._announced.get(key, 0)
                 if pct < announced:

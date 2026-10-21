@@ -445,6 +445,14 @@ class ValkeyCounterStore:
         await pipe.execute()
 
 
+_IN_CHUNK = 500
+
+
+def _chunks(items: list[uuid.UUID]) -> list[list[uuid.UUID]]:
+    """Slices small enough for an IN list on every dialect's parameter limit."""
+    return [items[start : start + _IN_CHUNK] for start in range(0, len(items), _IN_CHUNK)]
+
+
 class DatabaseCounterStore:
     """Exact aggregates over the ledger.
 
@@ -467,7 +475,88 @@ class DatabaseCounterStore:
         if not queries:
             return []
         async with self._session_factory() as session:
-            return [await self._one(session, query, now) for query in queries]
+            results: list[WindowTotal | None] = [None] * len(queries)
+            for positions in self._batches(queries, now):
+                for position, total in await self._batch_totals(session, queries, positions, now):
+                    results[position] = total
+            return [
+                result if result is not None else await self._one(session, query, now)
+                for result, query in zip(results, queries, strict=True)
+            ]
+
+    @staticmethod
+    def _person_of(query: WindowQuery) -> uuid.UUID | None:
+        """Whom a per-person query is about, or None if it is not one.
+
+        A user's own counter and a group member's are both "one person's
+        total under a fixed filter", which is what lets many of them share one
+        grouped ledger query.
+        """
+        scope = query.scope
+        if scope.scope is LimitScope.USER:
+            return scope.scope_id
+        if scope.scope is LimitScope.GROUP and scope.member_id is not None:
+            return scope.member_id
+        return None
+
+    def _batches(self, queries: Sequence[WindowQuery], now: float) -> list[list[int]]:
+        """Positions of the queries that can share one ``GROUP BY user_id``.
+
+        Seeding, rebuilding, reconciling and the health view of a per-user rule
+        ask for one window per user, and one ledger query each would be a
+        query per person per pass: thousands on a deployment that has them.
+        Queries are batchable together when everything but the person is
+        equal — the filter (all users, or one group's), the metric and the
+        window's bounds — and a lone query is left to the plain path.
+        """
+        groups: dict[tuple[object, ...], list[int]] = {}
+        for position, query in enumerate(queries):
+            if self._person_of(query) is None:
+                continue
+            since, until = self._bounds(query, now)
+            group = query.scope.scope_id if query.scope.scope is LimitScope.GROUP else None
+            groups.setdefault((query.scope.scope, group, query.metric, since, until), []).append(
+                position
+            )
+        return [positions for positions in groups.values() if len(positions) > 1]
+
+    async def _batch_totals(
+        self,
+        session: AsyncSession,
+        queries: Sequence[WindowQuery],
+        positions: list[int],
+        now: float,
+    ) -> list[tuple[int, WindowTotal]]:
+        first = queries[positions[0]]
+        since, until = self._bounds(first, now)
+        # The aggregate is built by _select_for, so the batch cannot drift from
+        # the single-query definition of any metric.
+        column = self._select_for(first, since, until).selected_columns[0]
+        people = {
+            person for position in positions if (person := self._person_of(queries[position]))
+        }
+        found: dict[uuid.UUID, int] = {}
+        for chunk in _chunks(sorted(people, key=str)):
+            stmt = (
+                select(UsageRecord.user_id, column)
+                .where(
+                    UsageRecord.created_at >= since,
+                    UsageRecord.status != UsageStatus.IN_PROGRESS,
+                    UsageRecord.user_id.in_(chunk),
+                )
+                .group_by(UsageRecord.user_id)
+            )
+            if until is not None:
+                stmt = stmt.where(UsageRecord.created_at < until)
+            if first.scope.scope is LimitScope.GROUP:
+                stmt = stmt.where(UsageRecord.group_id == first.scope.scope_id)
+            for user_id, value in (await session.execute(stmt)).all():
+                if user_id is not None and value is not None:
+                    found[user_id] = to_units(first.metric, Decimal(str(value)))
+        return [
+            (position, WindowTotal(units=found.get(self._person_of(queries[position]), 0)))  # type: ignore[arg-type]
+            for position in positions
+        ]
 
     @staticmethod
     def _bounds(query: WindowQuery, now: float) -> tuple[datetime, datetime | None]:
@@ -625,9 +714,41 @@ class DatabaseCounterStore:
         thing to look at when the two disagree.
         """
         cutoff = datetime.fromtimestamp(now - older_than_seconds, tz=UTC)
-        counts: list[int] = []
+        counts: list[int | None] = [None] * len(queries)
         async with self._session_factory() as session:
-            for query in queries:
+            # Per-person windows share one grouped query, as in totals().
+            for positions in self._batches(queries, now):
+                first = queries[positions[0]]
+                since, until = self._bounds(first, now)
+                people = {
+                    person
+                    for position in positions
+                    if (person := self._person_of(queries[position]))
+                }
+                found: dict[uuid.UUID, int] = {}
+                for chunk in _chunks(sorted(people, key=str)):
+                    grouped = (
+                        select(UsageRecord.user_id, func.count(UsageRecord.id))
+                        .where(
+                            UsageRecord.created_at >= since,
+                            UsageRecord.created_at < cutoff,
+                            UsageRecord.status == UsageStatus.IN_PROGRESS,
+                            UsageRecord.user_id.in_(chunk),
+                        )
+                        .group_by(UsageRecord.user_id)
+                    )
+                    if until is not None:
+                        grouped = grouped.where(UsageRecord.created_at < until)
+                    if first.scope.scope is LimitScope.GROUP:
+                        grouped = grouped.where(UsageRecord.group_id == first.scope.scope_id)
+                    for user_id, count in (await session.execute(grouped)).all():
+                        if user_id is not None:
+                            found[user_id] = int(count)
+                for position in positions:
+                    counts[position] = found.get(self._person_of(queries[position]), 0)  # type: ignore[arg-type]
+            for position, query in enumerate(queries):
+                if counts[position] is not None:
+                    continue
                 since, until = self._bounds(query, now)
                 stmt = select(func.count(UsageRecord.id)).where(
                     UsageRecord.created_at >= since,
@@ -636,8 +757,10 @@ class DatabaseCounterStore:
                 )
                 if until is not None:
                     stmt = stmt.where(UsageRecord.created_at < until)
-                counts.append(int((await session.execute(self._scoped(stmt, query))).scalar_one()))
-        return counts
+                counts[position] = int(
+                    (await session.execute(self._scoped(stmt, query))).scalar_one()
+                )
+        return [count or 0 for count in counts]
 
     async def rebuild_into(
         self,

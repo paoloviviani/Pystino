@@ -256,6 +256,70 @@ primes the members who already spent in the window. The rules list carries
 no single consumption figure for a per-member rule — the per-member figures
 live in the health table.
 
+### Everyone's own ceiling: a global rule per user
+
+A **global** rule has the same choice (`applies_to`, immutable, and only
+offered at global scope):
+
+- **`aggregate`** (the default): one budget for everything the gateway serves,
+  all users together.
+- **`each_user`**: one budget **per person**, counted over everything that
+  person spends: through every group they bill to, personal usage, and API
+  keys they own (a key's spend is its owner's). Nobody needs a rule of their
+  own and nobody needs configuring: a user created tomorrow is capped from
+  their first request. "Each person may spend at most €20 per month" is one
+  rule.
+
+A per-user rule counts under the person's ordinary **user counter**,
+`user:<id>`, the same one an explicit `scope=user` rule for that person reads.
+The two mean the same quantity (that person's total spend), so for the same
+metric, window and reset they are one counter: one reserve, one settle and one
+refund per request however many such rules apply, and seeding or reconciling
+either repairs both. Counters stay apart where it matters, because a quota
+**reset** is part of the counter key: resetting the global rule restarts every
+person's count for it without touching an explicit user rule's counter, and
+the other way round.
+
+Interactions, all of them the ordinary *all rules must pass*:
+
+- With a **group aggregate** or **per-member** rule: independent; any of them
+  can refuse. A person can be inside their group share and over their personal
+  ceiling (they also spend through another group), or the reverse.
+- With a **global aggregate** rule: also independent. The aggregate caps
+  everyone together, the per-user rule caps each person; whichever is reached
+  first refuses.
+- With an explicit **`scope=user`** rule for one person: both apply and the
+  lower ceiling binds. A `scope=user` rule **cannot raise** that person above
+  the global per-user ceiling, because no rule overrides another. Giving one
+  person a *higher* limit than everyone else is not supported; see the open
+  question below.
+- A request with **no user** (no path reserves one today) skips per-user
+  rules, as it skips per-member ones.
+
+A refusal reads `global per user limit of 20 cost per month exceeded (current
+20)`: the figure is the person's own total, never anyone else's. A person sees
+the rule in `/api/me/limits` and `/v1/pystino/usage` as their own limit with
+their own consumption (`"scope": "global"`, `"applies_to": "each_user"`), and
+quota notifications (ADR 0052) for it go to the person whose budget it is: one
+user's crossing never mails another user who asked to hear about the same rule.
+
+Operationally the rule is one counter per user, and the cost of that is paid
+in the maintenance paths, not on the request path (its query budget is
+unchanged, which `test_query_counts.py` pins). Seeding a new rule, the cold
+rebuild, **Reconcile** and the health view reach every user, and each does it
+with one grouped ledger query per rule rather than one per person (seeding and
+the cold rebuild first ask which users spent in the window). Health and
+Reconcile list a row per user, including users with no usage, because drift
+can be a counter that should be zero. The admin rules list carries no single
+consumption figure for a per-user rule.
+
+**Open question for the owner.** Because nothing overrides, an operator who
+wants a per-person *exception that raises* the ceiling (say, one heavy user at
+€100 where everyone else has €20) cannot express it: the explicit `scope=user`
+rule only ever adds a tighter bound. The ways to get there would be an
+exclusion list on the per-user rule, or an override rule kind with defined
+priority; both are new semantics and deliberately not invented here.
+
 ### Rebuilds replace; they never add
 
 Every path that fills a counter from the ledger (the start-up rebuild, seeding

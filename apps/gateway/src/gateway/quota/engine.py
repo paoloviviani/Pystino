@@ -41,6 +41,7 @@ from gateway.models import (
     Membership,
     UsageRecord,
     UsageStatus,
+    User,
 )
 from gateway.periods import Period, period_containing
 from gateway.quota.counters import (
@@ -137,7 +138,12 @@ class Violation:
         # A per-member refusal names the member's share — their own current,
         # which they are entitled to know — and never the group's total, so
         # one member's 429 cannot report the group's spend to another member.
-        kind = " per member" if self.rule.applies_to is LimitAppliesTo.EACH_MEMBER else ""
+        # A per-user refusal reads the same way and for the same reason: the
+        # figure is the person's own total, never anyone else's.
+        kind = {
+            LimitAppliesTo.EACH_MEMBER: " per member",
+            LimitAppliesTo.EACH_USER: " per user",
+        }.get(self.rule.applies_to, "")
         return (
             f"{self.rule.scope.value}{kind} limit of {self.limit} {self.rule.metric.value}"
             f" per {self.rule.window_label} exceeded (current {self.current})"
@@ -204,7 +210,9 @@ class WindowHealth:
 
     For a per-member rule there is one of these per member: each member's
     budget is enforced independently, so drift in one member's counter is a
-    fact about that member, and ``member_id`` says which.
+    fact about that member, and ``member_id`` says which. A per-user (global,
+    ``each_user``) rule reports the same way, one window per user, and
+    ``member_id`` is then the user.
     """
 
     rule: LimitRule
@@ -328,16 +336,23 @@ class QuotaEngine:
         """The counter scope a rule counts under for this subject.
 
         An ``each_member`` group rule counts the member's own usage billed to
-        the group — ``(group, member)`` — so the scope carries both ids. A
-        subject with no user cannot be attributed to a member, and those rules
-        are skipped: every path that reserves today carries an authenticated
-        user, and the guard is what keeps a future user-less path from
-        enforcing a budget it cannot count.
+        the group — ``(group, member)`` — so the scope carries both ids. An
+        ``each_user`` global rule counts the person's whole usage under the
+        ordinary user scope, ``(user, person)``: the very counter a
+        ``scope=user`` rule for them reads, because it is the same quantity
+        (see :meth:`query_for`). A subject with no user cannot be attributed
+        to anyone, and those rules are skipped: every path that reserves
+        today carries an authenticated user, and the guard is what keeps a
+        future user-less path from enforcing a budget it cannot count.
         """
         if rule.scope is LimitScope.GROUP and rule.applies_to is LimitAppliesTo.EACH_MEMBER:
             if subject.user_id is None:
                 return None
             return ScopeRef(LimitScope.GROUP, rule.scope_id, member_id=subject.user_id)
+        if rule.scope is LimitScope.GLOBAL and rule.applies_to is LimitAppliesTo.EACH_USER:
+            if subject.user_id is None:
+                return None
+            return ScopeRef(LimitScope.USER, subject.user_id)
         return ScopeRef(rule.scope, rule.scope_id)
 
     async def current_values(
@@ -372,12 +387,9 @@ class QuotaEngine:
         answerable = []
         for rule in rules:
             spec, period = self.window_for(rule, as_datetime)
-            if rule.scope is LimitScope.GROUP and rule.applies_to is LimitAppliesTo.EACH_MEMBER:
-                if subject is None or subject.user_id is None:
-                    continue
-                scope = ScopeRef(LimitScope.GROUP, rule.scope_id, member_id=subject.user_id)
-            else:
-                scope = ScopeRef(rule.scope, rule.scope_id)
+            scope = self.scope_for_rule(rule, subject or QuotaSubject(None, None))
+            if scope is None:
+                continue
             answerable.append(rule)
             queries.append(
                 WindowQuery(
@@ -403,12 +415,24 @@ class QuotaEngine:
     ) -> WindowQuery:
         """The rule's current window as a counter query, reset watermark included.
 
-        A per-member rule needs the member: without one there is no key to
-        ask about. An aggregate rule takes none.
+        A per-member or per-user rule needs the person: without one there is
+        no key to ask about. An aggregate rule takes none.
+
+        A per-user rule reads the plain ``user:<id>`` counter rather than a
+        key of its own. ``scope=user`` rules and per-user rules both mean "this
+        person's total spend", so for the same metric, window and reset they
+        are the same number; one key means one reserve, one settle and one
+        refund per request however many such rules apply, and seeding or
+        reconciling either repairs both. A reset is the exception that keeps
+        them independent where it should: the watermark is in the key, so
+        resetting one rule renames only its own counter.
         """
         if rule.scope is LimitScope.GROUP and rule.applies_to is LimitAppliesTo.EACH_MEMBER:
             assert member_id is not None, "a per-member query needs its member"
             scope = ScopeRef(LimitScope.GROUP, rule.scope_id, member_id=member_id)
+        elif rule.scope is LimitScope.GLOBAL and rule.applies_to is LimitAppliesTo.EACH_USER:
+            assert member_id is not None, "a per-user query needs its user"
+            scope = ScopeRef(LimitScope.USER, member_id)
         else:
             assert member_id is None, "only a per-member rule takes a member"
             scope = ScopeRef(rule.scope, rule.scope_id)
@@ -488,6 +512,36 @@ class QuotaEngine:
         )
         return [user_id for user_id in rows if user_id is not None]
 
+    @staticmethod
+    async def _user_ids(session: AsyncSession) -> list[uuid.UUID]:
+        """Every user row: the counter namespace of a per-user rule.
+
+        A user is a counter holder from their first request, so the set that
+        can hold a counter is the users table — disabled people included, for
+        the reason ``_member_ids`` gives.
+        """
+        return list((await session.execute(select(User.id))).scalars().all())
+
+    @staticmethod
+    async def _user_ids_with_usage(session: AsyncSession, since: datetime) -> list[uuid.UUID]:
+        """Users with settled usage anywhere since *since*: one ledger query."""
+        rows: Sequence[uuid.UUID | None] = (
+            (
+                await session.execute(
+                    select(UsageRecord.user_id)
+                    .where(
+                        UsageRecord.created_at >= since,
+                        UsageRecord.status != UsageStatus.IN_PROGRESS,
+                        UsageRecord.user_id.is_not(None),
+                    )
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [user_id for user_id in rows if user_id is not None]
+
     def _window_since(self, rule: LimitRule, moment: float) -> datetime:
         """The earliest instant that can still count towards the rule's window."""
         spec, period = self.window_for(rule, datetime.fromtimestamp(moment, tz=UTC))
@@ -513,6 +567,12 @@ class QuotaEngine:
             else:
                 members = await self._member_ids(session, rule.scope_id)
             return [(member, self.query_for(rule, moment, member)) for member in members]
+        if rule.scope is LimitScope.GLOBAL and rule.applies_to is LimitAppliesTo.EACH_USER:
+            if with_usage_only:
+                users = await self._user_ids_with_usage(session, self._window_since(rule, moment))
+            else:
+                users = await self._user_ids(session)
+            return [(user, self.query_for(rule, moment, user)) for user in users]
         return [(None, self.query_for(rule, moment))]
 
     async def seed_rule(
@@ -910,7 +970,7 @@ class QuotaEngine:
         # notifier is in-memory + detached, so it costs admission nothing.
         if self._notifier is not None and measured:
             with contextlib.suppress(Exception):
-                self._notifier.observe(measured)
+                self._notifier.observe(measured, requester=subject.user_id)
 
         if violations:
             # Undo what was reserved a moment ago. The refusal is the caller's
