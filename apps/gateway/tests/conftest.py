@@ -248,9 +248,15 @@ def _ensure_template() -> None:
         async def _build() -> None:
             async with engine.begin() as connection:
                 await connection.run_sync(Base.metadata.create_all)
+            # Disposed inside the loop that opened the connections. The old
+            # `engine.sync_engine.dispose()` ran after `asyncio.run` had closed
+            # that loop, which could leave an asyncpg connection open on the
+            # server; the first tests' CREATE DATABASE ... TEMPLATE then failed
+            # with ObjectInUseError ("being accessed by other users"). Only a
+            # run that had to build the template hit it, so a rerun "fixed" it.
+            await engine.dispose()
 
         asyncio.run(_build())
-        engine.sync_engine.dispose()
 
 
 def _external_test_database() -> str | None:
@@ -272,9 +278,17 @@ def _external_test_database() -> str | None:
     db = f"{_TEST_DB_PREFIX}{uuid.uuid4().hex[:12]}"
 
     async def _create() -> None:
-
         admin = await _admin_connect()
         try:
+            # Belt and braces for the case above: nothing may hold a
+            # connection to the template (a crashed earlier run, a person's
+            # psql). The template is never used directly, so ending such
+            # sessions loses nothing.
+            await admin.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                "WHERE datname = $1 AND pid <> pg_backend_pid()",
+                _template_name(),
+            )
             await admin.execute(f"CREATE DATABASE {db} TEMPLATE {_template_name()}")
         finally:
             await admin.close()

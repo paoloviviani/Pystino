@@ -560,6 +560,4 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   the owner's CI minutes are small. **Run `test_model_aliases.py`,
   `test_admin_aliases.py`, `test_migrations_sqlite.py` and
   `test_query_counts.py` on a throwaway `pgvector/pgvector:pg18` by hand before
-  releasing a change that touches model aliases, migrations or the ledger.** One
-  process at a time, or the shared test database shows setup errors that pass on
-  rerun.
+  releasing a change that touches model aliases, migrations or the ledger.**
