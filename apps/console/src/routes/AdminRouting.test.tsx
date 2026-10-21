@@ -166,6 +166,22 @@ describe("the Routing tab", () => {
     expect(within(row).getByText("Available")).toBeTruthy();
   });
 
+  it("still renders when the gateway reports a reason this console does not know", async () => {
+    // A newer gateway may add a reason code. An unknown one used to throw on
+    // `.label()` and blank the whole page; it must fall back to a generic badge.
+    await open([
+      alias({
+        status: "unavailable",
+        target: null,
+        targets: [{ ...TARGET, available: false, unavailable_reason: "brand_new_reason" as never }],
+        unavailable_reason: "brand_new_reason" as never,
+      }),
+    ]);
+
+    expect(screen.getAllByText(/brand_new_reason/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("row", { name: /fast/i })).toBeTruthy();
+  });
+
   it("names the reason an alias is unavailable, and explains it", async () => {
     await open([
       alias({

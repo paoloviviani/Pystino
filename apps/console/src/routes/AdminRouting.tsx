@@ -74,6 +74,21 @@ const RULE_LABELS: Record<(typeof RULES)[number], () => string> = {
   cheapest: () => m["admin_routing.rule.cheapest"](),
 };
 
+/**
+ * The reason's words, or a generic pair for a code this console does not know
+ * yet: a newer gateway may add one, and an unknown code must not take the
+ * whole page down (a plain table lookup returned undefined and `.label()`
+ * threw, leaving a blank screen).
+ */
+function reasonOf(code: string): { label: () => string; body: () => string } {
+  return (
+    (REASONS as Record<string, { label: () => string; body: () => string } | undefined>)[code] ?? {
+      label: () => m["admin_routing.badge.unknown_reason"]({ code }),
+      body: () => m["admin_routing.reason.unknown_reason"]({ code }),
+    }
+  );
+}
+
 const RULE_HINTS: Record<(typeof RULES)[number], () => string> = {
   first_available: () => m["admin_routing.rule.first_available_hint"](),
   weighted: () => m["admin_routing.rule.weighted_hint"](),
@@ -139,7 +154,7 @@ export function AdminRouting() {
                     </span>
                   ) : null}
                   {!target.available && target.unavailable_reason ? (
-                    <Badge tone="danger">{REASONS[target.unavailable_reason].label()}</Badge>
+                    <Badge tone="danger">{reasonOf(target.unavailable_reason).label()}</Badge>
                   ) : null}
                 </li>
               ))}
@@ -193,7 +208,7 @@ export function AdminRouting() {
             <Badge tone="danger">
               {m["admin_routing.badge.unavailable"]()}
               {alias.unavailable_reason
-                ? ` — ${REASONS[alias.unavailable_reason].label()}`
+                ? ` — ${reasonOf(alias.unavailable_reason).label()}`
                 : ""}
             </Badge>
           )}
@@ -283,8 +298,8 @@ export function AdminRouting() {
       {rows
         .filter((alias) => alias.status === "unavailable" && alias.unavailable_reason)
         .map((alias) => (
-          <Notice key={alias.id} tone="danger" title={`${alias.name} — ${REASONS[alias.unavailable_reason!].label()}`}>
-            {REASONS[alias.unavailable_reason!].body()}
+          <Notice key={alias.id} tone="danger" title={`${alias.name} — ${reasonOf(alias.unavailable_reason!).label()}`}>
+            {reasonOf(alias.unavailable_reason!).body()}
           </Notice>
         ))}
 
