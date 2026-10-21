@@ -111,6 +111,11 @@ export const ADMIN_GROUPS: AdminGroup[] = [
     id: "deployment",
     heading: m["shell.nav.group.deployment"],
     sections: [
+      {
+        to: "/admin/audit",
+        title: m["admin.sections.audit.title"],
+        description: m["admin.sections.audit.description"],
+      },
       // Settings is last in both places this list is read: it is the one
       // position that reads as "start with this" if it led, and it is the
       // wiring of the deployment rather than its traffic.

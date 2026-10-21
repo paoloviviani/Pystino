@@ -89,6 +89,7 @@ const ADMIN_ICONS: Record<string, ComponentType<SVGProps<SVGSVGElement>>> = {
   "/admin/redaction": EyeOffIcon,
   "/admin/users": UserIcon,
   "/admin/groups": UsersRoundIcon,
+  "/admin/audit": ShieldIcon,
   "/admin/settings": SettingsIcon,
 };
 

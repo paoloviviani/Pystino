@@ -23,7 +23,7 @@ per-group model availability and a pluggable redaction layer.
 | `GET /auth/login`, `/auth/callback/{provider}` | — | OIDC authorization-code login (PKCE); the provider is `default` for the one set in `.env` |
 | `GET /auth/methods`, `/auth/session`, `POST /auth/logout` | —, cookie, cookie | Which sign-in methods exist; whether a session cookie is still good; sign out, at the provider too |
 | `/api/me/*` | session cookie | Identity, billing group, API keys, own usage and reports |
-| `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, reports, identity events |
+| `/api/admin/*` | session cookie + `is_admin` | Models, prices, group access, quotas, users, providers, redaction rules, reports, identity events, the [administrator audit log](console.md#the-administrator-audit-log) |
 | `/scim/v2/{provider}/*` | the provider's SCIM token | SCIM 2.0 pushes from an external directory ([User sync](oidc-generic-provider.md#user-sync)) |
 | `GET /opencode/install.sh` | — | The opencode setup script ([Coding agents](coding-agents.md#point-opencode-at-the-gateway-with-a-script)) |
 | `GET /healthz`, `/readyz` | — | Liveness (no dependencies) and readiness (one DB round trip) |

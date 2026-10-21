@@ -2142,6 +2142,40 @@ for _statement in (
     )
 
 
+class AdminAuditEvent(Base):
+    """One change an administrator made to configuration (issue P9).
+
+    Distinct from `IdentityEvent`, which records who exists and who may sign in.
+    This is the trail for what an administrator *configured*: models, prices,
+    aliases, grants, providers and quota rules. It is written by
+    `gateway.admin_audit.record_audit` in the same transaction as the change.
+
+    `actor_user_id` is a real foreign key that goes NULL when the account is
+    deleted; `actor_label` freezes the email at the time so the row still says
+    who. `changes` holds before/after for the changed fields only, and never a
+    credential: see `gateway.admin_audit` for how that is enforced.
+    """
+
+    __tablename__ = "admin_audit_events"
+    __table_args__ = (
+        Index("ix_admin_audit_events_created_at", "created_at"),
+        Index("ix_admin_audit_events_actor", "actor_user_id", "created_at"),
+        Index("ix_admin_audit_events_action", "action", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), default=None
+    )
+    actor_label: Mapped[str] = mapped_column(String(320), default="")
+    action: Mapped[str] = mapped_column(String(64))
+    target_type: Mapped[str] = mapped_column(String(32))
+    target_id: Mapped[str | None] = mapped_column(String(80), default=None)
+    target_label: Mapped[str] = mapped_column(String(320), default="")
+    changes: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default=text("'{}'"))
+
+
 class FXRate(Base):
     """The last known exchange rate for one currency pair (ADR 0054).
 

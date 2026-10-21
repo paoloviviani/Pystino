@@ -40,6 +40,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from gateway.access import alias_unavailable_reason
+from gateway.admin_audit import alias_view, record_audit
 from gateway.deps import AdminUserDep, SessionDep
 from gateway.errors import BadRequestError
 from gateway.identity_events import record_event
@@ -347,6 +348,15 @@ async def create_alias(
             target_label=payload.name,
             detail={"target": target.name},
         )
+        record_audit(
+            session,
+            admin,
+            "alias.create",
+            "alias",
+            alias.id,
+            alias.name,
+            after=alias_view(alias, target.name),
+        )
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -380,6 +390,7 @@ async def update_alias(
     corrected is its own kind of bug.
     """
     alias = await _load_alias(session, alias_id)
+    audit_before = alias_view(alias, alias.target.name if alias.target is not None else None)
     fields = payload.model_dump(exclude_unset=True)
     changed: list[str] = []
 
@@ -424,6 +435,16 @@ async def update_alias(
             target_label=alias.name,
             detail={"fields": sorted(changed), "target": now.name if now is not None else ""},
         )
+        record_audit(
+            session,
+            admin,
+            "alias.update",
+            "alias",
+            alias.id,
+            alias.name,
+            before=audit_before,
+            after=alias_view(alias, now.name if now is not None else None),
+        )
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -455,6 +476,15 @@ async def delete_alias(alias_id: uuid.UUID, admin: AdminUserDep, session: Sessio
         action=IdentityEventAction.ALIAS_DELETE,
         target_label=alias.name,
         detail={"target": target_name},
+    )
+    record_audit(
+        session,
+        admin,
+        "alias.delete",
+        "alias",
+        alias.id,
+        alias.name,
+        before=alias_view(alias, target_name or None),
     )
     # Explicit child deletes rather than ORM cascade, matching `delete_model`:
     # the same outcome, and these name what goes.

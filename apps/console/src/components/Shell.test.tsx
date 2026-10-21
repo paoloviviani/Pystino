@@ -298,6 +298,7 @@ describe("Shell: the sidebar", () => {
       "/admin/redaction",
       "/admin/users",
       "/admin/groups",
+      "/admin/audit",
       "/admin/settings",
     ]);
     // The view switcher is deliberately not one of the links — it sits pinned
