@@ -584,6 +584,103 @@ class TestListingFollowsTheBillingGroup:
         assert completion.status_code == 404, completion.text
 
     @pytest.mark.asyncio
+    async def test_every_kind_of_key_lists_exactly_what_it_is_admitted_to(
+        self,
+        bearer_app: FastAPI,
+        client: Any,
+        seeded: Seeded,
+        fake_upstream: Any,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """Issue #11 (P10): a scoped key once got an empty list while it could
+        still call models. A key's only scope is the group it pins (or, with no
+        pin, the user's default), so this walks both shapes with every grant
+        kind in play — group, personal, public — and asserts, per model, that
+        listed and admitted are the same fact. It is a regression pin: it
+        passed on main when written, because 0.11.0 had already made the list
+        read the scope admission reads.
+        """
+        from gateway.models import ApiKey, Membership, User
+        from gateway.security import generate_api_key
+
+        beta = await _second_group_and_model(session_factory, seeded, bearer_app)
+        fake_upstream.set_json(completion_body())
+        async with session_factory() as db:
+            db.add(Membership(user_id=seeded.user.id, group_id=beta.id))
+            personal = ModelDef(
+                name="just-mine",
+                upstream_model="upstream/just-mine",
+                provider_id=seeded.provider.id,
+            )
+            public = ModelDef(
+                name="shared",
+                upstream_model="upstream/shared",
+                provider_id=seeded.provider.id,
+                is_public=True,
+            )
+            # Granted to the seeded group, but behind a provider taken out of
+            # service: neither listed nor admitted, which is the same answer.
+            dead_provider = Provider(name="down", base_url="https://down.test/v1", is_active=False)
+            db.add_all([personal, public, dead_provider])
+            await db.flush()
+            dead = ModelDef(
+                name="behind-dead-provider",
+                upstream_model="upstream/dead",
+                provider_id=dead_provider.id,
+            )
+            db.add(dead)
+            await db.flush()
+            db.add(UserModelAccess(user_id=seeded.user.id, model_id=personal.id))
+            db.add(GroupModelAccess(group_id=seeded.group.id, model_id=dead.id))
+            # An unpinned key bills the user's *current* default: point it at
+            # beta, so the seeded (research-pinned) key and this one differ.
+            user = (await db.execute(select(User).where(User.id == seeded.user.id))).scalar_one()
+            user.default_billing_group_id = beta.id
+            generated = generate_api_key()
+            db.add(
+                ApiKey(
+                    user_id=user.id,
+                    prefix=generated.prefix,
+                    key_hash=generated.key_hash,
+                    name="unpinned",
+                    billing_group_id=None,
+                )
+            )
+            await db.commit()
+            unpinned = {"authorization": f"Bearer {generated.secret}"}
+
+        everything = (
+            "test-model",
+            "only-beta",
+            "just-mine",
+            "shared",
+            "behind-dead-provider",
+            "no-such-model",
+        )
+        expected = {
+            "pinned to research": (seeded.auth, {"test-model", "just-mine", "shared"}),
+            "unpinned, default beta": (unpinned, {"only-beta", "just-mine", "shared"}),
+        }
+        for label, (headers, want) in expected.items():
+            listing = await client.get("/v1/models", headers=headers)
+            assert listing.status_code == 200, listing.text
+            listed = {entry["id"] for entry in listing.json()["data"]}
+            assert listed == want, f"{label}: listed {listed}"
+            for name in everything:
+                completion = await client.post(
+                    "/v1/chat/completions",
+                    json={"model": name, "messages": [{"role": "user", "content": "hi"}]},
+                    headers=headers,
+                )
+                assert (completion.status_code == 200) == (name in listed), (
+                    f"{label}: {name} listed={name in listed} completion={completion.status_code}"
+                )
+                retrieved = await client.get(f"/v1/models/{name}", headers=headers)
+                assert (retrieved.status_code == 200) == (name in listed), (
+                    f"{label}: {name} retrieve={retrieved.status_code}"
+                )
+
+    @pytest.mark.asyncio
     async def test_public_models_are_listed_regardless(
         self,
         bearer_app: FastAPI,
