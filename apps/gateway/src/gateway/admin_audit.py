@@ -97,6 +97,7 @@ LIMIT_FIELDS = (
     "limit_value",
     "is_active",
     "applies_to",
+    "overrides_each_user",
 )
 
 

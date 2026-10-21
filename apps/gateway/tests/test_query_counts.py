@@ -358,6 +358,81 @@ class TestTheMeteredPath:
         )
         assert per_user[1] <= 2
 
+    async def test_an_override_rule_adds_no_queries(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        app: object,
+        fake_upstream: FakeUpstream,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """An override replaces the each-user rule in the rules already loaded:
+        no lookup of its own, so the metered path costs what it did with the
+        each-user rule alone."""
+        from decimal import Decimal
+
+        from gateway.models import LimitAppliesTo, LimitMetric, LimitRule, LimitScope
+        from test_chat_completions import basic_request
+
+        engine = app.state.engine  # type: ignore[attr-defined]
+        completion = {
+            "id": "c1",
+            "object": "chat.completion",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        }
+
+        async def metered() -> tuple[int, int]:
+            fake_upstream.set_json(completion)
+            with counted(engine) as statements:
+                response = await client.post(
+                    "/v1/chat/completions", json=basic_request(), headers=seeded.auth
+                )
+            assert response.status_code == 200
+            selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+            writes = [
+                s
+                for s in statements
+                if s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+            ]
+            return len(selects), len(writes)
+
+        async with session_factory() as db:
+            db.add(
+                LimitRule(
+                    name="each user",
+                    scope=LimitScope.GLOBAL,
+                    metric=LimitMetric.COST,
+                    window_seconds=3600,
+                    limit_value=Decimal("1000"),
+                    applies_to=LimitAppliesTo.EACH_USER,
+                )
+            )
+            await db.commit()
+        await metered()
+        per_user = await metered()
+
+        async with session_factory() as db:
+            db.add(
+                LimitRule(
+                    name="override",
+                    scope=LimitScope.USER,
+                    scope_id=seeded.user.id,
+                    metric=LimitMetric.COST,
+                    window_seconds=3600,
+                    limit_value=Decimal("2000"),
+                    overrides_each_user=True,
+                )
+            )
+            await db.commit()
+        overridden = await metered()
+
+        print(f"\n  each-user: {per_user[0]} selects, {per_user[1]} writes")
+        print(f"  each-user + override: {overridden[0]} selects, {overridden[1]} writes")
+        assert overridden == per_user, (
+            f"an override costs extra queries: {per_user} -> {overridden}"
+        )
+
 
 class TestTheAliasPath:
     """An alias costs one round trip more than the model it points at (ADR 0101).

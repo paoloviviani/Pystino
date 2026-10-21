@@ -73,7 +73,7 @@ async def caller_limits(
         )
         .order_by(LimitRule.scope, LimitRule.metric)
     )
-    rules = list((await session.execute(stmt)).scalars().all())
+    rules = QuotaEngine.drop_overridden(list((await session.execute(stmt)).scalars().all()))
 
     # Absent, not zero, when the counter store cannot be reached — a budget
     # shown as 0% used because Valkey is down is worse than one shown as
@@ -90,6 +90,7 @@ async def caller_limits(
             name=rule.name,
             scope=rule.scope.value,
             applies_to=rule.applies_to.value,
+            overrides_each_user=rule.overrides_each_user,
             metric=rule.metric.value,
             window_label=rule.window_label,
             limit_value=rule.limit_value,

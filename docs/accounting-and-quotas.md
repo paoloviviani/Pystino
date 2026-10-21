@@ -289,10 +289,9 @@ Interactions, all of them the ordinary *all rules must pass*:
   everyone together, the per-user rule caps each person; whichever is reached
   first refuses.
 - With an explicit **`scope=user`** rule for one person: both apply and the
-  lower ceiling binds. A `scope=user` rule **cannot raise** that person above
-  the global per-user ceiling, because no rule overrides another. Giving one
-  person a *higher* limit than everyone else is not supported; see the open
-  question below.
+  lower ceiling binds. An ordinary `scope=user` rule **cannot raise** that
+  person above the global per-user ceiling. To give one person a different
+  figure, higher or lower, mark their rule as an override; see below.
 - A request with **no user** (no path reserves one today) skips per-user
   rules, as it skips per-member ones.
 
@@ -313,12 +312,43 @@ Reconcile list a row per user, including users with no usage, because drift
 can be a counter that should be zero. The admin rules list carries no single
 consumption figure for a per-user rule.
 
-**Open question for the owner.** Because nothing overrides, an operator who
-wants a per-person *exception that raises* the ceiling (say, one heavy user at
-€100 where everyone else has €20) cannot express it: the explicit `scope=user`
-rule only ever adds a tighter bound. The ways to get there would be an
-exclusion list on the per-user rule, or an override rule kind with defined
-priority; both are new semantics and deliberately not invented here.
+#### Overriding the per-user ceiling for one person
+
+A `scope=user` rule can be created with **`overrides_each_user: true`** (the
+console's "Overrides everyone's ceiling" checkbox, offered only for a rule on one
+person). For that person it **replaces** every global `each_user` rule with the
+**same metric and the same window** (same rolling length, or same calendar
+period): they are held to the override's limit, which may be higher or lower
+than the global one, instead of the global one. "Everyone has €20 per month,
+Ada has €100" is two rules: the global `each_user` rule and Ada's override.
+
+What an override does not touch: it replaces only the matching global per-user
+rules, so a per-user rule for another metric or window still applies to that
+person; and everything else still applies and can refuse them: the group
+aggregate and per-member rules, the global aggregate rule, API-key rules, and
+any other ordinary `scope=user` rule for them (a tighter one still binds, and
+may sit beside the override for the same metric and window: the override flag is
+part of a rule's identity). An inactive override replaces nothing. The flag is
+fixed at creation, like `applies_to`, and is only valid on `scope=user`: the
+API answers 400 elsewhere and a database check constraint refuses it
+regardless of writer.
+
+It is applied when the rules are loaded, so the request path costs no extra
+query (`test_query_counts.py`). The override reads the person's `user:<id>`
+counter for that metric and window, the same one the global rule reads, so
+creating, deactivating or deleting an override moves no counter and loses no
+count: the person's total is simply judged against another figure from the next
+request. Seeding, the cold rebuild and **Reconcile** are unchanged. In the
+health view the person's row for the replaced global rule is **omitted** (it is
+not enforced on them); the override's own row, with the same counter and
+ledger, is there instead.
+
+A person sees the override in place of the global rule in `/api/me/limits` and
+`/v1/pystino/usage` (`"scope": "user"`, `"overrides_each_user": true`, their
+real ceiling and consumption), so the chat's usage page needs no change.
+Notifications (ADR 0052) follow the rules that are evaluated: the override
+notifies like any user rule, and the replaced global rule does not notify that
+person.
 
 ### Rebuilds replace; they never add
 
