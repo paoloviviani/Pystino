@@ -34,6 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from gateway.config import Settings
+from gateway.loops import stop_between_passes
 from gateway.models import FXRate as FXRateRow
 from gateway.types import utcnow
 
@@ -78,6 +79,7 @@ class FXService:
         # poller or the first request after a restart.
         self._memory: dict[tuple[str, str], tuple[Decimal, str]] = {}
         self._task: asyncio.Task[None] | None = None
+        self._stopping = asyncio.Event()
 
     async def close(self) -> None:
         if self._own_http:
@@ -89,6 +91,7 @@ class FXService:
         return self._refresh_seconds
 
     def start(self) -> None:
+        self._stopping.clear()
         self._task = asyncio.create_task(self._run())
 
     async def refresh_once(self) -> None:
@@ -109,10 +112,9 @@ class FXService:
         return [(c, billing) for c in sorted(currencies) if c != billing]
 
     async def stop(self) -> None:
+        """Stop between passes; see `loops.stop_between_passes`."""
         if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+            await stop_between_passes(self._task, self._stopping)
             self._task = None
 
     async def cached_rate(self, base: str, quote: str) -> FXQuote | None:
@@ -195,10 +197,11 @@ class FXService:
 
     async def _run(self) -> None:
         """Keep the day's rates warm, so no request ever waits on the API."""
-        while True:
+        while not self._stopping.is_set():
             try:
                 for base, quote in await self._needed_pairs():
                     await self.rate(base, quote)
             except Exception:
                 logger.exception("fx refresh failed")
-            await asyncio.sleep(self._refresh_seconds)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stopping.wait(), timeout=self._refresh_seconds)

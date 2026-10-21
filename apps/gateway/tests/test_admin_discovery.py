@@ -1358,10 +1358,12 @@ class TestImport:
                     select(ModelDef).where(ModelDef.upstream_model == "vendor/dollar-model")
                 )
             ).scalar_one_or_none()
-        assert found is not None
-        price = (
-            await session.execute(select(ModelPrice).where(ModelPrice.model_id == found.id))
-        ).scalar_one()
+            assert found is not None
+            # Inside the block: a statement on a closed session quietly begins a
+            # new transaction, and its connection is never given back.
+            price = (
+                await session.execute(select(ModelPrice).where(ModelPrice.model_id == found.id))
+            ).scalar_one()
         assert price.currency == "USD"
 
     async def test_reimport_is_reported_not_duplicated(

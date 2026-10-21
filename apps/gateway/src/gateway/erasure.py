@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from gateway.config import Settings
 from gateway.identity_events import record_event
+from gateway.loops import stop_between_passes
 from gateway.models import ChatErasure, ChatErasureStatus, IdentityEventAction, IdentityEventActor
 from gateway.types import utcnow
 
@@ -211,24 +212,33 @@ class ErasureRetryLoop:
         self._own_http = http is None
         self._poll_seconds = poll_seconds
         self._task: asyncio.Task[None] | None = None
+        self._stopping = asyncio.Event()
 
     def start(self) -> None:
+        self._stopping.clear()
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
+        """Stop between passes, never in the middle of one.
+
+        The first pass starts the moment the loop does, so a stop soon after
+        start used to cancel it while asyncpg was still connecting or running
+        its query, and the cancelled connection's socket was never closed (an
+        unclosed transport, reported at garbage collection). The running pass
+        is let finish; only one that overruns the grace period is cancelled.
+        """
         if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+            await stop_between_passes(self._task, self._stopping)
             self._task = None
         if self._own_http:
             with contextlib.suppress(Exception):
                 await self._http.aclose()
 
     async def _run(self) -> None:
-        while True:
+        while not self._stopping.is_set():
             try:
                 await run_pending_erasures(self._session_factory, self._settings, self._http)
             except Exception:
                 logger.exception("chat erasure retry pass failed")
-            await asyncio.sleep(self._poll_seconds)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stopping.wait(), timeout=self._poll_seconds)
