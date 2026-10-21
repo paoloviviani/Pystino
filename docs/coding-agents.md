@@ -163,6 +163,12 @@ unchanged, which Caddy does by default.
   re-enrolling; [Billing groups](billing-groups.md) is the whole rule, and
   `GET /v1/pystino/usage` returns the caller's own spend and quotas to
   anything holding the same token.
+- `x-session-id` (or `x-session-affinity`), when the client sends one: the
+  session key a [routed alias](model-aliases.md#2-session-stickiness) uses to keep
+  a conversation on the target that served it. Without one the gateway falls
+  back to `prompt_cache_key` and `user` in the request body, and without any of
+  them a routed alias is not sticky. A machine that wants stickiness on an alias
+  with several targets should send its session id in `x-session-id`.
 - Revoking the grant at the IdP ends the machine's `/v1` access and its chat link
   together within one access-token lifetime, because both use the same enrolment
   credential.

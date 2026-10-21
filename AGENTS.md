@@ -116,6 +116,7 @@ Inside the gateway, the pieces that carry the most weight:
 | `accounting/cost.py` | the money arithmetic, and the three prompt slices |
 | `quota/engine.py` | admission; `quota/counters.py` has the three stores |
 | `access.py` | one predicate for "may this caller use this model" |
+| `routing.py` | an alias with several targets: selection rules (`SelectionRule`), the session key and the session memory; `_metered.serve_with_failover` runs the attempts |
 | `pagination.py` | the listing envelope every management route returns |
 
 ## How Pystino and Cerea relate
@@ -530,6 +531,15 @@ workflow's sparse checkout of Cerea's `kit/` on the tag.
   catalogue and the reachable agents), 5 selects + 2 writes for a metered
   request, and a bearer token may cost no more than a key. `selectinload` on a
   many-to-one relation costs a round trip that `joinedload` does not.
+- **A routed alias leaves one ledger row per attempt.** Same `request_id`,
+  `route_attempt` 1, 2, 3: failed attempts are `upstream_error` at zero cost
+  against the target that failed, and the one that served is billed to its
+  target. Quota admission runs per attempt (a refused attempt writes no row),
+  so a requests limit counts attempts. A route's attempts re-run redaction,
+  the input limit and `begin` per target inside `serve`, and only a non-last
+  attempt raises `AttemptFailed`, after settling its own row; the last attempt
+  answers the caller exactly as a direct call does. Stickiness is a table
+  (`route_sessions`) keyed on a hash of caller and session key.
 - **`InMemoryCounterStore` is atomic only because it never awaits.** It proves
   nothing about `MULTI`/`EXEC`, which is why `test_quota_race_live.py` exists.
 - **An abandoned stream is billed from our price table.** A client that hangs
