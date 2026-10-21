@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AdminAlias, AdminModel } from "../lib/types";
+import type { AdminAlias, AdminModel, AliasTarget } from "../lib/types";
 import { jsonResponse } from "../test-helpers";
 import { AdminRouting } from "./AdminRouting";
 
@@ -51,6 +51,17 @@ const EMBEDDER: AdminModel = {
   kind: "embedding",
 };
 
+const TARGET: AliasTarget = {
+  id: "m1",
+  name: "gpt-4o-mini",
+  kind: "chat",
+  is_active: true,
+  position: 0,
+  weight: 1,
+  available: true,
+  unavailable_reason: null,
+};
+
 function alias(overrides: Partial<AdminAlias> = {}): AdminAlias {
   return {
     id: "a1",
@@ -60,7 +71,10 @@ function alias(overrides: Partial<AdminAlias> = {}): AdminAlias {
     kind: "chat",
     is_active: true,
     is_public: false,
-    target: { id: "m1", name: "gpt-4o-mini", kind: "chat", is_active: true },
+    target: TARGET,
+    targets: [TARGET],
+    route_rule: "first_available",
+    route_sticky_ttl_seconds: 3600,
     status: "available",
     unavailable_reason: null,
     granted_to: ["research"],
@@ -157,6 +171,7 @@ describe("the Routing tab", () => {
       alias({
         status: "unavailable",
         target: null,
+        targets: [],
         unavailable_reason: "target_deleted",
       }),
     ]);
@@ -196,7 +211,7 @@ describe("the Routing tab", () => {
     await user.type(within(dialog).getByLabelText("Name"), "quick");
     await user.type(within(dialog).getByLabelText("Display name"), "Quick");
     await user.selectOptions(
-      within(dialog).getByLabelText("Target model"),
+      within(dialog).getByLabelText("Target 1"),
       "m1",
     );
     await user.click(within(dialog).getByRole("button", { name: /Create alias/ }));
@@ -210,12 +225,16 @@ describe("the Routing tab", () => {
     );
     const posted = captured.bodies.find((b) => b.method === "POST")!.body as {
       name: string;
-      target_model_id: string;
+      targets: { model_id: string; weight: number }[];
+      route_rule: string;
+      route_sticky_ttl_seconds: number;
       display_name: string;
     };
     expect(posted.name).toBe("quick");
     expect(posted.display_name).toBe("Quick");
-    expect(posted.target_model_id).toBe("m1");
+    expect(posted.targets).toEqual([{ model_id: "m1", weight: 1 }]);
+    expect(posted.route_rule).toBe("first_available");
+    expect(posted.route_sticky_ttl_seconds).toBe(3600);
   });
 
   it("edits the target and sends exactly the change", async () => {
@@ -224,7 +243,7 @@ describe("the Routing tab", () => {
     await user.click(screen.getByRole("button", { name: "Edit" }));
     const dialog = await screen.findByRole("dialog");
 
-    await user.selectOptions(within(dialog).getByLabelText("Target model"), "m1");
+    await user.selectOptions(within(dialog).getByLabelText("Target 1"), "m1");
     await user.clear(within(dialog).getByLabelText("Display name"));
     await user.type(within(dialog).getByLabelText("Display name"), "Quicker");
     await user.click(within(dialog).getByRole("button", { name: /Save alias/ }));
@@ -277,7 +296,7 @@ describe("the Routing tab", () => {
     const dialog = await screen.findByRole("dialog");
 
     const options = within(dialog)
-      .getByLabelText("Target model")
+      .getByLabelText("Target 1")
       .querySelectorAll("option");
     const names = Array.from(options).map((o) => o.textContent ?? "");
     expect(names.some((n) => n.includes("text-embedding-3-small"))).toBe(false);
@@ -292,7 +311,8 @@ describe("the Routing tab", () => {
         alias({
           status: "unavailable",
           unavailable_reason: "target_inactive",
-          target: { id: "m9", name: "retired-model", kind: "chat", is_active: false },
+          target: { ...TARGET, id: "m9", name: "retired-model", is_active: false },
+          targets: [{ ...TARGET, id: "m9", name: "retired-model", is_active: false }],
         }),
       ],
       [MODEL],
@@ -301,7 +321,7 @@ describe("the Routing tab", () => {
     await user.click(screen.getByRole("button", { name: "Edit" }));
     const dialog = await screen.findByRole("dialog");
 
-    const select = within(dialog).getByLabelText("Target model") as HTMLSelectElement;
+    const select = within(dialog).getByLabelText("Target 1") as HTMLSelectElement;
     expect(select.value).toBe("m9");
   });
 
@@ -353,7 +373,7 @@ describe("the Routing tab", () => {
     await user.click(screen.getByRole("button", { name: /Add alias/ }));
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText("Name"), "quick");
-    await user.selectOptions(within(dialog).getByLabelText("Target model"), "m1");
+    await user.selectOptions(within(dialog).getByLabelText("Target 1"), "m1");
     await user.click(within(dialog).getByRole("button", { name: /Create alias/ }));
 
     expect(await screen.findByText(/already used by a model/)).toBeTruthy();
@@ -372,5 +392,211 @@ describe("the Routing tab", () => {
     ]);
     expect(screen.getByText("Inactive")).toBeTruthy();
     expect(screen.getAllByText(/Target inactive/).length).toBeGreaterThan(0);
+  });
+
+  describe("several targets", () => {
+    const SECOND: AliasTarget = {
+      ...TARGET,
+      id: "m3",
+      name: "claude-haiku",
+      position: 1,
+      weight: 4,
+    };
+    const THIRD_MODEL: AdminModel = {
+      ...MODEL,
+      id: "m3",
+      name: "claude-haiku",
+      upstream_model: "anthropic/claude-haiku",
+    };
+
+    function routed(overrides: Partial<AdminAlias> = {}): AdminAlias {
+      return alias({
+        targets: [{ ...TARGET, weight: 1 }, SECOND],
+        route_rule: "weighted",
+        route_sticky_ttl_seconds: 1800,
+        ...overrides,
+      });
+    }
+
+    function sent(captured: Captured, method: string) {
+      return captured.bodies.find((b) => b.method === method)!.body as {
+        targets: { model_id: string; weight: number }[];
+        route_rule: string;
+        route_sticky_ttl_seconds?: number;
+      };
+    }
+
+    it("lists the targets in order with weights, the rule and the stickiness", async () => {
+      await open([routed()], [MODEL, THIRD_MODEL]);
+
+      const row = screen.getByRole("row", { name: /fast/i });
+      const links = within(row).getAllByRole("link");
+      expect(links.map((a) => a.textContent)).toEqual(["gpt-4o-mini", "claude-haiku"]);
+      expect(within(row).getByText("weight 4")).toBeTruthy();
+      expect(within(row).getByText(/Weighted · sticky 30 min/)).toBeTruthy();
+    });
+
+    it("says which target is down without calling the alias unavailable", async () => {
+      await open(
+        [
+          routed({
+            targets: [
+              {
+                ...TARGET,
+                available: false,
+                unavailable_reason: "target_inactive",
+                is_active: false,
+              },
+              SECOND,
+            ],
+          }),
+        ],
+        [MODEL, THIRD_MODEL],
+      );
+      const row = screen.getByRole("row", { name: /fast/i });
+      expect(within(row).getByText("Available")).toBeTruthy();
+      expect(within(row).getByText("Target inactive")).toBeTruthy();
+    });
+
+    it("hides the rule line for a single target", async () => {
+      await open([alias()]);
+      const row = screen.getByRole("row", { name: /fast/i });
+      expect(within(row).queryByText(/First available/)).toBeNull();
+    });
+
+    it("creates an alias with an ordered route, a rule and a stickiness window", async () => {
+      const { captured, user } = await open([alias()], [MODEL, THIRD_MODEL]);
+
+      await user.click(screen.getByRole("button", { name: /Add alias/ }));
+      const dialog = await screen.findByRole("dialog");
+      await user.type(within(dialog).getByLabelText("Name"), "quick");
+      await user.selectOptions(within(dialog).getByLabelText("Target 1"), "m3");
+      await user.click(within(dialog).getByRole("button", { name: "Add target" }));
+      await user.selectOptions(within(dialog).getByLabelText("Target 2"), "m1");
+      await user.selectOptions(within(dialog).getByLabelText("Selection rule"), "cheapest");
+      await user.clear(within(dialog).getByLabelText(/Session stickiness/));
+      await user.type(within(dialog).getByLabelText(/Session stickiness/), "15");
+      await user.click(within(dialog).getByRole("button", { name: /Create alias/ }));
+
+      await waitFor(() => expect(captured.bodies.some((b) => b.method === "POST")).toBe(true));
+      const posted = sent(captured, "POST");
+      expect(posted.targets).toEqual([
+        { model_id: "m3", weight: 1 },
+        { model_id: "m1", weight: 1 },
+      ]);
+      expect(posted.route_rule).toBe("cheapest");
+      expect(posted.route_sticky_ttl_seconds).toBe(900);
+    });
+
+    it("reorders targets and sends the new order", async () => {
+      const { captured, user } = await open([routed()], [MODEL, THIRD_MODEL]);
+
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      const dialog = await screen.findByRole("dialog");
+      await user.click(within(dialog).getByRole("button", { name: "Move target 2 up" }));
+      await user.click(within(dialog).getByRole("button", { name: /Save alias/ }));
+
+      await waitFor(() => expect(captured.bodies.some((b) => b.method === "PATCH")).toBe(true));
+      expect(sent(captured, "PATCH").targets.map((t) => t.model_id)).toEqual(["m3", "m1"]);
+    });
+
+    it("shows weights only under the weighted rule, and sends them", async () => {
+      const { captured, user } = await open([routed()], [MODEL, THIRD_MODEL]);
+
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      const dialog = await screen.findByRole("dialog");
+      const weight = within(dialog).getByLabelText("Weight 2") as HTMLInputElement;
+      expect(weight.value).toBe("4");
+      await user.clear(weight);
+      await user.type(weight, "9");
+
+      await user.selectOptions(within(dialog).getByLabelText("Selection rule"), "first_available");
+      expect(within(dialog).queryByLabelText("Weight 2")).toBeNull();
+      await user.selectOptions(within(dialog).getByLabelText("Selection rule"), "weighted");
+      expect((within(dialog).getByLabelText("Weight 2") as HTMLInputElement).value).toBe("9");
+
+      await user.click(within(dialog).getByRole("button", { name: /Save alias/ }));
+      await waitFor(() => expect(captured.bodies.some((b) => b.method === "PATCH")).toBe(true));
+      expect(sent(captured, "PATCH").targets[1]).toEqual({ model_id: "m3", weight: 9 });
+    });
+
+    it("refuses an out-of-range weight before sending anything", async () => {
+      const { captured, user } = await open([routed()], [MODEL, THIRD_MODEL]);
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      const dialog = await screen.findByRole("dialog");
+      const weight = within(dialog).getByLabelText("Weight 2");
+      await user.clear(weight);
+      await user.type(weight, "0");
+      const save = within(dialog).getByRole("button", { name: /Save alias/ }) as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      expect(captured.bodies.filter((b) => b.method === "PATCH")).toHaveLength(0);
+    });
+
+    it("does not offer a model another row already holds", async () => {
+      const { user } = await open([routed()], [MODEL, THIRD_MODEL]);
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      const dialog = await screen.findByRole("dialog");
+      const options = Array.from(
+        within(dialog).getByLabelText("Target 2").querySelectorAll("option"),
+      ).map((o) => o.textContent);
+      expect(options).toContain("claude-haiku");
+      expect(options).not.toContain("gpt-4o-mini");
+    });
+
+    it("removes a target, but never the last one", async () => {
+      const { captured, user } = await open([routed()], [MODEL, THIRD_MODEL]);
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      const dialog = await screen.findByRole("dialog");
+
+      await user.click(within(dialog).getByRole("button", { name: "Remove target 1" }));
+      const last = within(dialog).getByRole("button", {
+        name: "Remove target 1",
+      }) as HTMLButtonElement;
+      expect(last.disabled).toBe(true);
+
+      await user.click(within(dialog).getByRole("button", { name: /Save alias/ }));
+      await waitFor(() => expect(captured.bodies.some((b) => b.method === "PATCH")).toBe(true));
+      expect(sent(captured, "PATCH").targets).toEqual([{ model_id: "m3", weight: 4 }]);
+    });
+
+    it("keeps the kind to the first target's, so a mixed route cannot be built", async () => {
+      const { user } = await open([alias()], [MODEL, EMBEDDER, THIRD_MODEL]);
+      await user.click(screen.getByRole("button", { name: /Add alias/ }));
+      const dialog = await screen.findByRole("dialog");
+      await user.selectOptions(within(dialog).getByLabelText("Target 1"), "m1");
+      await user.click(within(dialog).getByRole("button", { name: "Add target" }));
+      const options = Array.from(
+        within(dialog).getByLabelText("Target 2").querySelectorAll("option"),
+      ).map((o) => o.textContent);
+      expect(options).toContain("claude-haiku");
+      expect(options).not.toContain("text-embedding-3-small");
+    });
+
+    it("does not rewrite a stickiness window that is not a whole number of minutes", async () => {
+      const { captured, user } = await open([routed({ route_sticky_ttl_seconds: 90 })], [
+        MODEL,
+        THIRD_MODEL,
+      ]);
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      const dialog = await screen.findByRole("dialog");
+      await user.click(within(dialog).getByRole("button", { name: /Save alias/ }));
+      await waitFor(() => expect(captured.bodies.some((b) => b.method === "PATCH")).toBe(true));
+      expect(sent(captured, "PATCH").route_sticky_ttl_seconds).toBeUndefined();
+    });
+
+    it("keeps a rule this console does not know selectable", async () => {
+      const { captured, user } = await open(
+        [routed({ route_rule: "decision_model" })],
+        [MODEL, THIRD_MODEL],
+      );
+      await user.click(screen.getByRole("button", { name: "Edit" }));
+      const dialog = await screen.findByRole("dialog");
+      expect((within(dialog).getByLabelText("Selection rule") as HTMLSelectElement).value).toBe(
+        "decision_model",
+      );
+      await user.click(within(dialog).getByRole("button", { name: /Save alias/ }));
+      await waitFor(() => expect(captured.bodies.some((b) => b.method === "PATCH")).toBe(true));
+      expect(sent(captured, "PATCH").route_rule).toBe("decision_model");
+    });
   });
 });

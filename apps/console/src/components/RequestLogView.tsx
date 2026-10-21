@@ -103,6 +103,14 @@ export function RequestLogView({ scope }: { scope: RequestLogScope }) {
         row.requested_model ? (
           <span>
             {row.requested_model} <span className={MUTED}>→ {row.model}</span>
+            {/* Which try this was: a request that fell back has one line per
+                attempt under one request id, and the failed ones read as errors. */}
+            {row.route_attempt ? (
+              <>
+                {" "}
+                <Badge>{m["request_log.attempt"]({ n: row.route_attempt })}</Badge>
+              </>
+            ) : null}
           </span>
         ) : (
           row.model

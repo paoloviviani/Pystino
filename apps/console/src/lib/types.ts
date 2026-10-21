@@ -196,7 +196,19 @@ export interface AliasTarget {
   name: string;
   kind: ModelKind;
   is_active: boolean;
+  /** Order of preference, 0 first. */
+  position: number;
+  /** Relative share under the `weighted` rule; ignored by the others. */
+  weight: number;
+  /** Whether this target can serve a request right now, and if not why. */
+  available: boolean;
+  unavailable_reason: AliasUnavailableReason | null;
 }
+
+/** How a request picks among an alias's targets (issue P1). A string, not a
+ *  closed union: a rule added on the gateway later arrives here before the
+ *  console knows its name, and must render rather than break. */
+export type AliasRouteRule = "first_available" | "weighted" | "cheapest";
 
 /** Why an alias cannot serve a request. `null` on an available one.
  *
@@ -220,9 +232,17 @@ export interface AdminAlias {
   kind: ModelKind;
   is_active: boolean;
   is_public: boolean;
-  /** Null when the alias has no target — one of its three unavailable states
-   *  rather than an error, and why `status` exists beside it. */
+  /** The first target in the operator's order; null when the alias has none —
+   *  one of its unavailable states rather than an error, and why `status`
+   *  exists beside it. `targets` is the whole route. */
   target: AliasTarget | null;
+  targets: AliasTarget[];
+  /** How a request picks among `targets`. */
+  route_rule: AliasRouteRule | (string & {});
+  /** How long a session stays on the target that served it, in seconds; 0 is
+   *  off. */
+  route_sticky_ttl_seconds: number;
+  /** `available` while at least one target can serve. */
   status: "available" | "unavailable";
   unavailable_reason: AliasUnavailableReason | null;
   granted_to: string[];

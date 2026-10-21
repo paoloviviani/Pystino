@@ -22,6 +22,7 @@ function row(overrides: Partial<RequestLogRow> = {}): RequestLogRow {
     group_id: "g1",
     group_name: "research",
     requested_model: "fast",
+    route_attempt: null,
     model: "gpt-real",
     upstream_model: null,
     streamed: false,
@@ -79,6 +80,28 @@ describe("request log", () => {
     // Scoped to the table: "Completed" is also an option in the status filter.
     expect(within(screen.getByRole("table")).getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("1,200 / 30 / 7")).toBeInTheDocument();
+  });
+
+  it("numbers the attempts of a request that fell back to another target", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes(
+        [],
+        [
+          row({ route_attempt: 1, model: "target-a", status: "upstream_error" }),
+          row({ route_attempt: 2, model: "target-b", status: "completed" }),
+          row({ requested_model: null, route_attempt: null, model: "direct-model" }),
+        ],
+      ),
+    );
+    renderScreen(<AdminRequests />);
+
+    await waitFor(() => expect(screen.getByText(/target-a/)).toBeInTheDocument());
+    const table = within(screen.getByRole("table"));
+    expect(table.getByText("try 1")).toBeInTheDocument();
+    expect(table.getByText("try 2")).toBeInTheDocument();
+    // A direct call carries no attempt badge.
+    expect(table.getAllByText(/^try \d$/)).toHaveLength(2);
   });
 
   it("asks the administrator endpoint, and sends a person filter", async () => {
