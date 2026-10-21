@@ -18,8 +18,9 @@ Credentials come from the environment:
     PYSTINO_LIVE_ADMIN_USER          Authelia username (default $AUTHELIA_ADMIN_USER, else admin)
     PYSTINO_LIVE_ADMIN_PASSWORD      required: the password behind AUTHELIA_ADMIN_PASSWORD_DIGEST
                                      (whatever you minted it from — deploy/.env.example)
-    PYSTINO_LIVE_USER                optional, a non-admin for the 403 checks
-    PYSTINO_LIVE_USER_PASSWORD
+    PYSTINO_LIVE_USER                optional, a non-admin for the 403 checks; when unset,
+    PYSTINO_LIVE_USER_PASSWORD       the checks create (or re-key) `live-check-user` themselves
+                                     on a bundled-Authelia stack (PYSTINO_LIVE_AUTO_USER=0: off)
     PYSTINO_LIVE_PROVIDER            optional: the provider name (default: the first enabled)
     PYSTINO_LIVE_RESOLVE             optional: an IP the public name resolves to (a trial
                                      stack with no DNS), as a hosts-file entry would
@@ -84,10 +85,80 @@ def admin_credentials() -> tuple[str, str] | None:
     return (user, password) if password else None
 
 
+#: The non-admin these checks provision for themselves when none is given.
+AUTO_USER_LOGIN = "live-check-user"
+_auto_user: tuple[str, str] | None = None
+_auto_user_tried = False
+
+
 def user_credentials() -> tuple[str, str] | None:
+    """A non-admin to sign in as, for the checks an admin cannot make.
+
+    ``PYSTINO_LIVE_USER``/``PYSTINO_LIVE_USER_PASSWORD`` when set. Otherwise,
+    on a stack with the bundled Authelia, the checks provision their own: the
+    admin creates (or, on a later run, re-keys) the ``live-check-user`` login
+    through the console API and uses the one-time password it returns. Every
+    check used to sign in as the admin only, so none could see what an
+    ordinary member sees, and the non-admin assertions skipped unless someone
+    set the variables by hand. ``PYSTINO_LIVE_AUTO_USER=0`` turns this off.
+    """
     user = os.environ.get("PYSTINO_LIVE_USER", "")
     password = os.environ.get("PYSTINO_LIVE_USER_PASSWORD", "")
-    return (user, password) if user and password else None
+    if user and password:
+        return (user, password)
+    if os.environ.get("PYSTINO_LIVE_AUTO_USER", "1") == "0":
+        return None
+    return _provision_user()
+
+
+def _provision_user() -> tuple[str, str] | None:
+    """Create or re-key the throwaway non-admin, once per process."""
+    global _auto_user, _auto_user_tried
+    if _auto_user_tried:
+        return _auto_user
+    _auto_user_tried = True
+    admin = admin_credentials()
+    if admin is None:
+        return None
+    result = sign_in(*admin)
+    if result.opener is None:
+        return None
+    op = result.opener
+    request(op, f"{GATEWAY}/auth/session")
+    login_name = AUTO_USER_LOGIN
+    email = f"{login_name}@example.org"
+    status, _, body = request(
+        op, f"{GATEWAY}/api/admin/users?" + urllib.parse.urlencode({"q": email})
+    )
+    existing = None
+    if status == 200:
+        for row in json.loads(body).get("items", []):
+            if row.get("email") == email:
+                existing = row
+                break
+    if existing is not None:
+        status, _, body = request(
+            op, f"{GATEWAY}/api/admin/users/{existing['id']}/reset-password", method="POST"
+        )
+    else:
+        status, _, body = request(
+            op,
+            f"{GATEWAY}/api/admin/users",
+            method="POST",
+            json_body={"login": login_name, "display_name": "Live check user", "email": email},
+        )
+    if status not in (200, 201):
+        skip(
+            "a non-admin for the 403 checks",
+            f"could not provision {login_name} (HTTP {status}); this needs the bundled "
+            "Authelia, or set PYSTINO_LIVE_USER and PYSTINO_LIVE_USER_PASSWORD",
+        )
+        return None
+    password = json.loads(body).get("password", "")
+    if not password:
+        return None
+    _auto_user = (login_name, password)
+    return _auto_user
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
