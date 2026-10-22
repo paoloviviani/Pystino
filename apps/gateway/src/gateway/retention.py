@@ -25,6 +25,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from gateway.config import Settings
+from gateway.loops import stop_between_passes
 from gateway.models import UsageRecord
 from gateway.types import utcnow
 
@@ -82,23 +83,34 @@ class TranscriptRetentionLoop:
         self._retention = timedelta(hours=settings.transcript_retention_hours)
         self._interval = settings.transcript_sweep_seconds
         self._task: asyncio.Task[None] | None = None
+        self._stopping = asyncio.Event()
 
     def start(self) -> None:
+        self._stopping.clear()
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+        """Stop between sweeps, never in the middle of one.
+
+        Cancelling the task while a sweep's query was in flight left that
+        asyncpg connection checked out of the pool, so the engine's dispose at
+        shutdown never closed it: a leaked socket on every shutdown that caught
+        a sweep, which the Postgres test leg reported as an unclosed transport.
+        The running sweep (a few batched updates) is let finish; only a sweep
+        that overruns the grace period is cancelled.
+        """
+        if self._task is None:
+            return
+        await stop_between_passes(self._task, self._stopping)
+        self._task = None
 
     async def _run(self) -> None:
-        while True:
+        while not self._stopping.is_set():
             try:
                 cleared = await sweep_assistant_text(self._session_factory, self._retention)
                 if cleared:
                     logger.info("cleared reply text from %d usage rows past retention", cleared)
             except Exception:
                 logger.exception("transcript retention sweep failed")
-            await asyncio.sleep(self._interval)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._stopping.wait(), timeout=self._interval)
