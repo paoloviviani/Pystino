@@ -1606,8 +1606,10 @@ class LimitRule(Base):
     """A quota rule: one metric, one scope, one rolling window.
 
     Rules are additive and all matching rules must pass. There is intentionally
-    no priority or override mechanism: "most specific wins" reliably surprises
-    people when a user-scoped rule silently raises a group ceiling.
+    no priority mechanism: "most specific wins" reliably surprises people when a
+    user-scoped rule silently raises a group ceiling. The one exception is an
+    explicit, flagged one: a user rule with ``overrides_each_user`` replaces the
+    global each-user rule of the same metric and window for that person.
     """
 
     __tablename__ = "limit_rules"
@@ -1627,6 +1629,9 @@ class LimitRule(Base):
             # A group may hold both an aggregate rule and a per-member rule
             # for the same metric and window (ADR 0098).
             text("applies_to"),
+            # A person may hold an override and an ordinary user rule for the
+            # same metric and window; they are different rules.
+            text("overrides_each_user"),
             unique=True,
         ),
         CheckConstraint(
@@ -1644,6 +1649,12 @@ class LimitRule(Base):
             " OR (applies_to = 'each_member' AND scope = 'group')"
             " OR (applies_to = 'each_user' AND scope = 'global')",
             name="ck_limit_rules_applies_to_group",
+        ),
+        # An override replaces the global each-user ceiling for one person, so
+        # it can only sit on a user rule.
+        CheckConstraint(
+            "NOT overrides_each_user OR scope = 'user'",
+            name="ck_limit_rules_override_user_scope",
         ),
         # Correct as-is for a nullable column: a CHECK passes when its expression
         # is NULL, so a calendar rule with no window_seconds satisfies it.
@@ -1673,6 +1684,12 @@ class LimitRule(Base):
         _enum(LimitAppliesTo, "limit_applies_to"),
         default=LimitAppliesTo.AGGREGATE,
         server_default=text("'aggregate'"),
+    )
+
+    # A user rule that replaces, for that person, every global each-user rule
+    # with the same metric and window (see QuotaEngine.drop_overridden).
+    overrides_each_user: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
     )
 
     # Exactly one of these. A rolling window is bucket-approximated and right for

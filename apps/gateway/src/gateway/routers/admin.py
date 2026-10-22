@@ -3052,6 +3052,7 @@ def _limit_response(rule: LimitRule, current: Decimal | None = None) -> LimitRul
         window_label=rule.window_label,
         limit_value=rule.limit_value,
         applies_to=rule.applies_to.value,
+        overrides_each_user=rule.overrides_each_user,
         is_active=rule.is_active,
         current_value=current,
         # Requires `resets` to be loaded; every caller here does so explicitly,
@@ -3181,8 +3182,10 @@ async def create_limit(
     """Add a quota rule.
 
     All matching rules must pass, so adding one can only ever tighten the budget —
-    there is no priority or override, because "most specific wins" surprises people
-    when a user rule silently raises a group ceiling.
+    there is no priority, because "most specific wins" surprises people when a user
+    rule silently raises a group ceiling. The one explicit exception is a user rule
+    created with ``overrides_each_user``: for that person it replaces the global
+    each-user rule of the same metric and window (see ``QuotaEngine.drop_overridden``).
     """
     scope = LimitScope(payload.scope)
     if scope is LimitScope.GLOBAL and payload.scope_id is not None:
@@ -3194,6 +3197,10 @@ async def create_limit(
     if payload.applies_to == "each_user" and scope is not LimitScope.GLOBAL:
         raise BadRequestError(
             "Only a global rule can apply to each user. For one person, use a user rule."
+        )
+    if payload.overrides_each_user and scope is not LimitScope.USER:
+        raise BadRequestError(
+            "Only a user rule can override the each-user ceiling, for that one person."
         )
 
     # Fail now with a readable message rather than later with a rule that silently
@@ -3228,6 +3235,7 @@ async def create_limit(
         limit_value=payload.limit_value,
         is_active=payload.is_active,
         applies_to=LimitAppliesTo(payload.applies_to),
+        overrides_each_user=payload.overrides_each_user,
     )
     session.add(rule)
     record_audit(

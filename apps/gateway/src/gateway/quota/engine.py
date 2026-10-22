@@ -43,7 +43,7 @@ from gateway.models import (
     UsageStatus,
     User,
 )
-from gateway.periods import Period, period_containing
+from gateway.periods import Period, PeriodKind, period_containing
 from gateway.quota.counters import (
     CounterDelta,
     CounterStore,
@@ -309,7 +309,38 @@ class QuotaEngine:
             # the rows are being fetched either way.
             .execution_options(populate_existing=True)
         )
-        return list((await session.execute(stmt)).scalars().all())
+        return self.drop_overridden(list((await session.execute(stmt)).scalars().all()))
+
+    @staticmethod
+    def drop_overridden(rules: Sequence[LimitRule]) -> list[LimitRule]:
+        """Remove the global each-user rules an override replaces.
+
+        ``rules`` is one person's applicable set (the only user-scoped rules in
+        it are theirs). An active user rule flagged ``overrides_each_user``
+        replaces every global each-user rule with the same metric and window,
+        so the person is held to the override's figure, higher or lower. A
+        different metric or window is a different ceiling and stays. Done on
+        the rules already loaded, so admission, ``/api/me/limits`` and the
+        usage route pay no query for it, and the dropped rule is neither
+        evaluated nor notified for that person. Both read the person's
+        ``user:<id>`` counter, so turning an override on or off moves no data.
+        """
+        overridden = {
+            (rule.metric, rule.window_seconds, rule.period)
+            for rule in rules
+            if rule.scope is LimitScope.USER and rule.overrides_each_user and rule.is_active
+        }
+        if not overridden:
+            return list(rules)
+        return [
+            rule
+            for rule in rules
+            if not (
+                rule.scope is LimitScope.GLOBAL
+                and rule.applies_to is LimitAppliesTo.EACH_USER
+                and (rule.metric, rule.window_seconds, rule.period) in overridden
+            )
+        ]
 
     def window_for(
         self, rule: LimitRule, moment: datetime
@@ -790,11 +821,37 @@ class QuotaEngine:
             .scalars()
             .all()
         )
+        # A person with an active override is checked against it, not the
+        # global each-user rule it replaces: that rule's row for them is
+        # skipped, since it is not enforced on them and would report a window
+        # nobody is held to. The override's own row reads the same counter.
+        # Reconcile, by contrast, keeps every row: it repairs counters, and the
+        # replaced rule's counter must stay right for the day the override goes.
+        overrides: dict[tuple[LimitMetric, int | None, PeriodKind | None], set[uuid.UUID]] = {}
+        for rule in rules:
+            if (
+                rule.scope is LimitScope.USER
+                and rule.overrides_each_user
+                and rule.is_active
+                and rule.scope_id is not None
+            ):
+                overrides.setdefault((rule.metric, rule.window_seconds, rule.period), set()).add(
+                    rule.scope_id
+                )
         expanded: list[tuple[LimitRule, uuid.UUID | None, WindowQuery]] = []
         for rule in rules:
+            skip = (
+                overrides.get((rule.metric, rule.window_seconds, rule.period), set())
+                if rule.scope is LimitScope.GLOBAL
+                and rule.applies_to is LimitAppliesTo.EACH_USER
+                and rule.is_active
+                else set()
+            )
             for member, query in await self._queries_for_rule(
                 session, rule, moment, with_usage_only=False
             ):
+                if member in skip:
+                    continue
                 expanded.append((rule, member, query))
         queries = [query for _, _, query in expanded]
         ledger = await self._fallback.totals(queries, now=moment)

@@ -878,6 +878,8 @@ export interface CreateLimitInput {
   limit_value: string;
   /** "aggregate", "each_member" (group scope only) or "each_user" (global scope only). */
   applies_to?: string;
+  /** User scope only: replaces the global each-user ceiling for that person. */
+  overrides_each_user?: boolean;
 }
 
 export function useCreateLimit() {

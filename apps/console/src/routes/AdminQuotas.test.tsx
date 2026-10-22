@@ -393,6 +393,51 @@ describe("AdminQuotas", () => {
       expect(screen.queryByText("counter unavailable")).toBeNull();
     });
 
+    it("offers the override checkbox for one person only, and sends it", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const fetchMock = routes([rule()], { windows: [] }, [
+        { id: "u1", email: "ada@example.test", display_name: "Ada", subject: "s1" },
+      ]);
+      vi.stubGlobal("fetch", fetchMock);
+      renderScreen(<AdminQuotas />);
+      await user.click(await screen.findByRole("button", { name: "New rule" }));
+
+      const dialog = await screen.findByRole("dialog");
+      expect(within(dialog).queryByLabelText("Overrides everyone's ceiling")).toBeNull();
+      await user.selectOptions(within(dialog).getByLabelText("Scope"), "global");
+      expect(within(dialog).queryByLabelText("Overrides everyone's ceiling")).toBeNull();
+
+      await user.selectOptions(within(dialog).getByLabelText("Scope"), "user");
+      expect(within(dialog).getByText(/replaces every "each user separately" rule/)).toBeInTheDocument();
+      await user.selectOptions(await within(dialog).findByLabelText("User"), "u1");
+      await user.click(within(dialog).getByLabelText("Overrides everyone's ceiling"));
+      await user.click(within(dialog).getByRole("button", { name: "Create" }));
+
+      await waitFor(() => {
+        const post = fetchMock.mock.calls.find(
+          ([url, init]) =>
+            String(url).endsWith("/api/admin/limits") && init?.method === "POST",
+        );
+        expect(post).toBeDefined();
+        expect(JSON.parse(String(post![1]!.body))).toMatchObject({
+          scope: "user",
+          scope_id: "u1",
+          overrides_each_user: true,
+        });
+      });
+    });
+
+    it("marks an override rule in the list", async () => {
+      vi.stubGlobal(
+        "fetch",
+        routes([rule({ id: "r4", name: "ada higher", scope: "user", scope_id: "u1", overrides_each_user: true })]),
+      );
+      renderScreen(<AdminQuotas />);
+
+      await waitFor(() => expect(screen.getByText("ada higher")).toBeInTheDocument());
+      expect(screen.getByText("Overrides everyone's ceiling")).toBeInTheDocument();
+    });
+
     it("sends applies_to when creating a per-member rule", async () => {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
       const fetchMock = routes([rule()]);

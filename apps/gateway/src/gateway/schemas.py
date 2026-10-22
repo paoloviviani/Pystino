@@ -722,6 +722,8 @@ class LimitRuleResponse(BaseModel):
     limit_value: Money
     #: "aggregate", "each_member" (ADR 0098) or "each_user": whose budget this rule is.
     applies_to: str = "aggregate"
+    #: A user rule that replaces the global each-user ceiling for that person.
+    overrides_each_user: bool = False
     is_active: bool
     current_value: Money | None = None
     # Null unless the rule has ever been reset. Consumption before this instant
@@ -800,6 +802,9 @@ class MyLimitResponse(BaseModel):
     #: the scope's total. Additive,
     #: so existing consumers keep parsing.
     applies_to: str = "aggregate"
+    #: True on a rule that stands in for the global each-user ceiling for this
+    #: caller (the ceiling shown here is then their real one).
+    overrides_each_user: bool = False
     metric: str
     window_label: str = ""
     limit_value: Money
@@ -2008,6 +2013,11 @@ class LimitRuleCreateRequest(BaseModel):
     # refuses it regardless of writer. "each_user" caps every person's own
     # total across all their usage and is likewise global-scope only.
     applies_to: Literal["aggregate", "each_member", "each_user"] = "aggregate"
+    # On a user rule only: the person's ceiling replaces every global each-user
+    # rule with the same metric and window (higher or lower), instead of being
+    # added to it. The route refuses it on any other scope with a 400, the
+    # database regardless of writer.
+    overrides_each_user: bool = False
     # `own_search_requests` bounds **volume, not spend**: it counts calls to
     # our own web-search backends, whose per-request prices differ by more than
     # an order of magnitude between tiers (Exa `deep-reasoning` against
