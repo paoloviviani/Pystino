@@ -13,8 +13,13 @@ A deployment that ran the old adapter has rows that name it, so they are
 moved rather than left dangling: ``kind`` becomes ``generic`` and a
 ``keycloak_admin`` adapter becomes ``none``, with its stored service-account
 credentials and review state cleared (the secret is useless without the
-adapter). Users already created by earlier pulls keep their accounts and
-(issuer, subject) links; only the scheduled mirror stops. The downgrade is a
+adapter). A provider whose groups came from that mirror
+(``group_source = directory``) moves to ``none``, because ``directory`` with
+no adapter is a policy the console refuses to save: memberships stay as they
+are and are managed in the console from then on, rather than switching to the
+token's claim, which could empty them at the next login. Users already
+created by earlier pulls keep their accounts and (issuer, subject) links; only
+the scheduled mirror stops. The downgrade is a
 no-op: the old values cannot be recovered, and ``generic`` is valid on the
 older schema.
 """
@@ -35,8 +40,14 @@ def upgrade() -> None:
         "identity_providers",
         sa.column("kind", sa.String),
         sa.column("sync_adapter", sa.String),
+        sa.column("group_source", sa.String),
         sa.column("sync_config_encrypted", sa.Text),
         sa.column("sync_confirmed", sa.Boolean),
+    )
+    op.execute(
+        table.update()
+        .where(table.c.sync_adapter == "keycloak_admin", table.c.group_source == "directory")
+        .values(group_source="none")
     )
     op.execute(
         table.update()
