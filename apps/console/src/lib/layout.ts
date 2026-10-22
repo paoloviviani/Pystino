@@ -231,3 +231,22 @@ export const WIDE_LAYOUT_MAX_WIDTH = "104rem";
 export function isWideRoute(pathname: string): boolean {
   return WIDE_ROUTES.has(pathname.replace(/\/+$/, "") || "/");
 }
+
+/**
+ * Secondary text in a table cell — a description, a URL, an upstream name — on
+ * one line, cut with an ellipsis. Pair it with a `title` carrying the full
+ * text: the cell stays one line tall and nothing is lost to a mouse or a
+ * screen reader. The cap is what lets `truncate` work in an auto-width table,
+ * where a cell otherwise grows to fit its longest line.
+ */
+export const CLAMP = "block max-w-[min(26rem,70vw)] truncate";
+
+/** A short fingerprint of a secret: one line, never broken mid-token. */
+export const FINGERPRINT = "whitespace-nowrap font-mono";
+
+/** The tail of a key hint ("sk-a…p4dA" -> "…p4dA"); the full hint is the title. */
+export function shortHint(hint: string | null | undefined): string {
+  if (!hint) return "";
+  const at = hint.indexOf("\u2026");
+  return at >= 0 ? hint.slice(at) : hint.length > 5 ? `\u2026${hint.slice(-4)}` : hint;
+}

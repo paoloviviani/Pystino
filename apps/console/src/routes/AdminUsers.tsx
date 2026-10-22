@@ -250,6 +250,7 @@ export function AdminUsers() {
     },
     {
       key: "groups",
+      hideBelow: "md",
       header: m["admin_users.column.groups"](),
       render: (user) =>
         user.groups.length === 0 ? (
@@ -264,12 +265,14 @@ export function AdminUsers() {
     },
     {
       key: "billing",
+      hideBelow: "lg",
       header: m["admin_users.column.billing_group"](),
       render: (user) =>
         user.default_billing_group ?? <span className={MUTED}>{m["admin_users.billing_unset"]()}</span>,
     },
     {
       key: "keys",
+      hideBelow: "md",
       header: m["admin_users.column.keys"](),
       numeric: true,
       render: (user) => formatNumber(user.active_key_count),
@@ -303,6 +306,7 @@ export function AdminUsers() {
     },
     {
       key: "seen",
+      hideBelow: "lg",
       header: m["admin_users.column.last_login"](),
       render: (user) =>
         user.last_login_at ? (

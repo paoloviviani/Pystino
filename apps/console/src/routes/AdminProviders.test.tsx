@@ -207,7 +207,10 @@ describe("AdminProviders", () => {
     vi.stubGlobal("fetch", routes([provider()]));
     renderScreen(<AdminProviders />);
 
-    await waitFor(() => expect(screen.getByText("sk-a…3456")).toBeInTheDocument());
+    // The tail on one line; the whole hint is the title, so nothing is lost.
+    const tail = await screen.findByText("…3456");
+    expect(tail).toHaveAttribute("title", "sk-a…3456");
+    expect(screen.queryByText("sk-a…3456")).not.toBeInTheDocument();
   });
 
   it("says when a provider has no credential", async () => {

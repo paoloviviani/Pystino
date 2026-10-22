@@ -36,7 +36,7 @@ import {
   useProviders,
   useUpdateModel,
 } from "../lib/admin";
-import { CHIPS, CODE, FORM, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
+import { CHIPS, CLAMP, CODE, FORM, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
 import { usePaginated } from "../lib/paging";
 import type {
   AdminModel,
@@ -163,7 +163,9 @@ export function AdminModels() {
           {model.display_name && (
             <div className={CODE}>{model.name}</div>
           )}
-          <div className={`${MUTED} ${CODE}`}>{model.upstream_model}</div>
+          <div className={`${MUTED} ${CODE} ${CLAMP}`} title={model.upstream_model}>
+            {model.upstream_model}
+          </div>
         </>
       ),
     },
@@ -181,6 +183,7 @@ export function AdminModels() {
       // model behind a deactivated provider is unreachable, and that has to be
       // visible before someone spends time wondering why.
       hideBelow: "md",
+      nowrap: true,
       render: (model) => (
         <>
           <div>{model.provider_name}</div>

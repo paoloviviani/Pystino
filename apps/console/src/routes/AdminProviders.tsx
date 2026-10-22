@@ -29,7 +29,18 @@ import type {
   ProviderTestResult,
 } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
-import { CHIPS, CHECK_ITEM, CODE, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
+import {
+  CHIPS,
+  CHECK_ITEM,
+  CLAMP,
+  CODE,
+  FINGERPRINT,
+  MUTED,
+  NOWRAP,
+  PAGE,
+  ROW_ACTIONS,
+  shortHint,
+} from "../lib/layout";
 import { useOptionalToast } from "../lib/toast";
 import { formatNumber } from "../lib/format";
 import { m } from "../paraglide/messages.js";
@@ -78,19 +89,26 @@ export function AdminProviders() {
       render: (provider) => (
         <>
           <div>{provider.name}</div>
-          <div className={`${MUTED} ${CODE}`}>{provider.base_url}</div>
-          {provider.description && <div className={MUTED}>{provider.description}</div>}
+          <div className={`${MUTED} ${CODE} ${CLAMP}`} title={provider.base_url}>
+            {provider.base_url}
+          </div>
+          {provider.description && (
+            <div className={`${MUTED} ${CLAMP}`} title={provider.description}>
+              {provider.description}
+            </div>
+          )}
         </>
       ),
     },
     {
       key: "type",
+      hideBelow: "md",
       header: m["admin_providers.column.type"](),
       render: (provider) => (
         <>
           {/* The label, not the internal name: the operator chose "Cortecs
               (router)" and should see that back. */}
-          <div>{pluginLabel(plugins.data, provider.plugin)}</div>
+          <div className={NOWRAP}>{pluginLabel(plugins.data, provider.plugin)}</div>
           <div className={CHIPS}>
             {provider.kind === "router" && (
               <Badge tone="accent">{m["admin_providers.badge.router"]()}</Badge>
@@ -128,18 +146,22 @@ export function AdminProviders() {
     },
     {
       key: "credential",
+      hideBelow: "lg",
       header: m["admin_providers.column.api_key"](),
       render: (provider) =>
         provider.has_api_key ? (
           // Only ever a hint: the key itself is write-only and never leaves the
           // gateway (ADR 0027).
-          <span className={CODE}>{provider.api_key_hint}</span>
+          <span className={`${CODE} ${FINGERPRINT}`} title={provider.api_key_hint ?? undefined}>
+            {shortHint(provider.api_key_hint)}
+          </span>
         ) : (
           <span className={MUTED}>{m["admin_providers.no_key"]()}</span>
         ),
     },
     {
       key: "models",
+      hideBelow: "sm",
       header: m["admin_providers.column.models"](),
       numeric: true,
       render: (provider) => formatNumber(provider.model_count),

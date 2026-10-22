@@ -27,7 +27,16 @@ import {
 import type { AdminProvider, ProviderPlugin } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
-import { CHIPS, CODE, FORM, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
+import {
+  CHIPS,
+  CODE,
+  FINGERPRINT,
+  FORM,
+  MUTED,
+  PAGE,
+  ROW_ACTIONS,
+  shortHint,
+} from "../lib/layout";
 import { formatNumber } from "../lib/format";
 import { Message } from "../components/Message";
 import { m } from "../paraglide/messages.js";
@@ -85,7 +94,9 @@ export function AdminSearch() {
       header: m["admin_search.column.api_key"](),
       render: (backend) =>
         backend.has_api_key ? (
-          <span className={CODE}>{backend.api_key_hint}</span>
+          <span className={`${CODE} ${FINGERPRINT}`} title={backend.api_key_hint ?? undefined}>
+            {shortHint(backend.api_key_hint)}
+          </span>
         ) : (
           <span className={MUTED}>{m["admin_search.no_key"]()}</span>
         ),

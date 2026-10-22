@@ -18,6 +18,13 @@ export interface Column<Row> {
    * than by importance. Hiding says which ones are secondary.
    */
   hideBelow?: "sm" | "md" | "lg";
+  /**
+   * Keep each cell on one line. For short values that read as one token — a
+   * date, an address, a name — which otherwise break at a hyphen or a space
+   * ("provider-" / "1") the moment the column is squeezed. Numeric columns are
+   * always one line. A long value should be clamped by the cell instead.
+   */
+  nowrap?: boolean;
   render: (row: Row) => ReactNode;
 }
 
@@ -91,6 +98,8 @@ export function Table<Row>({
 
   const cellTone = (numeric?: boolean) =>
     cx(numeric && "text-right tabular-nums");
+  const cellWrap = (column: Column<Row>) =>
+    (column.nowrap || column.numeric) && "whitespace-nowrap";
 
   return (
     <div className="overflow-x-auto">
@@ -130,6 +139,7 @@ export function Table<Row>({
                     // read as a border under a border.
                     index < rows.length - 1 && "border-b border-line-quiet",
                     cellTone(column.numeric),
+                    cellWrap(column),
                     column.hideBelow && HIDE_BELOW[column.hideBelow],
                   )}
                 >
@@ -154,6 +164,7 @@ export function Table<Row>({
                     CELL_X,
                     "border-t border-line-strong py-2 font-bold",
                     cellTone(column.numeric),
+                    cellWrap(column),
                     // Not optional. Hiding a column in the head and body but
                     // not here leaves the total row one cell wider than the
                     // rest, so every figure in it lands under the wrong header.
