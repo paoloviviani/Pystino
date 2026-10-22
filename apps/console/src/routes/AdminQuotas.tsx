@@ -96,7 +96,9 @@ export function AdminQuotas() {
           <div className={`${MUTED} ${NOWRAP}`}>
             {rule.applies_to === "each_member"
               ? m["admin_quotas.window.per_member"]({ window: describeWindow(rule) })
-              : m["admin_quotas.window.per"]({ window: describeWindow(rule) })}
+              : rule.applies_to === "each_user"
+                ? m["admin_quotas.window.per_user"]({ window: describeWindow(rule) })
+                : m["admin_quotas.window.per"]({ window: describeWindow(rule) })}
           </div>
         </>
       ),
@@ -380,6 +382,10 @@ function Consumption({ rule }: { rule: LimitRule }) {
     // means the store could not be read and would be the wrong fact.
     return <span className={MUTED}>{m["admin_quotas.consumption.per_member_note"]()}</span>;
   }
+  if (rule.applies_to === "each_user") {
+    // Same reason: one budget per person, no single figure.
+    return <span className={MUTED}>{m["admin_quotas.consumption.per_user_note"]()}</span>;
+  }
   if (rule.current_value === null) {
     // A status, so a pill in the warn tone — but the words stay exactly as
     // they were ("counter unavailable", lowercase): the route tests pin that
@@ -435,9 +441,10 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
         // A non-global rule needs a target; the API refuses a null one, which is
         // deliberate — an accidentally global cap is far too easy otherwise.
         scope_id: scope === "global" ? null : scopeId || null,
-        // Per-member only means something for a group; the choice is offered
-        // there alone, and anything else goes out as the aggregate default.
-        applies_to: scope === "group" ? appliesTo : "aggregate",
+        // Per-member only means something for a group and per-user only for
+        // everyone; the choice is offered there alone, and anything else goes
+        // out as the aggregate default.
+        applies_to: scope === "group" || scope === "global" ? appliesTo : "aggregate",
         metric,
         window_seconds: kind === "rolling" ? Math.round(Number(hours) * 3600) : null,
         period: kind === "period" ? period : null,
@@ -505,6 +512,17 @@ function CreateRuleDialog({ open, onClose }: { open: boolean; onClose: () => voi
           >
             <option value="aggregate">{m["admin_quotas.create.applies.aggregate"]()}</option>
             <option value="each_member">{m["admin_quotas.create.applies.each_member"]()}</option>
+          </Select>
+        )}
+
+        {scope === "global" && (
+          <Select
+            label={m["admin_quotas.create.applies_to"]()}
+            value={appliesTo}
+            onChange={(e) => setAppliesTo(e.target.value)}
+          >
+            <option value="aggregate">{m["admin_quotas.create.applies.aggregate_global"]()}</option>
+            <option value="each_user">{m["admin_quotas.create.applies.each_user"]()}</option>
           </Select>
         )}
 

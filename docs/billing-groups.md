@@ -59,6 +59,9 @@ by changing their default.
   it. A per-member rule (`applies_to: each_member`) binds each person's own
   share; an aggregate rule binds the group's total, whoever sent the
   request.
+  A global per-user rule (`applies_to: each_user`) is not a group rule: it
+  caps each person across every group they bill to; see
+  [quotas](accounting-and-quotas.md).
 
 ## The default billing group
 

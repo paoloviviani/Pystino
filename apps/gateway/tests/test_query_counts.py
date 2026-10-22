@@ -292,6 +292,72 @@ class TestTheMeteredPath:
         assert member == aggregate, f"per-member rules cost extra queries: {aggregate} -> {member}"
         assert member[1] <= 2
 
+    async def test_a_per_user_rule_adds_no_queries(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        app: object,
+        fake_upstream: FakeUpstream,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        """A global each-user rule rides the one rule query and the user's own
+        counter: the metered path costs what it did with a plain global rule."""
+        from decimal import Decimal
+
+        from gateway.models import LimitAppliesTo, LimitMetric, LimitRule, LimitScope
+        from test_chat_completions import basic_request
+
+        engine = app.state.engine  # type: ignore[attr-defined]
+        completion = {
+            "id": "c1",
+            "object": "chat.completion",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+        }
+
+        async def make_rule(mode: str) -> None:
+            async with session_factory() as db:
+                db.add(
+                    LimitRule(
+                        name=f"rule {mode}",
+                        scope=LimitScope.GLOBAL,
+                        metric=LimitMetric.COST,
+                        window_seconds=3600,
+                        limit_value=Decimal("1000"),
+                        applies_to=LimitAppliesTo(mode),
+                    )
+                )
+                await db.commit()
+
+        async def metered() -> tuple[int, int]:
+            fake_upstream.set_json(completion)
+            with counted(engine) as statements:
+                response = await client.post(
+                    "/v1/chat/completions", json=basic_request(), headers=seeded.auth
+                )
+            assert response.status_code == 200
+            selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+            writes = [
+                s
+                for s in statements
+                if s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+            ]
+            return len(selects), len(writes)
+
+        await make_rule("aggregate")
+        await metered()
+        aggregate = await metered()
+
+        await make_rule("each_user")
+        per_user = await metered()
+
+        print(f"\n  global aggregate: {aggregate[0]} selects, {aggregate[1]} writes")
+        print(f"  global aggregate+each-user: {per_user[0]} selects, {per_user[1]} writes")
+        assert per_user == aggregate, (
+            f"per-user rules cost extra queries: {aggregate} -> {per_user}"
+        )
+        assert per_user[1] <= 2
+
 
 class TestTheAliasPath:
     """An alias costs one round trip more than the model it points at (ADR 0101).

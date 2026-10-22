@@ -3191,6 +3191,10 @@ async def create_limit(
         raise BadRequestError(f"A {scope.value} rule needs a scope_id.")
     if payload.applies_to == "each_member" and scope is not LimitScope.GROUP:
         raise BadRequestError("Only a group rule can apply per member.")
+    if payload.applies_to == "each_user" and scope is not LimitScope.GLOBAL:
+        raise BadRequestError(
+            "Only a global rule can apply to each user. For one person, use a user rule."
+        )
 
     # Fail now with a readable message rather than later with a rule that silently
     # matches nothing.

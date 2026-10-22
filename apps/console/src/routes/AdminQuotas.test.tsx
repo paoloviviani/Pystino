@@ -344,8 +344,53 @@ describe("AdminQuotas", () => {
       await user.selectOptions(within(dialog).getByLabelText("Scope"), "user");
       expect(within(dialog).queryByLabelText("Applies to")).toBeNull();
 
+      // Everyone has its own choice: the total, or each user separately.
       await user.selectOptions(within(dialog).getByLabelText("Scope"), "global");
-      expect(within(dialog).queryByLabelText("Applies to")).toBeNull();
+      const appliesTo = within(dialog).getByLabelText("Applies to");
+      expect(within(appliesTo).getByRole("option", { name: "Everyone's total" })).toBeInTheDocument();
+      expect(
+        within(appliesTo).getByRole("option", { name: "Each user separately" }),
+      ).toBeInTheDocument();
+      expect(within(appliesTo).queryByRole("option", { name: "Each member" })).toBeNull();
+    });
+
+    it("sends each_user when creating a rule for everyone's own ceiling", async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const fetchMock = routes([rule()]);
+      vi.stubGlobal("fetch", fetchMock);
+      renderScreen(<AdminQuotas />);
+      await user.click(await screen.findByRole("button", { name: "New rule" }));
+
+      const dialog = await screen.findByRole("dialog");
+      await user.selectOptions(within(dialog).getByLabelText("Scope"), "global");
+      await user.selectOptions(within(dialog).getByLabelText("Applies to"), "each_user");
+      await user.click(within(dialog).getByRole("button", { name: "Create" }));
+
+      await waitFor(() => {
+        const post = fetchMock.mock.calls.find(
+          ([url, init]) =>
+            String(url).endsWith("/api/admin/limits") && init?.method === "POST",
+        );
+        expect(post).toBeDefined();
+        expect(JSON.parse(String(post![1]!.body))).toMatchObject({
+          scope: "global",
+          scope_id: null,
+          applies_to: "each_user",
+        });
+      });
+    });
+
+    it("prints a per-user rule as per user with no single figure", async () => {
+      vi.stubGlobal(
+        "fetch",
+        routes([rule({ id: "r3", name: "personal ceiling", scope: "global", scope_id: null, applies_to: "each_user", current_value: null })]),
+      );
+      renderScreen(<AdminQuotas />);
+
+      await waitFor(() => expect(screen.getByText("personal ceiling")).toBeInTheDocument());
+      expect(screen.getByText("per month per user")).toBeInTheDocument();
+      expect(screen.getByText("per user · see health")).toBeInTheDocument();
+      expect(screen.queryByText("counter unavailable")).toBeNull();
     });
 
     it("sends applies_to when creating a per-member rule", async () => {
