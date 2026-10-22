@@ -2260,6 +2260,10 @@ class UsageReportRow(BaseModel):
     # came in through a name callers chose, which is the question they ask after
     # granting one to a group.
     via_alias_requests: int = 0
+    # Set only on a report with a ``split_by`` (the console's daily charts):
+    # the second grouping key of this (key, split) cell, e.g. day + provider.
+    split_key: str | None = None
+    split_label: str | None = None
 
 
 class BillingDrift(BaseModel):
@@ -2290,6 +2294,8 @@ class BillingDrift(BaseModel):
 class UsageReport(BaseModel):
     period: PeriodResponse
     group_by: str
+    #: The second dimension each row is also keyed by, when one was asked for.
+    split_by: str | None = None
     currency: str
     rows: list[UsageReportRow]
     totals: UsageReportRow

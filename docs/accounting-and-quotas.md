@@ -54,6 +54,17 @@ served it. A requests limit counts every attempt. See
 
 ## The request log
 
+**Reports by provider, and the console's charts.** `GET /api/admin/reports/usage`
+(and `/api/me/reports/usage` for the caller's own) takes `group_by=provider`:
+the provider that served the request, read from the model that served it, so a
+request sent to an alias and routed to a model on another provider counts for
+that provider. Rows whose model has since been deleted appear as
+"(unknown provider)". Adding `split_by` (`group`, `user`, `model` or `provider`;
+not `user` on the personal route) to a `group_by=day` report returns one row per
+day and breakdown value; the console's usage charts draw from exactly this, in
+the billing currency, with the largest six series plotted and the rest as
+"Other".
+
 The reports add rows up; the request log lists them. It shows one line per
 request, newest first: time, person, billing group, the model asked for and the
 model that served it (the alias and its target when an alias was used), tokens in,

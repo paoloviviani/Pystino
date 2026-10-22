@@ -25,6 +25,8 @@ from gateway.models import (
     LimitMetric,
     LimitRule,
     LimitScope,
+    ModelDef,
+    Provider,
     QuotaReset,
     UsageRecord,
     UsageSource,
@@ -56,6 +58,8 @@ async def record(
     status: UsageStatus = UsageStatus.COMPLETED,
     searches: int = 0,
     own_searches: int = 0,
+    model_id: uuid.UUID | None = None,
+    requested_model: str | None = None,
 ) -> UsageRecord:
     row = UsageRecord(
         request_id=f"r-{uuid.uuid4().hex[:8]}",
@@ -64,6 +68,8 @@ async def record(
         user_id=user_id,
         api_key_id=api_key_id,
         model_name=model,
+        model_id=model_id,
+        requested_model=requested_model,
         currency="EUR",
         prompt_tokens=prompt,
         completion_tokens=completion,
@@ -1012,3 +1018,165 @@ class TestOwnSearches:
         body = (await admin_client.get(f"/api/admin/reports/usage?period={THIS_MONTH}")).json()
         assert body["totals"]["own_searches"] == 0
         assert not any("own search backends" in n for n in body["disclosures"])
+
+
+async def second_provider(session: AsyncSession) -> ModelDef:
+    """A model on a provider other than the seeded ``fake`` one."""
+    provider = Provider(name="other-cloud", base_url="https://other.example/v1")
+    session.add(provider)
+    await session.flush()
+    model = ModelDef(
+        name="other-model",
+        upstream_model="vendor/other-model",
+        provider_id=provider.id,
+        context_window=8192,
+    )
+    session.add(model)
+    await session.commit()
+    return model
+
+
+class TestByProvider:
+    async def test_rows_are_grouped_by_the_serving_provider(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        other = await second_provider(session)
+        at = inside_this_month()
+        await record(session, model_id=seeded.model.id, cost="1", at=at)
+        await record(session, model_id=seeded.model.id, cost="2", at=at)
+        await record(session, model="other-model", model_id=other.id, cost="5", at=at)
+
+        body = (await admin_client.get("/api/admin/reports/usage?group_by=provider")).json()
+        by_label = {row["label"]: row for row in body["rows"]}
+        assert set(by_label) == {"fake", "other-cloud"}
+        assert by_label["fake"]["requests"] == 2
+        assert Decimal(by_label["fake"]["cost"]) == Decimal(3)
+        assert Decimal(by_label["other-cloud"]["cost"]) == Decimal(5)
+        assert Decimal(body["totals"]["cost"]) == Decimal(8)
+
+    async def test_an_alias_row_is_attributed_to_the_provider_of_its_target(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        """A request sent to alias ``fast`` and routed to a model on another
+        provider records the target's id and name, so its spend belongs to the
+        provider that served it, not to whichever provider the caller's usual
+        model lives on."""
+        other = await second_provider(session)
+        at = inside_this_month()
+        await record(
+            session,
+            model="other-model",
+            model_id=other.id,
+            requested_model="fast",
+            cost="7",
+            at=at,
+        )
+        await record(session, model_id=seeded.model.id, cost="1", at=at)
+
+        body = (await admin_client.get("/api/admin/reports/usage?group_by=provider")).json()
+        by_label = {row["label"]: row for row in body["rows"]}
+        assert Decimal(by_label["other-cloud"]["cost"]) == Decimal(7)
+        assert by_label["other-cloud"]["via_alias_requests"] == 1
+        assert Decimal(by_label["fake"]["cost"]) == Decimal(1)
+
+    async def test_a_row_whose_model_was_deleted_stays_visible(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession
+    ) -> None:
+        await record(session, model="retired", model_id=None, cost="4", at=inside_this_month())
+        body = (await admin_client.get("/api/admin/reports/usage?group_by=provider")).json()
+        assert [row["label"] for row in body["rows"]] == ["(unknown provider)"]
+        assert body["rows"][0]["key"] is None
+
+    async def test_the_csv_has_the_provider_group(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        await record(session, model_id=seeded.model.id, cost="3", at=inside_this_month())
+        response = await admin_client.get("/api/admin/reports/usage.csv?group_by=provider")
+        assert f"usage-{THIS_MONTH}-by-provider.csv" in response.headers["content-disposition"]
+        rows = list(csv.DictReader(io.StringIO(response.text)))
+        assert rows[0]["group_by"] == "provider"
+        assert rows[0]["label"] == "fake"
+
+
+class TestDailySplit:
+    """The chart endpoint is the report endpoint with a second key."""
+
+    async def test_day_by_provider_cells(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        other = await second_provider(session)
+        day1 = inside_this_month(48)
+        day2 = day1 + timedelta(days=1)
+        await record(session, model_id=seeded.model.id, cost="1", at=day1)
+        await record(session, model="other-model", model_id=other.id, cost="2", at=day1)
+        await record(session, model="other-model", model_id=other.id, cost="4", at=day2)
+
+        body = (
+            await admin_client.get("/api/admin/reports/usage?group_by=day&split_by=provider")
+        ).json()
+        assert body["split_by"] == "provider"
+        cells = {(row["label"], row["split_label"]): Decimal(row["cost"]) for row in body["rows"]}
+        assert cells[(day1.strftime("%Y-%m-%d"), "fake")] == Decimal(1)
+        assert cells[(day1.strftime("%Y-%m-%d"), "other-cloud")] == Decimal(2)
+        assert cells[(day2.strftime("%Y-%m-%d"), "other-cloud")] == Decimal(4)
+        assert len(cells) == 3
+        # Same totals as the unsplit report: one aggregate, one more key.
+        plain = (await admin_client.get("/api/admin/reports/usage?group_by=day")).json()
+        assert plain["totals"] == body["totals"]
+        assert plain["split_by"] is None
+        assert all(row["split_key"] is None for row in plain["rows"])
+
+    async def test_split_by_user_and_group(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        await record(
+            session, user_id=seeded.user.id, group_id=seeded.group.id, at=inside_this_month()
+        )
+        for dim, label in (("user", "member@example.org"), ("group", "research")):
+            body = (
+                await admin_client.get(f"/api/admin/reports/usage?group_by=day&split_by={dim}")
+            ).json()
+            assert [row["split_label"] for row in body["rows"]] == [label]
+
+    async def test_a_split_by_day_is_refused(self, admin_client: httpx.AsyncClient) -> None:
+        response = await admin_client.get("/api/admin/reports/usage?group_by=day&split_by=day")
+        assert response.status_code == 400
+
+    async def test_the_csv_carries_the_split_columns(
+        self, admin_client: httpx.AsyncClient, session: AsyncSession, seeded: Seeded
+    ) -> None:
+        await record(session, model_id=seeded.model.id, at=inside_this_month())
+        text = (
+            await admin_client.get("/api/admin/reports/usage.csv?group_by=day&split_by=provider")
+        ).text
+        row = next(csv.DictReader(io.StringIO(text)))
+        assert (row["split_by"], row["split_label"]) == ("provider", "fake")
+
+    async def test_a_person_only_ever_gets_their_own_cells(
+        self,
+        app: object,
+        client: httpx.AsyncClient,
+        session: AsyncSession,
+        seeded: Seeded,
+    ) -> None:
+        other = User(issuer="https://idp.test", subject="other", email="other@example.org")
+        session.add(other)
+        await session.flush()
+        as_user(app, seeded.user)
+        at = inside_this_month()
+        await record(session, user_id=other.id, model_id=seeded.model.id, cost="99", at=at)
+        await record(session, user_id=seeded.user.id, model_id=seeded.model.id, cost="1", at=at)
+
+        for split in ("provider", "model", "group"):
+            body = (await client.get(f"/api/me/reports/usage?group_by=day&split_by={split}")).json()
+            assert Decimal(body["totals"]["cost"]) == Decimal(1)
+        body = (await client.get("/api/me/reports/usage?group_by=provider")).json()
+        assert Decimal(body["totals"]["cost"]) == Decimal(1)
+        # Splitting by user is not offered on the personal surface.
+        assert (
+            await client.get("/api/me/reports/usage?group_by=day&split_by=user")
+        ).status_code == 400
+        # And the admin endpoint stays admin-only.
+        assert (
+            await client.get("/api/admin/reports/usage?group_by=day&split_by=user")
+        ).status_code == 403
