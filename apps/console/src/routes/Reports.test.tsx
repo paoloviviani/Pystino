@@ -194,4 +194,30 @@ describe("Reports", () => {
       ).toBe(true),
     );
   });
+
+  it("charts only its own usage, with no breakdown by user", async () => {
+    const fetchMock = respondWith(report());
+    vi.stubGlobal("fetch", fetchMock);
+    renderScreen();
+
+    const chart = await screen.findByLabelText("Chart breakdown");
+    const options = Array.from(chart.querySelectorAll("option")).map((o) => o.value);
+    expect(options).toEqual(["model", "provider", "group"]);
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some((call) => String(call[0]).includes("split_by=model")),
+      ).toBe(true),
+    );
+    const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(urls.every((url) => url.includes("/api/me/"))).toBe(true);
+    expect(urls.some((url) => url.includes("split_by=user"))).toBe(false);
+  });
+
+  it("offers a provider breakdown in the table", async () => {
+    vi.stubGlobal("fetch", respondWith(report()));
+    renderScreen();
+    const breakdown = await screen.findByLabelText("Breakdown");
+    const options = Array.from(breakdown.querySelectorAll("option")).map((o) => o.value);
+    expect(options).toContain("provider");
+  });
 });

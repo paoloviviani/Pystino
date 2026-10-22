@@ -21,7 +21,8 @@ import type {
 export const keys = {
   me: ["me"] as const,
   myKeys: ["me", "keys"] as const,
-  myReport: (period: string, groupBy: string) => ["me", "report", period, groupBy] as const,
+  myReport: (period: string, groupBy: string, splitBy: string) =>
+    ["me", "report", period, groupBy, splitBy] as const,
   myLimits: ["me", "limits"] as const,
 };
 
@@ -51,12 +52,15 @@ export function useMe() {
   });
 }
 
-export function useMyReport(period: string, groupBy: string) {
+export function useMyReport(period: string, groupBy: string, splitBy = "") {
   const query = period ? `period=${encodeURIComponent(period)}&` : "";
+  const split = splitBy ? `&split_by=${encodeURIComponent(splitBy)}` : "";
   return useQuery({
-    queryKey: keys.myReport(period, groupBy),
+    queryKey: keys.myReport(period, groupBy, splitBy),
     queryFn: () =>
-      request<UsageReport>(`/api/me/reports/usage?${query}group_by=${encodeURIComponent(groupBy)}`),
+      request<UsageReport>(
+        `/api/me/reports/usage?${query}group_by=${encodeURIComponent(groupBy)}${split}`,
+      ),
     retry: retryUnlessRejected,
   });
 }
