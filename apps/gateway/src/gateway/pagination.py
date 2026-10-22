@@ -27,11 +27,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from gateway.response_model import ResponseModel
+
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 
 
-class Page[T](BaseModel):
+class Page[T](ResponseModel):
     """A window onto a listing, and how big the listing actually is.
 
     ``total`` is what the filter matched, not what was returned: a client shows

@@ -28,9 +28,9 @@ the safe slice of that deferred work, not a down payment on the rest.
 from __future__ import annotations
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from gateway.deps import PrincipalDep
+from gateway.response_model import ResponseModel
 from gateway.schemas import GroupSummary
 
 router = APIRouter(prefix="/v1", tags=["pystino"])
@@ -42,7 +42,7 @@ class BillableGroup(GroupSummary):
     is_default: bool
 
 
-class BillableGroups(BaseModel):
+class BillableGroups(ResponseModel):
     """The caller's billable groups.
 
     ``object`` and ``data`` mirror every other ``/v1`` listing so a client
