@@ -296,7 +296,11 @@ What to know about GitLab:
   `/.well-known/openid-configuration` lists the `device_code` grant but no
   `device_authorization_endpoint`; the endpoint is
   `<issuer>/oauth/authorize_device`. galopin derives it (from 0.10.13 on); an
-  older galopin stops with *no device endpoint advertised*.
+  older galopin stops with *no device endpoint advertised*. `pystino idp check`
+  derives it the same way and reports `device flow: available via
+  <issuer>/oauth/authorize_device (not advertised; derived ...)`; it fails with
+  `device flow: MISSING` only for an issuer with no device endpoint and no way
+  to derive one.
 - **Revocation takes up to a minute.** Answers are cached in the gateway,
   keyed by a hash of the token (never the token), for 60 seconds or until the
   token's own `exp`, whichever is sooner; a refusal is cached for 10 seconds.

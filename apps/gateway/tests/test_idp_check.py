@@ -82,7 +82,9 @@ class FakeIdp:
         device: bool = True,
         wrong_issuer: bool = False,
         grant_types: list[str] | None = None,
+        discovery: dict[str, object] | None = None,
     ) -> None:
+        self.discovery = discovery
         self.key = key
         self.device = device
         # An override for testing an issuer whose grant list omits the device
@@ -100,6 +102,8 @@ class FakeIdp:
             doc = _discovery(issuer, device=self.device)
             if self.grant_types is not None:
                 doc["grant_types_supported"] = self.grant_types
+            if self.discovery is not None:
+                doc = {**self.discovery, "issuer": issuer}
             return httpx.Response(200, json=doc)
         if path.endswith("/jwks"):
             return httpx.Response(200, json=KeySet([self.key]).as_dict())
@@ -311,6 +315,84 @@ class TestDeviceFlow:
         )
         assert not report.ok
         assert any("no device_authorization_endpoint in discovery" in line for line in report.lines)
+
+    @staticmethod
+    def _gitlab_doc(grants: list[str] | None) -> dict[str, object]:
+        doc: dict[str, object] = {
+            "authorization_endpoint": f"{ISSUER}/oauth/authorize",
+            "token_endpoint": f"{ISSUER}/oauth/token",
+            "jwks_uri": f"{ISSUER}/oauth/discovery/keys",
+        }
+        if grants is not None:
+            doc["grant_types_supported"] = grants
+        return doc
+
+    async def test_gitlab_shaped_discovery_derives_the_device_endpoint(
+        self, signing_key: RSAKey
+    ) -> None:
+        """No device_authorization_endpoint, the short grant spelling, and
+        Doorkeeper's /oauth/authorize: galopin enrolls, so the check passes."""
+        doc = self._gitlab_doc(["authorization_code", "refresh_token", "device_code"])
+        idp = FakeIdp(signing_key, discovery=doc)
+        report = await run_check(
+            _settings(),
+            discovery_only=True,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(idp)),
+        )
+        joined = "\n".join(report.lines)
+        assert f"device flow: available via {ISSUER}/oauth/authorize_device" in joined
+        assert "as galopin does" in joined
+        assert "MISSING" not in joined
+
+    async def test_the_urn_grant_also_derives_for_doorkeeper(self, signing_key: RSAKey) -> None:
+        doc = self._gitlab_doc(["urn:ietf:params:oauth:grant-type:device_code"])
+        report = await run_check(
+            _settings(),
+            discovery_only=True,
+            http=httpx.AsyncClient(
+                transport=httpx.MockTransport(FakeIdp(signing_key, discovery=doc))
+            ),
+        )
+        assert not any("MISSING" in line for line in report.lines)
+
+    async def test_the_short_grant_spelling_is_accepted_with_an_advertised_endpoint(
+        self, signing_key: RSAKey
+    ) -> None:
+        idp = FakeIdp(signing_key, device=True, grant_types=["authorization_code", "device_code"])
+        report = await run_check(
+            _settings(),
+            discovery_only=True,
+            http=httpx.AsyncClient(transport=httpx.MockTransport(idp)),
+        )
+        assert report.ok
+        assert any("device flow: available (galopin can enroll)" in x for x in report.lines)
+
+    async def test_infomaniak_shaped_discovery_still_fails(self, signing_key: RSAKey) -> None:
+        """No endpoint, no device grant: nothing to derive from."""
+        doc = self._gitlab_doc(["authorization_code", "refresh_token", "password"])
+        report = await run_check(
+            _settings(),
+            discovery_only=True,
+            http=httpx.AsyncClient(
+                transport=httpx.MockTransport(FakeIdp(signing_key, discovery=doc))
+            ),
+        )
+        assert not report.ok
+        assert any("device flow: MISSING" in line for line in report.lines)
+
+    async def test_a_non_doorkeeper_issuer_listing_the_grant_is_not_guessed(
+        self, signing_key: RSAKey
+    ) -> None:
+        doc = self._gitlab_doc(["device_code"])
+        doc["authorization_endpoint"] = f"{ISSUER}/auth"
+        report = await run_check(
+            _settings(),
+            discovery_only=True,
+            http=httpx.AsyncClient(
+                transport=httpx.MockTransport(FakeIdp(signing_key, discovery=doc))
+            ),
+        )
+        assert not report.ok
 
     async def test_a_grant_list_omitting_the_device_grant_fails_too(
         self, signing_key: RSAKey
