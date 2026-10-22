@@ -45,13 +45,22 @@ and the alias is kept beside it so a report can say "via alias" and a retarget
 cannot rewrite the row. It is a copy of a string, not a foreign key, so an
 alias that is deleted or retargeted leaves the ledger readable.
 
+**Fallback attempts.** An alias with several targets can try more than one for a
+request. Each attempt is its own row under the same `request_id`, numbered in
+`route_attempt`: a failed attempt is `upstream_error` at zero cost against the
+target that failed, and the attempt that served is billed to the target that
+served it. A requests limit counts every attempt. See
+[routing policies](model-aliases.md#routing-several-targets-per-alias).
+
 ## The request log
 
 The reports add rows up; the request log lists them. It shows one line per
 request, newest first: time, person, billing group, the model asked for and the
 model that served it (the alias and its target when an alias was used), tokens in,
 out and cached, cost, latency, status and source (`api_key` when a gateway API
-key authenticated the request, `token` for a sign-in token or session).
+key authenticated the request, `token` for a sign-in token or session). A request
+that fell back to another target of an alias has one line per attempt, with the
+attempt number.
 
 **It never carries content.** The listing reads named metadata columns only.
 `assistant_text` and `error_message` are not selected, so neither the reply nor a

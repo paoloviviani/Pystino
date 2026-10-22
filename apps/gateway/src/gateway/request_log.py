@@ -52,6 +52,7 @@ CSV_HEADER = [
     "latency_ms",
     "status",
     "source",
+    "attempt",
 ]
 
 
@@ -101,6 +102,7 @@ def _listing_query(f: RequestLogFilter) -> Select[Any]:
             UsageRecord.group_id,
             Group.name.label("group_name"),
             UsageRecord.requested_model,
+            UsageRecord.route_attempt,
             UsageRecord.model_name,
             UsageRecord.upstream_model,
             UsageRecord.streamed,
@@ -130,6 +132,7 @@ def _row(r: Any) -> RequestLogRow:
         group_id=r.group_id,
         group_name=r.group_name,
         requested_model=r.requested_model,
+        route_attempt=r.route_attempt,
         model=r.model_name,
         upstream_model=r.upstream_model,
         streamed=bool(r.streamed),
@@ -197,6 +200,7 @@ async def requests_to_csv(session: AsyncSession, f: RequestLogFilter) -> str:
                 "" if r.latency_ms is None else r.latency_ms,
                 r.status,
                 r.source,
+                "" if r.route_attempt is None else r.route_attempt,
             ]
         )
     return buffer.getvalue()

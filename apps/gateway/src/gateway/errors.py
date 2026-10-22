@@ -165,9 +165,11 @@ class AliasUnavailableError(GatewayError):
     unknown. Answering 404 would tell a client to re-enrol a model that is there,
     and would hide the reason from the administrator who can fix it.
 
-    Never silently served by anything else. An alias that quietly fell back to a
-    second model would bill the target's price for work a different model did,
-    which is the one thing the alias's name is supposed to promise.
+    Never silently served by anything else *unless the operator gave the alias
+    several targets* (issue P1): then a failing target moves the request to the
+    next one, and the ledger says which served. An alias with one target that
+    quietly fell back to some other model would bill that model's price for work
+    it never agreed to do, which is why this stays a refusal.
 
     Separate from :class:`UpstreamUnavailableError` (a 502) on purpose: that one
     is the provider refusing or being unreachable, this one is us knowing before

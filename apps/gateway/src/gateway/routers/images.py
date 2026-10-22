@@ -43,6 +43,7 @@ from gateway.deps import (
 from gateway.errors import BadRequestError, error_payload
 from gateway.models import ApiSurface
 from gateway.routers import _metered
+from gateway.routing import affinity_key
 from gateway.schemas import ImageGenerationRequest
 from gateway.upstream import UpstreamError
 
@@ -69,86 +70,96 @@ async def create_image(
         raise BadRequestError("'prompt' must not be empty.")
 
     request_id = _metered.request_id_for(request, settings)
-    resolved = await _metered.resolve_model(
-        session, body.model, principal=principal, surface=SURFACE
-    )
-    # The target, when the name sent was an alias (ADR 0101); everything below
-    # follows what serves the request.
-    model = resolved.model
-    upstream = await _metered.resolve_upstream(providers, resolved)
-
-    outcome = await _metered.redact_or_block(
-        request,
-        [{"role": "user", "content": body.prompt}],
-        redactor=redactor,
-        session=session,
+    plan = await _metered.resolve_plan(
+        session,
+        body.model,
         principal=principal,
-        model=model,
-        settings=settings,
         surface=SURFACE,
-        request_id=request_id,
-    )
-    redacted_prompt = str(outcome.messages[0].get("content") or "") if outcome.messages else ""
-
-    # The reservation has to cover the pictures, not just the prompt: on a
-    # per-image-priced model the prompt is a rounding error and `n` is the
-    # bill. Asked for up front, because `n` is in the request.
-    prompt_tokens = estimator.count_text(redacted_prompt)
-    worst_case = TokenCounts(
-        prompt=prompt_tokens, completion=0, images=body.n, image_size=body.size
-    )
-
-    metered = await _metered.begin(
+        affinity=affinity_key(request.headers, body),
         fx=request.app.state.fx,
-        session_factory=request.app.state.session_factory,
-        session=session,
-        principal=principal,
-        settings=settings,
-        quota=quota,
-        estimator=estimator,
-        resolved=resolved,
-        surface=SURFACE,
-        request_id=request_id,
-        worst_case=worst_case,
-        outcome=outcome,
-        streamed=False,
+        currency=settings.billing_currency,
     )
-    if isinstance(metered, JSONResponse):
-        return metered
 
-    payload = body.upstream_payload(outcome, upstream_model=resolved.upstream_model)
-    payload = metered.shape_payload(payload, surface=SURFACE)
+    async def serve(resolved: _metered.ResolvedModel) -> JSONResponse:
+        # The target, when the name sent was an alias (ADR 0101); everything below
+        # follows what serves the request.
+        model = resolved.model
+        upstream = await _metered.resolve_upstream(providers, resolved)
 
-    try:
-        response = await upstream.images(payload, request_id=request_id)
-    except UpstreamError as exc:
-        raise await metered.upstream_unreachable(exc) from exc
+        outcome = await _metered.redact_or_block(
+            request,
+            [{"role": "user", "content": body.prompt}],
+            redactor=redactor,
+            session=session,
+            principal=principal,
+            model=model,
+            settings=settings,
+            surface=SURFACE,
+            request_id=request_id,
+        )
+        redacted_prompt = str(outcome.messages[0].get("content") or "") if outcome.messages else ""
 
-    if response.status_code >= 400:
-        return await metered.upstream_refused(
-            status_code=response.status_code,
-            message=_metered.error_text(response.payload),
-            content=response.payload
-            or error_payload("The upstream provider returned an error.", type_="api_error"),
+        # The reservation has to cover the pictures, not just the prompt: on a
+        # per-image-priced model the prompt is a rounding error and `n` is the
+        # bill. Asked for up front, because `n` is in the request.
+        prompt_tokens = estimator.count_text(redacted_prompt)
+        worst_case = TokenCounts(
+            prompt=prompt_tokens, completion=0, images=body.n, image_size=body.size
         )
 
-    out = dict(response.payload or {})
-    metered.accounting.observe_payload(out, headers=response.headers)
-    # Counted from what came back, not from what was asked for: a provider that
-    # returns three images for a request for four must be billed for three.
-    produced = sum(1 for entry in out.get("data") or [] if isinstance(entry, dict))
-    metered.accounting.observe_images(produced, _reported_size(out) or body.size)
+        metered = await _metered.begin(
+            fx=request.app.state.fx,
+            session_factory=request.app.state.session_factory,
+            session=session,
+            principal=principal,
+            settings=settings,
+            quota=quota,
+            estimator=estimator,
+            resolved=resolved,
+            surface=SURFACE,
+            request_id=request_id,
+            worst_case=worst_case,
+            outcome=outcome,
+            streamed=False,
+        )
+        if isinstance(metered, JSONResponse):
+            return metered
 
-    for entry in out.get("data") or []:
-        if isinstance(entry, dict) and isinstance(entry.get("revised_prompt"), str):
-            restored = await redactor.restore_response(entry["revised_prompt"], outcome)
-            entry["revised_prompt"] = restored.text
+        payload = body.upstream_payload(outcome, upstream_model=resolved.upstream_model)
+        payload = metered.shape_payload(payload, surface=SURFACE)
 
-    return JSONResponse(
-        status_code=response.status_code,
-        content=out,
-        background=metered.completed_after_response(upstream_status=response.status_code),
-    )
+        try:
+            response = await upstream.images(payload, request_id=request_id)
+        except UpstreamError as exc:
+            raise await metered.upstream_unreachable(exc) from exc
+
+        if response.status_code >= 400:
+            return await metered.upstream_refused(
+                status_code=response.status_code,
+                message=_metered.error_text(response.payload),
+                content=response.payload
+                or error_payload("The upstream provider returned an error.", type_="api_error"),
+            )
+
+        out = dict(response.payload or {})
+        metered.accounting.observe_payload(out, headers=response.headers)
+        # Counted from what came back, not from what was asked for: a provider that
+        # returns three images for a request for four must be billed for three.
+        produced = sum(1 for entry in out.get("data") or [] if isinstance(entry, dict))
+        metered.accounting.observe_images(produced, _reported_size(out) or body.size)
+
+        for entry in out.get("data") or []:
+            if isinstance(entry, dict) and isinstance(entry.get("revised_prompt"), str):
+                restored = await redactor.restore_response(entry["revised_prompt"], outcome)
+                entry["revised_prompt"] = restored.text
+
+        return JSONResponse(
+            status_code=response.status_code,
+            content=out,
+            background=metered.completed_after_response(upstream_status=response.status_code),
+        )
+
+    return await _metered.serve_with_failover(session, plan, serve)
 
 
 def _reported_size(payload: dict[str, object]) -> str | None:

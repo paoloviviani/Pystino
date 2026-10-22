@@ -678,11 +678,19 @@ export interface AliasCreateInput {
   name: string;
   display_name?: string | null;
   description?: string | null;
-  /** Exactly one target for this step (ADR 0101): the routing table it leaves
-   *  behind is a list, but the save path refuses a second row. */
-  target_model_id: string;
+  /** The ordered route; position is the index (issue P1). */
+  targets: AliasTargetInput[];
+  route_rule?: string;
+  route_sticky_ttl_seconds?: number;
+  route_price_input_weight?: number;
+  route_price_output_weight?: number;
   is_active?: boolean;
   is_public?: boolean;
+}
+
+export interface AliasTargetInput {
+  model_id: string;
+  weight?: number;
 }
 
 /** Every field optional; only what is sent is changed, matching the API.
@@ -692,7 +700,12 @@ export interface AliasUpdateInput {
   name?: string;
   display_name?: string | null;
   description?: string | null;
-  target_model_id?: string;
+  /** Replaces the whole route, in this order. */
+  targets?: AliasTargetInput[];
+  route_rule?: string;
+  route_sticky_ttl_seconds?: number;
+  route_price_input_weight?: number;
+  route_price_output_weight?: number;
   is_active?: boolean;
   is_public?: boolean;
 }

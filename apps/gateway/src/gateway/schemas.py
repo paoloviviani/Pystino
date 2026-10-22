@@ -1247,7 +1247,7 @@ class ModelAdminResponse(BaseModel):
 
 
 class AliasTargetResponse(BaseModel):
-    """The model an alias serves, as the admin surface shows it.
+    """A model an alias may be served by, as the admin surface shows it.
 
     Not the same shape as `ModelAdminResponse`: no provider, no prices, no
     upstream name — an administrator retargeting an alias is choosing between
@@ -1258,6 +1258,15 @@ class AliasTargetResponse(BaseModel):
     name: str
     kind: str
     is_active: bool
+    #: Order of preference (0 first). What `first_available` follows and what
+    #: ties fall back to under the other rules.
+    position: int = 0
+    #: Relative share under the `weighted` rule.
+    weight: int = 1
+    #: Whether this target can serve a request right now, and if not why — the
+    #: same reasons, from the same function, as the alias-level status.
+    available: bool = True
+    unavailable_reason: str | None = None
 
 
 class AliasResponse(BaseModel):
@@ -1270,11 +1279,25 @@ class AliasResponse(BaseModel):
     kind: str
     is_active: bool
     is_public: bool
-    #: Null when the alias has no target, which is one of the three states an
-    #: alias can be in (ADR 0101, decision 5) rather than an error.
+    #: The first target in the operator's order, or null when the alias has
+    #: none (one of the states an alias can be in, ADR 0101 decision 5, rather
+    #: than an error). Kept for clients written before routing; `targets` is the
+    #: whole route.
     target: AliasTargetResponse | None
-    #: `available`, or `unavailable` with `unavailable_reason` set to one of
-    #: `target_deleted`, `target_inactive`, `target_provider_inactive`.
+    #: Every target, in order.
+    targets: list[AliasTargetResponse] = Field(default_factory=list)
+    #: How a request picks among `targets`: `first_available`, `weighted` or
+    #: `cheapest`.
+    route_rule: str = "first_available"
+    #: How long a session stays on the target that served it; 0 is off.
+    route_sticky_ttl_seconds: int = 3600
+    #: How `cheapest` weighs input against output rates (input * this +
+    #: output * that). 1:1 by default.
+    route_price_input_weight: int = 1
+    route_price_output_weight: int = 1
+    #: `available` while at least one target can serve, otherwise `unavailable`
+    #: with `unavailable_reason` set to one of `target_deleted`,
+    #: `target_inactive`, `target_provider_inactive`.
     status: str
     unavailable_reason: str | None = None
     granted_to: list[str] = Field(default_factory=list)
@@ -1282,19 +1305,46 @@ class AliasResponse(BaseModel):
     created_at: datetime
 
 
+class AliasTargetInput(BaseModel):
+    """One target in a create or update: which model, and its weight."""
+
+    model_id: uuid.UUID
+    weight: int = Field(default=1, ge=1, le=1000)
+
+
+#: A bound on a route, matching `routing.MAX_ATTEMPTS`' spirit: more targets than
+#: a request will ever try is configuration nobody can reason about.
+MAX_ALIAS_TARGETS = 16
+
+
 class AliasCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
-    #: The one model this alias serves. Must exist, must not be an alias, and
-    #: must be active — all checked in the save path rather than by the schema,
-    #: because each is a fact about another row.
-    target_model_id: uuid.UUID
+    #: The one model this alias serves — the single-target spelling, kept. Send
+    #: this **or** `targets`. Must exist, must not be an alias, and must be
+    #: active — all checked in the save path rather than by the schema, because
+    #: each is a fact about another row.
+    target_model_id: uuid.UUID | None = None
+    #: The ordered route (position is the index). Same checks per entry.
+    targets: list[AliasTargetInput] | None = Field(default=None, max_length=MAX_ALIAS_TARGETS)
+    route_rule: str = Field(default="first_available", max_length=32)
+    route_sticky_ttl_seconds: int = Field(default=3600, ge=0, le=2_592_000)
+    route_price_input_weight: int = Field(default=1, ge=1, le=1000)
+    route_price_output_weight: int = Field(default=1, ge=1, le=1000)
     is_active: bool = True
     # Defaults closed, as for a model (ADR 0045): widening access is a decision,
     # and granting an alias is how a caller gets a model they cannot otherwise
     # reach.
     is_public: bool = False
+
+    @model_validator(mode="after")
+    def _one_way_to_name_targets(self) -> AliasCreateRequest:
+        if (self.target_model_id is None) == (self.targets is None):
+            raise ValueError("send exactly one of 'target_model_id' and 'targets'")
+        if self.targets is not None and not self.targets:
+            raise ValueError("'targets' must name at least one model")
+        return self
 
 
 class AliasUpdateRequest(BaseModel):
@@ -1304,14 +1354,30 @@ class AliasUpdateRequest(BaseModel):
     alias name into the ledger — `usage_records.requested_model` is a copy of a
     string, not a foreign key — and a stable name is the whole point of an
     alias, so being unable to fix a typo in one would be its own kind of bug.
+
+    ``targets`` replaces the whole route; ``target_model_id`` replaces it with
+    that one model (weight 1). Sending both is refused.
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     target_model_id: uuid.UUID | None = None
+    targets: list[AliasTargetInput] | None = Field(default=None, max_length=MAX_ALIAS_TARGETS)
+    route_rule: str | None = Field(default=None, max_length=32)
+    route_sticky_ttl_seconds: int | None = Field(default=None, ge=0, le=2_592_000)
+    route_price_input_weight: int | None = Field(default=None, ge=1, le=1000)
+    route_price_output_weight: int | None = Field(default=None, ge=1, le=1000)
     is_active: bool | None = None
     is_public: bool | None = None
+
+    @model_validator(mode="after")
+    def _one_way_to_name_targets(self) -> AliasUpdateRequest:
+        if self.target_model_id is not None and self.targets is not None:
+            raise ValueError("send only one of 'target_model_id' and 'targets'")
+        if self.targets is not None and not self.targets:
+            raise ValueError("'targets' must name at least one model")
+        return self
 
 
 class IdentityProviderResponse(BaseModel):
@@ -2052,6 +2118,11 @@ class RequestLogRow(BaseModel):
     group_name: str | None
     #: The alias the caller asked for, when they asked for one; null otherwise.
     requested_model: str | None
+    #: Which try this row is, when the alias has several targets (1 is the
+    #: first target chosen). A request that fell back shows one row per attempt
+    #: under one request id: the failed ones `upstream_error`, the last the one
+    #: that served. Null for a direct call and a single-target alias.
+    route_attempt: int | None = None
     #: The model that served it (the alias's target when an alias was used).
     model: str
     #: What the provider reported answering, when it said.

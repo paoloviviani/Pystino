@@ -24,7 +24,7 @@ import {
 import { CHIPS, CODE, FORM, FORM_ROW, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
 import { Message } from "../components/Message";
 import { m } from "../paraglide/messages.js";
-import type { AdminAlias, AliasUnavailableReason, ModelKind } from "../lib/types";
+import type { AdminAlias, AliasTarget, AliasUnavailableReason, ModelKind } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 
 /**
@@ -63,6 +63,47 @@ const REASONS: Record<AliasUnavailableReason, { label: () => string; body: () =>
   },
 };
 
+/** The rules the gateway offers, as the picker lists them. The gateway
+ *  validates the name, so a rule added there needs a line here and nothing
+ *  else; one this table does not know renders as its own name. */
+const RULES = ["first_available", "weighted", "cheapest"] as const;
+
+const RULE_LABELS: Record<(typeof RULES)[number], () => string> = {
+  first_available: () => m["admin_routing.rule.first_available"](),
+  weighted: () => m["admin_routing.rule.weighted"](),
+  cheapest: () => m["admin_routing.rule.cheapest"](),
+};
+
+/**
+ * The reason's words, or a generic pair for a code this console does not know
+ * yet: a newer gateway may add one, and an unknown code must not take the
+ * whole page down (a plain table lookup returned undefined and `.label()`
+ * threw, leaving a blank screen).
+ */
+function reasonOf(code: string): { label: () => string; body: () => string } {
+  return (
+    (REASONS as Record<string, { label: () => string; body: () => string } | undefined>)[code] ?? {
+      label: () => m["admin_routing.badge.unknown_reason"]({ code }),
+      body: () => m["admin_routing.reason.unknown_reason"]({ code }),
+    }
+  );
+}
+
+const RULE_HINTS: Record<(typeof RULES)[number], () => string> = {
+  first_available: () => m["admin_routing.rule.first_available_hint"](),
+  weighted: () => m["admin_routing.rule.weighted_hint"](),
+  cheapest: () => m["admin_routing.rule.cheapest_hint"](),
+};
+
+function ruleLabel(rule: string): string {
+  return (RULE_LABELS as Record<string, (() => string) | undefined>)[rule]?.() ?? rule;
+}
+
+/** Whole minutes, which is how an administrator thinks about a session. */
+function minutesOf(seconds: number): number {
+  return Math.round(seconds / 60);
+}
+
 export function AdminRouting() {
   const aliases = useAliases();
   const create = useCreateAlias();
@@ -96,12 +137,47 @@ export function AdminRouting() {
       key: "target",
       header: m["admin_routing.column.target"](),
       render: (alias) =>
-        alias.target ? (
-          // A real link to the model, because "what is `fast` actually?" is the
-          // question this column exists to answer and it should be one click.
-          <Link to={`/admin/models/${alias.target.id}`}>{alias.target.name}</Link>
-        ) : (
+        alias.targets.length === 0 ? (
           <span className={MUTED}>{m["admin_routing.form.target_none"]()}</span>
+        ) : (
+          <>
+            {/* In the order the rule starts from. Each is a real link to the
+                model, because "what is `fast` actually?" is the question this
+                column exists to answer and it should be one click. */}
+            <ol className="m-0 list-none p-0">
+              {alias.targets.map((target) => (
+                <li key={target.id} className="flex flex-wrap items-center gap-1">
+                  <Link to={`/admin/models/${target.id}`}>{target.name}</Link>
+                  {alias.route_rule === "weighted" ? (
+                    <span className={MUTED}>
+                      {m["admin_routing.row.weight"]({ weight: target.weight })}
+                    </span>
+                  ) : null}
+                  {!target.available && target.unavailable_reason ? (
+                    <Badge tone="danger">{reasonOf(target.unavailable_reason).label()}</Badge>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+            {alias.targets.length > 1 ? (
+              <div className={MUTED}>
+                {ruleLabel(alias.route_rule)}
+                {" · "}
+                {alias.route_sticky_ttl_seconds > 0
+                  ? m["admin_routing.row.sticky"]({
+                      minutes: minutesOf(alias.route_sticky_ttl_seconds),
+                    })
+                  : m["admin_routing.row.not_sticky"]()}
+                {alias.route_rule === "cheapest" &&
+                (alias.route_price_input_weight !== 1 || alias.route_price_output_weight !== 1)
+                  ? ` · ${m["admin_routing.row.price_weights"]({
+                      input: alias.route_price_input_weight,
+                      output: alias.route_price_output_weight,
+                    })}`
+                  : null}
+              </div>
+            ) : null}
+          </>
         ),
     },
     {
@@ -139,7 +215,7 @@ export function AdminRouting() {
             <Badge tone="danger">
               {m["admin_routing.badge.unavailable"]()}
               {alias.unavailable_reason
-                ? ` — ${REASONS[alias.unavailable_reason].label()}`
+                ? ` — ${reasonOf(alias.unavailable_reason).label()}`
                 : ""}
             </Badge>
           )}
@@ -229,8 +305,8 @@ export function AdminRouting() {
       {rows
         .filter((alias) => alias.status === "unavailable" && alias.unavailable_reason)
         .map((alias) => (
-          <Notice key={alias.id} tone="danger" title={`${alias.name} — ${REASONS[alias.unavailable_reason!].label()}`}>
-            {REASONS[alias.unavailable_reason!].body()}
+          <Notice key={alias.id} tone="danger" title={`${alias.name} — ${reasonOf(alias.unavailable_reason!).label()}`}>
+            {reasonOf(alias.unavailable_reason!).body()}
           </Notice>
         ))}
 
@@ -341,14 +417,23 @@ export function AdminRouting() {
   );
 }
 
+interface TargetRow {
+  /** Stable across re-ordering, so React keeps each row's focus. */
+  key: number;
+  modelId: string;
+  weight: string;
+}
+
 /**
  * Create and edit, as one form.
  *
- * The target is chosen from active, non-alias models, and the kind follows it.
- * Retargeting across kinds is refused by the gateway (ADR 0101, "Designed for
- * routing": the targets of one alias must be interchangeable), so the picker
- * simply does not offer them — a control that could be set to something the
- * server would reject is worse than one that cannot be set to it.
+ * The route is a list: each row picks a model and, under the weighted rule, a
+ * share. Order is the operator's order (first available starts from the top; a
+ * tie under the other rules falls back to it). The kind follows the first
+ * target on create and is fixed on edit: the gateway refuses a route whose
+ * targets serve different API surfaces (ADR 0101, "Designed for routing"), so
+ * the pickers simply do not offer them — a control that could be set to
+ * something the server would reject is worse than one that cannot be.
  */
 function AliasDialog({
   alias,
@@ -363,7 +448,11 @@ function AliasDialog({
     name: string;
     display_name: string | null;
     description: string | null;
-    target_model_id: string;
+    targets: { model_id: string; weight: number }[];
+    route_rule: string;
+    route_sticky_ttl_seconds?: number;
+    route_price_input_weight: number;
+    route_price_output_weight: number;
     is_public: boolean;
   }) => void;
 }) {
@@ -375,59 +464,92 @@ function AliasDialog({
   const [name, setName] = useState(alias?.name ?? "");
   const [displayName, setDisplayName] = useState(alias?.display_name ?? "");
   const [description, setDescription] = useState(alias?.description ?? "");
-  const [targetId, setTargetId] = useState(alias?.target?.id ?? "");
   const [isPublic, setIsPublic] = useState(alias?.is_public ?? false);
+  const [rule, setRule] = useState<string>(alias?.route_rule ?? "first_available");
+  const initialMinutes = minutesOf(alias?.route_sticky_ttl_seconds ?? 3600);
+  const [minutes, setMinutes] = useState(String(initialMinutes));
+  const [inputWeight, setInputWeight] = useState(String(alias?.route_price_input_weight ?? 1));
+  const [outputWeight, setOutputWeight] = useState(String(alias?.route_price_output_weight ?? 1));
+  const [nextKey, setNextKey] = useState(1000);
+  const [rows, setRows] = useState<TargetRow[]>(() =>
+    alias && alias.targets.length > 0
+      ? alias.targets.map((target, index) => ({
+          key: index,
+          modelId: target.id,
+          weight: String(target.weight),
+        }))
+      : [{ key: 0, modelId: "", weight: "1" }],
+  );
 
   const all = models.data?.items ?? [];
   const candidates = all.filter(
     (model) => model.kind !== "search" && model.provider_kind !== "internal" && model.is_active,
   );
-  // **Retargeting is locked to the alias's kind; creating is not.** A new alias
-  // takes its kind from whatever it points at, so the picker may offer every
-  // kind — that is how an operator gets a chat alias or an embedding alias
-  // without a second screen. An existing alias already has a kind its callers
-  // were promised, and ADR 0101 refuses a retarget that would change it, so
-  // offering the others here would only produce a 400 after the save.
-  const retargetable =
-    alias === null ? candidates : candidates.filter((model) => model.kind === alias.kind);
-  const selected = candidates.find((model) => model.id === targetId);
-
-  // An alias being edited may point at a model this picker does not offer —
-  // deactivated, internal, or a search tier — and dropping it from the list
+  // An alias being edited may point at models this picker does not offer —
+  // deactivated, internal, or a search tier — and dropping one from its row
   // would silently rewrite the target to whatever happens to be first.
-  const orphan =
-    alias?.target && !candidates.some((model) => model.id === alias.target!.id)
-      ? alias.target
-      : null;
+  const current: AliasTarget[] = alias?.targets ?? [];
 
-  const kind: ModelKind | null = selected?.kind ?? alias?.kind ?? null;
+  const firstChosen = rows.find((row) => row.modelId !== "")?.modelId ?? "";
+  const chosenKind: ModelKind | null =
+    alias?.kind ??
+    candidates.find((model) => model.id === firstChosen)?.kind ??
+    null;
+  const offered = chosenKind ? candidates.filter((model) => model.kind === chosenKind) : candidates;
+
+  const setRow = (key: number, change: Partial<TargetRow>) =>
+    setRows((list) => list.map((row) => (row.key === key ? { ...row, ...change } : row)));
+  const move = (index: number, by: -1 | 1) =>
+    setRows((list) => {
+      const to = index + by;
+      if (to < 0 || to >= list.length) return list;
+      const copy = [...list];
+      [copy[index], copy[to]] = [copy[to]!, copy[index]!];
+      return copy;
+    });
+
+  const chosen = rows.filter((row) => row.modelId !== "");
+  const weightsValid = chosen.every((row) => {
+    const weight = Number(row.weight);
+    return Number.isInteger(weight) && weight >= 1 && weight <= 1000;
+  });
+  const minutesValid = /^\d+$/.test(minutes) && Number(minutes) <= 43200;
+  const priceWeightValid = (value: string) =>
+    /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 1000;
+  const priceWeightsValid = priceWeightValid(inputWeight) && priceWeightValid(outputWeight);
 
   const submit = () => {
     onSubmit({
       name: name.trim(),
       display_name: displayName.trim() || null,
       description: description.trim() || null,
-      target_model_id: targetId,
+      targets: chosen.map((row) => ({ model_id: row.modelId, weight: Number(row.weight) })),
+      route_rule: rule,
+      // Only when the administrator changed it, so opening and saving an alias
+      // whose window is not a whole number of minutes does not round it.
+      ...(Number(minutes) !== initialMinutes || alias === null
+        ? { route_sticky_ttl_seconds: Number(minutes) * 60 }
+        : {}),
+      route_price_input_weight: Number(inputWeight),
+      route_price_output_weight: Number(outputWeight),
       is_public: isPublic,
     });
   };
+
+  const known = (RULES as readonly string[]).includes(rule);
 
   return (
     <Dialog
       open
       onClose={onClose}
-      title={
-        alias
-          ? m["admin_routing.action.edit"]()
-          : m["admin_routing.action.create"]()
-      }
+      title={alias ? m["admin_routing.action.edit"]() : m["admin_routing.action.create"]()}
       footer={
         <>
           <Button onClick={onClose}>{m["model_detail.delete.cancel"]()}</Button>
           <Button
             variant="primary"
             busy={busy}
-            disabled={name.trim() === "" || targetId === ""}
+            disabled={name.trim() === "" || chosen.length === 0 || !weightsValid || !minutesValid || !priceWeightsValid}
             onClick={submit}
           >
             {alias ? m["admin_routing.action.save"]() : m["admin_routing.action.create"]()}
@@ -454,39 +576,151 @@ function AliasDialog({
           onChange={(event) => setDescription(event.target.value)}
         />
 
+        <fieldset className="m-0 flex flex-col gap-3 border-0 p-0">
+          <legend className="mb-1 text-base font-medium">{m["admin_routing.form.targets"]()}</legend>
+          <p className={MUTED}>{m["admin_routing.form.targets_hint"]()}</p>
+          {rows.map((row, index) => {
+            // The row's current model stays selectable even when it is not a
+            // candidate today (see `current`), and nothing another row already
+            // picked is offered twice: the gateway refuses a duplicate.
+            const orphan = current.find(
+              (target) => target.id === row.modelId && !candidates.some((c) => c.id === target.id),
+            );
+            return (
+              <div key={row.key} className={FORM_ROW}>
+                <Select
+                  label={m["admin_routing.form.target_n"]({ n: index + 1 })}
+                  value={row.modelId}
+                  onChange={(event) => setRow(row.key, { modelId: event.target.value })}
+                >
+                  <option value="">{m["admin_routing.form.target_none"]()}</option>
+                  {orphan ? (
+                    <option value={orphan.id}>
+                      {orphan.name} — {m["admin_routing.badge.target_inactive"]()}
+                    </option>
+                  ) : null}
+                  {offered
+                    .filter(
+                      (model) =>
+                        model.id === row.modelId ||
+                        !rows.some((other) => other.key !== row.key && other.modelId === model.id),
+                    )
+                    .map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.display_name ? `${model.display_name} (${model.name})` : model.name}
+                      </option>
+                    ))}
+                </Select>
+                {rule === "weighted" ? (
+                  <Input
+                    label={m["admin_routing.form.weight_n"]({ n: index + 1 })}
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={row.weight}
+                    onChange={(event) => setRow(row.key, { weight: event.target.value })}
+                  />
+                ) : null}
+                <div className={ROW_ACTIONS}>
+                  <Button
+                    variant="ghost"
+                    disabled={index === 0}
+                    aria-label={m["admin_routing.form.move_up"]({ n: index + 1 })}
+                    onClick={() => move(index, -1)}
+                  >
+                    ↑
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={index === rows.length - 1}
+                    aria-label={m["admin_routing.form.move_down"]({ n: index + 1 })}
+                    onClick={() => move(index, 1)}
+                  >
+                    ↓
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={rows.length === 1}
+                    aria-label={m["admin_routing.form.remove_target"]({ n: index + 1 })}
+                    onClick={() => setRows((list) => list.filter((r) => r.key !== row.key))}
+                  >
+                    ✕
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+          <div>
+            <Button
+              onClick={() => {
+                setRows((list) => [...list, { key: nextKey, modelId: "", weight: "1" }]);
+                setNextKey((key) => key + 1);
+              }}
+            >
+              {m["admin_routing.form.add_target"]()}
+            </Button>
+          </div>
+        </fieldset>
+
         <div className={FORM_ROW}>
           <Select
-            label={m["admin_routing.form.target"]()}
-            value={targetId}
-            onChange={(event) => setTargetId(event.target.value)}
-            hint={m["admin_routing.form.target_hint"]()}
+            label={m["admin_routing.form.rule"]()}
+            value={rule}
+            onChange={(event) => setRule(event.target.value)}
+            hint={known ? RULE_HINTS[rule as (typeof RULES)[number]]() : undefined}
           >
-            <option value="">{m["admin_routing.form.target_none"]()}</option>
-            {/* The current target, shown even when it is not a candidate today,
-                so an administrator opening an alias whose target was deactivated
-                sees where it points instead of an empty select that would
-                rewrite it to the first option on save. */}
-            {orphan ? (
-              <option value={orphan.id}>
-                {orphan.name} — {m["admin_routing.badge.target_inactive"]()}
-              </option>
-            ) : null}
-            {retargetable.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.display_name ? `${model.display_name} (${model.name})` : model.name}
+            {/* A rule this console does not know, kept selectable so opening
+                and saving an alias does not rewrite it to the default. */}
+            {known ? null : <option value={rule}>{rule}</option>}
+            {RULES.map((value) => (
+              <option key={value} value={value}>
+                {RULE_LABELS[value]()}
               </option>
             ))}
           </Select>
+          <Input
+            label={m["admin_routing.form.sticky"]()}
+            type="number"
+            min={0}
+            max={43200}
+            value={minutes}
+            onChange={(event) => setMinutes(event.target.value)}
+            hint={m["admin_routing.form.sticky_hint"]()}
+          />
         </div>
 
-        {/* Read-only on purpose, and said to be: it is the target's kind, and
-            the server refuses a retarget that would change it. Showing it as a
+        {/* Only the cheapest rule reads them; hidden otherwise rather than
+            shown disabled, because they mean nothing to the other rules. */}
+        {rule === "cheapest" ? (
+          <div className={FORM_ROW}>
+            <Input
+              label={m["admin_routing.form.price_input_weight"]()}
+              type="number"
+              min={1}
+              max={1000}
+              value={inputWeight}
+              onChange={(event) => setInputWeight(event.target.value)}
+              hint={m["admin_routing.form.price_weight_hint"]()}
+            />
+            <Input
+              label={m["admin_routing.form.price_output_weight"]()}
+              type="number"
+              min={1}
+              max={1000}
+              value={outputWeight}
+              onChange={(event) => setOutputWeight(event.target.value)}
+            />
+          </div>
+        ) : null}
+
+        {/* Read-only on purpose, and said to be: it is the targets' kind, and
+            the server refuses a route that would mix them. Showing it as a
             disabled control with the reason next to it is what turns "why can't
             I pick the embedding model?" from a support ticket into a sentence
             on the screen. */}
         <Input
           label={m["admin_routing.form.kind"]()}
-          value={kind ?? ""}
+          value={chosenKind ?? ""}
           readOnly
           disabled
           hint={m["admin_routing.form.kind_hint"]()}

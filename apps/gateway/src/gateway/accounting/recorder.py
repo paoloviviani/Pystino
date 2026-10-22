@@ -134,6 +134,9 @@ class RequestContext:
     #: target; this is the name they typed, kept so a report can say "via fast"
     #: and so the row still reads correctly after the alias is retargeted.
     requested_model: str | None = None
+    #: Which try this is, for an alias with several targets (issue P1); null for
+    #: a direct call and for an alias with one target.
+    route_attempt: int | None = None
     # Locally counted prompt size, used for the pre-call reservation and as the
     # fallback when the upstream never reports usage.
     estimated_prompt_tokens: int = 0
@@ -256,6 +259,7 @@ class RequestAccounting:
             model_id=self._ctx.model_id,
             model_name=self._ctx.model_name,
             requested_model=self._ctx.requested_model,
+            route_attempt=self._ctx.route_attempt,
             streamed=self._ctx.streamed,
             api_surface=self._ctx.surface,
             currency=self._ctx.currency,

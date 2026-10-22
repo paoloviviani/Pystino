@@ -386,7 +386,7 @@ class TestTheAliasPath:
     ) -> None:
         """Six: the five above, plus the one that reads the target.
 
-        The reason it is one and not three — `alias_target` loads the target
+        The reason it is one and not three — `alias_targets` loads the targets
         joined to its provider, and `selectinload`s its prices — is that the
         request path needs all three immediately. There is no cache to make a
         second request cheaper, because a retarget has to take effect on the
@@ -423,3 +423,75 @@ class TestTheAliasPath:
         print(summarise(selects))
         assert len(writes) <= 2, f"{len(writes)} writes:\n{summarise(writes)}"
         assert len(selects) <= 6, f"{len(selects)} selects:\n{summarise(selects)}"
+
+
+class TestTheRoutedAliasPath:
+    """An alias with several targets (issue P1) on the same budget.
+
+    Reading the whole route is still one statement, so a routed alias without a
+    session key costs what a single-target alias does. Stickiness is what adds
+    work, and only for a caller who sent a session key: one select to read the
+    pin, and a write when the pin is made or renewed.
+    """
+
+    async def _measure(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        app: object,
+        fake_upstream: FakeUpstream,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        headers: dict[str, str],
+    ) -> tuple[list[str], list[str]]:
+        from test_routing_policies import COMPLETION, make_route
+
+        await make_route(session_factory, seeded, ("t-a", 1), ("t-b", 1))
+        engine = app.state.engine  # type: ignore[attr-defined]
+        fake_upstream.set_json(COMPLETION)
+        body = {"model": "routed", "messages": [{"role": "user", "content": "hi"}]}
+        await client.post("/v1/chat/completions", json=body, headers={**seeded.auth, **headers})
+        with counted(engine) as statements:
+            response = await client.post(
+                "/v1/chat/completions", json=body, headers={**seeded.auth, **headers}
+            )
+        assert response.status_code == 200
+        selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+        writes = [
+            s for s in statements if s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE"))
+        ]
+        return selects, writes
+
+    async def test_without_a_session_key_it_costs_what_a_single_target_alias_does(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        app: object,
+        fake_upstream: FakeUpstream,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        selects, writes = await self._measure(
+            client, seeded, app, fake_upstream, session_factory, headers={}
+        )
+        print(f"\n  routed alias, no key: {len(selects)} selects, {len(writes)} writes")
+        print(summarise(selects))
+        assert len(selects) <= 6, f"{len(selects)} selects:\n{summarise(selects)}"
+        assert len(writes) <= 2, f"{len(writes)} writes:\n{summarise(writes)}"
+
+    async def test_a_pinned_session_costs_one_select_more_and_no_write(
+        self,
+        client: httpx.AsyncClient,
+        seeded: Seeded,
+        app: object,
+        fake_upstream: FakeUpstream,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        selects, writes = await self._measure(
+            client, seeded, app, fake_upstream, session_factory, headers={"x-session-id": "s"}
+        )
+        print(f"\n  routed alias, pinned: {len(selects)} selects, {len(writes)} writes")
+        print(summarise(selects))
+        # The second request in `_measure` finds a fresh pin, so it reads it and
+        # writes nothing: renewal waits for the last half of the window.
+        assert len(selects) <= 7, f"{len(selects)} selects:\n{summarise(selects)}"
+        assert len(writes) <= 2, f"{len(writes)} writes:\n{summarise(writes)}"

@@ -14,6 +14,8 @@ export interface RequestLogRow {
   group_id: string | null;
   group_name: string | null;
   requested_model: string | null;
+  /** Which try this line is, when the alias has several targets; null otherwise. */
+  route_attempt: number | null;
   model: string;
   upstream_model: string | null;
   streamed: boolean;
