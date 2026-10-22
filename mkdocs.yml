@@ -82,6 +82,7 @@ nav:
   - Accounting and quotas: accounting-and-quotas.md
   - Billing groups: billing-groups.md
   - Model aliases: model-aliases.md
+  - Provider catalogue: provider-catalogue.md
   - Redaction: redaction.md
   - Deployment: deployment.md
   - Coding agents: coding-agents.md

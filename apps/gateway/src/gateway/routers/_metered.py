@@ -42,6 +42,7 @@ from gateway.access import accessible_model_by_name, alias_targets, alias_unavai
 from gateway.accounting import RequestAccounting, RequestContext, TokenCounts
 from gateway.accounting.cost import CostBreakdown, compute_cost, select_price
 from gateway.accounting.tokens import TokenEstimator
+from gateway.catalogue import Catalogue, CatalogueFacts
 from gateway.config import EffectivePolicy, Settings
 from gateway.deps import Principal
 from gateway.errors import (
@@ -253,6 +254,14 @@ def _wrong_kind(name: str, model: ModelDef) -> BadRequestError:
     )
 
 
+def _facts_of(target: ModelDef, catalogue: Catalogue | None) -> CatalogueFacts | None:
+    """The catalogue's facts about the provider behind *target*, if it is linked."""
+    provider = target.provider
+    if catalogue is None or provider is None:
+        return None
+    return catalogue.facts_for(provider.catalogue_id)
+
+
 async def resolve_plan(
     session: AsyncSession,
     name: str,
@@ -263,6 +272,7 @@ async def resolve_plan(
     fx: FXService | None = None,
     currency: str = "EUR",
     rng: random.Random | None = None,
+    catalogue: Catalogue | None = None,
 ) -> RoutePlan:
     """The models to try for this caller and surface, or a 404/400/503 saying why not.
 
@@ -311,7 +321,14 @@ async def resolve_plan(
         elif target.kind not in allowed:
             wrong_kind = wrong_kind or target
         else:
-            candidates.append(Candidate(target=target, position=position, weight=weight))
+            candidates.append(
+                Candidate(
+                    target=target,
+                    position=position,
+                    weight=weight,
+                    facts=_facts_of(target, catalogue),
+                )
+            )
     if not candidates and wrong_kind is not None:
         raise _wrong_kind(name, wrong_kind)
 

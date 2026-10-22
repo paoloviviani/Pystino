@@ -333,6 +333,11 @@ class PriceSource(enum.StrEnum):
     #: for someone else's charges — the one kind of price worth re-checking
     #: against an invoice.
     COMMUNITY = "community"
+    #: A dated price hint from the YAML provider catalogue (backlog P4), filling
+    #: a price the provider left out. Distinct from `COMMUNITY` because the figure
+    #: is the operator's or the release's own statement about this provider, not a
+    #: third party's file. Still not the provider's published price.
+    HINT = "catalogue_hint"
     #: Historical. Written by the original Cortecs importer, and by every
     #: catalogue import until ADR 0053's fill made the distinction matter — which
     #: means existing rows labelled `cortecs` may hold a community figure, and
@@ -1005,6 +1010,14 @@ class Provider(Base):
 
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    # Which provider-catalogue entry this row is an instance of (backlog P4), or
+    # null for one made by hand. A plain id, not a foreign key: the catalogue is
+    # YAML read at startup, so the target is not a table. Region and retention
+    # are read *through* this link at request time and never copied here, so
+    # correcting a file and restarting corrects every row; an id the catalogue
+    # no longer has leaves the row working and its metadata unknown.
+    catalogue_id: Mapped[str | None] = mapped_column(String(64), default=None)
 
     models: Mapped[list[ModelDef]] = relationship(back_populates="provider")
 

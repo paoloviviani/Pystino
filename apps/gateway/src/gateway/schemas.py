@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -846,6 +846,54 @@ class MyNotificationThresholdsRequest(BaseModel):
 # primary key.
 
 
+class CatalogueOriginResponse(BaseModel):
+    """Where one catalogue field's current value came from."""
+
+    field: str
+    #: ``builtin`` (shipped in the image) or ``override`` (the operator directory).
+    layer: Literal["builtin", "override"]
+    #: The file inside that layer.
+    file: str
+
+
+class CatalogueRetentionResponse(BaseModel):
+    """What the provider keeps. ``null`` is *unknown*, never "no"."""
+
+    zero_data_retention: bool | None = None
+    retention_days: int | None = None
+    trains_on_customer_data: bool | None = None
+    note: str | None = None
+    source_url: str | None = None
+
+
+class CataloguePriceHintResponse(BaseModel):
+    model: str
+    effective_from: date
+    currency: str
+    input_per_mtok: Decimal | None = None
+    output_per_mtok: Decimal | None = None
+    cache_read_per_mtok: Decimal | None = None
+    cache_write_per_mtok: Decimal | None = None
+    per_image: Decimal | None = None
+    per_page: Decimal | None = None
+
+
+class CatalogueEntryResponse(BaseModel):
+    """One entry of the provider catalogue, with where each field came from."""
+
+    id: str
+    name: str
+    description: str | None = None
+    plugin: str
+    #: The entry's URL, else the plugin's own default; null when neither exists.
+    base_url: str | None = None
+    prefix: str = ""
+    region: str | None = None
+    retention: CatalogueRetentionResponse
+    price_hints: list[CataloguePriceHintResponse] = []
+    origins: list[CatalogueOriginResponse] = []
+
+
 class ProviderResponse(BaseModel):
     """A provider, minus its credential.
 
@@ -867,6 +915,14 @@ class ProviderResponse(BaseModel):
     #: Prepended to every model name this provider contributes, so two vendors
     #: whose tiers share a word do not collide. Empty means none.
     prefix: str = ""
+    #: The catalogue entry this row is an instance of, if any (backlog P4).
+    catalogue_id: str | None = None
+    #: That entry as the gateway holds it now, with the origin of every field.
+    #: Null when the row is not linked, or when the entry is gone (see below).
+    catalogue: CatalogueEntryResponse | None = None
+    #: True when ``catalogue_id`` names an entry this catalogue no longer has: the
+    #: row keeps working, and its region and retention are unknown.
+    catalogue_missing: bool = False
     #: Active models behind this provider with no price row. Reported because a
     #: provider in `provider_reported` billing mode still needs prices: admission
     #: happens *before* the request and the counterparty's figure only exists
@@ -932,6 +988,10 @@ class ProviderCreateRequest(BaseModel):
     # named plugin below: pass-through needs a plugin that asserts its figure is
     # the counterparty's actual charge.
     billing_mode: Literal["own_prices", "provider_reported"] = "own_prices"
+    # The catalogue entry this provider is an instance of (backlog P4). When
+    # given, what the request leaves out (plugin, endpoint, prefix) is taken from
+    # the entry; what the request states always wins.
+    catalogue_id: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def _billing_mode_needs_a_plugin_that_can_claim_it(self) -> ProviderCreateRequest:
@@ -966,6 +1026,9 @@ class ProviderUpdateRequest(BaseModel):
     # half-disambiguated. An empty string removes the prefix and un-names the
     # models that carry it.
     prefix: str | None = Field(default=None, max_length=32, pattern=r"^[a-zA-Z0-9._-]*$")
+    # Link the row to a catalogue entry, or unlink it with an empty string. Only
+    # the link changes: nothing is copied from the entry into the row.
+    catalogue_id: str | None = Field(default=None, max_length=64)
 
     @model_validator(mode="after")
     def _billing_mode_needs_a_plugin_that_can_claim_it(self) -> ProviderUpdateRequest:
@@ -2614,7 +2677,8 @@ class DiscoveredModel(BaseModel):
     # is a price quoted in a currency this gateway does not bill in.
     blocked_reason: str | None = None
     # Where the figures above came from: "provider" for the counterparty's own
-    # catalogue, "community" for a gap the LiteLLM file filled, None for a model
+    # catalogue, "community" for a gap the LiteLLM file filled, "hint" for a gap
+    # the provider catalogue's own dated price hint filled, None for a model
     # the provider listed and nobody has priced. Shown per row rather than once
     # per import, because a single import can mix all three and "which of these
     # prices did a third party supply" is the question an operator asks before

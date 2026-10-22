@@ -59,10 +59,12 @@ from gateway.admin_audit import (
     record_audit,
 )
 from gateway.capabilities import Capabilities, effective_capabilities, new_group_flags
+from gateway.catalogue import Catalogue, CatalogueEntry
 from gateway.config import EffectivePolicy, RedactionPolicy, RedactionSettings, Settings
 from gateway.deployment_state import mark_bootstrap_consumed
 from gateway.deps import (
     AdminUserDep,
+    CatalogueDep,
     ControlHttpDep,
     ProvidersDep,
     QuotaDep,
@@ -204,6 +206,10 @@ from gateway.schemas import (
     BundledUserCreatedResponse,
     CatalogueDiscoveryResponse,
     CatalogueDriftRow,
+    CatalogueEntryResponse,
+    CatalogueOriginResponse,
+    CataloguePriceHintResponse,
+    CatalogueRetentionResponse,
     CatalogueTagsResponse,
     ChatSharedResource,
     DeletePreviewResponse,
@@ -582,8 +588,67 @@ async def _load_provider(session: SessionDep, provider_id: uuid.UUID) -> Provide
 # out, only a hint.
 
 
-def _provider_response(provider: Provider, model_count: int, unpriced: int = 0) -> ProviderResponse:
+def _catalogue_entry_response(entry: CatalogueEntry) -> CatalogueEntryResponse:
+    return CatalogueEntryResponse(
+        id=entry.id,
+        name=entry.name,
+        description=entry.description,
+        plugin=entry.plugin,
+        base_url=entry.effective_base_url,
+        prefix=entry.prefix,
+        region=entry.region,
+        retention=CatalogueRetentionResponse(
+            zero_data_retention=entry.retention.zero_data_retention,
+            retention_days=entry.retention.retention_days,
+            trains_on_customer_data=entry.retention.trains_on_customer_data,
+            note=entry.retention.note,
+            source_url=entry.retention.source_url,
+        ),
+        price_hints=[
+            CataloguePriceHintResponse(
+                model=h.model,
+                effective_from=h.effective_from,
+                currency=h.currency,
+                input_per_mtok=h.input_per_mtok,
+                output_per_mtok=h.output_per_mtok,
+                cache_read_per_mtok=h.cache_read_per_mtok,
+                cache_write_per_mtok=h.cache_write_per_mtok,
+                per_image=h.per_image,
+                per_page=h.per_page,
+            )
+            for h in entry.prices
+        ],
+        origins=[
+            CatalogueOriginResponse(field=name, layer=origin.layer, file=origin.file)
+            for name, origin in sorted(entry.origins.items())
+        ],
+    )
+
+
+def _catalogue_entry_or_400(
+    catalogue: Catalogue, catalogue_id: str | None
+) -> CatalogueEntry | None:
+    """The named entry; ``None`` for no id (or an empty one, which unlinks)."""
+    if not catalogue_id:
+        return None
+    entry = catalogue.get(catalogue_id)
+    if entry is None:
+        raise BadRequestError(
+            f"No catalogue entry {catalogue_id!r}. Known: "
+            f"{', '.join(e.id for e in catalogue.ordered()) or 'none'}.",
+            code="unknown_catalogue_entry",
+        )
+    return entry
+
+
+def _provider_response(
+    provider: Provider, model_count: int, unpriced: int = 0, catalogue: Catalogue | None = None
+) -> ProviderResponse:
+    entry = catalogue.get(provider.catalogue_id) if catalogue is not None else None
     return ProviderResponse(
+        catalogue_id=provider.catalogue_id,
+        catalogue=_catalogue_entry_response(entry) if entry is not None else None,
+        catalogue_missing=bool(provider.catalogue_id) and entry is None,
         id=provider.id,
         name=provider.name,
         description=provider.description,
@@ -643,9 +708,22 @@ def _store_api_key(provider: Provider, secrets: SecretBox, plaintext: str) -> No
     provider.api_key_hint = hint_for(plaintext)
 
 
+@router.get("/provider-catalogue", response_model=list[CatalogueEntryResponse])
+async def list_provider_catalogue(
+    admin: AdminUserDep, catalogue: CatalogueDep
+) -> list[CatalogueEntryResponse]:
+    """The provider catalogue as read at startup, each field with its origin.
+
+    Read-only by design: the catalogue is files, edited where they live, and
+    applied on restart. Not paginated: a few dozen entries, never a listing that
+    grows with use.
+    """
+    return [_catalogue_entry_response(entry) for entry in catalogue.ordered()]
+
+
 @router.get("/providers", response_model=Page[ProviderResponse])
 async def list_providers(
-    admin: AdminUserDep, session: SessionDep, page: PageDep
+    admin: AdminUserDep, session: SessionDep, page: PageDep, catalogue: CatalogueDep
 ) -> Page[ProviderResponse]:
     stmt = select(Provider).order_by(Provider.name)
     total = await count_of(session, stmt)
@@ -654,7 +732,9 @@ async def list_providers(
     unpriced = await _unpriced_counts(session)
     return page.page(
         [
-            _provider_response(provider, counts.get(provider.id, 0), unpriced.get(provider.id, 0))
+            _provider_response(
+                provider, counts.get(provider.id, 0), unpriced.get(provider.id, 0), catalogue
+            )
             for provider in providers
         ],
         total,
@@ -678,6 +758,7 @@ async def create_provider(
     admin: AdminUserDep,
     session: SessionDep,
     secrets: SecretsDep,
+    catalogue: CatalogueDep,
 ) -> ProviderResponse:
     """Add an inference endpoint.
 
@@ -688,10 +769,25 @@ async def create_provider(
     an operator re-typing a URL the plugin already knows is a typo with extra
     steps. A type with no default — the generic OpenAI-compatible one, whose
     endpoints range from a cloud API to a laptop's Ollama — still requires one.
+
+    A ``catalogue_id`` names the catalogue entry this provider is an instance of
+    (backlog P4). What the request leaves out (plugin, endpoint, prefix) is taken
+    from the entry; what it states wins. The entry is linked, not copied.
     """
+    entry = _catalogue_entry_or_400(catalogue, payload.catalogue_id)
+    fields_given = payload.model_fields_set
+    plugin_name = payload.plugin
+    prefix = payload.prefix
     base_url = payload.base_url
+    if entry is not None:
+        if "plugin" not in fields_given:
+            plugin_name = entry.plugin
+        if "prefix" not in fields_given:
+            prefix = entry.prefix
+        if base_url is None:
+            base_url = entry.effective_base_url
     if base_url is None:
-        plugin = plugin_registry.resolve(payload.plugin)
+        plugin = plugin_registry.resolve(plugin_name)
         base_url = getattr(plugin, "default_base_url", None)
         if base_url is None:
             raise BadRequestError(
@@ -705,10 +801,11 @@ async def create_provider(
         base_url=base_url.rstrip("/"),
         extra_headers=payload.extra_headers,
         is_active=payload.is_active,
-        plugin=payload.plugin,
+        plugin=plugin_name,
         kind=ProviderKind(payload.kind),
         billing_mode=BillingMode(payload.billing_mode),
-        prefix=payload.prefix,
+        prefix=prefix,
+        catalogue_id=entry.id if entry is not None else None,
     )
     if payload.api_key is not None:
         _store_api_key(provider, secrets, payload.api_key.get_secret_value())
@@ -760,7 +857,7 @@ async def create_provider(
                 "backend's grant anchor could not be created."
             ) from exc
 
-    return _provider_response(provider, 0)
+    return _provider_response(provider, 0, catalogue=catalogue)
 
 
 @router.patch("/providers/{provider_id}", response_model=ProviderResponse)
@@ -771,6 +868,7 @@ async def update_provider(
     session: SessionDep,
     secrets: SecretsDep,
     providers: ProvidersDep,
+    catalogue: CatalogueDep,
 ) -> ProviderResponse:
     """Change a provider.
 
@@ -847,6 +945,9 @@ async def update_provider(
             await session.flush()
         provider.prefix = new_prefix
 
+    if "catalogue_id" in fields:
+        entry = _catalogue_entry_or_400(catalogue, fields.pop("catalogue_id"))
+        provider.catalogue_id = entry.id if entry is not None else None
     if (base_url := fields.pop("base_url", None)) is not None:
         provider.base_url = base_url.rstrip("/")
     if (kind := fields.pop("kind", None)) is not None:
@@ -890,7 +991,10 @@ async def update_provider(
 
     counts = await _model_counts(session)
     return _provider_response(
-        provider, counts.get(provider.id, 0), await _unpriced_count(session, provider.id)
+        provider,
+        counts.get(provider.id, 0),
+        await _unpriced_count(session, provider.id),
+        catalogue,
     )
 
 
@@ -1351,6 +1455,32 @@ async def _catalogue_source(
     return provider, catalogue_url, api_key
 
 
+def _fill_from_hints(
+    entry: CatalogueEntry, published: Sequence[CataloguePrice], unpriced: Sequence[str]
+) -> list[CataloguePrice]:
+    """Prices from the catalogue entry's hints, for models listed and unpriced."""
+    today = utcnow().date()
+    out: list[CataloguePrice] = []
+    for model_id in unpriced:
+        if model_id in ANONYMOUS_UNPARSABLE:
+            continue
+        hint = entry.price_hint_for(model_id, today)
+        if hint is None:
+            continue
+        out.append(
+            CataloguePrice(
+                model_id=model_id,
+                input_per_mtok=hint.input_per_mtok or Decimal(0),
+                output_per_mtok=hint.output_per_mtok or Decimal(0),
+                currency=hint.currency,
+                cache_read_per_mtok=hint.cache_read_per_mtok,
+                cache_write_per_mtok=hint.cache_write_per_mtok,
+                per_page=hint.per_page,
+            )
+        )
+    return out
+
+
 async def _catalogue_with_prices(
     # `Any`, as `ControlHttpDep` itself is: the control-plane client is passed
     # through rather than constructed here.
@@ -1360,17 +1490,19 @@ async def _catalogue_with_prices(
     api_key: str | None,
     *,
     fill_missing: bool,
+    entry: CatalogueEntry | None = None,
 ) -> tuple[
     dict[str, CataloguePrice],
     list[str],
-    set[str],
+    dict[str, str],
     dict[str, ModelKind],
     dict[str, tuple[int | None, int | None]],
 ]:
     """The provider's catalogue, optionally with community prices in the gaps.
 
-    Returns ``(prices by upstream id, unpriced ids, ids filled from the
-    community file)``.
+    Returns ``(prices by upstream id, unpriced ids, {id filled: "hint" or
+    "community"}, kinds, limits)``. A catalogue price hint is tried before the
+    community file, and only when ``fill_missing`` is set.
 
     Both fetches are the operator's explicit request, so a failure of either is
     reported rather than absorbed: ticking the fill and silently getting the
@@ -1392,7 +1524,17 @@ async def _catalogue_with_prices(
 
     published, unpriced = _catalogue_parser(provider)(payload)
 
-    filled: set[str] = set()
+    filled: dict[str, str] = {}
+    if fill_missing and entry is not None and unpriced:
+        # The catalogue's dated hints come before the community file: they are
+        # the operator's (or the release's) own statement about this provider,
+        # and only for a model the provider listed and left unpriced, exactly
+        # like the community fill. They count as filled, so the console and the
+        # price row say the figure did not come from the provider.
+        hinted = _fill_from_hints(entry, published, unpriced)
+        published = [*published, *hinted]
+        filled.update({h.model_id: "hint" for h in hinted})
+        unpriced = [u for u in unpriced if u not in filled]
     if fill_missing and unpriced:
         try:
             community_payload = await fetch_catalogue(http, LITELLM_CATALOGUE_URL, None)
@@ -1405,7 +1547,10 @@ async def _catalogue_with_prices(
         community, _ = parse_litellm_catalogue(
             community_payload, providers=[provider.plugin] if provider.plugin else None
         )
-        prices, unpriced, filled = fill_prices_from_community(published, unpriced, community)
+        prices, unpriced, from_community = fill_prices_from_community(
+            published, unpriced, community
+        )
+        filled.update(dict.fromkeys(from_community, "community"))
     else:
         prices = list(published)
 
@@ -1425,6 +1570,7 @@ async def discover_models(
     settings: SettingsDep,
     secrets: SecretsDep,
     http: ControlHttpDep,
+    catalogue: CatalogueDep,
     provider_id: uuid.UUID,
     url: str | None = None,
     fill_missing_prices: bool = False,
@@ -1450,7 +1596,12 @@ async def discover_models(
         session, secrets, provider_id, url, tag
     )
     by_upstream, unpriced, filled, kinds, limits = await _catalogue_with_prices(
-        http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
+        http,
+        provider,
+        catalogue_url,
+        api_key,
+        fill_missing=fill_missing_prices,
+        entry=catalogue.get(provider.catalogue_id),
     )
 
     # Only this provider's models. A model served by another provider is not
@@ -1494,7 +1645,7 @@ async def discover_models(
                 output_modalities=list(price.output_modalities),
                 supported_features=list(price.supported_features),
                 blocked_reason=None,
-                price_source="community" if upstream_id in filled else "provider",
+                price_source=filled.get(upstream_id, "provider"),
             )
         )
 
@@ -1790,6 +1941,7 @@ async def import_models(
     settings: SettingsDep,
     secrets: SecretsDep,
     http: ControlHttpDep,
+    catalogue: CatalogueDep,
     provider_id: uuid.UUID,
     url: str | None = None,
     fill_missing_prices: bool = False,
@@ -1830,7 +1982,12 @@ async def import_models(
         session, secrets, provider_id, url, tag
     )
     by_upstream, unpriced, filled, kinds, limits = await _catalogue_with_prices(
-        http, provider, catalogue_url, api_key, fill_missing=fill_missing_prices
+        http,
+        provider,
+        catalogue_url,
+        api_key,
+        fill_missing=fill_missing_prices,
+        entry=catalogue.get(provider.catalogue_id),
     )
     # The ids a manual price may name: what the provider listed and nobody
     # priced, minus the anonymous placeholders discovery never lists. The same
@@ -1884,7 +2041,8 @@ async def import_models(
             )
             continue
 
-        from_community = item.upstream_model in filled
+        fill_source = filled.get(item.upstream_model)
+        from_community = fill_source is not None
 
         # The catalogue's own figure outranks one typed from memory. Silently
         # would be the worst of both: the operator typed a number, reviewed it,
@@ -1898,7 +2056,9 @@ async def import_models(
         manual_set_aside: str | None = None
         if price is not None and price.currency != "" and item.manual_price is not None:
             manual_set_aside = "the price entered by hand was not used: " + (
-                "the community file supplies one"
+                "the catalogue's price hint supplies one"
+                if fill_source == "hint"
+                else "the community file supplies one"
                 if from_community
                 else "the provider publishes one"
             )
@@ -2002,7 +2162,9 @@ async def import_models(
         # one — `manual` — because it is the same act: a person vouching for a
         # figure.
         source = (
-            PriceSource.COMMUNITY
+            PriceSource.HINT
+            if fill_source == "hint"
+            else PriceSource.COMMUNITY
             if from_community
             else PriceSource.MANUAL
             if manual_used
@@ -2040,9 +2202,7 @@ async def import_models(
                 imported=True,
                 priced=True,
                 reason=manual_set_aside,
-                price_source=(
-                    "community" if from_community else "manual" if manual_used else "provider"
-                ),
+                price_source=(fill_source or ("manual" if manual_used else "provider")),
             )
         )
 

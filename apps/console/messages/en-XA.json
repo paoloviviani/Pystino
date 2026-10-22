@@ -2728,5 +2728,36 @@
   "admin_routing.form.price_input_weight": "[Íńþúť þŕíćé ŵéíǧȟť]",
   "admin_routing.form.price_output_weight": "[Óúťþúť þŕíćé ŵéíǧȟť]",
   "admin_routing.form.price_weight_hint": "[Ćȟéáþéśť ŕáńķś ťáŕǧéťś ƀý íńþúť ŕáťé × ťȟíś + óúťþúť ŕáťé × ťȟé óúťþúť ŵéíǧȟť. 1:1 áďďś ťȟéḿ; 10:1 śúíťś ľóńǧ þŕóḿþťś ŵíťȟ śȟóŕť áńśŵéŕś.]",
-  "request_log.attempt": "[ťŕý {n}]"
+  "request_log.attempt": "[ťŕý {n}]",
+  "admin_providers.badge.region": "[ŕéǧíóń {region}]",
+  "admin_providers.badge.zero_retention": "[źéŕó ďáťá ŕéťéńťíóń]",
+  "admin_providers.badge.catalogue_missing": "[ćáťáľóǧúé éńťŕý ḿíśśíńǧ]",
+  "admin_providers.field.catalogue": "[Ćáťáľóǧúé éńťŕý]",
+  "admin_providers.field.catalogue_none": "[Ńóńé (śéť úþ ƀý ȟáńď)]",
+  "admin_providers.field.catalogue_hint_new": "[Ƒíľľś íń ťȟé ťýþé, éńďþóíńť áńď þŕéƒíẋ ƀéľóŵ; ýóú ćáń śťíľľ ćȟáńǧé ťȟéḿ. Ŕéǧíóń áńď ŕéťéńťíóń áŕé ŕéáď ƒŕóḿ ťȟé ćáťáľóǧúé.]",
+  "admin_providers.field.catalogue_hint_edit": "[Ĺíńķś ťȟíś þŕóǚíďéŕ ťó á ćáťáľóǧúé éńťŕý ƒóŕ íťś ŕéǧíóń áńď ŕéťéńťíóń. Ńóťȟíńǧ íś ćóþíéď íńťó ťȟé þŕóǚíďéŕ.]",
+  "admin_providers.catalogue.title": "[Þŕóǚíďéŕ ćáťáľóǧúé]",
+  "admin_providers.catalogue.subtitle": "[Ķńóŵń þŕóǚíďéŕś, ŕéáď ƒŕóḿ ÝÁḾĹ áť śťáŕťúþ: ťȟé óńéś śȟíþþéď ŵíťȟ Þýśťíńó áńď áńý íń ýóúŕ þŕóǚíďéŕś ďíŕéćťóŕý. Ćȟáńǧéś áþþľý óń ŕéśťáŕť.]",
+  "admin_providers.catalogue.caption": "[Ćáťáľóǧúé éńťŕíéś, ŵíťȟ ŵȟéŕé éáćȟ ǚáľúé ćáḿé ƒŕóḿ.]",
+  "admin_providers.catalogue.column.entry": "[Éńťŕý]",
+  "admin_providers.catalogue.column.endpoint": "[Éńďþóíńť]",
+  "admin_providers.catalogue.column.region": "[Ŕéǧíóń]",
+  "admin_providers.catalogue.column.retention": "[Ŕéťéńťíóń]",
+  "admin_providers.catalogue.column.prices": "[Þŕíćé ȟíńťś]",
+  "admin_providers.catalogue.unknown": "[úńķńóŵń]",
+  "admin_providers.catalogue.zdr_yes": "[źéŕó ďáťá ŕéťéńťíóń]",
+  "admin_providers.catalogue.zdr_no": "[ŕéťáíńś ďáťá]",
+  "admin_providers.catalogue.days": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "[{count: number} ďáýś]"
+      }
+    }
+  ],
+  "admin_providers.catalogue.trains": "[ťŕáíńś óń ćúśťóḿéŕ ďáťá]",
+  "admin_providers.catalogue.origin_builtin": "[ƀúíľť-íń]",
+  "admin_providers.catalogue.origin_override": "[óǚéŕŕíďé]"
 }

@@ -139,6 +139,12 @@ Two consequences worth knowing:
 - a plugin that does not read a cost reports none, which is the safe default —
   see [Accounting and quotas](accounting-and-quotas.md#three-cost-figures-one-meaning-each).
 
+### The provider catalogue
+
+Known providers (endpoint, plugin, region, data retention, dated price hints)
+are described in YAML, shipped with the image and overridable from a mounted
+directory. See [Provider catalogue](provider-catalogue.md).
+
 ### Importing models from a provider's catalogue
 
 `GET /api/admin/models/discover` compares a provider's catalogue with what this

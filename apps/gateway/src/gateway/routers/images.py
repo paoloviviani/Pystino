@@ -78,6 +78,7 @@ async def create_image(
         affinity=affinity_key(request.headers, body),
         fx=request.app.state.fx,
         currency=settings.billing_currency,
+        catalogue=request.app.state.catalogue,
     )
 
     async def serve(resolved: _metered.ResolvedModel) -> JSONResponse:

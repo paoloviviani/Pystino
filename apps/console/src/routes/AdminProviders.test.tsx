@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AdminProvider } from "../lib/types";
+import type { AdminProvider, CatalogueEntry } from "../lib/types";
 import { jsonResponse } from "../test-helpers";
 import { AdminProviders } from "./AdminProviders";
 
@@ -122,7 +122,37 @@ const PLUGINS = [
   },
 ];
 
-function routes(providers: AdminProvider[], captured: Captured = { bodies: [] }, test?: unknown) {
+function entry(overrides: Partial<CatalogueEntry> = {}): CatalogueEntry {
+  return {
+    id: "mistral",
+    name: "Mistral AI",
+    description: null,
+    plugin: "openai",
+    base_url: "https://api.mistral.test/v1",
+    prefix: "mi-",
+    region: "eu",
+    retention: {
+      zero_data_retention: true,
+      retention_days: 0,
+      trains_on_customer_data: null,
+      note: null,
+      source_url: null,
+    },
+    price_hints: [{ model: "m", effective_from: "2026-01-01", currency: "EUR" }],
+    origins: [
+      { field: "name", layer: "builtin", file: "mistral.yaml" },
+      { field: "region", layer: "override", file: "mine.yaml" },
+    ],
+    ...overrides,
+  };
+}
+
+function routes(
+  providers: AdminProvider[],
+  captured: Captured = { bodies: [] },
+  test?: unknown,
+  catalogue: CatalogueEntry[] = [],
+) {
   return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -130,6 +160,14 @@ function routes(providers: AdminProvider[], captured: Captured = { bodies: [] },
 
     if (url.includes("/provider-plugins")) {
       return new Response(JSON.stringify(PLUGINS), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (url.includes("/provider-catalogue")) {
+      // A plain array, like the plugins: not a listing.
+      return new Response(JSON.stringify(catalogue), {
         status: 200,
         headers: { "content-type": "application/json" },
       });
@@ -544,5 +582,100 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
     const table = within(await screen.findByRole("table"));
     await waitFor(() => expect(table.getByText("extractor")).toBeInTheDocument());
     expect(table.getByRole("button", { name: "Deactivate" })).toBeEnabled();
+  });
+
+  it("shows each catalogue field with its origin: built-in, or the override file", async () => {
+    vi.stubGlobal("fetch", routes([provider()], { bodies: [] }, undefined, [entry()]));
+    renderScreen(<AdminProviders />);
+
+    const table = await screen.findByRole("table", { name: /catalogue entries/i });
+    expect(within(table).getByText("Mistral AI")).toBeInTheDocument();
+    // The region was overridden, so it is marked and names the file...
+    expect(within(table).getByText("override")).toBeInTheDocument();
+    expect(within(table).getByText("mine.yaml")).toBeInTheDocument();
+    // ...and the untouched fields say they are the release's own.
+    expect(within(table).getAllByText("built-in").length).toBeGreaterThanOrEqual(2);
+    expect(within(table).getByText("eu")).toBeInTheDocument();
+    expect(within(table).getByText("zero data retention · 0 days")).toBeInTheDocument();
+  });
+
+  it("says unknown, not no, for a retention the catalogue does not state", async () => {
+    const unknown = entry({
+      region: null,
+      retention: {
+        zero_data_retention: null,
+        retention_days: null,
+        trains_on_customer_data: null,
+        note: null,
+        source_url: null,
+      },
+    });
+    vi.stubGlobal("fetch", routes([provider()], { bodies: [] }, undefined, [unknown]));
+    renderScreen(<AdminProviders />);
+
+    const table = await screen.findByRole("table", { name: /catalogue entries/i });
+    expect(within(table).getAllByText("unknown").length).toBe(2);
+  });
+
+  it("badges a provider with its region and zero retention, and flags a lost entry", async () => {
+    vi.stubGlobal(
+      "fetch",
+      routes(
+        [
+          provider({ catalogue_id: "mistral", catalogue: entry() }),
+          provider({ id: "pr2", name: "gone", catalogue_id: "old", catalogue_missing: true }),
+        ],
+        { bodies: [] },
+        undefined,
+        [entry()],
+      ),
+    );
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("region eu")).toBeInTheDocument());
+    expect(screen.getAllByText("zero data retention").length).toBeGreaterThan(0);
+    expect(screen.getByText("catalogue entry missing")).toBeInTheDocument();
+  });
+
+  it("creating from an entry pre-fills the form and sends the link", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal("fetch", routes([], captured, undefined, [entry()]));
+    renderScreen(<AdminProviders />);
+
+    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.selectOptions(await within(dialog).findByLabelText("Catalogue entry"), "mistral");
+
+    expect(within(dialog).getByLabelText("Base URL")).toHaveValue("https://api.mistral.test/v1");
+    expect(within(dialog).getByLabelText("Model name prefix")).toHaveValue("mi-");
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("mistral");
+    await user.click(within(dialog).getByRole("button", { name: "Add" }));
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    const body = captured.bodies[0]?.body as Record<string, unknown>;
+    expect(body.catalogue_id).toBe("mistral");
+    expect(body.plugin).toBe("openai");
+  });
+
+  it("editing something else does not rewrite the catalogue link", async () => {
+    const user = userEvent.setup();
+    const captured: Captured = { bodies: [] };
+    vi.stubGlobal(
+      "fetch",
+      routes([provider({ catalogue_id: "mistral", catalogue: entry() })], captured, undefined, [
+        entry(),
+      ]),
+    );
+    renderScreen(<AdminProviders />);
+
+    await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Description"), "!");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(captured.bodies.length).toBeGreaterThan(0));
+    expect("catalogue_id" in (captured.bodies[0]?.body as object)).toBe(false);
   });
 });

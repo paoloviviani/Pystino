@@ -1031,6 +1031,13 @@ class Settings(BaseSettings):
     # local-password door.
     bootstrap_admin_email: str = ""
 
+    # The operator directory of the provider catalogue (backlog P4): YAML files
+    # that override the built-in entries field by field and may add providers.
+    # Empty means "the default, /etc/pystino/providers.d, if it exists"; a value
+    # that is set must exist, so a typo in the mount stops the gateway rather
+    # than quietly serving the built-in catalogue. Read once at startup.
+    providers_dir: str = ""
+
     database_url: str = "postgresql+asyncpg://gateway:gateway@localhost:5432/gateway"
     database_pool_size: int = 10
     database_max_overflow: int = 20

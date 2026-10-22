@@ -143,6 +143,10 @@ conflicts with yours) — a mounted **directory**, so adding a file never meets
 the stale-inode trap of a single-file mount. Reload with
 `docker compose exec proxy caddy reload --config /etc/caddy/Caddyfile`.
 
+A provider catalogue override for `deploy/providers.d/` (YAML, git-ignored
+too) — see [Provider catalogue](provider-catalogue.md). The gateway reads it
+once at startup, so restart it after a change.
+
 ## Backups
 
 `deploy/.env` (every secret: `GATEWAY_SECRET_KEY` decrypts provider keys,

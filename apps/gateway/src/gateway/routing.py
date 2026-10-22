@@ -44,6 +44,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from gateway.accounting.cost import select_price
+from gateway.catalogue import CatalogueFacts
 from gateway.fx import FXService
 from gateway.models import ApiSurface, ModelDef, RouteSession
 from gateway.types import utcnow
@@ -126,6 +127,24 @@ class Candidate:
     target: ModelDef
     position: int
     weight: int = 1
+    #: What the provider catalogue says about the provider behind this target
+    #: (backlog P4), or ``None`` when the provider is not linked to an entry (or
+    #: the caller has no catalogue, a unit test). For a residency or
+    #: zero-data-retention rule to filter on; a field that is ``None`` inside is
+    #: *unknown*, which a rule must decide how to treat.
+    facts: CatalogueFacts | None = None
+
+    @property
+    def region(self) -> str | None:
+        return self.facts.region if self.facts else None
+
+    @property
+    def zero_data_retention(self) -> bool | None:
+        return self.facts.zero_data_retention if self.facts else None
+
+    @property
+    def retention_days(self) -> int | None:
+        return self.facts.retention_days if self.facts else None
 
 
 @dataclass(slots=True)

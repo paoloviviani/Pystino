@@ -1,0 +1,4 @@
+providers:
+  - id: tensorix
+    name: Tensorix
+    plugin: tensorix

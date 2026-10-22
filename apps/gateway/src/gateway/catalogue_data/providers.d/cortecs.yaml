@@ -1,0 +1,6 @@
+providers:
+  - id: cortecs
+    name: Cortecs
+    plugin: cortecs
+    base_url: https://api.cortecs.ai/v1
+    region: eu

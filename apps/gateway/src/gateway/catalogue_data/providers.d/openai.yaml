@@ -1,0 +1,8 @@
+# Built-in catalogue entry. Override any field from the operator directory;
+# see docs/provider-catalogue.md. Region and retention are left unset where the
+# provider does not commit to one answer: unknown is not the same as "no".
+providers:
+  - id: openai
+    name: OpenAI
+    plugin: openai
+    base_url: https://api.openai.com/v1

@@ -243,6 +243,11 @@ services:
       # The bundled Authelia's users file, which the console manages
       # and the authelia_file adapter reads. Empty when the profile is off.
       - authelia-config:/authelia
+      # The operator directory of the provider catalogue: YAML files that
+      # override the built-in entries field by field or add providers. A
+      # directory mount, read-only, optional (an empty directory is fine), read
+      # once at startup. docs/provider-catalogue.md.
+      - ${PYSTINO_PROVIDERS_DIR:-./providers.d}:/etc/pystino/providers.d:ro
     depends_on:
       postgres:
         condition: service_healthy

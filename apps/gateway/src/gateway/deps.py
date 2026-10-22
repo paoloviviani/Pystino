@@ -16,6 +16,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from gateway.accounting import TokenEstimator
 from gateway.capabilities import Capabilities, default_flags, effective_capabilities
+from gateway.catalogue import Catalogue
 from gateway.config import Settings
 from gateway.errors import (
     AgentsNotAllowedError,
@@ -162,6 +163,12 @@ def get_providers(request: Request) -> ProviderRegistry:
     """
     registry: ProviderRegistry = request.app.state.providers
     return registry
+
+
+def get_catalogue(request: Request) -> Catalogue:
+    """The provider catalogue read at startup (backlog P4)."""
+    catalogue: Catalogue = request.app.state.catalogue
+    return catalogue
 
 
 def get_estimator(request: Request) -> TokenEstimator:
@@ -886,5 +893,6 @@ QuotaDep = Annotated[QuotaEngine, Depends(get_quota_engine)]
 RedactorDep = Annotated[Redactor, Depends(get_redactor)]
 ProvidersDep = Annotated[ProviderRegistry, Depends(get_providers)]
 SecretsDep = Annotated[SecretBox, Depends(get_secrets)]
+CatalogueDep = Annotated[Catalogue, Depends(get_catalogue)]
 ControlHttpDep = Annotated[Any, Depends(get_control_http)]
 EstimatorDep = Annotated[TokenEstimator, Depends(get_estimator)]

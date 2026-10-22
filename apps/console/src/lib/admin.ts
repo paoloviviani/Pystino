@@ -37,6 +37,7 @@ import type {
   UserStatusCounts,
   ModelKind,
   Price,
+  CatalogueEntry,
   ProviderPlugin,
   ProviderTestResult,
   QuotaReset,
@@ -107,6 +108,7 @@ export const adminKeys = {
   redaction: ["admin", "redaction"] as const,
   redactionRules: ["admin", "redaction", "rules"] as const,
   providerPlugins: ["admin", "provider-plugins"] as const,
+  providerCatalogue: ["admin", "provider-catalogue"] as const,
   report: (query: string) => ["admin", "report", query] as const,
 };
 
@@ -173,6 +175,8 @@ export interface ProviderInput {
    * console — and an empty string strips it back off.
    */
   prefix?: string;
+  /** Link the row to a catalogue entry; on update an empty string unlinks. */
+  catalogue_id?: string;
 }
 
 export function useCreateProvider() {
@@ -201,6 +205,16 @@ export function useCreateProvider() {
  * Long stale time: this changes when a package is installed, not while somebody
  * is filling in a form.
  */
+/** The YAML provider catalogue as read at startup, each field with its origin. */
+export function useProviderCatalogue() {
+  return useQuery({
+    queryKey: adminKeys.providerCatalogue,
+    queryFn: () => request<CatalogueEntry[]>("/api/admin/provider-catalogue"),
+    // Files read once at startup: it cannot change under a running gateway.
+    staleTime: 10 * 60_000,
+  });
+}
+
 export function useProviderPlugins() {
   return useQuery({
     queryKey: adminKeys.providerPlugins,
