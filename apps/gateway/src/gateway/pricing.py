@@ -551,6 +551,12 @@ def _kind_of(entry: dict[str, Any]) -> ModelKind:
         lowered_tags = {str(tag).strip().lower() for tag in tags}
         if "ocr" in lowered_tags:
             return ModelKind.OCR
+        # A decision model reports text in and text out like a chat model, so
+        # only the tag tells them apart (ADR 0100). Cortecs's own /models does
+        # not list them today (checked 2026-10-22), so in practice they are
+        # created by hand; this keeps a catalogue that does list them right.
+        if "decision" in lowered_tags:
+            return ModelKind.DECISION
         # The same trap, one step worse: a search backend's tiers report text
         # in and text out, so nothing about their modalities distinguishes one
         # from a chat model. The tag is written by a search plugin's own

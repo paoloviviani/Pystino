@@ -40,7 +40,14 @@ from typing import TYPE_CHECKING, Any
 
 from gateway.accounting.cost import TokenCounts
 from gateway.models import ApiSurface
-from gateway.plugins.base import ProbeResult, ProviderKind, ReportedCost, ServedBy, bearer_headers
+from gateway.plugins.base import (
+    DecisionSupport,
+    ProbeResult,
+    ProviderKind,
+    ReportedCost,
+    ServedBy,
+    bearer_headers,
+)
 
 if TYPE_CHECKING:
     import httpx
@@ -83,6 +90,24 @@ class CortecsRouterPlugin:
     default_base_url: str | None = "https://api.cortecs.ai/v1"
     # One documented host, so the console offers no endpoint choice.
     base_url_options: tuple[tuple[str, str], ...] = ()
+    #: The Decisions API (beta; ADR 0100), measured against the live service
+    #: on 2026-10-22: `/v1/decisions` takes the `input` + array form and the
+    #: System One form and answers in kind, `/v1/systemone` takes only the
+    #: second. The routing fields are the ones its schema documents; the
+    #: deployment's provider settings own them, so they are refused rather
+    #: than forwarded. `preference` (speed, cost, balanced) is not among them.
+    decisions = DecisionSupport(
+        paths={"decisions": "/decisions", "systemone": "/systemone"},
+        routing_fields=(
+            "allowed_providers",
+            "eu_native",
+            "provider_order",
+            "quantizations",
+            "allow_zero_data_retention",
+            "enable_model_fallback",
+            "fallbacks",
+        ),
+    )
 
     # -- shaping a request --------------------------------------------------
 
@@ -128,7 +153,7 @@ class CortecsRouterPlugin:
         """
         if surface is ApiSurface.MESSAGES:
             return TokenCounts.from_anthropic_usage(usage)
-        if surface in (ApiSurface.RESPONSES, ApiSurface.IMAGES):
+        if surface in (ApiSurface.RESPONSES, ApiSurface.IMAGES, ApiSurface.DECISIONS):
             return TokenCounts.from_responses_usage(usage)
         return TokenCounts.from_usage(usage)
 

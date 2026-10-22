@@ -130,6 +130,41 @@ class EmbeddingRequest(BaseModel):
         return [self.input] if isinstance(self.input, str) else list(self.input)
 
 
+class DecisionsRequest(BaseModel):
+    """``POST /v1/decisions`` and ``POST /v1/systemone`` (ADR 0100).
+
+    Typed questions about a text. Two formats arrive here and each is answered
+    in kind: the ``input`` form (``input`` a string or messages, ``questions``
+    an array of predicate, choice and score questions) and the System One form
+    (``state``, ``questions`` an object keyed by the caller's ids). Only what
+    the gateway acts on is declared; the rest, question bodies included,
+    passes through for the provider to validate, because a gateway that
+    re-validated a beta schema would refuse valid requests each time the
+    provider added a question type (it already has: OpenRouter has a ``box``
+    question). ``extra="allow"`` keeps the routing fields visible so the route
+    can refuse them by name.
+    """
+
+    model_config = ConfigDict(extra="allow", protected_namespaces=())
+
+    model: str
+    input: Any = None
+    state: Any = None
+    questions: Any = None
+
+    def format(self) -> Literal["input", "state"] | None:
+        """Which of the two formats this body is, or None when it is neither or both.
+
+        Presence is what decides it, not value: ``state: ""`` is a System One
+        request about an empty text, and ``input: null`` is no input.
+        """
+        has_input = "input" in self.model_fields_set and self.input is not None
+        has_state = "state" in self.model_fields_set and self.state is not None
+        if has_input == has_state:
+            return None
+        return "input" if has_input else "state"
+
+
 class ResponsesRequest(BaseModel):
     """``POST /v1/responses``.
 
@@ -1124,6 +1159,10 @@ class ProviderPluginResponse(BaseModel):
     #: instead of demanding a dummy key. True for everything else, which is
     #: also what an installed third-party plugin reports by saying nothing.
     requires_api_key: bool = True
+    #: Whether a `decision` model can be served through this type (ADR 0100).
+    #: The console says so before an administrator makes one that would be
+    #: refused.
+    supports_decisions: bool = False
     #: What a provider row with no plugin named resolves to.
     is_default: bool
 
@@ -1150,7 +1189,7 @@ class ModelCreateRequest(BaseModel):
     # Which endpoint serves it. Required: a model with no provider cannot be
     # routed, and defaulting one would guess at spending money (ADR 0027).
     provider_id: uuid.UUID
-    kind: Literal["chat", "embedding", "image", "ocr", "search"] = "chat"
+    kind: Literal["chat", "embedding", "image", "ocr", "search", "decision"] = "chat"
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)
@@ -1182,7 +1221,7 @@ class ModelUpdateRequest(BaseModel):
     # and a mis-inferred kind takes a model off the only route that would serve
     # it. Historical usage rows record the surface they actually went through,
     # so correcting this does not make past spend unreadable (ADR 0030).
-    kind: Literal["chat", "embedding", "image", "ocr", "search"] | None = None
+    kind: Literal["chat", "embedding", "image", "ocr", "search", "decision"] | None = None
     display_name: str | None = Field(default=None, max_length=255)
     description: str | None = None
     context_window: int | None = Field(default=None, ge=1)

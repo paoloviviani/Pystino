@@ -170,6 +170,37 @@ class ProbeResult:
     sample: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class DecisionSupport:
+    """What a plugin knows about serving decision models (ADR 0100).
+
+    Optional on a plugin, read with ``getattr(plugin, "decisions", None)``: a
+    plugin without it cannot serve a ``decision`` model, which is how a
+    deployment learns, when the model is created, that the provider behind it
+    has no such endpoint. Not part of ``ProviderPlugin`` for the same reason
+    ``base_url_options`` is not: an installed plugin written before this
+    existed must keep satisfying the protocol.
+
+    Everything here is vendor knowledge that would otherwise be a literal in a
+    router. The core knows the two *request formats* (the ``input`` + array
+    form and the System One ``state`` + keyed form), because those are the
+    caller's contract; where a provider serves them and which of the body's
+    fields are the provider's own routing settings is the plugin's.
+    """
+
+    #: Upstream path per route the caller used: ``"decisions"`` for
+    #: ``/v1/decisions`` and ``"systemone"`` for ``/v1/systemone``. A route
+    #: with no entry is not served by this provider (a 400 naming the route).
+    paths: Mapping[str, str]
+    #: Body fields that choose providers, regions, quantisations or fallbacks.
+    #: They are the deployment's settings (the provider row), as for chat, so a
+    #: caller sending one is refused with a 400 naming the field instead of
+    #: being allowed to route around a policy the deployment set, an
+    #: EU-only deployment's first. A field whose value is ``null`` counts as
+    #: absent and is dropped.
+    routing_fields: tuple[str, ...] = ()
+
+
 def bearer_headers(credential: str) -> dict[str, str]:
     """``Authorization: Bearer`` — what every OpenAI-compatible endpoint wants.
 

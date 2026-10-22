@@ -104,7 +104,7 @@ class AnthropicPlugin:
         """
         if surface is ApiSurface.MESSAGES:
             return TokenCounts.from_anthropic_usage(usage)
-        if surface in (ApiSurface.RESPONSES, ApiSurface.IMAGES):
+        if surface in (ApiSurface.RESPONSES, ApiSurface.IMAGES, ApiSurface.DECISIONS):
             return TokenCounts.from_responses_usage(usage)
         return TokenCounts.from_usage(usage)
 

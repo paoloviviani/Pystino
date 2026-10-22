@@ -327,6 +327,15 @@ describe("AdminModels", () => {
     expect(screen.queryByRole("heading", { name: /^Image/ })).not.toBeInTheDocument();
   });
 
+  it("gives decision models their own section, with the routes that serve them", async () => {
+    vi.stubGlobal("fetch", routes([model(), model({ id: "m4", name: "triage", kind: "decision" })]));
+    renderScreen(<AdminModels />);
+
+    await waitFor(() => expect(screen.getByText("triage")).toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: /^Decision/ })).toBeInTheDocument();
+    expect(screen.getByText(/\/v1\/decisions and \/v1\/systemone/)).toBeInTheDocument();
+  });
+
   it("counts each section, so a long catalogue is legible at a glance", async () => {
     vi.stubGlobal(
       "fetch",

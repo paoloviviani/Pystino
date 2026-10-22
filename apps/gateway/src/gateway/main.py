@@ -50,6 +50,7 @@ from gateway.routers import (
     chat,
     client_scripts,
     console,
+    decisions,
     directory,
     embeddings,
     health,
@@ -426,6 +427,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(client_scripts.router)
     app.include_router(chat.router)
+    app.include_router(decisions.router)
     app.include_router(embeddings.router)
     app.include_router(responses_router.router)
     app.include_router(messages.router)

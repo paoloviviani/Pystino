@@ -159,6 +159,9 @@ def describe() -> list[dict[str, object]]:
                 # Keyless unless the plugin says otherwise: a backend with no
                 # credential to store must be creatable without one, or the
                 # console can only offer it behind a dummy key.
+                # Whether a `decision` model can be served through this type
+                # (ADR 0100), so the console can say so before a model is made.
+                "supports_decisions": getattr(plugin, "decisions", None) is not None,
                 "requires_api_key": bool(getattr(plugin, "requires_api_key", True)),
                 "is_default": plugin.name == DEFAULT_PLUGIN,
             }
