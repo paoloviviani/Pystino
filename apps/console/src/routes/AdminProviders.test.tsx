@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdminProvider, CatalogueEntry } from "../lib/types";
-import { jsonResponse } from "../test-helpers";
+import { jsonResponse, chooseRowAction } from "../test-helpers";
 import { AdminProviders } from "./AdminProviders";
 
 /**
@@ -222,7 +222,10 @@ describe("AdminProviders", () => {
     vi.stubGlobal("fetch", routes([provider()]));
     renderScreen(<AdminProviders />);
 
-    await waitFor(() => expect(screen.getByText("sk-a…3456")).toBeInTheDocument());
+    // The tail on one line; the whole hint is the title, so nothing is lost.
+    const tail = await screen.findByText("…3456");
+    expect(tail).toHaveAttribute("title", "sk-a…3456");
+    expect(screen.queryByText("sk-a…3456")).not.toBeInTheDocument();
   });
 
   it("says when a provider has no credential", async () => {
@@ -248,7 +251,7 @@ describe("AdminProviders", () => {
     renderScreen(<AdminProviders />);
 
     await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: "Test" }));
+    await chooseRowAction(user, "Test");
 
     await waitFor(() => expect(screen.getByText(/4 models/)).toBeInTheDocument());
   });
@@ -269,7 +272,7 @@ describe("AdminProviders", () => {
     renderScreen(<AdminProviders />);
 
     await waitFor(() => expect(screen.getByText("acme")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: "Test" }));
+    await chooseRowAction(user, "Test");
 
     await waitFor(() =>
       expect(
@@ -573,7 +576,8 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
 
     const table = within(await screen.findByRole("table"));
     await waitFor(() => expect(table.getByText("extractor")).toBeInTheDocument());
-    expect(table.getByRole("button", { name: "Delete" })).toBeDisabled();
+    await userEvent.setup().click(table.getByRole("button", { name: /^Actions for / }));
+    expect(await screen.findByRole("menuitem", { name: "Delete" })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("leaves Delete enabled for an ordinary provider", async () => {
@@ -582,7 +586,8 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
 
     const table = within(await screen.findByRole("table"));
     await waitFor(() => expect(table.getByText("acme")).toBeInTheDocument());
-    expect(table.getByRole("button", { name: "Delete" })).toBeEnabled();
+    await userEvent.setup().click(table.getByRole("button", { name: /^Actions for / }));
+    expect(await screen.findByRole("menuitem", { name: "Delete" })).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("still offers Deactivate for the internal provider", async () => {
@@ -596,7 +601,8 @@ describe("AdminProviders: the local extractor cannot be deleted", () => {
 
     const table = within(await screen.findByRole("table"));
     await waitFor(() => expect(table.getByText("extractor")).toBeInTheDocument());
-    expect(table.getByRole("button", { name: "Deactivate" })).toBeEnabled();
+    await userEvent.setup().click(table.getByRole("button", { name: /^Actions for / }));
+    expect(await screen.findByRole("menuitem", { name: "Deactivate" })).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("shows each catalogue field with its origin: built-in, or the override file", async () => {

@@ -18,6 +18,13 @@ export interface Column<Row> {
    * than by importance. Hiding says which ones are secondary.
    */
   hideBelow?: "sm" | "md" | "lg";
+  /**
+   * Keep each cell on one line. For short values that read as one token — a
+   * date, an address, a name — which otherwise break at a hyphen or a space
+   * ("provider-" / "1") the moment the column is squeezed. Numeric columns are
+   * always one line. A long value should be clamped by the cell instead.
+   */
+  nowrap?: boolean;
   render: (row: Row) => ReactNode;
 }
 
@@ -27,6 +34,20 @@ const HIDE_BELOW = {
   md: "hidden md:table-cell",
   lg: "hidden lg:table-cell",
 } as const;
+
+/*
+ * Density. These are working tables an administrator scans for many rows, so
+ * cell text is the 13px `text-xs` step (the page's 17px body made a six-column
+ * row wider than the screen and three lines tall), and padding is tight enough
+ * to keep a screenful of rows. Two things inside cells would undo that if left
+ * alone: monospace spans (`CODE` is the 15px step) and buttons (17px, tall
+ * padding), so both are scaled to the cell here, once, rather than at each of
+ * the screens that put them in a row.
+ */
+const TABLE =
+  "w-full border-collapse text-xs " +
+  "[&_td_.font-mono]:text-xs [&_td_button]:px-2.5 [&_td_button]:py-1 [&_td_button]:text-xs";
+const CELL_X = "px-3 first:pl-5 last:pr-5";
 
 export interface TableProps<Row> {
   columns: Column<Row>[];
@@ -77,10 +98,12 @@ export function Table<Row>({
 
   const cellTone = (numeric?: boolean) =>
     cx(numeric && "text-right tabular-nums");
+  const cellWrap = (column: Column<Row>) =>
+    (column.nowrap || column.numeric) && "whitespace-nowrap";
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full border-collapse text-base">
+      <table className={TABLE}>
         {/* Announced, not shown — see the note on the caption. Omitting it
             would leave a screen reader to infer what thirty numbers are. */}
         {caption && <caption className="sr-only">{caption}</caption>}
@@ -91,7 +114,8 @@ export function Table<Row>({
                 key={column.key}
                 scope="col"
                 className={cx(
-                  "border-b border-line bg-sunken px-5 py-2 text-left text-xs font-medium tracking-[0.01em] whitespace-nowrap text-ink",
+                  "border-b border-line bg-sunken py-1.5 text-left text-xs font-semibold tracking-[0.01em] whitespace-nowrap text-ink",
+                  CELL_X,
                   cellTone(column.numeric),
                   column.hideBelow && HIDE_BELOW[column.hideBelow],
                 )}
@@ -108,12 +132,14 @@ export function Table<Row>({
                 <td
                   key={column.key}
                   className={cx(
-                    "px-5 py-3 align-baseline",
+                    CELL_X,
+                    "py-2 align-baseline",
                     // The quiet rule under every row *except* the last: the
                     // card's own edge closes the table, and a line above it
                     // read as a border under a border.
                     index < rows.length - 1 && "border-b border-line-quiet",
                     cellTone(column.numeric),
+                    cellWrap(column),
                     column.hideBelow && HIDE_BELOW[column.hideBelow],
                   )}
                 >
@@ -135,8 +161,10 @@ export function Table<Row>({
                     // rewrite styled body cells and forgot it — the total sat
                     // flush against the card's edge, looking cut off. Found by
                     // looking at the real console, not by a test.
-                    "border-t border-line-strong px-5 py-3 font-bold",
+                    CELL_X,
+                    "border-t border-line-strong py-2 font-bold",
                     cellTone(column.numeric),
+                    cellWrap(column),
                     // Not optional. Hiding a column in the head and body but
                     // not here leaves the total row one cell wider than the
                     // rest, so every figure in it lands under the wrong header.

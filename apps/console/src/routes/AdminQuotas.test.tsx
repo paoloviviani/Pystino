@@ -6,7 +6,7 @@ import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LimitRule } from "../lib/types";
 import { MoneyPrecisionProvider } from "@llmp/ui";
-import { jsonResponse } from "../test-helpers";
+import { jsonResponse, chooseRowAction } from "../test-helpers";
 import { AdminQuotas } from "./AdminQuotas";
 
 /**
@@ -192,7 +192,7 @@ describe("AdminQuotas", () => {
     renderScreen(<AdminQuotas />);
 
     await waitFor(() => expect(screen.getByText("€31.40 of €50.00")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: "Reset" }));
+    await chooseRowAction(user, "Reset");
 
     const dialog = await screen.findByRole("dialog");
     expect(
@@ -208,7 +208,7 @@ describe("AdminQuotas", () => {
     renderScreen(<AdminQuotas />);
 
     await waitFor(() => expect(screen.getByText("€31.40 of €50.00")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: "Reset" }));
+    await chooseRowAction(user, "Reset");
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByLabelText("Reason (optional)")).toBeInTheDocument();
@@ -232,7 +232,7 @@ describe("AdminQuotas", () => {
     renderScreen(<AdminQuotas />);
 
     await waitFor(() => expect(screen.getByText("€31.40 of €50.00")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: "Reset" }));
+    await chooseRowAction(user, "Reset");
 
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText("Reason (optional)"), "grant extension approved");

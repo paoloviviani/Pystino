@@ -20,6 +20,7 @@ import {
   Select,
   Spinner,
   Table,
+  RowActions,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
@@ -174,12 +175,20 @@ export function AdminGroups() {
       header: "",
       render: (group) => (
         <div className={ROW_ACTIONS}>
-          <Button variant="ghost" onClick={() => setManaging(group)}>
+          <Button variant="secondary" onClick={() => setManaging(group)}>
             {m["admin_groups.action.members"]()}
           </Button>
-          <Button variant="ghost" className="text-danger" onClick={() => setDeleting(group)}>
-            {m["admin_groups.action.delete"]()}
-          </Button>
+          <RowActions
+            label={m["table.row_actions"]({ name: group.name })}
+            actions={[
+              {
+                key: "delete",
+                label: m["admin_groups.action.delete"](),
+                onSelect: () => setDeleting(group),
+                destructive: true,
+              },
+            ]}
+          />
         </div>
       ),
     },

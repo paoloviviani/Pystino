@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdminGroup, AdminModel, AdminProvider, ProviderPlugin } from "../lib/types";
-import { jsonResponse } from "../test-helpers";
+import { jsonResponse, chooseRowAction } from "../test-helpers";
 import { AdminSearch } from "./AdminSearch";
 
 /**
@@ -561,7 +561,7 @@ describe("AdminSearch backend deletion", () => {
     const user = userEvent.setup({ delay: null });
     renderScreen(<AdminSearch />);
 
-    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await chooseRowAction(user, "Delete");
     const dialog = within(await screen.findByRole("dialog"));
     expect(dialog.getByText("Delete linkup")).toBeInTheDocument();
     expect(dialog.getByText(/Removes the backend and its 1 tier/)).toBeInTheDocument();
@@ -577,7 +577,7 @@ describe("AdminSearch backend deletion", () => {
     const user = userEvent.setup({ delay: null });
     renderScreen(<AdminSearch />);
 
-    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await chooseRowAction(user, "Delete");
     const dialog = within(await screen.findByRole("dialog"));
     await user.click(dialog.getByRole("button", { name: "Cancel" }));
 
@@ -590,7 +590,7 @@ describe("AdminSearch backend deletion", () => {
     const user = userEvent.setup({ delay: null });
     renderScreen(<AdminSearch />);
 
-    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await chooseRowAction(user, "Delete");
     const dialog = within(await screen.findByRole("dialog"));
     await user.click(dialog.getByRole("button", { name: "Delete permanently" }));
 
@@ -616,13 +616,13 @@ describe("AdminSearch backend deletion", () => {
     renderScreen(<AdminSearch />);
 
     // Loaded, so the initial fetches are counted before the mutation runs.
-    await screen.findByRole("button", { name: "Delete" });
+    await screen.findByRole("button", { name: /^Actions for / });
     const providersBefore = counts.providers;
     const modelsBefore = counts.models;
     const groupsBefore = counts.groups;
     expect(providersBefore).toBeGreaterThan(0);
 
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await chooseRowAction(user, "Delete");
     const dialog = within(await screen.findByRole("dialog"));
     await user.click(dialog.getByRole("button", { name: "Delete permanently" }));
 
@@ -645,7 +645,7 @@ describe("AdminSearch backend deletion", () => {
     const user = userEvent.setup({ delay: null });
     renderScreen(<AdminSearch />);
 
-    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await chooseRowAction(user, "Delete");
     const dialog = within(await screen.findByRole("dialog"));
     await user.click(dialog.getByRole("button", { name: "Delete permanently" }));
 

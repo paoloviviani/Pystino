@@ -9,7 +9,7 @@ import {
   Stat,
   SummaryStrip,
   Table,
-  
+  RowActions,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useId, useState } from "react";
@@ -410,41 +410,34 @@ function RulesList({
       header: "",
       render: (rule) => (
         <div className={ROW_ACTIONS}>
-          {/* Explicit, not inherited: the row's actions read as one system
-              across the console — Edit and Clone are the light outline, never
-              a colour that could be mistaken for the primary action of the
-              row. */}
           <Button variant="secondary" onClick={() => navigate(`/admin/redaction/rules/${rule.id}`)}>
             {m["admin_redaction.action.edit"]()}
           </Button>
-          <Button
-            variant="secondary"
-            onClick={() =>
-              navigate("/admin/redaction/rules/new", { state: { cloneFrom: rule } })
-            }
-          >
-            {m["admin_redaction.action.clone"]()}
-          </Button>
-          <Button
-            busy={update.isPending && update.variables?.id === rule.id}
-            onClick={() => update.mutate({ id: rule.id, is_active: !rule.is_active })}
-          >
-            {rule.is_active
-              ? m["admin_redaction.action.deactivate"]()
-              : m["admin_redaction.action.activate"]()}
-          </Button>
-          {/* Thin red text, never filled: at row level a filled red button
-              outweighs every other element in the table, and deletion here is
-              confirmable, not accidental — the confirm dialog is where the
-              filled danger belongs. */}
-          <Button
-            variant="ghost"
-            className="text-danger"
-            busy={remove.isPending && remove.variables === rule.id}
-            onClick={() => remove.mutate(rule.id)}
-          >
-            {m["admin_redaction.action.delete"]()}
-          </Button>
+          <RowActions
+            label={m["table.row_actions"]({ name: rule.name })}
+            actions={[
+              {
+                key: "clone",
+                label: m["admin_redaction.action.clone"](),
+                onSelect: () => navigate("/admin/redaction/rules/new", { state: { cloneFrom: rule } }),
+              },
+              {
+                key: "toggle",
+                label: rule.is_active
+                  ? m["admin_redaction.action.deactivate"]()
+                  : m["admin_redaction.action.activate"](),
+                onSelect: () => update.mutate({ id: rule.id, is_active: !rule.is_active }),
+                disabled: update.isPending && update.variables?.id === rule.id,
+              },
+              {
+                key: "delete",
+                label: m["admin_redaction.action.delete"](),
+                onSelect: () => remove.mutate(rule.id),
+                destructive: true,
+                disabled: remove.isPending && remove.variables === rule.id,
+              },
+            ]}
+          />
         </div>
       ),
     },

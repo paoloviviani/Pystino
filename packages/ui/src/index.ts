@@ -49,6 +49,9 @@ export {
 } from "./components/Menu";
 export type { MenuContentProps, MenuSectionProps } from "./components/Menu";
 
+export { RowActions } from "./components/RowActions";
+export type { RowAction, RowActionsProps } from "./components/RowActions";
+
 export { Meter } from "./components/Meter";
 export type { MeterProps } from "./components/Meter";
 

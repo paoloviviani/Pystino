@@ -201,3 +201,52 @@ export const LOGIN_CENTRE = "flex min-h-[60vh] items-center justify-center p-5";
 export const LOGIN_CARD =
   "flex w-96 max-w-full flex-col gap-4 rounded-2xl border border-line-quiet bg-surface p-6 shadow-sm";
 export const FORM_STACK = "flex flex-col gap-4";
+
+/* -- page width -------------------------------------------------------------- */
+
+/**
+ * Listing screens, which opt in to the wide layout. A table of six or seven
+ * columns plus its actions wants more than the 76rem that keeps a form's lines
+ * readable, so on a wide screen these routes raise `--layout-max-width` (the
+ * header and the content both read it, so they stay aligned). Forms, settings
+ * and detail pages are not listed and keep the default.
+ */
+const WIDE_ROUTES = new Set([
+  "/requests",
+  "/admin/models",
+  "/admin/routing",
+  "/admin/providers",
+  "/admin/search",
+  "/admin/groups",
+  "/admin/quotas",
+  "/admin/redaction",
+  "/admin/requests",
+  "/admin/audit",
+  "/admin/users",
+]);
+
+/** The width cap for listing screens, in place of the token's default. */
+export const WIDE_LAYOUT_MAX_WIDTH = "104rem";
+
+export function isWideRoute(pathname: string): boolean {
+  return WIDE_ROUTES.has(pathname.replace(/\/+$/, "") || "/");
+}
+
+/**
+ * Secondary text in a table cell — a description, a URL, an upstream name — on
+ * one line, cut with an ellipsis. Pair it with a `title` carrying the full
+ * text: the cell stays one line tall and nothing is lost to a mouse or a
+ * screen reader. The cap is what lets `truncate` work in an auto-width table,
+ * where a cell otherwise grows to fit its longest line.
+ */
+export const CLAMP = "block max-w-[min(26rem,70vw)] truncate";
+
+/** A short fingerprint of a secret: one line, never broken mid-token. */
+export const FINGERPRINT = "whitespace-nowrap font-mono";
+
+/** The tail of a key hint ("sk-a…p4dA" -> "…p4dA"); the full hint is the title. */
+export function shortHint(hint: string | null | undefined): string {
+  if (!hint) return "";
+  const at = hint.indexOf("\u2026");
+  return at >= 0 ? hint.slice(at) : hint.length > 5 ? `\u2026${hint.slice(-4)}` : hint;
+}

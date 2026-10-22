@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { jsonResponse } from "../test-helpers";
+import { jsonResponse, chooseRowAction } from "../test-helpers";
 import type { AdminUser, DeletePreview, IdentityProvider, MergePreview } from "../lib/types";
 import { AdminUsers } from "./AdminUsers";
 
@@ -593,7 +593,8 @@ describe("AdminUsers bundled Authelia actions", () => {
     expect(screen.queryByRole("button", { name: "Create sign-in" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reset password" })).not.toBeInTheDocument();
     // Disable/Enable is a gateway-side action regardless of provider kind.
-    expect(screen.getAllByRole("button", { name: "Disable" }).length).toBeGreaterThan(0);
+    await chooseRowAction(userEvent.setup({ delay: null }), "Disable");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("Add user mints a one-time password with a copy button and the sharing note", async () => {
@@ -805,7 +806,7 @@ describe("AdminUsers disable and enable", () => {
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getByRole("button", { name: "Disable" }));
+    await chooseRowAction(user_, "Disable");
     const dialog = screen.getByRole("dialog");
 
     expect(within(dialog).getByText(/Personal API keys are kept/)).toBeInTheDocument();
@@ -822,7 +823,7 @@ describe("AdminUsers disable and enable", () => {
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getByRole("button", { name: "Enable" }));
+    await chooseRowAction(user_, "Enable");
     const dialog = screen.getByRole("dialog");
 
     expect(
@@ -899,7 +900,7 @@ describe("AdminUsers delete dialog", () => {
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getByRole("button", { name: "Delete" }));
+    await chooseRowAction(user_, "Delete");
     const dialog = screen.getByRole("dialog");
 
     await waitFor(() => expect(within(dialog).getByText("A shared chat — anyone with the link")).toBeInTheDocument());
@@ -921,7 +922,7 @@ describe("AdminUsers delete dialog", () => {
     renderScreen(<AdminUsers />);
 
     await waitFor(() => expect(screen.getByText("person-0@example.org")).toBeInTheDocument());
-    await user_.click(screen.getByRole("button", { name: "Delete" }));
+    await chooseRowAction(user_, "Delete");
     const dialog = screen.getByRole("dialog");
 
     await waitFor(() =>
@@ -1146,7 +1147,7 @@ describe("AdminUsers join modes (ADR 0095)", () => {
 
     expect(screen.getByText("Invited")).toBeInTheDocument();
     expect(screen.getByText("Expired")).toBeInTheDocument();
-    await user_.click(screen.getByRole("button", { name: "Re-invite" }));
+    await chooseRowAction(user_, "Re-invite");
     await waitFor(() =>
       expect(
         fetcher.mock.calls.some(

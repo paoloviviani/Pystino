@@ -9,10 +9,9 @@ import {
   Spinner,
   SummaryStrip,
   Table,
-  
+  RowActions,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
-import { Tooltip } from "@llmp/ui";
 import { useState } from "react";
 import {
   useCreateProvider,
@@ -30,7 +29,18 @@ import type {
   ProviderTestResult,
 } from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
-import { CHIPS, CHECK_ITEM, CODE, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
+import {
+  CHIPS,
+  CHECK_ITEM,
+  CLAMP,
+  CODE,
+  FINGERPRINT,
+  MUTED,
+  NOWRAP,
+  PAGE,
+  ROW_ACTIONS,
+  shortHint,
+} from "../lib/layout";
 import { useOptionalToast } from "../lib/toast";
 import { formatNumber } from "../lib/format";
 import { m } from "../paraglide/messages.js";
@@ -79,19 +89,26 @@ export function AdminProviders() {
       render: (provider) => (
         <>
           <div>{provider.name}</div>
-          <div className={`${MUTED} ${CODE}`}>{provider.base_url}</div>
-          {provider.description && <div className={MUTED}>{provider.description}</div>}
+          <div className={`${MUTED} ${CODE} ${CLAMP}`} title={provider.base_url}>
+            {provider.base_url}
+          </div>
+          {provider.description && (
+            <div className={`${MUTED} ${CLAMP}`} title={provider.description}>
+              {provider.description}
+            </div>
+          )}
         </>
       ),
     },
     {
       key: "type",
+      hideBelow: "md",
       header: m["admin_providers.column.type"](),
       render: (provider) => (
         <>
           {/* The label, not the internal name: the operator chose "Cortecs
               (router)" and should see that back. */}
-          <div>{pluginLabel(plugins.data, provider.plugin)}</div>
+          <div className={NOWRAP}>{pluginLabel(plugins.data, provider.plugin)}</div>
           <div className={CHIPS}>
             {provider.kind === "router" && (
               <Badge tone="accent">{m["admin_providers.badge.router"]()}</Badge>
@@ -129,18 +146,22 @@ export function AdminProviders() {
     },
     {
       key: "credential",
+      hideBelow: "lg",
       header: m["admin_providers.column.api_key"](),
       render: (provider) =>
         provider.has_api_key ? (
           // Only ever a hint: the key itself is write-only and never leaves the
           // gateway (ADR 0027).
-          <span className={CODE}>{provider.api_key_hint}</span>
+          <span className={`${CODE} ${FINGERPRINT}`} title={provider.api_key_hint ?? undefined}>
+            {shortHint(provider.api_key_hint)}
+          </span>
         ) : (
           <span className={MUTED}>{m["admin_providers.no_key"]()}</span>
         ),
     },
     {
       key: "models",
+      hideBelow: "sm",
       header: m["admin_providers.column.models"](),
       numeric: true,
       render: (provider) => formatNumber(provider.model_count),
@@ -164,66 +185,57 @@ export function AdminProviders() {
       header: "",
       render: (provider) => (
         <div className={ROW_ACTIONS}>
-          {/* So a wrong URL or a stale key shows up here rather than in a
-              request to a model. Said here, where the button is — it spent a
-              while as a notice inside the create dialog, explaining an action
-              that did not exist yet. */}
-          <Tooltip label={m["admin_providers.test.tooltip"]()}>
-            <Button
-              busy={test.isPending && test.variables === provider.id}
-              onClick={() => runTest(provider)}
-            >
-              {m["admin_providers.action.test"]()}
-            </Button>
-          </Tooltip>
-          <Button onClick={() => setEditing(provider)}>{m["admin_providers.action.edit"]()}</Button>
-          <Button
-            busy={update.isPending && update.variables?.id === provider.id}
-            onClick={() =>
-              update.mutate(
-                { id: provider.id, is_active: !provider.is_active },
-                {
-                  onSuccess: () =>
-                    toast?.add({ title: m["admin_providers.toast.updated"](), type: "success" }),
-                  onError: () =>
-                    toast?.add({
-                      title: m["admin_providers.toast.update_failed"](),
-                      type: "error",
-                    }),
-                },
-              )
-            }
-          >
-            {provider.is_active
-              ? m["admin_providers.action.deactivate"]()
-              : m["admin_providers.action.activate"]()}
+          <Button variant="secondary" onClick={() => setEditing(provider)}>
+            {m["admin_providers.action.edit"]()}
           </Button>
-          {provider.kind === "internal" ? (
-            <Tooltip label={m["admin_providers.internal.tooltip"]()}>
-              <Button variant="ghost" className="text-danger" disabled>
-                {m["admin_providers.action.delete"]()}
-              </Button>
-            </Tooltip>
-          ) : (
-            <Button
-              variant="ghost"
-              className="text-danger"
-              busy={remove.isPending && remove.variables === provider.id}
-              onClick={() =>
-                remove.mutate(provider.id, {
-                  onSuccess: () =>
-                    toast?.add({ title: m["admin_providers.toast.deleted"](), type: "success" }),
-                  onError: () =>
-                    toast?.add({
-                      title: m["admin_providers.toast.delete_failed"](),
-                      type: "error",
-                    }),
-                })
-              }
-            >
-              {m["admin_providers.action.delete"]()}
-            </Button>
-          )}
+          <RowActions
+            label={m["table.row_actions"]({ name: provider.name })}
+            actions={[
+              {
+                key: "test",
+                label: m["admin_providers.action.test"](),
+                onSelect: () => runTest(provider),
+                disabled: test.isPending && test.variables === provider.id,
+              },
+              {
+                key: "toggle",
+                label: provider.is_active
+                  ? m["admin_providers.action.deactivate"]()
+                  : m["admin_providers.action.activate"](),
+                onSelect: () =>
+                  update.mutate(
+                    { id: provider.id, is_active: !provider.is_active },
+                    {
+                      onSuccess: () =>
+                        toast?.add({ title: m["admin_providers.toast.updated"](), type: "success" }),
+                      onError: () =>
+                        toast?.add({
+                          title: m["admin_providers.toast.update_failed"](),
+                          type: "error",
+                        }),
+                    },
+                  ),
+                disabled: update.isPending && update.variables?.id === provider.id,
+              },
+              {
+                key: "delete",
+                label: m["admin_providers.action.delete"](),
+                onSelect: () =>
+                  remove.mutate(provider.id, {
+                    onSuccess: () =>
+                      toast?.add({ title: m["admin_providers.toast.deleted"](), type: "success" }),
+                    onError: () =>
+                      toast?.add({
+                        title: m["admin_providers.toast.delete_failed"](),
+                        type: "error",
+                      }),
+                  }),
+                destructive: true,
+                disabled:
+                  provider.kind === "internal" || (remove.isPending && remove.variables === provider.id),
+              },
+            ]}
+          />
         </div>
       ),
     },

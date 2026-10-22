@@ -14,11 +14,13 @@ import {
   Tooltip,
 } from "@llmp/ui";
 import { useState } from "react";
-import type { ComponentType, ReactNode, SVGProps } from "react";
+import type { ComponentType, CSSProperties, ReactNode, SVGProps } from "react";
 import { NavLink, useLocation } from "react-router";
 import { ADMIN_GROUPS } from "../lib/adminNav";
 import { request } from "../lib/api";
 import {
+  WIDE_LAYOUT_MAX_WIDTH,
+  isWideRoute,
   SIDEBAR_GROUP,
   SIDEBAR_LINK,
   SIDEBAR_LINK_ACTIVE,
@@ -154,6 +156,8 @@ export function Shell({ me, children }: ShellProps) {
   // screen arrives with the right navigation around it, which a stateful switch
   // would not give them.
   const inAdmin = location.pathname.startsWith("/admin");
+  // Listings opt in to a wider column; see lib/layout.ts.
+  const wide = isWideRoute(location.pathname);
   const name = me.display_name || me.email || m["shell.signed_in"]();
 
   // Administrators only. A reader looking at their own spend has no use for
@@ -198,7 +202,10 @@ export function Shell({ me, children }: ShellProps) {
   };
 
   return (
-    <div className="flex min-h-dvh flex-col">
+    <div
+      className="flex min-h-dvh flex-col"
+      style={wide ? ({ "--layout-max-width": WIDE_LAYOUT_MAX_WIDTH } as CSSProperties) : undefined}
+    >
       <header className="sticky top-0 z-20 border-b border-line bg-surface">
         <div className="mx-auto flex h-15 w-full max-w-[var(--layout-max-width)] items-center gap-1 px-5 max-[40rem]:px-3">
           {/* On a phone, the hamburger that brings the drawer in. */}

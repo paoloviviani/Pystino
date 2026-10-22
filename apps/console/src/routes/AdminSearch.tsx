@@ -9,6 +9,7 @@ import {
   Spinner,
   SummaryStrip,
   Table,
+  RowActions,
 } from "@llmp/ui";
 import type { Column } from "@llmp/ui";
 import { useState } from "react";
@@ -26,7 +27,16 @@ import {
 import type { AdminProvider, ProviderPlugin } from "../lib/types";
 import { useOptionalToast } from "../lib/toast";
 import { PageHeader } from "../components/PageHeader";
-import { CHIPS, CODE, FORM, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
+import {
+  CHIPS,
+  CODE,
+  FINGERPRINT,
+  FORM,
+  MUTED,
+  PAGE,
+  ROW_ACTIONS,
+  shortHint,
+} from "../lib/layout";
 import { formatNumber } from "../lib/format";
 import { Message } from "../components/Message";
 import { m } from "../paraglide/messages.js";
@@ -84,7 +94,9 @@ export function AdminSearch() {
       header: m["admin_search.column.api_key"](),
       render: (backend) =>
         backend.has_api_key ? (
-          <span className={CODE}>{backend.api_key_hint}</span>
+          <span className={`${CODE} ${FINGERPRINT}`} title={backend.api_key_hint ?? undefined}>
+            {shortHint(backend.api_key_hint)}
+          </span>
         ) : (
           <span className={MUTED}>{m["admin_search.no_key"]()}</span>
         ),
@@ -114,19 +126,20 @@ export function AdminSearch() {
       header: "",
       render: (backend) => (
         <div className={ROW_ACTIONS}>
-          {/* Explicit, not inherited: the row's actions read as one system
-              across the console — Edit is always the light outline, never a
-              colour that could be mistaken for the primary action of the row. */}
           <Button variant="secondary" onClick={() => setEditing(backend)}>
             {m["admin_search.action.edit"]()}
           </Button>
-          {/* Thin red text, never filled: at row level a filled red button
-              outweighs every other element in the table, and deletion here is
-              confirmable, not accidental — the confirm dialog is where the
-              filled danger belongs. */}
-          <Button variant="ghost" className="text-danger" onClick={() => setDeleting(backend)}>
-            {m["admin_search.action.delete"]()}
-          </Button>
+          <RowActions
+            label={m["table.row_actions"]({ name: backend.name })}
+            actions={[
+              {
+                key: "delete",
+                label: m["admin_search.action.delete"](),
+                onSelect: () => setDeleting(backend),
+                destructive: true,
+              },
+            ]}
+          />
         </div>
       ),
     },

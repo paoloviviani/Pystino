@@ -14,7 +14,7 @@ import { PageHeader } from "./PageHeader";
 import { useGroups, useModels, useUsers } from "../lib/admin";
 import { downloadCsv } from "../lib/api";
 import { formatDateTime, formatNumber } from "../lib/format";
-import { FILTERS, MUTED, PAGE } from "../lib/layout";
+import { FILTERS, MUTED, NOWRAP, PAGE } from "../lib/layout";
 import { recentPeriods } from "../lib/periods";
 import {
   REQUEST_STATUSES,
@@ -78,6 +78,7 @@ export function RequestLogView({ scope }: { scope: RequestLogScope }) {
     {
       key: "time",
       header: m["request_log.column.time"](),
+      nowrap: true,
       render: (row) => formatDateTime(row.created_at),
     },
     ...(admin
@@ -86,6 +87,7 @@ export function RequestLogView({ scope }: { scope: RequestLogScope }) {
             key: "user",
             header: m["request_log.column.user"](),
             hideBelow: "md" as const,
+            nowrap: true,
             render: (row: RequestLogRow) => row.user_label ?? <span className={MUTED}>—</span>,
           },
         ]
@@ -94,6 +96,7 @@ export function RequestLogView({ scope }: { scope: RequestLogScope }) {
       key: "group",
       header: m["request_log.column.group"](),
       hideBelow: "lg",
+      nowrap: true,
       render: (row) => row.group_name ?? <span className={MUTED}>—</span>,
     },
     {
@@ -102,7 +105,7 @@ export function RequestLogView({ scope }: { scope: RequestLogScope }) {
       render: (row) =>
         row.requested_model ? (
           <span>
-            {row.requested_model} <span className={MUTED}>→ {row.model}</span>
+            {row.requested_model} <span className={`${MUTED} ${NOWRAP}`}>→ {row.model}</span>
             {/* Which try this was: a request that fell back has one line per
                 attempt under one request id, and the failed ones read as errors. */}
             {row.route_attempt ? (
@@ -159,6 +162,7 @@ export function RequestLogView({ scope }: { scope: RequestLogScope }) {
       key: "source",
       header: m["request_log.column.source"](),
       hideBelow: "md",
+      nowrap: true,
       render: (row) =>
         row.source === "api_key" ? m["request_log.source.api_key"]() : m["request_log.source.token"](),
     },
