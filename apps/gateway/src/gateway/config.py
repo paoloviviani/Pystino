@@ -293,8 +293,8 @@ class OIDCSettings(BaseModel):
     # audience would accept any token the issuer ever issued to anybody — the
     # audience *is* the security property, so it is also the switch.
     #
-    # Verified against a Keycloak deployment on 2026-08-28 and not guessed:
-    # a Keycloak access token carries **no `aud` claim at all** unless an
+    # Verified against a live provider on 2026-08-28 and not guessed:
+    # some providers' access tokens (Keycloak among them) carry **no `aud` claim at all** unless an
     # audience mapper puts one there, only `azp` naming the client that asked
     # for it. So the value here must match a mapper configured on every client
     # permitted to call `/v1` — see docs/oidc-generic-provider.md for the
@@ -317,8 +317,12 @@ class OIDCSettings(BaseModel):
     @classmethod
     def _known_kind(cls, value: str) -> str:
         # identity_policy.KINDS, spelled here: importing it would be a cycle.
-        kinds = ("generic", "authelia", "keycloak", "entra", "okta", "authentik", "google")
+        kinds = ("generic", "authelia", "entra", "okta", "authentik", "google")
         value = value.strip().lower() or "generic"
+        if value == "keycloak":
+            # Withdrawn kind (ADR 0088): an existing .env must still boot.
+            # Keycloak is an ordinary external OIDC provider now.
+            value = "generic"
         if value not in kinds:
             raise ValueError(f"GATEWAY_OIDC__KIND must be one of {', '.join(kinds)}")
         return value

@@ -99,7 +99,7 @@ your own (`OIDC_ISSUER`, `OIDC_INTERNAL_BASE_URL`, `OIDC_CONSOLE_CLIENT_ID`/
 `OIDC_*` variables in `deploy/.env`; the gateway re-reads them at every
 start and the console shows the provider read-only. To combine several
 sources of users, federate them in your own IdP (Keycloak, Authentik and the
-like) and point the stack at it. Who is an administrator, how groups sync,
+like, deployed separately) and point the stack at it. Who is an administrator, how groups sync,
 and linking accounts by email are all environment settings too — see
 [Identity](identity.md) for every variable and what the gateway
 checks at startup.

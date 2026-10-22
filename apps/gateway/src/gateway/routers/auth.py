@@ -401,7 +401,7 @@ async def callback(
         )
     _set_session_cookie(response, request, user.id)
     # Kept solely to pass as `id_token_hint` when signing out. Without it
-    # Keycloak cannot tell which session is being ended, so it interrupts with
+    # the provider cannot tell which session is being ended, so it interrupts with
     # a "Logging out?" confirmation page — safe, but an unfamiliar screen in
     # the middle of a one-click action.
     #
@@ -484,7 +484,7 @@ def _unverified_issuer(token: str) -> str | None:
 async def logout(request: Request, session: SessionDep, settings: SettingsDep) -> JSONResponse:
     """End the session here **and** at the identity provider.
 
-    Dropping our own cookie is not logging out. Keycloak keeps its own SSO
+    Dropping our own cookie is not logging out. The provider keeps its own SSO
     session, so the next visit to ``/auth/login`` was answered without a
     password prompt and the reader arrived back on the console as the same
     person — signing out looked like it did nothing at all. On a shared machine
@@ -493,7 +493,7 @@ async def logout(request: Request, session: SessionDep, settings: SettingsDep) -
     So the cookie goes *and* the caller is handed the provider's
     ``end_session_endpoint`` to navigate to. Returned rather than redirected
     into, because this is a POST from `fetch` — following a 3xx would fetch
-    Keycloak's page into JavaScript instead of taking the browser there. The
+    the provider's page into JavaScript instead of taking the browser there. The
     console does a full page navigation with it.
 
     ``end_session_endpoint`` is optional in the spec, and the bundled Authelia

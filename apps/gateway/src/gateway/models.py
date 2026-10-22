@@ -421,7 +421,7 @@ class User(Base):
     #:
     #: It was previously read only as a fallback for `display_name`
     #: (`name or preferred_username`), so any directory that sends both threw
-    #: the username away. Keycloak sends both by default, which made an account
+    #: the username away. Some providers send both by default, which made an account
     #: created as `chat@local` findable only as `chat@example.org` — a real
     #: report, and the reason this column exists.
     #:
@@ -1928,7 +1928,7 @@ class DirectoryEntry(Base):
     `users` because a directory can name people who have never signed in — and
     for Authelia, whose `sub` is an opaque id minted at first login, cannot even
     say which `(issuer, subject)` they will be. An entry is linked to a user
-    (`user_id`) when the subject is known up front (Keycloak, SCIM) or at that
+    (`user_id`) when the subject is known up front (SCIM) or at that
     person's first login (by username and verified email).
 
     `preassigned_groups` lets an administrator put someone in groups before
@@ -1959,7 +1959,7 @@ class DirectoryEntry(Base):
     provider_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("identity_providers.id", ondelete="CASCADE"), index=True
     )
-    #: The directory's own key: Keycloak/SCIM id (= the OIDC subject), or the
+    #: The directory's own key: SCIM id (= the OIDC subject), or the
     #: Authelia login name.
     external_id: Mapped[str] = mapped_column(String(255))
     username: Mapped[str | None] = mapped_column(String(255), default=None)

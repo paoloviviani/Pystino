@@ -14,7 +14,6 @@ from gateway.directory.adapters import (
     AdapterError,
     AutheliaFileAdapter,
     Entry,
-    KeycloakAdminAdapter,
 )
 from gateway.directory.engine import apply_entries, link_at_login
 from gateway.identity_registry import record_from_row
@@ -101,29 +100,6 @@ class TestAdapters:
         path.write_text("")
         with pytest.raises(AdapterError):
             await AutheliaFileAdapter(path).list_entries()
-
-    async def test_keycloak_admin_rest(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            if request.url.path.endswith("/protocol/openid-connect/token"):
-                return httpx.Response(200, json={"access_token": "t"})
-            if request.url.path.endswith("/admin/realms/corp/users"):
-                assert request.headers["authorization"] == "Bearer t"
-                return httpx.Response(
-                    200,
-                    json=[{"id": "u-1", "username": "alice", "email": "a@x.org", "enabled": True}],
-                )
-            if request.url.path.endswith("/users/u-1/groups"):
-                return httpx.Response(200, json=[{"name": "ops"}])
-            return httpx.Response(404)
-
-        adapter = KeycloakAdminAdapter(
-            "https://kc.example.org/realms/corp",
-            "sync",
-            "secret",
-            httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-        )
-        (entry,) = await adapter.list_entries()
-        assert (entry.external_id, entry.groups, entry.is_subject) == ("u-1", ("ops",), True)
 
 
 class TestEngine:
@@ -278,8 +254,8 @@ class TestEngine:
     ) -> None:
         row = await _provider(
             session,
-            kind="keycloak",
-            sync_adapter="keycloak_admin",
+            kind="generic",
+            sync_adapter="scim",
             issuer="https://kc.example.org/realms/corp",
         )
         report = await apply_entries(
@@ -306,8 +282,8 @@ class TestEngine:
         row = await _provider(
             session,
             name="scim",
-            kind="keycloak",
-            sync_adapter="keycloak_admin",
+            kind="generic",
+            sync_adapter="scim",
             issuer="https://kc.example.org/realms/corp",
         )
         pending = User(

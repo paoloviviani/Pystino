@@ -109,7 +109,6 @@ def exempt(
 
 _PROVIDER_LABELS = {
     "authelia": "Authelia",
-    "keycloak": "Keycloak",
     "entra": "Microsoft Entra ID",
     "okta": "Okta",
     "authentik": "Authentik",

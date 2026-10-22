@@ -30,7 +30,7 @@ account together.
 - **Password only**: the access-control policy and every client's
   authorization policy are `one_factor` (the deploy kit's copy also switches
   TOTP and WebAuthn off). A second factor comes from an
-  external IdP such as Keycloak, configured through the environment
+  external IdP, configured through the environment
   ([Identity](identity.md#one-provider-set-in-the-environment)).
 - It needs a **dotted host name** in this repository's `deploy/`: browsers
   refuse its session cookie on a dotless name, and `deploy/` has no way to

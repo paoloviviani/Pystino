@@ -69,7 +69,7 @@ class TestTheRedirectSelection:
     def test_the_default_is_offered_to_the_console_only_for_authelia(self) -> None:
         expected = f"{AUTHELIA}/logout?rd={{redirect}}"
         assert default_logout_url("authelia", f"{AUTHELIA}/") == expected
-        assert default_logout_url("keycloak", AUTHELIA) == ""
+        assert default_logout_url("generic", AUTHELIA) == ""
 
 
 class TestTheRoute:

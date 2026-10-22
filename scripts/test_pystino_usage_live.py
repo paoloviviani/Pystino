@@ -25,18 +25,14 @@ Usage:
       -f deploy/compose.yaml -f deploy/dev/smoke.yml up -d --wait
     set -a; . deploy/.env; set +a; python3 scripts/test_pystino_usage_live.py
 
-The access-token half additionally needs an identity provider with a direct
-grant enabled (a Keycloak client with `directAccessGrantsEnabled`; the
-development Keycloak is `deploy/dev/keycloak/compose.yml`) and
-KEYCLOAK_TEST_USER / KEYCLOAK_TEST_PASSWORD for a real person to sign in as.
-Without them that half is reported skipped, not failed: the API-key half
+The access-token half additionally needs the bundled Authelia's device flow.
+Without it that half is reported skipped, not failed: the API-key half
 alone still proves the route.
 """
 
 from __future__ import annotations
 
 import json
-import os
 import sys
 import urllib.error
 import urllib.parse
@@ -94,46 +90,16 @@ def bearer_get(credential: str | None, path: str) -> tuple[int, Any]:
 
 
 def access_token() -> str | None:
-    """An OIDC access token, minted by password grant.
+    """An OIDC access token from the bundled Authelia's device flow, or None.
 
-    Built from ``GATEWAY_OIDC__ISSUER`` / ``__CLIENT_ID`` / ``__CLIENT_SECRET``
-    on purpose, not from ``CHAT_OPENID_CONFIG``: that variable is JSON, and
-    ``set -a; . deploy/.env; set +a`` strips its quotes, leaving a value no
-    JSON parser accepts (the trap AGENTS.md records under "Sourcing
-    deploy/.env mangles CHAT_OPENID_CONFIG"). The three ``GATEWAY_OIDC__*``
-    variables are plain strings and survive sourcing unharmed. The gateway's
-    own console client works for this when the client has
-    ``directAccessGrantsEnabled`` set in Keycloak.
+    The same walk an agent machine's enrollment drives (see
+    ``test_models_billing_live.device_token``); skips itself when the
+    deployment's identity provider does not offer the device flow.
     """
-    issuer = os.environ.get("GATEWAY_OIDC__ISSUER", "")
-    client_id = os.environ.get("GATEWAY_OIDC__CLIENT_ID", "")
-    client_secret = os.environ.get("GATEWAY_OIDC__CLIENT_SECRET", "")
-    user = os.environ.get("KEYCLOAK_TEST_USER", "")
-    password = os.environ.get("KEYCLOAK_TEST_PASSWORD", "")
-    if not (issuer and client_id and client_secret and user and password):
-        return None
+    from test_models_billing_live import device_token, opener_and_verify
 
-    body = urllib.parse.urlencode(
-        {
-            "grant_type": "password",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "username": user,
-            "password": password,
-            "scope": "openid",
-        }
-    ).encode()
-    req = urllib.request.Request(
-        f"{issuer}/protocol/openid-connect/token",
-        data=body,
-        headers={"content-type": "application/x-www-form-urlencoded"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as response:
-            token = json.loads(response.read()).get("access_token")
-            return str(token) if token else None
-    except urllib.error.HTTPError:
-        return None
+    op, _verify = opener_and_verify()
+    return device_token(op)
 
 
 def check_document(label: str, status: int, body: Any) -> None:
@@ -308,8 +274,7 @@ def main() -> int:
     if token is None:
         skip(
             "the access-token case",
-            "set KEYCLOAK_TEST_USER / KEYCLOAK_TEST_PASSWORD, with an OIDC "
-            "provider configured (deploy/dev/keycloak/compose.yml)",
+            "needs the bundled Authelia's device flow",
         )
     else:
         status, body = bearer_get(token, "/v1/pystino/usage")

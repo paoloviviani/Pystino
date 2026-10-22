@@ -50,10 +50,10 @@ class SyncConfigRequest(BaseModel):
     ``config`` is write-only and never returned; ``None`` means "leave the
     stored credentials alone" and is not the same as an empty dict, which
     clears them — a save that only changes the adapter or the interval must
-    not silently wipe a working `keycloak_admin` credential.
+    not silently wipe a working adapter credential.
     """
 
-    sync_adapter: Literal["none", "authelia_file", "keycloak_admin", "scim"] | None = None
+    sync_adapter: Literal["none", "authelia_file", "scim"] | None = None
     sync_interval_minutes: int | None = Field(default=None, ge=0, le=10080)
     config: dict[str, Any] | None = None
 

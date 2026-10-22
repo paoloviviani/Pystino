@@ -17,10 +17,8 @@ reach, and both are the point of this file:
   mistake ADR 0057 records three times over — an implementation reading the
   token's `groups` claim passes every other check and fails this one.
 
-Needs an OIDC provider with the direct access grant enabled, which
-a Keycloak client sets (the development Keycloak is
-`deploy/dev/keycloak/compose.yml`). Source deploy/.env first, so PUBLIC_HOST
-and the credentials are set:
+Needs the bundled Authelia's device flow (see test_models_billing_live.py).
+Source deploy/.env first, so PUBLIC_HOST and the credentials are set:
 
     set -a; . deploy/.env; set +a
     ./scripts/test_bill_to_live.py
@@ -29,7 +27,6 @@ and the credentials are set:
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
 
 import httpx
@@ -66,89 +63,6 @@ def ca_bundle() -> str | None:
     return path if os.path.exists(path) else None
 
 
-def kcadm(*args: str) -> str:
-    """One kcadm call. Present only to read the client secret we then use.
-
-    Deliberately not used to *create* anything: this script checks a deployment,
-    and one that quietly provisioned its own realm would be checking itself.
-    """
-    container = os.environ.get("KEYCLOAK_CONTAINER", "llm-platform-keycloak-1")
-    cmd = [
-        "docker",
-        "exec",
-        "-i",
-        container,
-        "/opt/keycloak/bin/kcadm.sh",
-        *args,
-        "--server",
-        "http://localhost:8080",
-        "--realm",
-        "master",
-        "--user",
-        os.environ.get("KEYCLOAK_ADMIN_USER", "admin"),
-        "--password",
-        os.environ.get("KEYCLOAK_ADMIN_PASSWORD", ""),
-    ]
-    out = subprocess.run(cmd, capture_output=True, text=True)  # noqa: S603
-    return out.stdout.strip().replace("\r", "")
-
-
-def get_token(base: str, verify: str | bool) -> str | None:
-    realm = os.environ.get("KEYCLOAK_REALM", "pystino")
-    user = os.environ.get("KEYCLOAK_TEST_USER", "")
-    password = os.environ.get("KEYCLOAK_TEST_PASSWORD", "")
-    if not (user and password and os.environ.get("KEYCLOAK_ADMIN_PASSWORD")):
-        return None
-
-    uuid = kcadm(
-        "get",
-        "clients",
-        "-r",
-        realm,
-        "-q",
-        "clientId=pystino-chat",
-        "--fields",
-        "id",
-        "--format",
-        "csv",
-        "--noquotes",
-    ).splitlines()
-    if not uuid:
-        return None
-    secret = kcadm(
-        "get",
-        f"clients/{uuid[0]}/client-secret",
-        "-r",
-        realm,
-        "--fields",
-        "value",
-        "--format",
-        "csv",
-        "--noquotes",
-    ).splitlines()
-    if not secret:
-        return None
-
-    issuer = f"{base}/idp/realms/{realm}"
-    response = httpx.post(
-        f"{issuer}/protocol/openid-connect/token",
-        data={
-            "grant_type": "password",
-            "client_id": "pystino-chat",
-            "client_secret": secret[0],
-            "username": user,
-            "password": password,
-            "scope": "openid",
-        },
-        verify=verify,
-        timeout=30,
-    )
-    if response.status_code != 200:
-        return None
-    token: str | None = response.json().get("access_token")
-    return token
-
-
 def device_flow_token() -> str | None:
     """An access token from the bundled Authelia's device flow, or None."""
     sys.path.insert(0, os.path.dirname(__file__))
@@ -165,18 +79,11 @@ def main() -> int:
     print(f"origin: {base}\n")
 
     print("=== a token from the configured identity provider ===")
-    token = get_token(base, verify)
-    if token is None:
-        # No Keycloak direct grant: the bundled Authelia's device flow gives a
-        # real access token too, the way an agent machine gets one. Without
-        # this the whole file skipped on the default stack, including at a
-        # release (0.11.0).
-        token = device_flow_token()
+    token = device_flow_token()
     if token is None:
         skip(
             "the whole file",
-            "no Keycloak direct grant and no Authelia device flow; "
-            "configure one (deploy/dev/keycloak/compose.yml) and source deploy/.env",
+            "no Authelia device flow; run against the bundled stack and source deploy/.env",
         )
         return 0
     ok("obtained an access token", f"{len(token)} chars")

@@ -6,7 +6,14 @@ import httpx
 import pytest
 from conftest import LEGACY_GROUPS, Seeded
 from gateway.config import OIDCSettings
-from gateway.identity_policy import AdminRule, PolicyError, admin_rule, capabilities, validate
+from gateway.identity_policy import (
+    KINDS,
+    AdminRule,
+    PolicyError,
+    admin_rule,
+    capabilities,
+    validate,
+)
 from gateway.models import Membership, User
 from gateway.oidc import provision_user, sync_user_from_claims
 from sqlalchemy import select
@@ -19,10 +26,9 @@ ISS = "https://sso.example.org/realms/x"
 class TestCapabilities:
     def test_each_kind_offers_only_what_it_can(self) -> None:
         assert capabilities("authelia").adapters == ("authelia_file",)
-        assert capabilities("keycloak").adapters == ("keycloak_admin",)
         assert capabilities("entra").adapters == ("scim",)
         assert not capabilities("authelia").subject_before_login
-        assert capabilities("keycloak").subject_before_login
+        assert capabilities("entra").subject_before_login
         assert not capabilities("google").claims_groups
         # Unknown kinds fall back to generic: JIT only, SCIM if it can push.
         assert capabilities("nonsense") == capabilities("generic")
@@ -30,7 +36,7 @@ class TestCapabilities:
     @pytest.mark.parametrize(
         ("args", "message"),
         [
-            (("authelia", "claim", "console", "keycloak_admin", "disable"), "cannot use"),
+            (("authelia", "claim", "console", "scim", "disable"), "cannot use"),
             (("generic", "directory", "console", "none", "disable"), "needs a sync adapter"),
             (("google", "claim", "console", "none", "disable"), "no groups claim"),
             (("generic", "claim", "root", "none", "disable"), "admin_source"),
@@ -40,6 +46,13 @@ class TestCapabilities:
     def test_impossible_combinations_are_refused(self, args: tuple, message: str) -> None:
         with pytest.raises(PolicyError, match=message):
             validate(*args)
+
+    def test_the_withdrawn_keycloak_kind_is_refused(self) -> None:
+        # ADR 0088: Keycloak is an external generic OIDC provider now.
+        assert "keycloak" not in KINDS
+        with pytest.raises(PolicyError, match="kind"):
+            validate("keycloak", "claim", "console", "none", "disable")
+        assert capabilities("keycloak") == capabilities("generic")
 
     def test_safe_defaults_validate(self) -> None:
         validate("generic", "claim", "console", "none", "disable")
@@ -211,3 +224,7 @@ class TestTheApi:
         assert response.status_code == 200
         async with session_factory() as session:
             assert (await session.get(User, pid)).admin_source == "manual"
+
+
+def test_a_keycloak_kind_in_the_environment_still_boots_as_generic() -> None:
+    assert OIDCSettings(**LEGACY_GROUPS, kind="keycloak").kind == "generic"

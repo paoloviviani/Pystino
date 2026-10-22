@@ -215,7 +215,7 @@ the browser case:
   the default, since their sessions really are browser-length.
 - **Keycloak's** realm-level offline-session idle timeout (what governs an
   `offline_access` refresh token) defaults to **30 days**, which is long
-  enough for this use case. With your own Keycloak, register an
+  enough for this use case. With your own Keycloak (deployed separately), register an
   `opencode-enrollment` client in the same shape as above.
 
 ## Machine credentials, and how access ends

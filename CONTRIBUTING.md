@@ -81,8 +81,8 @@ the in-memory counters the tests use. Every setting is in
 `production`, where a missing `GATEWAY_SESSION_SECRET` or `GATEWAY_SECRET_KEY`
 stops the gateway at startup and says which.
 The console's sign-in is OIDC, so a working console needs an identity provider:
-bring up the compose deployment instead (below), or develop against
-`deploy/dev/keycloak/`.
+bring up the compose deployment instead (below), or point it at any OIDC
+provider you run separately.
 
 The console in development:
 

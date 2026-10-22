@@ -563,7 +563,7 @@ function UserMenu({
     // what actually signs the person out: dropping our cookie alone leaves the
     // provider's SSO session standing, so /auth/login is answered without a
     // password prompt and they arrive back as themselves. That is what "logout
-    // does nothing" looked like (found with Keycloak; any SSO provider does it).
+    // does nothing" looked like (any SSO provider does it).
     //
     // The fallback is the console's own login page — the SPA route that asks
     // /auth/methods and renders whichever doors exist. /auth/login, the API

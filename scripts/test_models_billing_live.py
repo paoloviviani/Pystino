@@ -21,8 +21,8 @@ the list the way the send path is billed:
 The token comes from the bundled Authelia's RFC 8622 device flow for the
 machine-enrollment client (``opencode-enrollment`` — ADR 0089's client, whose
 tokens the gateway already accepts on ``/v1``), approved through the same
-portal API a browser drives. A Keycloak deployment has no Authelia portal;
-that is what ``test_bill_to_live.py`` is for.
+portal API a browser drives. A deployment on an external identity provider has
+no Authelia portal, so this check does not apply to it.
 
 The second group, the model granted to it alone, and the membership are set
 up through the management API (an administrator's grant, source ``manual``),
@@ -158,8 +158,7 @@ def device_token(op: urllib.request.OpenerDirector) -> str | None:
     base = idp_base()
     origin_ = origin().rstrip("/")
 
-    # Discovery names the device endpoint only when the IdP speaks RFC 8628;
-    # anything else is what test_bill_to_live.py's Keycloak path is for.
+    # Discovery names the device endpoint only when the IdP speaks RFC 8628.
     status, _, body = request(op, f"{base}/.well-known/openid-configuration")
     if status != 200:
         skip("a token from the identity provider", f"discovery unreachable (HTTP {status})")
@@ -168,9 +167,7 @@ def device_token(op: urllib.request.OpenerDirector) -> str | None:
     if not doc.get("device_authorization_endpoint"):
         skip(
             "a token from the identity provider",
-            "the IdP does not advertise the device flow; configure a Keycloak "
-            "direct grant (deploy/dev/keycloak/compose.yml) and use "
-            "test_bill_to_live.py",
+            "the IdP does not advertise the device flow",
         )
         return None
 

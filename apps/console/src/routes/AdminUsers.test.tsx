@@ -566,7 +566,7 @@ describe("AdminUsers bundled Authelia actions", () => {
       "fetch",
       routes(1, undefined, {}, [
         bundledProvider({
-          kind: "keycloak",
+          kind: "generic",
           is_enabled: true,
           capabilities: {
             claims_groups: true,
@@ -1164,7 +1164,7 @@ describe("AdminUsers join modes (ADR 0095)", () => {
       "fetch",
       routes(1, seen, {}, [
         bundledProvider({
-          kind: "keycloak",
+          kind: "generic",
           is_enabled: true,
           capabilities: {
             claims_groups: true,
@@ -1200,7 +1200,7 @@ describe("AdminUsers join modes (ADR 0095)", () => {
       "fetch",
       routes(1, { users: [], patches: [], posts: [] }, {}, [
         bundledProvider({
-          kind: "keycloak",
+          kind: "generic",
           is_enabled: true,
           capabilities: {
             claims_groups: true,

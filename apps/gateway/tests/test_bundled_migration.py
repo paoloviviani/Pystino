@@ -260,12 +260,12 @@ async def test_a_non_bundled_provider_is_never_passed_in_by_the_caller(
         session.add(
             IdentityProvider(
                 name="default",
-                issuer="https://keycloak.example.org",
+                issuer="https://sso.example.org",
                 client_id="c",
                 client_secret_encrypted=BOX.encrypt("s"),
                 scopes=["openid"],
                 groups_claim="groups",
-                kind="keycloak",
+                kind="generic",
                 group_source="directory",
                 sync_adapter="none",
                 admin_source="console",

@@ -20,14 +20,14 @@ policy (who may join, which claim names their groups, what an IdP group
 means here) and the people themselves (the **Users** page).
 
 If you need several sources of users, federate them in your own IdP
-(Keycloak, Authentik and the like) and point the stack at it. **If you need
-multi-factor authentication, that is also the IdP's job**: the bundled Authelia is password-only, so switch the stack to a Keycloak (or any IdP that does MFA) instead.
+(Keycloak, Authentik and the like, deployed separately) and point the stack at it. **If you need
+multi-factor authentication, that is also the IdP's job**: the bundled Authelia is password-only, so switch the stack to an external IdP that does MFA instead.
 
 | Variable | Gateway setting | Meaning |
 |---|---|---|
 | `OIDC_ISSUER` | `GATEWAY_OIDC__ISSUER` | the issuer URL, exactly as the discovery document's `issuer` states it |
 | `OIDC_INTERNAL_BASE_URL` | `GATEWAY_OIDC__INTERNAL_BASE_URL` | where the gateway reaches the issuer from inside the network (bundled Authelia: `http://authelia:9091/authelia`); empty means the issuer URL itself |
-| `OIDC_KIND` | `GATEWAY_OIDC__KIND` | `authelia` for the bundled one, `generic` otherwise (`keycloak`, `entra`, `okta`, `authentik`, `google` are recognised kinds) |
+| `OIDC_KIND` | `GATEWAY_OIDC__KIND` | `authelia` for the bundled one, `generic` otherwise (`entra`, `okta`, `authentik`, `google` are recognised kinds) |
 | `OIDC_CONSOLE_CLIENT_ID`, `_SECRET` | `GATEWAY_OIDC__CLIENT_ID`, `_CLIENT_SECRET` | the console's client |
 | `OIDC_CHAT_CLIENT_ID`, `_SECRET` | `GATEWAY_OIDC__CHAT_CLIENT_ID`, `_CHAT_CLIENT_SECRET` | the chat's client, when the chat is deployed; the id also tells the gateway which accepted client may announce chat sign-ins. The gateway uses the secret only to introspect the chat's tokens at an IdP whose access tokens are opaque ([GitLab](oidc-generic-provider.md#worked-example-gitlab)) |
 | `OIDC_MACHINE_CLIENT_ID` | `GATEWAY_OIDC__MACHINE_CLIENT_ID` | galopin's public client, `opencode-enrollment` by default: the device flow for agent machines, and the client the `code_agents` gate keys on ([Chat-only people](#chat-only-people)) |
@@ -124,7 +124,7 @@ deployment at that issuer again creates the row afresh.
 Every other row is disabled, and the start logs one line per disabled row
 with its user count. The console keeps editing what the environment does not
 own: the identity policy and its group mappings, and directory sync on
-the active row (an Authelia users-file or Keycloak-admin pull, and SCIM 2.0
+the active row (an Authelia users-file pull, and SCIM 2.0
 pushes at `/scim/v2/<provider>`; a first sync is a dry run until an
 administrator confirms it).
 

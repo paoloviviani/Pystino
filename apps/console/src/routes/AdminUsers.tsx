@@ -196,7 +196,7 @@ export function AdminUsers() {
             </div>
           ) : null}
           {/* The directory's own name for this person, shown when it is not
-              already the line above. An account created in Keycloak as
+              already the line above. An account created in the identity provider as
               `chat@local` with the address `chat@example.org` was listed only
               by the address, so searching for the name it was made under found
               nothing — which reads as a missing account rather than a missing
