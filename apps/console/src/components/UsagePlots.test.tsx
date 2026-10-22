@@ -27,6 +27,8 @@ function row(day: string, split: string, cost: string): UsageReportRow {
     native_currency: null,
     estimated_requests: 0,
     unavailable_requests: 0,
+    estimated_disconnected_requests: 0,
+    via_alias_requests: 0,
   };
 }
 
@@ -45,6 +47,7 @@ function report(rows: UsageReportRow[]): UsageReport {
     rows,
     totals: row("", "", "0"),
     disclosures: [],
+    reconciliation: [],
   };
 }
 

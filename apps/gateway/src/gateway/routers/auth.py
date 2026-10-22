@@ -17,7 +17,7 @@ from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import OctKey
 from joserfc.jwt import JWTClaimsRegistry
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from gateway import identity_policy
 from gateway.config import Settings
@@ -37,6 +37,7 @@ from gateway.oidc import (
     issue_session_token,
     sign_in,
 )
+from gateway.response_model import ResponseModel
 from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
@@ -150,7 +151,7 @@ async def _resolve_provider_client(
     return registry.client_for(record, origin), record
 
 
-class AuthProvider(BaseModel):
+class AuthProvider(ResponseModel):
     """One enabled identity provider, as the login page needs it (ADR 0051).
 
     The name is what ``GET /auth/login?provider=`` takes, so it is the button's
@@ -163,7 +164,7 @@ class AuthProvider(BaseModel):
     issuer: str
 
 
-class AuthMethods(BaseModel):
+class AuthMethods(ResponseModel):
     """Which ways in this deployment offers. Drives the console's login page."""
 
     local: bool

@@ -34,6 +34,7 @@ from pydantic import (
 from gateway.config import RedactionPolicy
 from gateway.pagination import Page
 from gateway.plugins import registry as plugin_registry
+from gateway.response_model import ResponseModel
 
 if TYPE_CHECKING:
     from gateway.redaction import RedactionOutcome as RedactionOutcomeLike
@@ -534,7 +535,7 @@ class ImageGenerationRequest(BaseModel):
         return payload
 
 
-class ModelCard(BaseModel):
+class ModelCard(ResponseModel):
     """One entry of ``GET /v1/models``, in OpenAI's shape."""
 
     id: str
@@ -573,7 +574,7 @@ class ModelCard(BaseModel):
     local: bool = False
 
 
-class ModelList(BaseModel):
+class ModelList(ResponseModel):
     object: Literal["list"] = "list"
     data: list[ModelCard] = Field(default_factory=list)
 
@@ -581,13 +582,13 @@ class ModelList(BaseModel):
 # -- management API ---------------------------------------------------------
 
 
-class GroupSummary(BaseModel):
+class GroupSummary(ResponseModel):
     id: uuid.UUID
     name: str
     description: str | None = None
 
 
-class MeResponse(BaseModel):
+class MeResponse(ResponseModel):
     id: uuid.UUID
     email: str | None
     display_name: str | None
@@ -605,7 +606,7 @@ class MeResponse(BaseModel):
     capabilities: CapabilityFlags | None = None
 
 
-class CapabilityFlags(BaseModel):
+class CapabilityFlags(ResponseModel):
     """The two ADR 0096 capabilities, as one person effectively holds them.
 
     ``code_agents``: the /code panel and the machine links that serve it.
@@ -618,7 +619,7 @@ class CapabilityFlags(BaseModel):
     api_keys: bool
 
 
-class CallerIdentity(BaseModel):
+class CallerIdentity(ResponseModel):
     """What ``GET /v1/me`` answers, deliberately beside :class:`MeResponse`.
 
     The two answer the same question through different doors, and keeping them
@@ -667,14 +668,14 @@ class CallerIdentity(BaseModel):
     capabilities: CapabilityFlags | None = None
 
 
-class IdentityRef(BaseModel):
+class IdentityRef(ResponseModel):
     """One ``(issuer, subject)`` that signs in as a gateway user (ADR 0093)."""
 
     issuer: str
     subject: str
 
 
-class MeIdentities(BaseModel):
+class MeIdentities(ResponseModel):
     """``GET /v1/me/identities``: everything that names this person here.
 
     The chat keys its own records on the gateway's ``id`` and uses the rest to
@@ -715,7 +716,7 @@ class ApiKeyCreateRequest(BaseModel):
     expires_in_days: int | None = Field(default=None, ge=1, le=3650)
 
 
-class ApiKeyResponse(BaseModel):
+class ApiKeyResponse(ResponseModel):
     id: uuid.UUID
     name: str
     prefix: str
@@ -732,7 +733,7 @@ class ApiKeyCreatedResponse(ApiKeyResponse):
     secret: str
 
 
-class UsageSummaryResponse(BaseModel):
+class UsageSummaryResponse(ResponseModel):
     window_seconds: int
     requests: int
     total_tokens: int
@@ -742,7 +743,7 @@ class UsageSummaryResponse(BaseModel):
     estimated_requests: int = 0
 
 
-class LimitRuleResponse(BaseModel):
+class LimitRuleResponse(ResponseModel):
     id: uuid.UUID
     name: str
     scope: str
@@ -766,7 +767,7 @@ class LimitRuleResponse(BaseModel):
     last_reset_at: datetime | None = None
 
 
-class QuotaWindowHealth(BaseModel):
+class QuotaWindowHealth(ResponseModel):
     """One rule's current window, counter against ledger (``GET /quota/health``)."""
 
     rule_id: uuid.UUID
@@ -792,7 +793,7 @@ class QuotaWindowHealth(BaseModel):
     stale_in_progress: int
 
 
-class QuotaHealthResponse(BaseModel):
+class QuotaHealthResponse(ResponseModel):
     windows: list[QuotaWindowHealth]
     # The short-lived election key one worker holds while rebuilding a cold
     # cache. Absent in normal running; there is no longer a permanent marker.
@@ -800,7 +801,7 @@ class QuotaHealthResponse(BaseModel):
     rebuild_lock_ttl_seconds: int | None
 
 
-class QuotaReconcileEntry(BaseModel):
+class QuotaReconcileEntry(ResponseModel):
     rule_id: uuid.UUID
     rule_name: str
     window_id: str
@@ -810,12 +811,12 @@ class QuotaReconcileEntry(BaseModel):
     member_id: uuid.UUID | None = None
 
 
-class QuotaReconcileResponse(BaseModel):
+class QuotaReconcileResponse(ResponseModel):
     reconciled: list[QuotaReconcileEntry]
     corrected: int
 
 
-class MyLimitResponse(BaseModel):
+class MyLimitResponse(ResponseModel):
     """One quota rule that constrains the caller, and how much of it is spent.
 
     Deliberately narrower than :class:`LimitRuleResponse`. It carries no
@@ -845,10 +846,10 @@ class MyLimitResponse(BaseModel):
     limit_value: Money
     current_value: Money | None = None
     #: The caller's own notification thresholds on this rule (ADR 0052).
-    notification_thresholds: list[int] = []
+    notification_thresholds: list[int] = Field(default_factory=list)
 
 
-class PystinoUsageResponse(BaseModel):
+class PystinoUsageResponse(ResponseModel):
     """``GET /v1/pystino/usage`` (ADR 0074): a bearer caller's own quotas and spend.
 
     The gateway's own shape under a clearly-custom path, not a mimicry of
@@ -881,7 +882,7 @@ class MyNotificationThresholdsRequest(BaseModel):
 # primary key.
 
 
-class CatalogueOriginResponse(BaseModel):
+class CatalogueOriginResponse(ResponseModel):
     """Where one catalogue field's current value came from."""
 
     field: str
@@ -891,7 +892,7 @@ class CatalogueOriginResponse(BaseModel):
     file: str
 
 
-class CatalogueRetentionResponse(BaseModel):
+class CatalogueRetentionResponse(ResponseModel):
     """What the provider keeps. ``null`` is *unknown*, never "no"."""
 
     zero_data_retention: bool | None = None
@@ -901,7 +902,7 @@ class CatalogueRetentionResponse(BaseModel):
     source_url: str | None = None
 
 
-class CataloguePriceHintResponse(BaseModel):
+class CataloguePriceHintResponse(ResponseModel):
     model: str
     effective_from: date
     currency: str
@@ -913,7 +914,7 @@ class CataloguePriceHintResponse(BaseModel):
     per_page: Decimal | None = None
 
 
-class CatalogueEntryResponse(BaseModel):
+class CatalogueEntryResponse(ResponseModel):
     """One entry of the provider catalogue, with where each field came from."""
 
     id: str
@@ -925,11 +926,11 @@ class CatalogueEntryResponse(BaseModel):
     prefix: str = ""
     region: str | None = None
     retention: CatalogueRetentionResponse
-    price_hints: list[CataloguePriceHintResponse] = []
-    origins: list[CatalogueOriginResponse] = []
+    price_hints: list[CataloguePriceHintResponse] = Field(default_factory=list)
+    origins: list[CatalogueOriginResponse] = Field(default_factory=list)
 
 
-class ProviderResponse(BaseModel):
+class ProviderResponse(ResponseModel):
     """A provider, minus its credential.
 
     The API key is never returned — only ``api_key_hint``, which is enough to
@@ -1095,7 +1096,7 @@ def _check_billing_mode(plugin: str | None, mode: str | None) -> None:
         )
 
 
-class SearchBackendDeleteResponse(BaseModel):
+class SearchBackendDeleteResponse(ResponseModel):
     """What deleting a search backend took down with it.
 
     A search backend and its tiers are one concept on the console's search
@@ -1113,7 +1114,7 @@ class SearchBackendDeleteResponse(BaseModel):
     cleared_groups: list[str]
 
 
-class PluginBaseURLOption(BaseModel):
+class PluginBaseURLOption(ResponseModel):
     """One endpoint a provider type documents: the URL and what it is.
 
     The label is the plugin's knowledge — which host is the EU-only one is a
@@ -1126,7 +1127,7 @@ class PluginBaseURLOption(BaseModel):
     label: str
 
 
-class ProviderPluginResponse(BaseModel):
+class ProviderPluginResponse(ResponseModel):
     """An installed provider type, for the console's selector.
 
     The plugin *is* the provider type as far as an operator is concerned: it
@@ -1153,7 +1154,7 @@ class ProviderPluginResponse(BaseModel):
     #: to happen. Empty means the default above is the whole of the answer; the
     #: API itself keeps accepting any base URL, because a hand-set one is the
     #: operator's own (a private gateway, a proxy) and stays legitimate.
-    base_url_options: list[PluginBaseURLOption] = []
+    base_url_options: list[PluginBaseURLOption] = Field(default_factory=list)
     #: Whether creating a provider of this type needs a credential. False for
     #: the keyless search backend, so the console offers creation without one
     #: instead of demanding a dummy key. True for everything else, which is
@@ -1167,7 +1168,7 @@ class ProviderPluginResponse(BaseModel):
     is_default: bool
 
 
-class ProviderTestResponse(BaseModel):
+class ProviderTestResponse(ResponseModel):
     """The result of calling a provider's ``/models``.
 
     Run against the row as stored, so it exercises the credential the gateway
@@ -1237,7 +1238,7 @@ class ModelUpdateRequest(BaseModel):
     is_public: bool | None = None
 
 
-class PriceResponse(BaseModel):
+class PriceResponse(ResponseModel):
     id: uuid.UUID
     input_per_mtok: Money
     output_per_mtok: Money
@@ -1300,7 +1301,7 @@ class PriceCreateRequest(BaseModel):
         return cleaned
 
 
-class AliasPointer(BaseModel):
+class AliasPointer(ResponseModel):
     """The minimum to link to an alias: which row, and what to call it.
 
     Deliberately not the whole alias response. A model page showing twenty
@@ -1315,7 +1316,7 @@ class AliasPointer(BaseModel):
     is_active: bool = True
 
 
-class ModelAdminResponse(BaseModel):
+class ModelAdminResponse(ResponseModel):
     id: uuid.UUID
     name: str
     upstream_model: str
@@ -1354,7 +1355,7 @@ class ModelAdminResponse(BaseModel):
 # -- aliases (ADR 0101) ------------------------------------------------------
 
 
-class AliasTargetResponse(BaseModel):
+class AliasTargetResponse(ResponseModel):
     """A model an alias may be served by, as the admin surface shows it.
 
     Not the same shape as `ModelAdminResponse`: no provider, no prices, no
@@ -1377,7 +1378,7 @@ class AliasTargetResponse(BaseModel):
     unavailable_reason: str | None = None
 
 
-class AliasResponse(BaseModel):
+class AliasResponse(ResponseModel):
     """One alias, as the Routing page shows it."""
 
     id: uuid.UUID
@@ -1488,7 +1489,7 @@ class AliasUpdateRequest(BaseModel):
         return self
 
 
-class IdentityProviderResponse(BaseModel):
+class IdentityProviderResponse(ResponseModel):
     """A provider row. The secret is never returned — only whether one is set."""
 
     id: uuid.UUID
@@ -1534,7 +1535,7 @@ class IdentityProviderResponse(BaseModel):
     kept_reason: str = ""
 
 
-class EmailSettingsResponse(BaseModel):
+class EmailSettingsResponse(ResponseModel):
     host: str
     port: int
     username: str
@@ -1548,7 +1549,7 @@ class EmailTestRequest(BaseModel):
     to: str = Field(min_length=3, max_length=255)
 
 
-class EmailTestResponse(BaseModel):
+class EmailTestResponse(ResponseModel):
     ok: bool
     detail: str
 
@@ -1562,7 +1563,7 @@ class GroupMemberAddRequest(BaseModel):
     user_id: uuid.UUID
 
 
-class GroupAdminResponse(BaseModel):
+class GroupAdminResponse(ResponseModel):
     id: uuid.UUID
     name: str
     description: str | None
@@ -1601,7 +1602,7 @@ class GroupUpdateRequest(BaseModel):
     api_keys_allowed: bool | None = None
 
 
-class GroupCapabilityBulkResponse(BaseModel):
+class GroupCapabilityBulkResponse(ResponseModel):
     """What the bulk flip did (ADR 0096, amended): how many groups the
     statement touched, which is also the audit row's ``count``."""
 
@@ -1617,7 +1618,7 @@ class GroupCapabilityBulkRequest(BaseModel):
     value: bool
 
 
-class SeenGroupResponse(BaseModel):
+class SeenGroupResponse(ResponseModel):
     """A group name a directory reported that no group here carries yet."""
 
     id: uuid.UUID
@@ -1640,7 +1641,7 @@ class SeenGroupPage(Page[SeenGroupResponse]):
     default_group: str
 
 
-class SeenGroupImportResponse(BaseModel):
+class SeenGroupImportResponse(ResponseModel):
     group: GroupAdminResponse
     #: People granted the group now, from what their last sign-in carried.
     members_added: int
@@ -1691,7 +1692,7 @@ class GroupSearchBackendRequest(BaseModel):
     model_id: uuid.UUID | None = None
 
 
-class UserAdminResponse(BaseModel):
+class UserAdminResponse(ResponseModel):
     id: uuid.UUID
     email: str | None
     display_name: str | None
@@ -1758,7 +1759,7 @@ class UserAdminResponse(BaseModel):
     authelia_sync_message: str | None = None
 
 
-class UserStatusCounts(BaseModel):
+class UserStatusCounts(ResponseModel):
     """The Users page's filter-chip counts (ADR 0095 §7)."""
 
     awaiting_approval: int = 0
@@ -1871,7 +1872,7 @@ class UserCreateRequest(BaseModel):
     send_email: bool = False
 
 
-class InvitedUserResponse(BaseModel):
+class InvitedUserResponse(ResponseModel):
     """An invitation for a provider that creates no logins (ADR 0095).
 
     ``sign_in_url`` is where the invitee signs in: the chat when one is
@@ -1888,7 +1889,7 @@ class InvitedUserResponse(BaseModel):
     email_error: str | None = None
 
 
-class InviteTextResponse(BaseModel):
+class InviteTextResponse(ResponseModel):
     """A regenerated invitation text (ADR 0095).
 
     Re-issuing re-stamps ``invited_at``: copying the text to resend it *is*
@@ -1907,11 +1908,11 @@ class SignInCreateRequest(BaseModel):
     login: str = Field(min_length=1, max_length=64)
 
 
-class PasswordResetResponse(BaseModel):
+class PasswordResetResponse(ResponseModel):
     password: str
 
 
-class MergePreviewResponse(BaseModel):
+class MergePreviewResponse(ResponseModel):
     """``GET /admin/users/{source}/merge-preview?into=`` (ADR 0093 §7.1): the
     dry run the console shows before an operator can even reach the typed
     confirmation."""
@@ -1943,7 +1944,7 @@ class MergeRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
-class MergeResponse(BaseModel):
+class MergeResponse(ResponseModel):
     target_id: uuid.UUID
     counts: dict[str, int]
     identities_dropped: list[IdentityRef]
@@ -1951,7 +1952,7 @@ class MergeResponse(BaseModel):
     duplicate_rules_dropped: int
 
 
-class ChatSharedResource(BaseModel):
+class ChatSharedResource(ResponseModel):
     """One resource of this person that someone else can see, named, with who
     can see it (§9.2: "every resource of the user that someone else can see,
     named, with who can see it") -- passed through from the chat's own
@@ -1963,7 +1964,7 @@ class ChatSharedResource(BaseModel):
     audience: str
 
 
-class DeletePreviewResponse(BaseModel):
+class DeletePreviewResponse(ResponseModel):
     """``GET /admin/users/{id}/delete-preview`` (ADR 0093 §9.2). The dialog
     shows this verbatim before the confirmation.
     """
@@ -1995,14 +1996,14 @@ class DeleteUserRequest(BaseModel):
     confirm_shared_loss: bool = False
 
 
-class DeleteUserResponse(BaseModel):
+class DeleteUserResponse(ResponseModel):
     erasure_id: uuid.UUID
     #: Whether the chat confirmed inline, right after the commit -- `False`
     #: means it is `pending` and the retry loop has it now.
     chat_erasure_done: bool
 
 
-class PendingErasuresResponse(BaseModel):
+class PendingErasuresResponse(ResponseModel):
     """``GET /admin/erasures/pending`` (ADR 0093 §9.3): the Users page's own
     banner, "N erasures waiting for the chat", while any are pending."""
 
@@ -2047,13 +2048,13 @@ class OidcPolicyUpdateRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
-class OidcPolicyChange(BaseModel):
+class OidcPolicyChange(ResponseModel):
     reason: str
     changed_at: datetime
     changed_by: str | None = None
 
 
-class OidcPolicyPreviewResponse(BaseModel):
+class OidcPolicyPreviewResponse(ResponseModel):
     """What saving this group gate would do (ADR 0095 §7), and what a bulk
     capability flip would do (ADR 0096, amended): people counted over
     effective memberships, in SQL.
@@ -2076,7 +2077,7 @@ class OidcPolicyPreviewResponse(BaseModel):
     would_lose: int | None = None
 
 
-class OidcPolicyResponse(BaseModel):
+class OidcPolicyResponse(ResponseModel):
     """The policy in force on this worker, and where each part came from."""
 
     auto_provision: bool
@@ -2084,7 +2085,7 @@ class OidcPolicyResponse(BaseModel):
     # ADR 0095: the join answer, and the group gate's local names. The two
     # fields above are the derived legacy view, kept one release.
     join_mode: str
-    required_groups: list[str] = []
+    required_groups: list[str] = Field(default_factory=list)
     group_fallback: str = "refuse"
     groups_claim: str
     group_mappings: list[OidcMappingRule]
@@ -2097,7 +2098,7 @@ class OidcPolicyResponse(BaseModel):
     # `sources` says which, per field — "the console says X and the
     # environment says Y" is otherwise invisible.
     source: str
-    sources: dict[str, str] = {}
+    sources: dict[str, str] = Field(default_factory=dict)
     configured: OidcPolicyChange | None = None
     # How long a saved change may take to reach every worker (the poll
     # interval). Reported rather than implied: a change that looks instant and
@@ -2172,7 +2173,7 @@ class LimitRuleResetRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
-class QuotaResetResponse(BaseModel):
+class QuotaResetResponse(ResponseModel):
     id: uuid.UUID
     rule_id: uuid.UUID
     effective_at: datetime
@@ -2182,7 +2183,7 @@ class QuotaResetResponse(BaseModel):
     created_by_email: str | None = None
 
 
-class GroupUsageRow(BaseModel):
+class GroupUsageRow(ResponseModel):
     group_id: uuid.UUID | None
     group_name: str
     requests: int
@@ -2198,7 +2199,7 @@ class GroupUsageRow(BaseModel):
 # same function calendar quotas use (ADR 0024).
 
 
-class PeriodResponse(BaseModel):
+class PeriodResponse(ResponseModel):
     """The exact window a report covers.
 
     Echoed back in full because "August" is ambiguous until you say in which
@@ -2213,7 +2214,7 @@ class PeriodResponse(BaseModel):
     timezone: str
 
 
-class RequestLogRow(BaseModel):
+class RequestLogRow(ResponseModel):
     """One request, as the request log shows it: metadata only.
 
     There is deliberately no field here that could carry prompt or completion
@@ -2254,7 +2255,7 @@ class RequestLogRow(BaseModel):
     source: Literal["api_key", "token"]
 
 
-class UsageReportRow(BaseModel):
+class UsageReportRow(ResponseModel):
     key: str | None
     label: str
     requests: int
@@ -2305,7 +2306,7 @@ class UsageReportRow(BaseModel):
     split_label: str | None = None
 
 
-class BillingDrift(BaseModel):
+class BillingDrift(ResponseModel):
     """Our figure against the provider's, for one provider.
 
     **Per provider, and never summed across them.** A total mixes requests whose
@@ -2330,7 +2331,7 @@ class BillingDrift(BaseModel):
     upstream_currency: str
 
 
-class UsageReport(BaseModel):
+class UsageReport(ResponseModel):
     period: PeriodResponse
     group_by: str
     #: The second dimension each row is also keyed by, when one was asked for.
@@ -2346,7 +2347,7 @@ class UsageReport(BaseModel):
     disclosures: list[str] = Field(default_factory=list)
 
 
-class RedactionServiceHealth(BaseModel):
+class RedactionServiceHealth(ResponseModel):
     """What the detection service says about itself, asked at read time.
 
     Asked rather than remembered: a service that was reachable at startup and is
@@ -2378,7 +2379,7 @@ class RedactionServiceHealth(BaseModel):
     family_partition: bool = False
 
 
-class RedactionActivity(BaseModel):
+class RedactionActivity(ResponseModel):
     """Evidence that it is working, not merely configured.
 
     The count of entities actually removed is the only figure that distinguishes
@@ -2397,7 +2398,7 @@ class RedactionActivity(BaseModel):
     engines: list[str] = Field(default_factory=list)
 
 
-class RedactionEngineOption(BaseModel):
+class RedactionEngineOption(ResponseModel):
     """One installed engine, as something an admin can choose.
 
     Built from the registry rather than written out in the console, so installing
@@ -2423,7 +2424,7 @@ class RedactionEngineOption(BaseModel):
     blocked_reason: str | None = None
 
 
-class RedactionConfigChange(BaseModel):
+class RedactionConfigChange(ResponseModel):
     """Who last changed the engine, when, and why.
 
     Present only when the console set it. Rows are append-only, so this is the
@@ -2463,7 +2464,7 @@ class RedactionEngineRequest(BaseModel):
     reason: str = Field(default="", max_length=500)
 
 
-class RedactionStatusResponse(BaseModel):
+class RedactionStatusResponse(ResponseModel):
     """The redaction layer as it is actually running.
 
     Everything except ``engine`` and the Presidio detector families still comes
@@ -2539,7 +2540,7 @@ class RedactionStatusResponse(BaseModel):
 RedactionScopeName = Literal["all", "provider", "model", "group", "user", "api_key"]
 
 
-class RedactionRuleResponse(BaseModel):
+class RedactionRuleResponse(ResponseModel):
     """One scoped rule, with enough about its subject to render a row.
 
     ``subject_label`` is resolved server-side because the console would otherwise
@@ -2643,7 +2644,7 @@ class RedactionPreviewRequest(BaseModel):
         return self
 
 
-class RedactionPreviewSpan(BaseModel):
+class RedactionPreviewSpan(ResponseModel):
     """One thing the detector found, and what the policy says about it.
 
     ``mode`` and ``threshold`` are the policy's answers for this type, and
@@ -2661,7 +2662,7 @@ class RedactionPreviewSpan(BaseModel):
     allow_listed: bool = False
 
 
-class RedactionPreviewResponse(BaseModel):
+class RedactionPreviewResponse(ResponseModel):
     """What the model would receive, and why.
 
     Item 4 of ADR 0037's "not done": until this existed, nothing anywhere showed
@@ -2694,7 +2695,7 @@ class RedactionPreviewResponse(BaseModel):
     note: str | None = None
 
 
-class DiscoveredModel(BaseModel):
+class DiscoveredModel(ResponseModel):
     """An upstream model the provider offers that we have not catalogued."""
 
     upstream_model: str
@@ -2731,7 +2732,7 @@ class DiscoveredModel(BaseModel):
     price_source: str | None = None
 
 
-class CatalogueDriftRow(BaseModel):
+class CatalogueDriftRow(ResponseModel):
     # Carried so the console can link straight to the model. The drift that
     # matters is "we serve this and the provider does not offer it", and the only
     # useful next click is the screen where it can be repointed or deactivated.
@@ -2741,7 +2742,7 @@ class CatalogueDriftRow(BaseModel):
     is_active: bool
 
 
-class CatalogueDiscoveryResponse(BaseModel):
+class CatalogueDiscoveryResponse(ResponseModel):
     """What the provider offers, against what we serve."""
 
     provider_url: str
@@ -2756,7 +2757,7 @@ class CatalogueDiscoveryResponse(BaseModel):
     unparsable: list[str]
 
 
-class CatalogueTagsResponse(BaseModel):
+class CatalogueTagsResponse(ResponseModel):
     """The tag vocabulary a provider slices its catalogue by.
 
     Feeds the discovery dialog's dropdown, read live from the counterparty so
@@ -2812,7 +2813,7 @@ class ModelImportRequest(BaseModel):
     models: list[ModelImportItem] = Field(min_length=1, max_length=200)
 
 
-class ModelImportResult(BaseModel):
+class ModelImportResult(ResponseModel):
     upstream_model: str
     name: str | None
     imported: bool
@@ -2825,7 +2826,7 @@ class ModelImportResult(BaseModel):
     price_source: str | None = None
 
 
-class ModelImportResponse(BaseModel):
+class ModelImportResponse(ResponseModel):
     results: list[ModelImportResult]
 
     @property

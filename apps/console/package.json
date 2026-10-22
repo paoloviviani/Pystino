@@ -13,7 +13,9 @@
     "typecheck": "pnpm i18n:compile && tsc --noEmit",
     "i18n:compile": "paraglide-js compile --project ./project.inlang",
     "i18n:pseudo": "node scripts/pseudo-locale.mjs",
-    "i18n:check": "node scripts/i18n-check.mjs"
+    "i18n:check": "node scripts/i18n-check.mjs",
+    "api:generate": "openapi-typescript openapi.json --default-non-nullable false -o src/lib/api-schema.ts",
+    "api:check": "node scripts/api-check.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -34,6 +36,7 @@
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
     "jsdom": "^30.0.1",
+    "openapi-typescript": "7.13.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^8.2.1",

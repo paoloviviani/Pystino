@@ -12,17 +12,17 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 from sqlalchemy import ColumnElement, select
 
 from gateway.deps import AdminUserDep, SessionDep
 from gateway.models import AdminAuditEvent
 from gateway.pagination import Page, PageDep, count_of
+from gateway.response_model import ResponseModel
 
 router = APIRouter(prefix="/api/admin", tags=["admin-audit"])
 
 
-class AdminAuditEventResponse(BaseModel):
+class AdminAuditEventResponse(ResponseModel):
     id: uuid.UUID
     created_at: datetime
     actor_user_id: uuid.UUID | None

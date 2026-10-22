@@ -42,6 +42,7 @@ function model(overrides: Partial<AdminModel> = {}): AdminModel {
       cache_read_per_mtok: null,
       cache_write_per_mtok: null,
       per_image: null,
+      per_image_by_size: null,
       currency: "EUR",
       effective_from: "2026-08-01T10:00:00Z",
       source: "manual",
@@ -74,6 +75,8 @@ const DISCOVERY: CatalogueDiscovery = {
       supported_features: ["tools"],
       blocked_reason: null,
       price_source: "provider",
+      max_input_tokens: null,
+      max_output_tokens: null,
     },
     {
       upstream_model: "provider/dollar-1",
@@ -91,6 +94,8 @@ const DISCOVERY: CatalogueDiscovery = {
       // conversion happens at admission.
       blocked_reason: null,
       price_source: "provider",
+      max_input_tokens: null,
+      max_output_tokens: null,
     },
   ],
   catalogued: [],
@@ -124,6 +129,8 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
       supported_features: [],
       blocked_reason: null,
       price_source: "community",
+      max_input_tokens: null,
+      max_output_tokens: null,
     },
     {
       upstream_model: "provider/nowhere-1",
@@ -139,6 +146,8 @@ const DISCOVERY_FILLED: CatalogueDiscovery = {
       supported_features: [],
       blocked_reason: "the provider publishes no price for this model",
       price_source: null,
+      max_input_tokens: null,
+      max_output_tokens: null,
     },
   ],
 };
@@ -982,6 +991,8 @@ describe("AdminModels", () => {
       supported_features: [],
       blocked_reason: "the provider publishes no price: enter one to import it",
       price_source: null,
+      max_input_tokens: null,
+      max_output_tokens: null,
     });
     vi.stubGlobal(
       "fetch",
@@ -1043,6 +1054,8 @@ describe("AdminModels", () => {
       supported_features: [],
       blocked_reason: "the provider publishes no price: enter one to import it",
       price_source: null,
+      max_input_tokens: null,
+      max_output_tokens: null,
     });
     vi.stubGlobal(
       "fetch",
@@ -1106,6 +1119,8 @@ describe("AdminModels", () => {
       supported_features: [],
       blocked_reason: "the provider publishes no price: enter one to import it",
       price_source: null,
+      max_input_tokens: null,
+      max_output_tokens: null,
     });
     const setup = async (rows: ReturnType<typeof unpriced>[]) => {
       const user = userEvent.setup();

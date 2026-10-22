@@ -36,11 +36,14 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
       timezone: "Europe/Rome",
     },
     group_by: "model",
+    split_by: null,
     currency: "EUR",
     rows: [
       {
         key: "gpt-ish",
         label: "gpt-ish",
+        split_key: null,
+        split_label: null,
         requests: 12,
         prompt_tokens: 1000,
         completion_tokens: 500,
@@ -53,11 +56,15 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
         native_currency: null,
         estimated_requests: 0,
         unavailable_requests: 0,
+        estimated_disconnected_requests: 0,
+        via_alias_requests: 0,
       },
     ],
     totals: {
       key: null,
       label: "total",
+      split_key: null,
+      split_label: null,
       requests: 12,
       prompt_tokens: 1000,
       completion_tokens: 500,
@@ -70,8 +77,11 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
       native_currency: null,
       estimated_requests: 0,
       unavailable_requests: 0,
+      estimated_disconnected_requests: 0,
+      via_alias_requests: 0,
     },
     disclosures: [],
+    reconciliation: [],
     ...overrides,
   };
 }

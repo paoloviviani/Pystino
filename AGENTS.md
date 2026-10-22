@@ -196,6 +196,25 @@ Two repositories, released separately, shipped together by Cerea's deploy kit.
    flock /tmp/heavy.lock pnpm build                  # tsc + vite build of the console
    ```
 
+   **The console's API types are generated.** `apps/console/src/lib/types.ts`
+   aliases `components["schemas"][…]` from `src/lib/api-schema.ts`, which
+   `openapi-typescript` (pinned exactly) makes from `apps/console/openapi.json`,
+   which `scripts/export_openapi.py` writes from the FastAPI app (no server).
+   After changing a request or response model in `apps/gateway`:
+
+   ```bash
+   uv run python scripts/export_openapi.py          # models  -> openapi.json
+   pnpm --filter @llmp/console api:generate         # openapi -> api-schema.ts
+   pnpm --filter @llmp/console typecheck            # what the change broke
+   ```
+
+   Commit all three. CI fails a stale `openapi.json` (gateway job,
+   `test_openapi_export.py`) and a stale `api-schema.ts` (console job,
+   `api:check`). A model the gateway *returns* derives `ResponseModel`
+   (`gateway/response_model.py`), not `BaseModel`, so its defaulted fields are
+   required in the schema, as they are on the wire; a request model stays a
+   plain `BaseModel`.
+
    If you touched `docs/`, `mkdocs.yml`, `CONTRIBUTING.md` or a README the
    site includes:
 

@@ -27,10 +27,13 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
     },
     currency: "EUR",
     group_by: "model",
+    split_by: null,
     rows: [
       {
         key: "m1",
         label: "gpt-4o",
+        split_key: null,
+        split_label: null,
         requests: 12,
         prompt_tokens: 900,
         completion_tokens: 300,
@@ -43,11 +46,15 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
         native_currency: null,
         estimated_requests: 0,
         unavailable_requests: 0,
+        estimated_disconnected_requests: 0,
+        via_alias_requests: 0,
       },
     ],
     totals: {
       key: null,
       label: "Total",
+      split_key: null,
+      split_label: null,
       requests: 12,
       prompt_tokens: 900,
       completion_tokens: 300,
@@ -60,8 +67,11 @@ function report(overrides: Partial<UsageReport> = {}): UsageReport {
       native_currency: null,
       estimated_requests: 0,
       unavailable_requests: 0,
+      estimated_disconnected_requests: 0,
+      via_alias_requests: 0,
     },
     disclosures: [],
+    reconciliation: [],
     ...overrides,
   };
 }

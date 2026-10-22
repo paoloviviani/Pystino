@@ -13,17 +13,17 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 from sqlalchemy import select
 
 from gateway.deps import AdminUserDep, SessionDep
 from gateway.models import IdentityEvent, IdentityEventAction, IdentityEventActor
 from gateway.pagination import Page, PageDep, count_of
+from gateway.response_model import ResponseModel
 
 router = APIRouter(prefix="/api/admin", tags=["identity-events"])
 
 
-class IdentityEventResponse(BaseModel):
+class IdentityEventResponse(ResponseModel):
     id: uuid.UUID
     at: datetime
     actor_type: IdentityEventActor

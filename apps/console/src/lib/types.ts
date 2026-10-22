@@ -1,103 +1,54 @@
 /**
- * Wire types, mirroring `gateway.schemas`.
+ * Wire types, derived from the gateway's OpenAPI document.
  *
- * Hand-written rather than generated from the OpenAPI document. Generation is
- * the better answer once the console covers the whole admin surface — it is on
- * the list for the remaining screens — but a generator plus its config is a poor
- * trade for the four responses this slice reads, and hand-writing them forces a
- * look at each field rather than importing a hundred unused ones.
+ * `api-schema.ts` is generated (`pnpm --filter @llmp/console api:generate`,
+ * from `apps/console/openapi.json`, which `scripts/export_openapi.py` writes
+ * from the FastAPI app). The names below are the console's own and stay the
+ * names call sites import; each is an alias of the gateway model, or of that
+ * model with some fields narrowed (`Narrow`). Types with no gateway model
+ * (closed sets, a few shapes the console builds itself) stay hand-written.
+ * Change a model in the gateway and regenerate; a field the console relied on
+ * that moved or changed type stops compiling here.
  *
  * **Money is a string everywhere.** The gateway stores `Numeric(24,12)` and
  * serialises decimals as strings precisely so no float ever touches an amount.
  * Typing these as `number` would undo that at the last hop.
  */
 
-export interface GroupSummary {
-  id: string;
-  name: string;
-  description: string | null;
-}
+import type { components } from "./api-schema";
 
-export interface Me {
-  id: string;
-  email: string | null;
-  display_name: string | null;
-  is_admin: boolean;
-  groups: GroupSummary[];
-  default_billing_group: GroupSummary | null;
-  /** "local" means a password here is the way in; anything else is the IdP's
-   * (ADR 0049) — the account menu offers password management on that basis. */
-  issuer: string;
-  has_password: boolean;
-  /** ADR 0096: which capabilities this person holds. The key page reads
-   * `api_keys` to decide whether to offer minting. */
-  capabilities: Capabilities | null;
-}
+type Schemas = components["schemas"];
+
+/**
+ * A generated type with some fields narrowed by the console. The gateway
+ * declares many closed sets as `str` (a model's `kind`, a limit's `scope`);
+ * the console knows the values, so it narrows them here. `N` must be
+ * assignable to the generated field it replaces, so a field the gateway drops
+ * or retypes stops compiling instead of silently surviving as a local lie.
+ */
+type Narrow<T, N extends { [K in keyof N]: K extends keyof T ? T[K] : never }> = Omit<
+  T,
+  keyof N
+> &
+  N;
+
+export type GroupSummary = Schemas["GroupSummary"];
+
+export type Me = Schemas["MeResponse"];
 
 /** The two ADR 0096 capabilities, as one person effectively holds them. */
-export interface Capabilities {
-  code_agents: boolean;
-  api_keys: boolean;
-}
+export type Capabilities = Schemas["CapabilityFlags"];
 
 /** A self-service default billing group choice, from the caller's own groups. */
-export interface SetDefaultBillingGroupInput {
-  group_id: string;
-}
+export type SetDefaultBillingGroupInput = Schemas["SetDefaultBillingGroupRequest"];
 
-export interface PeriodInfo {
-  label: string;
-  kind: string | null;
-  start: string;
-  end: string;
-  timezone: string;
-}
+export type PeriodInfo = Schemas["PeriodResponse"];
 
-export interface UsageReportRow {
-  key: string | null;
-  label: string;
-  requests: number;
-  prompt_tokens: number;
-  completion_tokens: number;
-  total_tokens: number;
-  /** Pictures generated. Non-zero only for image models, which often bill per image. */
-  images: number;
-  searches: number;
-  /** Ours, against our own backends: counted, never priced. */
-  own_searches: number;
-  cost: string;
-  /** The native figure — what the model's price table produced, in its own
-   * currency (ADR 0054). Present on model rows only. */
-  native_cost: string | null;
-  native_currency: string | null;
-  estimated_requests: number;
-  unavailable_requests: number;
-  /** Set only on a report asked for with `split_by`: this row's second key. */
-  split_key?: string | null;
-  split_label?: string | null;
-}
+export type UsageReportRow = Schemas["UsageReportRow"];
 
-export interface UsageReport {
-  period: PeriodInfo;
-  group_by: string;
-  split_by?: string | null;
-  currency: string;
-  rows: UsageReportRow[];
-  totals: UsageReportRow;
-  /** Plain-language caveats. Rendered verbatim — see the Notice component. */
-  disclosures: string[];
-}
+export type UsageReport = Schemas["UsageReport"];
 
-export interface ApiKey {
-  id: string;
-  name: string;
-  prefix: string;
-  billing_group: GroupSummary | null;
-  created_at: string;
-  expires_at: string | null;
-  revoked_at: string | null;
-  last_used_at: string | null;
-}
+export type ApiKey = Schemas["ApiKeyResponse"];
 
 /**
  * What minting returns, exactly once.
@@ -107,9 +58,7 @@ export interface ApiKey {
  * than an optional field on `ApiKey`, so that anywhere holding a plain `ApiKey`
  * provably has no secret in it.
  */
-export interface MintedApiKey extends ApiKey {
-  secret: string;
-}
+export type MintedApiKey = Schemas["ApiKeyCreatedResponse"];
 
 // -- administration ----------------------------------------------------------
 //
@@ -120,94 +69,30 @@ export interface MintedApiKey extends ApiKey {
 /** What a model produces, and therefore which route may use it. */
 export type ModelKind = "chat" | "embedding" | "image" | "ocr" | "search" | "decision";
 
-export interface Price {
-  id: string;
-  input_per_mtok: string;
-  output_per_mtok: string;
-  cache_read_per_mtok: string | null;
-  cache_write_per_mtok: string | null;
-  /** Per generated image, for image models nobody prices per token. */
-  per_image: string | null;
-  /** Per image at a given size; a size not listed takes `per_image`. */
-  per_image_by_size?: Record<string, string> | null;
-  /** Per page read, for OCR models, whose token rates are usually zero. */
-  per_page: string | null;
-  /** Per provider-side web search, charged on top of tokens (ADR 0058). */
-  per_search: string | null;
-  currency: string;
-  effective_from: string;
-  source: string;
-}
+export type Price = Schemas["PriceResponse"];
 
-export interface AdminModel {
-  id: string;
-  name: string;
-  upstream_model: string;
-  provider_id: string;
-  provider_name: string;
-  /** A model behind a deactivated provider is unreachable, and says so. */
-  provider_is_active: boolean;
-  /** What kind of counterparty stands behind the provider (router, search,
-   *  internal — this deployment's own infrastructure). Screens that list
-   *  models as things a caller could pick read it to leave infrastructure
-   *  out, the way the model's own kind sets search tiers aside. */
-  provider_kind: string;
-  /** Which /v1 route may serve it. */
-  kind: ModelKind;
-  display_name: string | null;
-  description: string | null;
-  is_active: boolean;
-  /** Public access (ADR 0045): any authenticated caller, billed to their own group. */
-  is_public: boolean;
-  context_window: number | null;
-  max_output_tokens: number | null;
-  /** Prompt cap the gateway enforces; set by hand, null means no local limit. */
-  max_input_tokens: number | null;
-  /** What it accepts, produces and can do. Empty means "nobody has said". */
-  input_modalities: string[];
-  output_modalities: string[];
-  supported_features: string[];
-  created_at: string;
-  current_price: Price | null;
-  granted_to: string[];
-  /** Users granted this model personally, on top of their groups. */
-  granted_to_users: string[];
-  /** The aliases that resolve to **this** model (ADR 0101).
-   *
-   *  On the model's page, so that deleting or deactivating it shows which names
-   *  will stop working. Always empty on the listing: the gateway sends it only
-   *  for a detail response, because it is a second query per row. The gateway
-   *  always sends it (as `[]` on the listing), so it is required and a client
-   *  that renders `aliases_pointing_here.length` cannot crash on a deployment
-   *  whose gateway is a version behind. */
-  aliases_pointing_here: AliasPointer[];
-}
+export type AdminModel = Narrow<
+  Schemas["ModelAdminResponse"],
+  {
+    kind: ModelKind;
+  }
+>;
 
 /** Which alias, and under what name — enough to link to it and to say whether
  *  it is switched on. Not the whole alias response: a model page showing twenty
  *  pointing aliases needs their names, not each one's visibility summary. */
-export interface AliasPointer {
-  id: string;
-  name: string;
-  is_active: boolean;
-}
+export type AliasPointer = Schemas["AliasPointer"];
 
 /** The model an alias serves. No provider and no upstream name: choosing a
  *  target is choosing between models, and nothing on this screen is about the
  *  counterparty behind one. */
-export interface AliasTarget {
-  id: string;
-  name: string;
-  kind: ModelKind;
-  is_active: boolean;
-  /** Order of preference, 0 first. */
-  position: number;
-  /** Relative share under the `weighted` rule; ignored by the others. */
-  weight: number;
-  /** Whether this target can serve a request right now, and if not why. */
-  available: boolean;
-  unavailable_reason: AliasUnavailableReason | null;
-}
+export type AliasTarget = Narrow<
+  Schemas["AliasTargetResponse"],
+  {
+    kind: ModelKind;
+    unavailable_reason: AliasUnavailableReason | null;
+  }
+>;
 
 /** How a request picks among an alias's targets (issue P1). A string, not a
  *  closed union: a rule added on the gateway later arrives here before the
@@ -226,144 +111,35 @@ export type AliasUnavailableReason =
   | "target_is_alias";
 
 /** One alias, as the Routing tab shows it (ADR 0101). */
-export interface AdminAlias {
-  id: string;
-  name: string;
-  display_name: string | null;
-  description: string | null;
-  /** The target's kind, set on save. Read-only on the form: retargeting across
-   *  kinds is refused (ADR 0101), so this is a fact rather than a choice. */
-  kind: ModelKind;
-  is_active: boolean;
-  is_public: boolean;
-  /** The first target in the operator's order; null when the alias has none —
-   *  one of its unavailable states rather than an error, and why `status`
-   *  exists beside it. `targets` is the whole route. */
-  target: AliasTarget | null;
-  targets: AliasTarget[];
-  /** How a request picks among `targets`. */
-  route_rule: AliasRouteRule | (string & {});
-  /** How long a session stays on the target that served it, in seconds; 0 is
-   *  off. */
-  route_sticky_ttl_seconds: number;
-  /** How `cheapest` weighs input against output rates; 1:1 by default. */
-  route_price_input_weight: number;
-  route_price_output_weight: number;
-  /** `available` while at least one target can serve. */
-  status: "available" | "unavailable";
-  unavailable_reason: AliasUnavailableReason | null;
-  granted_to: string[];
-  granted_to_users: string[];
-  created_at: string;
-}
+export type AdminAlias = Narrow<
+  Schemas["AliasResponse"],
+  {
+    kind: ModelKind;
+    target: AliasTarget | null;
+    targets: AliasTarget[];
+    status: "available" | "unavailable";
+    unavailable_reason: AliasUnavailableReason | null;
+  }
+>;
 
 /** A group name an identity provider reported that no group here carries
     yet (GATEWAY_OIDC__GROUP_IMPORT=manual records these instead of creating
     them). */
-export interface SeenGroup {
-  id: string;
-  name: string;
-  issuer: string;
-  /** The identity provider row with that issuer, by name. */
-  provider: string | null;
-  /** People whose last sign-in carried the name. */
-  people: number;
-  first_seen_at: string;
-  last_seen_at: string;
-  dismissed: boolean;
-}
+export type SeenGroup = Schemas["SeenGroupResponse"];
 
-export interface SeenGroupImport {
-  group: AdminGroup;
-  members_added: number;
-  /** "now" when the recorded claims could be applied at once; "next_login"
-      when the provider's group answer only applies at a sign-in. */
-  applied: "now" | "next_login";
-}
+export type SeenGroupImport = Schemas["SeenGroupImportResponse"];
 
-export interface AdminGroup {
-  id: string;
-  name: string;
-  description: string | null;
-  source: string;
-  is_active: boolean;
-  /** ADR 0096: a flag granting the capability, never withholding it. The
-   * Groups page shows these as two toggles. */
-  code_agents_allowed: boolean;
-  api_keys_allowed: boolean;
-  member_count: number;
-  /** Every model name this group may use, aliases included (ADR 0101).
-   *  The console badges the ones in `aliases` so an operator can see which
-   *  names the deployment defined and which are models behind them. */
-  models: string[];
-  /** The subset of `models` that is an alias. Always sent. */
-  aliases: string[];
-  /** The search backend this group searches through on POST /v1/search, by
-      model-row name — null when the group has no policy and cannot use the
-      unified route. */
-  search_backend: string | null;
-}
+export type AdminGroup = Schemas["GroupAdminResponse"];
 
-export interface AdminUser {
-  id: string;
-  email: string | null;
-  display_name: string | null;
-  /** The directory's own name for this person (`preferred_username`).
-   *
-   * Distinct from `display_name`: this is what the account was *created as*,
-   * and therefore what an administrator searches for. Null for a local
-   * account, and null for a directory account that has not signed in since
-   * the gateway started recording it — the claim arrives with a login. */
-  username: string | null;
-  issuer: string;
-  subject: string;
-  is_active: boolean;
-  is_admin: boolean;
-  /** The account can sign in with a password (local accounts, ADR 0043). */
-  has_password: boolean;
-  /** Directories that also name this account, by issuer (ADR 0056). A linked
-   * account has two doors, and one of them is not on this screen otherwise. */
-  linked_identities: string[];
-  /** The login at the enabled bundled provider this account answers through —
-   * the `external_id` of the directory entry bound to this user there. Null
-   * when the enabled provider is external, or the person has no bundled
-   * login. Stated outright rather than inferred from `issuer` and
-   * `linked_identities`: a person the console created has a login from the
-   * moment of creation, before either field could say so — inferring "no
-   * login" there offered Create sign-in for someone who already had one. */
-  bundled_login: string | null;
-  /** Who granted this person's membership of the group being listed (ADR 0057).
-   * Only the group-members listing answers it; null everywhere else. */
-  membership_source: "manual" | "oidc" | null;
-  groups: string[];
-  default_billing_group: string | null;
-  active_key_count: number;
-  last_login_at: string | null;
-  /** Set only by `PATCH /admin/users/{id}` when it just tried to sync the
-   * bundled Authelia's own `disabled` flag and that write failed — the
-   * gateway side of the same action already stands regardless (ADR 0093
-   * §9.1). Null on every other response, including a successful sync. */
-  authelia_sync: "failed" | null;
-  authelia_sync_message: string | null;
-  /** Who deactivated the account ("manual", "directory", "approval"). */
-  deactivated_by: string | null;
-  /** When this person was invited (ADR 0095); the expiry marker reads this. */
-  invited_at: string | null;
-  /** ADR 0096: which capabilities this person effectively holds. The Users
-   * page badges a person with neither as "Chat only". Null means the listing
-   * did not answer it (the group-members route) — never "chat only". */
-  code_agents_allowed: boolean | null;
-  api_keys_allowed: boolean | null;
-}
+export type AdminUser = Narrow<
+  Schemas["UserAdminResponse"],
+  {
+    membership_source: "manual" | "oidc" | null;
+  }
+>;
 
 /** `POST /admin/users`, either account backend (ADR 0095). */
-export interface UserCreateInput {
-  login?: string;
-  display_name?: string;
-  email?: string;
-  groups?: string[];
-  send_email?: boolean;
-}
+export type UserCreateInput = Schemas["UserCreateRequest"];
 
 /** `POST /admin/users`, bundled Authelia only (ADR 0093 §8.1/§8.2). */
 export interface BundledUserCreateInput {
@@ -374,243 +150,111 @@ export interface BundledUserCreateInput {
 }
 
 /** Includes the one-time password, shown once (§8.1). */
-export interface BundledUserCreated extends AdminUser {
-  password: string;
-}
+export type BundledUserCreated = Narrow<
+  Schemas["BundledUserCreatedResponse"],
+  {
+    membership_source: "manual" | "oidc" | null;
+  }
+>;
 
 /** An invitation for a provider that creates no logins (ADR 0095). */
-export interface InvitedUser {
-  user: AdminUser;
-  sign_in_url: string;
-  invite_text: string;
-  email_sent: boolean;
-  email_error: string | null;
-}
+export type InvitedUser = Narrow<
+  Schemas["InvitedUserResponse"],
+  {
+    user: AdminUser;
+  }
+>;
 
 /** A regenerated invitation text (ADR 0095). */
-export interface InviteText {
-  sign_in_url: string;
-  invite_text: string;
-}
+export type InviteText = Schemas["InviteTextResponse"];
 
 export type UserStatus =
   "awaiting_approval" | "invited" | "active" | "disabled";
 
-export interface UserStatusCounts {
-  awaiting_approval: number;
-  invited: number;
-  active: number;
-  disabled: number;
-}
+export type UserStatusCounts = Schemas["UserStatusCounts"];
 
 /** One `(issuer, subject)` (ADR 0093). */
-export interface IdentityRef {
-  issuer: string;
-  subject: string;
-}
+export type IdentityRef = Schemas["IdentityRef"];
 
 /** `GET /admin/users/{source}/merge-preview?into=` (ADR 0093 §7.1). */
-export interface MergePreview {
-  source_id: string;
-  target_id: string;
-  counts: Record<string, number>;
-  identities_moving: IdentityRef[];
-  identities_dropped: IdentityRef[];
-  resulting_is_admin: boolean;
-  bundled_logins_disabled: string[];
-  /** A limit/redaction rule the source held that collided with one the
-   * target already had: kept as the target's, the source's dropped rather
-   * than moved. Already excluded from `counts`. */
-  duplicate_rules_dropped: number;
-  chat_note: string;
-}
+export type MergePreview = Schemas["MergePreviewResponse"];
 
 /** `POST /admin/users/{source}/merge` (ADR 0093 §7.1). */
-export interface MergeInput {
-  into: string;
-  confirm: string;
-  reason: string;
-}
+export type MergeInput = Schemas["MergeRequest"];
 
-export interface MergeResult {
-  target_id: string;
-  counts: Record<string, number>;
-  identities_dropped: IdentityRef[];
-  bundled_logins_disabled: string[];
-  duplicate_rules_dropped: number;
-}
+export type MergeResult = Schemas["MergeResponse"];
 
 /** One resource of this person that someone else can see, named, with who
  * can see it (ADR 0093 §9.2) — passed through from the chat's own erasure
  * preview verbatim. */
-export interface ChatSharedResource {
-  kind: "shared_conversation" | "project" | "knowledge_base" | "assistant";
-  id: string;
-  title: string;
-  audience: string;
-}
+export type ChatSharedResource = Narrow<
+  Schemas["ChatSharedResource"],
+  {
+    kind: "shared_conversation" | "project" | "knowledge_base" | "assistant";
+  }
+>;
 
 /** `GET /admin/users/{id}/delete-preview` (ADR 0093 §9.2). */
-export interface DeletePreview {
-  user_id: string;
-  gateway_counts: Record<string, number>;
-  bundled_login: string | null;
-  /** `null` means the chat could not be reached at all. */
-  chat_counts: Record<string, number> | null;
-  chat_reachable: boolean;
-  shared: ChatSharedResource[];
-  shared_with_others: boolean;
-  chat_unattributed_legacy_shares: number;
-}
+export type DeletePreview = Narrow<
+  Schemas["DeletePreviewResponse"],
+  {
+    shared: ChatSharedResource[];
+  }
+>;
 
 /** `DELETE /admin/users/{id}` (ADR 0093 §9.2, §9.3). */
-export interface DeleteUserResult {
-  erasure_id: string;
-  chat_erasure_done: boolean;
-}
+export type DeleteUserResult = Schemas["DeleteUserResponse"];
 
 /** The audit trail `record_event` writes to (ADR 0093 §3.1). */
-export interface IdentityEvent {
-  id: string;
-  at: string;
-  actor_type: "user" | "cli" | "login" | "system";
-  actor_user_id: string | null;
-  actor_label: string;
-  action: string;
-  target_user_id: string | null;
-  target_label: string;
-  issuer: string | null;
-  subject: string | null;
-  detail: Record<string, unknown>;
-  reason: string | null;
-}
+export type IdentityEvent = Schemas["IdentityEventResponse"];
 
-export interface LimitRule {
-  id: string;
-  name: string;
-  scope: "global" | "group" | "user" | "api_key";
-  scope_id: string | null;
-  metric: "requests" | "tokens" | "cost";
-  /** "aggregate" caps the scope's total; "each_member" caps each member (group scope only);
-   * "each_user" caps every person across all their usage (global scope only). */
-  applies_to: "aggregate" | "each_member" | "each_user";
-  /** A user rule that replaces the global each-user ceiling for that person. */
-  overrides_each_user?: boolean;
-  window_seconds: number | null;
-  period: string | null;
-  /** "3600s" or "month" — one string to print, whichever kind of rule it is. */
-  window_label: string;
-  limit_value: string;
-  is_active: boolean;
-  /** Live counter value. Absent — not zero — when the counter store is unreachable. */
-  current_value: string | null;
-  last_reset_at: string | null;
-}
+export type LimitRule = Narrow<
+  Schemas["LimitRuleResponse"],
+  {
+    scope: "global" | "group" | "user" | "api_key";
+    metric: "requests" | "tokens" | "cost";
+    applies_to: "aggregate" | "each_member" | "each_user";
+  }
+>;
 
 /** One rule's current window, counter against ledger (`GET /api/admin/quota/health`). */
-export interface QuotaWindowHealth {
-  rule_id: string;
-  rule_name: string;
-  scope: "global" | "group" | "user" | "api_key";
-  scope_id: string | null;
-  /** Set on rows of a per-member rule: whose budget this is. */
-  member_id: string | null;
-  metric: "requests" | "tokens" | "cost" | "own_search_requests";
-  window_label: string;
-  is_active: boolean;
-  window_id: string;
-  /** Absent — not zero — when the counter store could not be read. */
-  counter_value: string | null;
-  ledger_total: string;
-  /** counter − ledger; positive means over-counted. */
-  difference: string | null;
-  counter_ttl_seconds: number | null;
-  stale_in_progress: number;
-}
+export type QuotaWindowHealth = Narrow<
+  Schemas["QuotaWindowHealth"],
+  {
+    scope: "global" | "group" | "user" | "api_key";
+    metric: "requests" | "tokens" | "cost" | "own_search_requests";
+  }
+>;
 
-export interface QuotaHealth {
-  windows: QuotaWindowHealth[];
-  rebuild_lock_present: boolean;
-  rebuild_lock_ttl_seconds: number | null;
-}
+export type QuotaHealth = Narrow<
+  Schemas["QuotaHealthResponse"],
+  {
+    windows: QuotaWindowHealth[];
+  }
+>;
 
-export interface QuotaReconcileResult {
-  reconciled: {
-    rule_id: string;
-    rule_name: string;
-    window_id: string;
-    before: string;
-    after: string;
-    member_id: string | null;
-  }[];
-  corrected: number;
-}
+export type QuotaReconcileResult = Schemas["QuotaReconcileResponse"];
 
-export interface QuotaReset {
-  id: string;
-  rule_id: string;
-  effective_at: string;
-  reason: string;
-  created_by: string | null;
-  created_by_email: string | null;
-}
+export type QuotaReset = Schemas["QuotaResetResponse"];
 
-export interface DiscoveredModel {
-  upstream_model: string;
-  suggested_name: string;
-  input_per_mtok: string | null;
-  output_per_mtok: string | null;
-  /** Per page, for an OCR model — whose token rates are zero and whose real
-   * price is this one. Shown before adopting, like the token rates. */
-  per_page: string | null;
-  currency: string | null;
-  context_window: number | null;
-  /** The reply limit the catalogue states, where it does. */
-  max_output_tokens?: number | null;
-  /** What the provider claims, shown before importing so the choice is informed. */
-  kind: ModelKind;
-  input_modalities: string[];
-  output_modalities: string[];
-  supported_features: string[];
-  blocked_reason: string | null;
-  /**
-   * Who supplied the figures above: `provider` for the counterparty's own
-   * catalogue, `community` for a gap filled from LiteLLM, null for a model the
-   * provider lists and nobody prices. Per row, because one import can mix all
-   * three (ADR 0053).
-   */
-  price_source: "provider" | "community" | "hint" | null;
-}
+export type DiscoveredModel = Narrow<
+  Schemas["DiscoveredModel"],
+  {
+    kind: ModelKind;
+    price_source: "provider" | "community" | "hint" | null;
+  }
+>;
 
-export interface CatalogueDriftRow {
-  /** So the drift warning can link to the model it is about. */
-  id: string;
-  name: string;
-  upstream_model: string;
-  is_active: boolean;
-}
+export type CatalogueDriftRow = Schemas["CatalogueDriftRow"];
 
-export interface CatalogueDiscovery {
-  provider_url: string;
-  provider_model_count: number;
-  available: DiscoveredModel[];
-  catalogued: CatalogueDriftRow[];
-  /** Ours, no longer offered upstream. The drift that breaks at 3am. */
-  missing_upstream: CatalogueDriftRow[];
-  unparsable: string[];
-}
+export type CatalogueDiscovery = Narrow<
+  Schemas["CatalogueDiscoveryResponse"],
+  {
+    available: DiscoveredModel[];
+  }
+>;
 
-export interface CatalogueTags {
-  provider_url: string;
-  /**
-   * False for a provider whose plugin knows no way to ask for the whole
-   * catalogue — free text stays for those, rather than a dropdown of one
-   * default option presented as a complete vocabulary.
-   */
-  supported: boolean;
-  /** Sorted, the counterparty's spelling kept: the values go back as `tag=…`. */
-  tags: string[];
-}
+export type CatalogueTags = Schemas["CatalogueTagsResponse"];
 
 /**
  * A price typed by an administrator on an unpriced discovery row, sent with
@@ -618,62 +262,44 @@ export interface CatalogueTags {
  * string as typed, never a number — with the rates a kind is metered on
  * required by the gateway and the rest omitted.
  */
-export interface ManualImportPrice {
-  input_per_mtok?: string;
-  output_per_mtok?: string;
-  per_page?: string;
-  /** Optional; omitted bills cached tokens at the input rate. */
-  cache_read_per_mtok?: string;
-  cache_write_per_mtok?: string;
-  /** Empty means the gateway's billing currency, as on the price form. */
-  currency?: string;
-}
+export type ManualImportPrice = Narrow<
+  Schemas["ManualImportPrice"],
+  {
+    input_per_mtok?: string;
+    output_per_mtok?: string;
+    per_page?: string;
+    cache_read_per_mtok?: string;
+    cache_write_per_mtok?: string;
+    currency?: string;
+  }
+>;
 
 /** One row of an import request. */
-export interface ModelImportItem {
-  upstream_model: string;
-  /** Present only for a row the provider listed and nobody prices. */
-  manual_price?: ManualImportPrice;
-}
+export type ModelImportItem = Narrow<
+  Schemas["ModelImportItem"],
+  {
+    manual_price?: ManualImportPrice;
+  }
+>;
 
-export interface ModelImportResult {
-  upstream_model: string;
-  name: string | null;
-  imported: boolean;
-  priced: boolean;
-  reason: string | null;
-  /** Who supplied the price that was written to the append-only history. */
-  price_source: "provider" | "community" | "hint" | "manual" | null;
-}
+export type ModelImportResult = Narrow<
+  Schemas["ModelImportResult"],
+  {
+    price_source: "provider" | "community" | "hint" | "manual" | null;
+  }
+>;
 
-export interface ModelImportResponse {
-  results: ModelImportResult[];
-}
+export type ModelImportResponse = Narrow<
+  Schemas["ModelImportResponse"],
+  {
+    results: ModelImportResult[];
+  }
+>;
 
 /** What the detection service says about itself, asked at read time. */
-export interface RedactionServiceHealth {
-  reachable: boolean;
-  detail: string;
-  latency_ms: number | null;
-  engine: string | null;
-  engine_version: string | null;
-  languages: string[];
-  models: Record<string, string>;
-  /** Served without an NER model, so fewer entities are found. */
-  degraded_languages: string[];
-  entities: string[];
-  pattern_entities: string[];
-  model_entities: string[];
-  family_partition: boolean;
-}
+export type RedactionServiceHealth = Schemas["RedactionServiceHealth"];
 
-export interface RedactionActivity {
-  window_seconds: number;
-  requests: number;
-  requests_redacted: number;
-  entities_redacted: number;
-  engines: string[];
-}
+export type RedactionActivity = Schemas["RedactionActivity"];
 
 /**
  * One installed engine, as something an admin can choose.
@@ -682,35 +308,10 @@ export interface RedactionActivity {
  * `llmp.redactors` entry point makes it selectable without a console release —
  * the same argument the provider-type list makes (ADR 0026, ADR 0033).
  */
-export interface RedactionEngineOption {
-  name: string;
-  label: string;
-  description: string;
-  /** Whether it calls a detection service. */
-  needs_endpoint: boolean;
-  /**
-   * Whether it removes anything at all. `noop` is a real recorded engine rather
-   * than an absence, so this cannot be derived from the name without hardcoding
-   * that name here.
-   */
-  redacts: boolean;
-  is_active: boolean;
-  /** Null when it can be enabled; otherwise why not, computed server-side. */
-  blocked_reason: string | null;
-}
+export type RedactionEngineOption = Schemas["RedactionEngineOption"];
 
 /** Who last changed the engine, when, and why. Null when the environment decides. */
-export interface RedactionConfigChange {
-  engine: string;
-  /** Null preserves the detector deployment default. */
-  presidio_pattern_matching?: boolean | null;
-  /** Null preserves the detector deployment default. */
-  presidio_ner?: boolean | null;
-  reason: string;
-  changed_at: string;
-  /** Null once the user has been erased — the record of the change outlives them. */
-  changed_by: string | null;
-}
+export type RedactionConfigChange = Schemas["RedactionConfigChange"];
 
 /** The redaction layer as the gateway is actually running it (ADR 0012, ADR 0033). */
 /**
@@ -722,11 +323,13 @@ export interface RedactionConfigChange {
 export type EntityMode =
   "off" | "anonymise_restore" | "anonymise" | "redact" | "block";
 
-export interface EntityPolicy {
-  mode: EntityMode;
-  /** Overrides the global score threshold for this type. Null means it applies. */
-  threshold: number | null;
-}
+export type EntityPolicy = Narrow<
+  Schemas["EntityPolicy"],
+  {
+    mode: EntityMode;
+    threshold: number | null;
+  }
+>;
 
 /**
  * A regex an operator wrote, treated as one more entity type.
@@ -735,114 +338,58 @@ export interface EntityPolicy {
  * here: RE2 refuses constructs JavaScript accepts — backreferences, lookaround —
  * and a browser-side check would pass a pattern the API then rejects.
  */
-export interface CustomPattern {
-  name: string;
-  regex: string;
-  mode: EntityMode;
-}
+export type CustomPattern = Narrow<
+  Schemas["CustomPattern"],
+  {
+    mode: EntityMode;
+  }
+>;
 
-export interface RedactionPolicy {
-  /** What happens to a type nobody has ruled on. Defaults to protecting it. */
-  default_mode: EntityMode;
-  entities: Record<string, EntityPolicy>;
-  /** Unioned across scopes: a pattern can only find more, never less. */
-  patterns: CustomPattern[];
-  /** Values never redacted, whatever the detector says. Matched exactly. */
-  allow_list: string[];
-}
+export type RedactionPolicy = Narrow<
+  Schemas["RedactionPolicy"],
+  {
+    default_mode: EntityMode;
+    entities: Record<string, EntityPolicy>;
+    patterns: CustomPattern[];
+    allow_list: string[];
+  }
+>;
 
-export interface RedactionStatus {
-  engine: string;
-  enabled: boolean;
-  endpoint: string | null;
-  installed_engines: string[];
-  engines: RedactionEngineOption[];
-  /** `console` when a stored decision is in force, `environment` otherwise. */
-  source: "console" | "environment";
-  configured: RedactionConfigChange | null;
-  /**
-   * How long another worker may still run the previous engine after a change.
-   * Reported rather than implied: a change that looks instant and is not is
-   * worse than one that says how long it takes.
-   */
-  propagation_seconds: number;
-  fail_open: boolean;
-  restore_in_response: boolean;
-  language: string;
-  score_threshold: number;
-  presidio_pattern_matching?: boolean | null;
-  presidio_ner?: boolean | null;
-  /** Null means every type the engine offers, not none. Superseded by `policy`. */
-  entity_types: string[] | null;
-  /** What is acted on and how, per entity type. */
-  policy: RedactionPolicy;
-  /**
-   * `console` when the row in force carries a policy. Separate from `source`
-   * because a row may set the engine and say nothing about the policy.
-   */
-  policy_source: "console" | "environment";
-  timeout_seconds: number;
-  cache_size: number;
-  /** Whether the HMAC key is set. Never the key. */
-  placeholder_key_set: boolean;
-  service: RedactionServiceHealth | null;
-  activity: RedactionActivity;
-  /** Computed by the API, rendered verbatim. */
-  warnings: string[];
-}
+export type RedactionStatus = Narrow<
+  Schemas["RedactionStatusResponse"],
+  {
+    source: "console" | "environment";
+    policy: RedactionPolicy;
+    policy_source: "console" | "environment";
+  }
+>;
 
 /** The five subjects a redaction rule can name (ADR 0038). */
 export type RedactionScope =
   "all" | "provider" | "model" | "group" | "user" | "api_key";
 
-export interface RedactionRule {
-  id: string;
-  name: string;
-  scope: RedactionScope;
-  /** Null for the catch-all scope, whose subject is every request. */
-  scope_id: string | null;
-  /**
-   * The model, provider or group name, the user's email, the key's prefix.
-   * **Null means the subject no longer exists**, and a rule pointing at a
-   * deleted subject is inert while looking identical to a working one.
-   */
-  subject_label: string | null;
-  policy: RedactionPolicy;
-  is_active: boolean;
-  reason: string;
-  created_by: string | null;
-  /** Null once the account is erased; the rule outlives its author. */
-  created_by_email: string | null;
-  created_at: string;
-  updated_at: string;
-}
+export type RedactionRule = Narrow<
+  Schemas["RedactionRuleResponse"],
+  {
+    policy: RedactionPolicy;
+  }
+>;
 
 /** One thing the detector found in a sample, and what the policy said about it. */
-export interface RedactionPreviewSpan {
-  entity_type: string;
-  start: number;
-  end: number;
-  score: number;
-  mode: EntityMode;
-  threshold: number;
-  allow_listed: boolean;
-}
+export type RedactionPreviewSpan = Narrow<
+  Schemas["RedactionPreviewSpan"],
+  {
+    mode: EntityMode;
+  }
+>;
 
-export interface RedactionPreview {
-  engine: string;
-  /** The narrowest rule that contributed. Null when only the deployment policy applied. */
-  scope: RedactionScope | null;
-  rule_id: string | null;
-  policy: RedactionPolicy;
-  spans: RedactionPreviewSpan[];
-  /** What the provider would receive. Null when the request would be blocked. */
-  redacted_text: string | null;
-  entity_count: number;
-  blocked: boolean;
-  blocked_reason: string | null;
-  /** Set when the engine in force detects nothing, so an empty result is not read as "clean". */
-  note: string | null;
-}
+export type RedactionPreview = Narrow<
+  Schemas["RedactionPreviewResponse"],
+  {
+    policy: RedactionPolicy;
+    spans: RedactionPreviewSpan[];
+  }
+>;
 
 /**
  * One quota rule that constrains the person signed in.
@@ -852,21 +399,7 @@ export interface RedactionPreview {
  * either themselves or something they already know. No `is_active`, because an
  * inactive rule is not returned at all.
  */
-export interface MyLimit {
-  id: string;
-  name: string;
-  scope: string;
-  metric: string;
-  window_label: string;
-  limit_value: string;
-  /**
-   * Absent, not zero, when the counter store cannot be reached. A budget drawn
-   * as untouched because Valkey is down is worse than one drawn as unknown.
-   */
-  current_value: string | null;
-  /** The caller's own notification thresholds (ADR 0052). */
-  notification_thresholds?: number[];
-}
+export type MyLimit = Schemas["MyLimitResponse"];
 
 /**
  * An installed provider type.
@@ -876,136 +409,39 @@ export interface MyLimit {
  * Read from the API rather than hardcoded, so installing a plugin makes it
  * selectable without a console release (ADR 0032).
  */
-export interface ProviderPlugin {
-  name: string;
-  label: string;
-  description: string;
-  /** `provider` implies the serving endpoint; `router` chooses it per request.
-   * `search` is a web-search backend; `internal` is the deployment's own
-   * service (the extractor) — plumbing, never an LLM-provider picker choice. */
-  kind: "provider" | "router" | "search" | "internal";
-  /** Only the modes this plugin can support, so the UI cannot offer a refusal. */
-  billing_modes: ("own_prices" | "provider_reported")[];
-  /** Whether a decision model can be served through this type (ADR 0100). */
-  supports_decisions?: boolean;
-  /**
-   * The counterparty's public endpoint, when it has one worth pre-filling —
-   * choosing the Cortecs type is the act of choosing its endpoint. Null for a
-   * type whose endpoints vary (generic, self-hosted).
-   */
-  default_base_url: string | null;
-  /**
-   * The endpoints the vendor documents, when there is more than one, so the
-   * form offers a constrained choice instead of free-text URL entry — for a
-   * decision with two documented values, free text is a typo waiting to
-   * happen. The labels travel with the URLs because which host is the
-   * EU-only one is vendor knowledge, not a sentence the console should hold.
-   */
-  base_url_options: { url: string; label: string }[];
-  /**
-   * Whether creating a provider of this type needs a credential. False for
-   * the keyless search backend, so the form offers creation without one
-   * instead of demanding a dummy key. Absent means a key is required, which
-   * is every other installed type.
-   */
-  requires_api_key?: boolean;
-  is_default: boolean;
-}
+export type ProviderPlugin = Narrow<
+  Schemas["ProviderPluginResponse"],
+  {
+    kind: "provider" | "router" | "search" | "internal";
+    billing_modes: ("own_prices" | "provider_reported")[];
+  }
+>;
 
 /** Where one catalogue field's current value came from. */
-export interface CatalogueOrigin {
-  field: string;
-  /** `builtin` ships in the image; `override` is the operator directory. */
-  layer: "builtin" | "override";
-  file: string;
-}
+export type CatalogueOrigin = Schemas["CatalogueOriginResponse"];
 
 /**
  * One entry of the provider catalogue (YAML, read at startup). `null` in a
  * retention field is *unknown*, never "no".
  */
-export interface CatalogueEntry {
-  id: string;
-  name: string;
-  description: string | null;
-  plugin: string;
-  base_url: string | null;
-  prefix: string;
-  region: string | null;
-  retention: {
-    zero_data_retention: boolean | null;
-    retention_days: number | null;
-    trains_on_customer_data: boolean | null;
-    note: string | null;
-    source_url: string | null;
-  };
-  price_hints: { model: string; effective_from: string; currency: string }[];
-  origins: CatalogueOrigin[];
-}
+export type CatalogueEntry = Schemas["CatalogueEntryResponse"];
 
-export interface AdminProvider {
-  id: string;
-  /** The catalogue entry this row is an instance of; nothing is copied from it. */
-  catalogue_id?: string | null;
-  catalogue?: CatalogueEntry | null;
-  /** The row names an entry the catalogue no longer has. */
-  catalogue_missing?: boolean;
-  name: string;
-  description: string | null;
-  base_url: string;
-  /** Masked. The key itself is never returned by the API (ADR 0027). */
-  api_key_hint: string;
-  has_api_key: boolean;
-  extra_headers: Record<string, string>;
-  is_active: boolean;
-  /** Prepended to every model name this provider contributes. */
-  prefix: string;
-  /**
-   * Which plugin carries this counterparty's quirks. Null is the default type.
-   *
-   * It replaced three fields that were each added for one provider's habit —
-   * `auth_scheme`, `forward_stream_options` and `upstream_cost_unit`. The type
-   * now decides all three, which is why the dialog asks for one selection
-   * instead of four (ADR 0032).
-   */
-  plugin: string | null;
-  /** `internal` is the deployment's own service (the extractor): shown on the
-   * Providers page for management, hidden from the LLM-provider pickers. */
-  kind: "provider" | "router" | "search" | "internal";
-  /** What the named plugin actually is, so a mismatch with `kind` is visible. */
-  plugin_kind: string | null;
-  /** Whose figure is the charge. */
-  billing_mode: "own_prices" | "provider_reported";
-  /**
-   * Active models here with no price row. They reserve nothing, so no cost
-   * ceiling ever trips for them — a hole in any mode and a sharp one in
-   * pass-through, where the provider's figure arrives too late to admit on.
-   */
-  unpriced_model_count: number;
-  /** How many models this provider serves — the blast radius of turning it off. */
-  model_count: number;
-  created_at: string;
-  updated_at: string;
-}
+export type AdminProvider = Narrow<
+  Schemas["ProviderResponse"],
+  {
+    kind: "provider" | "router" | "search" | "internal";
+    billing_mode: "own_prices" | "provider_reported";
+  }
+>;
 
-export interface ProviderTestResult {
-  ok: boolean;
-  status_code: number | null;
-  detail: string;
-  model_count: number | null;
-  sample: string[];
-  latency_ms: number | null;
-}
+export type ProviderTestResult = Schemas["ProviderTestResponse"];
 
 /**
  * What deleting a search backend took with it (the gateway's cascade for
  * `kind=search` providers, ADR 0071). The cleared groups are names, not ids:
  * they are for a notice, and a notice speaks the group's name.
  */
-export interface SearchBackendDeleteResult {
-  tiers_deleted: number;
-  cleared_groups: string[];
-}
+export type SearchBackendDeleteResult = Schemas["SearchBackendDeleteResponse"];
 
 /**
  * The identity policy in force (ADR 0048, join modes ADR 0095), as
@@ -1017,74 +453,37 @@ export type JoinMode = "open" | "approval" | "invite" | "group";
 /** ADR 0096 (amended): the default flag new groups are created with. */
 export type CapabilityMode = "on" | "off";
 
-export interface OidcPolicy {
-  auto_provision: boolean;
-  unknown_user_policy: "refuse" | "create_inactive";
-  join_mode: JoinMode;
-  required_groups: string[];
-  group_fallback: "refuse" | "approval";
-  groups_claim: string;
-  group_mappings: { idp: string; local: string }[];
-  code_agents_mode: CapabilityMode;
-  api_keys_mode: CapabilityMode;
-  source: "console" | "environment";
-  /** Which fields a stored row decides; the rest are the environment's. */
-  sources: Record<string, string>;
-  configured: {
-    reason: string;
-    changed_at: string;
-    changed_by: string | null;
-  } | null;
-  propagation_seconds: number;
-}
+export type OidcPolicy = Narrow<
+  Schemas["OidcPolicyResponse"],
+  {
+    join_mode: JoinMode;
+    group_fallback: "refuse" | "approval";
+    code_agents_mode: CapabilityMode;
+    api_keys_mode: CapabilityMode;
+    source: "console" | "environment";
+  }
+>;
 
 /**
  * A policy change. Unset fields carry the newest stored row's answers
  * forward (ADR 0095) — an explicitly sent null clears back to the
  * environment — so a change to one knob never resets the others.
  */
-export interface OidcPolicyInput {
-  auto_provision?: boolean;
-  unknown_user_policy?: "refuse" | "create_inactive";
-  join_mode?: JoinMode;
-  required_groups?: string[] | null;
-  group_fallback?: "refuse" | "approval";
-  groups_claim?: string;
-  group_mappings?: { idp: string; local: string }[] | null;
-  code_agents_mode?: CapabilityMode | null;
-  api_keys_mode?: CapabilityMode | null;
-  reason?: string;
-}
+export type OidcPolicyInput = Schemas["OidcPolicyUpdateRequest"];
 
 /** What saving a group gate would do (ADR 0095), and what a bulk capability
  * flip would do (ADR 0096, amended). */
-export interface OidcPolicyPreview {
-  active_users: number;
-  would_be_refused: number;
-  admins_exempt: number;
-  /** Exactly one is filled for a bulk preview; both null for a join gate. */
-  would_gain: number | null;
-  would_lose: number | null;
-}
+export type OidcPolicyPreview = Schemas["OidcPolicyPreviewResponse"];
 
 /** Creating a group (ADR 0050). Manual is the point: it is the one kind whose
  * membership the console may edit. */
-export interface GroupCreateInput {
-  name: string;
-  description?: string;
-}
+export type GroupCreateInput = Schemas["GroupCreateRequest"];
 
 /** Flipping a group's capability flags (ADR 0096) — `PATCH /api/admin/groups/{id}`. */
-export interface GroupUpdateInput {
-  code_agents_allowed?: boolean;
-  api_keys_allowed?: boolean;
-}
+export type GroupUpdateInput = Schemas["GroupUpdateRequest"];
 
 /** The bulk flip (ADR 0096, amended) — `POST /api/admin/groups/capabilities`. */
-export interface GroupCapabilityBulkInput {
-  capability: "code_agents" | "api_keys";
-  value: boolean;
-}
+export type GroupCapabilityBulkInput = Schemas["GroupCapabilityBulkRequest"];
 
 // -- Settings (ADR 0051) ------------------------------------------------------
 
@@ -1092,56 +491,16 @@ export type GroupSync = "every_login" | "first_login" | "never";
 
 /** One configured identity provider. The client secret is write-only: a
  * response never carries it, only the fact that one is stored. */
-export interface IdentityProvider {
-  id: string;
-  name: string;
-  issuer: string;
-  client_id: string;
-  has_client_secret: boolean;
-  scopes: string[];
-  groups_claim: string;
-  fetch_userinfo: boolean;
-  group_mappings: { idp: string; local: string }[];
-  /** Whether a login here may adopt the local account with the same verified
-   * address (ADR 0056; the matcher itself is stage (c) — see ADR 0093 §3.2). */
-  link_by_email: boolean;
-  /** How far this directory's answer about groups reaches (ADR 0057). It never
-   * reaches a membership an administrator granted, in any of the three. */
-  group_sync: GroupSync;
-  is_enabled: boolean;
-  source: "console" | "environment";
-  /** People signed in under this row's issuer (ADR 0093 §14). */
-  user_count: number;
-  /** A disabled previous provider nobody signed in through: the console may
-   * offer to remove it. Never true for the enabled row. */
-  removable: boolean;
-  /** Why a disabled row is kept ("Kept: 3 people signed in with it ..."); empty
-   * when it is removable or there is nothing to explain. */
-  kept_reason: string;
-  /** Server-to-server base URL for the issuer (the bundled Authelia's
-   * internal address); empty when the issuer URL is reachable directly. */
-  internal_base_url: string;
-  /** Where signing out sends the browser to end the provider's own session;
-   * `{redirect}` is the page to come back to. Empty: discovery's
-   * end_session_endpoint, else `default_logout_url`. */
-  logout_url: string;
-  /** What an empty `logout_url` falls back to for this kind (Authelia). */
-  default_logout_url: string;
-  kind: IdentityKind;
-  /** Where the directory's answer about groups comes from (ADR 0088). */
-  group_source: GroupSource;
-  /** Who decides who is an administrator (ADR 0088). */
-  admin_source: AdminSource;
-  admin_claim: string;
-  admin_values: string[];
-  subject_claim: string;
-  sync_adapter: SyncAdapter;
-  sync_interval_minutes: number;
-  sync_deprovision: "disable" | "ignore";
-  sync_create_users: boolean;
-  sync_confirmed: boolean;
-  capabilities: IdentityCapabilities;
-}
+export type IdentityProvider = Narrow<
+  Schemas["IdentityProviderResponse"],
+  {
+    source: "console" | "environment";
+    kind: IdentityKind;
+    sync_adapter: SyncAdapter;
+    // The gateway sends `dict[str, Any]`; the console knows the keys.
+    capabilities: IdentityCapabilities;
+  }
+>;
 
 export type IdentityKind =
   | "generic"
@@ -1154,7 +513,9 @@ export type GroupSource = "claim" | "directory" | "none";
 export type AdminSource = "console" | "claim";
 export type SyncAdapter = "none" | "authelia_file" | "scim";
 
-export interface IdentityCapabilities {
+// A type alias, not an interface: only an alias is assignable to the gateway's
+// `dict[str, Any]` (an interface has no implicit index signature).
+export type IdentityCapabilities = {
   claims_groups: boolean;
   pull_adapters: SyncAdapter[];
   scim_push: boolean;
@@ -1164,7 +525,7 @@ export interface IdentityCapabilities {
    * the Add-user dialog. Without it, the Invite dialog. */
   creates_logins: boolean;
   adapters: SyncAdapter[];
-}
+};
 
 export interface SyncRun {
   id: string;
@@ -1197,31 +558,19 @@ export interface DirectoryPerson {
 }
 
 /** The SMTP configuration in force — the row's, or the environment's. */
-export interface EmailSettings {
-  host: string;
-  port: number;
-  username: string;
-  from_address: string;
-  has_password: boolean;
-  source: "console" | "environment";
-  enabled: boolean;
-}
+export type EmailSettings = Narrow<
+  Schemas["EmailSettingsResponse"],
+  {
+    source: "console" | "environment";
+  }
+>;
 
-export interface EmailTestResult {
-  ok: boolean;
-  detail: string;
-}
+export type EmailTestResult = Schemas["EmailTestResponse"];
 
 /** The sign-in page's menu, from GET /auth/methods (ADR 0051). */
-export interface AuthMethods {
-  local: boolean;
-  oidc: boolean;
-  providers: { name: string; issuer: string }[];
-}
+export type AuthMethods = Schemas["AuthMethods"];
 
 // -- Quota notifications (ADR 0052) -------------------------------------------
 
 /** The caller's thresholds for one rule: percentages, arbitrary, user-owned. */
-export interface MyNotificationThresholdsInput {
-  thresholds: number[];
-}
+export type MyNotificationThresholdsInput = Schemas["MyNotificationThresholdsRequest"];
