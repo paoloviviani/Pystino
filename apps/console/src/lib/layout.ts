@@ -201,3 +201,33 @@ export const LOGIN_CENTRE = "flex min-h-[60vh] items-center justify-center p-5";
 export const LOGIN_CARD =
   "flex w-96 max-w-full flex-col gap-4 rounded-2xl border border-line-quiet bg-surface p-6 shadow-sm";
 export const FORM_STACK = "flex flex-col gap-4";
+
+/* -- page width -------------------------------------------------------------- */
+
+/**
+ * Listing screens, which opt in to the wide layout. A table of six or seven
+ * columns plus its actions wants more than the 76rem that keeps a form's lines
+ * readable, so on a wide screen these routes raise `--layout-max-width` (the
+ * header and the content both read it, so they stay aligned). Forms, settings
+ * and detail pages are not listed and keep the default.
+ */
+const WIDE_ROUTES = new Set([
+  "/requests",
+  "/admin/models",
+  "/admin/routing",
+  "/admin/providers",
+  "/admin/search",
+  "/admin/groups",
+  "/admin/quotas",
+  "/admin/redaction",
+  "/admin/requests",
+  "/admin/audit",
+  "/admin/users",
+]);
+
+/** The width cap for listing screens, in place of the token's default. */
+export const WIDE_LAYOUT_MAX_WIDTH = "104rem";
+
+export function isWideRoute(pathname: string): boolean {
+  return WIDE_ROUTES.has(pathname.replace(/\/+$/, "") || "/");
+}
