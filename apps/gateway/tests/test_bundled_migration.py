@@ -7,6 +7,7 @@ converge it", which three ORM rows and a YAML file answer directly.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import yaml
@@ -274,3 +275,49 @@ async def test_a_non_bundled_provider_is_never_passed_in_by_the_caller(
         )
         await session.commit()
         assert await active_bundled_provider(session) is None
+
+
+async def test_workers_starting_together_do_not_race_on_directory_entries(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path
+) -> None:
+    """Every uvicorn worker runs this at boot, against the one database.
+
+    Each worker reads the logins already entered, then inserts the missing
+    ones; two workers on a fresh stack both read "none" and the second insert
+    broke `uq_directory_entries_provider_ext` (IntegrityError, worker dies,
+    container restarts). Many logins and several workers widen the window so
+    the unguarded read-then-insert fails reliably rather than occasionally.
+    """
+    path = tmp_path / "users_database.yml"
+    logins = [f"user{i:03d}" for i in range(60)]
+    path.write_text(
+        "users:\n"
+        + "".join(
+            f"  {login}:\n    disabled: false\n    displayname: {login}\n"
+            "    password: '$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA'\n"
+            f"    email: {login}@example.org\n    groups: [users]\n"
+            for login in logins
+        )
+    )
+    provider = await _provider(session_factory, path)
+
+    async def worker() -> None:
+        async with session_factory() as session:
+            await migrate_bundled_directory(session, provider, BOX)
+            await session.commit()
+
+    await asyncio.gather(*(worker() for _ in range(4)))
+
+    async with session_factory() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(DirectoryEntry.external_id).where(
+                        DirectoryEntry.provider_id == provider.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert sorted(rows) == logins
