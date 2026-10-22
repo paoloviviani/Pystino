@@ -55,3 +55,31 @@ select {
   line-height: revert-layer;
   color: revert-layer;
 }
+
+/*
+ * Chart palette (components/UsagePlots.tsx). The Okabe-Ito set, chosen because
+ * its hues stay distinguishable under protanopia, deuteranopia and tritanopia;
+ * the dark theme lifts the same hues one step so each keeps ~3:1 against the
+ * card (a graphic's floor, WCAG 1.4.11). Neutral grey is "Other" in both. The
+ * series are also always named in a legend and a table, so colour is never the
+ * only carrier.
+ */
+:root {
+  --plot-1: #0072b2;
+  --plot-2: #e69f00;
+  --plot-3: #009e73;
+  --plot-4: #cc79a7;
+  --plot-5: #56b4e9;
+  --plot-6: #d55e00;
+  --plot-other: #8a8a8a;
+}
+
+.dark {
+  --plot-1: #4aa3df;
+  --plot-2: #f0b429;
+  --plot-3: #2fc99b;
+  --plot-4: #e29bc2;
+  --plot-5: #7cc7f0;
+  --plot-6: #ef8a47;
+  --plot-other: #8a8a8a;
+}

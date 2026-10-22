@@ -72,11 +72,15 @@ export interface UsageReportRow {
   native_currency: string | null;
   estimated_requests: number;
   unavailable_requests: number;
+  /** Set only on a report asked for with `split_by`: this row's second key. */
+  split_key?: string | null;
+  split_label?: string | null;
 }
 
 export interface UsageReport {
   period: PeriodInfo;
   group_by: string;
+  split_by?: string | null;
   currency: string;
   rows: UsageReportRow[];
   totals: UsageReportRow;

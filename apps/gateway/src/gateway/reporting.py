@@ -59,6 +59,7 @@ class GroupBy(StrEnum):
     GROUP = "group"
     USER = "user"
     MODEL = "model"
+    PROVIDER = "provider"
     API_KEY = "api_key"
     DAY = "day"
     TOTAL = "total"
@@ -71,6 +72,7 @@ _NO_KEY_LABEL = {
     GroupBy.GROUP: "(no group)",
     GroupBy.USER: "(no user)",
     GroupBy.MODEL: "(unknown model)",
+    GroupBy.PROVIDER: "(unknown provider)",
     GroupBy.API_KEY: "(no API key — browser session)",
     GroupBy.DAY: "(no date)",
     GroupBy.TOTAL: "all usage",
@@ -80,10 +82,16 @@ _DELETED_LABEL = {
     GroupBy.GROUP: "(deleted group)",
     GroupBy.USER: "(erased user)",
     GroupBy.API_KEY: "(deleted key)",
+    GroupBy.PROVIDER: "(deleted provider)",
 }
 
 
-GroupByParam = Literal["group", "user", "model", "api_key", "day", "total"]
+GroupByParam = Literal["group", "user", "model", "provider", "api_key", "day", "total"]
+
+# What a daily chart may break each day down by. A subset of GroupBy on
+# purpose: day and total are not breakdowns of a day, and an API key is a
+# credential, not something anyone asks to see plotted.
+SplitByParam = Literal["group", "user", "model", "provider"]
 
 
 def resolve_period(
@@ -122,6 +130,10 @@ class ReportFilter:
 
     period: Period
     group_by: GroupBy = GroupBy.GROUP
+    # A second grouping dimension, for charts: with ``group_by=day`` each row is
+    # one (day, split) cell. The same aggregate, one more key column; the
+    # console draws its charts from these rows rather than from a second query.
+    split_by: GroupBy | None = None
     group_id: uuid.UUID | None = None
     user_id: uuid.UUID | None = None
     api_key_id: uuid.UUID | None = None
@@ -155,6 +167,13 @@ def _key_column(group_by: GroupBy, timezone: str, dialect: str) -> Any:
             return UsageRecord.model_name
         case GroupBy.API_KEY:
             return UsageRecord.api_key_id
+        case GroupBy.PROVIDER:
+            # The provider that SERVED the request. `model_id` is the serving
+            # target on every row (an alias request records its target, and a
+            # fallback leaves one row per attempt against the target tried), so
+            # the provider is the target model's. `usage_records.upstream_provider`
+            # is a different thing: what an upstream router said it forwarded to.
+            return ModelDef.provider_id
         case GroupBy.DAY:
             return _day_expression(timezone, dialect)
         case GroupBy.TOTAL:
@@ -164,8 +183,11 @@ def _key_column(group_by: GroupBy, timezone: str, dialect: str) -> Any:
 
 def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[Any]:
     key = _key_column(filters.group_by, timezone, dialect).label("key")
+    keys = [key]
+    if filters.split_by is not None:
+        keys.append(_key_column(filters.split_by, timezone, dialect).label("split_key"))
     query = select(
-        key,
+        *keys,
         func.count(UsageRecord.id).label("requests"),
         func.coalesce(func.sum(UsageRecord.prompt_tokens), 0).label("prompt_tokens"),
         func.coalesce(func.sum(UsageRecord.completion_tokens), 0).label("completion_tokens"),
@@ -209,7 +231,11 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
         func.coalesce(
             func.sum(case((UsageRecord.requested_model.is_not(None), 1), else_=0)), 0
         ).label("via_alias"),
-    ).where(
+    ).select_from(UsageRecord)
+    if GroupBy.PROVIDER in (filters.group_by, filters.split_by):
+        # Outer: a row whose model was deleted keeps its spend, under "unknown".
+        query = query.outerjoin(ModelDef, ModelDef.id == UsageRecord.model_id)
+    query = query.where(
         # Half-open, matching Period and the quota engine exactly. A record at
         # 00:00:00 on 1 September belongs to September, in both places.
         UsageRecord.created_at >= filters.period.start,
@@ -228,7 +254,7 @@ def _base_query(filters: ReportFilter, timezone: str, dialect: str) -> Select[An
     if filters.model_name is not None:
         query = query.where(UsageRecord.model_name == filters.model_name)
 
-    return query.group_by(key)
+    return query.group_by(*keys)
 
 
 async def _labels(session: AsyncSession, group_by: GroupBy, keys: Sequence[Any]) -> dict[Any, str]:
@@ -253,6 +279,12 @@ async def _labels(session: AsyncSession, group_by: GroupBy, keys: Sequence[Any])
                     select(User.id, func.coalesce(User.email, User.subject)).where(User.id.in_(ids))
                 )
             ).all()
+        case GroupBy.PROVIDER:
+            rows = (
+                await session.execute(
+                    select(Provider.id, Provider.name).where(Provider.id.in_(ids))
+                )
+            ).all()
         case GroupBy.API_KEY:
             rows = (
                 await session.execute(
@@ -268,8 +300,25 @@ async def _labels(session: AsyncSession, group_by: GroupBy, keys: Sequence[Any])
     return {row[0]: row[1] for row in rows}
 
 
+def _label(group_by: GroupBy, key: Any, labels: dict[Any, str]) -> str:
+    if key is None:
+        return _NO_KEY_LABEL[group_by]
+    # A key with no label is a subject that has since been deleted. The spend
+    # stays in the report — dropping it would silently change last month's
+    # total when someone leaves the organisation.
+    return labels.get(key) or (
+        _DELETED_LABEL.get(group_by, str(key)) if isinstance(key, uuid.UUID) else str(key)
+    )
+
+
 def _row(
-    group_by: GroupBy, key: Any, labels: dict[Any, str], values: Sequence[Any]
+    group_by: GroupBy,
+    key: Any,
+    labels: dict[Any, str],
+    values: Sequence[Any],
+    split_by: GroupBy | None = None,
+    split_key: Any = None,
+    split_labels: dict[Any, str] | None = None,
 ) -> UsageReportRow:
     (
         requests,
@@ -287,19 +336,11 @@ def _row(
         unavailable,
         via_alias,
     ) = values
-    if key is None:
-        label = _NO_KEY_LABEL[group_by]
-    else:
-        # A key with no label is a subject that has since been deleted. The spend
-        # stays in the report — dropping it would silently change last month's
-        # total when someone leaves the organisation.
-        label = labels.get(key) or (
-            _DELETED_LABEL.get(group_by, str(key)) if isinstance(key, uuid.UUID) else str(key)
-        )
+    label = _label(group_by, key, labels)
     # The native figure is only *reportable* for a model row: a model's rows
     # share one price currency, so its native sum means something. A group,
     # user or day mixes currencies and reports in the billing currency only.
-    show_native = group_by == GroupBy.MODEL and native_currency is not None
+    show_native = GroupBy.MODEL in (group_by, split_by) and native_currency is not None
     return UsageReportRow(
         key=str(key) if key is not None else None,
         label=label,
@@ -317,6 +358,10 @@ def _row(
         estimated_disconnected_requests=int(estimated_disconnected or 0),
         unavailable_requests=int(unavailable or 0),
         via_alias_requests=int(via_alias or 0),
+        split_key=str(split_key) if split_by is not None and split_key is not None else None,
+        split_label=_label(split_by, split_key, split_labels or {})
+        if split_by is not None
+        else None,
     )
 
 
@@ -546,10 +591,26 @@ async def build_report(
     dialect = session.bind.dialect.name if session.bind is not None else "postgresql"
     rows = (await session.execute(_base_query(filters, timezone, dialect))).all()
     labels = await _labels(session, filters.group_by, [row[0] for row in rows])
+    split_by = filters.split_by
+    offset = 2 if split_by is not None else 1
+    split_labels = (
+        await _labels(session, split_by, [row[1] for row in rows]) if split_by is not None else {}
+    )
 
-    report_rows = [_row(filters.group_by, row[0], labels, row[1:]) for row in rows]
+    report_rows = [
+        _row(
+            filters.group_by,
+            row[0],
+            labels,
+            row[offset:],
+            split_by,
+            row[1] if split_by is not None else None,
+            split_labels,
+        )
+        for row in rows
+    ]
     if filters.group_by is GroupBy.DAY:
-        report_rows.sort(key=lambda row: row.label)
+        report_rows.sort(key=lambda row: (row.label, -row.cost, row.split_label or ""))
     else:
         report_rows.sort(key=lambda row: (-row.cost, row.label))
 
@@ -608,6 +669,7 @@ async def build_report(
             timezone=timezone,
         ),
         group_by=filters.group_by.value,
+        split_by=split_by.value if split_by is not None else None,
         currency=currency,
         rows=report_rows,
         totals=totals,
@@ -631,6 +693,9 @@ CSV_HEADER = [
     "group_by",
     "key",
     "label",
+    "split_by",
+    "split_key",
+    "split_label",
     "requests",
     "prompt_tokens",
     "completion_tokens",
@@ -670,6 +735,9 @@ def report_to_csv(report: UsageReport) -> str:
                 report.group_by,
                 row.key or "",
                 row.label,
+                report.split_by or "",
+                row.split_key or "",
+                row.split_label or "",
                 row.requests,
                 row.prompt_tokens,
                 row.completion_tokens,

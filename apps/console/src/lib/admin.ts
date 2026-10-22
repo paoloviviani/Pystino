@@ -1466,6 +1466,8 @@ export function useBulkGroupCapabilities() {
 export interface ReportQuery {
   period: string;
   groupBy: string;
+  /** A second key for each row, for the daily charts (`groupBy: "day"`). */
+  splitBy?: string;
   groupId?: string;
   userId?: string;
   model?: string;
@@ -1475,6 +1477,7 @@ export function reportQueryString(query: ReportQuery): string {
   const params = new URLSearchParams();
   if (query.period) params.set("period", query.period);
   params.set("group_by", query.groupBy);
+  if (query.splitBy) params.set("split_by", query.splitBy);
   if (query.groupId) params.set("group_id", query.groupId);
   if (query.userId) params.set("user_id", query.userId);
   if (query.model) params.set("model", query.model);

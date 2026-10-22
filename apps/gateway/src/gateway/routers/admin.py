@@ -196,6 +196,7 @@ from gateway.reporting import (
     GroupBy,
     GroupByParam,
     ReportFilter,
+    SplitByParam,
     build_report,
     report_to_csv,
     resolve_period,
@@ -5542,6 +5543,7 @@ async def usage_report(
     start: datetime | None = None,
     end: datetime | None = None,
     group_by: GroupByParam = "group",
+    split_by: SplitByParam | None = None,
     group_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
     api_key_id: uuid.UUID | None = None,
@@ -5563,6 +5565,7 @@ async def usage_report(
         ReportFilter(
             period=resolve_period(period, start, end, settings.billing_timezone),
             group_by=GroupBy(group_by),
+            split_by=GroupBy(split_by) if split_by else None,
             group_id=group_id,
             user_id=user_id,
             api_key_id=api_key_id,
@@ -5583,6 +5586,7 @@ async def usage_report_csv(
     start: datetime | None = None,
     end: datetime | None = None,
     group_by: GroupByParam = "group",
+    split_by: SplitByParam | None = None,
     group_id: uuid.UUID | None = None,
     user_id: uuid.UUID | None = None,
     api_key_id: uuid.UUID | None = None,
@@ -5594,7 +5598,18 @@ async def usage_report_csv(
     keeps one response type and the download has a filename a browser will use.
     """
     report = await usage_report(
-        admin, session, settings, period, start, end, group_by, group_id, user_id, api_key_id, model
+        admin,
+        session,
+        settings,
+        period,
+        start,
+        end,
+        group_by,
+        split_by,
+        group_id,
+        user_id,
+        api_key_id,
+        model,
     )
     filename = f"usage-{report.period.label}-by-{report.group_by}.csv"
     return Response(

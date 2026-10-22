@@ -19,6 +19,7 @@ import { useState } from "react";
 
 import { PageHeader } from "../components/PageHeader";
 import { Disclosures } from "../components/Disclosures";
+import { UsagePlots } from "../components/UsagePlots";
 import { downloadCsv } from "../lib/api";
 import { recentPeriods } from "../lib/periods";
 import { useMyReport } from "../lib/queries";
@@ -40,6 +41,7 @@ import { m } from "../paraglide/messages.js";
  */
 const BREAKDOWNS = [
   { value: "model", label: m["reports.breakdown.model"] },
+  { value: "provider", label: m["reports.breakdown.provider"] },
   { value: "api_key", label: m["reports.breakdown.api_key"] },
   { value: "day", label: m["reports.breakdown.day"] },
   { value: "total", label: m["reports.breakdown.total"] },
@@ -192,6 +194,13 @@ export function Reports() {
         )}
       </Card>
 
+      {/* Pinned to the caller server-side (/api/me), like the tables. No
+          "user" breakdown: it could only ever be one series. */}
+      <UsagePlots
+        splits={["model", "provider", "group"]}
+        useChartReport={(splitBy) => useMyReport(period, "day", splitBy)}
+      />
+
       <Card title={m["reports.breakdown_card"]()} flush>
         {report.isPending ? (
           <Spinner />
@@ -244,6 +253,7 @@ function headingFor(groupBy: string): string {
   return (
     {
       model: m["reports.heading.model"](),
+      provider: m["reports.heading.provider"](),
       api_key: m["reports.heading.api_key"](),
       day: m["reports.heading.day"](),
       total: m["reports.heading.total"](),
@@ -256,6 +266,7 @@ function headingLowerFor(groupBy: string): string {
   return (
     {
       model: m["reports.heading_lower.model"](),
+      provider: m["reports.heading_lower.provider"](),
       api_key: m["reports.heading_lower.api_key"](),
       day: m["reports.heading_lower.day"](),
       total: m["reports.heading_lower.total"](),

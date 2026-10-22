@@ -10,12 +10,14 @@ import { formatNumber } from "../lib/format";
 import { m } from "../paraglide/messages.js";
 import { PageHeader } from "../components/PageHeader";
 import { Disclosures } from "../components/Disclosures";
+import { UsagePlots } from "../components/UsagePlots";
 
 /** Message functions, not strings: this list is built once, at import. */
 const BREAKDOWNS = [
   { value: "group", label: m["admin_reports.breakdown.group"] },
   { value: "user", label: m["admin_reports.breakdown.user"] },
   { value: "model", label: m["admin_reports.breakdown.model"] },
+  { value: "provider", label: m["admin_reports.breakdown.provider"] },
   { value: "api_key", label: m["admin_reports.breakdown.api_key"] },
   { value: "day", label: m["admin_reports.breakdown.day"] },
   { value: "total", label: m["admin_reports.breakdown.total"] },
@@ -186,6 +188,19 @@ export function AdminReports() {
         )}
       </Card>
 
+      <UsagePlots
+        splits={["group", "user", "model", "provider"]}
+        useChartReport={(splitBy) =>
+          useAdminReport({
+            period,
+            groupBy: "day",
+            splitBy,
+            groupId: groupId || undefined,
+            model: model || undefined,
+          })
+        }
+      />
+
       <Card title={m["admin_reports.breakdown_card"]()} flush>
         {report.isPending ? (
           <Spinner />
@@ -234,6 +249,7 @@ function headingFor(groupBy: string): string {
       group: m["admin_reports.heading.group"](),
       user: m["admin_reports.heading.user"](),
       model: m["admin_reports.heading.model"](),
+      provider: m["admin_reports.heading.provider"](),
       api_key: m["admin_reports.heading.api_key"](),
       day: m["admin_reports.heading.day"](),
       total: m["admin_reports.heading.total"](),
@@ -255,6 +271,7 @@ function headingLowerFor(groupBy: string): string {
       group: m["admin_reports.heading_lower.group"](),
       user: m["admin_reports.heading_lower.user"](),
       model: m["admin_reports.heading_lower.model"](),
+      provider: m["admin_reports.heading_lower.provider"](),
       api_key: m["admin_reports.heading_lower.api_key"](),
       day: m["admin_reports.heading_lower.day"](),
       total: m["admin_reports.heading_lower.total"](),

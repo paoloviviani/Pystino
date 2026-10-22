@@ -179,8 +179,46 @@ describe("AdminReports", () => {
     );
     renderScreen(<AdminReports />);
 
+    // Once for the tables and once for the chart, which reads the same endpoint.
     await waitFor(() =>
-      expect(screen.getByText("'nope' is not a period.")).toBeInTheDocument(),
+      expect(screen.getAllByText("'nope' is not a period.")).toHaveLength(2),
     );
+  });
+
+  it("charts the same report endpoint, daily and split by the chosen breakdown", async () => {
+    const user = userEvent.setup({ delay: null });
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", routes(report(), seen));
+    renderScreen(<AdminReports />);
+
+    const chart = await screen.findByLabelText("Chart breakdown");
+    const options = Array.from(chart.querySelectorAll("option")).map((o) => o.value);
+    // Admin views may break the chart down by all four.
+    expect(options).toEqual(["group", "user", "model", "provider"]);
+    await user.selectOptions(chart, "provider");
+    await waitFor(() =>
+      expect(
+        seen.some(
+          (url) =>
+            url.includes("/api/admin/reports/usage?") &&
+            url.includes("group_by=day") &&
+            url.includes("split_by=provider"),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("adds a provider breakdown to the table", async () => {
+    const seen: string[] = [];
+    const user = userEvent.setup({ delay: null });
+    vi.stubGlobal("fetch", routes(report(), seen));
+    renderScreen(<AdminReports />);
+    await user.selectOptions(await screen.findByLabelText("Breakdown"), "provider");
+    await waitFor(() =>
+      expect(
+        seen.some((url) => url.includes("group_by=provider") && !url.includes("split_by")),
+      ).toBe(true),
+    );
+    expect(await screen.findByRole("columnheader", { name: "Provider" })).toBeInTheDocument();
   });
 });

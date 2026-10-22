@@ -62,7 +62,9 @@ from gateway.types import utcnow
 router = APIRouter(prefix="/api", tags=["self-service"])
 
 # Deliberately narrower than the admin surface: see my_usage_report.
-MyGroupBy = Literal["model", "day", "group", "api_key", "total"]
+MyGroupBy = Literal["model", "provider", "day", "group", "api_key", "total"]
+# No "user": pinned to the caller it could only ever be one series.
+MySplitBy = Literal["group", "model", "provider"]
 
 
 def _group_summary(group: Group | None) -> GroupSummary | None:
@@ -273,6 +275,7 @@ async def my_usage_report(
     start: datetime | None = None,
     end: datetime | None = None,
     group_by: MyGroupBy = "model",
+    split_by: MySplitBy | None = None,
 ) -> UsageReport:
     """The caller's own spend over a calendar period.
 
@@ -289,6 +292,7 @@ async def my_usage_report(
         ReportFilter(
             period=resolve_period(period, start, end, settings.billing_timezone),
             group_by=GroupBy(group_by),
+            split_by=GroupBy(split_by) if split_by else None,
             user_id=user.id,
         ),
         currency=settings.billing_currency,
@@ -306,8 +310,9 @@ async def my_usage_report_csv(
     start: datetime | None = None,
     end: datetime | None = None,
     group_by: MyGroupBy = "model",
+    split_by: MySplitBy | None = None,
 ) -> Response:
-    report = await my_usage_report(user, session, settings, period, start, end, group_by)
+    report = await my_usage_report(user, session, settings, period, start, end, group_by, split_by)
     filename = f"my-usage-{report.period.label}-by-{report.group_by}.csv"
     return Response(
         content=report_to_csv(report),

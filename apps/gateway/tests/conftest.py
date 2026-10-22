@@ -14,7 +14,8 @@ tests use values that survive a float round-trip.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Callable
+import time
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -259,6 +260,61 @@ def _ensure_template() -> None:
         asyncio.run(_build())
 
 
+_SESSION_START = int(time.time())
+_swept = False
+
+
+def _sweep_stale_databases() -> None:
+    """Drop t_gwtest_* databases left by an earlier session (once per session).
+
+    A run killed with SIGKILL runs no teardown and no atexit hook, and one
+    such history left 1678 databases (15 GB) and put Postgres into crash
+    recovery. Names carry the creation epoch (t_gwtest_<epoch>_<hex>); a
+    database is stale when it was created before this session started and no
+    backend is connected to it, which spares a concurrent session's live ones
+    (its databases are connected to within milliseconds of creation).
+    """
+    global _swept
+    if _swept:
+        return
+    _swept = True
+    import asyncio
+
+    async def _run() -> None:
+        admin = await _admin_connect()
+        try:
+            rows = await admin.fetch(
+                "SELECT d.datname FROM pg_database d WHERE d.datname LIKE $1 "
+                "AND NOT EXISTS (SELECT 1 FROM pg_stat_activity a WHERE a.datname = d.datname)",
+                f"{_TEST_DB_PREFIX}%",
+            )
+            for row in rows:
+                name = row["datname"]
+                if name == _template_name():
+                    continue
+                parts = name[len(_TEST_DB_PREFIX) :].split("_")
+                stamp = int(parts[0]) if len(parts) == 2 and parts[0].isdigit() else 0
+                if stamp < _SESSION_START:
+                    await admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        finally:
+            await admin.close()
+
+    asyncio.run(_run())
+
+
+def _drop_database(db: str) -> None:
+    import asyncio
+
+    async def _run() -> None:
+        a = await _admin_connect()
+        try:
+            await a.execute(f'DROP DATABASE IF EXISTS "{db}" WITH (FORCE)')
+        finally:
+            await a.close()
+
+    asyncio.run(_run())
+
+
 def _external_test_database() -> str | None:
     """A fresh database for this test, or None (the SQLite leg).
 
@@ -275,7 +331,8 @@ def _external_test_database() -> str | None:
     import uuid
 
     _ensure_template()
-    db = f"{_TEST_DB_PREFIX}{uuid.uuid4().hex[:12]}"
+    _sweep_stale_databases()
+    db = f"{_TEST_DB_PREFIX}{int(time.time())}_{uuid.uuid4().hex[:12]}"
 
     async def _create() -> None:
         admin = await _admin_connect()
@@ -300,27 +357,18 @@ def _external_test_database() -> str | None:
         f"@{parsed['host']}:{parsed['port']}/{db}"
     )
 
-    def _drop() -> None:
-        async def _run() -> None:
-            a = await _admin_connect()
-            try:
-                await a.execute(f"DROP DATABASE IF EXISTS {db} WITH (FORCE)")
-            finally:
-                await a.close()
-
-        asyncio.run(_run())
-
-    atexit.register(_drop)
+    atexit.register(_drop_database, db)
     return url
 
 
 @pytest.fixture
-def settings(tmp_path: Path) -> Settings:
+def settings(tmp_path: Path) -> Iterator[Settings]:
     # A file per test rather than ":memory:". In-memory SQLite needs a single
     # pooled connection to be shared across sessions, and that pool does not
     # always close cleanly at interpreter teardown; a temp file exercises a real
     # connection pool and leaves nothing behind.
-    return Settings(
+    database_url = _external_test_database()
+    yield Settings(
         environment="dev",
         log_json=False,
         # TEST_DATABASE_URL runs against a real Postgres, one fresh
@@ -329,8 +377,7 @@ def settings(tmp_path: Path) -> Settings:
         # the only way to exercise advisory locks, FOR UPDATE and SKIP
         # LOCKED, which SQLite silently no-ops. Unset stays on the
         # temp-file, which is what CI runs. See _external_test_database.
-        database_url=_external_test_database()
-        or f"sqlite+aiosqlite:///{tmp_path / 'gateway-test.db'}",
+        database_url=database_url or f"sqlite+aiosqlite:///{tmp_path / 'gateway-test.db'}",
         # Empty means "no shared counter store": the in-memory store is used,
         # which is exactly right for a single-process test.
         valkey_url="",
@@ -349,6 +396,10 @@ def settings(tmp_path: Path) -> Settings:
         redaction=RedactionSettings(engine="noop"),
         quota=QuotaSettings(enabled=True, default_max_output_tokens=1000),
     )
+    # Teardown runs after the app fixture's (app depends on settings), so the
+    # engine is disposed by now; WITH (FORCE) ends any backend still attached.
+    if database_url:
+        _drop_database(database_url.rsplit("/", 1)[1])
 
 
 @pytest_asyncio.fixture
