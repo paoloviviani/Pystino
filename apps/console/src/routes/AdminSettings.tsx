@@ -16,6 +16,7 @@ import {
   EmptyState,
   Input,
   Notice,
+  Select,
   Spinner,
 } from "@llmp/ui";
 import { useState } from "react";
@@ -568,77 +569,50 @@ function CapabilityDefaultsCard() {
               <div className="min-w-0">
                 <div className={CHIPS}>
                   <span className="font-medium">{entry.title()}</span>
-                  <Badge tone={mode === "on" ? "ok" : "neutral"}>
-                    {mode === "on"
-                      ? m["admin_settings.capability.badge_on"]()
-                      : m["admin_settings.capability.badge_off"]()}
-                  </Badge>
                 </div>
                 <div className={`mt-1 text-sm ${MUTED}`}>{entry.hint()}</div>
               </div>
               {/* w-full on phones: shrink-0 alone kept the two long labels
                   side by side and they ran past the card edge. */}
-              <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
-                <Button
-                  variant="ghost"
-                  disabled={mode === "on"}
-                  busy={save.isPending}
-                  onClick={() =>
-                    save.mutate(
-                      { [`${entry.key}_mode`]: "on" } as Record<string, never>,
-                      {
-                        onSuccess: () =>
-                          toast?.add({
-                            title: m["admin_settings.capability.toast_saved"]({
-                              capability: entry.title(),
+              <div className="flex w-full flex-wrap items-end gap-3 sm:w-auto sm:shrink-0">
+                <div className="w-40">
+                  <Select
+                    label={m["admin_settings.capability.new_groups_label"]()}
+                    value={mode}
+                    disabled={save.isPending}
+                    onChange={(event) =>
+                      save.mutate(
+                        { [`${entry.key}_mode`]: event.target.value } as Record<string, never>,
+                        {
+                          onSuccess: () =>
+                            toast?.add({
+                              title: m["admin_settings.capability.toast_saved"]({
+                                capability: entry.title(),
+                              }),
+                              type: "success",
                             }),
-                            type: "success",
-                          }),
-                        onError: (caught: unknown) =>
-                          toast?.add({
-                            // i18n: server text — the gateway's own error message.
-                            title:
-                              caught instanceof Error
-                                ? caught.message
-                                : m["admin_settings.capability.toast_save_failed"](),
-                            type: "error",
-                          }),
-                      },
-                    )
-                  }
-                >
-                  {m["admin_settings.capability.turn_on_new"]()}
-                </Button>
-                <Button
-                  variant="ghost"
-                  disabled={mode === "off"}
-                  busy={save.isPending}
-                  onClick={() =>
-                    save.mutate(
-                      { [`${entry.key}_mode`]: "off" } as Record<string, never>,
-                      {
-                        onSuccess: () =>
-                          toast?.add({
-                            title: m["admin_settings.capability.toast_saved"]({
-                              capability: entry.title(),
+                          onError: (caught: unknown) =>
+                            toast?.add({
+                              // i18n: server text — the gateway's own error message.
+                              title:
+                                caught instanceof Error
+                                  ? caught.message
+                                  : m["admin_settings.capability.toast_save_failed"](),
+                              type: "error",
                             }),
-                            type: "success",
-                          }),
-                        onError: (caught: unknown) =>
-                          toast?.add({
-                            // i18n: server text — the gateway's own error message.
-                            title:
-                              caught instanceof Error
-                                ? caught.message
-                                : m["admin_settings.capability.toast_save_failed"](),
-                            type: "error",
-                          }),
-                      },
-                    )
-                  }
-                >
-                  {m["admin_settings.capability.turn_off_new"]()}
-                </Button>
+                        },
+                      )
+                    }
+                  >
+                    <option value="on">{m["admin_settings.capability.option_on"]()}</option>
+                    <option value="off">{m["admin_settings.capability.option_off"]()}</option>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm font-medium">
+                    {m["admin_settings.capability.all_groups_label"]()}
+                  </span>
+                  <div className="flex flex-wrap gap-2">
                 <Button
                   variant="secondary"
                   onClick={() => {
@@ -695,6 +669,8 @@ function CapabilityDefaultsCard() {
                 >
                   {m["admin_settings.capability.turn_off_all"]()}
                 </Button>
+                  </div>
+                </div>
               </div>
             </div>
           );
