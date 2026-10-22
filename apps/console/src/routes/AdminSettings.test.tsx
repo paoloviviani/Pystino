@@ -544,16 +544,17 @@ describe("AdminSettings capabilities card", () => {
   async function openCard() {
     // Await the settled card, not its header: the policy query answers after
     // the first paint, and a test that stops at the header races the spinner.
-    // Both capability rows carry a badge, so the wait matches two elements.
-    return (await screen.findAllByText(/new groups: on|new groups: off/))[0]!;
+    // Both capability rows carry a "New groups" select, so the wait matches two.
+    return (await screen.findAllByLabelText("New groups"))[0]!;
   }
 
   it("seeds the two defaults from the policy in force", async () => {
     mockRoutes({ policy: policyFixture({ code_agents_mode: "off" }) });
     renderScreen(<AdminSettings />);
     await openCard();
-    expect(screen.getByText("new groups: off")).toBeInTheDocument();
-    expect(screen.getByText("new groups: on")).toBeInTheDocument();
+    const selects = screen.getAllByLabelText("New groups") as HTMLSelectElement[];
+    // Card order: coding agents first, then API keys.
+    expect(selects.map((s) => s.value)).toEqual(["off", "on"]);
   });
 
   it("saves a default as its own policy field", async () => {
@@ -561,11 +562,9 @@ describe("AdminSettings capabilities card", () => {
     mockRoutes({ policy: policyFixture() });
     renderScreen(<AdminSettings />);
     await openCard();
-    // Two rows carry the same buttons; the buttons render in card order
-    // (coding agents first), so index selects the row.
-    await user.click(
-      screen.getAllByRole("button", { name: /turn off for new groups/i })[0]!,
-    );
+    // Two rows carry the same select; card order (coding agents first)
+    // makes the index the row.
+    await user.selectOptions(screen.getAllByLabelText("New groups")[0]!, "off");
     await waitFor(() => expect(puts()).toEqual([{ code_agents_mode: "off" }]));
   });
 
@@ -576,7 +575,7 @@ describe("AdminSettings capabilities card", () => {
     await openCard();
 
     await user.click(
-      screen.getAllByRole("button", { name: /turn off for all groups/i })[0]!,
+      screen.getAllByRole("button", { name: /turn off for all/i })[0]!,
     );
     const dialog = await screen.findByRole("dialog");
     expect(
@@ -597,7 +596,7 @@ describe("AdminSettings capabilities card", () => {
     await openCard();
 
     await user.click(
-      screen.getAllByRole("button", { name: /turn on for all groups/i })[0]!,
+      screen.getAllByRole("button", { name: /turn on for all/i })[0]!,
     );
     await waitFor(() =>
       expect(posts()).toEqual([{ capability: "code_agents", value: true }]),
