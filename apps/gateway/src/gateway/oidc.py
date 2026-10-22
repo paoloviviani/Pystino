@@ -99,6 +99,40 @@ _SESSION_ALGORITHM = "HS256"
 _ID_TYP = "ID"
 
 
+DEVICE_GRANTS = ("urn:ietf:params:oauth:grant-type:device_code", "device_code")
+DOORKEEPER_AUTHORIZE = "/oauth/authorize"
+DOORKEEPER_DEVICE = "/oauth/authorize_device"
+
+
+def supports_device_grant(grants: tuple[str, ...] | None) -> bool:
+    """Whether a grant list names the device grant, in either spelling (GitLab
+    lists the short ``device_code``)."""
+    return grants is not None and any(g in DEVICE_GRANTS for g in grants)
+
+
+def device_endpoint(metadata: OIDCMetadata) -> tuple[str | None, bool]:
+    """``(endpoint, derived)``: the device authorization endpoint galopin will use.
+
+    Mirrors galopin's ``deriveDeviceEndpoint``: an advertised endpoint wins;
+    otherwise, when the grant is listed and the authorization endpoint has
+    Doorkeeper's shape (GitLab publishes the grant but no endpoint), it is
+    ``<base>/oauth/authorize_device``. Nothing is guessed for any other issuer.
+    """
+    if metadata.device_authorization_endpoint:
+        return metadata.device_authorization_endpoint, False
+    if not supports_device_grant(metadata.grant_types_supported):
+        return None, False
+    base = metadata.authorization_endpoint.rstrip("/").removesuffix(DOORKEEPER_AUTHORIZE)
+    if (
+        base == metadata.authorization_endpoint.rstrip("/")
+        or not base
+        or "?" in base
+        or "#" in base
+    ):
+        return None, False
+    return base + DOORKEEPER_DEVICE, True
+
+
 class OIDCError(Exception):
     """Any failure in the login flow. Never surfaced verbatim to the browser."""
 
@@ -560,13 +594,14 @@ class OIDCClient:
         that lands.
         """
         metadata = await self.metadata()
-        if not metadata.device_authorization_endpoint:
+        endpoint, _ = device_endpoint(metadata)
+        if not endpoint:
             raise OIDCError(
                 "this identity provider does not publish a device_authorization_endpoint"
             )
         try:
             response = await self._http.post(
-                metadata.device_authorization_endpoint,
+                endpoint,
                 data={"client_id": client_id, "scope": scope},
                 headers=self._backchannel_headers(),
             )

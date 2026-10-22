@@ -33,7 +33,9 @@ from gateway.join_gate import (
 from gateway.oidc import (
     OIDCClient,
     OIDCError,
+    device_endpoint,
     resolve_claim,
+    supports_device_grant,
 )
 
 
@@ -85,19 +87,24 @@ async def check_discovery(client: OIDCClient, settings: OIDCSettings, report: Ch
     # enrollment time otherwise. Infomaniak (2026-10-10) is the real case:
     # no device endpoint, and grants limited to password/refresh/code/
     # token-exchange.
-    if not metadata.device_authorization_endpoint:
+    endpoint, derived = device_endpoint(metadata)
+    if not endpoint:
         report.fail(
             "  device flow: MISSING — no device_authorization_endpoint in discovery; "
             "galopin cannot enroll, so agent machines will not work with this issuer"
         )
-    elif (
-        metadata.grant_types_supported is not None
-        and "urn:ietf:params:oauth:grant-type:device_code" not in metadata.grant_types_supported
+    elif metadata.grant_types_supported is not None and not supports_device_grant(
+        metadata.grant_types_supported
     ):
         report.fail(
             "  device flow: MISSING — grant_types_supported omits "
             "urn:ietf:params:oauth:grant-type:device_code; galopin cannot enroll, "
             "so agent machines will not work with this issuer"
+        )
+    elif derived:
+        report.say(
+            f"  device flow: available via {endpoint} (not advertised; "
+            "derived for a Doorkeeper/GitLab issuer, as galopin does)"
         )
     else:
         report.say("  device flow: available (galopin can enroll)")
