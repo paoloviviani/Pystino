@@ -26,7 +26,7 @@ from gateway.types import utcnow
 
 logger = logging.getLogger(__name__)
 
-PULL_ADAPTERS = ("authelia_file", "keycloak_admin")
+PULL_ADAPTERS = ("authelia_file",)
 LOCK_SECONDS = 600
 
 

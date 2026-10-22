@@ -142,8 +142,8 @@ Toolchains, git hooks, every test layer, CI, releasing and the repository's
 conventions are in [CONTRIBUTING.md](CONTRIBUTING.md), which is also the
 [Development](https://paoloviviani.github.io/Pystino/development/) page of the
 documentation. `deploy/dev/smoke.yml` adds a fake upstream to the compose
-deployment, and `deploy/dev/keycloak/` a Keycloak to develop the external-IdP
-paths against. The console is `apps/console` (React, pnpm), built into the
+deployment. External-IdP paths are developed against any OIDC provider you
+run separately. The console is `apps/console` (React, pnpm), built into the
 gateway image. Live checks against a running stack are in `scripts/*_live.py`.
 
 ## Documentation

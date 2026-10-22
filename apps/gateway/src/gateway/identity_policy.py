@@ -1,7 +1,7 @@
 """What an identity provider can do, and who decides groups and admin (ADR 0088).
 
 OIDC itself has no listing API, so "sync users from the IdP" means different
-things per directory: Keycloak has an admin REST API, Authelia a users file,
+things per directory: Authelia has a users file,
 Entra/Okta/Authentik push over SCIM, and a generic issuer offers nothing beyond
 the claims in a login. `kind` names the directory; its capabilities decide
 which controls the console shows, and which sync adapters a provider may use.
@@ -18,7 +18,7 @@ Three orthogonal answers per provider, each with a safe default:
   the user row (``users.admin_source``) means the directory only ever revokes
   an admin flag *it* granted, and a revocation that would leave no active
   administrator is refused.
-- **sync_adapter** — none, ``authelia_file``, ``keycloak_admin`` or ``scim``.
+- **sync_adapter** — none, ``authelia_file`` or ``scim``.
 """
 
 from __future__ import annotations
@@ -30,10 +30,10 @@ from urllib.parse import quote, urlencode
 
 from gateway.oidc import normalise_groups, resolve_claim
 
-KINDS = ("generic", "authelia", "keycloak", "entra", "okta", "authentik", "google")
+KINDS = ("generic", "authelia", "entra", "okta", "authentik", "google")
 GROUP_SOURCES = ("claim", "directory", "none")
 ADMIN_SOURCES = ("console", "claim")
-SYNC_ADAPTERS = ("none", "authelia_file", "keycloak_admin", "scim")
+SYNC_ADAPTERS = ("none", "authelia_file", "scim")
 DEPROVISION = ("disable", "ignore")
 
 
@@ -75,7 +75,6 @@ class Capabilities:
 
 _CAPABILITIES: dict[str, Capabilities] = {
     "authelia": Capabilities(True, ("authelia_file",), False, False, True, True),
-    "keycloak": Capabilities(True, ("keycloak_admin",), False, True, True),
     "entra": Capabilities(True, (), True, True, True),
     "okta": Capabilities(True, (), True, True, True),
     "authentik": Capabilities(True, (), True, True, True),

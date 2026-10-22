@@ -2921,7 +2921,7 @@ async def list_group_members(
     if needle := q.strip():
         # `username` is in here because it is the name an administrator
         # created the account under, and searching for it was the reported
-        # failure: an account made as `chat@local` in Keycloak was findable
+        # failure: an account made as `chat@local` in the identity provider was findable
         # only as `chat@example.org`, its email (ADR 0062 follow-up).
         stmt = stmt.where(
             _matches(needle, User.email, User.display_name, User.username, User.subject)
@@ -4282,7 +4282,7 @@ async def list_users(
     if needle := q.strip():
         # `username` is in here because it is the name an administrator
         # created the account under, and searching for it was the reported
-        # failure: an account made as `chat@local` in Keycloak was findable
+        # failure: an account made as `chat@local` in the identity provider was findable
         # only as `chat@example.org`, its email (ADR 0062 follow-up).
         stmt = stmt.where(
             _matches(needle, User.email, User.display_name, User.username, User.subject)

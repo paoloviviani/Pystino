@@ -75,7 +75,7 @@ invite mode, warns when it is absent.
 | Bundled Authelia | yes | `true` for console-made accounts — invites are not the bundled flow anyway |
 | Google | yes | with the `email` scope; ID token and userinfo |
 | GitLab | yes, conditionally | only with the `email` scope **and** a public email on the user's profile; without one, an invite waits until the profile has an address |
-| Keycloak | yes | the built-in `email` client scope carries the `email_verified` mapper (source-checked, 2026-10); `true` once Keycloak considers the address verified |
+| Keycloak | yes | the built-in `email` client scope carries the `email_verified` mapper (source-checked, 2026-10); `true` once the realm considers the address verified |
 | Okta | yes | `email` scope, boolean; in the ID token for `id_token` response types, from userinfo on the `code` flow (which the console merges) |
 | Authentik | yes, but value varies | **before 2025.10 always `true`** (even for unverified addresses); **since 2025.10 `false` until the address is verified** through authentik's flow — an invitation stays unclaimable until then, or use SCIM |
 
@@ -154,15 +154,15 @@ enrolling a machine that would lose its sign-in within the hour, if no refresh
 token comes back. Enable refresh tokens for `opencode-enrollment` at the
 provider.
 
-## Keycloak: the audience mapper
+## Access tokens without an audience (for example Keycloak)
 
-A Keycloak access token carries **no `aud` claim at all** unless an audience
+Some providers' access tokens (Keycloak's, for one) carry **no `aud` claim at all** unless an audience
 mapper puts one there; it has only `azp`, which says who *asked* for the token,
 not who it is *for*. The gateway checks the audience (`OIDC_AUDIENCE`,
 `pystino-api` by default) rather than `azp`, because a token minted for any
 other purpose by a permitted client would otherwise be accepted at the API. So
-every Keycloak client that is to call `/v1` (the console's, the chat's and the
-machine client) needs a protocol mapper of type *Audience* that adds `OIDC_AUDIENCE` to
+every client that is to call `/v1` (the console's, the chat's and the
+machine client) needs a mapper (in Keycloak, a protocol mapper of type *Audience*) that adds `OIDC_AUDIENCE` to
 the access token.
 
 Without it nothing fails loudly at the provider. The symptom is that **every
@@ -201,7 +201,6 @@ The dialog offers the adapters the provider kind can support:
 | Adapter | How the directory tells the gateway about people |
 |---|---|
 | Off (default) | people appear at their first sign-in |
-| Keycloak admin API | pulled on a schedule, with a service-account client |
 | SCIM 2.0 | the provider pushes changes to `/scim/v2/<provider>` |
 | Authelia users file | not needed: the Users page manages bundled accounts |
 

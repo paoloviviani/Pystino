@@ -90,7 +90,8 @@ logger = logging.getLogger(__name__)
 _ID_TOKEN_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384", "PS256"]
 _SESSION_ALGORITHM = "HS256"
 
-# Keycloak marks an ID token `typ: ID` and an access token `typ: Bearer`. The
+# Some providers (Keycloak among them) mark an ID token `typ: ID` and an access
+# token `typ: Bearer`. The
 # claim is not standard, so its *absence* proves nothing and is allowed; its
 # presence saying "ID" is refused. Without this, a deployment whose configured
 # audience equals its own client_id would accept a console ID token as an API
@@ -453,7 +454,7 @@ class OIDCClient:
           ``kid`` — key rotation happens without warning.
         * **Issuer**, which must equal the discovery document's exactly.
           ``iss`` is part of a user's identity here (users are keyed on
-          ``(issuer, subject)``), so a token from a re-hosted Keycloak must fail
+          ``(issuer, subject)``), so a token from a re-hosted provider must fail
           rather than quietly provision a second set of everybody.
         * **Audience**, which must *contain* the configured value. An ID token
           names one audience; an access token may legitimately name several, so

@@ -7,7 +7,7 @@ PostgreSQL's ``timezone()``/``to_char()``, and the unique expression index on
 ``limit_rules`` is real DDL. Both are dialect-specific and therefore only ever
 proven here.
 
-Usage: python3 scripts/test_reporting_live.py   (stack must be up, with Keycloak)
+Usage: python3 scripts/test_reporting_live.py   (stack must be up)
 """
 
 from __future__ import annotations

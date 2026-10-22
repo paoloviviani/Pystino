@@ -318,7 +318,7 @@ class TestRefusals:
         self, session_factory: async_sessionmaker[AsyncSession]
     ) -> None:
         async with session_factory() as session:
-            provider = await _provider(session, kind="keycloak")
+            provider = await _provider(session, kind="generic")
             user = await _pending_user(session)
             await _bound_entry(session, provider, user)
 

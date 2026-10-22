@@ -169,16 +169,8 @@ def main() -> int:
             8000: "the gateway, without TLS",
             8081: "the fake upstream",
             int(os.environ.get("CHAT_PORT", "8100")): "the chat service, without TLS",
-            # The development Keycloak (docker-compose.keycloak.yml). It is
-            # deliberately not published — a browser reaches it through Caddy
-            # at /idp on the origin above — and this line is what keeps that
-            # true. Its admin console on a routable address would be the worst
-            # single thing this stack could expose, since it mints the
-            # identities the gateway then trusts.
-            8080: "the development Keycloak",
-            9000: "Keycloak's management port",
             # The Playwright server (the chat repository's docker-compose.playwright.yml).
-            # Listed for the same reason as Keycloak: it publishes nothing today,
+            # Listed so it stays private: it publishes nothing today,
             # so this skips, and it becomes a real check the moment somebody adds
             # a `ports:` line. It is the worst thing in this stack to expose —
             # `run-server` has no authentication of any kind, so reaching it is

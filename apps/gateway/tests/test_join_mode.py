@@ -133,17 +133,15 @@ class TestJoinGatePure:
         assert exempt(None, {"groups": ["users"]}, settings) is False
 
     def test_refusal_texts_name_no_groups(self) -> None:
-        assert "invitation-only" in refusal_text(
-            "invite", email="a@example.org", provider="Keycloak"
-        )
-        assert "a@example.org" in refusal_text("invite", email="a@example.org", provider="Keycloak")
-        text = refusal_text("group", email=None, provider="Keycloak")
-        assert "Keycloak" in text and "staff" not in text
+        assert "invitation-only" in refusal_text("invite", email="a@example.org", provider="Okta")
+        assert "a@example.org" in refusal_text("invite", email="a@example.org", provider="Okta")
+        text = refusal_text("group", email=None, provider="Okta")
+        assert "Okta" in text and "staff" not in text
         assert "no longer" in refusal_text("group_lost", email=None, provider="x")
         assert "waiting" in refusal_text("approval", email=None, provider="x")
 
     def test_provider_label_defaults_to_identity_provider(self) -> None:
-        assert provider_label("keycloak") == "Keycloak"
+        assert provider_label("keycloak") == "identity provider"
         assert provider_label("generic") == "identity provider"
         assert provider_label(None) == "identity provider"
 

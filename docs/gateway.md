@@ -299,8 +299,8 @@ src/gateway/
 
 Stated plainly, so none of them is a surprise later.
 
-- **OIDC is fully verified against Keycloak 26.7 and Authelia 4.39.22**, the
-  two versions tested. Entra ID, Google and others differ in exactly
+- **OIDC is fully verified against Authelia 4.39.22** (and was against
+  Keycloak 26.7, which is no longer part of the dev stack). Entra ID, Google and others differ in exactly
   the places the OIDC settings make configurable — where
   groups live, whether they appear in the ID token at all, how they are named.
   Test any new provider against your instance before relying on it; see the

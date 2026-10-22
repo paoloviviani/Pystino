@@ -71,7 +71,7 @@ services/redaction  Presidio behind a swappable contract, out of process
 deploy/             the Pystino-only deployment: compose.yaml, caddy/ and
                     authelia/ (mounted read-only into stock images),
                     .env.example, pin.py, release.env
-deploy/dev/         development-only fixtures: fake upstream, Keycloak
+deploy/dev/         development-only fixtures: fake upstream
 deploy/ci/          e2e_login.py, a browser-shaped sign-in check run by hand
 scripts/            live checks against a running stack, the fake upstream
 docs/               how to run, deploy and operate it (mkdocs)
@@ -256,7 +256,7 @@ uv run python scripts/test_surfaces_live.py          # responses, Anthropic mess
 uv run python scripts/test_quota_race_live.py        # admission under concurrency, real Valkey
 uv run python scripts/test_cache_accounting_live.py  # a real cache hit, and the ledger
 uv run python scripts/test_web_search_live.py        # per-search billing, the report and its CSV
-uv run python scripts/test_bill_to_live.py           # x-bill-to against a real OIDC token (Keycloak direct grant, else the Authelia device flow)
+uv run python scripts/test_bill_to_live.py           # x-bill-to against a real OIDC token (the Authelia device flow)
 uv run python scripts/test_pystino_usage_live.py     # GET /v1/pystino/usage under both credentials
 uv run python scripts/test_citations_live.py         # citation offsets after a real placeholder
 uv run python scripts/test_public_tls_live.py        # TLS, the IdP, a Secure cookie, nothing else exposed

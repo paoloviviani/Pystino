@@ -1144,14 +1144,13 @@ export interface IdentityProvider {
 export type IdentityKind =
   | "generic"
   | "authelia"
-  | "keycloak"
   | "entra"
   | "okta"
   | "authentik"
   | "google";
 export type GroupSource = "claim" | "directory" | "none";
 export type AdminSource = "console" | "claim";
-export type SyncAdapter = "none" | "authelia_file" | "keycloak_admin" | "scim";
+export type SyncAdapter = "none" | "authelia_file" | "scim";
 
 export interface IdentityCapabilities {
   claims_groups: boolean;

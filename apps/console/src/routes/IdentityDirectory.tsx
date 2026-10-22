@@ -36,7 +36,6 @@ import { m } from "../paraglide/messages.js";
 const ADAPTER_LABEL: Record<SyncAdapter, () => string> = {
   none: m["identity_directory.adapter.none"],
   authelia_file: m["identity_directory.adapter.authelia_file"],
-  keycloak_admin: m["identity_directory.adapter.keycloak_admin"],
   scim: m["identity_directory.adapter.scim"],
 };
 
@@ -112,8 +111,6 @@ export function DirectoryDialog({
 
   const [adapter, setAdapter] = useState<SyncAdapter | null>(null);
   const [intervalMinutes, setIntervalMinutes] = useState<string | null>(null);
-  const [kcClientId, setKcClientId] = useState("");
-  const [kcSecret, setKcSecret] = useState("");
   const [scim, setScim] = useState<{ token: string; endpoint: string } | null>(null);
   const [preassignDraft, setPreassignDraft] = useState<Record<string, string>>({});
 
@@ -121,7 +118,7 @@ export function DirectoryDialog({
   const chosen = adapter ?? provider.sync_adapter;
   const options: SyncAdapter[] = ["none", ...provider.capabilities.adapters];
   const lastRun = runs.data?.[0];
-  const pull = chosen === "authelia_file" || chosen === "keycloak_admin";
+  const pull = chosen === "authelia_file";
 
   const saveAdapter = () =>
     setConfig.mutate(
@@ -143,8 +140,6 @@ export function DirectoryDialog({
   const close = () => {
     setAdapter(null);
     setIntervalMinutes(null);
-    setKcClientId("");
-    setKcSecret("");
     setScim(null);
     setPreassignDraft({});
     onClose();
@@ -194,41 +189,6 @@ export function DirectoryDialog({
             {m["identity_directory.save"]()}
           </Button>
         </div>
-
-        {provider.sync_adapter === "keycloak_admin" && (
-          <div className="flex flex-col gap-2">
-            <div className={DETAIL_LABEL}>{m["identity_directory.keycloak.detail"]()}</div>
-            <Input
-              label={m["identity_directory.keycloak.client_id"]()}
-              value={kcClientId}
-              onChange={(e) => setKcClientId(e.target.value)}
-            />
-            <Input
-              label={m["identity_directory.keycloak.client_secret"]()}
-              type="password"
-              value={kcSecret}
-              onChange={(e) => setKcSecret(e.target.value)}
-              hint={m["identity_directory.keycloak.client_secret_hint"]()}
-            />
-            <div>
-              <Button
-                disabled={!kcClientId || !kcSecret}
-                busy={setConfig.isPending}
-                onClick={() =>
-                  setConfig.mutate(
-                    { id, config: { client_id: kcClientId, client_secret: kcSecret } },
-                    {
-                      onSuccess: () =>
-                        toast?.add({ title: m["identity_directory.keycloak.saved"](), type: "success" }),
-                    },
-                  )
-                }
-              >
-                {m["identity_directory.keycloak.save"]()}
-              </Button>
-            </div>
-          </div>
-        )}
 
         {provider.sync_adapter === "scim" && (
           <div className="flex flex-col gap-2">

@@ -149,7 +149,7 @@ describe("Shell", () => {
   });
 
   it("goes to the provider's end-session URL, not just to our login page", async () => {
-    // The bug this exists to catch: dropping our own cookie leaves Keycloak's
+    // The bug this exists to catch: dropping our own cookie leaves the provider's
     // SSO session standing, so /auth/login is answered without a password
     // prompt and the reader lands back on the console as the same person.
     // Signing out looked like it did nothing.

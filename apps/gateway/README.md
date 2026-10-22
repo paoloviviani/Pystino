@@ -107,9 +107,9 @@ Stated plainly, so none of these is a surprise later.
 
 **Needs verifying against the real thing**
 
-- **OIDC against providers other than Keycloak and Authelia.** The full
-  redirect flow is verified end to end against Keycloak 26.7 and Authelia
-  4.39.22, but Entra ID, Google
+- **OIDC against providers other than Authelia.** The full
+  redirect flow is verified end to end against Authelia 4.39.22 (and was
+  against Keycloak 26.7), but Entra ID, Google
   and others differ in exactly the places the OIDC settings make configurable: where
   groups live, whether they appear in the ID token at all, how they are named.
   Re-run the same checks against the real provider before going live; the

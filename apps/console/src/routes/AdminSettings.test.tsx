@@ -61,8 +61,8 @@ describe("AdminSettings providers card", () => {
   ): IdentityProvider {
     return {
       id: "p1",
-      name: "keycloak",
-      issuer: "https://idp.test/realms/main",
+      name: "corp-idp",
+      issuer: "https://idp.test/main",
       client_id: "pystino-console",
       has_client_secret: true,
       scopes: ["openid"],
@@ -79,7 +79,7 @@ describe("AdminSettings providers card", () => {
       internal_base_url: "",
       logout_url: "",
       default_logout_url: "",
-      kind: "keycloak",
+      kind: "generic",
       group_source: "none",
       admin_source: "console",
       admin_claim: "",
@@ -92,12 +92,12 @@ describe("AdminSettings providers card", () => {
       sync_confirmed: true,
       capabilities: {
         claims_groups: true,
-        pull_adapters: ["keycloak_admin"],
+        pull_adapters: ["authelia_file"],
         scim_push: false,
         subject_before_login: true,
         deprovision: true,
         creates_logins: false,
-        adapters: ["keycloak_admin"],
+        adapters: ["authelia_file"],
       },
       ...overrides,
     };
@@ -214,7 +214,7 @@ describe("AdminSettings providers card", () => {
         provider({
           name: "old-idp",
           is_enabled: false,
-          sync_adapter: "keycloak_admin",
+          sync_adapter: "authelia_file",
           sync_confirmed: true,
         }),
       ]),
@@ -227,7 +227,7 @@ describe("AdminSettings providers card", () => {
     expect(
       screen.queryByRole("button", { name: "User sync…" }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByText(/sync: keycloak_admin/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/sync: authelia_file/)).not.toBeInTheDocument();
   });
 
   it("the dialog opens under its new name and says the screen is optional", async () => {
@@ -244,7 +244,7 @@ describe("AdminSettings providers card", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("dialog", { name: "User sync — keycloak" }),
+        screen.getByRole("dialog", { name: "User sync — corp-idp" }),
       ).toBeInTheDocument(),
     );
     expect(

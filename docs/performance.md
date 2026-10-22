@@ -6,7 +6,7 @@
   below for what changed (single-request latency: nothing) and what it revealed
   (the throughput knee, at concurrency 8).
 - **The box: 2 cores, 3 GB, everything co-resident** — gateway, Postgres,
-  Valkey, Presidio, Keycloak, the fake upstream, *and* the load generator. Treat
+  Valkey, Presidio, the fake upstream (and Keycloak, when this was measured), *and* the load generator. Treat
   throughput as a floor and CPU-per-request as the transferable number.
 - Related: [redaction scoping](redaction.md), which turns out to be a
   performance feature as much as a policy one.
