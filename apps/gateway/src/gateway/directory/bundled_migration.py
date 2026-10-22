@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from gateway.directory.authelia_users import UsersFile, UsersFileError
 from gateway.directory.service import decrypt_config
 from gateway.identity_events import record_event
+from gateway.identity_registry import lock_reseed
 from gateway.models import (
     DirectoryEntry,
     IdentityEventAction,
@@ -69,7 +70,20 @@ async def migrate_bundled_directory(
     `reseed_from_env` and the admin-email sweep in `main.py`: this only
     reads and writes, and never raises anything but a genuine database or
     filesystem error.
+
+    Every worker runs this at boot against the one database, and step 3 reads
+    the logins already entered before inserting the missing ones, so two
+    workers on a fresh stack both saw "none" and the second insert broke
+    `uq_directory_entries_provider_ext`. The transaction-scoped advisory lock
+    (the one every other startup writer of identity state takes) makes the
+    second worker wait for the first's commit and then read its rows; it is
+    taken before any read, and held until the caller commits. An
+    `ON CONFLICT DO NOTHING` per row would also stop the crash, but would
+    leave both workers running the membership update and the audit event
+    concurrently; the lock serialises the whole routine. No-op on SQLite,
+    which has a single writer.
     """
+    await lock_reseed(session)
     await session.execute(
         update(Membership)
         .where(
