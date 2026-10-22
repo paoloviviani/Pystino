@@ -111,6 +111,15 @@ describe("UsagePlots", () => {
     expect(await screen.findByRole("img")).toHaveAccessibleName(/Tokens per day/);
   });
 
+  it("writes chart amounts to the cent", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderPlots(report([row("2026-03-02", "fake", "56.936")]));
+    await user.click(await screen.findByRole("button", { name: "Show as a table" }));
+    const table = screen.getByRole("table");
+    expect(table).toHaveTextContent("€56.94");
+    expect(table).not.toHaveTextContent("€56.936");
+  });
+
   it("has a table with the plotted figures", async () => {
     const user = userEvent.setup({ delay: null });
     renderPlots(report([row("2026-03-02", "fake", "3")]));

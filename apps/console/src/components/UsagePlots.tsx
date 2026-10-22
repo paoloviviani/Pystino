@@ -158,7 +158,9 @@ function PlotBody({
 }
 
 function formatValue(value: number | string, metric: Metric, currency: string): string {
-  if (metric === "cost") return formatMoney(String(value), currency);
+  // Cents on a chart: its sums and axis read at a glance; the tables keep the
+  // console's usual precision for exact figures.
+  if (metric === "cost") return formatMoney(String(value), currency, { maxDecimals: 2 });
   return formatNumber(Number(value));
 }
 
@@ -222,7 +224,7 @@ function StackedBars({
             fill="currentColor"
           >
             {metric === "cost"
-              ? formatMoney(String(tick), currency)
+              ? formatMoney(String(tick), currency, { maxDecimals: 2 })
               : new Intl.NumberFormat(undefined, { notation: "compact" }).format(tick)}
           </text>
         </g>
