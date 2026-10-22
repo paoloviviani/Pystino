@@ -2728,5 +2728,36 @@
   "admin_routing.form.price_input_weight": "Input price weight",
   "admin_routing.form.price_output_weight": "Output price weight",
   "admin_routing.form.price_weight_hint": "Cheapest ranks targets by input rate × this + output rate × the output weight. 1:1 adds them; 10:1 suits long prompts with short answers.",
-  "request_log.attempt": "try {n}"
+  "request_log.attempt": "try {n}",
+  "admin_providers.badge.region": "region {region}",
+  "admin_providers.badge.zero_retention": "zero data retention",
+  "admin_providers.badge.catalogue_missing": "catalogue entry missing",
+  "admin_providers.field.catalogue": "Catalogue entry",
+  "admin_providers.field.catalogue_none": "None (set up by hand)",
+  "admin_providers.field.catalogue_hint_new": "Fills in the type, endpoint and prefix below; you can still change them. Region and retention are read from the catalogue.",
+  "admin_providers.field.catalogue_hint_edit": "Links this provider to a catalogue entry for its region and retention. Nothing is copied into the provider.",
+  "admin_providers.catalogue.title": "Provider catalogue",
+  "admin_providers.catalogue.subtitle": "Known providers, read from YAML at startup: the ones shipped with Pystino and any in your providers directory. Changes apply on restart.",
+  "admin_providers.catalogue.caption": "Catalogue entries, with where each value came from.",
+  "admin_providers.catalogue.column.entry": "Entry",
+  "admin_providers.catalogue.column.endpoint": "Endpoint",
+  "admin_providers.catalogue.column.region": "Region",
+  "admin_providers.catalogue.column.retention": "Retention",
+  "admin_providers.catalogue.column.prices": "Price hints",
+  "admin_providers.catalogue.unknown": "unknown",
+  "admin_providers.catalogue.zdr_yes": "zero data retention",
+  "admin_providers.catalogue.zdr_no": "retains data",
+  "admin_providers.catalogue.days": [
+    {
+      "declarations": [
+        "input count"
+      ],
+      "match": {
+        "*": "{count: number} days"
+      }
+    }
+  ],
+  "admin_providers.catalogue.trains": "trains on customer data",
+  "admin_providers.catalogue.origin_builtin": "built-in",
+  "admin_providers.catalogue.origin_override": "override"
 }

@@ -17,12 +17,18 @@ import { useState } from "react";
 import {
   useCreateProvider,
   useDeleteProvider,
+  useProviderCatalogue,
   useProviderPlugins,
   useProviders,
   useTestProvider,
   useUpdateProvider,
 } from "../lib/admin";
-import type { AdminProvider, ProviderPlugin, ProviderTestResult } from "../lib/types";
+import type {
+  AdminProvider,
+  CatalogueEntry,
+  ProviderPlugin,
+  ProviderTestResult,
+} from "../lib/types";
 import { PageHeader } from "../components/PageHeader";
 import { CHIPS, CHECK_ITEM, CODE, MUTED, PAGE, ROW_ACTIONS } from "../lib/layout";
 import { useOptionalToast } from "../lib/toast";
@@ -97,6 +103,19 @@ export function AdminProviders() {
                 configuration to point at, not a silent inconsistency. */}
             {provider.plugin_kind !== null && provider.plugin_kind !== provider.kind && (
               <Badge tone="danger">{m["admin_providers.badge.kind_mismatch"]()}</Badge>
+            )}
+            {/* What the catalogue says about where it runs and what it keeps.
+                Unknown stays unmarked: absence is not a "no". */}
+            {provider.catalogue?.region && (
+              <Badge tone="neutral">
+                {m["admin_providers.badge.region"]({ region: provider.catalogue.region })}
+              </Badge>
+            )}
+            {provider.catalogue?.retention.zero_data_retention === true && (
+              <Badge tone="ok">{m["admin_providers.badge.zero_retention"]()}</Badge>
+            )}
+            {provider.catalogue_missing && (
+              <Badge tone="warn">{m["admin_providers.badge.catalogue_missing"]()}</Badge>
             )}
             {/* Unpriced models reserve nothing, so no cost ceiling trips. */}
             {provider.unpriced_model_count > 0 && (
@@ -278,6 +297,8 @@ export function AdminProviders() {
         )}
       </Card>
 
+      <CatalogueCard />
+
       <ProviderDialog
         open={creating}
         provider={null}
@@ -290,6 +311,128 @@ export function AdminProviders() {
         pluginFilter={isLlmProviderPlugin}
         onClose={() => setEditing(null)}
       />
+    </div>
+  );
+}
+
+/**
+ * The provider catalogue (YAML), read-only: each value with where it came from.
+ *
+ * The catalogue is files, edited where they live and applied on restart, so
+ * there is nothing to edit here. What the screen is for is the question an
+ * operator asks when a value surprises them: "is that the release's, or mine?".
+ * Renders nothing while loading or when the request fails, because the page's
+ * real content is the providers above it.
+ */
+function CatalogueCard() {
+  const catalogue = useProviderCatalogue();
+  const entries = Array.isArray(catalogue.data) ? catalogue.data : [];
+  if (entries.length === 0) return null;
+
+  const columns: Column<CatalogueEntry>[] = [
+    {
+      key: "entry",
+      header: m["admin_providers.catalogue.column.entry"](),
+      render: (entry) => (
+        <>
+          {/* i18n: server text — the catalogue file's own name and id. */}
+          <div>{entry.name}</div>
+          <div className={`${MUTED} ${CODE}`}>{entry.id}</div>
+        </>
+      ),
+    },
+    {
+      key: "endpoint",
+      header: m["admin_providers.catalogue.column.endpoint"](),
+      render: (entry) => (
+        <>
+          <div className={CODE}>{entry.base_url ?? m["admin_providers.catalogue.unknown"]()}</div>
+          <Origin entry={entry} fields={["base_url", "plugin"]} />
+        </>
+      ),
+    },
+    {
+      key: "region",
+      header: m["admin_providers.catalogue.column.region"](),
+      render: (entry) => (
+        <>
+          <div>{entry.region ?? m["admin_providers.catalogue.unknown"]()}</div>
+          <Origin entry={entry} fields={["region"]} />
+        </>
+      ),
+    },
+    {
+      key: "retention",
+      header: m["admin_providers.catalogue.column.retention"](),
+      render: (entry) => (
+        <>
+          <div>{retentionText(entry)}</div>
+          <Origin
+            entry={entry}
+            fields={[
+              "retention.zero_data_retention",
+              "retention.retention_days",
+              "retention.trains_on_customer_data",
+              "retention.note",
+            ]}
+          />
+        </>
+      ),
+    },
+    {
+      key: "prices",
+      header: m["admin_providers.catalogue.column.prices"](),
+      numeric: true,
+      render: (entry) => formatNumber(entry.price_hints.length),
+    },
+  ];
+
+  return (
+    <Card flush>
+      <div className="p-5">
+        <h2 className="text-lg font-semibold">{m["admin_providers.catalogue.title"]()}</h2>
+        <p className={MUTED}>{m["admin_providers.catalogue.subtitle"]()}</p>
+      </div>
+      <Table
+        columns={columns}
+        rows={entries}
+        rowKey={(entry) => entry.id}
+        empty=""
+        caption={m["admin_providers.catalogue.caption"]()}
+      />
+    </Card>
+  );
+}
+
+/** What the entry says it keeps, in one line; unknown is said as unknown. */
+function retentionText(entry: CatalogueEntry): string {
+  const r = entry.retention;
+  const parts: string[] = [];
+  if (r.zero_data_retention === true) parts.push(m["admin_providers.catalogue.zdr_yes"]());
+  if (r.zero_data_retention === false) parts.push(m["admin_providers.catalogue.zdr_no"]());
+  if (r.retention_days !== null) {
+    parts.push(m["admin_providers.catalogue.days"]({ count: r.retention_days }));
+  }
+  if (r.trains_on_customer_data === true) parts.push(m["admin_providers.catalogue.trains"]());
+  return parts.length > 0 ? parts.join(" · ") : m["admin_providers.catalogue.unknown"]();
+}
+
+/**
+ * Where the shown fields came from. Built-in is the quiet default; an override
+ * is marked, with the file that did it, because that is the one to look for.
+ */
+function Origin({ entry, fields }: { entry: CatalogueEntry; fields: string[] }) {
+  const overrides = entry.origins.filter(
+    (origin) => fields.includes(origin.field) && origin.layer === "override",
+  );
+  if (overrides.length === 0) {
+    return <div className={MUTED}>{m["admin_providers.catalogue.origin_builtin"]()}</div>;
+  }
+  const files = [...new Set(overrides.map((origin) => origin.file))].join(", ");
+  return (
+    <div className={CHIPS}>
+      <Badge tone="accent">{m["admin_providers.catalogue.origin_override"]()}</Badge>
+      <span className={`${MUTED} ${CODE}`}>{files}</span>
     </div>
   );
 }
@@ -405,6 +548,11 @@ export function ProviderDialog({
   const [plugin, setPlugin] = useState<string>("");
   const [billingMode, setBillingMode] = useState<"own_prices" | "provider_reported">("own_prices");
   const [prefix, setPrefix] = useState("");
+  // The catalogue entry this row is an instance of ("" for none). Linking copies
+  // nothing into the row: on create it pre-fills the fields below, which stay
+  // the operator's to change; on edit it only sets the link.
+  const catalogue = useProviderCatalogue();
+  const [catalogueId, setCatalogueId] = useState("");
   // Keyed remount: without this the fields keep the previous provider's values
   // when a different row is opened.
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -419,6 +567,7 @@ export function ProviderDialog({
     setPlugin(provider?.plugin ?? "");
     setBillingMode(provider?.billing_mode ?? "own_prices");
     setPrefix(provider?.prefix ?? "");
+    setCatalogueId(provider?.catalogue_id ?? "");
   }
 
   const chosen = (plugins.data ?? []).find(
@@ -429,6 +578,12 @@ export function ProviderDialog({
   const modes = chosen?.billing_modes ?? ["own_prices"];
   const effectiveMode = modes.includes(billingMode) ? billingMode : "own_prices";
 
+  // Entries this screen owns: those whose plugin the screen's filter accepts, so
+  // the search screen's dialog is not offered inference providers.
+  const offered = (catalogue.data ?? []).filter((entry) => {
+    const type = (allPlugins.data ?? []).find((p) => p.name === entry.plugin);
+    return type !== undefined && (pluginFilter ? pluginFilter(type) : true);
+  });
   const pending = create.isPending || update.isPending;
   const error = create.error ?? update.error;
 
@@ -447,6 +602,8 @@ export function ProviderDialog({
           kind: chosen?.kind ?? "provider",
           billing_mode: effectiveMode,
           prefix,
+          // Only when it changed, so saving something else never rewrites the link.
+          ...(catalogueId !== (provider.catalogue_id ?? "") ? { catalogue_id: catalogueId } : {}),
           // Three ways, deliberately: a typed key replaces, the explicit clear
           // removes, and neither leaves the stored credential untouched.
           ...(apiKey ? { api_key: apiKey } : clearKey ? { api_key: "" } : {}),
@@ -470,6 +627,7 @@ export function ProviderDialog({
           kind: chosen?.kind ?? "provider",
           billing_mode: effectiveMode,
           prefix,
+          ...(catalogueId ? { catalogue_id: catalogueId } : {}),
           ...(apiKey ? { api_key: apiKey } : {}),
         },
         {
@@ -537,6 +695,39 @@ export function ProviderDialog({
           example: prefix ? `${prefix}deep` : "deep",
         })}
       />
+
+      {offered.length > 0 && (
+        <Select
+          label={m["admin_providers.field.catalogue"]()}
+          value={catalogueId}
+          onChange={(event) => {
+            const id = event.target.value;
+            setCatalogueId(id);
+            const entry = offered.find((candidate) => candidate.id === id);
+            // Pre-fill on create only; an existing row's fields are its own.
+            if (!editing && entry) {
+              const known = (plugins.data ?? []).find((p) => p.name === entry.plugin);
+              setPlugin(known?.is_default ? "" : entry.plugin);
+              if (entry.base_url) setBaseUrl(entry.base_url);
+              setPrefix(entry.prefix);
+              if (!name.trim()) setName(entry.id);
+            }
+          }}
+          hint={
+            editing
+              ? m["admin_providers.field.catalogue_hint_edit"]()
+              : m["admin_providers.field.catalogue_hint_new"]()
+          }
+        >
+          <option value="">{m["admin_providers.field.catalogue_none"]()}</option>
+          {offered.map((entry) => (
+            // i18n: server text — the catalogue entry's own name.
+            <option key={entry.id} value={entry.id}>
+              {entry.name}
+            </option>
+          ))}
+        </Select>
+      )}
 
       <Select
         label={m["admin_providers.field.type"]()}

@@ -1,0 +1,5 @@
+providers:
+  - id: nebius
+    name: Nebius AI Studio
+    plugin: nebius
+    base_url: https://api.studio.nebius.com/v1

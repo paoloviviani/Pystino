@@ -575,7 +575,7 @@ export interface DiscoveredModel {
    * provider lists and nobody prices. Per row, because one import can mix all
    * three (ADR 0053).
    */
-  price_source: "provider" | "community" | null;
+  price_source: "provider" | "community" | "hint" | null;
 }
 
 export interface CatalogueDriftRow {
@@ -639,7 +639,7 @@ export interface ModelImportResult {
   priced: boolean;
   reason: string | null;
   /** Who supplied the price that was written to the append-only history. */
-  price_source: "provider" | "community" | "manual" | null;
+  price_source: "provider" | "community" | "hint" | "manual" | null;
 }
 
 export interface ModelImportResponse {
@@ -906,8 +906,44 @@ export interface ProviderPlugin {
   is_default: boolean;
 }
 
+/** Where one catalogue field's current value came from. */
+export interface CatalogueOrigin {
+  field: string;
+  /** `builtin` ships in the image; `override` is the operator directory. */
+  layer: "builtin" | "override";
+  file: string;
+}
+
+/**
+ * One entry of the provider catalogue (YAML, read at startup). `null` in a
+ * retention field is *unknown*, never "no".
+ */
+export interface CatalogueEntry {
+  id: string;
+  name: string;
+  description: string | null;
+  plugin: string;
+  base_url: string | null;
+  prefix: string;
+  region: string | null;
+  retention: {
+    zero_data_retention: boolean | null;
+    retention_days: number | null;
+    trains_on_customer_data: boolean | null;
+    note: string | null;
+    source_url: string | null;
+  };
+  price_hints: { model: string; effective_from: string; currency: string }[];
+  origins: CatalogueOrigin[];
+}
+
 export interface AdminProvider {
   id: string;
+  /** The catalogue entry this row is an instance of; nothing is copied from it. */
+  catalogue_id?: string | null;
+  catalogue?: CatalogueEntry | null;
+  /** The row names an entry the catalogue no longer has. */
+  catalogue_missing?: boolean;
   name: string;
   description: string | null;
   base_url: string;

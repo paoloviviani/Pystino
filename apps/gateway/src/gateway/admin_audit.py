@@ -88,6 +88,7 @@ PROVIDER_FIELDS = (
     "billing_mode",
     "prefix",
     "is_active",
+    "catalogue_id",
 )
 LIMIT_FIELDS = (
     "name",

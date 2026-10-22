@@ -1,0 +1,5 @@
+providers:
+  - id: openrouter
+    name: OpenRouter
+    plugin: openrouter
+    base_url: https://openrouter.ai/api/v1

@@ -14,6 +14,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from gateway.accounting import DEFAULT_ESTIMATOR
+from gateway.catalogue import CatalogueError, load_catalogue
 from gateway.config import Settings, get_settings, startup_warnings
 from gateway.db import create_engine, create_session_factory
 from gateway.directory.bundled_migration import migrate_bundled_directory
@@ -116,6 +117,15 @@ async def init_app_state(
     """
     for message in startup_warnings(settings):
         logger.warning(message)
+
+    # The provider catalogue, before anything is opened: a bad file must stop the
+    # gateway with a message naming the file and the field, not surface later as
+    # a half-started process. Read once; changes apply on restart.
+    try:
+        app.state.catalogue = load_catalogue(override_dir=settings.providers_dir)
+    except CatalogueError as exc:
+        logger.critical("provider catalogue is invalid, refusing to start:\n%s", exc)
+        raise
 
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)

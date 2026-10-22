@@ -1,3 +1,5 @@
 .env
 proxy.d/*.caddy
 first-sign-in.txt
+providers.d/*.yaml
+providers.d/*.yml

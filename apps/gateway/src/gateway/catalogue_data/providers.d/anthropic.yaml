@@ -1,0 +1,4 @@
+providers:
+  - id: anthropic
+    name: Anthropic
+    plugin: anthropic
