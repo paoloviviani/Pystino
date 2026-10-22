@@ -264,6 +264,18 @@ class OpenAICompatibleUpstream:
         """
         return await self.post_json("/ocr", payload, request_id=request_id)
 
+    async def decisions(
+        self, payload: Mapping[str, Any], *, path: str, request_id: str | None = None
+    ) -> UpstreamResponse:
+        """Ask a decision model typed questions. Never streams.
+
+        The *path* is the plugin's to name (``DecisionSupport.paths``): the
+        reference router serves ``/decisions`` and ``/systemone``, and another
+        counterparty may put them elsewhere, which is a plugin's knowledge and
+        not a branch here (ADR 0032).
+        """
+        return await self.post_json(path, payload, request_id=request_id)
+
     async def list_models(self) -> UpstreamResponse:
         """Ask the provider what it offers.
 

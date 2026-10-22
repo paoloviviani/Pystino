@@ -11,6 +11,7 @@ per-group model availability and a pluggable redaction layer.
 | `POST /v1/responses` | key or bearer | OpenAI's Responses API. Server-side conversation state (`previous_response_id`, `store`) is refused |
 | `POST /v1/messages` | key or bearer | Anthropic's Messages API, over the same chat models |
 | `POST /v1/embeddings` | key or bearer | Embeddings, metered and redacted like a completion |
+| `POST /v1/decisions`, `POST /v1/systemone` | key or bearer | [Decision models](decision-models.md): typed questions about a text, answered with calibrated probabilities. Metered per token, redacted, the request and the answer passed through in the format they arrived in |
 | `POST /v1/images/generations` | key or bearer | Image generation, billed per picture or per token depending on the model |
 | `POST /v1/ocr` | key or bearer | Document extraction, metered per page. Two backends: an upstream OCR model, or this deployment's own extractor |
 | `POST /v1/search` | key or bearer | Web search against a configured backend (Linkup, Exa, Jina, DuckDuckGo), metered per call. The backend is the billing group's search policy, or the one the body names in an optional `backend` (a search model the caller is granted; an ungranted name is a 404, never a fallback to the policy). `POST /v1/search/{backend}` is the verbatim passthrough |
@@ -30,8 +31,8 @@ per-group model availability and a pluggable redaction layer.
 
 Every metered `/v1` route shares one metering path — `routers/_metered.py` — so
 resolve → reserve → record → settle cannot drift between surfaces.
-Seven routers import it today: chat, responses, messages, embeddings, images,
-ocr and search.
+Eight routers import it today: chat, responses, messages, embeddings, images,
+ocr, search and decisions.
 `_metered.begin` takes `fx` and `session_factory` rather than a `Request`, so
 code with no request can bill through the same path: a second copy of the money
 code would make that spend invisible to every report. Knowledge-base ingestion
@@ -171,7 +172,7 @@ same amounts and money-as-string shape the model page's price form posts
 OCR model, and an optional `currency` that defaults to the gateway's billing
 currency and is refused in any other, never converted). The price must carry
 the rates the kind is metered on — a chat model an input and an output rate, an
-embedding model an input rate, an OCR model a page rate; a search tier takes no
+embedding model an input rate, a decision model an input and an output rate (zero is accepted, absent is not), an OCR model a page rate; a search tier takes no
 price at all, because its meter counts requests. Each kind's missing rate is
 refused per item, so one bad price does not lose the rest of the batch.
 

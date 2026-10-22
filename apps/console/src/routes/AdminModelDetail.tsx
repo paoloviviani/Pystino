@@ -439,6 +439,7 @@ function Describe({ model }: { model: AdminModel }) {
           <option value="chat">{m["model_detail.kind.chat"]()}</option>
           <option value="embedding">{m["model_detail.kind.embedding"]()}</option>
           <option value="image">{m["model_detail.kind.image"]()}</option>
+          <option value="decision">{m["model_detail.kind.decision"]()}</option>
         </Select>
 
         <CapabilityPicker

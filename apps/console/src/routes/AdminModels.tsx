@@ -87,6 +87,11 @@ const KIND_SECTIONS: {
     description: m["admin_models.section.ocr_description"],
   },
   {
+    kind: "decision",
+    title: m["admin_models.section.decision"],
+    description: m["admin_models.section.decision_description"],
+  },
+  {
     kind: "image",
     title: m["admin_models.section.image"],
     description: m["admin_models.section.image_description"],
@@ -652,6 +657,7 @@ function CreateModelDialog({ open, onClose }: { open: boolean; onClose: () => vo
           <option value="chat">{m["admin_models.kind.chat"]()}</option>
           <option value="embedding">{m["admin_models.kind.embedding"]()}</option>
           <option value="image">{m["admin_models.kind.image"]()}</option>
+          <option value="decision">{m["admin_models.kind.decision"]()}</option>
         </Select>
 
         {/* Describing it now rather than importing-then-editing. Left empty this
@@ -747,6 +753,7 @@ const RATE_FIELDS: Record<string, ("input" | "output" | "perPage")[]> = {
   embedding: ["input"],
   image: ["input"],
   ocr: ["perPage"],
+  decision: ["input", "output"],
 };
 
 const RATE_LABELS: Record<string, () => string> = {

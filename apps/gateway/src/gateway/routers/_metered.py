@@ -104,6 +104,7 @@ _SURFACE_KINDS: dict[ApiSurface, tuple[ModelKind, ...]] = {
     ApiSurface.IMAGES: (ModelKind.IMAGE,),
     ApiSurface.OCR: (ModelKind.OCR,),
     ApiSurface.SEARCH: (ModelKind.SEARCH,),
+    ApiSurface.DECISIONS: (ModelKind.DECISION,),
 }
 
 _KIND_ROUTES: dict[ModelKind, str] = {
@@ -112,6 +113,7 @@ _KIND_ROUTES: dict[ModelKind, str] = {
     ModelKind.IMAGE: "/v1/images/generations",
     ModelKind.OCR: "/v1/ocr",
     ModelKind.SEARCH: "/v1/search",
+    ModelKind.DECISION: "/v1/decisions or /v1/systemone",
 }
 
 

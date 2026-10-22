@@ -224,7 +224,7 @@ it as a "try n" badge and as the `attempt` column in the CSV.
 ### Where routing applies
 
 Selection, stickiness and fallback apply to chat completions, responses,
-messages, embeddings and image generation. OCR and search serve an alias from
+messages, embeddings, decisions and image generation. OCR and search serve an alias from
 the rule's first choice and do not fall back.
 
 ### Rules that stay

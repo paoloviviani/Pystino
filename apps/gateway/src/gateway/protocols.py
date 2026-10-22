@@ -708,6 +708,51 @@ class SearchReader:
         raise NotImplementedError("the search route does not stream")
 
 
+class DecisionsReader:
+    """``POST /v1/decisions`` and ``POST /v1/systemone`` (ADR 0100).
+
+    Nothing here is read except the usage object and the model, and that is
+    deliberate: an answer is probabilities, choices and scores, not text. There
+    is no assistant text to restore placeholders into, no citation offsets to
+    move, nothing to stream, and the one free-text field an answer may carry (a
+    refusal's reason) passes through as the provider wrote it.
+
+    Usage is the Responses spelling, ``input_tokens`` and ``output_tokens``
+    (checked live against Cortecs, 2026-10-22), and the counts are exact: the
+    provider tokenised the input, so ``deltas`` returns nothing and a request
+    that reports no usage is estimated from the prompt alone.
+    """
+
+    accumulates_usage = False
+
+    def frame(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        return payload
+
+    def counts(self, usage: dict[str, Any] | None) -> TokenCounts:
+        return TokenCounts.from_responses_usage(usage)
+
+    def shift_citations(self, payload: dict[str, Any], shift: Shift) -> bool:
+        return False
+
+    def deltas(self, payload: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+        return []
+
+    def stream_texts(self, payload: dict[str, Any]) -> list[tuple[int, str]]:
+        return []
+
+    def set_stream_text(self, payload: dict[str, Any], index: int, text: str) -> None:
+        return None
+
+    def rewrite_whole(self, payload: dict[str, Any], rewrite: Rewrite) -> bool:
+        return False
+
+    def is_terminal(self, payload: dict[str, Any]) -> bool:
+        return True
+
+    def synthesise(self, template: dict[str, Any] | None, index: int, text: str) -> dict[str, Any]:
+        raise NotImplementedError("the decisions routes do not stream")
+
+
 _READERS: dict[ApiSurface, SurfaceProtocol] = {
     ApiSurface.CHAT_COMPLETIONS: ChatCompletionsReader(),
     ApiSurface.EMBEDDINGS: ChatCompletionsReader(),
@@ -716,6 +761,7 @@ _READERS: dict[ApiSurface, SurfaceProtocol] = {
     ApiSurface.IMAGES: ImagesReader(),
     ApiSurface.OCR: OcrReader(),
     ApiSurface.SEARCH: SearchReader(),
+    ApiSurface.DECISIONS: DecisionsReader(),
 }
 
 

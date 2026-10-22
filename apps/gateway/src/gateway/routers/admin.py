@@ -582,6 +582,17 @@ async def _load_provider(session: SessionDep, provider_id: uuid.UUID) -> Provide
     return provider
 
 
+def _require_decision_provider(provider: Provider, model_name: str) -> None:
+    """Refuse a `decision` model whose provider type has no decision support.
+
+    At creation rather than at the first request (ADR 0100, decision 4): the
+    administrator learns it where they can fix it, and not from a caller's 400.
+    """
+    from gateway.routers.decisions import require_decision_support
+
+    require_decision_support(provider, model_name)
+
+
 # -- providers ---------------------------------------------------------------
 #
 # Adding an inference endpoint is configuration, not a deploy (ADR 0027). The
@@ -1235,7 +1246,9 @@ async def create_model(
     """
     # Checked before insert so the failure is "no such provider" rather than a
     # foreign-key violation.
-    await _load_provider(session, payload.provider_id)
+    provider = await _load_provider(session, payload.provider_id)
+    if payload.kind == ModelKind.DECISION.value:
+        _require_decision_provider(provider, payload.name)
 
     model = ModelDef(
         id=uuid.uuid4(),
@@ -1278,12 +1291,17 @@ async def update_model(
     model = await _load_model(session, model_id)
     audit_before = model_view(model)
     fields = payload.model_dump(exclude_unset=True)
+    provider = model.provider
     if (provider_id := fields.get("provider_id")) is not None:
         # Repointing at another endpoint is allowed and is how a migration off a
         # provider happens; pointing at one that does not exist is not.
-        await _load_provider(session, provider_id)
+        provider = await _load_provider(session, provider_id)
     if (kind := fields.pop("kind", None)) is not None:
         model.kind = ModelKind(kind)
+    if model.kind is ModelKind.DECISION and provider is not None and not model.is_alias:
+        # Either change can produce the combination: a model made a decision
+        # model, or a decision model moved to a provider that cannot serve it.
+        _require_decision_provider(provider, model.name)
     for field, value in fields.items():
         setattr(model, field, value)
     record_audit(
@@ -1870,6 +1888,10 @@ _KIND_RATES: dict[ModelKind, tuple[str, ...]] = {
     ModelKind.EMBEDDING: ("input_per_mtok",),
     ModelKind.IMAGE: ("input_per_mtok",),
     ModelKind.OCR: ("per_page",),
+    # Metered on input tokens, and a provider may quote an output rate (zero
+    # on every decision model seen), so both are required: a rate of zero is
+    # accepted, an absent one is not (ADR 0100).
+    ModelKind.DECISION: ("input_per_mtok", "output_per_mtok"),
 }
 
 _RATE_PHRASES: dict[str, str] = {

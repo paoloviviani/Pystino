@@ -260,6 +260,11 @@ class ApiSurface(enum.StrEnum):
     #: surface metered by a count with no rate behind it: `own_search_requests`
     #: rather than `cost`, for the reasons on `LimitMetric.OWN_SEARCH_REQUESTS`.
     SEARCH = "search"
+    #: `POST /v1/decisions` and `POST /v1/systemone` (ADR 0100): typed
+    #: questions about a piece of text, answered with calibrated
+    #: probabilities. One surface for both routes, because they differ in the
+    #: shape of the body and not in what is metered.
+    DECISIONS = "decisions"
 
 
 class BillingMode(enum.StrEnum):
@@ -936,6 +941,12 @@ class ModelKind(enum.StrEnum):
     #: metered as a count and never priced (`LimitMetric.OWN_SEARCH_REQUESTS`),
     #: so a price row on one of these charges nothing and reserves nothing.
     SEARCH = "search"
+    #: A decision model (ADR 0100): it does not generate text, it answers
+    #: typed questions about a text with calibrated probabilities. Served on
+    #: `/v1/decisions` and `/v1/systemone`, priced per token like an embedding
+    #: model (the provider may quote an output rate; it is usually zero), and
+    #: refused on every other route.
+    DECISION = "decision"
 
 
 class Provider(Base):

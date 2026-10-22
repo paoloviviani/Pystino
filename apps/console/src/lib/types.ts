@@ -118,7 +118,7 @@ export interface MintedApiKey extends ApiKey {
 // them as `number` would undo that at the last hop.
 
 /** What a model produces, and therefore which route may use it. */
-export type ModelKind = "chat" | "embedding" | "image" | "ocr" | "search";
+export type ModelKind = "chat" | "embedding" | "image" | "ocr" | "search" | "decision";
 
 export interface Price {
   id: string;
@@ -886,6 +886,8 @@ export interface ProviderPlugin {
   kind: "provider" | "router" | "search" | "internal";
   /** Only the modes this plugin can support, so the UI cannot offer a refusal. */
   billing_modes: ("own_prices" | "provider_reported")[];
+  /** Whether a decision model can be served through this type (ADR 0100). */
+  supports_decisions?: boolean;
   /**
    * The counterparty's public endpoint, when it has one worth pre-filling —
    * choosing the Cortecs type is the act of choosing its endpoint. Null for a
